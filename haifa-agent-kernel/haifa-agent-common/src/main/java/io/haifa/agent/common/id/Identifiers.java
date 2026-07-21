@@ -1,16 +1,11 @@
 package io.haifa.agent.common.id;
 
 import java.util.Objects;
-import java.util.UUID;
 
-/** Identifier validation and generation utilities shared by domain modules. */
+/** Identifier validation utilities shared by domain modules. */
 public final class Identifiers {
 
     private Identifiers() {}
-
-    public static String randomValue() {
-        return UUID.randomUUID().toString();
-    }
 
     public static String requireValid(String value, String fieldName) {
         String normalized =

@@ -4,5 +4,5 @@ package io.haifa.agent.runtime.api;
 @FunctionalInterface
 public interface AgentRunListener {
 
-    void onRunChanged(AgentRunResult result);
+    void onRunChanged(AgentRunSnapshot snapshot);
 }
