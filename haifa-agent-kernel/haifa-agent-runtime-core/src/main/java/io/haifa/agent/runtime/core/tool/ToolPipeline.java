@@ -11,7 +11,6 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.tool.ToolCall;
-import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
@@ -90,22 +89,47 @@ public final class ToolPipeline {
     }
 
     public ToolResult execute(AgentRun run, AgentStepId stepId, ToolRequest request) {
-        return journal.completed(run.id(), request.idempotencyKey()).orElseGet(() -> executeNew(run, stepId, request));
+        ToolCall call = prepare(run, stepId, request);
+        return execute(run, call, request);
     }
 
-    private ToolResult executeNew(AgentRun run, AgentStepId stepId, ToolRequest request) {
-        checkCancellation(run);
-        ToolDefinition definition = registry.find(request.toolName(), request.toolVersion())
-                .orElseThrow(() -> new IllegalArgumentException("unknown tool: " + request.toolName()));
+    public ToolCall prepare(AgentRun run, AgentStepId stepId, ToolRequest request) {
+        ToolCall existing = state.toolCalls(run.id()).stream()
+                .filter(call -> call.idempotencyKey().equals(request.idempotencyKey()))
+                .findFirst()
+                .orElse(null);
+        if (existing != null) {
+            if (!existing.providerCorrelationId().equals(request.providerCorrelationId())
+                    || !existing.toolName().equals(request.toolName())
+                    || !existing.toolVersion().equals(request.toolVersion())
+                    || !existing.arguments().equals(request.arguments())) {
+                throw new IllegalStateException("runtime idempotency key was reused for a different tool request");
+            }
+            return existing;
+        }
         ToolCall call = new ToolCall(
-                new ToolCallId(ids.nextValue()),
+                request.toolCallId(),
                 run.id(),
                 stepId,
-                definition.name(),
-                definition.version(),
+                request.providerCorrelationId(),
+                request.idempotencyKey(),
+                request.toolName(),
+                request.toolVersion(),
                 request.arguments(),
                 time.now());
         state.appendToolCall(call);
+        return call;
+    }
+
+    public ToolResult execute(AgentRun run, ToolCall call, ToolRequest request) {
+        if (call.result().isPresent()) return call.result().orElseThrow();
+        return journal.completed(run.id(), request.idempotencyKey()).orElseGet(() -> executeNew(run, call, request));
+    }
+
+    private ToolResult executeNew(AgentRun run, ToolCall call, ToolRequest request) {
+        checkCancellation(run);
+        ToolDefinition definition = registry.find(request.toolName(), request.toolVersion())
+                .orElseThrow(() -> new IllegalArgumentException("unknown tool: " + request.toolName()));
         call.beginValidation();
         if (!capabilityAuthorizer.isAllowed(run, definition)) {
             call.cancel(time.now());
@@ -138,7 +162,7 @@ public final class ToolPipeline {
                 run.id(),
                 java.util.Optional.empty(),
                 run.sessionId(),
-                java.util.Optional.of(stepId),
+                java.util.Optional.of(call.stepId()),
                 java.util.Optional.of(call.id()),
                 java.util.Optional.empty(),
                 0,
@@ -182,7 +206,7 @@ public final class ToolPipeline {
                     run.id(),
                     java.util.Optional.empty(),
                     run.sessionId(),
-                    java.util.Optional.of(stepId),
+                    java.util.Optional.of(call.stepId()),
                     java.util.Optional.of(call.id()),
                     java.util.Optional.empty(),
                     0,

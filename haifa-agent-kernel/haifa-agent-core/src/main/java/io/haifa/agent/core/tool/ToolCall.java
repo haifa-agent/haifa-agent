@@ -14,6 +14,8 @@ public final class ToolCall {
     private final ToolCallId id;
     private final AgentRunId runId;
     private final AgentStepId stepId;
+    private final ProviderToolCallCorrelationId providerCorrelationId;
+    private final RuntimeIdempotencyKey idempotencyKey;
     private final String toolName;
     private final String toolVersion;
     private final ToolArguments arguments;
@@ -29,6 +31,8 @@ public final class ToolCall {
             ToolCallId id,
             AgentRunId runId,
             AgentStepId stepId,
+            ProviderToolCallCorrelationId providerCorrelationId,
+            RuntimeIdempotencyKey idempotencyKey,
             String toolName,
             String toolVersion,
             ToolArguments arguments,
@@ -36,6 +40,9 @@ public final class ToolCall {
         this.id = Objects.requireNonNull(id, "id must not be null");
         this.runId = Objects.requireNonNull(runId, "runId must not be null");
         this.stepId = Objects.requireNonNull(stepId, "stepId must not be null");
+        this.providerCorrelationId =
+                Objects.requireNonNull(providerCorrelationId, "providerCorrelationId must not be null");
+        this.idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
         this.toolName = requireText(toolName, "toolName");
         this.toolVersion = requireText(toolVersion, "toolVersion");
         this.arguments = Objects.requireNonNull(arguments, "arguments must not be null");
@@ -153,6 +160,14 @@ public final class ToolCall {
 
     public AgentStepId stepId() {
         return stepId;
+    }
+
+    public ProviderToolCallCorrelationId providerCorrelationId() {
+        return providerCorrelationId;
+    }
+
+    public RuntimeIdempotencyKey idempotencyKey() {
+        return idempotencyKey;
     }
 
     public String toolName() {

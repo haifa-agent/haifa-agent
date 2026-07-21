@@ -31,6 +31,10 @@
             <artifactId>haifa-agent-model-api</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-context</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
             <scope>test</scope>

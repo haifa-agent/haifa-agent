@@ -4,23 +4,15 @@ import io.haifa.agent.runtime.core.decision.AgentDecision;
 import java.util.Map;
 import java.util.Objects;
 
-public record ModelResponse(
+/** Runtime outcome of one Model API invocation; not a compatibility model protocol. */
+public record ModelInvocationResult(
         AgentDecision decision,
         long inputTokens,
         long outputTokens,
         boolean costKnown,
         long costMinorUnits,
         Map<String, Object> metadata) {
-    public ModelResponse(AgentDecision decision, long inputTokens, long outputTokens, long costMinorUnits) {
-        this(decision, inputTokens, outputTokens, true, costMinorUnits, Map.of());
-    }
-
-    public ModelResponse(
-            AgentDecision decision, long inputTokens, long outputTokens, boolean costKnown, long costMinorUnits) {
-        this(decision, inputTokens, outputTokens, costKnown, costMinorUnits, Map.of());
-    }
-
-    public ModelResponse {
+    public ModelInvocationResult {
         decision = Objects.requireNonNull(decision, "decision must not be null");
         if (inputTokens < 0 || outputTokens < 0 || costMinorUnits < 0) {
             throw new IllegalArgumentException("model usage must not be negative");

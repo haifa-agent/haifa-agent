@@ -1,17 +1,18 @@
 package io.haifa.agent.runtime.core.tool;
 
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolResult;
 import java.util.Optional;
 
 public interface ToolExecutionJournal {
-    Optional<ToolResult> completed(AgentRunId runId, String idempotencyKey);
+    Optional<ToolResult> completed(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
 
-    void recordIntent(AgentRunId runId, String idempotencyKey);
+    void recordIntent(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
 
-    void recordCompleted(AgentRunId runId, String idempotencyKey, ToolResult result);
+    void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey, ToolResult result);
 
-    void recordUncertain(AgentRunId runId, String idempotencyKey);
+    void recordUncertain(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
 
     boolean hasUncertain(AgentRunId runId);
 }

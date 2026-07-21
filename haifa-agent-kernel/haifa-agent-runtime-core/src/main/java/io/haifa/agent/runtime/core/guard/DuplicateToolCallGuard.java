@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.guard;
 
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
@@ -16,7 +17,7 @@ public final class DuplicateToolCallGuard {
     }
 
     public void check(AgentRun run, ToolCallDecision decision) {
-        var keys = new HashSet<String>();
+        var keys = new HashSet<RuntimeIdempotencyKey>();
         for (ToolRequest request : decision.requests()) {
             if (!keys.add(request.idempotencyKey())) {
                 throw new IllegalArgumentException("duplicate tool request idempotency key");

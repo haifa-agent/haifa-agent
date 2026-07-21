@@ -7,6 +7,7 @@ import java.util.Set;
 /** A governed model entry owned by exactly one provider. */
 public record ModelDefinition(
         ModelDefinitionId id,
+        String version,
         ModelProviderId providerId,
         String providerModelId,
         String displayName,
@@ -18,6 +19,7 @@ public record ModelDefinition(
         Map<String, Object> metadata) {
     public ModelDefinition {
         id = Objects.requireNonNull(id, "id must not be null");
+        version = ModelValues.text(version, "version");
         providerId = Objects.requireNonNull(providerId, "providerId must not be null");
         providerModelId = ModelValues.text(providerModelId, "providerModelId");
         displayName = ModelValues.text(displayName, "displayName");

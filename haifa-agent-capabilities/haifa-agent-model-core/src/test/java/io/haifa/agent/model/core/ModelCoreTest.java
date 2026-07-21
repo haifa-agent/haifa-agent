@@ -35,7 +35,12 @@ class ModelCoreTest {
         var second = selector.select(request);
 
         assertThat(first.providerId().value()).isEqualTo("deepseek");
+        assertThat(first.providerVersion()).isEqualTo("provider-v1");
         assertThat(first.providerModelId()).isEqualTo("deepseek-v4-pro");
+        assertThat(first.modelVersion()).isEqualTo("model-v1");
+        assertThat(first.endpoint()).isEqualTo(URI.create("https://api.deepseek.com"));
+        assertThat(first.contextWindow()).isEqualTo(1_048_576);
+        assertThat(first.maxOutputTokens()).isEqualTo(393_216);
         assertThat(first.configurationDigest())
                 .isEqualTo(second.configurationDigest())
                 .startsWith("sha256:");
@@ -69,6 +74,7 @@ class ModelCoreTest {
         ModelDefinition duplicate = model(otherId, ModelStatus.ACTIVE);
         ModelProviderDefinition other = new ModelProviderDefinition(
                 otherId,
+                "provider-v1",
                 "Other",
                 "other-adapter",
                 URI.create("https://other.example.com"),
@@ -122,6 +128,7 @@ class ModelCoreTest {
         ModelProviderId providerId = new ModelProviderId("deepseek");
         return new ModelProviderDefinition(
                 providerId,
+                "provider-v1",
                 "DeepSeek",
                 "openai-compatible",
                 URI.create("https://api.deepseek.com"),
@@ -135,6 +142,7 @@ class ModelCoreTest {
     private static ModelDefinition model(ModelProviderId providerId, ModelStatus status) {
         return new ModelDefinition(
                 new ModelDefinitionId("deepseek-v4-pro"),
+                "model-v1",
                 providerId,
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",

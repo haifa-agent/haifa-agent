@@ -28,9 +28,9 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
-import io.haifa.agent.runtime.core.model.ModelResponse;
-import io.haifa.agent.runtime.core.model.ModelResponseInterpreter;
-import io.haifa.agent.runtime.core.model.ModelSelector;
+import io.haifa.agent.runtime.core.model.FrozenModelBinding;
+import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
+import io.haifa.agent.runtime.core.model.ModelInvocationResult;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -47,9 +47,8 @@ import java.util.Objects;
 public final class DefaultAgentLoop implements AgentLoop {
     private final RunControlRegistry controls;
     private final List<AgentLoopGuard> guards;
-    private final ContextBuilder contextBuilder;
-    private final ModelSelector models;
-    private final ModelResponseInterpreter interpreter;
+    private final RuntimeContextBuilder contextBuilder;
+    private final FrozenModelInvoker models;
     private final DecisionValidator validator;
     private final DecisionExecutor decisionExecutor;
     private final CheckpointManager checkpoints;
@@ -67,9 +66,8 @@ public final class DefaultAgentLoop implements AgentLoop {
     public DefaultAgentLoop(
             RunControlRegistry controls,
             List<AgentLoopGuard> guards,
-            ContextBuilder contextBuilder,
-            ModelSelector models,
-            ModelResponseInterpreter interpreter,
+            RuntimeContextBuilder contextBuilder,
+            FrozenModelInvoker models,
             DecisionValidator validator,
             DecisionExecutor decisionExecutor,
             CheckpointManager checkpoints,
@@ -87,7 +85,6 @@ public final class DefaultAgentLoop implements AgentLoop {
         this.guards = List.copyOf(guards);
         this.contextBuilder = Objects.requireNonNull(contextBuilder);
         this.models = Objects.requireNonNull(models);
-        this.interpreter = Objects.requireNonNull(interpreter);
         this.validator = Objects.requireNonNull(validator);
         this.decisionExecutor = Objects.requireNonNull(decisionExecutor);
         this.checkpoints = Objects.requireNonNull(checkpoints);
@@ -144,7 +141,27 @@ public final class DefaultAgentLoop implements AgentLoop {
                     Map.of("iteration", progress.iteration()),
                     time.now()));
 
-            ContextBuildResult built = contextBuilder.build(run, progress);
+            FrozenModelBinding model = models.bind(run);
+            RuntimeContextBuildResult built = contextBuilder.build(run, progress, model);
+            trace.record(new RuntimeTraceEvent(
+                    traceId,
+                    run.id(),
+                    java.util.Optional.of(attempt.attemptId()),
+                    run.sessionId(),
+                    java.util.Optional.empty(),
+                    java.util.Optional.empty(),
+                    attempt.workerId(),
+                    progress.iteration(),
+                    RuntimePhase.AFTER_CONTEXT_BUILD,
+                    "context.built",
+                    Map.of(
+                            "modelConfigDigest", built.context().trace().modelConfigurationDigest(),
+                            "estimatedInputTokens", built.context().context().estimatedInputTokens(),
+                            "selectedItems", built.context().context().items().size(),
+                            "traceItems", built.context().trace().items().size(),
+                            "estimatorVersion", built.context().trace().estimatorVersion(),
+                            "selectionPolicyVersion", built.context().trace().selectionPolicyVersion()),
+                    time.now()));
             RuntimeMiddlewareContext middlewareContext = built.middlewareContext();
             middleware.apply(RuntimePhase.BEFORE_MODEL_CALL, middlewareContext);
             if (applyControl(run, progress, SafePoint.AFTER_CONTEXT_BUILD, progress.iteration() - 1)) {
@@ -161,7 +178,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             state.appendStep(modelStep);
             modelStep.start(time.now());
             AgentDecision decision;
-            ModelResponse response;
+            ModelInvocationResult response;
             try {
                 response = retries.execute(
                         () -> {
@@ -170,7 +187,11 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         "model call budget exhausted");
                             }
                             transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
-                            return models.select(run).invoke(built.request());
+                            return models.invoke(
+                                    model,
+                                    run,
+                                    progress.iteration(),
+                                    built.context().context());
                         },
                         modelRetryPolicy.policy());
                 transitions.usage(
@@ -201,7 +222,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                         modelTraceAttributes(run, response),
                         time.now()));
                 middleware.apply(RuntimePhase.AFTER_MODEL_CALL, middlewareContext);
-                decision = interpreter.interpret(response);
+                decision = response.decision();
                 validator.validate(run, decision);
             } catch (RuntimeException error) {
                 trace.record(new RuntimeTraceEvent(
@@ -323,7 +344,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 time.now());
     }
 
-    private Map<String, Object> modelTraceAttributes(AgentRun run, ModelResponse response) {
+    private Map<String, Object> modelTraceAttributes(AgentRun run, ModelInvocationResult response) {
         Map<String, Object> attributes = modelSnapshotAttributes(run);
         attributes.putAll(response.metadata());
         attributes.put("inputTokens", response.inputTokens());

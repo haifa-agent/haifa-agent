@@ -9,15 +9,20 @@ import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.run.AgentRunBudget;
+import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ResolvedCredential;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
+import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.tool.ToolDefinition;
@@ -48,6 +53,7 @@ class DeepSeekRuntimeIntegrationTest {
             ModelProviderDefinition defaults = DeepSeekDefaults.provider();
             ModelProviderDefinition provider = new ModelProviderDefinition(
                     defaults.id(),
+                    defaults.version(),
                     defaults.displayName(),
                     defaults.adapterType(),
                     endpoint,
@@ -70,8 +76,31 @@ class DeepSeekRuntimeIntegrationTest {
             AtomicInteger idSequence = new AtomicInteger();
             IdentifierGenerator ids = () -> "deepseek-it-" + idSequence.incrementAndGet();
             TimeProvider time = () -> Instant.parse("2026-07-21T00:00:00Z");
+            var modelDefinition = provider.models().getFirst();
+            ResolvedModelSnapshot frozenModel = ResolvedModelSnapshot.create(
+                    provider.id(),
+                    provider.version(),
+                    modelDefinition.id(),
+                    modelDefinition.version(),
+                    modelDefinition.providerModelId(),
+                    provider.adapterType(),
+                    "1.0.0",
+                    endpoint,
+                    provider.credentialRef(),
+                    modelDefinition.capabilities(),
+                    modelDefinition.contextWindow(),
+                    modelDefinition.maxOutputTokens(),
+                    provider.options(),
+                    modelDefinition.options());
             var runtime = new RuntimeCoreBuilder()
-                    .registerChatModel("openai-compatible", adapter)
+                    .registerChatModel("openai-compatible", "1.0.0", adapter)
+                    .profiles((id, overrides) -> new ResolvedProfile(
+                            id,
+                            "1.0.0",
+                            AgentRunType.CHAT,
+                            new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, 32, 64, 8, "USD", 1_000_000),
+                            new AgentRunLimits(50, 4, 1, 300_000, 60_000),
+                            frozenModel))
                     .registerTool(new ToolDefinition("echo", "1.0", "echo.input", false))
                     .registerModelTool(new ModelToolSpecification(
                             "echo",

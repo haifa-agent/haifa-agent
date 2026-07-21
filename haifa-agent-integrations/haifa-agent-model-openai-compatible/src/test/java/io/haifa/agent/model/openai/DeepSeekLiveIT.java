@@ -31,16 +31,22 @@ class DeepSeekLiveIT {
                         .build(),
                 new ObjectMapper(),
                 ignored -> new ResolvedCredential(apiKey));
-        ResolvedModelSnapshot snapshot = new ResolvedModelSnapshot(
+        var definition = provider.models().getFirst();
+        ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                 provider.id(),
-                provider.models().getFirst().id(),
-                provider.models().getFirst().providerModelId(),
+                provider.version(),
+                definition.id(),
+                definition.version(),
+                definition.providerModelId(),
                 provider.adapterType(),
                 "1.0.0",
+                provider.endpoint(),
                 provider.credentialRef(),
-                provider.models().getFirst().capabilities(),
-                Map.of("thinking", "disabled", "maxOutputTokens", 64),
-                "sha256:live-test");
+                definition.capabilities(),
+                definition.contextWindow(),
+                64,
+                provider.options(),
+                Map.of("thinking", "disabled"));
 
         var response = model.invoke(new AgentChatRequest(
                 new ModelCallId("live-call"),

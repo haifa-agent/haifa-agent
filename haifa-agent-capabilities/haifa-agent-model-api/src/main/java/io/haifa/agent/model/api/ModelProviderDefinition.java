@@ -9,6 +9,7 @@ import java.util.Objects;
 /** Immutable provider connection definition and its governed ordered model list. */
 public record ModelProviderDefinition(
         ModelProviderId id,
+        String version,
         String displayName,
         String adapterType,
         URI endpoint,
@@ -19,6 +20,7 @@ public record ModelProviderDefinition(
         Map<String, Object> metadata) {
     public ModelProviderDefinition {
         id = Objects.requireNonNull(id, "id must not be null");
+        version = ModelValues.text(version, "version");
         displayName = ModelValues.text(displayName, "displayName");
         adapterType = ModelValues.text(adapterType, "adapterType");
         endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");

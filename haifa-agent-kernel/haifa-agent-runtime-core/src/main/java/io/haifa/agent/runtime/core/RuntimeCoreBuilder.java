@@ -4,6 +4,9 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.budget.HeuristicTokenEstimator;
+import io.haifa.agent.context.core.DefaultAgentContextBuilder;
+import io.haifa.agent.context.selection.ContextSelectionPolicy;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -57,7 +60,7 @@ import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.loop.DefaultAgentLoop;
-import io.haifa.agent.runtime.core.loop.DefaultContextBuilder;
+import io.haifa.agent.runtime.core.loop.DefaultRuntimeContextBuilder;
 import io.haifa.agent.runtime.core.loop.RuntimeStateReconciler;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddleware;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
@@ -66,10 +69,8 @@ import io.haifa.agent.runtime.core.middleware.SafetyInstructionMiddleware;
 import io.haifa.agent.runtime.core.middleware.TodoMiddleware;
 import io.haifa.agent.runtime.core.middleware.ToolDisclosureMiddleware;
 import io.haifa.agent.runtime.core.middleware.TraceMiddleware;
-import io.haifa.agent.runtime.core.model.ModelClient;
-import io.haifa.agent.runtime.core.model.ModelResponseInterpreter;
-import io.haifa.agent.runtime.core.model.ModelSelector;
-import io.haifa.agent.runtime.core.model.SnapshotModelSelector;
+import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
+import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
@@ -101,9 +102,6 @@ import java.util.Set;
 
 /** Convenience assembly for a local, dependency-free Runtime. */
 public final class RuntimeCoreBuilder {
-    private ModelClient modelClient;
-    private ModelSelector modelSelector;
-    private ModelResponseInterpreter responseInterpreter = response -> response.decision();
     private IdentifierGenerator ids = new UuidV7IdentifierGenerator();
     private TimeProvider time = new SystemTimeProvider();
     private ExecutionScheduler scheduler = new LocalExecutionScheduler();
@@ -125,7 +123,7 @@ public final class RuntimeCoreBuilder {
             List.of(),
             List.of("delegation adapter unavailable"));
     private final Map<String, ToolDefinition> tools = new LinkedHashMap<>();
-    private final Map<String, AgentChatModel> chatModels = new LinkedHashMap<>();
+    private final Map<ModelAdapterKey, AgentChatModel> chatModels = new LinkedHashMap<>();
     private final Map<String, ModelToolSpecification> modelToolSpecifications = new LinkedHashMap<>();
     private ToolExecutor toolExecutor = (run, definition, request) -> {
         throw new IllegalStateException("no tool executor configured for " + definition.name());
@@ -146,22 +144,11 @@ public final class RuntimeCoreBuilder {
     private String workerId = "local-runtime";
     private ExecutionOwnershipPort ownership = ExecutionOwnershipPort.local();
 
-    public RuntimeCoreBuilder modelClient(ModelClient value) {
-        modelClient = Objects.requireNonNull(value);
-        return this;
-    }
-
-    public RuntimeCoreBuilder modelSelector(ModelSelector value) {
-        modelSelector = Objects.requireNonNull(value);
-        return this;
-    }
-
-    public RuntimeCoreBuilder registerChatModel(String adapterType, AgentChatModel value) {
-        String normalized = Objects.requireNonNull(adapterType, "adapterType must not be null")
-                .trim();
-        if (normalized.isEmpty()) throw new IllegalArgumentException("adapterType must not be blank");
-        if (chatModels.putIfAbsent(normalized, Objects.requireNonNull(value, "value must not be null")) != null) {
-            throw new IllegalArgumentException("duplicate model adapter: " + normalized);
+    public RuntimeCoreBuilder registerChatModel(String adapterType, String adapterVersion, AgentChatModel value) {
+        ModelAdapterKey key = new ModelAdapterKey(adapterType, adapterVersion);
+        if (chatModels.putIfAbsent(key, Objects.requireNonNull(value, "value must not be null")) != null) {
+            throw new IllegalArgumentException(
+                    "duplicate model adapter: " + key.adapterType() + "@" + key.adapterVersion());
         }
         return this;
     }
@@ -171,11 +158,6 @@ public final class RuntimeCoreBuilder {
         if (modelToolSpecifications.putIfAbsent(specification.name(), specification) != null) {
             throw new IllegalArgumentException("duplicate model tool specification: " + specification.name());
         }
-        return this;
-    }
-
-    public RuntimeCoreBuilder responseInterpreter(ModelResponseInterpreter value) {
-        responseInterpreter = Objects.requireNonNull(value);
         return this;
     }
 
@@ -316,11 +298,7 @@ public final class RuntimeCoreBuilder {
     }
 
     public DefaultAgentRuntime build() {
-        int modelModes =
-                (modelClient == null ? 0 : 1) + (modelSelector == null ? 0 : 1) + (chatModels.isEmpty() ? 0 : 1);
-        if (modelModes == 0)
-            throw new NullPointerException("a model client, selector, or chat adapter must be configured");
-        if (modelModes > 1) throw new IllegalStateException("configure exactly one model integration mode");
+        if (chatModels.isEmpty()) throw new NullPointerException("a versioned Model API adapter must be configured");
         modelToolSpecifications.forEach((name, specification) -> {
             boolean matchingTool = tools.values().stream()
                     .anyMatch(tool -> tool.name().equals(name) && tool.version().equals(specification.version()));
@@ -328,11 +306,16 @@ public final class RuntimeCoreBuilder {
                 throw new IllegalStateException("model tool specification has no matching registered tool: " + name);
             }
         });
-        ModelSelector effectiveModels = modelSelector != null
-                ? modelSelector
-                : modelClient != null
-                        ? run -> modelClient
-                        : new SnapshotModelSelector(store, chatModels, modelToolSpecifications, ids);
+        tools.values().forEach(tool -> {
+            ModelToolSpecification specification = modelToolSpecifications.get(tool.name());
+            if (specification == null || !specification.version().equals(tool.version())) {
+                throw new IllegalStateException("registered model-visible tool has no exact Model API specification: "
+                        + tool.name()
+                        + "@"
+                        + tool.version());
+            }
+        });
+        FrozenModelInvoker models = new FrozenModelInvoker(store, chatModels, modelToolSpecifications, ids);
         Set<String> toolNames =
                 tools.values().stream().map(ToolDefinition::name).collect(java.util.stream.Collectors.toSet());
         DefinitionResolver definitionResolver = definitions != null
@@ -426,9 +409,12 @@ public final class RuntimeCoreBuilder {
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
-                new DefaultContextBuilder(store, middleware),
-                effectiveModels,
-                responseInterpreter,
+                new DefaultRuntimeContextBuilder(
+                        store,
+                        middleware,
+                        new DefaultAgentContextBuilder(
+                                new HeuristicTokenEstimator(), new ContextSelectionPolicy(), List.of())),
+                models,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(store), new ChildRunGuard(store)),
                 decisionExecutor,
                 checkpoints,

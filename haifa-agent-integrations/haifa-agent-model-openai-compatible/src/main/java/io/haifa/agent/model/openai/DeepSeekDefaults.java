@@ -25,6 +25,7 @@ public final class DeepSeekDefaults {
     public static ModelProviderDefinition provider() {
         ModelDefinition model = new ModelDefinition(
                 MODEL_ID,
+                "2026-07-21",
                 PROVIDER_ID,
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",
@@ -36,6 +37,7 @@ public final class DeepSeekDefaults {
                 Map.of("source", "deepseek-official-docs-2026-07-21"));
         return new ModelProviderDefinition(
                 PROVIDER_ID,
+                "2026-07-21",
                 "DeepSeek",
                 ADAPTER_TYPE,
                 ENDPOINT,

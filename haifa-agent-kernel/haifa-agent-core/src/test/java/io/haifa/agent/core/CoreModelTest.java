@@ -25,6 +25,8 @@ import io.haifa.agent.core.reference.CheckpointPayloadRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
@@ -72,6 +74,8 @@ class CoreModelTest {
                 new ToolCallId("tool-call-1"),
                 new AgentRunId("run-1"),
                 new AgentStepId("step-1"),
+                new ProviderToolCallCorrelationId("provider-call-1"),
+                new RuntimeIdempotencyKey("runtime-key-1"),
                 "file.read",
                 "1.0.0",
                 arguments,

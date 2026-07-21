@@ -25,6 +25,7 @@ import io.haifa.agent.core.step.AgentStepError;
 import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.step.AgentStepResult;
 import io.haifa.agent.core.step.AgentStepType;
+import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
@@ -116,23 +117,20 @@ public final class DecisionExecutor {
     }
 
     private AgentLoopDirective executeTools(AgentRun run, ToolCallDecision decision, AgentLoopContext loopContext) {
-        appendToolCalls(run, decision.requests());
-        for (ToolRequest request : decision.requests()) {
-            AgentStep step = new AgentStep(
-                    new AgentStepId(ids.nextValue()),
-                    run.id(),
-                    null,
-                    null,
-                    AgentStepType.TOOL_EXECUTION,
-                    state.steps(run.id()).size() + 1,
-                    time.now());
-            state.appendStep(step);
+        List<PreparedTool> prepared = decision.requests().stream()
+                .map(request -> prepareTool(run, request))
+                .toList();
+        appendToolCalls(run, prepared.stream().map(PreparedTool::call).toList());
+        for (PreparedTool preparedTool : prepared) {
+            ToolRequest request = preparedTool.request();
+            ToolCall call = preparedTool.call();
+            AgentStep step = preparedTool.step();
             step.start(time.now());
             try {
-                var result = tools.execute(run, step.id(), request);
+                var result = tools.execute(run, call, request);
                 step.complete(
                         new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
-                appendToolResult(run, request.idempotencyKey(), result.summary());
+                appendToolResult(run, call, result.summary());
                 checkpoints.capture(run, loopContext.iteration(), loopContext.fingerprints(), CheckpointType.AUTOMATIC);
                 if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
                     throw new CancellationObservedException();
@@ -152,9 +150,7 @@ public final class DecisionExecutor {
                                 time.now())),
                         time.now());
                 appendToolResult(
-                        run,
-                        request.idempotencyKey(),
-                        "Tool request rejected; repair the arguments or choose another capability.");
+                        run, call, "Tool request rejected; repair the arguments or choose another capability.");
             }
         }
         return AgentLoopDirective.CONTINUE;
@@ -206,19 +202,32 @@ public final class DecisionExecutor {
         appendMessage(run, role, List.of(new TextPart(text, "plain")), visibility, metadata);
     }
 
-    private void appendToolCalls(AgentRun run, List<ToolRequest> requests) {
-        List<ContentPart> parts = requests.stream()
-                .map(request -> (ContentPart) new ToolCallPart(
-                        request.idempotencyKey(), request.toolName(), request.toolVersion(), request.arguments()))
+    private PreparedTool prepareTool(AgentRun run, ToolRequest request) {
+        AgentStep step = new AgentStep(
+                new AgentStepId(ids.nextValue()),
+                run.id(),
+                null,
+                null,
+                AgentStepType.TOOL_EXECUTION,
+                state.steps(run.id()).size() + 1,
+                time.now());
+        state.appendStep(step);
+        return new PreparedTool(request, tools.prepare(run, step.id(), request), step);
+    }
+
+    private void appendToolCalls(AgentRun run, List<ToolCall> calls) {
+        List<ContentPart> parts = calls.stream()
+                .map(call -> (ContentPart)
+                        new ToolCallPart(call.id(), call.providerCorrelationId(), call.toolName(), call.toolVersion()))
                 .toList();
         appendMessage(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, Map.of());
     }
 
-    private void appendToolResult(AgentRun run, String toolCallId, String text) {
+    private void appendToolResult(AgentRun run, ToolCall call, String text) {
         appendMessage(
                 run,
                 MessageRole.TOOL,
-                List.of(new ToolResultPart(toolCallId, text)),
+                List.of(new ToolResultPart(call.id(), call.providerCorrelationId(), text)),
                 MessageVisibility.AGENT_VISIBLE,
                 Map.of());
     }
@@ -242,4 +251,6 @@ public final class DecisionExecutor {
                 metadata,
                 time.now()));
     }
+
+    private record PreparedTool(ToolRequest request, ToolCall call, AgentStep step) {}
 }

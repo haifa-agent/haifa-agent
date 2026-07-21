@@ -15,6 +15,7 @@ haifa-agent-kernel/
   haifa-agent-common/          无框架基础类型
   haifa-agent-core/            稳定 Agent 领域模型
   haifa-agent-runtime-api/     Runtime 生命周期契约
+  haifa-agent-context/         Context IR、预算、选择与安全 Trace
   haifa-agent-runtime-core/    Runtime、AgentLoop 与本地执行实现
 haifa-agent-capabilities/
   haifa-agent-model-api/       Provider-neutral Model 契约
@@ -27,6 +28,8 @@ haifa-agent-integrations/
 
 ```text
 common <- core <- runtime-api <- runtime-core -> model-api
+            \        context --------^       ^
+             \----------> model-api ---------|
                   model-api <- model-core
                   model-api <- model-openai-compatible
    ^

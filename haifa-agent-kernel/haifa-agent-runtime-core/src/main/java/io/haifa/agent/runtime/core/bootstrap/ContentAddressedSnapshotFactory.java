@@ -26,9 +26,13 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                 + profile.limits() + "|" + request.overrides().schemaId() + "|"
                 + request.overrides().schemaVersion() + "|"
                 + new java.util.TreeMap<>(request.overrides().values())
-                + "|" + profile.model().providerId() + "|" + profile.model().modelId() + "|"
+                + "|" + profile.model().schemaVersion() + "|" + profile.model().providerId() + "|"
+                + profile.model().providerVersion() + "|" + profile.model().modelId() + "|"
+                + profile.model().modelVersion() + "|"
                 + profile.model().providerModelId() + "|" + profile.model().adapterType() + "|"
-                + profile.model().adapterVersion() + "|" + profile.model().configurationDigest()
+                + profile.model().adapterVersion() + "|" + profile.model().endpoint() + "|"
+                + profile.model().contextWindow() + "|" + profile.model().maxOutputTokens() + "|"
+                + profile.model().configurationDigest()
                 + "|" + caller.tenant().tenantId() + "|" + caller.principal();
         try {
             String hash = HexFormat.of()

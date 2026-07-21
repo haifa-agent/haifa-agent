@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
-import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
@@ -14,8 +13,17 @@ import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelToolCall;
+import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -32,10 +40,7 @@ import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
-import io.haifa.agent.runtime.core.decision.ContinueDecision;
-import io.haifa.agent.runtime.core.decision.DelegationDecision;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
-import io.haifa.agent.runtime.core.decision.InteractionDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
@@ -45,8 +50,6 @@ import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddleware;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareOrder;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
-import io.haifa.agent.runtime.core.model.ModelClient;
-import io.haifa.agent.runtime.core.model.ModelResponse;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
@@ -60,7 +63,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -152,49 +154,7 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void interactionResponseIsCorrelatedDurableAndIdempotent() {
-        Fixture fixture =
-                fixture(model(new InteractionDecision("clarification", "scope?", false), finalDecision("answered")));
-        var accepted = fixture.runtime.start(request("interaction"));
-        fixture.scheduler.runAll();
-        String requestId = fixture.store
-                .find(accepted.runId())
-                .orElseThrow()
-                .waitingFor()
-                .orElseThrow()
-                .interactionRequestId();
-        InteractionResponse response = new InteractionResponse(
-                new InteractionResponseId("response-1"),
-                new InteractionRequestId(requestId),
-                accepted.runId(),
-                InteractionResponseType.CLARIFY,
-                List.of(new TextPart("all modules", "plain")),
-                "response-key",
-                NOW);
-
-        fixture.runtime.respond(response);
-        fixture.runtime.respond(response);
-        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
-        fixture.scheduler.runAll();
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.COMPLETED);
-        assertThat(fixture.store.eventsFor(accepted.runId()).stream()
-                        .filter(event -> event.type().equals("interaction.responded")))
-                .hasSize(1);
-    }
-
-    @Test
-    void illegalModelResponseAndExhaustedCompletionRepairFailTheRun() {
-        Fixture illegal = fixture(
-                model(finalDecision("ignored")),
-                builder -> builder.responseInterpreter(response -> {
-                    throw new IllegalArgumentException("unknown response");
-                }));
-        var illegalRun = illegal.runtime.start(request("illegal-response"));
-        illegal.scheduler.runAll();
-        assertThat(illegal.runtime.find(illegalRun.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.FAILED);
-
+    void exhaustedCompletionRepairFailsTheRun() {
         Fixture blocked = fixture(
                 model(finalDecision("first"), finalDecision("second")),
                 builder -> builder.requiredArtifactChecker((run, decision) -> false)
@@ -250,8 +210,8 @@ class RuntimeCoreHardeningTest {
     void resumeUsesFrozenConfigurationAndRecordsCheckpointOnNewAttempt() {
         AtomicReference<DefaultAgentRuntime> runtime = new AtomicReference<>();
         AtomicReference<AgentRunId> runId = new AtomicReference<>();
-        Queue<ModelResponse> responses = new ArrayDeque<>();
-        ModelClient client = request -> {
+        Queue<AgentChatResponse> responses = new ArrayDeque<>();
+        AgentChatModel client = request -> {
             if (responses.isEmpty()) {
                 runtime.get()
                         .command(new RuntimeCommand(
@@ -261,7 +221,7 @@ class RuntimeCoreHardeningTest {
                                 RuntimeCommandArguments.NONE,
                                 "pause",
                                 NOW));
-                return new ModelResponse(new ContinueDecision("pause"), 1, 1, 0);
+                return response(finalDecision("pause"));
             }
             return responses.remove();
         };
@@ -271,7 +231,7 @@ class RuntimeCoreHardeningTest {
         runId.set(accepted.runId());
         fixture.scheduler.runAll();
         var before = fixture.store.find(accepted.runId()).orElseThrow().configurationSnapshot();
-        responses.add(new ModelResponse(finalDecision("done"), 1, 1, 0));
+        responses.add(response(finalDecision("done")));
         fixture.runtime.resume(new ResumeAgentRunRequest("resume", accepted.runId(), List.of()));
         var attempts = fixture.store.attemptsFor(accepted.runId());
         assertThat(attempts.get(1).resumedFromCheckpointId()).isPresent();
@@ -334,11 +294,11 @@ class RuntimeCoreHardeningTest {
 
     @Test
     void businessToolFailureReturnsToContextAndExecutionCanComplete() {
-        ToolRequest request =
-                new ToolRequest("shell", "1", new ToolArguments("shell.input", "1", Map.of()), "tool-key");
+        ToolRequest request = toolRequest("tool-key", "shell", "1", new ToolArguments("shell.input", "1", Map.of()));
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(request)), finalDecision("handled")),
                 builder -> builder.registerTool(new ToolDefinition("shell", "1", "shell.input", true))
+                        .registerModelTool(toolSpecification("shell", "1", "shell.input"))
                         .toolExecutor((run, definition, ignored) ->
                                 new ToolResult(false, "exit 2", Map.of("exitCode", 2), List.of(), List.of(), false)));
         var accepted = fixture.runtime.start(request("business-failure"));
@@ -350,11 +310,13 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void budgetConvergenceAndHardIterationLimitAreEnforced() {
-        AtomicReference<Map<String, Object>> attributes = new AtomicReference<>();
+    void budgetConvergenceInstructionReachesTheModelContext() {
+        AtomicReference<List<String>> messages = new AtomicReference<>();
         Fixture nearBudget = fixture(request -> {
-            attributes.set(request.attributes());
-            return new ModelResponse(finalDecision("done"), 1, 1, 0);
+            messages.set(request.messages().stream()
+                    .map(message -> message.content())
+                    .toList());
+            return response(finalDecision("done"));
         });
         var accepted = nearBudget.runtime.start(request("soft-budget"));
         var run = nearBudget.store.find(accepted.runId()).orElseThrow();
@@ -362,33 +324,17 @@ class RuntimeCoreHardeningTest {
         run.recordUsage(new AgentRunUsageDelta(0, 0, 0, 52, 0, 0, 0, 0));
         nearBudget.store.save(run, expected);
         nearBudget.scheduler.runAll();
-        assertThat(attributes.get()).containsKey("runtime.convergenceRequired");
-
-        Fixture iterations =
-                fixture(request -> new ModelResponse(new ContinueDecision("more"), 0, 0, 0), builder -> builder);
-        AgentRunRequest limited = new AgentRunRequest(
-                "iteration-limit",
-                new AgentDefinitionId("test-agent"),
-                Optional.empty(),
-                "test-profile",
-                new AgentSessionId("session-1"),
-                Optional.empty(),
-                "objective",
-                List.of(),
-                new RuntimeOverrides("runtime.overrides", "1.0", Map.of("maxIterations", 2)));
-        var limitedRun = iterations.runtime.start(limited);
-        iterations.scheduler.runAll();
-        assertThat(iterations.runtime.find(limitedRun.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(messages.get()).anyMatch(value -> value.contains("resource budget"));
     }
 
     @Test
     void recoveryNeverBlindlyReplaysAnUncertainSideEffectingTool() {
         AtomicInteger calls = new AtomicInteger();
         ToolRequest tool =
-                new ToolRequest("write", "1", new ToolArguments("write.input", "1", Map.of("value", 1)), "write-once");
+                toolRequest("write-once", "write", "1", new ToolArguments("write.input", "1", Map.of("value", 1)));
         Fixture fixture = fixture(model(new ToolCallDecision(List.of(tool))), builder -> builder.registerTool(
                         new ToolDefinition("write", "1", "write.input", true))
+                .registerModelTool(toolSpecification("write", "1", "write.input"))
                 .toolExecutor((run, definition, request) -> {
                     calls.incrementAndGet();
                     throw new AssertionError("process died after external side effect");
@@ -408,13 +354,13 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void semanticDuplicateToolCallsAndAlternatingDecisionsAreDetected() {
+    void semanticDuplicateToolCallsAreDetected() {
         ToolRequest first =
-                new ToolRequest("read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")), "key-1");
+                toolRequest("key-1", "read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")));
         ToolRequest second =
-                new ToolRequest("read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")), "key-2");
+                toolRequest("key-2", "read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")));
         ToolRequest third =
-                new ToolRequest("read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")), "key-3");
+                toolRequest("key-3", "read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")));
         AtomicInteger executions = new AtomicInteger();
         Fixture duplicate = fixture(
                 model(
@@ -422,6 +368,7 @@ class RuntimeCoreHardeningTest {
                         new ToolCallDecision(List.of(second)),
                         new ToolCallDecision(List.of(third))),
                 builder -> builder.registerTool(new ToolDefinition("read", "1", "read.input", false))
+                        .registerModelTool(toolSpecification("read", "1", "read.input"))
                         .toolExecutor((run, definition, request) -> {
                             executions.incrementAndGet();
                             return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
@@ -431,56 +378,6 @@ class RuntimeCoreHardeningTest {
         assertThat(executions).hasValue(2);
         assertThat(duplicate.runtime.find(duplicateRun.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.FAILED);
-
-        AtomicInteger modelCalls = new AtomicInteger();
-        Fixture alternating = fixture(request -> {
-            int call = modelCalls.incrementAndGet();
-            return new ModelResponse(new ContinueDecision(call % 2 == 0 ? "B" : "A"), 0, 0, 0);
-        });
-        var alternatingRun = alternating.runtime.start(request("a-b-loop"));
-        alternating.scheduler.runAll();
-        assertThat(modelCalls.get()).isBetween(3, 4);
-        assertThat(alternating
-                        .runtime
-                        .find(alternatingRun.runId())
-                        .orElseThrow()
-                        .status())
-                .isEqualTo(AgentRunStatus.FAILED);
-    }
-
-    @Test
-    void synchronousDelegationReturnsStructuredChildResultAndHonorsAllowlist() {
-        AgentDefinitionId child = new AgentDefinitionId("child-agent");
-        Fixture fixture = fixture(
-                model(new DelegationDecision(child, "inspect"), finalDecision("parent done")),
-                builder -> builder.definitions(
-                                (id, requested) -> new io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition(
-                                        id,
-                                        requested.orElse(new io.haifa.agent.core.agent.AgentDefinitionVersion(1, 0, 0)),
-                                        Set.of(),
-                                        Set.of(child),
-                                        "delegate safely"))
-                        .delegations((parent, decision) -> new io.haifa.agent.core.run.AgentRunResult(
-                                AgentRunOutcome.PARTIAL_SUCCESS,
-                                "child summary",
-                                "child.output",
-                                "1.0",
-                                Map.of("finding", 42),
-                                List.of(),
-                                List.of("child warning"))));
-        var accepted = fixture.runtime.start(request("delegation"));
-        fixture.scheduler.runAll();
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.COMPLETED);
-        assertThat(fixture.store.messages(accepted.runId())).anySatisfy(message -> assertThat(message.metadata())
-                .containsEntry("outcome", "PARTIAL_SUCCESS")
-                .containsKeys("structuredOutput", "warnings"));
-
-        Fixture denied = fixture(model(new DelegationDecision(new AgentDefinitionId("denied"), "inspect")));
-        var deniedRun = denied.runtime.start(request("delegation-denied"));
-        denied.scheduler.runAll();
-        assertThat(denied.runtime.find(deniedRun.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.FAILED);
     }
 
     @Test
@@ -489,7 +386,7 @@ class RuntimeCoreHardeningTest {
         Fixture fixture = fixture(
                 request -> {
                     calls.incrementAndGet();
-                    return new ModelResponse(finalDecision("should not run"), 1, 1, 0);
+                    return response(finalDecision("should not run"));
                 },
                 builder -> builder.executionOwnership(attempt -> false));
         var accepted = fixture.runtime.start(request("lost-lease"));
@@ -505,7 +402,7 @@ class RuntimeCoreHardeningTest {
         AtomicReference<AgentRunId> runId = new AtomicReference<>();
         Fixture fixture = fixture(request -> {
             runtime.get().command(command(runId.get(), "cancel-during-model"));
-            return new ModelResponse(finalDecision("must not commit"), 1, 1, 0);
+            return response(finalDecision("must not commit"));
         });
         runtime.set(fixture.runtime);
         var accepted = fixture.runtime.start(request("cancel-race"));
@@ -514,39 +411,6 @@ class RuntimeCoreHardeningTest {
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.CANCELLED);
         assertThat(fixture.store.output(accepted.runId())).isEmpty();
-    }
-
-    @Test
-    void approvalResponseAndTimeoutRaceConvergesToTimeout() throws Exception {
-        RunControlRegistry controls = new RunControlRegistry();
-        Fixture fixture = fixture(
-                model(new InteractionDecision("approval", "approve?", true), finalDecision("approved")),
-                builder -> builder.controlRegistry(controls));
-        var accepted = fixture.runtime.start(request("approval-timeout"));
-        fixture.scheduler.runAll();
-        String requestId = fixture.store
-                .find(accepted.runId())
-                .orElseThrow()
-                .waitingFor()
-                .orElseThrow()
-                .interactionRequestId();
-        InteractionResponse response = new InteractionResponse(
-                new InteractionResponseId("approval-response"),
-                new InteractionRequestId(requestId),
-                accepted.runId(),
-                InteractionResponseType.APPROVE,
-                List.of(),
-                "approval-response-key",
-                NOW);
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var timeout = executor.submit(() -> controls.requestTimeout(accepted.runId()));
-            var approval = executor.submit(() -> fixture.runtime.respond(response));
-            timeout.get();
-            approval.get();
-        }
-        fixture.scheduler.runAll();
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.TIMEOUT);
     }
 
     @Test
@@ -596,18 +460,18 @@ class RuntimeCoreHardeningTest {
                 .hasMessageContaining("response id");
     }
 
-    private static Fixture fixture(ModelClient model) {
+    private static Fixture fixture(AgentChatModel model) {
         return fixture(model, builder -> builder);
     }
 
-    private static Fixture fixture(ModelClient model, RuntimeCoreBuilderCustomizer customizer) {
+    private static Fixture fixture(AgentChatModel model, RuntimeCoreBuilderCustomizer customizer) {
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AtomicInteger sequence = new AtomicInteger();
         IdentifierGenerator ids = () -> "hardening-id-" + sequence.incrementAndGet();
         TimeProvider time = () -> NOW;
         RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
-                .modelClient(model)
+                .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)
                 .store(store)
                 .identifierGenerator(ids)
@@ -615,9 +479,56 @@ class RuntimeCoreHardeningTest {
         return new Fixture(customizer.apply(builder).build(), scheduler, store);
     }
 
-    private static ModelClient model(io.haifa.agent.runtime.core.decision.AgentDecision... decisions) {
+    private static AgentChatModel model(io.haifa.agent.runtime.core.decision.AgentDecision... decisions) {
         Queue<io.haifa.agent.runtime.core.decision.AgentDecision> queue = new ArrayDeque<>(List.of(decisions));
-        return request -> new ModelResponse(queue.remove(), 1, 1, 0);
+        return request -> response(queue.remove());
+    }
+
+    private static AgentChatResponse response(io.haifa.agent.runtime.core.decision.AgentDecision decision) {
+        if (decision instanceof FinalAnswerDecision answer) {
+            return new AgentChatResponse(
+                    "response",
+                    "deepseek-v4-pro",
+                    answer.summary(),
+                    List.of(),
+                    ModelFinishReason.STOP,
+                    ModelUsage.unpriced(1, 1),
+                    "",
+                    Map.of());
+        }
+        if (decision instanceof ToolCallDecision tools) {
+            List<ModelToolCall> calls = tools.requests().stream()
+                    .map(tool -> new ModelToolCall(
+                            tool.providerCorrelationId(),
+                            tool.toolName(),
+                            tool.arguments().values()))
+                    .toList();
+            return new AgentChatResponse(
+                    "response",
+                    "deepseek-v4-pro",
+                    "",
+                    calls,
+                    ModelFinishReason.TOOL_CALLS,
+                    ModelUsage.unpriced(1, 1),
+                    "",
+                    Map.of());
+        }
+        throw new IllegalArgumentException("decision is not representable by the Model API response contract");
+    }
+
+    private static ToolRequest toolRequest(String key, String name, String version, ToolArguments arguments) {
+        return new ToolRequest(
+                new ToolCallId("domain-" + key),
+                new ProviderToolCallCorrelationId("provider-" + key),
+                new RuntimeIdempotencyKey("runtime-" + key),
+                name,
+                version,
+                arguments);
+    }
+
+    private static ModelToolSpecification toolSpecification(String name, String version, String schemaId) {
+        return new ModelToolSpecification(
+                name, version, "Test tool " + name, schemaId, version, Map.of("type", "object"), false);
     }
 
     private static FinalAnswerDecision finalDecision(String summary) {

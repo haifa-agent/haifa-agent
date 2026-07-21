@@ -6,11 +6,14 @@
 
 ```yaml
 provider-id: deepseek
+provider-version: provider-v1
 adapter-type: openai-compatible
+adapter-version: 1.0.0
 endpoint: https://api.deepseek.com
 credential-ref: env://DEEPSEEK_API_KEY
 models:
   - id: deepseek-v4-pro
+    version: model-v1
     provider-model-id: deepseek-v4-pro
 thinking: disabled
 stream: false
@@ -23,17 +26,17 @@ stream: false
 ## 装配示意
 
 ```java
-var provider = DeepSeekDefaults.provider();
 var chatModel = new OpenAiCompatibleChatModel(
-        provider,
         HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(),
         new ObjectMapper(),
         new EnvironmentCredentialResolver());
 
 var runtime = new RuntimeCoreBuilder()
-        .registerChatModel("openai-compatible", chatModel)
+        .registerChatModel("openai-compatible", "1.0.0", chatModel)
         .build();
 ```
+
+每次调用的 Endpoint、`CredentialRef`、Provider Model ID 与调用选项均来自 `AgentChatRequest.model()` 中已持久化的严格冻结快照；Adapter 不在调用期间读取可变 Provider 目录。
 
 实际使用 Tool Calling 时，还必须同时注册 Runtime `ToolDefinition` 和带 JSON Schema 的 `ModelToolSpecification`。
 

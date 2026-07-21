@@ -1,0 +1,113 @@
+package io.haifa.agent.runtime.core.model;
+
+import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.context.api.AgentContext;
+import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
+import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ModelCallId;
+import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
+import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/** Invokes Model API from the exact immutable adapter/provider/model snapshot frozen for a run. */
+public final class FrozenModelInvoker {
+    private final RuntimeStateRepository state;
+    private final Map<ModelAdapterKey, AgentChatModel> adapters;
+    private final Map<String, ModelToolSpecification> toolSpecifications;
+    private final IdentifierGenerator ids;
+    private final ModelMessageAssembler messages;
+    private final AgentChatResponseMapper responses;
+
+    public FrozenModelInvoker(
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            Map<String, ModelToolSpecification> toolSpecifications,
+            IdentifierGenerator ids) {
+        this.state = Objects.requireNonNull(state, "state must not be null");
+        this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
+        this.toolSpecifications =
+                Map.copyOf(Objects.requireNonNull(toolSpecifications, "toolSpecifications must not be null"));
+        this.ids = Objects.requireNonNull(ids, "ids must not be null");
+        this.messages = new ModelMessageAssembler(state);
+        this.responses = new AgentChatResponseMapper(ids);
+    }
+
+    public FrozenModelBinding bind(AgentRun run) {
+        Objects.requireNonNull(run, "run must not be null");
+        RuntimeConfigurationSnapshot configuration = state.configuration(run.configurationSnapshot())
+                .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
+        var model = configuration.model();
+        ModelAdapterKey key = new ModelAdapterKey(model.adapterType(), model.adapterVersion());
+        AgentChatModel adapter = adapters.get(key);
+        if (adapter == null) {
+            throw new IllegalStateException(
+                    "frozen model adapter is unavailable: " + key.adapterType() + "@" + key.adapterVersion());
+        }
+        List<ModelToolSpecification> tools = configuration.allowedTools().stream()
+                .sorted()
+                .map(name -> {
+                    ModelToolSpecification specification = toolSpecifications.get(name);
+                    if (specification == null) {
+                        throw new IllegalStateException("frozen tool specification is unavailable: " + name);
+                    }
+                    return specification;
+                })
+                .toList();
+        return new FrozenModelBinding(configuration, adapter, tools);
+    }
+
+    public ModelInvocationResult invoke(FrozenModelBinding binding, AgentRun run, int iteration, AgentContext context) {
+        if (!binding.configuration().reference().equals(run.configurationSnapshot())) {
+            throw new IllegalArgumentException("model binding belongs to another configuration snapshot");
+        }
+        ModelCallId callId = new ModelCallId(ids.nextValue());
+        int attempt = Math.max(
+                1, Math.toIntExact(Math.min(Integer.MAX_VALUE, run.usage().modelCalls())));
+        AgentChatRequest request = new AgentChatRequest(
+                callId,
+                run.id(),
+                iteration,
+                attempt,
+                binding.configuration().model(),
+                messages.assemble(run.id(), context),
+                context.tools(),
+                Math.toIntExact(context.budget().outputReserve()),
+                Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
+                Map.of());
+        AgentChatResponse response = binding.chatModel().invoke(request);
+        var decision = responses.map(request, response, binding.tools());
+        return new ModelInvocationResult(
+                decision,
+                response.usage().inputTokens(),
+                response.usage().outputTokens(),
+                response.usage().costKnown(),
+                response.usage().costMinorUnits(),
+                Map.ofEntries(
+                        Map.entry(
+                                "providerId",
+                                binding.configuration().model().providerId().value()),
+                        Map.entry(
+                                "providerVersion",
+                                binding.configuration().model().providerVersion()),
+                        Map.entry(
+                                "modelId",
+                                binding.configuration().model().modelId().value()),
+                        Map.entry(
+                                "modelVersion", binding.configuration().model().modelVersion()),
+                        Map.entry(
+                                "adapterVersion",
+                                binding.configuration().model().adapterVersion()),
+                        Map.entry("modelCallId", callId.value()),
+                        Map.entry("responseId", response.responseId()),
+                        Map.entry("finishReason", response.finishReason().name()),
+                        Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
+                        Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
+                        Map.entry("reasoningTokens", response.usage().reasoningTokens())));
+    }
+}

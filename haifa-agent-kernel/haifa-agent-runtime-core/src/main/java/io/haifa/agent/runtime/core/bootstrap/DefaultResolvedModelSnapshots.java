@@ -5,11 +5,8 @@ import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import java.net.URI;
 import java.util.EnumSet;
-import java.util.HexFormat;
 import java.util.Map;
 
 /** Compatibility defaults for the first configured external model. */
@@ -17,27 +14,20 @@ public final class DefaultResolvedModelSnapshots {
     private DefaultResolvedModelSnapshots() {}
 
     public static ResolvedModelSnapshot deepSeekV4Pro() {
-        return new ResolvedModelSnapshot(
+        return ResolvedModelSnapshot.create(
                 new ModelProviderId("deepseek"),
+                "2026-07-21",
                 new ModelDefinitionId("deepseek-v4-pro"),
+                "2026-07-21",
                 "deepseek-v4-pro",
                 "openai-compatible",
                 "1.0.0",
+                URI.create("https://api.deepseek.com"),
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
                 EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT),
-                Map.of("thinking", "disabled", "maxOutputTokens", 8192),
-                sha256(
-                        "deepseek|deepseek-v4-pro|openai-compatible|env://DEEPSEEK_API_KEY|thinking=disabled|maxOutputTokens=8192"));
-    }
-
-    private static String sha256(String value) {
-        try {
-            return "sha256:"
-                    + HexFormat.of()
-                            .formatHex(MessageDigest.getInstance("SHA-256")
-                                    .digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required", exception);
-        }
+                1_048_576,
+                8_192,
+                Map.of("thinking", "disabled"),
+                Map.of("thinking", "disabled"));
     }
 }

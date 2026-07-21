@@ -3,6 +3,7 @@ package io.haifa.agent.model.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -47,9 +48,9 @@ class ModelApiTest {
     void modelMessagesEnforceToolCorrelation() {
         assertThatThrownBy(() -> ModelMessage.text(ModelMessageRole.TOOL, "result"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("toolCallId");
-        ModelMessage message = new ModelMessage(ModelMessageRole.TOOL, "result", List.of(), "call-1");
-        assertThat(message.toolCallId()).isEqualTo("call-1");
+                .hasMessageContaining("providerCorrelationId");
+        ModelMessage message = ModelMessage.tool(new ProviderToolCallCorrelationId("call-1"), "result");
+        assertThat(message.providerCorrelationId().orElseThrow().value()).isEqualTo("call-1");
     }
 
     @Test
@@ -59,6 +60,7 @@ class ModelApiTest {
         options.put("thinking", Map.of("modes", nested));
         ModelProviderDefinition provider = new ModelProviderDefinition(
                 new ModelProviderId("deepseek"),
+                "provider-v1",
                 "DeepSeek",
                 "openai-compatible",
                 URI.create("https://api.deepseek.com"),
@@ -77,9 +79,67 @@ class ModelApiTest {
         assertThatThrownBy(modes::clear).isInstanceOf(UnsupportedOperationException.class);
     }
 
+    @Test
+    void frozenSnapshotDigestCoversEndpointLimitsVersionsAndOptions() {
+        ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
+                new ModelProviderId("deepseek"),
+                "provider-v1",
+                new ModelDefinitionId("deepseek-v4-pro"),
+                "model-v1",
+                "deepseek-v4-pro",
+                "openai-compatible",
+                "adapter-v1",
+                URI.create("https://api.deepseek.com"),
+                new CredentialRef("env://DEEPSEEK_API_KEY"),
+                EnumSet.of(ModelCapability.TEXT_CHAT),
+                1_048_576,
+                8_192,
+                Map.of("transport", Map.of("timeout", 30)),
+                Map.of("thinking", "disabled"));
+
+        assertThat(snapshot.configurationDigest()).startsWith("sha256:");
+        assertThatThrownBy(() -> new ResolvedModelSnapshot(
+                        snapshot.schemaVersion(),
+                        snapshot.providerId(),
+                        snapshot.providerVersion(),
+                        snapshot.modelId(),
+                        snapshot.modelVersion(),
+                        snapshot.providerModelId(),
+                        snapshot.adapterType(),
+                        snapshot.adapterVersion(),
+                        URI.create("https://changed.example.com"),
+                        snapshot.credentialRef(),
+                        snapshot.capabilities(),
+                        snapshot.contextWindow(),
+                        snapshot.maxOutputTokens(),
+                        snapshot.providerOptions(),
+                        snapshot.invocationOptions(),
+                        snapshot.configurationDigest()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("digest");
+        assertThat(ResolvedModelSnapshot.create(
+                                snapshot.providerId(),
+                                snapshot.providerVersion(),
+                                snapshot.modelId(),
+                                snapshot.modelVersion(),
+                                snapshot.providerModelId(),
+                                snapshot.adapterType(),
+                                snapshot.adapterVersion(),
+                                snapshot.endpoint(),
+                                snapshot.credentialRef(),
+                                snapshot.capabilities(),
+                                snapshot.contextWindow(),
+                                snapshot.maxOutputTokens() - 1,
+                                snapshot.providerOptions(),
+                                snapshot.invocationOptions())
+                        .configurationDigest())
+                .isNotEqualTo(snapshot.configurationDigest());
+    }
+
     private static ModelProviderDefinition provider(ModelProviderId id, List<ModelDefinition> models) {
         return new ModelProviderDefinition(
                 id,
+                "provider-v1",
                 "DeepSeek",
                 "openai-compatible",
                 URI.create("https://api.deepseek.com"),
@@ -93,6 +153,7 @@ class ModelApiTest {
     private static ModelDefinition model(ModelProviderId providerId, String id, String providerModelId) {
         return new ModelDefinition(
                 new ModelDefinitionId(id),
+                "model-v1",
                 providerId,
                 providerModelId,
                 id,

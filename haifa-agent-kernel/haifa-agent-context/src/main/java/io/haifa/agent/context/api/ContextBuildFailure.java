@@ -1,0 +1,9 @@
+package io.haifa.agent.context.api;
+
+public enum ContextBuildFailure {
+    RUN_INPUT_BUDGET_EXHAUSTED,
+    RUN_OUTPUT_BUDGET_EXHAUSTED,
+    MODEL_WINDOW_TOO_SMALL,
+    REQUIRED_CONTEXT_TOO_LARGE,
+    UNSUPPORTED_CONTEXT_CONTENT
+}

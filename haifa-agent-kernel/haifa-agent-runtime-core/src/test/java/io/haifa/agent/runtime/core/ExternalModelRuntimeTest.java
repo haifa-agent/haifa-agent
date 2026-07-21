@@ -1,7 +1,6 @@
 package io.haifa.agent.runtime.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -17,6 +16,7 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.step.AgentStepType;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -33,7 +33,6 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
-import io.haifa.agent.runtime.core.model.ModelResponse;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.tool.ToolDefinition;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
@@ -69,7 +68,8 @@ class ExternalModelRuntimeTest {
                         "response-1",
                         "deepseek-v4-pro",
                         "",
-                        List.of(new ModelToolCall("provider-call-1", "echo", Map.of("text", "hello"))),
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("provider-call-1"), "echo", Map.of("text", "hello"))),
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(10, 3),
                         "fp-test",
@@ -77,10 +77,14 @@ class ExternalModelRuntimeTest {
             }
             assertThat(request.messages())
                     .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
-                            && message.toolCalls().stream()
-                                    .anyMatch(toolCall -> toolCall.id().equals("provider-call-1")))
+                            && message.toolCalls().stream().anyMatch(toolCall -> toolCall.providerCorrelationId()
+                                    .value()
+                                    .equals("provider-call-1")))
                     .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                            && message.toolCallId().equals("provider-call-1")
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("provider-call-1")
                             && message.content().equals("echoed: hello"));
             return new AgentChatResponse(
                     "response-2",
@@ -104,7 +108,7 @@ class ExternalModelRuntimeTest {
                         "required", List.of("text")),
                 false);
         DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
-                .registerChatModel("openai-compatible", chatModel)
+                .registerChatModel("openai-compatible", "1.0.0", chatModel)
                 .registerTool(new ToolDefinition("echo", "1.0", "echo.input", false))
                 .registerModelTool(specification)
                 .toolExecutor((run, definition, request) -> new ToolResult(
@@ -170,11 +174,15 @@ class ExternalModelRuntimeTest {
         var runtime = new RuntimeCoreBuilder()
                 .registerChatModel(
                         "openai-compatible",
+                        "1.0.0",
                         request -> new AgentChatResponse(
                                 "response-unknown-tool",
                                 "deepseek-v4-pro",
                                 "",
-                                List.of(new ModelToolCall("provider-call-unknown", "not-disclosed", Map.of())),
+                                List.of(new ModelToolCall(
+                                        new ProviderToolCallCorrelationId("provider-call-unknown"),
+                                        "not-disclosed",
+                                        Map.of())),
                                 ModelFinishReason.TOOL_CALLS,
                                 ModelUsage.unpriced(1, 1),
                                 "",
@@ -204,40 +212,84 @@ class ExternalModelRuntimeTest {
     }
 
     @Test
-    void builderRejectsAmbiguousModelIntegrationModes() {
-        RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
-                .modelClient(request -> new ModelResponse(
-                        new io.haifa.agent.runtime.core.decision.ContinueDecision("continue"), 0, 0, 0))
-                .registerChatModel(
-                        "openai-compatible",
-                        request -> new AgentChatResponse(
-                                "response",
-                                "model",
-                                "content",
-                                List.of(),
-                                ModelFinishReason.STOP,
-                                ModelUsage.unpriced(0, 0),
-                                "",
-                                Map.of()));
+    void builderExposesOnlyVersionedModelApiAssembly() {
+        assertThat(List.of(RuntimeCoreBuilder.class.getMethods()))
+                .noneMatch(method -> method.getName().equals("modelClient"))
+                .noneMatch(method -> method.getName().equals("modelSelector"))
+                .filteredOn(method -> method.getName().equals("registerChatModel"))
+                .singleElement()
+                .satisfies(method -> assertThat(method.getParameterTypes())
+                        .containsExactly(String.class, String.class, io.haifa.agent.model.api.AgentChatModel.class));
+    }
 
-        assertThatThrownBy(builder::build)
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("exactly one model integration mode");
+    @Test
+    void missingFrozenAdapterVersionFailsWithoutFallingBack() {
+        var defaults = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        var unavailable = io.haifa.agent.model.api.ResolvedModelSnapshot.create(
+                defaults.providerId(),
+                defaults.providerVersion(),
+                defaults.modelId(),
+                defaults.modelVersion(),
+                defaults.providerModelId(),
+                defaults.adapterType(),
+                "9.9.9",
+                defaults.endpoint(),
+                defaults.credentialRef(),
+                defaults.capabilities(),
+                defaults.contextWindow(),
+                defaults.maxOutputTokens(),
+                defaults.providerOptions(),
+                defaults.invocationOptions());
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        AtomicInteger calls = new AtomicInteger();
+        var runtime = new RuntimeCoreBuilder()
+                .registerChatModel("openai-compatible", "1.0.0", request -> {
+                    calls.incrementAndGet();
+                    return new AgentChatResponse(
+                            "unexpected",
+                            "model",
+                            "unexpected",
+                            List.of(),
+                            ModelFinishReason.STOP,
+                            ModelUsage.unpriced(0, 0),
+                            "",
+                            Map.of());
+                })
+                .profiles((id, overrides) -> new ResolvedProfile(
+                        id,
+                        "1.0",
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(1000, 1000, 1000, 10, 10, 2, "USD", 1000),
+                        new AgentRunLimits(10, 2, 1, 60_000, 30_000),
+                        unavailable))
+                .scheduler(scheduler)
+                .build();
+
+        var accepted = runtime.start(request("missing-adapter"));
+        scheduler.runAll();
+
+        assertThat(calls).hasValue(0);
+        assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
     }
 
     @Test
     void modelSelectionIsPartOfContentAddressedRunConfiguration() {
         var defaults = DefaultResolvedModelSnapshots.deepSeekV4Pro();
-        var alternative = new io.haifa.agent.model.api.ResolvedModelSnapshot(
+        var alternative = io.haifa.agent.model.api.ResolvedModelSnapshot.create(
                 defaults.providerId(),
+                defaults.providerVersion(),
                 new ModelDefinitionId("deepseek-v4-flash"),
+                "model-v2",
                 "deepseek-v4-flash",
                 defaults.adapterType(),
                 defaults.adapterVersion(),
+                defaults.endpoint(),
                 defaults.credentialRef(),
                 defaults.capabilities(),
-                defaults.invocationOptions(),
-                "sha256:alternative-model");
+                defaults.contextWindow(),
+                defaults.maxOutputTokens(),
+                defaults.providerOptions(),
+                defaults.invocationOptions());
         AgentRunBudget budget = new AgentRunBudget(1000, 1000, 1000, 10, 10, 2, "USD", 1000);
         AgentRunLimits limits = new AgentRunLimits(10, 2, 1, 60_000, 30_000);
         ResolvedDefinition definition = new ResolvedDefinition(

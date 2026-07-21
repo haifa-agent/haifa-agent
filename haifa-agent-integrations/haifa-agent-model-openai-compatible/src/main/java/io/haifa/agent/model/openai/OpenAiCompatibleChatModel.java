@@ -3,6 +3,7 @@ package io.haifa.agent.model.openai;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
@@ -33,7 +34,8 @@ import java.util.Objects;
 /** Synchronous bounded OpenAI Chat Completions adapter. */
 public final class OpenAiCompatibleChatModel implements AgentChatModel {
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-    private final ModelProviderDefinition provider;
+    private final String adapterType;
+    private final String adapterVersion;
     private final HttpClient http;
     private final ObjectMapper json;
     private final CredentialResolver credentials;
@@ -52,14 +54,26 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             CredentialResolver credentials,
             boolean allowInsecureHttp,
             int maxResponseBytes) {
-        this.provider = Objects.requireNonNull(provider, "provider must not be null");
+        this(requireAdapterType(provider), "1.0.0", http, json, credentials, allowInsecureHttp, maxResponseBytes);
+        validateProviderDefinition(provider, allowInsecureHttp);
+    }
+
+    public OpenAiCompatibleChatModel(
+            String adapterType,
+            String adapterVersion,
+            HttpClient http,
+            ObjectMapper json,
+            CredentialResolver credentials,
+            boolean allowInsecureHttp,
+            int maxResponseBytes) {
+        this.adapterType = requireText(adapterType, "adapterType");
+        this.adapterVersion = requireText(adapterVersion, "adapterVersion");
         this.http = Objects.requireNonNull(http, "http must not be null");
         this.json = Objects.requireNonNull(json, "json must not be null");
         this.credentials = Objects.requireNonNull(credentials, "credentials must not be null");
         this.allowInsecureHttp = allowInsecureHttp;
         if (maxResponseBytes < 1) throw new IllegalArgumentException("maxResponseBytes must be positive");
         this.maxResponseBytes = maxResponseBytes;
-        validateProvider();
     }
 
     @Override
@@ -68,7 +82,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         validateSelection(request);
         ResolvedCredential credential;
         try {
-            credential = credentials.resolve(provider.credentialRef());
+            credential = credentials.resolve(request.model().credentialRef());
         } catch (RuntimeException exception) {
             throw failure(
                     request,
@@ -92,7 +106,8 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "model request cannot be serialized",
                     exception);
         }
-        HttpRequest httpRequest = HttpRequest.newBuilder(chatCompletionsUri())
+        HttpRequest httpRequest = HttpRequest.newBuilder(
+                        chatCompletionsUri(request.model().endpoint()))
                 .timeout(request.timeout())
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
@@ -157,52 +172,33 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         }
     }
 
-    private void validateProvider() {
-        if (!"https".equalsIgnoreCase(provider.endpoint().getScheme())
-                && !(allowInsecureHttp
-                        && "http".equalsIgnoreCase(provider.endpoint().getScheme()))) {
-            throw new IllegalArgumentException("provider endpoint must use HTTPS");
-        }
-        Object thinking = provider.options().get("thinking");
-        if (thinking != null && !"disabled".equals(thinking)) {
-            throw new IllegalArgumentException("first integration requires thinking=disabled");
-        }
-        provider.models().forEach(model -> {
-            Object modelThinking = model.options().get("thinking");
-            if (modelThinking != null && !"disabled".equals(modelThinking)) {
-                throw new IllegalArgumentException("first integration requires model thinking=disabled");
-            }
-        });
-    }
-
     private void validateSelection(AgentChatRequest request) {
-        if (!provider.id().equals(request.model().providerId())) {
+        if (!adapterType.equals(request.model().adapterType())
+                || !adapterVersion.equals(request.model().adapterVersion())) {
             throw failure(
                     request,
                     ModelErrorCategory.INVALID_REQUEST,
                     false,
                     0,
-                    "provider_snapshot_mismatch",
-                    "run model snapshot does not match the configured provider",
+                    "adapter_snapshot_mismatch",
+                    "frozen model snapshot requires an unavailable adapter binding",
                     null);
         }
-        boolean configured = provider.models().stream()
-                .anyMatch(model -> model.id().equals(request.model().modelId())
-                        && model.providerModelId().equals(request.model().providerModelId()));
-        if (!configured) {
-            throw failure(
-                    request,
-                    ModelErrorCategory.MODEL_NOT_FOUND,
-                    false,
-                    0,
-                    "model_snapshot_mismatch",
-                    "run model snapshot is not configured by the provider",
-                    null);
+        URI endpoint = request.model().endpoint();
+        if (!"https".equalsIgnoreCase(endpoint.getScheme())
+                && !(allowInsecureHttp && "http".equalsIgnoreCase(endpoint.getScheme()))) {
+            throw new IllegalArgumentException("frozen provider endpoint must use HTTPS");
+        }
+        Object providerThinking = request.model().providerOptions().get("thinking");
+        Object modelThinking = request.model().invocationOptions().get("thinking");
+        if ((providerThinking != null && !"disabled".equals(providerThinking))
+                || (modelThinking != null && !"disabled".equals(modelThinking))) {
+            throw new IllegalArgumentException("first integration requires thinking=disabled");
         }
     }
 
-    private URI chatCompletionsUri() {
-        String base = provider.endpoint().toString();
+    private URI chatCompletionsUri(URI endpoint) {
+        String base = endpoint.toString();
         while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
         return URI.create(base + "/chat/completions");
     }
@@ -216,7 +212,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             body.put("tool_choice", "auto");
         }
         body.put("max_tokens", request.maxOutputTokens());
-        body.put("thinking", Map.of("type", "disabled"));
+        body.put("thinking", Map.of("type", frozenThinking(request)));
         body.put("stream", false);
         Object responseFormat = request.options().get("response_format");
         if (responseFormat != null) body.put("response_format", validateResponseFormat(responseFormat));
@@ -226,11 +222,49 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         return body;
     }
 
+    private String frozenThinking(AgentChatRequest request) {
+        Object value = request.model()
+                .invocationOptions()
+                .getOrDefault("thinking", request.model().providerOptions().getOrDefault("thinking", "disabled"));
+        if (!"disabled".equals(value))
+            throw new IllegalArgumentException("first integration requires thinking=disabled");
+        return "disabled";
+    }
+
     private Object validateResponseFormat(Object value) {
         if (!(value instanceof Map<?, ?> map) || !"json_object".equals(map.get("type")) || map.size() != 1) {
             throw new IllegalArgumentException("response_format must be {type=json_object}");
         }
         return Map.of("type", "json_object");
+    }
+
+    private static String requireAdapterType(ModelProviderDefinition provider) {
+        return Objects.requireNonNull(provider, "provider must not be null").adapterType();
+    }
+
+    private static void validateProviderDefinition(ModelProviderDefinition provider, boolean allowInsecureHttp) {
+        if (!"https".equalsIgnoreCase(provider.endpoint().getScheme())
+                && !(allowInsecureHttp
+                        && "http".equalsIgnoreCase(provider.endpoint().getScheme()))) {
+            throw new IllegalArgumentException("provider endpoint must use HTTPS");
+        }
+        Object providerThinking = provider.options().get("thinking");
+        if (providerThinking != null && !"disabled".equals(providerThinking)) {
+            throw new IllegalArgumentException("first integration requires thinking=disabled");
+        }
+        provider.models().forEach(model -> {
+            Object modelThinking = model.options().get("thinking");
+            if (modelThinking != null && !"disabled".equals(modelThinking)) {
+                throw new IllegalArgumentException("first integration requires thinking=disabled");
+            }
+        });
+    }
+
+    private static String requireText(String value, String field) {
+        String normalized =
+                Objects.requireNonNull(value, field + " must not be null").trim();
+        if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
+        return normalized;
     }
 
     private Map<String, Object> message(ModelMessage message) {
@@ -242,14 +276,14 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "tool_calls",
                     message.toolCalls().stream().map(this::toolCall).toList());
         }
-        if (!message.toolCallId().isEmpty()) mapped.put("tool_call_id", message.toolCallId());
+        message.providerCorrelationId().ifPresent(value -> mapped.put("tool_call_id", value.value()));
         return mapped;
     }
 
     private Map<String, Object> toolCall(ModelToolCall call) {
         try {
             return Map.of(
-                    "id", call.id(),
+                    "id", call.providerCorrelationId().value(),
                     "type", "function",
                     "function", Map.of("name", call.name(), "arguments", json.writeValueAsString(call.arguments())));
         } catch (JsonProcessingException exception) {
@@ -384,7 +418,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 if (!parsed.isObject()) throw new JsonProcessingException("tool arguments must be an object") {};
                 @SuppressWarnings("unchecked")
                 Map<String, Object> values = json.convertValue(parsed, LinkedHashMap.class);
-                calls.add(new ModelToolCall(id, name, values));
+                calls.add(new ModelToolCall(new ProviderToolCallCorrelationId(id), name, values));
             } catch (JsonProcessingException | IllegalArgumentException exception) {
                 throw failure(
                         request,

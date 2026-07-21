@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCallId;
@@ -106,11 +107,12 @@ class OpenAiCompatibleChatModelTest {
                    "tool_calls":[{"id":"call-2","type":"function","function":{"name":"weather","arguments":"{\\"city\\":\\"Shanghai\\"}"}}]}}],
                  "usage":{"prompt_tokens":20,"completion_tokens":8,"total_tokens":28}}
                 """));
-        ModelToolCall previous = new ModelToolCall("call-1", "weather", Map.of("city", "Beijing"));
+        ModelToolCall previous =
+                new ModelToolCall(new ProviderToolCallCorrelationId("call-1"), "weather", Map.of("city", "Beijing"));
         List<ModelMessage> messages = List.of(
                 ModelMessage.text(ModelMessageRole.USER, "weather"),
-                new ModelMessage(ModelMessageRole.ASSISTANT, "", List.of(previous), ""),
-                new ModelMessage(ModelMessageRole.TOOL, "sunny", List.of(), "call-1"));
+                ModelMessage.assistant("", List.of(previous)),
+                ModelMessage.tool(new ProviderToolCallCorrelationId("call-1"), "sunny"));
         ModelToolSpecification tool = new ModelToolSpecification(
                 "weather",
                 "1.0",
@@ -126,7 +128,7 @@ class OpenAiCompatibleChatModelTest {
         var actual = model().invoke(request(messages, List.of(tool)));
 
         assertThat(actual.toolCalls()).singleElement().satisfies(call -> {
-            assertThat(call.id()).isEqualTo("call-2");
+            assertThat(call.providerCorrelationId().value()).isEqualTo("call-2");
             assertThat(call.name()).isEqualTo("weather");
             assertThat(call.arguments()).containsEntry("city", "Shanghai");
         });
@@ -224,7 +226,9 @@ class OpenAiCompatibleChatModelTest {
                 """));
         var multiple = model().invoke(simpleRequest());
         assertThat(multiple.finishReason()).isEqualTo(ModelFinishReason.TOOL_CALLS);
-        assertThat(multiple.toolCalls()).extracting(ModelToolCall::id).containsExactly("c1", "c2");
+        assertThat(multiple.toolCalls())
+                .extracting(call -> call.providerCorrelationId().value())
+                .containsExactly("c1", "c2");
 
         assertFinishReason("length", ModelFinishReason.LENGTH);
         assertFinishReason("unknown_provider_reason", ModelFinishReason.UNKNOWN);
@@ -303,6 +307,7 @@ class OpenAiCompatibleChatModelTest {
     void rejectsThinkingEnabledProviderAndResolvesOnlyEnvironmentReferences() {
         ModelProviderDefinition enabled = new ModelProviderDefinition(
                 provider.id(),
+                provider.version(),
                 provider.displayName(),
                 provider.adapterType(),
                 provider.endpoint(),
@@ -412,22 +417,28 @@ class OpenAiCompatibleChatModelTest {
     }
 
     private ResolvedModelSnapshot snapshot() {
-        return new ResolvedModelSnapshot(
+        return ResolvedModelSnapshot.create(
                 provider.id(),
+                provider.version(),
                 new ModelDefinitionId("deepseek-v4-pro"),
+                "model-v1",
                 "deepseek-v4-pro",
                 "openai-compatible",
                 "1.0.0",
+                provider.endpoint(),
                 provider.credentialRef(),
                 EnumSet.allOf(ModelCapability.class),
-                Map.of("thinking", "disabled"),
-                "sha256:test");
+                1_048_576,
+                393_216,
+                provider.options(),
+                Map.of("thinking", "disabled"));
     }
 
     private ModelProviderDefinition provider(URI endpoint) {
         ModelProviderId providerId = new ModelProviderId("deepseek");
         ModelDefinition model = new ModelDefinition(
                 new ModelDefinitionId("deepseek-v4-pro"),
+                "model-v1",
                 providerId,
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",
@@ -439,6 +450,7 @@ class OpenAiCompatibleChatModelTest {
                 Map.of());
         return new ModelProviderDefinition(
                 providerId,
+                "provider-v1",
                 "DeepSeek",
                 "openai-compatible",
                 endpoint,

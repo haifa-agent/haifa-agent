@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.tool;
 
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolResult;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -14,25 +15,25 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
     private final Map<String, ToolResult> completed = new HashMap<>();
 
     @Override
-    public synchronized Optional<ToolResult> completed(AgentRunId runId, String key) {
+    public synchronized Optional<ToolResult> completed(AgentRunId runId, RuntimeIdempotencyKey key) {
         return Optional.ofNullable(completed.get(id(runId, key)));
     }
 
     @Override
-    public synchronized void recordIntent(AgentRunId runId, String key) {
+    public synchronized void recordIntent(AgentRunId runId, RuntimeIdempotencyKey key) {
         String id = id(runId, key);
         if (!intents.add(id)) throw new IllegalStateException("duplicate active tool intent: " + key);
     }
 
     @Override
-    public synchronized void recordCompleted(AgentRunId runId, String key, ToolResult result) {
+    public synchronized void recordCompleted(AgentRunId runId, RuntimeIdempotencyKey key, ToolResult result) {
         String id = id(runId, key);
         completed.put(id, result);
         uncertain.remove(id);
     }
 
     @Override
-    public synchronized void recordUncertain(AgentRunId runId, String key) {
+    public synchronized void recordUncertain(AgentRunId runId, RuntimeIdempotencyKey key) {
         uncertain.add(id(runId, key));
     }
 
@@ -42,7 +43,7 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
         return uncertain.stream().anyMatch(value -> value.startsWith(prefix));
     }
 
-    private static String id(AgentRunId runId, String key) {
-        return runId.value() + "|" + key;
+    private static String id(AgentRunId runId, RuntimeIdempotencyKey key) {
+        return runId.value() + "|" + key.value();
     }
 }
