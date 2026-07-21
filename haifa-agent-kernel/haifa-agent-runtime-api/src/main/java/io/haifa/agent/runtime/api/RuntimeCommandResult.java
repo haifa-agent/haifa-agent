@@ -1,0 +1,15 @@
+package io.haifa.agent.runtime.api;
+
+import java.util.Objects;
+
+/** Result of applying a Runtime control command. */
+public record RuntimeCommandResult(RuntimeCommand command, AgentRunResult result) {
+
+    public RuntimeCommandResult {
+        command = Objects.requireNonNull(command, "command must not be null");
+        result = Objects.requireNonNull(result, "result must not be null");
+        if (!command.runId().equals(result.run().id())) {
+            throw new IllegalArgumentException("command and result must refer to the same run");
+        }
+    }
+}
