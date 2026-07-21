@@ -29,6 +29,7 @@ import io.haifa.agent.memory.core.DefaultMemoryRetriever;
 import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
@@ -39,6 +40,7 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RunAccessValidator;
 import io.haifa.agent.runtime.core.bootstrap.RunBootstrapper;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
+import io.haifa.agent.runtime.core.checkpoint.CapabilityCheckpointRegistry;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointPolicy;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder;
@@ -158,6 +160,7 @@ public final class RuntimeCoreBuilder {
     private CompletionPolicy completionPolicy = (run, decision) -> true;
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
     private final List<ContextSource> additionalContextSources = new ArrayList<>();
+    private final List<CapabilityCheckpointParticipant> capabilityCheckpointParticipants = new ArrayList<>();
     private String workerId = "local-runtime";
     private ExecutionOwnershipPort ownership = ExecutionOwnershipPort.local();
     private MemoryRetriever memoryRetriever;
@@ -187,6 +190,17 @@ public final class RuntimeCoreBuilder {
             throw new IllegalArgumentException("duplicate context source: " + source.id());
         }
         additionalContextSources.add(source);
+        return this;
+    }
+
+    public RuntimeCoreBuilder registerCapabilityCheckpointParticipant(CapabilityCheckpointParticipant participant) {
+        Objects.requireNonNull(participant, "participant must not be null");
+        if (capabilityCheckpointParticipants.stream()
+                .anyMatch(existing -> existing.id().equals(participant.id()))) {
+            throw new IllegalArgumentException("duplicate capability checkpoint participant: "
+                    + participant.id().value());
+        }
+        capabilityCheckpointParticipants.add(participant);
         return this;
     }
 
@@ -443,14 +457,18 @@ public final class RuntimeCoreBuilder {
                 requiredArtifacts,
                 completionPolicy);
         ResumeCheckpointSelector checkpointSelections = new ResumeCheckpointSelector();
+        CapabilityCheckpointRegistry capabilityCheckpointRegistry =
+                new CapabilityCheckpointRegistry(capabilityCheckpointParticipants);
         CheckpointManager checkpoints = new CheckpointManager(
                 store,
                 CheckpointPolicy.everyIteration(),
-                new CheckpointSnapshotBuilder(ids, time, store, store, interactions),
+                new CheckpointSnapshotBuilder(ids, time, store, store, interactions, capabilityCheckpointRegistry),
                 checkpointSelections,
                 store,
                 store,
-                new MemoryCheckpointValidator(configuredMemoryRetriever, configuredMemoryAudit, time));
+                new MemoryCheckpointValidator(configuredMemoryRetriever, configuredMemoryAudit, time),
+                capabilityCheckpointRegistry,
+                time);
         DecisionExecutor decisionExecutor = new DecisionExecutor(
                 pipeline,
                 completion,

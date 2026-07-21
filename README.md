@@ -17,6 +17,7 @@ haifa-agent-kernel/
   haifa-agent-runtime-api/     Runtime 生命周期契约
   haifa-agent-context/         Context IR、预算、选择与安全 Trace
   haifa-agent-project/         Project、Workspace、逻辑路径与安全文件访问
+  haifa-agent-artifact/        显式发布、内容寻址与 Provenance
   haifa-agent-runtime-core/    Runtime、AgentLoop 与本地执行实现
 haifa-agent-execution/
   haifa-agent-execution-api/   Provider-neutral 命令执行契约
@@ -56,6 +57,8 @@ Project 模块提供可选的长期 Project、受控 Workspace、跨平台逻辑
 ExecutionBroker 是本地命令的唯一应用层入口。首个 Host Provider 只提供白名单命令、逻辑工作目录、环境租约、超时、输出和进程树等可诚实执行的限制，不宣称具备网络、CPU、内存或文件系统挂载强隔离。Git inspect/status/diff 也通过 Broker；临时副本和 Git Worktree 子 Workspace 必须拥有收窄权限和独立生命周期。
 
 Project 模块还提供可重建的 File/Java Symbol/Markdown Index 和内容寻址的版本化 ProjectConfiguration。高层 Project Application 复用现有 Context Source 与 Runtime Tool Pipeline，并提供只要求 ProjectId、消息和附件的产品入口；Workspace 仍是内部授权与执行概念。
+
+Workspace Run 的 Runtime Checkpoint 可通过版本化 Capability Participant 引用 Metadata、Git Reference 或受限 Full Copy Snapshot；普通 Chat 的冻结能力集合为空，因此不会创建 Workspace 或空 Snapshot。恢复先重新授权当前调用者并校验 Binding、Snapshot digest 与 Drift，DIRECT Workspace 的内容漂移不会触发隐式覆盖。Artifact 只由显式 Export 产生，保存不可变内容寻址 payload 与完整 Provenance；只读 Admin 投影不返回主机路径、正文或凭据。
 
 首个外部模型配置使用 Provider `deepseek`、Model `deepseek-v4-pro` 与 OpenAI 兼容 Chat Completions API。模型选择在 Run 启动时冻结到内容寻址配置快照；普通配置变化不影响已创建 Run。首版显式发送 `thinking.type=disabled`，后续启用思考模式前需先完成推理内容在 Tool Call、Checkpoint 与恢复中的持久语义。
 

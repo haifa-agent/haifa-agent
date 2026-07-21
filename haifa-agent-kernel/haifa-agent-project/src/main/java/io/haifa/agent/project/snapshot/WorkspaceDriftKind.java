@@ -1,0 +1,12 @@
+package io.haifa.agent.project.snapshot;
+
+public enum WorkspaceDriftKind {
+    NO_DRIFT,
+    SAFE_METADATA_DRIFT,
+    CONTENT_DRIFT,
+    BINDING_MISSING,
+    PERMISSION_REVOKED,
+    SNAPSHOT_MISSING_OR_CORRUPT,
+    PROVIDER_INCOMPATIBLE,
+    MANUAL_RESOLUTION_REQUIRED
+}

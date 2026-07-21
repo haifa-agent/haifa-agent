@@ -8,6 +8,7 @@ import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointRef;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -35,7 +36,55 @@ public record RuntimeCheckpointState(
         List<MemoryCheckpointRef> selectedMemories,
         String memoryRetrievalPolicyVersion,
         String memoryQueryDigest,
+        List<CapabilityCheckpointRef> capabilityCheckpoints,
         Instant capturedAt) {
+    public RuntimeCheckpointState(
+            AgentRunId runId,
+            AgentSessionId sessionId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            int nextIteration,
+            List<String> decisionFingerprints,
+            MessageCursor sessionMessageCursor,
+            Optional<SummaryCheckpointRef> activeSummary,
+            RunConfigurationSnapshotRef configurationSnapshot,
+            String modelConfigurationDigest,
+            String contextPolicyVersion,
+            String estimatorVersion,
+            String compressorVersion,
+            List<ToolCheckpointRef> toolCalls,
+            Optional<InteractionRequestRef> pendingInteraction,
+            int forcedContextRebuildAttempts,
+            List<AssetRef> derivedContentReferences,
+            List<MemoryCheckpointRef> selectedMemories,
+            String memoryRetrievalPolicyVersion,
+            String memoryQueryDigest,
+            Instant capturedAt) {
+        this(
+                runId,
+                sessionId,
+                tenant,
+                principal,
+                nextIteration,
+                decisionFingerprints,
+                sessionMessageCursor,
+                activeSummary,
+                configurationSnapshot,
+                modelConfigurationDigest,
+                contextPolicyVersion,
+                estimatorVersion,
+                compressorVersion,
+                toolCalls,
+                pendingInteraction,
+                forcedContextRebuildAttempts,
+                derivedContentReferences,
+                selectedMemories,
+                memoryRetrievalPolicyVersion,
+                memoryQueryDigest,
+                List.of(),
+                capturedAt);
+    }
+
     public RuntimeCheckpointState {
         runId = Objects.requireNonNull(runId, "runId must not be null");
         sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
@@ -61,6 +110,8 @@ public record RuntimeCheckpointState(
         selectedMemories = List.copyOf(Objects.requireNonNull(selectedMemories, "selectedMemories must not be null"));
         memoryRetrievalPolicyVersion = requireText(memoryRetrievalPolicyVersion, "memoryRetrievalPolicyVersion");
         memoryQueryDigest = requireText(memoryQueryDigest, "memoryQueryDigest");
+        capabilityCheckpoints =
+                List.copyOf(Objects.requireNonNull(capabilityCheckpoints, "capabilityCheckpoints must not be null"));
         capturedAt = Objects.requireNonNull(capturedAt, "capturedAt must not be null");
     }
 

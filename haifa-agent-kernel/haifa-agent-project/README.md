@@ -17,4 +17,6 @@
 
 `ProjectIndexService` 提供 generation 原子切换的文件、Java 语法级 Symbol 和 Markdown heading 索引。索引只保存逻辑路径和有界派生元数据，可全量重建，也可由完整 `FileChangeSet` 精确更新；查询结果在返回前仍通过当前文件服务重新授权。外部漂移只把 generation 标记为 `SUSPECT`，不会伪造 ChangeSet。
 
-`ProjectConfiguration` 是不可变、内容寻址的可信配置版本，冻结默认 Workspace、Product Profile、能力、Context Source、Tool 与安全策略引用；不保存 Host Path 或 Credential。Snapshot、Checkpoint Participant 和 Artifact 由后续阶段实现。
+`ProjectConfiguration` 是不可变、内容寻址的可信配置版本，冻结默认 Workspace、Product Profile、能力、Context Source、Tool 与安全策略引用；不保存 Host Path 或 Credential。
+
+Workspace Snapshot 支持 `METADATA_ONLY`、`GIT_REFERENCE` 与仅限受控 `EPHEMERAL_COPY` 的 `FULL_COPY`。Snapshot 是可验证的 Workspace 状态引用，不等于 Runtime Checkpoint；它保存逻辑身份、Revision、manifest/root fingerprint、可选 Git 证据或外部 payload ref，绝不内嵌主机路径或副本正文。`WorkspaceSnapshotValidator` 只分类 Drift，不执行 fetch、reset、checkout 或覆盖操作。

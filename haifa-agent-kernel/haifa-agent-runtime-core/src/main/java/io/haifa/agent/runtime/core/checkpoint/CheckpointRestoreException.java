@@ -10,6 +10,11 @@ public final class CheckpointRestoreException extends RuntimeException {
         this.failure = Objects.requireNonNull(failure, "failure must not be null");
     }
 
+    public CheckpointRestoreException(CheckpointRestoreFailure failure, String message, Throwable cause) {
+        super(message, cause);
+        this.failure = Objects.requireNonNull(failure, "failure must not be null");
+    }
+
     public CheckpointRestoreFailure failure() {
         return failure;
     }

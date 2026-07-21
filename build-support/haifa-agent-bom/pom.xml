@@ -48,6 +48,11 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-artifact</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-execution-api</artifactId>
                 <version>${project.version}</version>
             </dependency>

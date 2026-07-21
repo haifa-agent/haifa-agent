@@ -15,6 +15,7 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-common</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-artifact</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-context</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-core</artifactId></dependency>

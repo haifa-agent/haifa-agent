@@ -13,10 +13,6 @@ import io.haifa.agent.core.reference.InteractionRequestRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,6 +25,7 @@ public final class CheckpointSnapshotBuilder {
     private final RuntimeStateRepository state;
     private final ConversationSummaryRepository summaries;
     private final InteractionPort interactions;
+    private final CapabilityCheckpointRegistry capabilityCheckpoints;
 
     public CheckpointSnapshotBuilder(
             IdentifierGenerator ids,
@@ -36,11 +33,22 @@ public final class CheckpointSnapshotBuilder {
             RuntimeStateRepository state,
             ConversationSummaryRepository summaries,
             InteractionPort interactions) {
+        this(ids, time, state, summaries, interactions, CapabilityCheckpointRegistry.empty());
+    }
+
+    public CheckpointSnapshotBuilder(
+            IdentifierGenerator ids,
+            TimeProvider time,
+            RuntimeStateRepository state,
+            ConversationSummaryRepository summaries,
+            InteractionPort interactions,
+            CapabilityCheckpointRegistry capabilityCheckpoints) {
         this.ids = Objects.requireNonNull(ids);
         this.time = Objects.requireNonNull(time);
         this.state = Objects.requireNonNull(state);
         this.summaries = Objects.requireNonNull(summaries);
         this.interactions = Objects.requireNonNull(interactions);
+        this.capabilityCheckpoints = Objects.requireNonNull(capabilityCheckpoints);
     }
 
     public Snapshot build(
@@ -70,6 +78,8 @@ public final class CheckpointSnapshotBuilder {
                 .map(value -> new InteractionRequestRef(value.id().value(), value.type()));
         var memorySelection = state.memorySelection(run.id())
                 .orElse(io.haifa.agent.runtime.core.storage.RuntimeMemorySelection.EMPTY);
+        var capturedAt = time.now();
+        var capabilityReferences = capabilityCheckpoints.capture(run, configuration.capabilities(), id, capturedAt);
         RuntimeCheckpointState checkpointState = new RuntimeCheckpointState(
                 run.id(),
                 run.sessionId(),
@@ -91,26 +101,8 @@ public final class CheckpointSnapshotBuilder {
                 memorySelection.memories(),
                 memorySelection.retrievalPolicyVersion(),
                 memorySelection.queryDigest(),
-                time.now());
-        String hash = hash(run.id().value()
-                + "|"
-                + checkpointState.nextIteration()
-                + "|"
-                + checkpointState.sessionMessageCursor().serialize()
-                + "|"
-                + checkpointState.modelConfigurationDigest()
-                + "|"
-                + checkpointState.activeSummary()
-                + "|"
-                + checkpointState.toolCalls()
-                + "|"
-                + checkpointState.forcedContextRebuildAttempts()
-                + "|"
-                + checkpointState.selectedMemories()
-                + "|"
-                + checkpointState.memoryRetrievalPolicyVersion()
-                + "|"
-                + checkpointState.memoryQueryDigest());
+                capabilityReferences,
+                capturedAt);
         Checkpoint checkpoint = new Checkpoint(
                 new CheckpointId(id),
                 run.id(),
@@ -119,17 +111,8 @@ public final class CheckpointSnapshotBuilder {
                 CheckpointStatus.VERIFIED,
                 sequence,
                 new CheckpointPayloadRef("runtime-store", "checkpoint/" + id, "runtime-loop-state", "3.0"),
-                "sha256:" + hash,
+                RuntimeCheckpointStateHasher.digest(checkpointState),
                 time.now());
         return new Snapshot(checkpoint, checkpointState);
-    }
-
-    private static String hash(String value) {
-        try {
-            return HexFormat.of()
-                    .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException(exception);
-        }
     }
 }
