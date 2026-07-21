@@ -53,6 +53,17 @@ public record Workspace(
         return transition(WorkspaceStatus.RELEASED, at);
     }
 
+    public Workspace advanceRevision(WorkspaceRevision nextRevision, Instant at) {
+        Objects.requireNonNull(nextRevision, "nextRevision must not be null");
+        Objects.requireNonNull(at, "at must not be null");
+        if (status != WorkspaceStatus.ACTIVE) throw new IllegalStateException("only active workspace can advance");
+        if (nextRevision.sequence() != revision.sequence() + 1) {
+            throw new IllegalArgumentException("workspace revision must advance by one");
+        }
+        if (at.isBefore(updatedAt)) throw new IllegalArgumentException("workspace change time must not move backwards");
+        return new Workspace(id, projectId, purpose, status, root, nextRevision, createdAt, at, version + 1);
+    }
+
     private Workspace transition(WorkspaceStatus target, Instant at) {
         Objects.requireNonNull(at, "at must not be null");
         if (at.isBefore(updatedAt)) throw new IllegalArgumentException("workspace change time must not move backwards");

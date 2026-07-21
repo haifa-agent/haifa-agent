@@ -14,4 +14,13 @@ public record WorkspaceCapabilitySet(Set<String> values) {
     public static WorkspaceCapabilitySet readOnlyFiles() {
         return new WorkspaceCapabilitySet(Set.of("files.list", "files.stat", "files.read", "files.search"));
     }
+
+    public static WorkspaceCapabilitySet readWriteFiles() {
+        return new WorkspaceCapabilitySet(
+                Set.of("files.list", "files.stat", "files.read", "files.search", "files.write", "files.delete"));
+    }
+
+    public boolean allows(String capability) {
+        return values.contains(Objects.requireNonNull(capability, "capability must not be null"));
+    }
 }

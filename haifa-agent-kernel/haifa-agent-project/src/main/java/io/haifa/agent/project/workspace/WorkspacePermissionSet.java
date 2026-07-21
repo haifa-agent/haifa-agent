@@ -17,6 +17,16 @@ public record WorkspacePermissionSet(Set<WorkspacePermission> values) {
                 WorkspacePermission.SEARCH));
     }
 
+    public static WorkspacePermissionSet readWrite() {
+        return new WorkspacePermissionSet(EnumSet.of(
+                WorkspacePermission.LIST,
+                WorkspacePermission.STAT,
+                WorkspacePermission.READ,
+                WorkspacePermission.SEARCH,
+                WorkspacePermission.WRITE,
+                WorkspacePermission.DELETE));
+    }
+
     public boolean allows(WorkspacePermission permission) {
         return values.contains(permission);
     }
