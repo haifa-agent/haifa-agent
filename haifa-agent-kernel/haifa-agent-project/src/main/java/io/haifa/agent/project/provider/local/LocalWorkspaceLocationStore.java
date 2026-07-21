@@ -29,6 +29,20 @@ public final class LocalWorkspaceLocationStore implements WorkspaceLocationStore
         return path;
     }
 
+    /** Host-path bridge for trusted provider implementations; never expose this value to product or model APIs. */
+    public Path resolveForTrustedProvider(WorkspaceLocationRef reference) {
+        return resolve(reference);
+    }
+
+    public void unregisterForTrustedProvider(WorkspaceLocationRef reference, Path expectedHostRoot) {
+        Path expected = Objects.requireNonNull(expectedHostRoot, "expectedHostRoot must not be null")
+                .toAbsolutePath()
+                .normalize();
+        if (!locations.remove(reference, expected)) {
+            throw new IllegalStateException("workspace location ownership mismatch");
+        }
+    }
+
     @Override
     public boolean contains(WorkspaceLocationRef reference) {
         return locations.containsKey(reference);

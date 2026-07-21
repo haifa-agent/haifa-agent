@@ -13,5 +13,6 @@
     <packaging>pom</packaging>
     <modules>
         <module>haifa-agent-model-openai-compatible</module>
+        <module>haifa-agent-git</module>
     </modules>
 </project>

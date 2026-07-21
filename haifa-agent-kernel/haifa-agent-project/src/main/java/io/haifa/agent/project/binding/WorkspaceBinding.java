@@ -48,9 +48,6 @@ public record WorkspaceBinding(
             WorkspacePermissionSet permissions,
             String rootFingerprint,
             Instant at) {
-        if (mode == WorkspaceBindingMode.COPY_ON_WRITE || mode == WorkspaceBindingMode.EPHEMERAL_COPY) {
-            throw new UnsupportedOperationException("binding mode is not implemented in phase 1: " + mode);
-        }
         return new WorkspaceBinding(
                 id,
                 locationRef,

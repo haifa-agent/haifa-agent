@@ -20,6 +20,14 @@ public record WorkspaceCapabilitySet(Set<String> values) {
                 Set.of("files.list", "files.stat", "files.read", "files.search", "files.write", "files.delete"));
     }
 
+    public static WorkspaceCapabilitySet executionFiles() {
+        java.util.HashSet<String> capabilities =
+                new java.util.HashSet<>(readWriteFiles().values());
+        capabilities.add("execution.run");
+        capabilities.add("git.read");
+        return new WorkspaceCapabilitySet(capabilities);
+    }
+
     public boolean allows(String capability) {
         return values.contains(Objects.requireNonNull(capability, "capability must not be null"));
     }

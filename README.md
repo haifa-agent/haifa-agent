@@ -18,6 +18,11 @@ haifa-agent-kernel/
   haifa-agent-context/         Context IR、预算、选择与安全 Trace
   haifa-agent-project/         Project、Workspace、逻辑路径与安全文件访问
   haifa-agent-runtime-core/    Runtime、AgentLoop 与本地执行实现
+haifa-agent-execution/
+  haifa-agent-execution-api/   Provider-neutral 命令执行契约
+  haifa-agent-sandbox-api/     Sandbox 与隔离 Workspace SPI
+  haifa-agent-execution-core/  ExecutionBroker、输出与 Manifest 审计
+  haifa-agent-sandbox-host/    受控但非强隔离的本地主机 Provider
 haifa-agent-capabilities/
   haifa-agent-model-api/       Provider-neutral Model 契约
   haifa-agent-model-core/      Model 目录、选择与健康状态
@@ -25,6 +30,7 @@ haifa-agent-capabilities/
   haifa-agent-memory-core/     Memory 审核、冲突、检索与清除实现
 haifa-agent-integrations/
   haifa-agent-model-openai-compatible/  DeepSeek/OpenAI 兼容协议适配
+  haifa-agent-git/                      经 Broker 执行的只读 Git 适配器
 ```
 
 依赖方向固定为：
@@ -44,6 +50,8 @@ common <- core <- runtime-api <- runtime-core -> model-api / memory-api / memory
 `contract` 不依赖 `core`，所有已初始化的 Kernel 模块均保持纯 Java。
 
 Project 模块提供可选的长期 Project、受控 Workspace、跨平台逻辑路径和安全只读文件 Provider。普通对话 Run 不要求 Project 或 Workspace；声明相关能力的 Run 才在 Bootstrap 时解析、授权并冻结有效 Capability。
+
+ExecutionBroker 是本地命令的唯一应用层入口。首个 Host Provider 只提供白名单命令、逻辑工作目录、环境租约、超时、输出和进程树等可诚实执行的限制，不宣称具备网络、CPU、内存或文件系统挂载强隔离。Git inspect/status/diff 也通过 Broker；临时副本和 Git Worktree 子 Workspace 必须拥有收窄权限和独立生命周期。
 
 首个外部模型配置使用 Provider `deepseek`、Model `deepseek-v4-pro` 与 OpenAI 兼容 Chat Completions API。模型选择在 Run 启动时冻结到内容寻址配置快照；普通配置变化不影响已创建 Run。首版显式发送 `thinking.type=disabled`，后续启用思考模式前需先完成推理内容在 Tool Call、Checkpoint 与恢复中的持久语义。
 

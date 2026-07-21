@@ -12,7 +12,10 @@ public interface SensitivePathPolicy {
         Set<String> deniedNames = Set.of(".env", "id_rsa", "id_ed25519", "credentials", "credentials.json");
         return path -> {
             String lower = path.value().toLowerCase(Locale.ROOT);
-            if (lower.equals(".git/config") || lower.startsWith(".ssh/") || lower.startsWith(".haifa-")) {
+            if (lower.equals(".git")
+                    || lower.startsWith(".git/")
+                    || lower.startsWith(".ssh/")
+                    || lower.startsWith(".haifa-")) {
                 return false;
             }
             if (path.segments().stream()

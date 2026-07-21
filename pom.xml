@@ -16,6 +16,7 @@
         <module>build-support</module>
         <module>haifa-agent-contract</module>
         <module>haifa-agent-kernel</module>
+        <module>haifa-agent-execution</module>
         <module>haifa-agent-capabilities</module>
         <module>haifa-agent-integrations</module>
     </modules>
@@ -80,6 +81,31 @@
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-project</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-execution-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-execution-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-sandbox-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-sandbox-host</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-git</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

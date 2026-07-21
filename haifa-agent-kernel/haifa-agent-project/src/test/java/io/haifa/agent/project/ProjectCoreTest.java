@@ -91,17 +91,39 @@ class ProjectCoreTest {
     }
 
     @Test
-    void phaseOneRejectsUnimplementedBindingModesAndReadOnlyCannotGrantWrites() {
+    void phaseThreeAllowsProviderOwnedIsolationModesAndReadOnlyCannotGrantWrites() {
         var location = new WorkspaceLocationRef("local-1");
+        assertThat(WorkspaceBinding.provision(
+                                new WorkspaceBindingId("binding-1"),
+                                location,
+                                WorkspaceBindingMode.COPY_ON_WRITE,
+                                OWNER,
+                                WorkspaceCapabilitySet.readOnlyFiles(),
+                                WorkspacePermissionSet.readOnly(),
+                                "sha256:root",
+                                NOW)
+                        .mode())
+                .isEqualTo(WorkspaceBindingMode.COPY_ON_WRITE);
+        assertThat(WorkspaceBinding.provision(
+                                new WorkspaceBindingId("binding-2"),
+                                location,
+                                WorkspaceBindingMode.EPHEMERAL_COPY,
+                                OWNER,
+                                WorkspaceCapabilitySet.readOnlyFiles(),
+                                WorkspacePermissionSet.readOnly(),
+                                "sha256:root",
+                                NOW)
+                        .mode())
+                .isEqualTo(WorkspaceBindingMode.EPHEMERAL_COPY);
         assertThatThrownBy(() -> WorkspaceBinding.provision(
-                        new WorkspaceBindingId("binding-1"),
+                        new WorkspaceBindingId("binding-3"),
                         location,
-                        WorkspaceBindingMode.COPY_ON_WRITE,
+                        WorkspaceBindingMode.READ_ONLY,
                         OWNER,
-                        WorkspaceCapabilitySet.readOnlyFiles(),
-                        WorkspacePermissionSet.readOnly(),
+                        WorkspaceCapabilitySet.executionFiles(),
+                        WorkspacePermissionSet.readWriteExecute(),
                         "sha256:root",
                         NOW))
-                .isInstanceOf(UnsupportedOperationException.class);
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -27,6 +27,12 @@ public record WorkspacePermissionSet(Set<WorkspacePermission> values) {
                 WorkspacePermission.DELETE));
     }
 
+    public static WorkspacePermissionSet readWriteExecute() {
+        EnumSet<WorkspacePermission> permissions = EnumSet.copyOf(readWrite().values());
+        permissions.add(WorkspacePermission.EXECUTE);
+        return new WorkspacePermissionSet(permissions);
+    }
+
     public boolean allows(WorkspacePermission permission) {
         return values.contains(permission);
     }
