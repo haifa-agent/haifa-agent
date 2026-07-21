@@ -2,7 +2,7 @@
 
 Haifa Agent 是面向 Java / Spring 生态的通用 Agent Runtime 与 Agent 产品开发平台。
 
-当前仓库处于 `0.1.0-SNAPSHOT` 的内核建设阶段，已完成 03 领域模型和 04 Runtime/AgentLoop 的第一阶段实现。
+当前仓库处于 `0.1.0-SNAPSHOT` 的内核建设阶段，已完成 03 领域模型、04 Runtime/AgentLoop，以及首个 DeepSeek 外部模型纵向集成。
 
 ## 当前模块
 
@@ -16,17 +16,26 @@ haifa-agent-kernel/
   haifa-agent-core/            稳定 Agent 领域模型
   haifa-agent-runtime-api/     Runtime 生命周期契约
   haifa-agent-runtime-core/    Runtime、AgentLoop 与本地执行实现
+haifa-agent-capabilities/
+  haifa-agent-model-api/       Provider-neutral Model 契约
+  haifa-agent-model-core/      Model 目录、选择与健康状态
+haifa-agent-integrations/
+  haifa-agent-model-openai-compatible/  DeepSeek/OpenAI 兼容协议适配
 ```
 
 依赖方向固定为：
 
 ```text
-common <- core <- runtime-api <- runtime-core
+common <- core <- runtime-api <- runtime-core -> model-api
+                  model-api <- model-core
+                  model-api <- model-openai-compatible
    ^
    └──── contract
 ```
 
 `contract` 不依赖 `core`，所有已初始化的 Kernel 模块均保持纯 Java。
+
+首个外部模型配置使用 Provider `deepseek`、Model `deepseek-v4-pro` 与 OpenAI 兼容 Chat Completions API。模型选择在 Run 启动时冻结到内容寻址配置快照；普通配置变化不影响已创建 Run。首版显式发送 `thinking.type=disabled`，后续启用思考模式前需先完成推理内容在 Tool Call、Checkpoint 与恢复中的持久语义。
 
 Core 当前提供版本化 `AgentDefinition`、不绑定具体 Agent 的 `AgentSession`、可复现的 `AgentRun` 聚合，以及 Message、Step、ToolCall、Plan/Todo、Checkpoint、Error 和 Domain Event 最小模型。领域 ID 由调用方通过 Common 的可注入 UUIDv7 生成器创建；领域对象不读取系统时间。
 

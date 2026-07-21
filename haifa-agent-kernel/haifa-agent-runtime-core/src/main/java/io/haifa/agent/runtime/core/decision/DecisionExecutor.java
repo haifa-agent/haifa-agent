@@ -3,7 +3,10 @@ package io.haifa.agent.runtime.core.decision;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.checkpoint.CheckpointType;
+import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.content.ToolCallPart;
+import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.error.AgentError;
 import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
@@ -113,6 +116,7 @@ public final class DecisionExecutor {
     }
 
     private AgentLoopDirective executeTools(AgentRun run, ToolCallDecision decision, AgentLoopContext loopContext) {
+        appendToolCalls(run, decision.requests());
         for (ToolRequest request : decision.requests()) {
             AgentStep step = new AgentStep(
                     new AgentStepId(ids.nextValue()),
@@ -128,7 +132,7 @@ public final class DecisionExecutor {
                 var result = tools.execute(run, step.id(), request);
                 step.complete(
                         new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
-                appendMessage(run, MessageRole.TOOL, result.summary(), MessageVisibility.AGENT_VISIBLE);
+                appendToolResult(run, request.idempotencyKey(), result.summary());
                 checkpoints.capture(run, loopContext.iteration(), loopContext.fingerprints(), CheckpointType.AUTOMATIC);
                 if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
                     throw new CancellationObservedException();
@@ -147,11 +151,10 @@ public final class DecisionExecutor {
                                 Map.of("reason", repairable.getClass().getSimpleName()),
                                 time.now())),
                         time.now());
-                appendMessage(
+                appendToolResult(
                         run,
-                        MessageRole.TOOL,
-                        "Tool request rejected; repair the arguments or choose another capability.",
-                        MessageVisibility.AGENT_VISIBLE);
+                        request.idempotencyKey(),
+                        "Tool request rejected; repair the arguments or choose another capability.");
             }
         }
         return AgentLoopDirective.CONTINUE;
@@ -200,6 +203,32 @@ public final class DecisionExecutor {
 
     private void appendMessage(
             AgentRun run, MessageRole role, String text, MessageVisibility visibility, Map<String, Object> metadata) {
+        appendMessage(run, role, List.of(new TextPart(text, "plain")), visibility, metadata);
+    }
+
+    private void appendToolCalls(AgentRun run, List<ToolRequest> requests) {
+        List<ContentPart> parts = requests.stream()
+                .map(request -> (ContentPart) new ToolCallPart(
+                        request.idempotencyKey(), request.toolName(), request.toolVersion(), request.arguments()))
+                .toList();
+        appendMessage(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, Map.of());
+    }
+
+    private void appendToolResult(AgentRun run, String toolCallId, String text) {
+        appendMessage(
+                run,
+                MessageRole.TOOL,
+                List.of(new ToolResultPart(toolCallId, text)),
+                MessageVisibility.AGENT_VISIBLE,
+                Map.of());
+    }
+
+    private void appendMessage(
+            AgentRun run,
+            MessageRole role,
+            List<ContentPart> contents,
+            MessageVisibility visibility,
+            Map<String, Object> metadata) {
         state.appendMessage(new AgentMessage(
                 new AgentMessageId(ids.nextValue()),
                 run.sessionId(),
@@ -209,7 +238,7 @@ public final class DecisionExecutor {
                 MessageStatus.COMPLETED,
                 visibility,
                 state.messages(run.id()).size() + 1L,
-                List.of(new TextPart(text, "plain")),
+                contents,
                 metadata,
                 time.now()));
     }

@@ -12,6 +12,7 @@ import io.haifa.agent.core.step.AgentStepError;
 import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.step.AgentStepResult;
 import io.haifa.agent.core.step.AgentStepType;
+import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
@@ -27,6 +28,7 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
+import io.haifa.agent.runtime.core.model.ModelResponse;
 import io.haifa.agent.runtime.core.model.ModelResponseInterpreter;
 import io.haifa.agent.runtime.core.model.ModelSelector;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
@@ -36,6 +38,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -158,8 +161,9 @@ public final class DefaultAgentLoop implements AgentLoop {
             state.appendStep(modelStep);
             modelStep.start(time.now());
             AgentDecision decision;
+            ModelResponse response;
             try {
-                var response = retries.execute(
+                response = retries.execute(
                         () -> {
                             if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
                                 throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
@@ -183,21 +187,47 @@ public final class DefaultAgentLoop implements AgentLoop {
                 if (run.budget().isExceededBy(run.usage())) {
                     throw new IllegalStateException("run budget exceeded by model usage");
                 }
+                trace.record(new RuntimeTraceEvent(
+                        traceId,
+                        run.id(),
+                        java.util.Optional.of(attempt.attemptId()),
+                        run.sessionId(),
+                        java.util.Optional.of(modelStep.id()),
+                        java.util.Optional.empty(),
+                        attempt.workerId(),
+                        progress.iteration(),
+                        RuntimePhase.AFTER_MODEL_CALL,
+                        "model.invoke",
+                        modelTraceAttributes(run, response),
+                        time.now()));
                 middleware.apply(RuntimePhase.AFTER_MODEL_CALL, middlewareContext);
                 decision = interpreter.interpret(response);
                 validator.validate(run, decision);
             } catch (RuntimeException error) {
+                trace.record(new RuntimeTraceEvent(
+                        traceId,
+                        run.id(),
+                        java.util.Optional.of(attempt.attemptId()),
+                        run.sessionId(),
+                        java.util.Optional.of(modelStep.id()),
+                        java.util.Optional.empty(),
+                        attempt.workerId(),
+                        progress.iteration(),
+                        RuntimePhase.ON_ERROR,
+                        "model.error",
+                        modelErrorAttributes(run, error),
+                        time.now()));
                 failModelStep(modelStep, error);
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContext);
                 throw error;
             }
             String fingerprint = decision.getClass().getSimpleName() + ":" + decision;
             progress.record(fingerprint);
+            Map<String, Object> stepMetadata = new LinkedHashMap<>(modelTraceAttributes(run, response));
+            stepMetadata.put("fingerprint", fingerprint);
             modelStep.complete(
                     new AgentStepResult(
-                            "Model decision: " + decision.getClass().getSimpleName(),
-                            Map.of("fingerprint", fingerprint),
-                            List.of()),
+                            "Model decision: " + decision.getClass().getSimpleName(), stepMetadata, List.of()),
                     time.now());
 
             if (applyControl(run, progress, SafePoint.AFTER_MODEL_CALL, progress.iteration() - 1)) {
@@ -291,6 +321,42 @@ public final class DefaultAgentLoop implements AgentLoop {
                         Map.of("exceptionType", error.getClass().getSimpleName()),
                         time.now())),
                 time.now());
+    }
+
+    private Map<String, Object> modelTraceAttributes(AgentRun run, ModelResponse response) {
+        Map<String, Object> attributes = modelSnapshotAttributes(run);
+        attributes.putAll(response.metadata());
+        attributes.put("inputTokens", response.inputTokens());
+        attributes.put("outputTokens", response.outputTokens());
+        attributes.put("costKnown", response.costKnown());
+        attributes.put("costMinorUnits", response.costMinorUnits());
+        return Map.copyOf(attributes);
+    }
+
+    private Map<String, Object> modelErrorAttributes(AgentRun run, RuntimeException error) {
+        Map<String, Object> attributes = modelSnapshotAttributes(run);
+        attributes.put("exceptionType", error.getClass().getSimpleName());
+        if (error instanceof ModelInvocationException modelError) {
+            attributes.put("category", modelError.category().name());
+            attributes.put("retryable", modelError.retryable());
+            attributes.put("httpStatus", modelError.httpStatus());
+            attributes.put("providerCode", modelError.providerCode());
+            attributes.put("modelCallId", modelError.callId().value());
+        }
+        return Map.copyOf(attributes);
+    }
+
+    private Map<String, Object> modelSnapshotAttributes(AgentRun run) {
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        state.configuration(run.configurationSnapshot()).ifPresent(configuration -> {
+            var model = configuration.model();
+            attributes.put("providerId", model.providerId().value());
+            attributes.put("modelId", model.modelId().value());
+            attributes.put("adapterType", model.adapterType());
+            attributes.put("adapterVersion", model.adapterVersion());
+            attributes.put("modelConfigDigest", model.configurationDigest());
+        });
+        return attributes;
     }
 
     private String progressSignature(AgentRun run) {
