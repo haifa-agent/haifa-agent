@@ -6,6 +6,7 @@ import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import java.util.Objects;
 import java.util.Set;
@@ -23,7 +24,37 @@ public record RuntimeConfigurationSnapshot(
         Set<String> allowedTools,
         Set<AgentDefinitionId> allowedChildAgents,
         String agentInstruction,
-        RuntimeOverrides overrides) {
+        RuntimeOverrides overrides,
+        ResolvedModelSnapshot model) {
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            Set<String> allowedTools,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                allowedTools,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                DefaultResolvedModelSnapshots.deepSeekV4Pro());
+    }
+
     public RuntimeConfigurationSnapshot {
         reference = Objects.requireNonNull(reference, "reference must not be null");
         definitionId = Objects.requireNonNull(definitionId, "definitionId must not be null");
@@ -38,6 +69,7 @@ public record RuntimeConfigurationSnapshot(
                 Set.copyOf(Objects.requireNonNull(allowedChildAgents, "allowedChildAgents must not be null"));
         agentInstruction = requireText(agentInstruction, "agentInstruction");
         overrides = Objects.requireNonNull(overrides, "overrides must not be null");
+        model = Objects.requireNonNull(model, "model must not be null");
     }
 
     private static String requireText(String value, String field) {

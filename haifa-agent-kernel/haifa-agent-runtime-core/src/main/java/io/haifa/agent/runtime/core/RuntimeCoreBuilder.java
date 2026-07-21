@@ -12,6 +12,8 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
@@ -66,6 +68,8 @@ import io.haifa.agent.runtime.core.middleware.ToolDisclosureMiddleware;
 import io.haifa.agent.runtime.core.middleware.TraceMiddleware;
 import io.haifa.agent.runtime.core.model.ModelClient;
 import io.haifa.agent.runtime.core.model.ModelResponseInterpreter;
+import io.haifa.agent.runtime.core.model.ModelSelector;
+import io.haifa.agent.runtime.core.model.SnapshotModelSelector;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
@@ -98,6 +102,7 @@ import java.util.Set;
 /** Convenience assembly for a local, dependency-free Runtime. */
 public final class RuntimeCoreBuilder {
     private ModelClient modelClient;
+    private ModelSelector modelSelector;
     private ModelResponseInterpreter responseInterpreter = response -> response.decision();
     private IdentifierGenerator ids = new UuidV7IdentifierGenerator();
     private TimeProvider time = new SystemTimeProvider();
@@ -120,6 +125,8 @@ public final class RuntimeCoreBuilder {
             List.of(),
             List.of("delegation adapter unavailable"));
     private final Map<String, ToolDefinition> tools = new LinkedHashMap<>();
+    private final Map<String, AgentChatModel> chatModels = new LinkedHashMap<>();
+    private final Map<String, ModelToolSpecification> modelToolSpecifications = new LinkedHashMap<>();
     private ToolExecutor toolExecutor = (run, definition, request) -> {
         throw new IllegalStateException("no tool executor configured for " + definition.name());
     };
@@ -140,7 +147,30 @@ public final class RuntimeCoreBuilder {
     private ExecutionOwnershipPort ownership = ExecutionOwnershipPort.local();
 
     public RuntimeCoreBuilder modelClient(ModelClient value) {
-        modelClient = value;
+        modelClient = Objects.requireNonNull(value);
+        return this;
+    }
+
+    public RuntimeCoreBuilder modelSelector(ModelSelector value) {
+        modelSelector = Objects.requireNonNull(value);
+        return this;
+    }
+
+    public RuntimeCoreBuilder registerChatModel(String adapterType, AgentChatModel value) {
+        String normalized = Objects.requireNonNull(adapterType, "adapterType must not be null")
+                .trim();
+        if (normalized.isEmpty()) throw new IllegalArgumentException("adapterType must not be blank");
+        if (chatModels.putIfAbsent(normalized, Objects.requireNonNull(value, "value must not be null")) != null) {
+            throw new IllegalArgumentException("duplicate model adapter: " + normalized);
+        }
+        return this;
+    }
+
+    public RuntimeCoreBuilder registerModelTool(ModelToolSpecification specification) {
+        Objects.requireNonNull(specification, "specification must not be null");
+        if (modelToolSpecifications.putIfAbsent(specification.name(), specification) != null) {
+            throw new IllegalArgumentException("duplicate model tool specification: " + specification.name());
+        }
         return this;
     }
 
@@ -286,7 +316,23 @@ public final class RuntimeCoreBuilder {
     }
 
     public DefaultAgentRuntime build() {
-        Objects.requireNonNull(modelClient, "modelClient must be configured");
+        int modelModes =
+                (modelClient == null ? 0 : 1) + (modelSelector == null ? 0 : 1) + (chatModels.isEmpty() ? 0 : 1);
+        if (modelModes == 0)
+            throw new NullPointerException("a model client, selector, or chat adapter must be configured");
+        if (modelModes > 1) throw new IllegalStateException("configure exactly one model integration mode");
+        modelToolSpecifications.forEach((name, specification) -> {
+            boolean matchingTool = tools.values().stream()
+                    .anyMatch(tool -> tool.name().equals(name) && tool.version().equals(specification.version()));
+            if (!matchingTool) {
+                throw new IllegalStateException("model tool specification has no matching registered tool: " + name);
+            }
+        });
+        ModelSelector effectiveModels = modelSelector != null
+                ? modelSelector
+                : modelClient != null
+                        ? run -> modelClient
+                        : new SnapshotModelSelector(store, chatModels, modelToolSpecifications, ids);
         Set<String> toolNames =
                 tools.values().stream().map(ToolDefinition::name).collect(java.util.stream.Collectors.toSet());
         DefinitionResolver definitionResolver = definitions != null
@@ -381,7 +427,7 @@ public final class RuntimeCoreBuilder {
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
                 new DefaultContextBuilder(store, middleware),
-                run -> modelClient,
+                effectiveModels,
                 responseInterpreter,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(store), new ChildRunGuard(store)),
                 decisionExecutor,

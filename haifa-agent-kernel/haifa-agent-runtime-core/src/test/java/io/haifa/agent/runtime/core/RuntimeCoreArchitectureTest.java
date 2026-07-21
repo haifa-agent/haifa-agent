@@ -18,6 +18,7 @@ class RuntimeCoreArchitectureTest {
                         "jakarta.persistence..",
                         "io.haifa.agent.product..",
                         "io.haifa.agent.integration..",
+                        "io.haifa.agent.model.openai..",
                         "com.openai..",
                         "dev.langchain4j..",
                         "org.testcontainers..",

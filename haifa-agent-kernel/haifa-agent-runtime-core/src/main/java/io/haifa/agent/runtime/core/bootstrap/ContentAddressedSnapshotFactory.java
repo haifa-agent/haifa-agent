@@ -26,6 +26,9 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                 + profile.limits() + "|" + request.overrides().schemaId() + "|"
                 + request.overrides().schemaVersion() + "|"
                 + new java.util.TreeMap<>(request.overrides().values())
+                + "|" + profile.model().providerId() + "|" + profile.model().modelId() + "|"
+                + profile.model().providerModelId() + "|" + profile.model().adapterType() + "|"
+                + profile.model().adapterVersion() + "|" + profile.model().configurationDigest()
                 + "|" + caller.tenant().tenantId() + "|" + caller.principal();
         try {
             String hash = HexFormat.of()
@@ -43,7 +46,8 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                     definition.allowedTools(),
                     definition.allowedChildAgents(),
                     definition.instruction(),
-                    request.overrides());
+                    request.overrides(),
+                    profile.model());
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required by the Java runtime", exception);
         }
