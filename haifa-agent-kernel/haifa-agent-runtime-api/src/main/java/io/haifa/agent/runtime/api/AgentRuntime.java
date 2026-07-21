@@ -9,9 +9,13 @@ public interface AgentRuntime {
 
     AgentRunSnapshot resume(ResumeAgentRunRequest request);
 
-    RuntimeCommandResult execute(RuntimeCommand command);
+    AgentRunSnapshot respond(InteractionResponse response);
 
-    Optional<AgentRunSnapshot> find(AgentRunQuery query);
+    RuntimeCommandResult command(RuntimeCommand command);
+
+    Optional<AgentRunSnapshot> find(io.haifa.agent.core.run.AgentRunId runId);
+
+    AgentRunHandle handle(io.haifa.agent.core.run.AgentRunId runId);
 
     void addListener(AgentRunListener listener);
 }

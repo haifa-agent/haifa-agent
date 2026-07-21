@@ -1,0 +1,14 @@
+package io.haifa.agent.runtime.core.middleware;
+
+public enum RuntimePhase {
+    BEFORE_RUN,
+    BEFORE_CONTEXT_BUILD,
+    AFTER_CONTEXT_BUILD,
+    BEFORE_MODEL_CALL,
+    AFTER_MODEL_CALL,
+    BEFORE_DECISION_EXECUTION,
+    AFTER_DECISION_EXECUTION,
+    BEFORE_COMPLETION,
+    AFTER_COMPLETION,
+    ON_ERROR
+}

@@ -17,5 +17,6 @@
         <module>haifa-agent-common</module>
         <module>haifa-agent-core</module>
         <module>haifa-agent-runtime-api</module>
+        <module>haifa-agent-runtime-core</module>
     </modules>
 </project>

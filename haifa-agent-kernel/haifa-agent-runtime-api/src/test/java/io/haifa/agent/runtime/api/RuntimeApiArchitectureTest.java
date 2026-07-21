@@ -15,8 +15,10 @@ class RuntimeApiArchitectureTest {
                     "org.springframework..",
                     "org.springframework.ai..",
                     "com.alibaba.cloud.ai..",
+                    "jakarta.persistence..",
                     "io.haifa.agent.product..",
-                    "io.haifa.agent.integration..");
+                    "io.haifa.agent.integration..",
+                    "io.haifa.agent.runtime.core..");
 
     @Test
     void runtimeApiIsFrameworkAndProductIndependent() {
