@@ -68,6 +68,8 @@ public final class CheckpointSnapshotBuilder {
         var pendingInteraction = interactions
                 .pending(run.id())
                 .map(value -> new InteractionRequestRef(value.id().value(), value.type()));
+        var memorySelection = state.memorySelection(run.id())
+                .orElse(io.haifa.agent.runtime.core.storage.RuntimeMemorySelection.EMPTY);
         RuntimeCheckpointState checkpointState = new RuntimeCheckpointState(
                 run.id(),
                 run.sessionId(),
@@ -86,6 +88,9 @@ public final class CheckpointSnapshotBuilder {
                 pendingInteraction,
                 forcedContextRebuildAttempts,
                 assets,
+                memorySelection.memories(),
+                memorySelection.retrievalPolicyVersion(),
+                memorySelection.queryDigest(),
                 time.now());
         String hash = hash(run.id().value()
                 + "|"
@@ -99,7 +104,13 @@ public final class CheckpointSnapshotBuilder {
                 + "|"
                 + checkpointState.toolCalls()
                 + "|"
-                + checkpointState.forcedContextRebuildAttempts());
+                + checkpointState.forcedContextRebuildAttempts()
+                + "|"
+                + checkpointState.selectedMemories()
+                + "|"
+                + checkpointState.memoryRetrievalPolicyVersion()
+                + "|"
+                + checkpointState.memoryQueryDigest());
         Checkpoint checkpoint = new Checkpoint(
                 new CheckpointId(id),
                 run.id(),
@@ -107,7 +118,7 @@ public final class CheckpointSnapshotBuilder {
                 type,
                 CheckpointStatus.VERIFIED,
                 sequence,
-                new CheckpointPayloadRef("runtime-store", "checkpoint/" + id, "runtime-loop-state", "2.0"),
+                new CheckpointPayloadRef("runtime-store", "checkpoint/" + id, "runtime-loop-state", "3.0"),
                 "sha256:" + hash,
                 time.now());
         return new Snapshot(checkpoint, checkpointState);

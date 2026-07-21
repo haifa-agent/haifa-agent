@@ -30,16 +30,19 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
     private final AgentRuntimeMiddlewareChain middleware;
     private final AgentContextBuilder contexts;
     private final SessionMessageSource sessionMessages;
+    private final MemoryContextSource memorySource;
 
     public DefaultRuntimeContextBuilder(
             RuntimeStateRepository state,
             AgentRuntimeMiddlewareChain middleware,
             AgentContextBuilder contexts,
-            SessionMessageSource sessionMessages) {
+            SessionMessageSource sessionMessages,
+            MemoryContextSource memorySource) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.middleware = Objects.requireNonNull(middleware, "middleware must not be null");
         this.contexts = Objects.requireNonNull(contexts, "contexts must not be null");
         this.sessionMessages = Objects.requireNonNull(sessionMessages, "sessionMessages must not be null");
+        this.memorySource = Objects.requireNonNull(memorySource, "memorySource must not be null");
     }
 
     @Override
@@ -67,6 +70,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 .flatMap(group -> group.messages().stream())
                 .forEach(this::validateContents);
         items.addAll(selection.items());
+        items.addAll(memorySource.select(run, model));
         int divisor = loopContext.forcedContextRebuildAttempts() > 0 ? 10 : 20;
         int safetyMargin =
                 Math.min(16_384, Math.max(256, model.configuration().model().contextWindow() / divisor));

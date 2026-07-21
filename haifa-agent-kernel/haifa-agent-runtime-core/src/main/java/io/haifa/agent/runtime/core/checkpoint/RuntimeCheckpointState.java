@@ -32,6 +32,9 @@ public record RuntimeCheckpointState(
         Optional<InteractionRequestRef> pendingInteraction,
         int forcedContextRebuildAttempts,
         List<AssetRef> derivedContentReferences,
+        List<MemoryCheckpointRef> selectedMemories,
+        String memoryRetrievalPolicyVersion,
+        String memoryQueryDigest,
         Instant capturedAt) {
     public RuntimeCheckpointState {
         runId = Objects.requireNonNull(runId, "runId must not be null");
@@ -55,6 +58,9 @@ public record RuntimeCheckpointState(
         }
         derivedContentReferences = List.copyOf(
                 Objects.requireNonNull(derivedContentReferences, "derivedContentReferences must not be null"));
+        selectedMemories = List.copyOf(Objects.requireNonNull(selectedMemories, "selectedMemories must not be null"));
+        memoryRetrievalPolicyVersion = requireText(memoryRetrievalPolicyVersion, "memoryRetrievalPolicyVersion");
+        memoryQueryDigest = requireText(memoryQueryDigest, "memoryQueryDigest");
         capturedAt = Objects.requireNonNull(capturedAt, "capturedAt must not be null");
     }
 

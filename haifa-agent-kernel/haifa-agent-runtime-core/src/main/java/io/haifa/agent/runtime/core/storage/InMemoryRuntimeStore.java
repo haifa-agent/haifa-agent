@@ -32,6 +32,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -74,7 +75,9 @@ public final class InMemoryRuntimeStore
     private final Map<io.haifa.agent.core.session.AgentSessionId, List<ConversationSummary>> summaries =
             new HashMap<>();
     private final Map<String, ToolResult> toolResultAssets = new HashMap<>();
+    private final Map<AgentRunId, RuntimeMemorySelection> memorySelections = new HashMap<>();
     private boolean failNextToolResultAssetWrite;
+    private final List<MessageRedactionListener> messageRedactionListeners = new ArrayList<>();
 
     @Override
     public synchronized void insert(AgentRun run) {
@@ -341,6 +344,7 @@ public final class InMemoryRuntimeStore
                 current.createdAt());
         replaceMessage(current, redacted);
         invalidateContaining(current.sessionId(), id);
+        messageRedactionListeners.forEach(listener -> listener.onRedacted(current));
         return redacted;
     }
 
@@ -496,6 +500,20 @@ public final class InMemoryRuntimeStore
 
     public synchronized void failNextToolResultAssetWrite() {
         failNextToolResultAssetWrite = true;
+    }
+
+    public synchronized void addMessageRedactionListener(MessageRedactionListener listener) {
+        messageRedactionListeners.add(Objects.requireNonNull(listener));
+    }
+
+    @Override
+    public synchronized void saveMemorySelection(AgentRunId runId, RuntimeMemorySelection selection) {
+        memorySelections.put(runId, selection);
+    }
+
+    @Override
+    public synchronized Optional<RuntimeMemorySelection> memorySelection(AgentRunId runId) {
+        return Optional.ofNullable(memorySelections.get(runId));
     }
 
     @Override

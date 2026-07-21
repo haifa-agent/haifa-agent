@@ -18,6 +18,7 @@ public final class CheckpointManager {
     private final ResumeCheckpointSelector selections;
     private final RuntimeStateRepository state;
     private final ConversationSummaryRepository summaries;
+    private final MemoryCheckpointValidator memoryValidator;
 
     public CheckpointManager(
             CheckpointRepository repository,
@@ -25,13 +26,15 @@ public final class CheckpointManager {
             CheckpointSnapshotBuilder snapshotBuilder,
             ResumeCheckpointSelector selections,
             RuntimeStateRepository state,
-            ConversationSummaryRepository summaries) {
+            ConversationSummaryRepository summaries,
+            MemoryCheckpointValidator memoryValidator) {
         this.repository = Objects.requireNonNull(repository);
         this.policy = Objects.requireNonNull(policy);
         this.snapshotBuilder = Objects.requireNonNull(snapshotBuilder);
         this.selections = Objects.requireNonNull(selections);
         this.state = Objects.requireNonNull(state);
         this.summaries = Objects.requireNonNull(summaries);
+        this.memoryValidator = Objects.requireNonNull(memoryValidator);
     }
 
     public Optional<Checkpoint> capture(
@@ -114,5 +117,6 @@ public final class CheckpointManager {
                     CheckpointRestoreFailure.TOOL_STATE_INVALID,
                     "checkpoint tool state does not match authoritative tool calls");
         }
+        memoryValidator.validate(run, checkpoint);
     }
 }

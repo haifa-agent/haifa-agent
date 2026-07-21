@@ -17,6 +17,15 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.memory.api.MemoryActor;
+import io.haifa.agent.memory.api.MemoryAuditSink;
+import io.haifa.agent.memory.api.MemoryRetriever;
+import io.haifa.agent.memory.api.MemoryService;
+import io.haifa.agent.memory.api.MemorySourceRef;
+import io.haifa.agent.memory.api.MemorySourceType;
+import io.haifa.agent.memory.core.DefaultMemoryPolicy;
+import io.haifa.agent.memory.core.DefaultMemoryRetriever;
+import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
@@ -32,6 +41,7 @@ import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointPolicy;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointSnapshotBuilder;
+import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCheckpointSelector;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
@@ -63,6 +73,7 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.loop.DefaultAgentLoop;
 import io.haifa.agent.runtime.core.loop.DefaultRuntimeContextBuilder;
+import io.haifa.agent.runtime.core.loop.MemoryContextSource;
 import io.haifa.agent.runtime.core.loop.RuntimeStateReconciler;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddleware;
@@ -147,6 +158,9 @@ public final class RuntimeCoreBuilder {
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
     private String workerId = "local-runtime";
     private ExecutionOwnershipPort ownership = ExecutionOwnershipPort.local();
+    private MemoryRetriever memoryRetriever;
+    private MemoryAuditSink memoryAudit;
+    private MemoryService memoryService;
 
     public RuntimeCoreBuilder registerChatModel(String adapterType, String adapterVersion, AgentChatModel value) {
         ModelAdapterKey key = new ModelAdapterKey(adapterType, adapterVersion);
@@ -301,6 +315,17 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    public RuntimeCoreBuilder memory(MemoryRetriever retriever, MemoryAuditSink audit) {
+        memoryRetriever = Objects.requireNonNull(retriever);
+        memoryAudit = Objects.requireNonNull(audit);
+        return this;
+    }
+
+    public RuntimeCoreBuilder memory(MemoryService service, MemoryRetriever retriever, MemoryAuditSink audit) {
+        memoryService = Objects.requireNonNull(service);
+        return memory(retriever, audit);
+    }
+
     public DefaultAgentRuntime build() {
         if (chatModels.isEmpty()) throw new NullPointerException("a versioned Model API adapter must be configured");
         modelToolSpecifications.forEach((name, specification) -> {
@@ -320,6 +345,21 @@ public final class RuntimeCoreBuilder {
             }
         });
         FrozenModelInvoker models = new FrozenModelInvoker(store, chatModels, modelToolSpecifications, ids);
+        InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
+        var defaultMemoryPolicy = new DefaultMemoryPolicy();
+        MemoryRetriever configuredMemoryRetriever = memoryRetriever != null
+                ? memoryRetriever
+                : new DefaultMemoryRetriever(defaultMemoryStore, defaultMemoryPolicy);
+        MemoryAuditSink configuredMemoryAudit = memoryAudit != null ? memoryAudit : defaultMemoryStore;
+        if (memoryService != null) {
+            store.addMessageRedactionListener(message -> message.runId()
+                    .flatMap(store::find)
+                    .ifPresent(run -> memoryService.invalidateSource(
+                            new MemorySourceRef(
+                                    MemorySourceType.MESSAGE, message.id().value(), java.util.Optional.empty()),
+                            "source message redacted",
+                            new MemoryActor(run.tenant(), run.principal(), Set.of("memory:review")))));
+        }
         Set<String> toolNames =
                 tools.values().stream().map(ToolDefinition::name).collect(java.util.stream.Collectors.toSet());
         DefinitionResolver definitionResolver = definitions != null
@@ -398,7 +438,8 @@ public final class RuntimeCoreBuilder {
                 new CheckpointSnapshotBuilder(ids, time, store, store, interactions),
                 checkpointSelections,
                 store,
-                store);
+                store,
+                new MemoryCheckpointValidator(configuredMemoryRetriever, configuredMemoryAudit, time));
         DecisionExecutor decisionExecutor = new DecisionExecutor(
                 pipeline,
                 completion,
@@ -424,7 +465,8 @@ public final class RuntimeCoreBuilder {
                         middleware,
                         new DefaultAgentContextBuilder(
                                 new HeuristicTokenEstimator(), new ContextSelectionPolicy(), List.of()),
-                        new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time)),
+                        new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time),
+                        new MemoryContextSource(configuredMemoryRetriever, store, time)),
                 models,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(store), new ChildRunGuard(store)),
                 decisionExecutor,

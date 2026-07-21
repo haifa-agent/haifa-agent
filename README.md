@@ -20,6 +20,8 @@ haifa-agent-kernel/
 haifa-agent-capabilities/
   haifa-agent-model-api/       Provider-neutral Model 契约
   haifa-agent-model-core/      Model 目录、选择与健康状态
+  haifa-agent-memory-api/      长期 Memory 领域契约与治理端口
+  haifa-agent-memory-core/     Memory 审核、冲突、检索与清除实现
 haifa-agent-integrations/
   haifa-agent-model-openai-compatible/  DeepSeek/OpenAI 兼容协议适配
 ```
@@ -27,10 +29,11 @@ haifa-agent-integrations/
 依赖方向固定为：
 
 ```text
-common <- core <- runtime-api <- runtime-core -> model-api
-            \        context --------^       ^
-             \----------> model-api ---------|
+common <- core <- runtime-api <- runtime-core -> model-api / memory-api / memory-core
+            \        context --------^
+             \----------> model-api
                   model-api <- model-core
+                 memory-api <- memory-core
                   model-api <- model-openai-compatible
    ^
    └──── contract

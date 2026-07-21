@@ -14,5 +14,7 @@
     <modules>
         <module>haifa-agent-model-api</module>
         <module>haifa-agent-model-core</module>
+        <module>haifa-agent-memory-api</module>
+        <module>haifa-agent-memory-core</module>
     </modules>
 </project>

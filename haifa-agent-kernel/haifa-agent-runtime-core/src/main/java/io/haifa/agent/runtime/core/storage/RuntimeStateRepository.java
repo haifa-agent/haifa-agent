@@ -10,7 +10,7 @@ import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import java.util.List;
 import java.util.Optional;
 
-public interface RuntimeStateRepository extends SessionMessageRepository {
+public interface RuntimeStateRepository extends SessionMessageRepository, RuntimeMemorySelectionRepository {
 
     void appendStep(AgentStep step);
 

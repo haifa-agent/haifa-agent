@@ -35,6 +35,14 @@
             <artifactId>haifa-agent-context</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-memory-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-memory-core</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
             <scope>test</scope>
