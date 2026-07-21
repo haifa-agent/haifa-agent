@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>me.wrj</groupId>
+        <groupId>io.haifa</groupId>
         <artifactId>haifa-agent-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
@@ -15,7 +15,7 @@
 
     <dependencies>
         <dependency>
-            <groupId>me.wrj</groupId>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-common</artifactId>
         </dependency>
         <dependency>
@@ -50,8 +50,8 @@
                             <rules>
                                 <bannedDependencies>
                                     <excludes>
-                                        <exclude>me.wrj:haifa-agent-core</exclude>
-                                        <exclude>me.wrj:haifa-agent-runtime-*</exclude>
+                                        <exclude>io.haifa:haifa-agent-core</exclude>
+                                        <exclude>io.haifa:haifa-agent-runtime-*</exclude>
                                         <exclude>org.springframework:*</exclude>
                                         <exclude>org.springframework.boot:*</exclude>
                                     </excludes>

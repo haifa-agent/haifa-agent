@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>me.wrj</groupId>
+    <groupId>io.haifa</groupId>
     <artifactId>haifa-agent-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>pom</packaging>
@@ -51,22 +51,22 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>me.wrj</groupId>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-common</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>me.wrj</groupId>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>me.wrj</groupId>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-runtime-api</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>me.wrj</groupId>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-contract</artifactId>
                 <version>${project.version}</version>
             </dependency>

@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>me.wrj</groupId>
+        <groupId>io.haifa</groupId>
         <artifactId>haifa-agent-parent</artifactId>
         <version>0.1.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
@@ -15,7 +15,7 @@
 
     <dependencies>
         <dependency>
-            <groupId>me.wrj</groupId>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-core</artifactId>
         </dependency>
         <dependency>
@@ -54,7 +54,7 @@
                                         <exclude>org.springframework.boot:*</exclude>
                                         <exclude>org.springframework.ai:*</exclude>
                                         <exclude>com.alibaba.cloud.ai:*</exclude>
-                                        <exclude>me.wrj:haifa-agent-product-*</exclude>
+                                        <exclude>io.haifa:haifa-agent-product-*</exclude>
                                     </excludes>
                                 </bannedDependencies>
                             </rules>
