@@ -20,6 +20,7 @@ public final class ResumeCoordinator {
     private final RunTransitionCoordinator transitions;
     private final RuntimeStateRepository state;
     private final RunAccessValidator access;
+    private final CheckpointManager checkpointManager;
 
     public ResumeCoordinator(
             InteractionPort interactions,
@@ -27,13 +28,15 @@ public final class ResumeCoordinator {
             ResumeCheckpointSelector selections,
             RunTransitionCoordinator transitions,
             RuntimeStateRepository state,
-            RunAccessValidator access) {
+            RunAccessValidator access,
+            CheckpointManager checkpointManager) {
         this.interactions = Objects.requireNonNull(interactions);
         this.checkpoints = Objects.requireNonNull(checkpoints);
         this.selections = Objects.requireNonNull(selections);
         this.transitions = Objects.requireNonNull(transitions);
         this.state = Objects.requireNonNull(state);
         this.access = Objects.requireNonNull(access);
+        this.checkpointManager = Objects.requireNonNull(checkpointManager);
     }
 
     public Optional<CheckpointId> prepare(AgentRun run, ResumeAgentRunRequest request, RuntimeCallerContext caller) {
@@ -66,6 +69,8 @@ public final class ResumeCoordinator {
             if (!belongsToRun || checkpoints.state(checkpointId.value()).isEmpty()) {
                 throw new IllegalArgumentException("selected checkpoint is not a valid checkpoint of the run");
             }
+            checkpointManager.validateState(
+                    run, checkpoints.state(checkpointId.value()).orElseThrow());
         });
     }
 

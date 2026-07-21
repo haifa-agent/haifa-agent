@@ -27,7 +27,10 @@ public record ContextBuildRequest(
         List<ContextItem> items,
         List<ModelToolSpecification> tools,
         int requestedOutputTokens,
-        int safetyMarginTokens) {
+        int safetyMarginTokens,
+        String compressionPolicyVersion,
+        String compressorVersion,
+        int forcedRebuildAttempt) {
     public ContextBuildRequest {
         runId = Objects.requireNonNull(runId, "runId must not be null");
         sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
@@ -42,5 +45,17 @@ public record ContextBuildRequest(
         tools = List.copyOf(Objects.requireNonNull(tools, "tools must not be null"));
         if (requestedOutputTokens < 1) throw new IllegalArgumentException("requestedOutputTokens must be positive");
         if (safetyMarginTokens < 0) throw new IllegalArgumentException("safetyMarginTokens must not be negative");
+        compressionPolicyVersion = requireText(compressionPolicyVersion, "compressionPolicyVersion");
+        compressorVersion = requireText(compressorVersion, "compressorVersion");
+        if (forcedRebuildAttempt < 0 || forcedRebuildAttempt > 1) {
+            throw new IllegalArgumentException("forcedRebuildAttempt must be zero or one");
+        }
+    }
+
+    private static String requireText(String value, String field) {
+        String normalized =
+                Objects.requireNonNull(value, field + " must not be null").trim();
+        if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
+        return normalized;
     }
 }

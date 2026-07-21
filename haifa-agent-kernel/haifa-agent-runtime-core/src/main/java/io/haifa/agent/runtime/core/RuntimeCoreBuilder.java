@@ -5,6 +5,8 @@ import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
+import io.haifa.agent.context.compression.CompressionPolicy;
+import io.haifa.agent.context.compression.DeterministicContextCompressor;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
 import io.haifa.agent.context.selection.ContextSelectionPolicy;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
@@ -62,6 +64,7 @@ import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.loop.DefaultAgentLoop;
 import io.haifa.agent.runtime.core.loop.DefaultRuntimeContextBuilder;
 import io.haifa.agent.runtime.core.loop.RuntimeStateReconciler;
+import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddleware;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
 import io.haifa.agent.runtime.core.middleware.RunMetadataMiddleware;
@@ -83,6 +86,7 @@ import io.haifa.agent.runtime.core.tool.ApprovalGateway;
 import io.haifa.agent.runtime.core.tool.BoundedToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.CapabilityAuthorizer;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
+import io.haifa.agent.runtime.core.tool.LargeToolResultPolicy;
 import io.haifa.agent.runtime.core.tool.ToolDefinition;
 import io.haifa.agent.runtime.core.tool.ToolExecutionEnvironment;
 import io.haifa.agent.runtime.core.tool.ToolExecutor;
@@ -365,7 +369,9 @@ public final class RuntimeCoreBuilder {
                 new RetryExecutor(Sleeper.threadSleep()),
                 toolRetry,
                 trace,
-                transitions);
+                transitions,
+                store,
+                LargeToolResultPolicy.defaults());
         List<AgentRuntimeMiddleware> configuredMiddleware = new ArrayList<>(List.of(
                 new RunMetadataMiddleware(),
                 new SafetyInstructionMiddleware(),
@@ -389,8 +395,10 @@ public final class RuntimeCoreBuilder {
         CheckpointManager checkpoints = new CheckpointManager(
                 store,
                 CheckpointPolicy.everyIteration(),
-                new CheckpointSnapshotBuilder(ids, time),
-                checkpointSelections);
+                new CheckpointSnapshotBuilder(ids, time, store, store, interactions),
+                checkpointSelections,
+                store,
+                store);
         DecisionExecutor decisionExecutor = new DecisionExecutor(
                 pipeline,
                 completion,
@@ -404,8 +412,10 @@ public final class RuntimeCoreBuilder {
                 checkpoints,
                 controls,
                 repairRetry);
-        ResumeCoordinator resumeCoordinator =
-                new ResumeCoordinator(interactions, store, checkpointSelections, transitions, store, access);
+        ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
+                interactions, store, checkpointSelections, transitions, store, access, checkpoints);
+        var compressor = new DeterministicContextCompressor();
+        var compressionPolicy = CompressionPolicy.defaults();
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
@@ -413,7 +423,8 @@ public final class RuntimeCoreBuilder {
                         store,
                         middleware,
                         new DefaultAgentContextBuilder(
-                                new HeuristicTokenEstimator(), new ContextSelectionPolicy(), List.of())),
+                                new HeuristicTokenEstimator(), new ContextSelectionPolicy(), List.of()),
+                        new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time)),
                 models,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(store), new ChildRunGuard(store)),
                 decisionExecutor,

@@ -10,8 +10,7 @@ import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import java.util.List;
 import java.util.Optional;
 
-public interface RuntimeStateRepository {
-    void appendMessage(AgentMessage message);
+public interface RuntimeStateRepository extends SessionMessageRepository {
 
     void appendStep(AgentStep step);
 
@@ -28,6 +27,8 @@ public interface RuntimeStateRepository {
     Optional<AgentPlan> plan(AgentRunId runId);
 
     void saveOutput(AgentRunId runId, String output);
+
+    AgentMessage saveFinalOutputAndMessage(AgentRunId runId, String output, SessionMessageDraft message);
 
     Optional<String> output(AgentRunId runId);
 

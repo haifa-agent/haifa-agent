@@ -12,6 +12,9 @@ public record ContextTrace(
         String modelConfigurationDigest,
         String estimatorVersion,
         String selectionPolicyVersion,
+        String compressionPolicyVersion,
+        String compressorVersion,
+        int forcedRebuildAttempt,
         long promptTokens,
         long toolTokens,
         long selectedItemTokens,
@@ -23,6 +26,11 @@ public record ContextTrace(
         modelConfigurationDigest = Objects.requireNonNull(modelConfigurationDigest);
         estimatorVersion = Objects.requireNonNull(estimatorVersion);
         selectionPolicyVersion = Objects.requireNonNull(selectionPolicyVersion);
+        compressionPolicyVersion = Objects.requireNonNull(compressionPolicyVersion);
+        compressorVersion = Objects.requireNonNull(compressorVersion);
+        if (forcedRebuildAttempt < 0 || forcedRebuildAttempt > 1) {
+            throw new IllegalArgumentException("forcedRebuildAttempt must be zero or one");
+        }
         if (promptTokens < 0 || toolTokens < 0 || selectedItemTokens < 0) {
             throw new IllegalArgumentException("trace token values must not be negative");
         }

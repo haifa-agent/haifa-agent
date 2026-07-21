@@ -12,6 +12,7 @@ import io.haifa.agent.core.step.AgentStepError;
 import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.step.AgentStepResult;
 import io.haifa.agent.core.step.AgentStepType;
+import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
@@ -103,8 +104,8 @@ public final class DefaultAgentLoop implements AgentLoop {
     @Override
     public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt) {
         var restored = checkpoints.restoreLatest(run);
-        AgentLoopContext progress = restored.map(
-                        value -> new AgentLoopContext(value.nextIteration(), value.decisionFingerprints()))
+        AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
+                        value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
                 .orElseGet(() -> new AgentLoopContext(1, List.of()));
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         String traceId = ids.nextValue();
@@ -160,9 +161,19 @@ public final class DefaultAgentLoop implements AgentLoop {
                             "selectedItems", built.context().context().items().size(),
                             "traceItems", built.context().trace().items().size(),
                             "estimatorVersion", built.context().trace().estimatorVersion(),
-                            "selectionPolicyVersion", built.context().trace().selectionPolicyVersion()),
+                            "selectionPolicyVersion", built.context().trace().selectionPolicyVersion(),
+                            "compressionPolicyVersion", built.context().trace().compressionPolicyVersion(),
+                            "compressorVersion", built.context().trace().compressorVersion(),
+                            "forcedRebuildAttempt", built.context().trace().forcedRebuildAttempt(),
+                            "sourceIds",
+                                    built.context().trace().items().stream()
+                                            .map(item -> item.sourceType() + ":" + item.sourceId() + "@"
+                                                    + item.sourceVersion())
+                                            .toList()),
                     time.now()));
-            RuntimeMiddlewareContext middlewareContext = built.middlewareContext();
+            RuntimeContextBuildResult[] builtRef = {built};
+            RuntimeMiddlewareContext[] middlewareContextRef = {built.middlewareContext()};
+            RuntimeMiddlewareContext middlewareContext = middlewareContextRef[0];
             middleware.apply(RuntimePhase.BEFORE_MODEL_CALL, middlewareContext);
             if (applyControl(run, progress, SafePoint.AFTER_CONTEXT_BUILD, progress.iteration() - 1)) {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
@@ -177,6 +188,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     time.now());
             state.appendStep(modelStep);
             modelStep.start(time.now());
+            AgentStep[] modelStepRef = {modelStep};
             AgentDecision decision;
             ModelInvocationResult response;
             try {
@@ -187,11 +199,85 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         "model call budget exhausted");
                             }
                             transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
-                            return models.invoke(
-                                    model,
-                                    run,
-                                    progress.iteration(),
-                                    built.context().context());
+                            try {
+                                return models.invoke(
+                                        model,
+                                        run,
+                                        progress.iteration(),
+                                        builtRef[0].context().context());
+                            } catch (ModelInvocationException contextTooLong) {
+                                if (contextTooLong.category() != ModelErrorCategory.CONTEXT_TOO_LONG
+                                        || progress.forcedContextRebuildAttempts() > 0) {
+                                    throw contextTooLong;
+                                }
+                                trace.record(new RuntimeTraceEvent(
+                                        traceId,
+                                        run.id(),
+                                        java.util.Optional.of(attempt.attemptId()),
+                                        run.sessionId(),
+                                        java.util.Optional.of(modelStepRef[0].id()),
+                                        java.util.Optional.empty(),
+                                        attempt.workerId(),
+                                        progress.iteration(),
+                                        RuntimePhase.ON_ERROR,
+                                        "model.context-too-long",
+                                        modelErrorAttributes(run, contextTooLong),
+                                        time.now()));
+                                failModelStep(modelStepRef[0], contextTooLong);
+                                progress.recordForcedContextRebuild();
+                                checkpoints.capture(
+                                        run,
+                                        Math.max(0, progress.iteration() - 1),
+                                        progress.fingerprints(),
+                                        progress.forcedContextRebuildAttempts(),
+                                        CheckpointType.AUTOMATIC);
+                                builtRef[0] = contextBuilder.build(run, progress, model);
+                                middlewareContextRef[0] = builtRef[0].middlewareContext();
+                                trace.record(new RuntimeTraceEvent(
+                                        traceId,
+                                        run.id(),
+                                        java.util.Optional.of(attempt.attemptId()),
+                                        run.sessionId(),
+                                        java.util.Optional.empty(),
+                                        java.util.Optional.empty(),
+                                        attempt.workerId(),
+                                        progress.iteration(),
+                                        RuntimePhase.AFTER_CONTEXT_BUILD,
+                                        "context.forced-rebuild",
+                                        Map.of(
+                                                "modelConfigDigest",
+                                                builtRef[0].context().trace().modelConfigurationDigest(),
+                                                "forcedRebuildAttempt",
+                                                progress.forcedContextRebuildAttempts(),
+                                                "estimatedInputTokens",
+                                                builtRef[0].context().context().estimatedInputTokens(),
+                                                "compressionPolicyVersion",
+                                                builtRef[0].context().trace().compressionPolicyVersion(),
+                                                "compressorVersion",
+                                                builtRef[0].context().trace().compressorVersion()),
+                                        time.now()));
+                                AgentStep recoveryStep = new AgentStep(
+                                        new AgentStepId(ids.nextValue()),
+                                        run.id(),
+                                        null,
+                                        null,
+                                        AgentStepType.MODEL_CALL,
+                                        state.steps(run.id()).size() + 1,
+                                        time.now());
+                                state.appendStep(recoveryStep);
+                                recoveryStep.start(time.now());
+                                modelStepRef[0] = recoveryStep;
+                                if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+                                    throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
+                                            "model call budget exhausted during context rebuild");
+                                }
+                                transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
+                                return models.invoke(
+                                        model,
+                                        run,
+                                        progress.iteration(),
+                                        builtRef[0].context().context());
+                            }
                         },
                         modelRetryPolicy.policy());
                 transitions.usage(
@@ -213,7 +299,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                         run.id(),
                         java.util.Optional.of(attempt.attemptId()),
                         run.sessionId(),
-                        java.util.Optional.of(modelStep.id()),
+                        java.util.Optional.of(modelStepRef[0].id()),
                         java.util.Optional.empty(),
                         attempt.workerId(),
                         progress.iteration(),
@@ -221,16 +307,20 @@ public final class DefaultAgentLoop implements AgentLoop {
                         "model.invoke",
                         modelTraceAttributes(run, response),
                         time.now()));
-                middleware.apply(RuntimePhase.AFTER_MODEL_CALL, middlewareContext);
+                middleware.apply(RuntimePhase.AFTER_MODEL_CALL, middlewareContextRef[0]);
                 decision = response.decision();
                 validator.validate(run, decision);
             } catch (RuntimeException error) {
+                RuntimeException terminal = isContextTooLong(error) && progress.forcedContextRebuildAttempts() > 0
+                        ? new ContextRebuildExhaustedException(
+                                "model context remained too long after the single forced rebuild")
+                        : error;
                 trace.record(new RuntimeTraceEvent(
                         traceId,
                         run.id(),
                         java.util.Optional.of(attempt.attemptId()),
                         run.sessionId(),
-                        java.util.Optional.of(modelStep.id()),
+                        java.util.Optional.of(modelStepRef[0].id()),
                         java.util.Optional.empty(),
                         attempt.workerId(),
                         progress.iteration(),
@@ -238,15 +328,15 @@ public final class DefaultAgentLoop implements AgentLoop {
                         "model.error",
                         modelErrorAttributes(run, error),
                         time.now()));
-                failModelStep(modelStep, error);
-                middleware.apply(RuntimePhase.ON_ERROR, middlewareContext);
-                throw error;
+                failModelStep(modelStepRef[0], terminal);
+                middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
+                throw terminal;
             }
             String fingerprint = decision.getClass().getSimpleName() + ":" + decision;
             progress.record(fingerprint);
             Map<String, Object> stepMetadata = new LinkedHashMap<>(modelTraceAttributes(run, response));
             stepMetadata.put("fingerprint", fingerprint);
-            modelStep.complete(
+            modelStepRef[0].complete(
                     new AgentStepResult(
                             "Model decision: " + decision.getClass().getSimpleName(), stepMetadata, List.of()),
                     time.now());
@@ -256,20 +346,25 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
 
             if (decision instanceof FinalAnswerDecision) {
-                middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContext);
-                checkpoints.capture(run, progress.iteration(), progress.fingerprints(), CheckpointType.AUTOMATIC);
+                middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
+                checkpoints.capture(
+                        run,
+                        progress.iteration(),
+                        progress.fingerprints(),
+                        progress.forcedContextRebuildAttempts(),
+                        CheckpointType.AUTOMATIC);
             }
-            middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContext);
+            middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContextRef[0]);
             AgentLoopDirective directive;
             try {
                 directive = decisionExecutor.execute(run, decision, progress);
             } catch (RuntimeException error) {
-                middleware.apply(RuntimePhase.ON_ERROR, middlewareContext);
+                middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
                 throw error;
             }
-            middleware.apply(RuntimePhase.AFTER_DECISION_EXECUTION, middlewareContext);
+            middleware.apply(RuntimePhase.AFTER_DECISION_EXECUTION, middlewareContextRef[0]);
             if (decision instanceof FinalAnswerDecision && run.status() == AgentRunStatus.COMPLETED) {
-                middleware.apply(RuntimePhase.AFTER_COMPLETION, middlewareContext);
+                middleware.apply(RuntimePhase.AFTER_COMPLETION, middlewareContextRef[0]);
             }
             events.append(
                     run.id(),
@@ -281,6 +376,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     run,
                     progress.iteration(),
                     progress.fingerprints(),
+                    progress.forcedContextRebuildAttempts(),
                     directive == AgentLoopDirective.WAIT ? CheckpointType.INTERACTION : CheckpointType.AUTOMATIC);
             if (directive != AgentLoopDirective.CONTINUE)
                 return new AgentLoopResult(run.status(), iteration, directive);
@@ -321,7 +417,12 @@ public final class DefaultAgentLoop implements AgentLoop {
                     "run.safe-point",
                     Map.of("safePoint", safePoint.name(), "iteration", progress.iteration()),
                     time.now());
-            checkpoints.capture(run, Math.max(0, completedIteration), progress.fingerprints(), CheckpointType.MANUAL);
+            checkpoints.capture(
+                    run,
+                    Math.max(0, completedIteration),
+                    progress.fingerprints(),
+                    progress.forcedContextRebuildAttempts(),
+                    CheckpointType.MANUAL);
             transitions.suspended(run);
             controls.clear(run.id());
             return true;
@@ -342,6 +443,11 @@ public final class DefaultAgentLoop implements AgentLoop {
                         Map.of("exceptionType", error.getClass().getSimpleName()),
                         time.now())),
                 time.now());
+    }
+
+    private boolean isContextTooLong(RuntimeException error) {
+        return error instanceof ModelInvocationException modelError
+                && modelError.category() == ModelErrorCategory.CONTEXT_TOO_LONG;
     }
 
     private Map<String, Object> modelTraceAttributes(AgentRun run, ModelInvocationResult response) {

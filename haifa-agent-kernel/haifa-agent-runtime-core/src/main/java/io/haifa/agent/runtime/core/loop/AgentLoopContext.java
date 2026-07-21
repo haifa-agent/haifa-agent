@@ -11,11 +11,20 @@ public final class AgentLoopContext {
     private final Set<String> convergenceReasons = new LinkedHashSet<>();
     private final List<String> progressSignatures = new ArrayList<>();
     private int repairAttempts;
+    private int forcedContextRebuildAttempts;
 
     public AgentLoopContext(int iteration, List<String> fingerprints) {
+        this(iteration, fingerprints, 0);
+    }
+
+    public AgentLoopContext(int iteration, List<String> fingerprints, int forcedContextRebuildAttempts) {
         if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
+        if (forcedContextRebuildAttempts < 0 || forcedContextRebuildAttempts > 1) {
+            throw new IllegalArgumentException("forced context rebuild attempts must be zero or one");
+        }
         this.iteration = iteration;
         this.fingerprints = new ArrayList<>(fingerprints);
+        this.forcedContextRebuildAttempts = forcedContextRebuildAttempts;
     }
 
     public int iteration() {
@@ -58,5 +67,16 @@ public final class AgentLoopContext {
 
     public int repairAttempts() {
         return repairAttempts;
+    }
+
+    public int recordForcedContextRebuild() {
+        if (forcedContextRebuildAttempts >= 1) {
+            throw new ContextRebuildExhaustedException("model context remained too long after forced rebuild");
+        }
+        return ++forcedContextRebuildAttempts;
+    }
+
+    public int forcedContextRebuildAttempts() {
+        return forcedContextRebuildAttempts;
     }
 }

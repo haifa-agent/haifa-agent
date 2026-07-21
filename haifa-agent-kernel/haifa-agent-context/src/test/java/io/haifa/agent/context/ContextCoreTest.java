@@ -120,7 +120,10 @@ class ContextCoreTest {
                 List.of(),
                 List.of(),
                 20,
-                10);
+                10,
+                "none-v1",
+                "none-v1",
+                0);
         assertThatThrownBy(() -> builder().build(exhausted))
                 .isInstanceOf(ContextBuildException.class)
                 .extracting(error -> ((ContextBuildException) error).failure())
@@ -145,7 +148,10 @@ class ContextCoreTest {
                 items,
                 List.of(),
                 output,
-                safety);
+                safety,
+                "none-v1",
+                "none-v1",
+                0);
     }
 
     private static PromptComponent prompt() {

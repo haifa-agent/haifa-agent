@@ -4,7 +4,6 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.TextPart;
-import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
@@ -48,6 +47,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -386,7 +386,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         List<ContentPart> contents = new ArrayList<>();
         contents.add(new TextPart(request.objective(), "plain"));
         contents.addAll(request.inputs());
-        state.appendMessage(new AgentMessage(
+        state.appendSessionMessage(new SessionMessageDraft(
                 new AgentMessageId(ids.nextValue()),
                 request.sessionId(),
                 Optional.of(run.id()),
@@ -394,14 +394,13 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 MessageRole.USER,
                 MessageStatus.COMPLETED,
                 MessageVisibility.USER_VISIBLE,
-                1,
                 contents,
                 Map.of(),
                 time.now()));
     }
 
     private void appendResumeMessage(AgentRun run, ContentPart input) {
-        state.appendMessage(new AgentMessage(
+        state.appendSessionMessage(new SessionMessageDraft(
                 new AgentMessageId(ids.nextValue()),
                 run.sessionId(),
                 Optional.of(run.id()),
@@ -409,7 +408,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 MessageRole.USER,
                 MessageStatus.COMPLETED,
                 MessageVisibility.USER_VISIBLE,
-                state.messages(run.id()).size() + 1L,
                 List.of(input),
                 Map.of("resume", true),
                 time.now()));
@@ -419,7 +417,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         List<ContentPart> contents = response.inputs().isEmpty()
                 ? List.of(new TextPart("Interaction response: " + response.type(), "plain"))
                 : response.inputs();
-        state.appendMessage(new AgentMessage(
+        state.appendSessionMessage(new SessionMessageDraft(
                 new AgentMessageId(ids.nextValue()),
                 run.sessionId(),
                 Optional.of(run.id()),
@@ -427,7 +425,6 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 MessageRole.USER,
                 MessageStatus.COMPLETED,
                 MessageVisibility.AGENT_VISIBLE,
-                state.messages(run.id()).size() + 1L,
                 contents,
                 Map.of(
                         "interactionRequestId", response.requestId().value(),

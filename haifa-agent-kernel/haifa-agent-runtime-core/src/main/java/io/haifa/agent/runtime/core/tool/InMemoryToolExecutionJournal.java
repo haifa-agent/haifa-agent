@@ -13,10 +13,16 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
     private final Set<String> intents = new HashSet<>();
     private final Set<String> uncertain = new HashSet<>();
     private final Map<String, ToolResult> completed = new HashMap<>();
+    private final Map<String, ToolResult> pendingResults = new HashMap<>();
 
     @Override
     public synchronized Optional<ToolResult> completed(AgentRunId runId, RuntimeIdempotencyKey key) {
         return Optional.ofNullable(completed.get(id(runId, key)));
+    }
+
+    @Override
+    public synchronized Optional<ToolResult> pendingResult(AgentRunId runId, RuntimeIdempotencyKey key) {
+        return Optional.ofNullable(pendingResults.get(id(runId, key)));
     }
 
     @Override
@@ -30,6 +36,15 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
         String id = id(runId, key);
         completed.put(id, result);
         uncertain.remove(id);
+        pendingResults.remove(id);
+    }
+
+    @Override
+    public synchronized void recordPendingResult(AgentRunId runId, RuntimeIdempotencyKey key, ToolResult result) {
+        ToolResult existing = pendingResults.putIfAbsent(id(runId, key), result);
+        if (existing != null && !existing.equals(result)) {
+            throw new IllegalStateException("pending tool result changed for the same idempotency key");
+        }
     }
 
     @Override

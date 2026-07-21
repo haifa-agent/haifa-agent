@@ -20,6 +20,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -98,6 +99,50 @@ public final class RunTransitionCoordinator {
 
     public AgentRunSnapshot completed(AgentRun run, AgentRunResult result) {
         return mutate(run, "run.completed", value -> value.complete(result, time.now()));
+    }
+
+    /** Commits final assistant message, public output and terminal Run state in one Unit of Work. */
+    public AgentRunSnapshot completedWithOutput(
+            AgentRun run, AgentRunResult result, String output, SessionMessageDraft finalMessage) {
+        synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
+            AgentRunSnapshot snapshot = retries.execute(
+                    () -> unitOfWork.execute(() -> {
+                        long expectedVersion = run.version();
+                        AgentRunStatus previous = run.status();
+                        run.beginCompleting(time.now());
+                        state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                        run.complete(result, time.now());
+                        runs.save(run, expectedVersion);
+                        events.append(
+                                run.id(),
+                                "run.completed",
+                                Map.of(
+                                        "previousStatus",
+                                        previous.name(),
+                                        "status",
+                                        run.status().name(),
+                                        "version",
+                                        run.version()),
+                                time.now());
+                        outbox.append(new OutboxMessage(
+                                ids.nextValue(),
+                                run.id(),
+                                "run.completed",
+                                Map.of("status", run.status().name(), "version", run.version()),
+                                time.now()));
+                        return AgentRunSnapshot.from(run, state.output(run.id()));
+                    }),
+                    persistenceRetry.policy());
+            awaiter.signal(run.id());
+            for (AgentRunListener listener : listeners) {
+                try {
+                    listener.onRunChanged(snapshot);
+                } catch (RuntimeException ignored) {
+                    // Listener delivery is observational and must not change committed state.
+                }
+            }
+            return snapshot;
+        }
     }
 
     public AgentRunSnapshot failed(AgentRun run, AgentError error) {

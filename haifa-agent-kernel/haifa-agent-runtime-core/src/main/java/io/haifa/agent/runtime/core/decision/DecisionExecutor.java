@@ -12,7 +12,6 @@ import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.error.AgentErrorSeverity;
 import io.haifa.agent.core.error.Retryability;
-import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
@@ -40,6 +39,7 @@ import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoopContext;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import java.util.List;
 import java.util.Map;
@@ -110,9 +110,16 @@ public final class DecisionExecutor {
                     MessageVisibility.INTERNAL);
             return AgentLoopDirective.CONTINUE;
         }
-        transitions.beginCompleting(run);
-        state.saveOutput(run.id(), decision.summary());
-        transitions.completed(run, finalizer.finalizeResult(run, decision));
+        transitions.completedWithOutput(
+                run,
+                finalizer.finalizeResult(run, decision),
+                decision.summary(),
+                messageDraft(
+                        run,
+                        MessageRole.ASSISTANT,
+                        List.of(new TextPart(decision.summary(), "plain")),
+                        MessageVisibility.USER_VISIBLE,
+                        Map.of("final", true)));
         return AgentLoopDirective.STOP;
     }
 
@@ -131,7 +138,12 @@ public final class DecisionExecutor {
                 step.complete(
                         new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
                 appendToolResult(run, call, result.summary());
-                checkpoints.capture(run, loopContext.iteration(), loopContext.fingerprints(), CheckpointType.AUTOMATIC);
+                checkpoints.capture(
+                        run,
+                        loopContext.iteration(),
+                        loopContext.fingerprints(),
+                        loopContext.forcedContextRebuildAttempts(),
+                        CheckpointType.AUTOMATIC);
                 if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
                     throw new CancellationObservedException();
                 }
@@ -170,7 +182,12 @@ public final class DecisionExecutor {
                         "artifacts", result.artifacts(),
                         "warnings", result.warnings()));
         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 0, 1, 0, 0));
-        checkpoints.capture(run, loopContext.iteration(), loopContext.fingerprints(), CheckpointType.AUTOMATIC);
+        checkpoints.capture(
+                run,
+                loopContext.iteration(),
+                loopContext.fingerprints(),
+                loopContext.forcedContextRebuildAttempts(),
+                CheckpointType.AUTOMATIC);
         if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
         return AgentLoopDirective.CONTINUE;
     }
@@ -188,7 +205,12 @@ public final class DecisionExecutor {
                 decision.approval(),
                 time.now(),
                 time.now().plus(java.time.Duration.ofHours(1))));
-        checkpoints.capture(run, loopContext.iteration(), loopContext.fingerprints(), CheckpointType.INTERACTION);
+        checkpoints.capture(
+                run,
+                loopContext.iteration(),
+                loopContext.fingerprints(),
+                loopContext.forcedContextRebuildAttempts(),
+                CheckpointType.INTERACTION);
         transitions.waiting(run, new InteractionRequestRef(requestId, decision.interactionType()), decision.approval());
         return AgentLoopDirective.WAIT;
     }
@@ -238,7 +260,16 @@ public final class DecisionExecutor {
             List<ContentPart> contents,
             MessageVisibility visibility,
             Map<String, Object> metadata) {
-        state.appendMessage(new AgentMessage(
+        state.appendSessionMessage(messageDraft(run, role, contents, visibility, metadata));
+    }
+
+    private SessionMessageDraft messageDraft(
+            AgentRun run,
+            MessageRole role,
+            List<ContentPart> contents,
+            MessageVisibility visibility,
+            Map<String, Object> metadata) {
+        return new SessionMessageDraft(
                 new AgentMessageId(ids.nextValue()),
                 run.sessionId(),
                 Optional.of(run.id()),
@@ -246,10 +277,9 @@ public final class DecisionExecutor {
                 role,
                 MessageStatus.COMPLETED,
                 visibility,
-                state.messages(run.id()).size() + 1L,
                 contents,
                 metadata,
-                time.now()));
+                time.now());
     }
 
     private record PreparedTool(ToolRequest request, ToolCall call, AgentStep step) {}

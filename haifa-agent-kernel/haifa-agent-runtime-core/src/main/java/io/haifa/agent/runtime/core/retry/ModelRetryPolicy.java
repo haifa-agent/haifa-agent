@@ -17,6 +17,9 @@ public record ModelRetryPolicy(RetryPolicy policy) {
         return new RetryPolicy(
                 policy.maxAttempts(),
                 error -> !(error instanceof io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException)
+                        && !(error instanceof io.haifa.agent.model.api.ModelInvocationException modelError
+                                && modelError.category()
+                                        == io.haifa.agent.model.api.ModelErrorCategory.CONTEXT_TOO_LONG)
                         && policy.retryable().test(error),
                 policy.backoff());
     }

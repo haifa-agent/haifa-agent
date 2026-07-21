@@ -26,6 +26,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.runtime.core.trace.TracePort;
+import java.util.ArrayList;
 import java.util.Objects;
 
 /** Sequential validate-authorize-policy-approve-execute-persist tool pipeline. */
@@ -48,6 +49,8 @@ public final class ToolPipeline {
     private final ToolRetryPolicy retryPolicy;
     private final TracePort trace;
     private final RunTransitionCoordinator transitions;
+    private final ToolResultAssetStore resultAssets;
+    private final LargeToolResultPolicy largeResultPolicy;
 
     public ToolPipeline(
             ToolRegistry registry,
@@ -67,7 +70,9 @@ public final class ToolPipeline {
             RetryExecutor retries,
             ToolRetryPolicy retryPolicy,
             TracePort trace,
-            RunTransitionCoordinator transitions) {
+            RunTransitionCoordinator transitions,
+            ToolResultAssetStore resultAssets,
+            LargeToolResultPolicy largeResultPolicy) {
         this.registry = Objects.requireNonNull(registry);
         this.schemaValidator = Objects.requireNonNull(schemaValidator);
         this.capabilityAuthorizer = Objects.requireNonNull(capabilityAuthorizer);
@@ -86,6 +91,8 @@ public final class ToolPipeline {
         this.retryPolicy = Objects.requireNonNull(retryPolicy);
         this.trace = Objects.requireNonNull(trace);
         this.transitions = Objects.requireNonNull(transitions);
+        this.resultAssets = Objects.requireNonNull(resultAssets);
+        this.largeResultPolicy = Objects.requireNonNull(largeResultPolicy);
     }
 
     public ToolResult execute(AgentRun run, AgentStepId stepId, ToolRequest request) {
@@ -123,7 +130,10 @@ public final class ToolPipeline {
 
     public ToolResult execute(AgentRun run, ToolCall call, ToolRequest request) {
         if (call.result().isPresent()) return call.result().orElseThrow();
-        return journal.completed(run.id(), request.idempotencyKey()).orElseGet(() -> executeNew(run, call, request));
+        return journal.completed(run.id(), request.idempotencyKey())
+                .or(() -> journal.pendingResult(run.id(), request.idempotencyKey())
+                        .map(result -> persistResult(run, call, request, result)))
+                .orElseGet(() -> executeNew(run, call, request));
     }
 
     private ToolResult executeNew(AgentRun run, ToolCall call, ToolRequest request) {
@@ -171,55 +181,82 @@ public final class ToolPipeline {
                 java.util.Map.of("toolName", definition.name(), "toolVersion", definition.version()),
                 time.now()));
         try (var permit = environment.acquire(run, definition)) {
-            ToolResult result = retries.execute(
+            ToolResult rawResult = retries.execute(
                     () -> {
                         if (run.usage().toolCalls() >= run.budget().maxToolCalls()) {
                             throw new RuntimeLimitExceededException("tool call budget exhausted");
                         }
                         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 1, 0, 0, 0));
-                        return resultNormalizer.normalize(definition, executor.execute(run, definition, request));
+                        return executor.execute(run, definition, request);
                     },
                     retryPolicy.forTool(definition));
-            if (result.successful()) {
-                call.complete(result, time.now());
-            } else {
-                call.fail(
-                        new ToolExecutionError(new AgentError(
-                                new AgentErrorCode("TOOL_BUSINESS_FAILURE"),
-                                AgentErrorCategory.TOOL,
-                                AgentErrorSeverity.WARNING,
-                                Retryability.NOT_RETRYABLE,
-                                result.summary(),
-                                null,
-                                java.util.Map.of("tool", definition.name()),
-                                time.now())),
-                        time.now());
-            }
-            journal.recordCompleted(run.id(), request.idempotencyKey(), result);
-            events.append(
-                    run.id(),
-                    result.successful() ? "tool.completed" : "tool.business-failed",
-                    java.util.Map.of("toolCallId", call.id().value(), "toolName", definition.name()),
-                    time.now());
-            trace.record(new RuntimeTraceEvent(
-                    ids.nextValue(),
-                    run.id(),
-                    java.util.Optional.empty(),
-                    run.sessionId(),
-                    java.util.Optional.of(call.stepId()),
-                    java.util.Optional.of(call.id()),
-                    java.util.Optional.empty(),
-                    0,
-                    RuntimePhase.AFTER_DECISION_EXECUTION,
-                    "tool.persisted",
-                    java.util.Map.of("successful", result.successful(), "truncated", result.truncated()),
-                    time.now()));
-            return result;
+            journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
+            return persistResult(run, call, request, rawResult);
         } catch (CancellationObservedException cancelled) {
             throw cancelled;
         } catch (RuntimeException exception) {
             journal.recordUncertain(run.id(), request.idempotencyKey());
             throw exception;
+        }
+    }
+
+    private ToolResult persistResult(AgentRun run, ToolCall call, ToolRequest request, ToolResult rawResult) {
+        ToolDefinition definition =
+                registry.find(request.toolName(), request.toolVersion()).orElseThrow();
+        ToolResult result = resultNormalizer.normalize(definition, rawResult);
+        if (largeResultPolicy.requiresExternalization(rawResult)) {
+            var reference = putResultAssetWithOnePersistenceRetry(call, rawResult);
+            var assets = new ArrayList<>(result.assets());
+            if (!assets.contains(reference)) assets.add(reference);
+            result = new ToolResult(
+                    result.successful(), result.summary(), result.structuredData(), assets, result.artifacts(), true);
+        }
+        if (result.successful()) {
+            call.complete(result, time.now());
+        } else {
+            call.fail(
+                    new ToolExecutionError(new AgentError(
+                            new AgentErrorCode("TOOL_BUSINESS_FAILURE"),
+                            AgentErrorCategory.TOOL,
+                            AgentErrorSeverity.WARNING,
+                            Retryability.NOT_RETRYABLE,
+                            result.summary(),
+                            null,
+                            java.util.Map.of("tool", definition.name()),
+                            time.now())),
+                    time.now());
+        }
+        journal.recordCompleted(run.id(), request.idempotencyKey(), result);
+        events.append(
+                run.id(),
+                result.successful() ? "tool.completed" : "tool.business-failed",
+                java.util.Map.of("toolCallId", call.id().value(), "toolName", definition.name()),
+                time.now());
+        trace.record(new RuntimeTraceEvent(
+                ids.nextValue(),
+                run.id(),
+                java.util.Optional.empty(),
+                run.sessionId(),
+                java.util.Optional.of(call.stepId()),
+                java.util.Optional.of(call.id()),
+                java.util.Optional.empty(),
+                0,
+                RuntimePhase.AFTER_DECISION_EXECUTION,
+                "tool.persisted",
+                java.util.Map.of(
+                        "successful", result.successful(),
+                        "truncated", result.truncated(),
+                        "externalized", largeResultPolicy.requiresExternalization(rawResult)),
+                time.now()));
+        return result;
+    }
+
+    private io.haifa.agent.core.reference.AssetRef putResultAssetWithOnePersistenceRetry(
+            ToolCall call, ToolResult rawResult) {
+        try {
+            return resultAssets.put(call.id(), rawResult);
+        } catch (RuntimeException firstFailure) {
+            return resultAssets.put(call.id(), rawResult);
         }
     }
 

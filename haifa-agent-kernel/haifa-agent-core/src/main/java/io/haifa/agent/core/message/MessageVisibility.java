@@ -5,5 +5,7 @@ public enum MessageVisibility {
     USER_VISIBLE,
     AGENT_VISIBLE,
     ADMIN_VISIBLE,
-    INTERNAL
+    INTERNAL,
+    HIDDEN,
+    REDACTED
 }

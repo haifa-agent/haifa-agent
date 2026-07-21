@@ -1,18 +1,31 @@
 package io.haifa.agent.runtime.core.storage;
 
+import io.haifa.agent.context.compression.ConversationSummary;
+import io.haifa.agent.context.compression.ConversationSummaryRepository;
+import io.haifa.agent.context.compression.SummaryId;
+import io.haifa.agent.context.compression.SummaryVersion;
 import io.haifa.agent.core.checkpoint.Checkpoint;
+import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.AgentMessage;
+import io.haifa.agent.core.message.AgentMessageId;
+import io.haifa.agent.core.message.MessageCursor;
+import io.haifa.agent.core.message.MessageStatus;
+import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.plan.AgentPlan;
+import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.runtime.api.RuntimeCommandResult;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState;
+import io.haifa.agent.runtime.core.tool.ToolResultAssetStore;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -32,6 +45,8 @@ public final class InMemoryRuntimeStore
                 CheckpointRepository,
                 IdempotencyRepository,
                 RuntimeStateRepository,
+                ConversationSummaryRepository,
+                ToolResultAssetStore,
                 RuntimeUnitOfWork {
 
     private record Versioned<T>(T value, long version) {}
@@ -49,11 +64,17 @@ public final class InMemoryRuntimeStore
     private final java.util.Set<String> appliedCommands = new java.util.HashSet<>();
     private final Map<String, RuntimeCommandResult> commandResults = new HashMap<>();
     private final Map<AgentRunId, List<AgentMessage>> messages = new HashMap<>();
+    private final Map<io.haifa.agent.core.session.AgentSessionId, List<AgentMessage>> sessionMessages = new HashMap<>();
+    private final Map<AgentMessageId, AgentMessage> messagesById = new HashMap<>();
     private final Map<AgentRunId, List<AgentStep>> steps = new HashMap<>();
     private final Map<AgentRunId, List<ToolCall>> toolCalls = new HashMap<>();
     private final Map<AgentRunId, AgentPlan> plans = new HashMap<>();
     private final Map<AgentRunId, String> outputs = new ConcurrentHashMap<>();
     private final Map<String, RuntimeConfigurationSnapshot> configurations = new HashMap<>();
+    private final Map<io.haifa.agent.core.session.AgentSessionId, List<ConversationSummary>> summaries =
+            new HashMap<>();
+    private final Map<String, ToolResult> toolResultAssets = new HashMap<>();
+    private boolean failNextToolResultAssetWrite;
 
     @Override
     public synchronized void insert(AgentRun run) {
@@ -236,10 +257,91 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
-    public synchronized void appendMessage(AgentMessage message) {
-        AgentRunId runId =
-                message.runId().orElseThrow(() -> new IllegalArgumentException("runtime message requires runId"));
-        messages.computeIfAbsent(runId, ignored -> new ArrayList<>()).add(message);
+    public synchronized AgentMessage appendSessionMessage(SessionMessageDraft draft) {
+        if (messagesById.containsKey(draft.id())) {
+            throw new IllegalStateException(
+                    "message already exists: " + draft.id().value());
+        }
+        List<AgentMessage> stream = sessionMessages.computeIfAbsent(draft.sessionId(), ignored -> new ArrayList<>());
+        long sequence = stream.isEmpty() ? 1L : Math.addExact(stream.getLast().sequence(), 1L);
+        AgentMessage message = new AgentMessage(
+                draft.id(),
+                draft.sessionId(),
+                draft.runId(),
+                draft.parentMessageId(),
+                draft.role(),
+                draft.status(),
+                draft.visibility(),
+                sequence,
+                draft.contents(),
+                draft.metadata(),
+                draft.createdAt());
+        stream.add(message);
+        messagesById.put(message.id(), message);
+        message.runId().ifPresent(runId -> messages.computeIfAbsent(runId, ignored -> new ArrayList<>())
+                .add(message));
+        return message;
+    }
+
+    @Override
+    public synchronized List<AgentMessage> messagesAfter(
+            io.haifa.agent.core.session.AgentSessionId sessionId, MessageCursor cursor, int limit) {
+        if (limit < 1) throw new IllegalArgumentException("limit must be positive");
+        return sessionMessages.getOrDefault(sessionId, List.of()).stream()
+                .filter(message -> message.sequence() > cursor.value())
+                .limit(limit)
+                .toList();
+    }
+
+    @Override
+    public synchronized RecentMessageWindow recentMessages(
+            io.haifa.agent.core.session.AgentSessionId sessionId, MessageCursor atOrBefore, int limit) {
+        if (limit < 1) throw new IllegalArgumentException("limit must be positive");
+        List<AgentMessage> eligible = sessionMessages.getOrDefault(sessionId, List.of()).stream()
+                .filter(message -> message.sequence() <= atOrBefore.value())
+                .toList();
+        List<AgentMessage> selected = eligible.subList(Math.max(0, eligible.size() - limit), eligible.size());
+        if (selected.isEmpty()) {
+            return new RecentMessageWindow(
+                    sessionId, MessageCursor.BEFORE_FIRST, MessageCursor.BEFORE_FIRST, List.of());
+        }
+        return new RecentMessageWindow(
+                sessionId, selected.getFirst().cursor(), selected.getLast().cursor(), selected);
+    }
+
+    @Override
+    public synchronized Optional<MessageCursor> latestMessageCursor(
+            io.haifa.agent.core.session.AgentSessionId sessionId) {
+        List<AgentMessage> stream = sessionMessages.getOrDefault(sessionId, List.of());
+        return stream.isEmpty()
+                ? Optional.empty()
+                : Optional.of(stream.getLast().cursor());
+    }
+
+    @Override
+    public synchronized Optional<AgentMessage> message(AgentMessageId id) {
+        return Optional.ofNullable(messagesById.get(id));
+    }
+
+    @Override
+    public synchronized AgentMessage redactMessage(AgentMessageId id) {
+        AgentMessage current = Optional.ofNullable(messagesById.get(id))
+                .orElseThrow(() -> new IllegalArgumentException("unknown message: " + id.value()));
+        AgentMessage redacted = new AgentMessage(
+                current.id(),
+                current.sessionId(),
+                current.runId(),
+                current.parentMessageId(),
+                current.role(),
+                MessageStatus.REDACTED,
+                MessageVisibility.REDACTED,
+                current.sequence(),
+                List.of(new TextPart("[REDACTED]", "plain")),
+                Map.of("redacted", true),
+                current.createdAt());
+        replaceMessage(current, redacted);
+        invalidateContaining(current.sessionId(), id);
+        return redacted;
     }
 
     @Override
@@ -285,6 +387,18 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
+    public synchronized AgentMessage saveFinalOutputAndMessage(
+            AgentRunId runId, String output, SessionMessageDraft message) {
+        if (!message.runId().equals(Optional.of(runId))) {
+            throw new IllegalArgumentException("final message must belong to the output run");
+        }
+        if (outputs.containsKey(runId)) throw new IllegalStateException("run output is already stored");
+        AgentMessage appended = appendSessionMessage(message);
+        outputs.put(runId, output);
+        return appended;
+    }
+
+    @Override
     public Optional<String> output(AgentRunId runId) {
         return Optional.ofNullable(outputs.get(runId));
     }
@@ -305,11 +419,101 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
+    public synchronized Optional<ConversationSummary> latestValid(
+            io.haifa.agent.core.session.AgentSessionId sessionId) {
+        return summaries.getOrDefault(sessionId, List.of()).stream()
+                .filter(ConversationSummary::valid)
+                .max(Comparator.comparingLong(summary -> summary.version().value()));
+    }
+
+    @Override
+    public synchronized Optional<ConversationSummary> find(SummaryId id, SummaryVersion version) {
+        return summaries.values().stream()
+                .flatMap(List::stream)
+                .filter(summary -> summary.id().equals(id) && summary.version().equals(version))
+                .findFirst();
+    }
+
+    @Override
+    public synchronized long latestVersion(io.haifa.agent.core.session.AgentSessionId sessionId) {
+        List<ConversationSummary> stream = summaries.getOrDefault(sessionId, List.of());
+        return stream.isEmpty() ? 0L : stream.getLast().version().value();
+    }
+
+    @Override
+    public synchronized ConversationSummary compareAndSet(ConversationSummary summary, long expectedPreviousVersion) {
+        List<ConversationSummary> stream = summaries.computeIfAbsent(summary.sessionId(), ignored -> new ArrayList<>());
+        long actual = stream.isEmpty() ? 0L : stream.getLast().version().value();
+        if (actual != expectedPreviousVersion || summary.version().value() != expectedPreviousVersion + 1L) {
+            throw new OptimisticLockException(
+                    "summary version conflict: expected " + expectedPreviousVersion + " but was " + actual);
+        }
+        stream.add(summary);
+        return summary;
+    }
+
+    @Override
+    public synchronized void invalidateContaining(
+            io.haifa.agent.core.session.AgentSessionId sessionId, AgentMessageId messageId) {
+        List<ConversationSummary> stream = summaries.getOrDefault(sessionId, List.of());
+        for (int index = 0; index < stream.size(); index++) {
+            ConversationSummary summary = stream.get(index);
+            if (summary.valid() && summary.sourceMessageIds().contains(messageId)) {
+                stream.set(index, summary.invalidate());
+            }
+        }
+    }
+
+    @Override
+    public synchronized boolean coversValidSource(ConversationSummary summary, MessageCursor through) {
+        if (!summary.valid() || summary.coveredThrough().compareTo(through) < 0) return false;
+        return summary.sourceMessageIds().stream()
+                .map(messagesById::get)
+                .allMatch(message -> message != null
+                        && message.sessionId().equals(summary.sessionId())
+                        && message.status() == MessageStatus.COMPLETED
+                        && message.visibility() != MessageVisibility.REDACTED);
+    }
+
+    @Override
+    public synchronized AssetRef put(ToolCallId toolCallId, ToolResult result) {
+        if (failNextToolResultAssetWrite) {
+            failNextToolResultAssetWrite = false;
+            throw new IllegalStateException("injected tool result asset write failure");
+        }
+        String assetId = "tool-result:" + toolCallId.value();
+        ToolResult existing = toolResultAssets.putIfAbsent(assetId, result);
+        if (existing != null && !existing.equals(result)) {
+            throw new IllegalStateException("tool result asset id collision");
+        }
+        return new AssetRef(assetId, "application/vnd.haifa.tool-result", toolCallId.value() + ".result");
+    }
+
+    @Override
+    public synchronized Optional<ToolResult> load(AssetRef reference) {
+        return Optional.ofNullable(toolResultAssets.get(reference.assetId()));
+    }
+
+    public synchronized void failNextToolResultAssetWrite() {
+        failNextToolResultAssetWrite = true;
+    }
+
+    @Override
     public synchronized <T> T execute(Supplier<T> work) {
         return work.get();
     }
 
     private static String idempotencyKey(String callerScope, String operation, String key) {
         return callerScope + "|" + operation + "|" + key;
+    }
+
+    private void replaceMessage(AgentMessage current, AgentMessage replacement) {
+        List<AgentMessage> session = sessionMessages.get(current.sessionId());
+        session.set(session.indexOf(current), replacement);
+        current.runId().ifPresent(runId -> {
+            List<AgentMessage> runMessages = messages.get(runId);
+            runMessages.set(runMessages.indexOf(current), replacement);
+        });
+        messagesById.put(replacement.id(), replacement);
     }
 }

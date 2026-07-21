@@ -6,8 +6,10 @@ import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.item.AssetDerivedTextContent;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.ContextRole;
+import io.haifa.agent.context.item.ConversationSummaryContent;
 import io.haifa.agent.context.item.MemoryReferenceContent;
 import io.haifa.agent.context.item.MessageContextContent;
+import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
@@ -47,6 +49,8 @@ public final class ModelMessageAssembler {
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageContextContent message) {
                 messages.addAll(mapMessage(message.message(), toolCalls));
+            } else if (item.content() instanceof MessageGroupContextContent group) {
+                group.messages().forEach(message -> messages.addAll(mapMessage(message, toolCalls)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof AssetDerivedTextContent asset) {
@@ -57,6 +61,8 @@ public final class ModelMessageAssembler {
                 messages.add(ModelMessage.text(
                         ModelMessageRole.SYSTEM,
                         "[memory " + memory.memoryId() + "@" + memory.version() + "]\n" + memory.text()));
+            } else if (item.content() instanceof ConversationSummaryContent summary) {
+                messages.add(ModelMessage.text(ModelMessageRole.SYSTEM, renderSummary(summary)));
             } else {
                 throw unsupported(item);
             }
@@ -66,6 +72,16 @@ public final class ModelMessageAssembler {
                     ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, "model context must not be empty");
         }
         return List.copyOf(messages);
+    }
+
+    private String renderSummary(ConversationSummaryContent summary) {
+        List<String> lines = new ArrayList<>();
+        lines.add("[conversation-summary " + summary.summaryId() + "@" + summary.version() + "]");
+        summary.facts().forEach(value -> lines.add("fact: " + value));
+        summary.decisions().forEach(value -> lines.add("decision: " + value));
+        summary.openItems().forEach(value -> lines.add("open: " + value));
+        summary.toolOutcomeReferences().forEach(value -> lines.add("tool-outcome-ref: " + value));
+        return String.join("\n", lines);
     }
 
     private List<ModelMessage> mapMessage(
