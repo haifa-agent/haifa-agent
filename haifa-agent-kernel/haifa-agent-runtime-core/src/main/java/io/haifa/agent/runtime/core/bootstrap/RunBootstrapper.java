@@ -14,6 +14,7 @@ public final class RunBootstrapper {
     private final ProfileResolver profiles;
     private final RunAccessValidator access;
     private final ConfigurationSnapshotFactory snapshots;
+    private final CapabilityResolver capabilities;
     private final IdentifierGenerator ids;
     private final TimeProvider time;
 
@@ -24,10 +25,22 @@ public final class RunBootstrapper {
             ConfigurationSnapshotFactory snapshots,
             IdentifierGenerator ids,
             TimeProvider time) {
+        this(definitions, profiles, access, snapshots, new DefaultCapabilityResolver(), ids, time);
+    }
+
+    public RunBootstrapper(
+            DefinitionResolver definitions,
+            ProfileResolver profiles,
+            RunAccessValidator access,
+            ConfigurationSnapshotFactory snapshots,
+            CapabilityResolver capabilities,
+            IdentifierGenerator ids,
+            TimeProvider time) {
         this.definitions = Objects.requireNonNull(definitions);
         this.profiles = Objects.requireNonNull(profiles);
         this.access = Objects.requireNonNull(access);
         this.snapshots = Objects.requireNonNull(snapshots);
+        this.capabilities = Objects.requireNonNull(capabilities);
         this.ids = Objects.requireNonNull(ids);
         this.time = Objects.requireNonNull(time);
     }
@@ -39,7 +52,8 @@ public final class RunBootstrapper {
         ResolvedProfile profile = profiles.resolve(request.productProfileId(), request.overrides());
         ResolvedDefinition definition =
                 definitions.resolve(request.agentDefinitionId(), request.requestedDefinitionVersion());
-        var configuration = snapshots.create(request, definition, profile, caller);
+        var effectiveCapabilities = capabilities.resolve(request, definition, profile);
+        var configuration = snapshots.create(request, definition, profile, caller, effectiveCapabilities);
         AgentRunId runId = new AgentRunId(ids.nextValue());
         AgentRun run = AgentRun.createRoot(
                 runId,

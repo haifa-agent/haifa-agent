@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.bootstrap;
 
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import java.util.List;
 
 @FunctionalInterface
 public interface ConfigurationSnapshotFactory {
@@ -8,5 +9,6 @@ public interface ConfigurationSnapshotFactory {
             AgentRunRequest request,
             ResolvedDefinition definition,
             ResolvedProfile profile,
-            RuntimeCallerContext caller);
+            RuntimeCallerContext caller,
+            List<EffectiveCapability> capabilities);
 }

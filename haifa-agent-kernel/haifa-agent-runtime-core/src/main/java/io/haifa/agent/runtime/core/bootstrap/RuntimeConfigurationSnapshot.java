@@ -8,6 +8,7 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -25,7 +26,39 @@ public record RuntimeConfigurationSnapshot(
         Set<AgentDefinitionId> allowedChildAgents,
         String agentInstruction,
         RuntimeOverrides overrides,
+        List<EffectiveCapability> capabilities,
         ResolvedModelSnapshot model) {
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            Set<String> allowedTools,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides,
+            ResolvedModelSnapshot model) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                allowedTools,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                List.of(),
+                model);
+    }
+
     public RuntimeConfigurationSnapshot(
             RunConfigurationSnapshotRef reference,
             AgentDefinitionId definitionId,
@@ -52,6 +85,7 @@ public record RuntimeConfigurationSnapshot(
                 allowedChildAgents,
                 agentInstruction,
                 overrides,
+                List.of(),
                 DefaultResolvedModelSnapshots.deepSeekV4Pro());
     }
 
@@ -69,6 +103,7 @@ public record RuntimeConfigurationSnapshot(
                 Set.copyOf(Objects.requireNonNull(allowedChildAgents, "allowedChildAgents must not be null"));
         agentInstruction = requireText(agentInstruction, "agentInstruction");
         overrides = Objects.requireNonNull(overrides, "overrides must not be null");
+        capabilities = List.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
         model = Objects.requireNonNull(model, "model must not be null");
     }
 

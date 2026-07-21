@@ -6,15 +6,25 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.List;
 
 /** Deterministic content-addressed configuration snapshot suitable for adapters to persist. */
 public final class ContentAddressedSnapshotFactory implements ConfigurationSnapshotFactory {
-    @Override
     public RuntimeConfigurationSnapshot create(
             AgentRunRequest request,
             ResolvedDefinition definition,
             ResolvedProfile profile,
             RuntimeCallerContext caller) {
+        return create(request, definition, profile, caller, List.of());
+    }
+
+    @Override
+    public RuntimeConfigurationSnapshot create(
+            AgentRunRequest request,
+            ResolvedDefinition definition,
+            ResolvedProfile profile,
+            RuntimeCallerContext caller,
+            List<EffectiveCapability> capabilities) {
         String canonical = definition.id().value() + "|" + definition.version() + "|"
                 + new java.util.TreeSet<>(definition.allowedTools()) + "|"
                 + definition.allowedChildAgents().stream()
@@ -33,6 +43,12 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                 + profile.model().adapterVersion() + "|" + profile.model().endpoint() + "|"
                 + profile.model().contextWindow() + "|" + profile.model().maxOutputTokens() + "|"
                 + profile.model().configurationDigest()
+                + "|"
+                + capabilities.stream()
+                        .sorted()
+                        .map(value -> value.capabilityId() + "@" + value.version() + ":"
+                                + value.optionalBindingRef().orElse("") + ":" + value.configurationDigest())
+                        .toList()
                 + "|" + caller.tenant().tenantId() + "|" + caller.principal();
         try {
             String hash = HexFormat.of()
@@ -51,6 +67,7 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                     definition.allowedChildAgents(),
                     definition.instruction(),
                     request.overrides(),
+                    capabilities,
                     profile.model());
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required by the Java runtime", exception);

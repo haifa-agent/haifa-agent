@@ -4,6 +4,7 @@ import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import java.util.Map;
 import java.util.Objects;
 
 public record ResolvedProfile(
@@ -12,10 +13,21 @@ public record ResolvedProfile(
         AgentRunType runType,
         AgentRunBudget budget,
         AgentRunLimits limits,
-        ResolvedModelSnapshot model) {
+        ResolvedModelSnapshot model,
+        Map<String, ResolvedCapability> capabilities) {
+    public ResolvedProfile(
+            String id,
+            String version,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            ResolvedModelSnapshot model) {
+        this(id, version, runType, budget, limits, model, Map.of());
+    }
+
     public ResolvedProfile(
             String id, String version, AgentRunType runType, AgentRunBudget budget, AgentRunLimits limits) {
-        this(id, version, runType, budget, limits, DefaultResolvedModelSnapshots.deepSeekV4Pro());
+        this(id, version, runType, budget, limits, DefaultResolvedModelSnapshots.deepSeekV4Pro(), Map.of());
     }
 
     public ResolvedProfile {
@@ -25,6 +37,12 @@ public record ResolvedProfile(
         budget = Objects.requireNonNull(budget, "budget must not be null");
         limits = Objects.requireNonNull(limits, "limits must not be null");
         model = Objects.requireNonNull(model, "model must not be null");
+        capabilities = Map.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
+        capabilities.forEach((key, value) -> {
+            if (!key.equals(value.capabilityId())) {
+                throw new IllegalArgumentException("capability map key must match capabilityId");
+            }
+        });
     }
 
     private static String requireText(String value, String field) {

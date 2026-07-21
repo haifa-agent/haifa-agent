@@ -1,7 +1,9 @@
 package io.haifa.agent.runtime.core.bootstrap;
 
+import io.haifa.agent.core.agent.AgentCapabilityRequirement;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -10,7 +12,17 @@ public record ResolvedDefinition(
         AgentDefinitionVersion version,
         Set<String> allowedTools,
         Set<AgentDefinitionId> allowedChildAgents,
-        String instruction) {
+        String instruction,
+        List<AgentCapabilityRequirement> capabilityRequirements) {
+    public ResolvedDefinition(
+            AgentDefinitionId id,
+            AgentDefinitionVersion version,
+            Set<String> allowedTools,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String instruction) {
+        this(id, version, allowedTools, allowedChildAgents, instruction, List.of());
+    }
+
     public ResolvedDefinition {
         id = Objects.requireNonNull(id, "id must not be null");
         version = Objects.requireNonNull(version, "version must not be null");
@@ -20,5 +32,7 @@ public record ResolvedDefinition(
         instruction = Objects.requireNonNull(instruction, "instruction must not be null")
                 .trim();
         if (instruction.isEmpty()) throw new IllegalArgumentException("instruction must not be blank");
+        capabilityRequirements =
+                List.copyOf(Objects.requireNonNull(capabilityRequirements, "capabilityRequirements must not be null"));
     }
 }

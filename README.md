@@ -16,6 +16,7 @@ haifa-agent-kernel/
   haifa-agent-core/            稳定 Agent 领域模型
   haifa-agent-runtime-api/     Runtime 生命周期契约
   haifa-agent-context/         Context IR、预算、选择与安全 Trace
+  haifa-agent-project/         Project、Workspace、逻辑路径与安全文件访问
   haifa-agent-runtime-core/    Runtime、AgentLoop 与本地执行实现
 haifa-agent-capabilities/
   haifa-agent-model-api/       Provider-neutral Model 契约
@@ -30,6 +31,7 @@ haifa-agent-integrations/
 
 ```text
 common <- core <- runtime-api <- runtime-core -> model-api / memory-api / memory-core
+          \--------- project
             \        context --------^
              \----------> model-api
                   model-api <- model-core
@@ -40,6 +42,8 @@ common <- core <- runtime-api <- runtime-core -> model-api / memory-api / memory
 ```
 
 `contract` 不依赖 `core`，所有已初始化的 Kernel 模块均保持纯 Java。
+
+Project 模块提供可选的长期 Project、受控 Workspace、跨平台逻辑路径和安全只读文件 Provider。普通对话 Run 不要求 Project 或 Workspace；声明相关能力的 Run 才在 Bootstrap 时解析、授权并冻结有效 Capability。
 
 首个外部模型配置使用 Provider `deepseek`、Model `deepseek-v4-pro` 与 OpenAI 兼容 Chat Completions API。模型选择在 Run 启动时冻结到内容寻址配置快照；普通配置变化不影响已创建 Run。首版显式发送 `thinking.type=disabled`，后续启用思考模式前需先完成推理内容在 Tool Call、Checkpoint 与恢复中的持久语义。
 
