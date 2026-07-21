@@ -9,5 +9,10 @@ public interface ContextSource {
 
     String version();
 
+    /** Cheap capability/profile gate evaluated before a source performs any lookup. */
+    default boolean supports(ContextBuildRequest request) {
+        return true;
+    }
+
     List<ContextItem> load(ContextBuildRequest request);
 }

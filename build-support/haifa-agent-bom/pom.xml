@@ -73,6 +73,11 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-project-application</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-model-api</artifactId>
                 <version>${project.version}</version>
             </dependency>

@@ -9,6 +9,7 @@ import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.DeterministicContextCompressor;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
 import io.haifa.agent.context.selection.ContextSelectionPolicy;
+import io.haifa.agent.context.source.ContextSource;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -156,6 +157,7 @@ public final class RuntimeCoreBuilder {
     private RequiredArtifactChecker requiredArtifacts = (run, decision) -> true;
     private CompletionPolicy completionPolicy = (run, decision) -> true;
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
+    private final List<ContextSource> additionalContextSources = new ArrayList<>();
     private String workerId = "local-runtime";
     private ExecutionOwnershipPort ownership = ExecutionOwnershipPort.local();
     private MemoryRetriever memoryRetriever;
@@ -176,6 +178,15 @@ public final class RuntimeCoreBuilder {
         if (modelToolSpecifications.putIfAbsent(specification.name(), specification) != null) {
             throw new IllegalArgumentException("duplicate model tool specification: " + specification.name());
         }
+        return this;
+    }
+
+    public RuntimeCoreBuilder registerContextSource(ContextSource source) {
+        Objects.requireNonNull(source, "source must not be null");
+        if (additionalContextSources.stream().anyMatch(existing -> existing.id().equals(source.id()))) {
+            throw new IllegalArgumentException("duplicate context source: " + source.id());
+        }
+        additionalContextSources.add(source);
         return this;
     }
 
@@ -457,6 +468,8 @@ public final class RuntimeCoreBuilder {
                 interactions, store, checkpointSelections, transitions, store, access, checkpoints);
         var compressor = new DeterministicContextCompressor();
         var compressionPolicy = CompressionPolicy.defaults();
+        var sessionMessageSource = new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time);
+        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, store, time);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
@@ -464,9 +477,9 @@ public final class RuntimeCoreBuilder {
                         store,
                         middleware,
                         new DefaultAgentContextBuilder(
-                                new HeuristicTokenEstimator(), new ContextSelectionPolicy(), List.of()),
-                        new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time),
-                        new MemoryContextSource(configuredMemoryRetriever, store, time)),
+                                new HeuristicTokenEstimator(), new ContextSelectionPolicy(), additionalContextSources),
+                        sessionMessageSource,
+                        memoryContextSource),
                 models,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(store), new ChildRunGuard(store)),
                 decisionExecutor,

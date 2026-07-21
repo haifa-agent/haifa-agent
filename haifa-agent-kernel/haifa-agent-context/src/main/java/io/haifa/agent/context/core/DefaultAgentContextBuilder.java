@@ -57,6 +57,7 @@ public final class DefaultAgentContextBuilder implements AgentContextBuilder {
 
         List<ContextItem> candidates = new ArrayList<>(request.items());
         for (ContextSource source : sources) {
+            if (!source.supports(request)) continue;
             List<ContextItem> loaded = List.copyOf(source.load(request));
             candidates.addAll(loaded);
         }

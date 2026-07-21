@@ -19,6 +19,7 @@
         <module>haifa-agent-execution</module>
         <module>haifa-agent-capabilities</module>
         <module>haifa-agent-integrations</module>
+        <module>haifa-agent-applications</module>
     </modules>
 
     <properties>
@@ -106,6 +107,11 @@
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-git</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-project-application</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

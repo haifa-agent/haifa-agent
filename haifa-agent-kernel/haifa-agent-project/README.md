@@ -13,4 +13,8 @@
 - 带幂等 operation key 的 `FileChangeSet`、受控 Quarantine 删除/恢复和未知结果 Reconciliation；
 - 有界文本 Unified Diff 生成、严格 Parser、Patch 预校验、精确 Hunk 应用与结构化部分失败。
 
-`COPY_ON_WRITE`、`EPHEMERAL_COPY`、命令执行、Git、Index、Snapshot 和 Artifact 尚未在本模块落地，分别由后续阶段实现。
+`COPY_ON_WRITE`、`EPHEMERAL_COPY`、命令执行和 Git 已由 Execution/Sandbox/Git 模块实现；Project 模块不反向依赖这些高层实现。
+
+`ProjectIndexService` 提供 generation 原子切换的文件、Java 语法级 Symbol 和 Markdown heading 索引。索引只保存逻辑路径和有界派生元数据，可全量重建，也可由完整 `FileChangeSet` 精确更新；查询结果在返回前仍通过当前文件服务重新授权。外部漂移只把 generation 标记为 `SUSPECT`，不会伪造 ChangeSet。
+
+`ProjectConfiguration` 是不可变、内容寻址的可信配置版本，冻结默认 Workspace、Product Profile、能力、Context Source、Tool 与安全策略引用；不保存 Host Path 或 Credential。Snapshot、Checkpoint Participant 和 Artifact 由后续阶段实现。

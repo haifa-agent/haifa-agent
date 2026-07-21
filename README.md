@@ -31,6 +31,8 @@ haifa-agent-capabilities/
 haifa-agent-integrations/
   haifa-agent-model-openai-compatible/  DeepSeek/OpenAI 兼容协议适配
   haifa-agent-git/                      经 Broker 执行的只读 Git 适配器
+haifa-agent-applications/
+  haifa-agent-project-application/      Project Context、Tool 与产品外观
 ```
 
 依赖方向固定为：
@@ -52,6 +54,8 @@ common <- core <- runtime-api <- runtime-core -> model-api / memory-api / memory
 Project 模块提供可选的长期 Project、受控 Workspace、跨平台逻辑路径和安全只读文件 Provider。普通对话 Run 不要求 Project 或 Workspace；声明相关能力的 Run 才在 Bootstrap 时解析、授权并冻结有效 Capability。
 
 ExecutionBroker 是本地命令的唯一应用层入口。首个 Host Provider 只提供白名单命令、逻辑工作目录、环境租约、超时、输出和进程树等可诚实执行的限制，不宣称具备网络、CPU、内存或文件系统挂载强隔离。Git inspect/status/diff 也通过 Broker；临时副本和 Git Worktree 子 Workspace 必须拥有收窄权限和独立生命周期。
+
+Project 模块还提供可重建的 File/Java Symbol/Markdown Index 和内容寻址的版本化 ProjectConfiguration。高层 Project Application 复用现有 Context Source 与 Runtime Tool Pipeline，并提供只要求 ProjectId、消息和附件的产品入口；Workspace 仍是内部授权与执行概念。
 
 首个外部模型配置使用 Provider `deepseek`、Model `deepseek-v4-pro` 与 OpenAI 兼容 Chat Completions API。模型选择在 Run 启动时冻结到内容寻址配置快照；普通配置变化不影响已创建 Run。首版显式发送 `thinking.type=disabled`，后续启用思考模式前需先完成推理内容在 Tool Call、Checkpoint 与恢复中的持久语义。
 

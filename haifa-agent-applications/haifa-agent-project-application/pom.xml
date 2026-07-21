@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.haifa</groupId>
+        <artifactId>haifa-agent-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+    <artifactId>haifa-agent-project-application</artifactId>
+    <name>Haifa Agent Project Application</name>
+    <dependencies>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-common</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-core</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-context</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-api</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-core</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-api</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-git</artifactId></dependency>
+        <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-api</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>com.tngtech.archunit</groupId><artifactId>archunit</artifactId><scope>test</scope></dependency>
+    </dependencies>
+</project>
