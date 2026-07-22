@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.mcp.config.McpProtocolProfile;
 import io.haifa.agent.mcp.config.McpServerDefinition;
 import io.haifa.agent.mcp.config.StreamableHttpDefinition;
+import io.haifa.agent.mcp.transport.http.BoundedHttpClientBuilder;
 import io.haifa.agent.mcp.transport.http.McpHttpCredentialContext;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
@@ -45,16 +46,20 @@ public final class SdkMcpClientFactory implements McpClientFactory {
         var transport = HttpClientStreamableHttpTransport.builder(origin)
                 .endpoint(endpoint)
                 .jsonMapper(mapper)
-                .clientBuilder(HttpClient.newBuilder()
-                        .connectTimeout(http.connectTimeout())
-                        .followRedirects(HttpClient.Redirect.NEVER))
+                .clientBuilder(new BoundedHttpClientBuilder(
+                        HttpClient.newBuilder()
+                                .connectTimeout(http.connectTimeout())
+                                .followRedirects(HttpClient.Redirect.NEVER),
+                        http.maxBodyBytes(),
+                        http.maxHeaderBytes()))
                 .requestBuilder(HttpRequest.newBuilder().timeout(http.requestTimeout()))
                 .resumableStreams(true)
                 .openConnectionOnStartup(false)
                 .supportedProtocolVersions(List.of(McpProtocolProfile.VERSION_2025_11_25))
                 .httpRequestCustomizer(credentials::customize)
                 .build();
-        var client = McpClient.sync(transport)
+        var trackedTransport = new TrackingMcpClientTransport(transport);
+        var client = McpClient.sync(trackedTransport)
                 .clientInfo(
                         McpSchema.Implementation.builder("haifa-agent", "0.1.0").build())
                 .capabilities(McpSchema.ClientCapabilities.builder().build())
@@ -64,6 +69,6 @@ public final class SdkMcpClientFactory implements McpClientFactory {
                 .toolsChangeConsumer(
                         ignored -> toolsChanged.accept(server.serverId().value()))
                 .build();
-        return new SdkMcpClientFacade(server, client, credentials, new ObjectMapper(), telemetry);
+        return new SdkMcpClientFacade(server, client, credentials, new ObjectMapper(), telemetry, trackedTransport);
     }
 }

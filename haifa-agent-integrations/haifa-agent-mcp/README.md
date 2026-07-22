@@ -5,10 +5,13 @@
 ## 支持范围
 
 - Streamable HTTP：精确协议协商、JSON/SSE POST response、`initialize`/`initialized`、显式分页 `tools/list`、`tools/call` 和幂等关闭。
+- HTTP 会话与恢复：兼容 stateless/session server、GET 405、DELETE 405、`Last-Event-ID` 恢复；session 404 使旧连接失效，发现操作可在重新 initialize 后安全重试，已发送 Tool Call 不重放。
+- 资源边界：JDK HttpClient 包装器在 SDK transport 下方强制 response header/body 字节预算；request/deadline/cancel 会终止受影响连接并保留 dispatch certainty。
 - stdio：通过唯一 `ExecutionBroker.openManagedSession` 桥接长驻 JSON-RPC 会话；MCP 模块不使用 `ProcessBuilder`。
 - 本地治理：server allowlist、HTTPS/loopback Origin、alias、保守风险/副作用/审批、受限 Schema、分页/Tool/Schema/deadline 预算。
 - 冻结恢复：`McpToolBindingSnapshot` 分别保存 server binding digest、remote definition digest 与本地 Tool definition hash，缺失或漂移时 fail closed。
 - 内容映射：Text/structured content 映射到唯一 Core `ToolResult`；`isError` 保留为业务失败；媒体只允许经有界 externalizer 形成 `AssetRef`。
+- 动态目录：`tools/list_changed` 经 `McpToolRefreshCoordinator` 去抖动后生成新的、待审查 candidate snapshot，不热改已有 Run；`CodingAgentMcpProfile` 给出保守 utility allowlist 示例。
 
 Resources、Prompts、Sampling、Elicitation、Roots、Completion、MCP Server Hosting、OAuth 浏览器授权和任意 server 自动发现不在本阶段范围。
 

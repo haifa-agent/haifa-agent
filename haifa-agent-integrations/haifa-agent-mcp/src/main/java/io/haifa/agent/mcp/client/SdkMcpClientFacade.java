@@ -10,6 +10,7 @@ import io.haifa.agent.mcp.protocol.McpListToolsPage;
 import io.haifa.agent.mcp.protocol.McpRemoteContent;
 import io.haifa.agent.mcp.protocol.McpRemoteTool;
 import io.haifa.agent.mcp.protocol.McpRemoteToolResult;
+import io.haifa.agent.mcp.transport.http.McpHttpResponseLimitException;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
@@ -26,6 +27,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
     private final McpRequestContext credentials;
     private final ObjectMapper mapper;
     private final McpTelemetry telemetry;
+    private final TrackingMcpClientTransport transportFailures;
     private final AtomicReference<McpConnectionState> state = new AtomicReference<>(McpConnectionState.DISCONNECTED);
 
     SdkMcpClientFacade(
@@ -33,12 +35,14 @@ final class SdkMcpClientFacade implements McpClientFacade {
             McpSyncClient client,
             McpRequestContext credentials,
             ObjectMapper mapper,
-            McpTelemetry telemetry) {
+            McpTelemetry telemetry,
+            TrackingMcpClientTransport transportFailures) {
         this.server = server;
         this.client = client;
         this.credentials = credentials;
         this.mapper = mapper;
         this.telemetry = telemetry;
+        this.transportFailures = transportFailures;
         telemetry.stateChanged(server.serverId(), McpConnectionState.DISCONNECTED);
     }
 
@@ -51,6 +55,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
         telemetry.stateChanged(server.serverId(), McpConnectionState.CONNECTING);
         transition(McpConnectionState.INITIALIZING);
         try {
+            transportFailures.clearFailure();
             McpSchema.InitializeResult result = credentials.withCredentials(leases, client::initialize);
             if (!McpProtocolProfile.VERSION_2025_11_25.equals(result.protocolVersion())) {
                 throw new ToolInvocationException(
@@ -69,7 +74,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
         } catch (RuntimeException exception) {
             transition(McpConnectionState.FAILED);
             close();
-            throw mapFailure("MCP_INITIALIZE_FAILED", ToolDispatchState.OUTCOME_UNKNOWN, exception);
+            throw mapOperationalFailure("MCP_INITIALIZE_FAILED", exception);
         }
     }
 
@@ -77,13 +82,14 @@ final class SdkMcpClientFacade implements McpClientFacade {
     public McpListToolsPage listTools(String cursor, List<CredentialLease> leases) {
         requireReady();
         try {
+            transportFailures.clearFailure();
             McpSchema.ListToolsResult result = credentials.withCredentials(
                     leases, () -> client.listTools(cursor == null ? McpSchema.FIRST_PAGE : cursor));
             List<McpRemoteTool> tools =
                     result.tools().stream().map(this::mapTool).toList();
             return new McpListToolsPage(tools, Optional.ofNullable(result.nextCursor()));
         } catch (RuntimeException exception) {
-            throw mapFailure("MCP_LIST_FAILED", ToolDispatchState.OUTCOME_UNKNOWN, exception);
+            throw mapOperationalFailure("MCP_LIST_FAILED", exception);
         }
     }
 
@@ -92,6 +98,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
             String name, Map<String, Object> arguments, List<CredentialLease> leases, ToolInvocationObserver observer) {
         requireReady();
         try {
+            transportFailures.clearFailure();
             McpSchema.CallToolResult result = credentials.withInvocation(
                     leases, observer, () -> client.callTool(new McpSchema.CallToolRequest(name, arguments)));
             return new McpRemoteToolResult(
@@ -99,7 +106,7 @@ final class SdkMcpClientFacade implements McpClientFacade {
                     result.content().stream().map(this::mapContent).toList(),
                     structured(result.structuredContent()));
         } catch (RuntimeException exception) {
-            throw mapFailure("MCP_CALL_FAILED", ToolDispatchState.OUTCOME_UNKNOWN, exception);
+            throw mapOperationalFailure("MCP_CALL_FAILED", exception);
         }
     }
 
@@ -212,6 +219,40 @@ final class SdkMcpClientFacade implements McpClientFacade {
         return new ToolInvocationException(code, dispatchState, "MCP operation failed", exception);
     }
 
+    private ToolInvocationException mapOperationalFailure(String defaultCode, RuntimeException exception) {
+        Throwable transportFailure = transportFailures.consumeFailure().orElse(null);
+        if (isSessionInvalid(exception) || isSessionInvalid(transportFailure)) {
+            transition(McpConnectionState.FAILED);
+            close();
+            telemetry.operationFailed(server.serverId(), "MCP_SESSION_INVALID");
+            return new ToolInvocationException(
+                    "MCP_SESSION_INVALID",
+                    ToolDispatchState.OUTCOME_UNKNOWN,
+                    "MCP server invalidated the current session",
+                    exception);
+        }
+        McpHttpResponseLimitException limit = find(exception, McpHttpResponseLimitException.class);
+        if (limit == null) limit = find(transportFailure, McpHttpResponseLimitException.class);
+        String aggregate = io.modelcontextprotocol.spec.McpError.aggregateExceptionMessages(exception);
+        if (limit == null && aggregate.contains("MCP HTTP response body exceeded configured budget")) {
+            limit = new McpHttpResponseLimitException(
+                    "MCP_HTTP_RESPONSE_BODY_TOO_LARGE", "MCP HTTP response body exceeded configured budget");
+        }
+        if (limit == null && aggregate.contains("MCP HTTP response headers exceeded configured budget")) {
+            limit = new McpHttpResponseLimitException(
+                    "MCP_HTTP_RESPONSE_HEADERS_TOO_LARGE", "MCP HTTP response headers exceeded configured budget");
+        }
+        if (limit != null) {
+            telemetry.operationFailed(server.serverId(), limit.failureCode());
+            return new ToolInvocationException(
+                    limit.failureCode(),
+                    ToolDispatchState.OUTCOME_UNKNOWN,
+                    "MCP HTTP response exceeded a configured budget",
+                    exception);
+        }
+        return mapFailure(defaultCode, ToolDispatchState.OUTCOME_UNKNOWN, exception);
+    }
+
     private void transition(McpConnectionState target) {
         state.set(target);
         telemetry.stateChanged(server.serverId(), target);
@@ -238,5 +279,44 @@ final class SdkMcpClientFacade implements McpClientFacade {
             }
         }
         return false;
+    }
+
+    private static boolean contains(Throwable error, Class<? extends Throwable> type) {
+        return find(error, type) != null;
+    }
+
+    private static boolean isSessionInvalid(Throwable error) {
+        return contains(error, io.modelcontextprotocol.spec.McpTransportSessionNotFoundException.class)
+                || messages(error).contains("session not found")
+                || messages(error).contains("session id") && messages(error).contains("404");
+    }
+
+    private static <T extends Throwable> T find(Throwable error, Class<T> type) {
+        return find(error, type, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+    }
+
+    private static <T extends Throwable> T find(Throwable error, Class<T> type, java.util.Set<Throwable> visited) {
+        if (error == null || !visited.add(error)) return null;
+        if (type.isInstance(error)) return type.cast(error);
+        T cause = find(error.getCause(), type, visited);
+        if (cause != null) return cause;
+        for (Throwable suppressed : error.getSuppressed()) {
+            T match = find(suppressed, type, visited);
+            if (match != null) return match;
+        }
+        return null;
+    }
+
+    private static String messages(Throwable error) {
+        var result = new StringBuilder();
+        collectMessages(error, result, java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>()));
+        return result.toString().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static void collectMessages(Throwable error, StringBuilder target, java.util.Set<Throwable> visited) {
+        if (error == null || !visited.add(error)) return;
+        if (error.getMessage() != null) target.append(' ').append(error.getMessage());
+        collectMessages(error.getCause(), target, visited);
+        for (Throwable suppressed : error.getSuppressed()) collectMessages(suppressed, target, visited);
     }
 }
