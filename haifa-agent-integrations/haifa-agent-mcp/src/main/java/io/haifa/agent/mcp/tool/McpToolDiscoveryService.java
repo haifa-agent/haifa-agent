@@ -9,6 +9,7 @@ import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.config.McpServerId;
 import io.haifa.agent.mcp.config.StdioDefinition;
 import io.haifa.agent.mcp.protocol.McpRemoteTool;
+import io.haifa.agent.tool.api.ToolInvocationException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -76,6 +77,7 @@ public final class McpToolDiscoveryService {
                 connection = connections.acquire(serverId, context.tenant(), context.principal(), discoveryLeases);
             }
             McpConnection activeConnection = connection;
+            boolean sessionRecovered = false;
             List<McpRemoteTool> discovered = new ArrayList<>();
             HashSet<String> names = new HashSet<>();
             String cursor = null;
@@ -84,7 +86,17 @@ public final class McpToolDiscoveryService {
                 if (pageNumber >= maxPages || !clock.instant().isBefore(expires)) {
                     throw new IllegalStateException("MCP discovery exceeded its page or time budget");
                 }
-                var page = activeConnection.client().listTools(cursor, discoveryLeases);
+                io.haifa.agent.mcp.protocol.McpListToolsPage page;
+                try {
+                    page = activeConnection.client().listTools(cursor, discoveryLeases);
+                } catch (ToolInvocationException exception) {
+                    if (sessionRecovered || !"MCP_SESSION_INVALID".equals(exception.failureCode())) throw exception;
+                    connections.invalidate(activeConnection);
+                    activeConnection =
+                            connections.acquire(serverId, context.tenant(), context.principal(), discoveryLeases);
+                    sessionRecovered = true;
+                    page = activeConnection.client().listTools(cursor, discoveryLeases);
+                }
                 for (McpRemoteTool tool : page.tools()) {
                     if (!names.add(tool.name())) throw new IllegalStateException("duplicate MCP remote tool name");
                     discovered.add(tool);
@@ -102,10 +114,11 @@ public final class McpToolDiscoveryService {
                 if (next.isEmpty()) break;
                 cursor = next.orElseThrow();
             }
+            McpConnection mappedConnection = activeConnection;
             return discovered.stream()
                     .sorted(Comparator.comparing(McpRemoteTool::name))
                     .map(tool ->
-                            mapper.map(server, activeConnection.serverSnapshot().negotiatedProtocolVersion(), tool))
+                            mapper.map(server, mappedConnection.serverSnapshot().negotiatedProtocolVersion(), tool))
                     .toList();
         } finally {
             if (server.transport() instanceof StdioDefinition) connections.invalidate(connection);

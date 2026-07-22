@@ -38,6 +38,7 @@ import io.haifa.agent.mcp.transport.stdio.McpManagedProcessLaunch;
 import io.haifa.agent.mcp.transport.stdio.McpStdioEnvironmentRegistry;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.tool.api.ToolInvocationException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -109,6 +110,33 @@ class StdioMcpComponentTest {
                 .isInstanceOf(SecurityException.class);
     }
 
+    @Test
+    void keepsStderrOutOfProtocolFramesAndRejectsOversizeStdout() {
+        var server = stdioServer(List.of());
+        var stderrBroker = new StubExecutionBroker(SessionMode.STDERR_BEFORE_RESPONSE);
+        var stderrClient = new SdkMcpStdioClientFactory(
+                        stderrBroker,
+                        (definition, identity, credentials) ->
+                                new McpManagedProcessLaunch(request(new ExecutionEnvironmentRef(List.of())), () -> {}))
+                .create(server, McpTestFixtures.IDENTITY);
+
+        assertThat(stderrClient.initialize(List.of()).negotiatedProtocolVersion())
+                .isEqualTo("2025-11-25");
+        stderrClient.close();
+
+        var oversizeBroker = new StubExecutionBroker(SessionMode.OVERSIZE_STDOUT);
+        var oversizeClient = new SdkMcpStdioClientFactory(
+                        oversizeBroker,
+                        (definition, identity, credentials) ->
+                                new McpManagedProcessLaunch(request(new ExecutionEnvironmentRef(List.of())), () -> {}))
+                .create(server, McpTestFixtures.IDENTITY);
+        assertThatThrownBy(() -> oversizeClient.initialize(List.of()))
+                .isInstanceOf(ToolInvocationException.class)
+                .satisfies(error -> assertThat(((ToolInvocationException) error).failureCode())
+                        .isEqualTo("MCP_INITIALIZE_FAILED"));
+        assertThat(oversizeBroker.session.closed).isTrue();
+    }
+
     private static McpServerDefinition stdioServer(List<McpCredentialInjection> credentials) {
         return McpServerDefinition.create(
                 new McpServerId("stdio"),
@@ -150,8 +178,16 @@ class StdioMcpComponentTest {
     }
 
     private static final class StubExecutionBroker implements ExecutionBroker {
-        private final StubSession session = new StubSession();
+        private final StubSession session;
         private final AtomicBoolean opened = new AtomicBoolean();
+
+        private StubExecutionBroker() {
+            this(SessionMode.NORMAL);
+        }
+
+        private StubExecutionBroker(SessionMode mode) {
+            this.session = new StubSession(mode);
+        }
 
         @Override
         public ExecutionResult execute(ExecutionRequest request) {
@@ -180,6 +216,11 @@ class StdioMcpComponentTest {
         private final LinkedBlockingQueue<ProcessOutputChunk> output = new LinkedBlockingQueue<>();
         private final CompletableFuture<ProcessExit> exit = new CompletableFuture<>();
         private volatile boolean closed;
+        private final SessionMode mode;
+
+        private StubSession(SessionMode mode) {
+            this.mode = mode;
+        }
 
         @Override
         public ManagedProcessSessionId id() {
@@ -192,6 +233,18 @@ class StdioMcpComponentTest {
                 String frame = new String(input.bytes(), StandardCharsets.UTF_8).trim();
                 Map<String, Object> request = mapper.readValue(frame, new TypeReference<>() {});
                 if (!request.containsKey("id")) return;
+                if (mode == SessionMode.STDERR_BEFORE_RESPONSE) {
+                    output.add(new ProcessOutputChunk(
+                            ExecutionOutputChannel.STDERR,
+                            "diagnostic-only".getBytes(StandardCharsets.UTF_8),
+                            false,
+                            false));
+                }
+                if (mode == SessionMode.OVERSIZE_STDOUT) {
+                    output.add(new ProcessOutputChunk(
+                            ExecutionOutputChannel.STDOUT, new byte[64 * 1024 + 1], false, false));
+                    return;
+                }
                 String method = String.valueOf(request.get("method"));
                 Object result =
                         switch (method) {
@@ -261,5 +314,11 @@ class StdioMcpComponentTest {
             closed = true;
             exit.complete(new ProcessExit(ExecutionStatus.CANCELLED, null, true, Instant.now()));
         }
+    }
+
+    private enum SessionMode {
+        NORMAL,
+        STDERR_BEFORE_RESPONSE,
+        OVERSIZE_STDOUT
     }
 }
