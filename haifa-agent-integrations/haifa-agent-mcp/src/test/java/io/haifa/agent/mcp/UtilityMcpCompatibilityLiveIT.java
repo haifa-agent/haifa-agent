@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.credential.api.CredentialDefinitionId;
 import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialRequirement;
+import io.haifa.agent.mcp.client.McpCompatibilityReport;
 import io.haifa.agent.mcp.client.SdkMcpClientFactory;
 import io.haifa.agent.mcp.config.McpConnectionPolicy;
 import io.haifa.agent.mcp.config.McpCredentialInjection;
@@ -17,6 +18,7 @@ import io.haifa.agent.mcp.config.McpToolImportPolicy;
 import io.haifa.agent.mcp.config.StreamableHttpDefinition;
 import java.net.URI;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -85,6 +87,16 @@ class UtilityMcpCompatibilityLiveIT {
             var time = client.callTool("time_now", Map.of("timezone", "UTC"), leases, observer);
             var calculate = client.callTool("calculate", Map.of("expression", "1 + 2 * 3"), leases, observer);
             var invalid = client.callTool("time_now", Map.of("timezone", "Invalid/Timezone"), leases, observer);
+            var report = new McpCompatibilityReport(
+                    server.serverId(),
+                    server.protocol().targetVersion(),
+                    snapshot.negotiatedProtocolVersion(),
+                    "2.0.0",
+                    "0.18.3",
+                    names.stream().sorted().toList(),
+                    token == null || token.isBlank(),
+                    token != null && !token.isBlank(),
+                    Instant.now());
 
             assertThat(snapshot.negotiatedProtocolVersion()).isEqualTo("2025-11-25");
             assertThat(snapshot.toolsCapability()).isTrue();
@@ -96,6 +108,13 @@ class UtilityMcpCompatibilityLiveIT {
             assertThat(time.structuredContent()).isNotEmpty();
             assertThat(calculate.error()).isFalse();
             assertThat(invalid.error()).isTrue();
+            assertThat(report.discoveredTools())
+                    .containsExactlyElementsOf(expected.stream().sorted().toList());
+            assertThat(report.clientSdkVersion()).isEqualTo("2.0.0");
+            assertThat(report.serverCompatibilityBaseline()).isEqualTo("0.18.3");
+            assertThat(report.getClass().getRecordComponents())
+                    .extracting(java.lang.reflect.RecordComponent::getName)
+                    .doesNotContain("credential", "secret", "rawResponse", "responseBody");
         } finally {
             client.close();
             leases.forEach(io.haifa.agent.credential.api.CredentialLease::close);
