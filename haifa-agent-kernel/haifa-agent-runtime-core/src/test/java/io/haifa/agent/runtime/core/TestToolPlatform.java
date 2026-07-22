@@ -46,6 +46,32 @@ final class TestToolPlatform {
                 handler);
     }
 
+    static RuntimeCoreBuilder installWithOutputSchema(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            Map<String, Object> outputSchema,
+            ToolHandler handler) {
+        ToolDefinition definition = definition(name, version, inputSchemaId, false, outputSchema);
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return PROVIDER_ID;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                return handler.invoke(request);
+            }
+        };
+        var catalog = new ToolCatalogBuilder()
+                .register(new ToolAlias(name), definition, "runtime-test", provider)
+                .freeze();
+        return builder.toolPolicy((run, binding, request) -> io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW)
+                .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
+    }
+
     static RuntimeCoreBuilder install(
             RuntimeCoreBuilder builder,
             String name,
@@ -97,6 +123,17 @@ final class TestToolPlatform {
     private static ToolDefinition definition(String name, String version, String inputSchemaId, boolean sideEffecting) {
         Map<String, Object> objectSchema =
                 Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        return definition(name, version, inputSchemaId, sideEffecting, objectSchema);
+    }
+
+    private static ToolDefinition definition(
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            Map<String, Object> outputSchema) {
+        Map<String, Object> objectSchema =
+                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
         return new ToolDefinition(
                 new ToolName(name),
                 new SemanticVersion(version),
@@ -104,7 +141,7 @@ final class TestToolPlatform {
                 name,
                 "Runtime test tool " + name,
                 new ToolSchema(inputSchemaId, "1.0", objectSchema),
-                new ToolSchema(name + ".output", "1.0", objectSchema),
+                new ToolSchema(name + ".output", "1.0", outputSchema),
                 ToolExecutionMode.IN_PROCESS,
                 true,
                 Duration.ofSeconds(10),

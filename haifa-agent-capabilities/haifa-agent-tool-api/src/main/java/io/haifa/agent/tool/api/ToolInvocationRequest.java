@@ -21,7 +21,8 @@ public record ToolInvocationRequest(
         Instant deadline,
         Optional<String> idempotencyKey,
         ToolCancellation cancellation,
-        List<CredentialLease> credentialLeases) {
+        List<CredentialLease> credentialLeases,
+        ToolInvocationObserver observer) {
     public ToolInvocationRequest {
         Objects.requireNonNull(binding, "binding");
         Objects.requireNonNull(toolCallId, "toolCallId");
@@ -33,5 +34,31 @@ public record ToolInvocationRequest(
         idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey");
         Objects.requireNonNull(cancellation, "cancellation");
         credentialLeases = List.copyOf(Objects.requireNonNull(credentialLeases, "credentialLeases"));
+        Objects.requireNonNull(observer, "observer");
+    }
+
+    public ToolInvocationRequest(
+            FrozenToolBinding binding,
+            ToolCallId toolCallId,
+            AgentRunId runId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            ToolArguments arguments,
+            Instant deadline,
+            Optional<String> idempotencyKey,
+            ToolCancellation cancellation,
+            List<CredentialLease> credentialLeases) {
+        this(
+                binding,
+                toolCallId,
+                runId,
+                tenant,
+                principal,
+                arguments,
+                deadline,
+                idempotencyKey,
+                cancellation,
+                credentialLeases,
+                ToolInvocationObserver.noop());
     }
 }
