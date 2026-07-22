@@ -1,5 +1,11 @@
 # Haifa Agent Model API
 
+## Reasoning safety
+
+Reasoning policy is represented by typed mode/effort values and normalized into frozen snapshot options.
+`SensitiveModelReasoning` is bounded, defensively copied, digest-addressed, and redacted by `toString`. It exists
+only at the model invocation/continuation boundary and is never a public Agent message payload.
+
 ## Streaming invocation
 
 `AgentChatModel.invoke` remains the compatible synchronous entry point. `invokeStreaming` publishes ordered

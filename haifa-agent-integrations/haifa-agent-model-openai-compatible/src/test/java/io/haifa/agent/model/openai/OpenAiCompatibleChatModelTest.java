@@ -425,7 +425,7 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
-    void rejectsThinkingEnabledProviderAndResolvesOnlyEnvironmentReferences() {
+    void acceptsThinkingEnabledProviderAndRejectsUnsupportedEffort() {
         ModelProviderDefinition enabled = new ModelProviderDefinition(
                 provider.id(),
                 provider.version(),
@@ -435,17 +435,30 @@ class OpenAiCompatibleChatModelTest {
                 provider.credentialRef(),
                 provider.status(),
                 provider.models(),
-                Map.of("thinking", "enabled"),
+                Map.of("thinking", "enabled", "reasoning_effort", "high"),
+                Map.of());
+        new OpenAiCompatibleChatModel(
+                enabled, HttpClient.newHttpClient(), json, ignored -> new ResolvedCredential("secret"), true, 1024);
+        ModelProviderDefinition invalid = new ModelProviderDefinition(
+                enabled.id(),
+                enabled.version(),
+                enabled.displayName(),
+                enabled.adapterType(),
+                enabled.endpoint(),
+                enabled.credentialRef(),
+                enabled.status(),
+                enabled.models(),
+                Map.of("thinking", "enabled", "reasoning_effort", "medium"),
                 Map.of());
         assertThatThrownBy(() -> new OpenAiCompatibleChatModel(
-                        enabled,
+                        invalid,
                         HttpClient.newHttpClient(),
                         json,
                         ignored -> new ResolvedCredential("secret"),
                         true,
                         1024))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("thinking=disabled");
+                .hasMessageContaining("high or max");
 
         EnvironmentCredentialResolver resolver =
                 new EnvironmentCredentialResolver(name -> name.equals("DEEPSEEK_API_KEY") ? "resolved-secret" : null);
@@ -454,6 +467,41 @@ class OpenAiCompatibleChatModelTest {
         assertThatThrownBy(() -> resolver.resolve(new CredentialRef("file://secret")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("scheme");
+    }
+
+    @Test
+    void sendsEnabledHighThinkingAndProtectsSynchronousReasoning() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"thinking-1","model":"deepseek-v4-pro","choices":[{"finish_reason":"stop",
+                 "message":{"content":"answer","reasoning_content":"private chain"}}],
+                 "usage":{"prompt_tokens":3,"completion_tokens":4,
+                          "completion_tokens_details":{"reasoning_tokens":2}}}
+                """));
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("thinking-call"),
+                new AgentRunId("thinking-run"),
+                1,
+                1,
+                reasoningSnapshot(),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of());
+
+        var result = model().invoke(request);
+
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("thinking").path("type").asText()).isEqualTo("enabled");
+        assertThat(sent.path("reasoning_effort").asText()).isEqualTo("high");
+        assertThat(result.reasoning()).isPresent();
+        assertThat(result.reasoning().orElseThrow().use(java.util.function.Function.identity()))
+                .isEqualTo("private chain");
+        assertThat(result.toString()).doesNotContain("private chain");
+        assertThat(result.usage().reasoningTokens()).isEqualTo(2);
     }
 
     @Test
@@ -553,6 +601,24 @@ class OpenAiCompatibleChatModelTest {
                 393_216,
                 provider.options(),
                 Map.of("thinking", "disabled"));
+    }
+
+    private ResolvedModelSnapshot reasoningSnapshot() {
+        return ResolvedModelSnapshot.create(
+                provider.id(),
+                provider.version(),
+                new ModelDefinitionId("deepseek-v4-pro"),
+                "model-v1",
+                "deepseek-v4-pro",
+                "openai-compatible",
+                "1.0.0",
+                provider.endpoint(),
+                provider.credentialRef(),
+                EnumSet.allOf(ModelCapability.class),
+                1_048_576,
+                393_216,
+                Map.of("thinking", "enabled", "reasoning_effort", "high"),
+                Map.of("thinking", "enabled", "reasoning_effort", "high"));
     }
 
     private ModelProviderDefinition provider(URI endpoint) {

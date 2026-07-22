@@ -88,7 +88,7 @@ public final class FrozenModelInvoker {
                 iteration,
                 attempt,
                 binding.configuration().model(),
-                messages.assemble(run.id(), context),
+                messages.assemble(run.id(), context, binding.configuration().model()),
                 context.tools(),
                 Math.toIntExact(context.budget().outputReserve()),
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
@@ -135,6 +135,9 @@ public final class FrozenModelInvoker {
                         Map.entry("finishReason", response.finishReason().name()),
                         Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
                         Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
-                        Map.entry("reasoningTokens", response.usage().reasoningTokens())));
+                        Map.entry("reasoningTokens", response.usage().reasoningTokens())),
+                callId.value(),
+                binding.configuration().model(),
+                response.reasoning());
     }
 }

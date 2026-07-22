@@ -23,6 +23,7 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +41,10 @@ public final class ModelMessageAssembler {
     }
 
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context) {
+        return assemble(runId, context, null);
+    }
+
+    public List<ModelMessage> assemble(AgentRunId runId, AgentContext context, ResolvedModelSnapshot model) {
         List<ModelMessage> messages = new ArrayList<>();
         context.prompts()
                 .forEach(prompt -> messages.add(ModelMessage.text(
@@ -48,9 +53,9 @@ public final class ModelMessageAssembler {
                 .collect(Collectors.toUnmodifiableMap(ToolCall::id, Function.identity()));
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageContextContent message) {
-                messages.addAll(mapMessage(message.message(), toolCalls));
+                messages.addAll(mapMessage(message.message(), toolCalls, model));
             } else if (item.content() instanceof MessageGroupContextContent group) {
-                group.messages().forEach(message -> messages.addAll(mapMessage(message, toolCalls)));
+                group.messages().forEach(message -> messages.addAll(mapMessage(message, toolCalls, model)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof AssetDerivedTextContent asset) {
@@ -85,7 +90,9 @@ public final class ModelMessageAssembler {
     }
 
     private List<ModelMessage> mapMessage(
-            AgentMessage message, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> authoritativeCalls) {
+            AgentMessage message,
+            Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> authoritativeCalls,
+            ResolvedModelSnapshot model) {
         List<ToolCallPart> calls = message.contents().stream()
                 .filter(ToolCallPart.class::isInstance)
                 .map(ToolCallPart.class::cast)
@@ -130,7 +137,16 @@ public final class ModelMessageAssembler {
                                 call.arguments().values());
                     })
                     .toList();
-            return List.of(ModelMessage.assistant(text, mapped));
+            var continuation = state.continuationForMessage(message.id());
+            if (continuation.isEmpty()) return List.of(ModelMessage.assistant(text, mapped));
+            if (model == null) {
+                throw new IllegalStateException("model snapshot is required to resolve provider continuation");
+            }
+            var correlations = mapped.stream()
+                    .map(call -> call.providerCorrelationId().value())
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            return List.of(
+                    ModelMessage.assistant(text, mapped, state.resolveContinuation(message.id(), model, correlations)));
         }
         if (message.role() == MessageRole.TOOL) {
             throw new IllegalStateException("tool message has no typed provider correlation");

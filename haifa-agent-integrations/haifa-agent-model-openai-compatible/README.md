@@ -1,5 +1,12 @@
 # Haifa Agent OpenAI-Compatible Model Adapter
 
+## DeepSeek thinking
+
+The governed DeepSeek default is `thinking=enabled` with `reasoning_effort=high`; explicit disabled snapshots
+remain supported. Enabled requests omit unsupported sampling options, parse sync/stream `reasoning_content`, and
+record `completion_tokens_details.reasoning_tokens`. Reasoning is returned only as a bounded sensitive payload;
+Tool Call continuation is controlled by Runtime and mapped back as assistant `reasoning_content`.
+
 ## Synchronous and streaming boundaries
 
 The adapter supports synchronous JSON Chat Completions and `text/event-stream`. Streaming requests send

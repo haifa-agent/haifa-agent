@@ -41,6 +41,9 @@ import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoopContext;
+import io.haifa.agent.runtime.core.model.ModelInvocationResult;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
@@ -104,6 +107,15 @@ public final class DecisionExecutor {
         return AgentLoopDirective.CONTINUE;
     }
 
+    public AgentLoopDirective executeModel(
+            AgentRun run, ModelInvocationResult invocation, AgentLoopContext loopContext) {
+        AgentDecision decision = invocation.decision();
+        if (decision instanceof ToolCallDecision toolDecision) {
+            return executeTools(run, toolDecision, loopContext, java.util.Optional.of(invocation));
+        }
+        return execute(run, decision, loopContext);
+    }
+
     private AgentLoopDirective executeFinal(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
         var readiness = completionGuard.evaluate(run, decision);
         if (!readiness.ready()) {
@@ -129,10 +141,18 @@ public final class DecisionExecutor {
     }
 
     private AgentLoopDirective executeTools(AgentRun run, ToolCallDecision decision, AgentLoopContext loopContext) {
+        return executeTools(run, decision, loopContext, java.util.Optional.empty());
+    }
+
+    private AgentLoopDirective executeTools(
+            AgentRun run,
+            ToolCallDecision decision,
+            AgentLoopContext loopContext,
+            java.util.Optional<ModelInvocationResult> invocation) {
         List<PreparedTool> prepared = decision.requests().stream()
                 .map(request -> prepareTool(run, request))
                 .toList();
-        appendToolCalls(run, prepared.stream().map(PreparedTool::call).toList());
+        appendToolCalls(run, prepared.stream().map(PreparedTool::call).toList(), invocation);
         for (PreparedTool preparedTool : prepared) {
             ToolRequest request = preparedTool.request();
             ToolCall call = preparedTool.call();
@@ -376,12 +396,49 @@ public final class DecisionExecutor {
         return new PreparedTool(request, tools.prepare(run, step.id(), request), step);
     }
 
-    private void appendToolCalls(AgentRun run, List<ToolCall> calls) {
+    private void appendToolCalls(
+            AgentRun run, List<ToolCall> calls, java.util.Optional<ModelInvocationResult> invocation) {
         List<ContentPart> parts = calls.stream()
                 .map(call -> (ContentPart)
                         new ToolCallPart(call.id(), call.providerCorrelationId(), call.toolName(), call.toolVersion()))
                 .toList();
-        appendMessage(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, Map.of());
+        var continuationInvocation =
+                invocation.filter(value -> value.reasoning().isPresent());
+        if (continuationInvocation.isEmpty()) {
+            appendMessage(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, Map.of());
+            return;
+        }
+        ModelInvocationResult value = continuationInvocation.orElseThrow();
+        var reasoning = value.reasoning().orElseThrow();
+        ModelContinuationRef reference =
+                new ModelContinuationRef(ids.nextValue(), "1.0", reasoning.digest(), reasoning.byteLength());
+        Map<String, Object> metadata = Map.of(
+                "modelContinuationId",
+                reference.id(),
+                "modelContinuationVersion",
+                reference.version(),
+                "modelContinuationDigest",
+                reference.digest(),
+                "modelContinuationBytes",
+                reference.byteLength());
+        SessionMessageDraft message =
+                messageDraft(run, MessageRole.ASSISTANT, parts, MessageVisibility.AGENT_VISIBLE, metadata);
+        var correlations = calls.stream()
+                .map(call -> call.providerCorrelationId().value())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        state.appendSessionMessageWithContinuation(
+                message,
+                new ModelContinuationDraft(
+                        reference,
+                        run.id(),
+                        run.sessionId(),
+                        value.modelCallId(),
+                        value.model().providerId().value(),
+                        value.model().providerModelId(),
+                        value.model().configurationDigest(),
+                        correlations,
+                        reasoning,
+                        time.now()));
     }
 
     private void appendToolResult(AgentRun run, ToolCall call, String text) {

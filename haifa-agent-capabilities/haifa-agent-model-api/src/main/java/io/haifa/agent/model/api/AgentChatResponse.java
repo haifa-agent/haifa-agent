@@ -13,7 +13,8 @@ public record AgentChatResponse(
         ModelFinishReason finishReason,
         ModelUsage usage,
         String systemFingerprint,
-        Map<String, Object> metadata) {
+        Map<String, Object> metadata,
+        java.util.Optional<SensitiveModelReasoning> reasoning) {
     public AgentChatResponse {
         responseId = ModelValues.text(responseId, "responseId");
         actualModelId = ModelValues.text(actualModelId, "actualModelId");
@@ -24,8 +25,30 @@ public record AgentChatResponse(
         systemFingerprint = Objects.requireNonNull(systemFingerprint, "systemFingerprint must not be null")
                 .trim();
         metadata = ModelValues.map(metadata, "metadata");
+        reasoning = Objects.requireNonNull(reasoning, "reasoning must not be null");
         if (content.isBlank() && toolCalls.isEmpty()) {
             throw new IllegalArgumentException("response must contain content or tool calls");
         }
+    }
+
+    public AgentChatResponse(
+            String responseId,
+            String actualModelId,
+            String content,
+            List<ModelToolCall> toolCalls,
+            ModelFinishReason finishReason,
+            ModelUsage usage,
+            String systemFingerprint,
+            Map<String, Object> metadata) {
+        this(
+                responseId,
+                actualModelId,
+                content,
+                toolCalls,
+                finishReason,
+                usage,
+                systemFingerprint,
+                metadata,
+                java.util.Optional.empty());
     }
 }

@@ -4,5 +4,6 @@ package io.haifa.agent.model.api;
 public enum ModelCapability {
     TEXT_CHAT,
     TOOL_CALLING,
-    STRUCTURED_OUTPUT
+    STRUCTURED_OUTPUT,
+    REASONING
 }

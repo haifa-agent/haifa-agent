@@ -25,6 +25,12 @@ import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState;
+import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRecord;
 import io.haifa.agent.runtime.core.tool.ToolResultAssetStore;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -67,6 +73,9 @@ public final class InMemoryRuntimeStore
     private final Map<AgentRunId, List<AgentMessage>> messages = new HashMap<>();
     private final Map<io.haifa.agent.core.session.AgentSessionId, List<AgentMessage>> sessionMessages = new HashMap<>();
     private final Map<AgentMessageId, AgentMessage> messagesById = new HashMap<>();
+    private final Map<AgentMessageId, ModelContinuationRecord> modelContinuationsByMessage = new HashMap<>();
+    private final Map<String, ModelContinuationRecord> modelContinuationsById = new HashMap<>();
+    private final ModelContinuationProtector modelContinuationProtector = AesGcmModelContinuationProtector.ephemeral();
     private final Map<AgentRunId, List<AgentStep>> steps = new HashMap<>();
     private final Map<AgentRunId, List<ToolCall>> toolCalls = new HashMap<>();
     private final Map<AgentRunId, AgentPlan> plans = new HashMap<>();
@@ -284,6 +293,105 @@ public final class InMemoryRuntimeStore
         message.runId().ifPresent(runId -> messages.computeIfAbsent(runId, ignored -> new ArrayList<>())
                 .add(message));
         return message;
+    }
+
+    @Override
+    public synchronized AgentMessage appendSessionMessageWithContinuation(
+            SessionMessageDraft message, ModelContinuationDraft draft) {
+        if (message.runId().isEmpty()
+                || !message.runId().orElseThrow().equals(draft.runId())
+                || !message.sessionId().equals(draft.sessionId())) {
+            throw new IllegalArgumentException("continuation does not belong to assistant message");
+        }
+        if (modelContinuationsById.containsKey(draft.reference().id())) {
+            throw new IllegalStateException("model continuation id already exists");
+        }
+        String binding = continuationBinding(draft);
+        var protectedReasoning = modelContinuationProtector.protect(draft.reasoning(), binding);
+        ModelContinuationRecord record = new ModelContinuationRecord(
+                draft.reference(),
+                message.id(),
+                draft.runId(),
+                draft.sessionId(),
+                draft.modelCallId(),
+                draft.providerId(),
+                draft.modelId(),
+                draft.configurationDigest(),
+                draft.toolCorrelationIds(),
+                protectedReasoning,
+                draft.createdAt());
+        AgentMessage appended = appendSessionMessage(message);
+        modelContinuationsByMessage.put(message.id(), record);
+        modelContinuationsById.put(record.reference().id(), record);
+        return appended;
+    }
+
+    @Override
+    public synchronized Optional<ModelContinuationRecord> continuationForMessage(AgentMessageId messageId) {
+        return Optional.ofNullable(modelContinuationsByMessage.get(messageId));
+    }
+
+    @Override
+    public synchronized List<ModelContinuationRecord> modelContinuations(AgentRunId runId) {
+        return modelContinuationsByMessage.values().stream()
+                .filter(record -> record.runId().equals(runId))
+                .sorted(Comparator.comparing(
+                        record -> record.assistantMessageId().value()))
+                .toList();
+    }
+
+    @Override
+    public synchronized io.haifa.agent.model.api.SensitiveModelReasoning resolveContinuation(
+            AgentMessageId messageId,
+            io.haifa.agent.model.api.ResolvedModelSnapshot model,
+            java.util.Set<String> toolCorrelationIds) {
+        ModelContinuationRecord record = Optional.ofNullable(modelContinuationsByMessage.get(messageId))
+                .orElseThrow(() -> new ModelContinuationException(
+                        ModelContinuationFailure.MISSING, "required model continuation is unavailable"));
+        if (!"1.0".equals(record.reference().version())) {
+            throw new ModelContinuationException(
+                    ModelContinuationFailure.VERSION_UNSUPPORTED, "model continuation version is unsupported");
+        }
+        if (!record.providerId().equals(model.providerId().value())
+                || !record.modelId().equals(model.providerModelId())
+                || !record.configurationDigest().equals(model.configurationDigest())
+                || !record.toolCorrelationIds().equals(java.util.Set.copyOf(toolCorrelationIds))) {
+            throw new ModelContinuationException(
+                    ModelContinuationFailure.BINDING_MISMATCH, "model continuation binding does not match request");
+        }
+        var reasoning = modelContinuationProtector.reveal(record.protectedReasoning(), continuationBinding(record));
+        if (!reasoning.digest().equals(record.reference().digest())
+                || reasoning.byteLength() != record.reference().byteLength()) {
+            throw new ModelContinuationException(
+                    ModelContinuationFailure.CORRUPT, "model continuation digest does not match payload");
+        }
+        return reasoning;
+    }
+
+    private static String continuationBinding(ModelContinuationDraft draft) {
+        return String.join(
+                "|",
+                draft.reference().id(),
+                draft.runId().value(),
+                draft.sessionId().value(),
+                draft.modelCallId(),
+                draft.providerId(),
+                draft.modelId(),
+                draft.configurationDigest(),
+                draft.toolCorrelationIds().stream().sorted().toList().toString());
+    }
+
+    private static String continuationBinding(ModelContinuationRecord record) {
+        return String.join(
+                "|",
+                record.reference().id(),
+                record.runId().value(),
+                record.sessionId().value(),
+                record.modelCallId(),
+                record.providerId(),
+                record.modelId(),
+                record.configurationDigest(),
+                record.toolCorrelationIds().stream().sorted().toList().toString());
     }
 
     @Override

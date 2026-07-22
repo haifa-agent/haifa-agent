@@ -80,6 +80,9 @@ public final class CheckpointSnapshotBuilder {
                 .orElse(io.haifa.agent.runtime.core.storage.RuntimeMemorySelection.EMPTY);
         var capturedAt = time.now();
         var capabilityReferences = capabilityCheckpoints.capture(run, configuration.capabilities(), id, capturedAt);
+        var modelContinuations = state.modelContinuations(run.id()).stream()
+                .map(value -> value.reference())
+                .toList();
         RuntimeCheckpointState checkpointState = new RuntimeCheckpointState(
                 run.id(),
                 run.sessionId(),
@@ -101,6 +104,7 @@ public final class CheckpointSnapshotBuilder {
                 memorySelection.memories(),
                 memorySelection.retrievalPolicyVersion(),
                 memorySelection.queryDigest(),
+                modelContinuations,
                 capabilityReferences,
                 capturedAt);
         Checkpoint checkpoint = new Checkpoint(

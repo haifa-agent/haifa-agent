@@ -6,6 +6,8 @@ import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningPolicy;
 import io.haifa.agent.model.api.ModelStatus;
 import io.haifa.agent.model.api.ProviderStatus;
 import java.net.URI;
@@ -30,10 +32,14 @@ public final class DeepSeekDefaults {
                 "deepseek-v4-pro",
                 "DeepSeek V4 Pro",
                 ModelStatus.ACTIVE,
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT),
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING),
                 1_048_576,
                 393_216,
-                Map.of("thinking", "disabled"),
+                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions(),
                 Map.of("source", "deepseek-official-docs-2026-07-21"));
         return new ModelProviderDefinition(
                 PROVIDER_ID,
@@ -44,7 +50,7 @@ public final class DeepSeekDefaults {
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
                 ProviderStatus.ACTIVE,
                 List.of(model),
-                Map.of("thinking", "disabled"),
+                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions(),
                 Map.of());
     }
 }

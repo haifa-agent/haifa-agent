@@ -27,14 +27,8 @@ public interface AgentChatModel {
         if (!response.content().isEmpty()
                 && sink.emit(new ModelStreamEvent.ContentDelta(request.callId(), eventIndex++, response.content()))
                         == ModelStreamControl.CANCEL) {
-            throw new ModelInvocationException(
-                    ModelErrorCategory.CANCELLED,
-                    false,
-                    0,
-                    "stream_cancelled",
-                    request.callId(),
-                    "model stream was cancelled",
-                    null);
+            // The synchronous adapter has already completed, so the Runtime safe point owns the pending control.
+            return response;
         }
         sink.emit(new ModelStreamEvent.UsageReported(request.callId(), eventIndex, response.usage()));
         return response;

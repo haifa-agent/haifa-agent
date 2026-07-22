@@ -174,6 +174,32 @@ public final class CheckpointManager {
                     CheckpointRestoreFailure.TOOL_STATE_INVALID,
                     "checkpoint tool state does not match authoritative tool calls");
         }
+        var authoritativeContinuations = state.modelContinuations(run.id());
+        boolean continuationsValid = checkpoint.modelContinuations().stream()
+                .allMatch(reference -> authoritativeContinuations.stream()
+                        .anyMatch(record -> record.reference().equals(reference)));
+        if (!continuationsValid
+                || authoritativeContinuations.size()
+                        < checkpoint.modelContinuations().size()) {
+            throw new CheckpointRestoreException(
+                    CheckpointRestoreFailure.CAPABILITY_STATE_INVALID,
+                    "checkpoint model continuation is unavailable or corrupt");
+        }
+        for (var reference : checkpoint.modelContinuations()) {
+            var record = authoritativeContinuations.stream()
+                    .filter(value -> value.reference().equals(reference))
+                    .findFirst()
+                    .orElseThrow();
+            try {
+                state.resolveContinuation(
+                        record.assistantMessageId(), configuration.model(), record.toolCorrelationIds());
+            } catch (io.haifa.agent.runtime.core.model.continuation.ModelContinuationException exception) {
+                throw new CheckpointRestoreException(
+                        CheckpointRestoreFailure.CAPABILITY_STATE_INVALID,
+                        "checkpoint model continuation validation failed: " + exception.failure(),
+                        exception);
+            }
+        }
         memoryValidator.validate(run, checkpoint);
     }
 }

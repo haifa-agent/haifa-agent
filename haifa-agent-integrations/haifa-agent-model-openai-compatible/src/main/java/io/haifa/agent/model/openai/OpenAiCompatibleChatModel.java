@@ -21,6 +21,7 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedCredential;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -289,12 +290,8 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 && !(allowInsecureHttp && "http".equalsIgnoreCase(endpoint.getScheme()))) {
             throw new IllegalArgumentException("frozen provider endpoint must use HTTPS");
         }
-        Object providerThinking = request.model().providerOptions().get("thinking");
-        Object modelThinking = request.model().invocationOptions().get("thinking");
-        if ((providerThinking != null && !"disabled".equals(providerThinking))
-                || (modelThinking != null && !"disabled".equals(modelThinking))) {
-            throw new IllegalArgumentException("first integration requires thinking=disabled");
-        }
+        validateThinkingOptions(request.model().providerOptions());
+        validateThinkingOptions(request.model().invocationOptions());
     }
 
     private URI chatCompletionsUri(URI endpoint) {
@@ -312,7 +309,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             body.put("tool_choice", "auto");
         }
         body.put("max_tokens", request.maxOutputTokens());
-        body.put("thinking", Map.of("type", frozenThinking(request)));
+        String thinking = frozenThinking(request);
+        body.put("thinking", Map.of("type", thinking));
+        if ("enabled".equals(thinking)) body.put("reasoning_effort", frozenReasoningEffort(request));
         body.put("stream", stream);
         if (stream) body.put("stream_options", Map.of("include_usage", true));
         Object responseFormat = request.options().get("response_format");
@@ -435,9 +434,23 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         Object value = request.model()
                 .invocationOptions()
                 .getOrDefault("thinking", request.model().providerOptions().getOrDefault("thinking", "disabled"));
-        if (!"disabled".equals(value))
-            throw new IllegalArgumentException("first integration requires thinking=disabled");
-        return "disabled";
+        String mode = String.valueOf(value);
+        if (!"disabled".equals(mode) && !"enabled".equals(mode)) {
+            throw new IllegalArgumentException("unsupported thinking mode: " + mode);
+        }
+        return mode;
+    }
+
+    private String frozenReasoningEffort(AgentChatRequest request) {
+        Object value = request.model()
+                .invocationOptions()
+                .getOrDefault(
+                        "reasoning_effort", request.model().providerOptions().getOrDefault("reasoning_effort", "high"));
+        String effort = String.valueOf(value);
+        if (!"high".equals(effort) && !"max".equals(effort)) {
+            throw new IllegalArgumentException("DeepSeek supports reasoning_effort high or max");
+        }
+        return effort;
     }
 
     private Object validateResponseFormat(Object value) {
@@ -457,16 +470,24 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                         && "http".equalsIgnoreCase(provider.endpoint().getScheme()))) {
             throw new IllegalArgumentException("provider endpoint must use HTTPS");
         }
-        Object providerThinking = provider.options().get("thinking");
-        if (providerThinking != null && !"disabled".equals(providerThinking)) {
-            throw new IllegalArgumentException("first integration requires thinking=disabled");
-        }
+        validateThinkingOptions(provider.options());
         provider.models().forEach(model -> {
-            Object modelThinking = model.options().get("thinking");
-            if (modelThinking != null && !"disabled".equals(modelThinking)) {
-                throw new IllegalArgumentException("first integration requires thinking=disabled");
-            }
+            validateThinkingOptions(model.options());
         });
+    }
+
+    private static void validateThinkingOptions(Map<String, Object> options) {
+        Object thinking = options.get("thinking");
+        if (thinking != null && !"disabled".equals(thinking) && !"enabled".equals(thinking)) {
+            throw new IllegalArgumentException("unsupported thinking mode: " + thinking);
+        }
+        Object effort = options.get("reasoning_effort");
+        if (effort != null && !"high".equals(effort) && !"max".equals(effort)) {
+            throw new IllegalArgumentException("DeepSeek supports reasoning_effort high or max");
+        }
+        if ("disabled".equals(thinking) && effort != null) {
+            throw new IllegalArgumentException("disabled thinking cannot have reasoning_effort");
+        }
     }
 
     private static String requireText(String value, String field) {
@@ -485,6 +506,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "tool_calls",
                     message.toolCalls().stream().map(this::toolCall).toList());
         }
+        message.reasoning()
+                .ifPresent(reasoning ->
+                        mapped.put("reasoning_content", reasoning.use(java.util.function.Function.identity())));
         message.providerCorrelationId().ifPresent(value -> mapped.put("tool_call_id", value.value()));
         return mapped;
     }
@@ -588,6 +612,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 ? ""
                 : responseMessage.path("content").asText("");
         List<ModelToolCall> toolCalls = parseToolCalls(request, responseMessage.path("tool_calls"));
+        JsonNode reasoningNode = responseMessage.path("reasoning_content");
+        String reasoningContent =
+                reasoningNode.isMissingNode() || reasoningNode.isNull() ? "" : reasoningNode.asText("");
         if (content.isBlank() && toolCalls.isEmpty()) {
             throw failure(
                     request,
@@ -607,7 +634,10 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 finishReason,
                 usage,
                 root.path("system_fingerprint").asText(""),
-                Map.of());
+                Map.of("reasoningCharacters", reasoningContent.length()),
+                reasoningContent.isEmpty()
+                        ? java.util.Optional.empty()
+                        : java.util.Optional.of(SensitiveModelReasoning.of(reasoningContent)));
     }
 
     private List<ModelToolCall> parseToolCalls(AgentChatRequest request, JsonNode node) {
@@ -899,7 +929,10 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     finalReason,
                     usage,
                     systemFingerprint,
-                    Map.of("reasoningCharacters", reasoning.length()));
+                    Map.of("reasoningCharacters", reasoning.length()),
+                    reasoning.isEmpty()
+                            ? java.util.Optional.empty()
+                            : java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString())));
         }
 
         private String consistentText(JsonNode node, String field, String current) {

@@ -363,7 +363,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContextRef[0]);
             AgentLoopDirective directive;
             try {
-                directive = decisionExecutor.execute(run, decision, progress);
+                directive = decisionExecutor.executeModel(run, response, progress);
             } catch (RuntimeException error) {
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
                 throw error;
