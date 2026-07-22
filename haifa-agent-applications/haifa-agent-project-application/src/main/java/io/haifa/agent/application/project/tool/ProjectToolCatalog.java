@@ -48,13 +48,16 @@ public final class ProjectToolCatalog {
                 .sorted()
                 .filter(configuredTools::contains)
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
-                .forEach(
-                        name -> builder.register(new ToolAlias(name), definition(name), "project-workspace", provider));
+                .forEach(name -> builder.register(modelAlias(name), definition(name), "project-workspace", provider));
         return builder.freeze();
     }
 
     public Set<String> names() {
         return REQUIRED_CAPABILITY.keySet();
+    }
+
+    private static ToolAlias modelAlias(String name) {
+        return new ToolAlias(name.replace('.', '_'));
     }
 
     private static ToolDefinition definition(String name) {

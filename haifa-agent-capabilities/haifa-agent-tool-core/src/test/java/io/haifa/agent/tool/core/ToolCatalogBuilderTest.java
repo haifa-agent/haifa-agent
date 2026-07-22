@@ -34,6 +34,7 @@ class ToolCatalogBuilderTest {
         assertThat(specification.name()).isEqualTo("read");
         assertThat(specification.inputJsonSchema())
                 .isEqualTo(ToolFixtures.definition().inputSchema().document());
+        assertThat(specification.strict()).isFalse();
         assertThat(specification.toString()).doesNotContain("project-default", "definitionHash");
     }
 

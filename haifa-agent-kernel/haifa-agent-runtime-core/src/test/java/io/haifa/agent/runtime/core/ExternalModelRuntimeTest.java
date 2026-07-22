@@ -61,6 +61,7 @@ class ExternalModelRuntimeTest {
                 assertThat(request.tools()).singleElement().satisfies(tool -> {
                     assertThat(tool.name()).isEqualTo("echo");
                     assertThat(tool.inputJsonSchema()).containsEntry("type", "object");
+                    assertThat(tool.strict()).isFalse();
                 });
                 return new AgentChatResponse(
                         "response-1",
