@@ -18,6 +18,10 @@ public interface OpenAiCompatibleDialect {
 
     void applyRequest(AgentChatRequest request, Map<String, Object> body);
 
+    default boolean acceptsResponseObject(String object, boolean streaming) {
+        return true;
+    }
+
     default ModelErrorCategory classifyError(int status, String providerCode, String safeDetail) {
         String normalized = (providerCode + " " + safeDetail).toLowerCase(java.util.Locale.ROOT);
         return switch (status) {
@@ -37,5 +41,11 @@ public interface OpenAiCompatibleDialect {
 
     default ModelErrorCategory classifyStreamError(String providerCode) {
         return classifyError(200, providerCode, "");
+    }
+
+    default boolean retryable(int status, ModelErrorCategory category, String providerCode) {
+        return category == ModelErrorCategory.TIMEOUT
+                || category == ModelErrorCategory.RATE_LIMITED
+                || category == ModelErrorCategory.PROVIDER_UNAVAILABLE;
     }
 }

@@ -9,6 +9,7 @@ transport 实现；厂商请求扩展、Endpoint policy 与错误分类由冻结
 | --- | --- | --- | --- | --- | --- |
 | DeepSeek | `deepseek-openai-chat` | 是 | 是 | 是 | enabled/high，安全 continuation |
 | 阿里云百炼 | `aliyun-bailian-openai-chat` | 是 | 是 | 是 | 由受治理 Qwen profile 决定 |
+| 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
 
 新配置必须冻结 `dialect_id` 和 `dialect_version`。仅为读取早期 DeepSeek `2.0` 快照保留按
 `providerId=deepseek` 的兼容解析；其他缺少 dialect 的快照会被拒绝。
@@ -27,6 +28,32 @@ Runtime 的受保护 continuation，raw reasoning 不进入公共输出。
 
 本阶段仅支持百炼 OpenAI Chat Completions。OpenAI Responses、DashScope 原生协议和
 Anthropic-compatible 是独立的后续 adapter，不复用 Chat SSE accumulator，也不应被配置成已支持。
+
+## 火山方舟
+
+`VolcengineArkProviderFactory` 冻结 region、完整 `/api/v3` endpoint、受信 `endpoint_host` 和模型 profile。
+`providerModelId` 的语义必须由 `ModelReferenceKind.MODEL_ID` 或 `ENDPOINT_ID` 明确声明，禁止依赖 `ep-`
+前缀猜测。Ark dialect 支持 `thinking`、`reasoning_effort`、`max_completion_tokens`、`service_tier` 的
+profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actual model 仅作为本次结果审计，不修改
+冻结 binding。
+
+### 当前兼容矩阵
+
+| 能力 | DeepSeek | Bailian | Ark |
+| --- | --- | --- | --- |
+| Sync Chat | 是 | 是 | 是 |
+| SSE Content | 是 | 是 | 是 |
+| final usage chunk | 是 | 是 | 是 |
+| Tool Calls | 是 | 是 | 是 |
+| Thinking | enabled/high | profile-gated | profile-gated |
+| Tool reasoning continuation | 必须 | profile-gated | profile-gated |
+| Live IT | opt-in | opt-in | opt-in |
+
+| Provider | Endpoint 示例 | Credential 示例 | 模型引用 | 厂商扩展 |
+| --- | --- | --- | --- | --- |
+| DeepSeek | `https://api.deepseek.com` | `env://DEEPSEEK_API_KEY` | model id | thinking object |
+| Bailian | region/Workspace `compatible-mode/v1` | `env://DASHSCOPE_API_KEY` | Qwen model id/alias | enable_thinking/tool_stream |
+| Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |
 
 ## DeepSeek thinking
 
@@ -112,6 +139,16 @@ DASHSCOPE_API_KEY=<secret>
 HAIFA_BAILIAN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 HAIFA_BAILIAN_MODEL_ID=<governed-model-id>
 HAIFA_BAILIAN_REGION=cn-beijing
+```
+
+方舟 Live IT 只调用用户已经创建并授权的 binding，不访问管理面或启停 Endpoint：
+
+```text
+HAIFA_ARK_LIVE_TEST=true
+ARK_API_KEY=<secret>
+HAIFA_ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+HAIFA_ARK_MODEL_ID=<model-or-endpoint-id>
+HAIFA_ARK_MODEL_REFERENCE_KIND=MODEL_ID|ENDPOINT_ID
 ```
 
 ```powershell

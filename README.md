@@ -2,7 +2,7 @@
 
 Haifa Agent 是面向 Java / Spring 生态的通用 Agent Runtime 与 Agent 产品开发平台。
 
-当前仓库处于 `0.1.0-SNAPSHOT` 的内核建设阶段，已完成 Core 领域模型、Runtime/AgentLoop、首个 DeepSeek 外部模型纵向集成、Phase 1 Tool/Credential 平台，以及固定协议 `2025-11-25` 的 MCP Client Integration。
+当前仓库处于 `0.1.0-SNAPSHOT` 的内核建设阶段，已完成 Core 领域模型、Runtime/AgentLoop、DeepSeek、阿里云百炼和火山方舟 OpenAI-compatible 模型纵向集成、Phase 1 Tool/Credential 平台，以及固定协议 `2025-11-25` 的 MCP Client Integration。
 
 ## 当前模块
 
@@ -34,7 +34,7 @@ haifa-agent-capabilities/
   haifa-agent-memory-api/      长期 Memory 领域契约与治理端口
   haifa-agent-memory-core/     Memory 审核、冲突、检索与清除实现
 haifa-agent-integrations/
-  haifa-agent-model-openai-compatible/  DeepSeek/OpenAI 兼容协议适配
+  haifa-agent-model-openai-compatible/  DeepSeek/百炼/方舟 OpenAI Chat 协议适配
   haifa-agent-git/                      经 Broker 执行的只读 Git 适配器
   haifa-agent-mcp/                      MCP 2025-11-25 HTTP/stdio Tool Provider
 haifa-agent-applications/
@@ -74,7 +74,7 @@ Project 模块还提供可重建的 File/Java Symbol/Markdown Index 和内容寻
 
 Workspace Run 的 Runtime Checkpoint 可通过版本化 Capability Participant 引用 Metadata、Git Reference 或受限 Full Copy Snapshot；普通 Chat 的冻结能力集合为空，因此不会创建 Workspace 或空 Snapshot。恢复先重新授权当前调用者并校验 Binding、Snapshot digest 与 Drift，DIRECT Workspace 的内容漂移不会触发隐式覆盖。Artifact 只由显式 Export 产生，保存不可变内容寻址 payload 与完整 Provenance；只读 Admin 投影不返回主机路径、正文或凭据。
 
-首个外部模型配置使用 Provider `deepseek`、Model `deepseek-v4-pro` 与 OpenAI 兼容 Chat Completions API。模型选择在 Run 启动时冻结到内容寻址配置快照；普通配置变化不影响已创建 Run。首版显式发送 `thinking.type=disabled`，后续启用思考模式前需先完成推理内容在 Tool Call、Checkpoint 与恢复中的持久语义。
+模型层当前通过统一 OpenAI Chat transport 和冻结 dialect 支持 Provider `deepseek`、`aliyun-bailian`、`volcengine-ark`。三家均支持同步与 SSE、final usage、Tool Call；DeepSeek 默认 thinking enabled/high，百炼和方舟由受治理模型 profile 显式开启。reasoning 只进入受保护 continuation，公共流仅投影 answer content。方舟的 Model ID/Endpoint ID 使用 `ModelReferenceKind` 冻结，不按字符串前缀猜测。模型选择在 Run 启动时进入内容寻址配置快照，目录或 Endpoint 后续变化不改变历史 Run。
 
 Core 当前提供版本化 `AgentDefinition`、不绑定具体 Agent 的 `AgentSession`、可复现的 `AgentRun` 聚合，以及 Message、Step、ToolCall、Plan/Todo、Checkpoint、Error 和 Domain Event 最小模型。领域 ID 由调用方通过 Common 的可注入 UUIDv7 生成器创建；领域对象不读取系统时间。
 

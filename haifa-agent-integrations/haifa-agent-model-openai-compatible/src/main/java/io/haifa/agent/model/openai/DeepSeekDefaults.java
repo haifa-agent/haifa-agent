@@ -43,7 +43,7 @@ public final class DeepSeekDefaults {
                         ModelCapability.REASONING),
                 1_048_576,
                 393_216,
-                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions(),
+                reasoningOptions(),
                 Map.of("source", "deepseek-official-docs-2026-07-21"));
         return new ModelProviderDefinition(
                 PROVIDER_ID,
@@ -56,5 +56,12 @@ public final class DeepSeekDefaults {
                 List.of(model),
                 providerOptions,
                 Map.of());
+    }
+
+    private static Map<String, Object> reasoningOptions() {
+        LinkedHashMap<String, Object> options = new LinkedHashMap<>(
+                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions());
+        options.put("requires_reasoning_continuation", true);
+        return options;
     }
 }

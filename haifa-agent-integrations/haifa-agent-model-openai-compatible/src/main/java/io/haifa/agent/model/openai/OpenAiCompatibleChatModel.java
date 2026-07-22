@@ -395,6 +395,17 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "provider returned invalid stream JSON",
                     exception);
         }
+        String object = chunk.path("object").asText("");
+        if (!dialect(request).acceptsResponseObject(object, true)) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "unexpected_stream_object",
+                    "provider returned an unexpected stream object",
+                    null);
+        }
         if (chunk.path("error").isObject()) {
             String code = truncate(chunk.path("error").path("code").asText("stream_error"), 80);
             throw failure(
@@ -516,6 +527,16 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     exception);
         }
         JsonNode choices = root.path("choices");
+        if (!dialect(request).acceptsResponseObject(root.path("object").asText(""), false)) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "unexpected_response_object",
+                    "provider returned an unexpected response object",
+                    null);
+        }
         if (!choices.isArray() || choices.size() != 1) {
             throw failure(
                     request,
@@ -587,7 +608,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 usage,
                 root.path("system_fingerprint").asText(""),
                 Map.of("reasoningCharacters", reasoningContent.length()),
-                reasoningContent.isEmpty()
+                reasoningContent.isEmpty() || !retainReasoning(request, finishReason)
                         ? java.util.Optional.empty()
                         : java.util.Optional.of(SensitiveModelReasoning.of(reasoningContent)));
     }
@@ -884,7 +905,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     usage,
                     systemFingerprint,
                     Map.of("reasoningCharacters", reasoning.length()),
-                    reasoning.isEmpty()
+                    reasoning.isEmpty() || !retainReasoning(request, finalReason)
                             ? java.util.Optional.empty()
                             : java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString())));
         }
@@ -959,7 +980,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             // The raw response is intentionally not propagated.
         }
         ModelErrorCategory category = dialect(request).classifyError(status, providerCode, safeDetail);
-        boolean retryable = status == 408 || status == 429 || status >= 500;
+        boolean retryable = dialect(request).retryable(status, category, providerCode);
         return failure(
                 request,
                 category,
@@ -968,6 +989,11 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 providerCode,
                 "model provider request failed with HTTP " + status,
                 null);
+    }
+
+    private static boolean retainReasoning(AgentChatRequest request, ModelFinishReason finishReason) {
+        if (finishReason != ModelFinishReason.TOOL_CALLS) return true;
+        return Boolean.TRUE.equals(request.model().invocationOptions().get("requires_reasoning_continuation"));
     }
 
     private static String truncate(String value, int max) {

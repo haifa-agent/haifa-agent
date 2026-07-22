@@ -33,3 +33,6 @@ chunks, SDK types, and reasoning text must not cross this module boundary.
 OpenAI-compatible Provider 的厂商协议差异必须通过 `providerOptions` 冻结稳定的 dialect id/version；
 region、Workspace/endpoint scope、模型 reasoning/tool profile 等会影响请求语义的字段也必须进入快照和配置摘要，
 Credential 只保存引用而不保存明文。
+
+`ModelReferenceKind.MODEL_ID/ENDPOINT_ID` 用于需要区分模型和已部署推理 Endpoint 的 Provider；该类型由
+Provider factory 写入冻结 profile，adapter 不得用名称前缀反推生产语义。

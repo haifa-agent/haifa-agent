@@ -11,6 +11,7 @@ public final class OpenAiCompatibleDialects {
     public static final String DIALECT_VERSION = "dialect_version";
     public static final String DEEPSEEK = "deepseek-openai-chat";
     public static final String ALIYUN_BAILIAN = "aliyun-bailian-openai-chat";
+    public static final String VOLCENGINE_ARK = "volcengine-ark-openai-chat";
     public static final String VERSION_1 = "1.0";
 
     private OpenAiCompatibleDialects() {}
@@ -37,6 +38,7 @@ public final class OpenAiCompatibleDialects {
         return switch (dialectId) {
             case DEEPSEEK -> DeepSeekOpenAiChatDialect.INSTANCE;
             case ALIYUN_BAILIAN -> AliyunBailianOpenAiChatDialect.INSTANCE;
+            case VOLCENGINE_ARK -> VolcengineArkOpenAiChatDialect.INSTANCE;
             default -> throw new IllegalArgumentException("unsupported OpenAI-compatible dialect: " + dialectId);
         };
     }

@@ -119,6 +119,9 @@ final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
         if (booleanOption(options, "preserve_thinking", false) && !enabled) {
             throw new IllegalArgumentException("preserve_thinking requires enabled thinking");
         }
+        if (booleanOption(options, "requires_reasoning_continuation", false) && !enabled) {
+            throw new IllegalArgumentException("reasoning continuation requires enabled thinking");
+        }
         if (booleanOption(options, "tool_stream", false) && !booleanOption(options, "supports_tool_stream", false)) {
             throw new IllegalArgumentException("Bailian model profile does not support tool_stream");
         }
