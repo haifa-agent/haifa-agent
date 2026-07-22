@@ -43,6 +43,7 @@ final class CliConfigurationLoader {
         String credential = environment("HAIFA_CREDENTIAL_REF")
                 .orElseGet(() -> text(model, "credentialRef", defaults.model().credentialRef()));
         Set<String> tools = stringSet(object(source, "tools").get("enabled"), defaults.enabledTools());
+        List<CliConfiguration.McpServer> mcpServers = mcpServers(object(source, "mcp"));
         ApprovalMode approval = arguments
                 .approval()
                 .orElseGet(() -> ApprovalMode.parse(text(
@@ -55,10 +56,45 @@ final class CliConfigurationLoader {
         return new CliConfiguration(
                 new CliConfiguration.Model(providerId, modelId, java.net.URI.create(endpoint), credential),
                 tools,
+                mcpServers,
                 approval,
                 timeout,
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()));
+    }
+
+    private static List<CliConfiguration.McpServer> mcpServers(Map<String, Object> mcp) {
+        Object configured = mcp.get("servers");
+        if (configured == null) return List.of();
+        if (!(configured instanceof List<?> servers)) {
+            throw new IllegalArgumentException("configuration mcp.servers must be a list");
+        }
+        List<CliConfiguration.McpServer> result = new ArrayList<>();
+        for (Object item : servers) {
+            if (!(item instanceof Map<?, ?> raw)) {
+                throw new IllegalArgumentException("configuration mcp.servers must contain objects");
+            }
+            Map<String, Object> server = new LinkedHashMap<>();
+            raw.forEach((key, value) -> server.put(String.valueOf(key), value));
+            String id = requiredText(server, "id", "configuration mcp server id");
+            String displayName = text(server, "displayName", id);
+            String endpoint = requiredText(server, "endpoint", "configuration mcp server endpoint");
+            result.add(new CliConfiguration.McpServer(
+                    id,
+                    displayName,
+                    java.net.URI.create(endpoint),
+                    bool(server, "allowLoopbackHttp", false),
+                    stringSet(server.get("allowedTools"), Set.of()),
+                    text(server, "aliasNamespace", id.replace('-', '_')),
+                    text(server, "policyProfile", "conservative"),
+                    Duration.ofMillis(number(server, "connectTimeoutMillis", 5000)),
+                    Duration.ofMillis(number(server, "requestTimeoutMillis", 15000)),
+                    Duration.ofMillis(number(server, "idleTimeoutMillis", 30000)),
+                    Math.toIntExact(number(server, "maxBodyBytes", 4 * 1024 * 1024)),
+                    Math.toIntExact(number(server, "maxHeaderBytes", 32 * 1024)),
+                    Math.toIntExact(nonNegativeNumber(server, "maxReconnectAttempts", 1))));
+        }
+        return List.copyOf(result);
     }
 
     private Map<String, Object> read(Path path) {
@@ -96,11 +132,35 @@ final class CliConfigurationLoader {
         return CliConfiguration.text(text, "configuration " + key);
     }
 
+    private static String requiredText(Map<String, Object> source, String key, String field) {
+        Object value = source.get(key);
+        if (!(value instanceof String text)) throw new IllegalArgumentException(field + " must be text");
+        return CliConfiguration.text(text, field);
+    }
+
+    private static boolean bool(Map<String, Object> source, String key, boolean fallback) {
+        Object value = source.get(key);
+        if (value == null) return fallback;
+        if (!(value instanceof Boolean flag)) {
+            throw new IllegalArgumentException("configuration " + key + " must be boolean");
+        }
+        return flag;
+    }
+
     private static long number(Map<String, Object> source, String key, long fallback) {
         Object value = source.get(key);
         if (value == null) return fallback;
         if (!(value instanceof Number number) || number.longValue() < 1) {
             throw new IllegalArgumentException("configuration " + key + " must be a positive number");
+        }
+        return number.longValue();
+    }
+
+    private static long nonNegativeNumber(Map<String, Object> source, String key, long fallback) {
+        Object value = source.get(key);
+        if (value == null) return fallback;
+        if (!(value instanceof Number number) || number.longValue() < 0) {
+            throw new IllegalArgumentException("configuration " + key + " must be a non-negative number");
         }
         return number.longValue();
     }

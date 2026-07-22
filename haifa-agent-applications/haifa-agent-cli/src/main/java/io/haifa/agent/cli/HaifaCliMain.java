@@ -34,22 +34,24 @@ public final class HaifaCliMain {
             Path workspace = parsed.workspace().orElseGet(() -> Path.of("."));
             if (!workspace.isAbsolute()) workspace = workspace.toAbsolutePath().normalize();
             CliConfiguration configuration = new CliConfigurationLoader().load(parsed, workspace);
-            LocalCodingAgent agent = LocalCodingAgent.create(workspace, configuration);
-            if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
-            var accepted = agent.start(parsed.message().orElseThrow());
-            if (parsed.verbose()) output.println("Run " + accepted.runId().value() + " submitted.");
-            var completed = await(agent, accepted.runId(), configuration.timeout(), configuration.approval(), output);
-            completed.output().ifPresent(output::println);
-            if (completed.status().isTerminal()
-                    && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
-                return 0;
+            try (LocalCodingAgent agent = LocalCodingAgent.create(workspace, configuration)) {
+                if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
+                var accepted = agent.start(parsed.message().orElseThrow());
+                if (parsed.verbose()) output.println("Run " + accepted.runId().value() + " submitted.");
+                var completed =
+                        await(agent, accepted.runId(), configuration.timeout(), configuration.approval(), output);
+                completed.output().ifPresent(output::println);
+                if (completed.status().isTerminal()
+                        && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
+                    return 0;
+                }
+                completed
+                        .error()
+                        .ifPresent(value ->
+                                error.println("Task failed: " + value.code().value()));
+                if (!completed.status().isTerminal()) error.println("Task did not complete before the CLI timeout.");
+                return 2;
             }
-            completed
-                    .error()
-                    .ifPresent(value ->
-                            error.println("Task failed: " + value.code().value()));
-            if (!completed.status().isTerminal()) error.println("Task did not complete before the CLI timeout.");
-            return 2;
         } catch (IllegalArgumentException exception) {
             error.println("Invalid command: " + exception.getMessage());
             error.println("Use --help for usage.");
