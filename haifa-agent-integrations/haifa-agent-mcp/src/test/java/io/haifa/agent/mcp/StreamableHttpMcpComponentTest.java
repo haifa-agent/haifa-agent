@@ -11,11 +11,16 @@ import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.client.McpConnectionState;
 import io.haifa.agent.mcp.client.McpTelemetry;
 import io.haifa.agent.mcp.client.SdkMcpClientFactory;
+import io.haifa.agent.mcp.transport.http.BoundedHttpClientBuilder;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -204,10 +209,12 @@ class StreamableHttpMcpComponentTest {
 
             client.initialize(List.of());
             assertThat(notified.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(stub.awaitResumedGet()).isTrue();
             client.close();
 
             assertThat(notifications).contains(definition.serverId().value());
-            assertThat(stub.getCount()).isGreaterThanOrEqualTo(1);
+            assertThat(stub.getCount()).isGreaterThanOrEqualTo(2);
+            assertThat(stub.lastEventIds()).contains("event-1");
             assertThat(stub.deleteCount()).isEqualTo(1);
         }
     }
@@ -239,6 +246,24 @@ class StreamableHttpMcpComponentTest {
         assertThat(resumedFrom).hasValue("event-1");
     }
 
+    @Test
+    void doesNotReplayCredentialHeadersWhenGetStreamEnds() throws Exception {
+        try (FaultStubServer stub = new FaultStubServer(Fault.RESUMABLE_NOTIFICATION)) {
+            HttpClient client = new BoundedHttpClientBuilder(
+                            HttpClient.newBuilder(), 1024 * 1024, 16 * 1024, 2, Duration.ZERO, Set.of("Authorization"))
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder(stub.endpoint())
+                    .header("Authorization", "Bearer test-placeholder")
+                    .GET()
+                    .build();
+
+            client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).join();
+
+            assertThat(stub.getCount()).isEqualTo(1);
+            assertThat(stub.lastEventIds()).isEmpty();
+        }
+    }
+
     private enum Fault {
         OVERSIZE_INITIALIZE,
         OVERSIZE_HEADERS,
@@ -256,6 +281,8 @@ class StreamableHttpMcpComponentTest {
         private final AtomicInteger callCount = new AtomicInteger();
         private final AtomicInteger getCount = new AtomicInteger();
         private final AtomicInteger deleteCount = new AtomicInteger();
+        private final List<String> lastEventIds = new CopyOnWriteArrayList<>();
+        private final CountDownLatch resumedGet = new CountDownLatch(1);
 
         private FaultStubServer(Fault fault) throws IOException {
             this.fault = fault;
@@ -282,6 +309,14 @@ class StreamableHttpMcpComponentTest {
 
         private int deleteCount() {
             return deleteCount.get();
+        }
+
+        private List<String> lastEventIds() {
+            return List.copyOf(lastEventIds);
+        }
+
+        private boolean awaitResumedGet() throws InterruptedException {
+            return resumedGet.await(2, TimeUnit.SECONDS);
         }
 
         private void handle(HttpExchange exchange) throws IOException {
@@ -356,17 +391,18 @@ class StreamableHttpMcpComponentTest {
 
         private void handleGet(HttpExchange exchange) throws IOException {
             int number = getCount.incrementAndGet();
+            if (number >= 2) resumedGet.countDown();
+            String lastEventId = exchange.getRequestHeaders().getFirst("Last-Event-ID");
+            if (lastEventId != null) lastEventIds.add(lastEventId);
             if (fault != Fault.RESUMABLE_NOTIFICATION) {
                 exchange.sendResponseHeaders(405, -1);
                 exchange.close();
                 return;
             }
-            if (number == 1) {
+            if (number <= 2) {
                 String notification = mapper.writeValueAsString(
                         Map.of("jsonrpc", "2.0", "method", "notifications/tools/list_changed"));
-                byte[] body = ("id: event-1\nevent: message\ndata: "
-                                + notification
-                                + "\n\nevent: message\ndata: {not-json\n\n")
+                byte[] body = ("id: event-" + number + "\nevent: message\ndata: " + notification + "\n\n")
                         .getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
                 exchange.sendResponseHeaders(200, body.length);
