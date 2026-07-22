@@ -88,6 +88,11 @@ class ProjectApplicationTest {
                         .snapshot()
                         .bindings())
                 .isEmpty();
+        assertThat(catalog.freeze(Set.of("file.read"), Set.of("file.read"), true, provider, List.of())
+                        .snapshot()
+                        .bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("file_read");
     }
 
     @Test

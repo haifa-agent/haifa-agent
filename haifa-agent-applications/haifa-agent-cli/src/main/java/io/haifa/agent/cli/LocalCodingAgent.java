@@ -65,22 +65,25 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Builds an in-process Coding Agent over one explicitly selected local workspace. */
-final class LocalCodingAgent {
+final class LocalCodingAgent implements AutoCloseable {
     private static final AgentDefinitionId DEFINITION_ID = new AgentDefinitionId("haifa-cli-coding-agent");
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final AgentRuntime runtime;
     private final InMemoryInteractionPort interactions;
+    private final CliMcpPlatform mcpPlatform;
 
     private LocalCodingAgent(
             IdentifierGenerator identifiers,
             TimeProvider time,
             AgentRuntime runtime,
-            InMemoryInteractionPort interactions) {
+            InMemoryInteractionPort interactions,
+            CliMcpPlatform mcpPlatform) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
         this.interactions = interactions;
+        this.mcpPlatform = mcpPlatform;
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration) {
@@ -94,6 +97,7 @@ final class LocalCodingAgent {
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = new SystemTimeProvider();
         PrincipalRef principal = new PrincipalRef("local-user", "user");
+        CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();
         var locations = new LocalWorkspaceLocationStore();
@@ -140,7 +144,12 @@ final class LocalCodingAgent {
                         workspaceId, configuration.enabledTools(), "cli-local-policy"),
                 operations);
         var catalog = new ProjectToolCatalog()
-                .freeze(configuration.enabledTools(), Set.of("file.read", "file.write"), true, provider);
+                .freeze(
+                        configuration.enabledTools(),
+                        Set.of("file.read", "file.write"),
+                        true,
+                        provider,
+                        mcpPlatform.contributions());
         var interactions = new InMemoryInteractionPort();
         var model = new OpenAiCompatibleChatModel(
                 "openai-compatible",
@@ -196,7 +205,7 @@ final class LocalCodingAgent {
                                 60_000),
                         modelSnapshot))
                 .build();
-        return new LocalCodingAgent(identifiers, time, runtime, interactions);
+        return new LocalCodingAgent(identifiers, time, runtime, interactions, mcpPlatform);
     }
 
     AgentRunSnapshot start(String message) {
@@ -226,6 +235,11 @@ final class LocalCodingAgent {
 
     TimeProvider time() {
         return time;
+    }
+
+    @Override
+    public void close() {
+        mcpPlatform.close();
     }
 
     private static ResolvedModelSnapshot modelSnapshot(CliConfiguration configuration) {

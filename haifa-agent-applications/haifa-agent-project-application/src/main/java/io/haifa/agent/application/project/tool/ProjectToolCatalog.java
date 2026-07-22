@@ -70,8 +70,7 @@ public final class ProjectToolCatalog {
                 .sorted()
                 .filter(configuredTools::contains)
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
-                .forEach(
-                        name -> builder.register(new ToolAlias(name), definition(name), "project-workspace", provider));
+                .forEach(name -> builder.register(modelAlias(name), definition(name), "project-workspace", provider));
         mcpTools.stream()
                 .sorted(java.util.Comparator.comparing(McpToolCatalogContribution::alias))
                 .forEach(contribution -> builder.register(

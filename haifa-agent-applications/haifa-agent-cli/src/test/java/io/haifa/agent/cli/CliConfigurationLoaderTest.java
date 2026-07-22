@@ -26,6 +26,15 @@ class CliConfigurationLoaderTest {
                   maxIterations: 3
                   maxToolCalls: 4
                   maxWallTimeMillis: 120000
+                mcp:
+                  servers:
+                    - id: utility
+                      displayName: Utility MCP
+                      endpoint: http://127.0.0.1:8091/mcp
+                      allowLoopbackHttp: true
+                      allowedTools: [time_now, calculate]
+                      aliasNamespace: utility
+                      policyProfile: utility
                 """);
 
         CliConfiguration result = new CliConfigurationLoader()
@@ -37,5 +46,11 @@ class CliConfigurationLoaderTest {
         assertThat(result.enabledTools()).containsExactlyInAnyOrder("file.read", "file.write");
         assertThat(result.approval()).isEqualTo(ApprovalMode.DENY);
         assertThat(result.timeout()).isEqualTo(java.time.Duration.ofMillis(120000));
+        assertThat(result.mcpServers()).singleElement().satisfies(server -> {
+            assertThat(server.id()).isEqualTo("utility");
+            assertThat(server.endpoint()).hasToString("http://127.0.0.1:8091/mcp");
+            assertThat(server.allowedTools()).containsExactlyInAnyOrder("time_now", "calculate");
+            assertThat(server.policyProfile()).isEqualTo("utility");
+        });
     }
 }
