@@ -1,0 +1,42 @@
+name: Dev Nightly Live
+
+on:
+    schedule:
+        - cron: "17 18 * * *"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: dev-nightly-live
+    cancel-in-progress: false
+
+jobs:
+    deepseek-live-smoke:
+        name: DeepSeek live smoke
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        environment: ai-live-test
+        env:
+            HAIFA_DEEPSEEK_LIVE_TEST: "true"
+            DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: dev
+            - uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: "21"
+                  cache: maven
+            - name: Require DeepSeek test key
+              run: test -n "$DEEPSEEK_API_KEY"
+            - name: Run DeepSeek LiveIT
+              run: >
+                  sh ./mvnw
+                  -pl :haifa-agent-model-openai-compatible
+                  -am
+                  -Pci-integration
+                  -DskipITs=false
+                  verify
