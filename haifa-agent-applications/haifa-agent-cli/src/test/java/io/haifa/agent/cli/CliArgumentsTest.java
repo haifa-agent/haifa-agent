@@ -14,7 +14,8 @@ class CliArgumentsTest {
         });
 
         assertThat(values.message()).contains("fix the test");
-        assertThat(values.workspace()).hasValueSatisfying(path -> assertThat(path.toString()).isEqualTo("demo"));
+        assertThat(values.workspace())
+                .hasValueSatisfying(path -> assertThat(path.toString()).isEqualTo("demo"));
         assertThat(values.approval()).contains(ApprovalMode.AUTO);
         assertThat(values.timeout()).contains(Duration.ofMinutes(2));
         assertThat(values.verbose()).isTrue();
@@ -22,9 +23,7 @@ class CliArgumentsTest {
 
     @Test
     void rejectsUnknownAndMissingOptions() {
-        assertThatThrownBy(() -> CliArguments.parse(new String[] {"--unknown"}))
-                .hasMessageContaining("unknown option");
-        assertThatThrownBy(() -> CliArguments.parse(new String[] {"-m"}))
-                .hasMessageContaining("missing value");
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"--unknown"})).hasMessageContaining("unknown option");
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"-m"})).hasMessageContaining("missing value");
     }
 }

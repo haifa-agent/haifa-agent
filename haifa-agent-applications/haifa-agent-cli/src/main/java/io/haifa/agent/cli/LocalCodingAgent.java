@@ -73,7 +73,10 @@ final class LocalCodingAgent {
     private final InMemoryInteractionPort interactions;
 
     private LocalCodingAgent(
-            IdentifierGenerator identifiers, TimeProvider time, AgentRuntime runtime, InMemoryInteractionPort interactions) {
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            AgentRuntime runtime,
+            InMemoryInteractionPort interactions) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
@@ -136,13 +139,15 @@ final class LocalCodingAgent {
                 (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
                         workspaceId, configuration.enabledTools(), "cli-local-policy"),
                 operations);
-        var catalog = new ProjectToolCatalog().freeze(
-                configuration.enabledTools(), Set.of("file.read", "file.write"), true, provider);
+        var catalog = new ProjectToolCatalog()
+                .freeze(configuration.enabledTools(), Set.of("file.read", "file.write"), true, provider);
         var interactions = new InMemoryInteractionPort();
         var model = new OpenAiCompatibleChatModel(
                 "openai-compatible",
                 "1.0.0",
-                HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build(),
+                HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build(),
                 new ObjectMapper(),
                 new EnvironmentCredentialResolver(),
                 false,
@@ -156,30 +161,39 @@ final class LocalCodingAgent {
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
                 .toolPolicy((run, binding, request) -> switch (configuration.approval()) {
                     case AUTO -> io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW;
-                    case DENY -> binding.definition().approvalRequirement()
-                                    == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
-                            ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
-                            : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.DENY;
-                    case ASK -> binding.definition().approvalRequirement()
-                                    == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
-                            ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
-                            : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.REQUIRE_APPROVAL;
+                    case DENY ->
+                        binding.definition().approvalRequirement()
+                                        == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
+                                ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
+                                : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.DENY;
+                    case ASK ->
+                        binding.definition().approvalRequirement()
+                                        == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
+                                ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
+                                : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.REQUIRE_APPROVAL;
                 })
-                .definitions((id, requested) -> new ResolvedDefinition(
-                        id,
-                        requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
-                        catalog.snapshot().bindings().stream()
-                                .map(binding -> binding.alias().value())
-                                .collect(java.util.stream.Collectors.toUnmodifiableSet()),
-                        Set.of(),
-                        "You are a careful local coding agent. Inspect relevant files before editing. "
-                                + "Use tools for workspace facts, preserve existing changes, and summarize completed work."))
+                .definitions(
+                        (id, requested) -> new ResolvedDefinition(
+                                id,
+                                requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
+                                catalog.snapshot().bindings().stream()
+                                        .map(binding -> binding.alias().value())
+                                        .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                                Set.of(),
+                                "You are a careful local coding agent. Inspect relevant files before editing. "
+                                        + "Use tools for workspace facts, preserve existing changes, and summarize completed work."))
                 .profiles((profileId, overrides) -> new ResolvedProfile(
                         profileId,
                         "1.0.0",
                         AgentRunType.CHAT,
-                        new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, configuration.maxToolCalls(), 64, 8, "USD", 1_000_000),
-                        new AgentRunLimits(configuration.maxIterations(), 4, 1, configuration.timeout().toMillis(), 60_000),
+                        new AgentRunBudget(
+                                1_000_000, 1_000_000, 1_000_000, configuration.maxToolCalls(), 64, 8, "USD", 1_000_000),
+                        new AgentRunLimits(
+                                configuration.maxIterations(),
+                                4,
+                                1,
+                                configuration.timeout().toMillis(),
+                                60_000),
                         modelSnapshot))
                 .build();
         return new LocalCodingAgent(identifiers, time, runtime, interactions);

@@ -37,13 +37,21 @@ final class CliConfigurationLoader {
         String providerId = text(model, "providerId", defaults.model().providerId());
         String modelId = arguments.model().orElseGet(() -> environment("HAIFA_MODEL_ID")
                 .orElseGet(() -> text(model, "modelId", defaults.model().modelId())));
-        String endpoint = environment("HAIFA_MODEL_ENDPOINT").orElseGet(() -> text(model, "endpoint", defaults.model().endpoint().toString()));
+        String endpoint = environment("HAIFA_MODEL_ENDPOINT")
+                .orElseGet(() ->
+                        text(model, "endpoint", defaults.model().endpoint().toString()));
         String credential = environment("HAIFA_CREDENTIAL_REF")
                 .orElseGet(() -> text(model, "credentialRef", defaults.model().credentialRef()));
         Set<String> tools = stringSet(object(source, "tools").get("enabled"), defaults.enabledTools());
-        ApprovalMode approval = arguments.approval().orElseGet(() -> ApprovalMode.parse(text(object(source, "approval"), "mode", defaults.approval().name())));
+        ApprovalMode approval = arguments
+                .approval()
+                .orElseGet(() -> ApprovalMode.parse(text(
+                        object(source, "approval"), "mode", defaults.approval().name())));
         Map<String, Object> runtime = object(source, "runtime");
-        Duration timeout = arguments.timeout().orElseGet(() -> Duration.ofMillis(number(runtime, "maxWallTimeMillis", defaults.timeout().toMillis())));
+        Duration timeout = arguments
+                .timeout()
+                .orElseGet(() -> Duration.ofMillis(
+                        number(runtime, "maxWallTimeMillis", defaults.timeout().toMillis())));
         return new CliConfiguration(
                 new CliConfiguration.Model(providerId, modelId, java.net.URI.create(endpoint), credential),
                 tools,
@@ -64,14 +72,17 @@ final class CliConfigurationLoader {
 
     private static Optional<Path> userConfiguration() {
         String home = System.getProperty("user.home");
-        return home == null || home.isBlank() ? Optional.empty() : Optional.of(Path.of(home, ".haifa-agent", "config.yaml"));
+        return home == null || home.isBlank()
+                ? Optional.empty()
+                : Optional.of(Path.of(home, ".haifa-agent", "config.yaml"));
     }
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> object(Map<String, Object> source, String key) {
         Object value = source.get(key);
         if (value == null) return Map.of();
-        if (!(value instanceof Map<?, ?> raw)) throw new IllegalArgumentException("configuration " + key + " must be an object");
+        if (!(value instanceof Map<?, ?> raw))
+            throw new IllegalArgumentException("configuration " + key + " must be an object");
         Map<String, Object> values = new LinkedHashMap<>();
         raw.forEach((entryKey, entryValue) -> values.put(String.valueOf(entryKey), entryValue));
         return values;
@@ -80,7 +91,8 @@ final class CliConfigurationLoader {
     private static String text(Map<String, Object> source, String key, String fallback) {
         Object value = source.get(key);
         if (value == null) return fallback;
-        if (!(value instanceof String text)) throw new IllegalArgumentException("configuration " + key + " must be text");
+        if (!(value instanceof String text))
+            throw new IllegalArgumentException("configuration " + key + " must be text");
         return CliConfiguration.text(text, "configuration " + key);
     }
 
@@ -95,7 +107,8 @@ final class CliConfigurationLoader {
 
     private static Set<String> stringSet(Object value, Set<String> fallback) {
         if (value == null) return fallback;
-        if (!(value instanceof List<?> values)) throw new IllegalArgumentException("configuration tools.enabled must be a list");
+        if (!(value instanceof List<?> values))
+            throw new IllegalArgumentException("configuration tools.enabled must be a list");
         List<String> names = new ArrayList<>();
         for (Object item : values) {
             if (!(item instanceof String name) || name.isBlank()) {

@@ -1,15 +1,15 @@
 package io.haifa.agent.cli;
 
-import java.io.PrintStream;
+import io.haifa.agent.runtime.api.InteractionResponse;
+import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseType;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import io.haifa.agent.runtime.api.InteractionResponse;
-import io.haifa.agent.runtime.api.InteractionResponseId;
-import io.haifa.agent.runtime.api.InteractionResponseType;
 
 /** Entry point for the one-shot Haifa coding-agent command. */
 public final class HaifaCliMain {
@@ -40,10 +40,14 @@ public final class HaifaCliMain {
             if (parsed.verbose()) output.println("Run " + accepted.runId().value() + " submitted.");
             var completed = await(agent, accepted.runId(), configuration.timeout(), configuration.approval(), output);
             completed.output().ifPresent(output::println);
-            if (completed.status().isTerminal() && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
+            if (completed.status().isTerminal()
+                    && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
                 return 0;
             }
-            completed.error().ifPresent(value -> error.println("Task failed: " + value.code().value()));
+            completed
+                    .error()
+                    .ifPresent(value ->
+                            error.println("Task failed: " + value.code().value()));
             if (!completed.status().isTerminal()) error.println("Task did not complete before the CLI timeout.");
             return 2;
         } catch (IllegalArgumentException exception) {
@@ -80,21 +84,24 @@ public final class HaifaCliMain {
             ApprovalMode approval,
             BufferedReader input,
             PrintStream output) {
-        InteractionResponseType response = switch (approval) {
-            case AUTO -> InteractionResponseType.APPROVE;
-            case DENY -> InteractionResponseType.REJECT;
-            case ASK -> confirm(request.prompt(), input, output)
-                    ? InteractionResponseType.APPROVE
-                    : InteractionResponseType.REJECT;
-        };
-        agent.runtime().respond(new InteractionResponse(
-                new InteractionResponseId(agent.identifiers().nextValue()),
-                request.id(),
-                request.runId(),
-                response,
-                List.of(),
-                "cli-interaction-" + request.id().value(),
-                agent.time().now()));
+        InteractionResponseType response =
+                switch (approval) {
+                    case AUTO -> InteractionResponseType.APPROVE;
+                    case DENY -> InteractionResponseType.REJECT;
+                    case ASK ->
+                        confirm(request.prompt(), input, output)
+                                ? InteractionResponseType.APPROVE
+                                : InteractionResponseType.REJECT;
+                };
+        agent.runtime()
+                .respond(new InteractionResponse(
+                        new InteractionResponseId(agent.identifiers().nextValue()),
+                        request.id(),
+                        request.runId(),
+                        response,
+                        List.of(),
+                        "cli-interaction-" + request.id().value(),
+                        agent.time().now()));
     }
 
     private static boolean confirm(String prompt, BufferedReader input, PrintStream output) {

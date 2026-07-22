@@ -73,20 +73,37 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                         "type", entry.metadata().type().name(),
                         "size", entry.metadata().size()))
                 .toList();
-        return success("Listed " + entries.size() + " workspace entries", Map.of("entries", entries, "truncated", page.truncated()));
+        return success(
+                "Listed " + entries.size() + " workspace entries",
+                Map.of("entries", entries, "truncated", page.truncated()));
     }
 
     private ToolResult stat(WorkspaceId workspaceId, Map<String, Object> values) {
         var metadata = files.stat(path(workspaceId, values, "path"), true);
-        return success("Inspected " + metadata.path().projectPath(), Map.of(
-                "path", metadata.path().projectPath().toString(), "type", metadata.type().name(), "size", metadata.size(),
-                "contentHash", metadata.contentHash().orElse("")));
+        return success(
+                "Inspected " + metadata.path().projectPath(),
+                Map.of(
+                        "path",
+                        metadata.path().projectPath().toString(),
+                        "type",
+                        metadata.type().name(),
+                        "size",
+                        metadata.size(),
+                        "contentHash",
+                        metadata.contentHash().orElse("")));
     }
 
     private ToolResult read(WorkspaceId workspaceId, Map<String, Object> values) {
         var content = files.read(path(workspaceId, values, "path"), ReadOptions.defaults());
-        return success("Read " + content.path().projectPath(), Map.of(
-                "path", content.path().projectPath().toString(), "content", content.text(), "truncated", content.truncated()));
+        return success(
+                "Read " + content.path().projectPath(),
+                Map.of(
+                        "path",
+                        content.path().projectPath().toString(),
+                        "content",
+                        content.text(),
+                        "truncated",
+                        content.truncated()));
     }
 
     private ToolResult search(WorkspaceId workspaceId, Map<String, Object> values) {
@@ -95,13 +112,24 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 path(workspaceId, values, "path"), query, 2_000, integer(values, "maxResults", 100), 1_048_576, false));
         List<Map<String, Object>> results = matches.stream()
                 .map(match -> Map.<String, Object>of(
-                        "path", match.path().projectPath().toString(), "line", match.line(), "column", match.column(), "excerpt", match.excerpt()))
+                        "path",
+                        match.path().projectPath().toString(),
+                        "line",
+                        match.line(),
+                        "column",
+                        match.column(),
+                        "excerpt",
+                        match.excerpt()))
                 .toList();
         return success("Found " + results.size() + " matches", Map.of("results", results));
     }
 
     private ToolResult create(
-            WorkspaceId workspaceId, PrincipalRef actor, String runRef, String policyDecisionRef, Map<String, Object> values) {
+            WorkspaceId workspaceId,
+            PrincipalRef actor,
+            String runRef,
+            String policyDecisionRef,
+            Map<String, Object> values) {
         WorkspacePath path = path(workspaceId, values, "path");
         Workspace workspace = workspace(workspaceId);
         var result = mutations.create(new CreateFileRequest(
@@ -109,44 +137,72 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 string(values, "content").getBytes(StandardCharsets.UTF_8),
                 MutationPrecondition.absent(workspace.revision()),
                 context(actor, runRef, policyDecisionRef)));
-        return success("Created " + path.projectPath(), Map.of("changeSetId", result.changeSetId().value()));
+        return success(
+                "Created " + path.projectPath(),
+                Map.of("changeSetId", result.changeSetId().value()));
     }
 
     private ToolResult write(
-            WorkspaceId workspaceId, PrincipalRef actor, String runRef, String policyDecisionRef, Map<String, Object> values) {
+            WorkspaceId workspaceId,
+            PrincipalRef actor,
+            String runRef,
+            String policyDecisionRef,
+            Map<String, Object> values) {
         WorkspacePath path = path(workspaceId, values, "path");
         Workspace workspace = workspace(workspaceId);
-        String currentHash = files.stat(path, true).contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        String currentHash = files.stat(path, true)
+                .contentHash()
+                .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
         var result = mutations.write(new WriteFileRequest(
                 path,
                 string(values, "content").getBytes(StandardCharsets.UTF_8),
                 MutationPrecondition.existing(workspace.revision(), currentHash),
                 context(actor, runRef, policyDecisionRef)));
-        return success("Wrote " + path.projectPath(), Map.of("changeSetId", result.changeSetId().value()));
+        return success(
+                "Wrote " + path.projectPath(),
+                Map.of("changeSetId", result.changeSetId().value()));
     }
 
     private ToolResult delete(
-            WorkspaceId workspaceId, PrincipalRef actor, String runRef, String policyDecisionRef, Map<String, Object> values) {
+            WorkspaceId workspaceId,
+            PrincipalRef actor,
+            String runRef,
+            String policyDecisionRef,
+            Map<String, Object> values) {
         WorkspacePath path = path(workspaceId, values, "path");
         Workspace workspace = workspace(workspaceId);
-        String currentHash = files.stat(path, true).contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        String currentHash = files.stat(path, true)
+                .contentHash()
+                .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
         var result = mutations.delete(new DeleteFileRequest(
-                path, MutationPrecondition.existing(workspace.revision(), currentHash), context(actor, runRef, policyDecisionRef)));
-        return success("Deleted " + path.projectPath(), Map.of("changeSetId", result.changeSetId().value()));
+                path,
+                MutationPrecondition.existing(workspace.revision(), currentHash),
+                context(actor, runRef, policyDecisionRef)));
+        return success(
+                "Deleted " + path.projectPath(),
+                Map.of("changeSetId", result.changeSetId().value()));
     }
 
     private ToolResult move(
-            WorkspaceId workspaceId, PrincipalRef actor, String runRef, String policyDecisionRef, Map<String, Object> values) {
+            WorkspaceId workspaceId,
+            PrincipalRef actor,
+            String runRef,
+            String policyDecisionRef,
+            Map<String, Object> values) {
         WorkspacePath source = path(workspaceId, values, "source");
         WorkspacePath destination = path(workspaceId, values, "destination");
         Workspace workspace = workspace(workspaceId);
-        String currentHash = files.stat(source, true).contentHash().orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
+        String currentHash = files.stat(source, true)
+                .contentHash()
+                .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"));
         var result = mutations.move(new MoveFileRequest(
                 source,
                 destination,
                 MutationPrecondition.existing(workspace.revision(), currentHash),
                 context(actor, runRef, policyDecisionRef)));
-        return success("Moved " + source.projectPath() + " to " + destination.projectPath(), Map.of("changeSetId", result.changeSetId().value()));
+        return success(
+                "Moved " + source.projectPath() + " to " + destination.projectPath(),
+                Map.of("changeSetId", result.changeSetId().value()));
     }
 
     private MutationContext context(PrincipalRef actor, String runRef, String policyDecisionRef) {
@@ -163,14 +219,16 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private static String string(Map<String, Object> values, String key) {
         Object value = values.get(key);
-        if (!(value instanceof String text) || text.isBlank()) throw new IllegalArgumentException(key + " must be non-empty text");
+        if (!(value instanceof String text) || text.isBlank())
+            throw new IllegalArgumentException(key + " must be non-empty text");
         return text;
     }
 
     private static int integer(Map<String, Object> values, String key, int fallback) {
         Object value = values.get(key);
         if (value == null) return fallback;
-        if (!(value instanceof Number number) || number.intValue() < 1) throw new IllegalArgumentException(key + " must be positive");
+        if (!(value instanceof Number number) || number.intValue() < 1)
+            throw new IllegalArgumentException(key + " must be positive");
         return number.intValue();
     }
 

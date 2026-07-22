@@ -10,7 +10,9 @@ class CliConfigurationLoaderTest {
     @Test
     void loadsExplicitYamlConfiguration() throws Exception {
         Path configuration = Files.createTempFile("haifa-cli", ".yaml");
-        Files.writeString(configuration, """
+        Files.writeString(
+                configuration,
+                """
                 model:
                   providerId: local
                   modelId: test-model
@@ -26,8 +28,10 @@ class CliConfigurationLoaderTest {
                   maxWallTimeMillis: 120000
                 """);
 
-        CliConfiguration result = new CliConfigurationLoader().load(
-                CliArguments.parse(new String[] {"-m", "test", "--config", configuration.toString()}), Path.of("."));
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "test", "--config", configuration.toString()}),
+                        Path.of("."));
 
         assertThat(result.model().modelId()).isEqualTo("test-model");
         assertThat(result.enabledTools()).containsExactlyInAnyOrder("file.read", "file.write");

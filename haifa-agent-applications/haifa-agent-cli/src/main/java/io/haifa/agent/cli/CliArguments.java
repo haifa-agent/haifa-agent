@@ -42,8 +42,14 @@ record CliArguments(
             }
         }
         return new CliArguments(
-                optionalText(message), Optional.ofNullable(workspace), Optional.ofNullable(config), optionalText(model),
-                Optional.ofNullable(approval), Optional.ofNullable(timeout), verbose, help);
+                optionalText(message),
+                Optional.ofNullable(workspace),
+                Optional.ofNullable(config),
+                optionalText(model),
+                Optional.ofNullable(approval),
+                Optional.ofNullable(timeout),
+                verbose,
+                help);
     }
 
     private static String requireValue(List<String> values, int index, String option) {
