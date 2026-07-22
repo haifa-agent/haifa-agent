@@ -3,6 +3,7 @@ package io.haifa.agent.tool.core;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.tool.api.ToolDefinition;
 import io.haifa.agent.tool.api.ToolDefinitionHash;
+import io.haifa.agent.tool.api.ToolDefinitionHasher;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -13,7 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public final class ToolDefinitionCanonicalizer {
+public final class ToolDefinitionCanonicalizer implements ToolDefinitionHasher {
+    @Override
     public ToolDefinitionHash hash(ToolDefinition definition) {
         return new ToolDefinitionHash(sha256(canonicalize(asDocument(definition))));
     }

@@ -11,6 +11,8 @@ import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionStatus;
+import io.haifa.agent.execution.api.ManagedProcessRequest;
+import io.haifa.agent.execution.api.ProcessInputChunk;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.manifest.ManifestBudget;
@@ -43,6 +45,7 @@ import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxExecution;
+import io.haifa.agent.sandbox.api.SandboxManagedProcess;
 import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
 import io.haifa.agent.sandbox.api.SandboxProfile;
@@ -127,6 +130,29 @@ class ExecutionCoreTest {
         });
     }
 
+    @Test
+    void managedSessionUsesTheSameAuthorizationRedactionAuditAndCompletionPath() throws Exception {
+        Fixture fixture = fixture();
+        var provider = managedProvider();
+        DefaultExecutionBroker broker = fixture.broker(provider, request -> {});
+        ExecutionRequest request =
+                fixture.request("managed-execution", "managed-key", Set.of("execution.run"), List.of("fake"));
+
+        try (var session = broker.openManagedSession(new ManagedProcessRequest(request))) {
+            session.write(new ProcessInputChunk("request\n".getBytes(StandardCharsets.UTF_8)));
+            var output = session.read(Duration.ofSeconds(1)).orElseThrow();
+            assertThat(new String(output.bytes(), StandardCharsets.UTF_8)).isEqualTo("***\n");
+            assertThat(session.exit()
+                            .get(2, java.util.concurrent.TimeUnit.SECONDS)
+                            .status())
+                    .isEqualTo(ExecutionStatus.SUCCEEDED);
+        }
+
+        var result = broker.find(request.id()).orElseThrow();
+        assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+        assertThat(result.stdout().summary()).doesNotContain("secret-token");
+    }
+
     private Fixture fixture() {
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-1");
@@ -201,6 +227,99 @@ class ExecutionCoreTest {
                                 false,
                                 true,
                                 1);
+                    }
+
+                    @Override
+                    public boolean cancel() {
+                        return true;
+                    }
+
+                    @Override
+                    public void close() {}
+                };
+            }
+        };
+    }
+
+    private static SandboxProvider managedProvider() {
+        return new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "managed-fake";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true, true, true, true, true);
+            }
+
+            @Override
+            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+                return new SandboxSession() {
+                    private final java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>
+                            exit = new java.util.concurrent.CompletableFuture<>();
+                    private boolean emitted;
+
+                    @Override
+                    public SandboxSessionId id() {
+                        return new SandboxSessionId("managed-session");
+                    }
+
+                    @Override
+                    public SandboxProcessResult execute(SandboxExecution execution) {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public SandboxManagedProcess openManagedProcess(SandboxExecution execution) {
+                        return new SandboxManagedProcess() {
+                            @Override
+                            public Instant startedAt() {
+                                return NOW;
+                            }
+
+                            @Override
+                            public void write(ProcessInputChunk input) {
+                                assertThat(new String(input.bytes(), StandardCharsets.UTF_8))
+                                        .isEqualTo("request\n");
+                            }
+
+                            @Override
+                            public java.util.Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(
+                                    Duration timeout) {
+                                if (emitted) return java.util.Optional.empty();
+                                emitted = true;
+                                var output = new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                        io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                        "secret-token\n".getBytes(StandardCharsets.UTF_8),
+                                        false,
+                                        false);
+                                java.util.concurrent.CompletableFuture.delayedExecutor(
+                                                20, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                        .execute(() -> exit.complete(new io.haifa.agent.execution.api.ProcessExit(
+                                                ExecutionStatus.SUCCEEDED, 0, true, NOW.plusSeconds(1))));
+                                return java.util.Optional.of(output);
+                            }
+
+                            @Override
+                            public java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>
+                                    exit() {
+                                return exit;
+                            }
+
+                            @Override
+                            public int observedProcessCount() {
+                                return 1;
+                            }
+
+                            @Override
+                            public boolean cancel() {
+                                return true;
+                            }
+
+                            @Override
+                            public void close() {}
+                        };
                     }
 
                     @Override

@@ -314,6 +314,46 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void businessFailureUsesPlatformFailureEnvelopeInsteadOfSuccessOutputSchema() {
+        ToolRequest request =
+                toolRequest("remote-failure", "remote", "1.0.0", new ToolArguments("remote.input", "1", Map.of()));
+        Map<String, Object> successOnlyOutput = Map.of(
+                "$schema",
+                io.haifa.agent.tool.api.ToolSchema.DRAFT_2020_12,
+                "type",
+                "object",
+                "required",
+                List.of("successValue"),
+                "properties",
+                Map.of("successValue", Map.of("type", "string")),
+                "additionalProperties",
+                false);
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request)), finalDecision("handled")),
+                builder -> TestToolPlatform.installWithOutputSchema(
+                        builder,
+                        "remote",
+                        "1.0.0",
+                        "remote.input",
+                        successOnlyOutput,
+                        ignored -> new ToolResult(
+                                false,
+                                "remote business error",
+                                Map.of("error", "invalid request"),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("remote-business-failure"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.toolCalls(accepted.runId()).getFirst().status().name())
+                .isEqualTo("FAILED");
+    }
+
+    @Test
     void budgetConvergenceInstructionReachesTheModelContext() {
         AtomicReference<List<String>> messages = new AtomicReference<>();
         Fixture nearBudget = fixture(request -> {

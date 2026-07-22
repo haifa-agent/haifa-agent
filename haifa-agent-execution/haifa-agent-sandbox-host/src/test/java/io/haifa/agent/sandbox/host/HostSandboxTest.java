@@ -80,6 +80,16 @@ class HostSandboxTest {
             assertThat(version.status()).isEqualTo(SandboxProcessStatus.EXITED);
             assertThat(version.exitCode()).isZero();
 
+            try (var managed = session.openManagedProcess(new SandboxExecution(
+                    new ExecutionCommand(ExecutionCommandMode.DIRECT, List.of("java", "-version")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)))) {
+                var managedExit = managed.exit().get(5, TimeUnit.SECONDS);
+                assertThat(managedExit.status()).isEqualTo(io.haifa.agent.execution.api.ExecutionStatus.SUCCEEDED);
+                assertThat(managed.observedProcessCount()).isGreaterThanOrEqualTo(0);
+            }
+
             copySleepClass(root);
             var timeout = session.execute(new SandboxExecution(
                     new ExecutionCommand(
@@ -90,6 +100,18 @@ class HostSandboxTest {
                     new ExecutionLimits(Duration.ofMillis(100), 1024, 1024, 2)));
             assertThat(timeout.status()).isEqualTo(SandboxProcessStatus.TIMED_OUT);
             assertThat(timeout.processTreeTerminated()).isTrue();
+
+            try (var managed = session.openManagedProcess(new SandboxExecution(
+                    new ExecutionCommand(
+                            ExecutionCommandMode.DIRECT,
+                            List.of("java", "-cp", ".", "io.haifa.agent.sandbox.host.SleepProcess")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 1024, 1024, 2)))) {
+                assertThat(managed.cancel()).isTrue();
+                assertThat(managed.exit().get(5, TimeUnit.SECONDS).status())
+                        .isEqualTo(io.haifa.agent.execution.api.ExecutionStatus.CANCELLED);
+            }
 
             var cancelled = CompletableFuture.supplyAsync(() -> session.execute(new SandboxExecution(
                     new ExecutionCommand(

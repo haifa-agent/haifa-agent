@@ -6,6 +6,9 @@ import io.haifa.agent.credential.api.CredentialDefinition;
 import io.haifa.agent.credential.api.CredentialDefinitionId;
 import io.haifa.agent.credential.api.CredentialException;
 import io.haifa.agent.credential.api.CredentialLease;
+import io.haifa.agent.credential.api.CredentialOperationRequest;
+import io.haifa.agent.credential.api.CredentialOperationUsageAudit;
+import io.haifa.agent.credential.api.CredentialOperationUsageAuditSink;
 import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.CredentialResolver;
 import io.haifa.agent.credential.api.CredentialStore;
@@ -26,6 +29,7 @@ public final class DefaultCredentialBroker implements CredentialBroker {
     private final CredentialResolver resolver;
     private final CredentialStore store;
     private final CredentialUsageAuditSink audit;
+    private final CredentialOperationUsageAuditSink operationAudit;
     private final Clock clock;
     private final SecretRedactor redactor;
 
@@ -40,6 +44,7 @@ public final class DefaultCredentialBroker implements CredentialBroker {
                 resolver,
                 store,
                 CredentialUsageAuditSink.noop(),
+                CredentialOperationUsageAuditSink.noop(),
                 Clock.systemUTC(),
                 new DefaultSecretRedactor());
     }
@@ -50,7 +55,15 @@ public final class DefaultCredentialBroker implements CredentialBroker {
             CredentialResolver resolver,
             CredentialStore store,
             CredentialUsageAuditSink audit) {
-        this(definitions, bindings, resolver, store, audit, Clock.systemUTC(), new DefaultSecretRedactor());
+        this(
+                definitions,
+                bindings,
+                resolver,
+                store,
+                audit,
+                CredentialOperationUsageAuditSink.noop(),
+                Clock.systemUTC(),
+                new DefaultSecretRedactor());
     }
 
     public DefaultCredentialBroker(
@@ -60,7 +73,15 @@ public final class DefaultCredentialBroker implements CredentialBroker {
             CredentialStore store,
             CredentialUsageAuditSink audit,
             Clock clock) {
-        this(definitions, bindings, resolver, store, audit, clock, new DefaultSecretRedactor());
+        this(
+                definitions,
+                bindings,
+                resolver,
+                store,
+                audit,
+                CredentialOperationUsageAuditSink.noop(),
+                clock,
+                new DefaultSecretRedactor());
     }
 
     public DefaultCredentialBroker(
@@ -71,12 +92,25 @@ public final class DefaultCredentialBroker implements CredentialBroker {
             CredentialUsageAuditSink audit,
             Clock clock,
             SecretRedactor redactor) {
+        this(definitions, bindings, resolver, store, audit, CredentialOperationUsageAuditSink.noop(), clock, redactor);
+    }
+
+    public DefaultCredentialBroker(
+            Collection<CredentialDefinition> definitions,
+            Collection<CredentialBinding> bindings,
+            CredentialResolver resolver,
+            CredentialStore store,
+            CredentialUsageAuditSink audit,
+            CredentialOperationUsageAuditSink operationAudit,
+            Clock clock,
+            SecretRedactor redactor) {
         this.definitions = definitions.stream()
                 .collect(Collectors.toUnmodifiableMap(CredentialDefinition::id, Function.identity()));
         this.bindings = ListCopies.copyOf(bindings);
         this.resolver = Objects.requireNonNull(resolver, "resolver");
         this.store = Objects.requireNonNull(store, "store");
         this.audit = Objects.requireNonNull(audit, "audit");
+        this.operationAudit = Objects.requireNonNull(operationAudit, "operationAudit");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.redactor = Objects.requireNonNull(redactor, "redactor");
     }
@@ -106,6 +140,26 @@ public final class DefaultCredentialBroker implements CredentialBroker {
     }
 
     @Override
+    public CredentialLease issue(CredentialOperationRequest request) {
+        CredentialDefinition definition = definitions.get(request.requirement().definitionId());
+        authorizeRequirement(request.requirement(), definition);
+        CredentialBinding binding = resolver.resolve(request, bindings);
+        var leaseExpiry = binding.expiresAt()
+                .filter(expiry -> expiry.isBefore(request.expiresAt()))
+                .orElse(request.expiresAt());
+        CredentialLease delegate =
+                store.lease(binding.reference(), request.tenant(), binding.definitionId(), leaseExpiry);
+        operationAudit.record(
+                operationEvent(request, binding, delegate, request.requestedAt(), CredentialUsagePhase.ISSUED));
+        redactor.track(delegate);
+        return new AuditedCredentialLease(delegate, () -> {
+            redactor.forget(delegate);
+            operationAudit.record(
+                    operationEvent(request, binding, delegate, clock.instant(), CredentialUsagePhase.CLOSED));
+        });
+    }
+
+    @Override
     public SecretRedactor redactor() {
         return redactor;
     }
@@ -127,6 +181,34 @@ public final class DefaultCredentialBroker implements CredentialBroker {
                 occurredAt,
                 lease.expiresAt(),
                 phase);
+    }
+
+    private static CredentialOperationUsageAudit operationEvent(
+            CredentialOperationRequest request,
+            CredentialBinding binding,
+            CredentialLease lease,
+            java.time.Instant occurredAt,
+            CredentialUsagePhase phase) {
+        return new CredentialOperationUsageAudit(
+                binding.reference(),
+                binding.definitionId(),
+                request.tenant(),
+                request.principal(),
+                request.operation(),
+                request.targetBindingReference(),
+                request.requirement().purpose(),
+                occurredAt,
+                lease.expiresAt(),
+                phase);
+    }
+
+    private static void authorizeRequirement(
+            io.haifa.agent.credential.api.CredentialRequirement requirement, CredentialDefinition definition) {
+        if (definition == null
+                || !definition.allowedScopes().containsAll(requirement.scopes())
+                || !definition.allowedExposureModes().contains(requirement.exposureMode())) {
+            throw new CredentialException("credential requirement is not authorized by its definition");
+        }
     }
 
     private static final class AuditedCredentialLease implements CredentialLease {
