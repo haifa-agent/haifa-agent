@@ -243,7 +243,10 @@ final class LocalCodingAgent {
                 EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT),
                 131_072,
                 8_192,
-                Map.of("thinking", "disabled"),
+                Map.of(
+                        "dialect_id", "deepseek-openai-chat",
+                        "dialect_version", "1.0",
+                        "thinking", "disabled"),
                 Map.of("thinking", "disabled"));
     }
 }

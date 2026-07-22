@@ -12,6 +12,7 @@ import io.haifa.agent.model.api.ModelStatus;
 import io.haifa.agent.model.api.ProviderStatus;
 import java.net.URI;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,6 +26,9 @@ public final class DeepSeekDefaults {
     private DeepSeekDefaults() {}
 
     public static ModelProviderDefinition provider() {
+        LinkedHashMap<String, Object> providerOptions = new LinkedHashMap<>(OpenAiCompatibleDialects.deepSeekOptions());
+        providerOptions.putAll(
+                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions());
         ModelDefinition model = new ModelDefinition(
                 MODEL_ID,
                 "2026-07-21",
@@ -50,7 +54,7 @@ public final class DeepSeekDefaults {
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
                 ProviderStatus.ACTIVE,
                 List.of(model),
-                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions(),
+                providerOptions,
                 Map.of());
     }
 }

@@ -285,13 +285,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "frozen model snapshot requires an unavailable adapter binding",
                     null);
         }
-        URI endpoint = request.model().endpoint();
-        if (!"https".equalsIgnoreCase(endpoint.getScheme())
-                && !(allowInsecureHttp && "http".equalsIgnoreCase(endpoint.getScheme()))) {
-            throw new IllegalArgumentException("frozen provider endpoint must use HTTPS");
-        }
-        validateThinkingOptions(request.model().providerOptions());
-        validateThinkingOptions(request.model().invocationOptions());
+        dialect(request).validateSnapshot(request.model(), allowInsecureHttp);
     }
 
     private URI chatCompletionsUri(URI endpoint) {
@@ -306,17 +300,16 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         body.put("messages", request.messages().stream().map(this::message).toList());
         if (!request.tools().isEmpty()) {
             body.put("tools", request.tools().stream().map(this::tool).toList());
-            body.put("tool_choice", "auto");
+            body.put("tool_choice", request.options().getOrDefault("tool_choice", "auto"));
         }
         body.put("max_tokens", request.maxOutputTokens());
-        String thinking = frozenThinking(request);
-        body.put("thinking", Map.of("type", thinking));
-        if ("enabled".equals(thinking)) body.put("reasoning_effort", frozenReasoningEffort(request));
+        dialect(request).applyRequest(request, body);
         body.put("stream", stream);
         if (stream) body.put("stream_options", Map.of("include_usage", true));
         Object responseFormat = request.options().get("response_format");
         if (responseFormat != null) body.put("response_format", validateResponseFormat(responseFormat));
-        if (request.options().keySet().stream().anyMatch(key -> !key.equals("response_format"))) {
+        if (request.options().keySet().stream()
+                .anyMatch(key -> !key.equals("response_format") && !key.equals("tool_choice"))) {
             throw new IllegalArgumentException("unsupported model invocation option");
         }
         return body;
@@ -406,7 +399,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             String code = truncate(chunk.path("error").path("code").asText("stream_error"), 80);
             throw failure(
                     request,
-                    ModelErrorCategory.UNKNOWN_PROVIDER_ERROR,
+                    dialect(request).classifyStreamError(code),
                     false,
                     200,
                     code,
@@ -430,29 +423,6 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         }
     }
 
-    private String frozenThinking(AgentChatRequest request) {
-        Object value = request.model()
-                .invocationOptions()
-                .getOrDefault("thinking", request.model().providerOptions().getOrDefault("thinking", "disabled"));
-        String mode = String.valueOf(value);
-        if (!"disabled".equals(mode) && !"enabled".equals(mode)) {
-            throw new IllegalArgumentException("unsupported thinking mode: " + mode);
-        }
-        return mode;
-    }
-
-    private String frozenReasoningEffort(AgentChatRequest request) {
-        Object value = request.model()
-                .invocationOptions()
-                .getOrDefault(
-                        "reasoning_effort", request.model().providerOptions().getOrDefault("reasoning_effort", "high"));
-        String effort = String.valueOf(value);
-        if (!"high".equals(effort) && !"max".equals(effort)) {
-            throw new IllegalArgumentException("DeepSeek supports reasoning_effort high or max");
-        }
-        return effort;
-    }
-
     private Object validateResponseFormat(Object value) {
         if (!(value instanceof Map<?, ?> map) || !"json_object".equals(map.get("type")) || map.size() != 1) {
             throw new IllegalArgumentException("response_format must be {type=json_object}");
@@ -465,29 +435,11 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     }
 
     private static void validateProviderDefinition(ModelProviderDefinition provider, boolean allowInsecureHttp) {
-        if (!"https".equalsIgnoreCase(provider.endpoint().getScheme())
-                && !(allowInsecureHttp
-                        && "http".equalsIgnoreCase(provider.endpoint().getScheme()))) {
-            throw new IllegalArgumentException("provider endpoint must use HTTPS");
-        }
-        validateThinkingOptions(provider.options());
-        provider.models().forEach(model -> {
-            validateThinkingOptions(model.options());
-        });
+        OpenAiCompatibleDialects.resolve(provider).validateProvider(provider, allowInsecureHttp);
     }
 
-    private static void validateThinkingOptions(Map<String, Object> options) {
-        Object thinking = options.get("thinking");
-        if (thinking != null && !"disabled".equals(thinking) && !"enabled".equals(thinking)) {
-            throw new IllegalArgumentException("unsupported thinking mode: " + thinking);
-        }
-        Object effort = options.get("reasoning_effort");
-        if (effort != null && !"high".equals(effort) && !"max".equals(effort)) {
-            throw new IllegalArgumentException("DeepSeek supports reasoning_effort high or max");
-        }
-        if ("disabled".equals(thinking) && effort != null) {
-            throw new IllegalArgumentException("disabled thinking cannot have reasoning_effort");
-        }
+    private static OpenAiCompatibleDialect dialect(AgentChatRequest request) {
+        return OpenAiCompatibleDialects.resolve(request.model());
     }
 
     private static String requireText(String value, String field) {
@@ -699,10 +651,12 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     "provider response is missing token usage",
                     null);
         }
+        long directCacheHit = nonNegativeLong(request, usage, "prompt_cache_hit_tokens", false);
+        long standardCached = nonNegativeLong(request, usage.path("prompt_tokens_details"), "cached_tokens", false);
         return new ModelUsage(
                 nonNegativeLong(request, usage, "prompt_tokens", true),
                 nonNegativeLong(request, usage, "completion_tokens", true),
-                nonNegativeLong(request, usage, "prompt_cache_hit_tokens", false),
+                directCacheHit == 0 ? standardCached : directCacheHit,
                 nonNegativeLong(request, usage, "prompt_cache_miss_tokens", false),
                 nonNegativeLong(request, usage.path("completion_tokens_details"), "reasoning_tokens", false),
                 false,
@@ -1004,23 +958,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         } catch (IOException ignored) {
             // The raw response is intentionally not propagated.
         }
-        ModelErrorCategory category =
-                switch (status) {
-                    case 400 ->
-                        providerCode.toLowerCase(Locale.ROOT).contains("context")
-                                        || safeDetail.toLowerCase(Locale.ROOT).contains("context")
-                                ? ModelErrorCategory.CONTEXT_TOO_LONG
-                                : ModelErrorCategory.INVALID_REQUEST;
-                    case 401 -> ModelErrorCategory.AUTHENTICATION_FAILED;
-                    case 403 -> ModelErrorCategory.PERMISSION_DENIED;
-                    case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
-                    case 408 -> ModelErrorCategory.TIMEOUT;
-                    case 429 -> ModelErrorCategory.RATE_LIMITED;
-                    default ->
-                        status >= 500
-                                ? ModelErrorCategory.PROVIDER_UNAVAILABLE
-                                : ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
-                };
+        ModelErrorCategory category = dialect(request).classifyError(status, providerCode, safeDetail);
         boolean retryable = status == 408 || status == 429 || status >= 500;
         return failure(
                 request,

@@ -29,3 +29,7 @@ chunks, SDK types, and reasoning text must not cross this module boundary.
 工具结果消息除有界摘要和 Provider correlation 外，还可携带已归一化、深度不可变的 `toolResultData` 与裁剪标记；具体协议序列化由 Provider Adapter 负责。
 
 `ResolvedModelSnapshot` 当前只接受严格的 `2.0` Schema。旧快照缺失冻结字段时必须由显式迁移程序处理；运行时不会用当前目录值或默认值补齐。
+
+OpenAI-compatible Provider 的厂商协议差异必须通过 `providerOptions` 冻结稳定的 dialect id/version；
+region、Workspace/endpoint scope、模型 reasoning/tool profile 等会影响请求语义的字段也必须进入快照和配置摘要，
+Credential 只保存引用而不保存明文。

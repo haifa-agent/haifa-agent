@@ -1,5 +1,33 @@
 # Haifa Agent OpenAI-Compatible Model Adapter
 
+## Transport 与 dialect
+
+HTTP、鉴权、同步 JSON、SSE framing/limits/cancel、Tool Call 分片和 usage 解析由同一个 Chat
+transport 实现；厂商请求扩展、Endpoint policy 与错误分类由冻结到 snapshot 的 dialect 负责。当前支持：
+
+| Provider | dialect id | 同步 | SSE | Tool Call | Thinking |
+| --- | --- | --- | --- | --- | --- |
+| DeepSeek | `deepseek-openai-chat` | 是 | 是 | 是 | enabled/high，安全 continuation |
+| 阿里云百炼 | `aliyun-bailian-openai-chat` | 是 | 是 | 是 | 由受治理 Qwen profile 决定 |
+
+新配置必须冻结 `dialect_id` 和 `dialect_version`。仅为读取早期 DeepSeek `2.0` 快照保留按
+`providerId=deepseek` 的兼容解析；其他缺少 dialect 的快照会被拒绝。
+
+## 阿里云百炼
+
+使用 `AliyunBailianProviderFactory` 从外部治理配置构造 Provider 和模型 profile，不在 adapter 中固定
+易变的 Qwen 型号、版本或限额。Provider 配置必须包含完整的 `compatible-mode/v1` Base URL、region、
+`workspace_scoped` 与 CredentialRef；公共域名和 Workspace 专属域名不可混用。本地示例可使用
+`env://DASHSCOPE_API_KEY`，生产应接入现有 Credential binding/lease。
+
+模型 profile 显式声明 `thinking_profile=none|hybrid|always`、`thinking_enabled`、
+`supports_tool_stream` 等能力。只有受支持且显式启用时才发送 `thinking_budget`、
+`preserve_thinking`、`reasoning_effort`、`tool_stream`；`tool_stream` 默认不发送。百炼 thinking 复用
+Runtime 的受保护 continuation，raw reasoning 不进入公共输出。
+
+本阶段仅支持百炼 OpenAI Chat Completions。OpenAI Responses、DashScope 原生协议和
+Anthropic-compatible 是独立的后续 adapter，不复用 Chat SSE accumulator，也不应被配置成已支持。
+
 ## DeepSeek thinking
 
 The governed DeepSeek default is `thinking=enabled` with `reasoning_effort=high`; explicit disabled snapshots
@@ -18,7 +46,7 @@ The parser bounds each SSE event, the total response, delta count, content, reas
 Consumer cancellation closes the response body and maps to standard `CANCELLED`; synchronous behavior remains
 compatible.
 
-使用 Java 21 `HttpClient` 与 Jackson 实现的同步 OpenAI Chat Completions 协议适配器。首个配置目标为 DeepSeek `deepseek-v4-pro`。
+使用 Java 21 `HttpClient` 与 Jackson 实现 OpenAI Chat Completions 协议适配器。
 
 ## 默认配置
 
@@ -33,13 +61,16 @@ models:
   - id: deepseek-v4-pro
     version: model-v1
     provider-model-id: deepseek-v4-pro
-thinking: disabled
-stream: false
+provider-options:
+  dialect_id: deepseek-openai-chat
+  dialect_version: "1.0"
+thinking: enabled
+reasoning-effort: high
 ```
 
 `DeepSeekDefaults.provider()` 提供无密钥的类型安全示例。生产应用应通过配置构造 Provider，并用 `EnvironmentCredentialResolver` 或自有 Secret Manager Adapter 解析 `CredentialRef`。
 
-首版强制 `thinking.type=disabled`。不能通过调用选项开启思考模式，因为 DeepSeek 在思考模式的 Tool Call 后要求回传 `reasoning_content`，该能力需要独立的持久化与安全设计。
+DeepSeek 默认 `thinking=enabled`、`reasoning_effort=high`；显式 disabled 快照仍受支持。
 
 ## 装配示意
 
@@ -71,6 +102,16 @@ mvn -pl :haifa-agent-model-openai-compatible -am test
 ```text
 HAIFA_DEEPSEEK_LIVE_TEST=true
 DEEPSEEK_API_KEY=<secret>
+```
+
+百炼 Live IT 还要求显式设置（会产生真实费用）：
+
+```text
+HAIFA_BAILIAN_LIVE_TEST=true
+DASHSCOPE_API_KEY=<secret>
+HAIFA_BAILIAN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+HAIFA_BAILIAN_MODEL_ID=<governed-model-id>
+HAIFA_BAILIAN_REGION=cn-beijing
 ```
 
 ```powershell
