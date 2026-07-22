@@ -5,6 +5,10 @@ public interface SandboxSession extends AutoCloseable {
 
     SandboxProcessResult execute(SandboxExecution execution);
 
+    default SandboxManagedProcess openManagedProcess(SandboxExecution execution) {
+        throw new UnsupportedOperationException("managed process sessions are not supported");
+    }
+
     boolean cancel();
 
     @Override

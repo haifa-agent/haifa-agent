@@ -11,6 +11,9 @@ import io.haifa.agent.credential.api.CredentialDefinition;
 import io.haifa.agent.credential.api.CredentialDefinitionId;
 import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialLease;
+import io.haifa.agent.credential.api.CredentialOperation;
+import io.haifa.agent.credential.api.CredentialOperationRequest;
+import io.haifa.agent.credential.api.CredentialOperationUsageAudit;
 import io.haifa.agent.credential.api.CredentialReference;
 import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.CredentialRequirement;
@@ -92,6 +95,68 @@ class DefaultCredentialBrokerTest {
                 .containsExactly(CredentialUsagePhase.ISSUED, CredentialUsagePhase.CLOSED);
         assertThat(events).allSatisfy(event -> assertThat(event.toString()).doesNotContain("plaintext-secret"));
         assertThat(broker.redactor().redact("plaintext-secret")).isEqualTo("plaintext-secret");
+    }
+
+    @Test
+    void issuesAndAuditsControlPlaneCredentialWithoutFabricatingRunOrToolIdentity() {
+        TenantRef tenant = new TenantRef("tenant");
+        PrincipalRef principal = new PrincipalRef("user", "human");
+        CredentialDefinitionId definitionId = new CredentialDefinitionId("mcp-token");
+        CredentialReference reference = new CredentialReference("mcp-reference");
+        var definition = new CredentialDefinition(
+                definitionId,
+                "mcp",
+                CredentialType.BEARER_TOKEN,
+                Set.of("mcp:tools:list"),
+                Set.of(CredentialExposureMode.HTTP_HEADER),
+                Map.of());
+        var scope = new CredentialBindingScope(CredentialScopeKind.USER, "user");
+        var binding = new CredentialBinding(
+                "mcp-binding",
+                tenant,
+                Optional.of(principal),
+                definitionId,
+                reference,
+                scope,
+                Set.of("mcp-server:utility:1:digest"),
+                Set.of("discover"),
+                Set.of("mcp:tools:list"),
+                Set.of(CredentialExposureMode.HTTP_HEADER),
+                CredentialStatus.ACTIVE,
+                Optional.empty());
+        var request = new CredentialOperationRequest(
+                CredentialOperation.MCP_DISCOVERY,
+                tenant,
+                principal,
+                "mcp-server:utility:1:digest",
+                new CredentialRequirement(
+                        definitionId, "discover", Set.of("mcp:tools:list"), CredentialExposureMode.HTTP_HEADER),
+                List.of(scope),
+                Optional.empty(),
+                NOW,
+                NOW.plusSeconds(30));
+        List<CredentialOperationUsageAudit> operationEvents = new ArrayList<>();
+        var broker = new DefaultCredentialBroker(
+                List.of(definition),
+                List.of(binding),
+                new DefaultCredentialResolver(),
+                new RecordingStore(reference),
+                event -> {},
+                operationEvents::add,
+                Clock.fixed(NOW.plusSeconds(5), ZoneOffset.UTC),
+                new DefaultSecretRedactor());
+
+        CredentialLease lease = broker.issue(request);
+        lease.close();
+
+        assertThat(operationEvents)
+                .extracting(CredentialOperationUsageAudit::operation)
+                .containsExactly(CredentialOperation.MCP_DISCOVERY, CredentialOperation.MCP_DISCOVERY);
+        assertThat(operationEvents)
+                .extracting(CredentialOperationUsageAudit::targetBindingReference)
+                .containsOnly("mcp-server:utility:1:digest");
+        assertThat(operationEvents).allSatisfy(event -> assertThat(event.toString())
+                .doesNotContain("plaintext-secret", "AgentRunId", "toolCoordinate"));
     }
 
     private static final class RecordingStore implements CredentialStore {

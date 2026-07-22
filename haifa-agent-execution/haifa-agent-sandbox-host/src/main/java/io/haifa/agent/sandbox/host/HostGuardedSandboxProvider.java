@@ -214,6 +214,34 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         }
 
         @Override
+        public synchronized io.haifa.agent.sandbox.api.SandboxManagedProcess openManagedProcess(
+                SandboxExecution execution) {
+            if (closed) throw failure("SESSION_CLOSED", "sandbox session is closed");
+            if (current != null && current.isAlive()) {
+                throw failure("SESSION_BUSY", "sandbox session already has a live process");
+            }
+            if (!execution.workingDirectory().workspaceId().equals(workspaceId)) {
+                throw failure("WORKSPACE_MISMATCH", "working directory belongs to another workspace");
+            }
+            validateCommand(execution);
+            Path cwd = resolveDirectory(execution.workingDirectory());
+            Map<String, String> environment = validateEnvironment(execution.environment());
+            try {
+                ProcessBuilder builder = new ProcessBuilder(execution.command().argv());
+                builder.directory(cwd.toFile());
+                builder.redirectInput(ProcessBuilder.Redirect.PIPE);
+                builder.environment().clear();
+                builder.environment().putAll(environment);
+                Process process = builder.start();
+                current = process;
+                cancelRequested = false;
+                return new Managed(process, execution, time.now());
+            } catch (IOException exception) {
+                throw failure("PROCESS_START_FAILED", "managed process could not be started");
+            }
+        }
+
+        @Override
         public boolean cancel() {
             cancelRequested = true;
             Process process = current;
@@ -262,6 +290,154 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         || normalized.matches("^[A-Za-z]:.*")
                         || normalized.startsWith("//")) {
                     throw failure("ARGUMENT_PATH_DENIED", "argument contains an unsafe path form");
+                }
+            }
+        }
+
+        private final class Managed implements io.haifa.agent.sandbox.api.SandboxManagedProcess {
+            private final Process process;
+            private final SandboxExecution execution;
+            private final Instant startedAt;
+            private final java.util.concurrent.LinkedBlockingQueue<io.haifa.agent.execution.api.ProcessOutputChunk>
+                    output = new java.util.concurrent.LinkedBlockingQueue<>(1024);
+            private final java.util.concurrent.atomic.AtomicInteger stdoutBytes =
+                    new java.util.concurrent.atomic.AtomicInteger();
+            private final java.util.concurrent.atomic.AtomicInteger stderrBytes =
+                    new java.util.concurrent.atomic.AtomicInteger();
+            private final java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit;
+            private final java.util.concurrent.atomic.AtomicBoolean managedClosed =
+                    new java.util.concurrent.atomic.AtomicBoolean();
+            private final java.util.concurrent.atomic.AtomicBoolean timedOut =
+                    new java.util.concurrent.atomic.AtomicBoolean();
+
+            private Managed(Process process, SandboxExecution execution, Instant startedAt) {
+                this.process = process;
+                this.execution = execution;
+                this.startedAt = startedAt;
+                Thread.ofVirtual()
+                        .name("haifa-managed-stdout")
+                        .start(() -> pump(
+                                process.getInputStream(),
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                                execution.limits().maxStdoutBytes(),
+                                stdoutBytes));
+                Thread.ofVirtual()
+                        .name("haifa-managed-stderr")
+                        .start(() -> pump(
+                                process.getErrorStream(),
+                                io.haifa.agent.execution.api.ExecutionOutputChannel.STDERR,
+                                execution.limits().maxStderrBytes(),
+                                stderrBytes));
+                this.exit = process.onExit().thenApply(ignored -> {
+                    current = null;
+                    var status = timedOut.get()
+                            ? io.haifa.agent.execution.api.ExecutionStatus.TIMED_OUT
+                            : cancelRequested
+                                    ? io.haifa.agent.execution.api.ExecutionStatus.CANCELLED
+                                    : process.exitValue() == 0
+                                            ? io.haifa.agent.execution.api.ExecutionStatus.SUCCEEDED
+                                            : io.haifa.agent.execution.api.ExecutionStatus.FAILED;
+                    return new io.haifa.agent.execution.api.ProcessExit(status, process.exitValue(), true, time.now());
+                });
+                java.util.concurrent.CompletableFuture.delayedExecutor(
+                                execution.limits().timeout().toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
+                        .execute(() -> {
+                            if (process.isAlive()) {
+                                timedOut.set(true);
+                                cancel();
+                            }
+                        });
+            }
+
+            @Override
+            public Instant startedAt() {
+                return startedAt;
+            }
+
+            @Override
+            public void write(io.haifa.agent.execution.api.ProcessInputChunk input) {
+                if (managedClosed.get() || !process.isAlive()) {
+                    throw failure("PROCESS_CLOSED", "managed process is closed");
+                }
+                try {
+                    synchronized (process.getOutputStream()) {
+                        process.getOutputStream().write(input.bytes());
+                        process.getOutputStream().flush();
+                    }
+                } catch (IOException exception) {
+                    throw failure("PROCESS_STDIN_FAILED", "managed process stdin write failed");
+                }
+            }
+
+            @Override
+            public java.util.Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(Duration timeout) {
+                try {
+                    return java.util.Optional.ofNullable(
+                            output.poll(timeout.toNanos(), java.util.concurrent.TimeUnit.NANOSECONDS));
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return java.util.Optional.empty();
+                }
+            }
+
+            @Override
+            public java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit() {
+                return exit;
+            }
+
+            @Override
+            public int observedProcessCount() {
+                return HostGuardedSandboxProvider.observedProcesses(process);
+            }
+
+            @Override
+            public boolean cancel() {
+                cancelRequested = true;
+                return terminateTree(process);
+            }
+
+            @Override
+            public void close() {
+                if (managedClosed.compareAndSet(false, true)) cancel();
+            }
+
+            private void pump(
+                    InputStream input,
+                    io.haifa.agent.execution.api.ExecutionOutputChannel channel,
+                    int limit,
+                    java.util.concurrent.atomic.AtomicInteger consumed) {
+                boolean truncated = false;
+                try (input) {
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    while ((count = input.read(buffer)) >= 0) {
+                        if (observedProcessCount() > execution.limits().maxProcesses()) {
+                            truncated = true;
+                            cancel();
+                            break;
+                        }
+                        int remaining = limit - consumed.get();
+                        int accepted = Math.max(0, Math.min(remaining, count));
+                        if (accepted > 0) {
+                            consumed.addAndGet(accepted);
+                            if (!output.offer(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                    channel, java.util.Arrays.copyOf(buffer, accepted), false, false))) {
+                                truncated = true;
+                                cancel();
+                                break;
+                            }
+                        }
+                        if (accepted < count) {
+                            truncated = true;
+                            cancel();
+                            break;
+                        }
+                    }
+                } catch (IOException exception) {
+                    truncated = true;
+                } finally {
+                    output.offer(
+                            new io.haifa.agent.execution.api.ProcessOutputChunk(channel, new byte[0], true, truncated));
                 }
             }
         }

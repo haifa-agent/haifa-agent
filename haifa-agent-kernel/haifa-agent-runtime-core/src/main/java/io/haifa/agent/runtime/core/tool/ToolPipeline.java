@@ -211,28 +211,43 @@ public final class ToolPipeline {
                             throw new RuntimeLimitExceededException("tool call budget exhausted");
                         }
                         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 1, 0, 0, 0));
-                        journal.recordDispatched(run.id(), request.idempotencyKey());
-                        ToolResult providerResult = invokeProvider(run, call, request, binding);
-                        journal.recordAcknowledged(run.id(), request.idempotencyKey());
-                        return providerResult;
+                        return invokeProvider(run, call, request, binding);
                     },
                     retryPolicy.forTool(binding));
-            ToolSchemaValidationResult outputValidation =
-                    schemaValidator.validate(definition.outputSchema(), rawResult.structuredData());
-            if (!outputValidation.valid()) {
-                throw new IllegalStateException("tool output failed schema validation: " + outputValidation.errors());
+            if (rawResult.successful()) {
+                ToolSchemaValidationResult outputValidation =
+                        schemaValidator.validate(definition.outputSchema(), rawResult.structuredData());
+                if (!outputValidation.valid()) {
+                    throw new IllegalStateException(
+                            "tool output failed schema validation: " + outputValidation.errors());
+                }
+            } else {
+                validateFailureEnvelope(rawResult);
             }
             journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
             return new ToolPipelineOutcome.Completed(persistResult(run, call, request, rawResult));
         } catch (CancellationObservedException cancelled) {
             throw cancelled;
         } catch (RuntimeException exception) {
+            if (exception instanceof io.haifa.agent.tool.api.ToolInvocationException invocationFailure) {
+                if (invocationFailure.dispatchState() == io.haifa.agent.tool.api.ToolDispatchState.DISPATCHED
+                        || invocationFailure.dispatchState()
+                                == io.haifa.agent.tool.api.ToolDispatchState.OUTCOME_UNKNOWN) {
+                    journal.recordDispatched(run.id(), request.idempotencyKey());
+                } else if (invocationFailure.dispatchState()
+                        == io.haifa.agent.tool.api.ToolDispatchState.ACKNOWLEDGED) {
+                    journal.recordDispatched(run.id(), request.idempotencyKey());
+                    journal.recordAcknowledged(run.id(), request.idempotencyKey());
+                }
+            }
             ToolJournalState journalState =
                     journal.state(run.id(), request.idempotencyKey()).orElse(ToolJournalState.INTENT_RECORDED);
             if (journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.PENDING_RESULT) {
                 journal.recordFailed(run.id(), request.idempotencyKey());
-            } else {
+            } else if (journalState == ToolJournalState.DISPATCHED) {
                 journal.recordUncertain(run.id(), request.idempotencyKey());
+            } else {
+                journal.recordFailed(run.id(), request.idempotencyKey());
             }
             throw exception;
         }
@@ -279,11 +294,28 @@ public final class ToolPipeline {
                         deadline,
                         java.util.Optional.of(request.idempotencyKey().value()),
                         (ToolCancellation) () -> controls.signal(run.id()) == RunControlSignal.CANCEL,
-                        leases));
+                        leases,
+                        new io.haifa.agent.tool.api.ToolInvocationObserver() {
+                            @Override
+                            public void dispatched() {
+                                journal.recordDispatched(run.id(), request.idempotencyKey());
+                            }
+
+                            @Override
+                            public void acknowledged() {
+                                journal.recordAcknowledged(run.id(), request.idempotencyKey());
+                            }
+                        }));
                 return leases.isEmpty() ? result : redactResult(result, credentials.redactor());
             } catch (RuntimeException exception) {
                 if (leases.isEmpty()) throw exception;
                 String detail = credentials.redactor().redact(exception.getMessage());
+                if (exception instanceof io.haifa.agent.tool.api.ToolInvocationException invocationFailure) {
+                    throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            invocationFailure.failureCode(),
+                            invocationFailure.dispatchState(),
+                            detail == null || detail.isBlank() ? "tool provider invocation failed" : detail);
+                }
                 throw new IllegalStateException(
                         detail == null || detail.isBlank()
                                 ? "tool provider invocation failed"
@@ -332,6 +364,35 @@ public final class ToolPipeline {
             return java.util.HexFormat.of().formatHex(digest);
         } catch (java.security.NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private static void validateFailureEnvelope(ToolResult result) {
+        int[] budget = new int[] {0, 0};
+        inspectFailureValue(result.structuredData(), 0, budget);
+        if (result.summary().length() > 16_384) {
+            throw new IllegalStateException("tool failure summary exceeds maximum size");
+        }
+    }
+
+    private static void inspectFailureValue(Object value, int depth, int[] budget) {
+        if (depth > 32 || ++budget[0] > 4096) {
+            throw new IllegalStateException("tool failure envelope exceeds structural limits");
+        }
+        if (value instanceof String text) {
+            budget[1] = Math.addExact(budget[1], text.length());
+            if (budget[1] > 1_048_576) {
+                throw new IllegalStateException("tool failure envelope exceeds maximum size");
+            }
+        } else if (value instanceof Map<?, ?> map) {
+            map.forEach((key, element) -> {
+                inspectFailureValue(String.valueOf(key), depth + 1, budget);
+                inspectFailureValue(element, depth + 1, budget);
+            });
+        } else if (value instanceof Iterable<?> iterable) {
+            iterable.forEach(element -> inspectFailureValue(element, depth + 1, budget));
+        } else if (value != null && !(value instanceof Number) && !(value instanceof Boolean)) {
+            throw new IllegalStateException("tool failure envelope contains a non-JSON value");
         }
     }
 

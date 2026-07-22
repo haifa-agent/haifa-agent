@@ -145,6 +145,34 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     }
 
     @Override
+    public io.haifa.agent.execution.api.ManagedProcessSession openManagedSession(
+            io.haifa.agent.execution.api.ManagedProcessRequest managedRequest) {
+        Objects.requireNonNull(managedRequest, "managedRequest must not be null");
+        ExecutionRequest request = managedRequest.execution();
+        if (executions.findByIdempotencyKey(request.idempotencyKey()).isPresent()) {
+            throw reject("MANAGED_SESSION_REPLAY_DENIED", "managed process sessions cannot be replayed");
+        }
+        authorize(request);
+        policy.authorize(request);
+        var profile = profiles.resolve(request.sandboxProfileRef());
+        var provider = providers.resolve(profile);
+        Map<String, String> environment = Map.copyOf(environments.resolve(request.environmentRef()));
+        WorkspaceManifest before = manifests.capture(request.workspaceId());
+        executions.create(request);
+        SandboxSession sandbox = provider.open(profile, new WorkspaceMount(request.workspaceId(), false));
+        active.put(request.id(), sandbox);
+        try {
+            var process = sandbox.openManagedProcess(
+                    new SandboxExecution(request.command(), request.workingDirectory(), environment, request.limits()));
+            return new BrokerManagedSession(request, sandbox, process, environment, before);
+        } catch (RuntimeException exception) {
+            active.remove(request.id());
+            sandbox.close();
+            throw exception;
+        }
+    }
+
+    @Override
     public boolean cancel(ExecutionId id) {
         SandboxSession session = active.get(id);
         return session != null && session.cancel();
@@ -166,6 +194,140 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         if (!binding.permissions().allows(WorkspacePermission.EXECUTE)
                 || !binding.capabilities().allows("execution.run")) {
             throw reject("WORKSPACE_EXECUTION_DENIED", "workspace execution capability is denied");
+        }
+    }
+
+    private final class BrokerManagedSession implements io.haifa.agent.execution.api.ManagedProcessSession {
+        private final ExecutionRequest request;
+        private final SandboxSession sandbox;
+        private final io.haifa.agent.sandbox.api.SandboxManagedProcess process;
+        private final Map<String, String> environment;
+        private final WorkspaceManifest before;
+        private final ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        private final ByteArrayOutputStream stderr = new ByteArrayOutputStream();
+        private final java.util.concurrent.atomic.AtomicBoolean closed =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        private final java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit;
+
+        private BrokerManagedSession(
+                ExecutionRequest request,
+                SandboxSession sandbox,
+                io.haifa.agent.sandbox.api.SandboxManagedProcess process,
+                Map<String, String> environment,
+                WorkspaceManifest before) {
+            this.request = request;
+            this.sandbox = sandbox;
+            this.process = process;
+            this.environment = environment;
+            this.before = before;
+            this.exit = process.exit().thenApply(this::complete);
+        }
+
+        @Override
+        public io.haifa.agent.execution.api.ManagedProcessSessionId id() {
+            return new io.haifa.agent.execution.api.ManagedProcessSessionId(
+                    request.id().value());
+        }
+
+        @Override
+        public void write(io.haifa.agent.execution.api.ProcessInputChunk input) {
+            if (closed.get()) throw new IllegalStateException("managed process session is closed");
+            process.write(input);
+        }
+
+        @Override
+        public Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(Duration timeout) {
+            if (closed.get()) return Optional.empty();
+            return process.read(timeout).map(chunk -> {
+                byte[] redacted = redact(chunk.bytes(), environment);
+                synchronized (this) {
+                    ByteArrayOutputStream target = chunk.channel() == ExecutionOutputChannel.STDOUT ? stdout : stderr;
+                    target.writeBytes(redacted);
+                }
+                return new io.haifa.agent.execution.api.ProcessOutputChunk(
+                        chunk.channel(), redacted, chunk.endOfStream(), chunk.truncated());
+            });
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit> exit() {
+            return exit;
+        }
+
+        @Override
+        public boolean cancel() {
+            return process.cancel();
+        }
+
+        @Override
+        public boolean isClosed() {
+            return closed.get();
+        }
+
+        @Override
+        public void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            try {
+                process.close();
+            } finally {
+                sandbox.close();
+                active.remove(request.id());
+            }
+        }
+
+        private io.haifa.agent.execution.api.ProcessExit complete(
+                io.haifa.agent.execution.api.ProcessExit processExit) {
+            byte[] stdoutBytes;
+            byte[] stderrBytes;
+            synchronized (this) {
+                stdoutBytes = stdout.toByteArray();
+                stderrBytes = stderr.toByteArray();
+            }
+            var storedStdout = outputs.store(request.id(), ExecutionOutputChannel.STDOUT, stdoutBytes, 4096, false);
+            var storedStderr = outputs.store(request.id(), ExecutionOutputChannel.STDERR, stderrBytes, 4096, false);
+            io.haifa.agent.project.changeset.FileChangeSetId changeSetId = null;
+            ExecutionStatus status = processExit.status();
+            ExecutionFailure executionFailure = failure(status, processExit.processTreeTerminated());
+            try {
+                WorkspaceManifest after = manifests.capture(request.workspaceId());
+                var changes = manifestDiff.diff(before, after);
+                if (!changes.isEmpty()) {
+                    var workspace = workspaces.find(request.workspaceId()).orElseThrow();
+                    changeSetId = observedChanges
+                            .record(
+                                    workspace,
+                                    "managed-execution:" + request.id().value(),
+                                    request.context().runRef(),
+                                    request.id().value(),
+                                    request.context().actor(),
+                                    request.context().policyDecisionRef(),
+                                    changes)
+                            .id();
+                }
+            } catch (RuntimeException manifestFailure) {
+                status = ExecutionStatus.UNKNOWN;
+                executionFailure = new ExecutionFailure(
+                        "MANIFEST_UNCERTAIN", "post-execution file changes could not be fully audited");
+            }
+            ExecutionResult result = new ExecutionResult(
+                    request.id(),
+                    status,
+                    processExit.exitCode(),
+                    process.startedAt(),
+                    processExit.endedAt(),
+                    storedStdout,
+                    storedStderr,
+                    changeSetId,
+                    sandbox.id().value(),
+                    new ResourceUsageSummary(
+                            Duration.between(process.startedAt(), processExit.endedAt()),
+                            process.observedProcessCount()),
+                    executionFailure,
+                    false);
+            executions.complete(request, result);
+            active.remove(request.id());
+            return new io.haifa.agent.execution.api.ProcessExit(
+                    status, processExit.exitCode(), processExit.processTreeTerminated(), processExit.endedAt());
         }
     }
 
