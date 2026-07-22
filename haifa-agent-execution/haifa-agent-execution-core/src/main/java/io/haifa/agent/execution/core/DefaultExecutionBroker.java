@@ -5,6 +5,7 @@ import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
+import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionOutputStore;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
@@ -72,7 +73,13 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
 
     @Override
     public ExecutionResult execute(ExecutionRequest request) {
+        return execute(request, ExecutionOutputObserver.noop());
+    }
+
+    @Override
+    public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
         Objects.requireNonNull(request, "request must not be null");
+        Objects.requireNonNull(observer, "observer must not be null");
         Optional<ExecutionResult> replay = executions.findByIdempotencyKey(request.idempotencyKey());
         if (replay.isPresent()) {
             var previous = executions.findRequest(replay.orElseThrow().id()).orElseThrow();
@@ -91,8 +98,14 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         SandboxSession session = provider.open(profile, new WorkspaceMount(request.workspaceId(), false));
         active.put(request.id(), session);
         try (session) {
-            var process = session.execute(
-                    new SandboxExecution(request.command(), request.workingDirectory(), environment, request.limits()));
+            io.haifa.agent.sandbox.api.SandboxProcessResult process;
+            try (var asynchronous = new BoundedAsyncExecutionOutputObserver(observer)) {
+                ExecutionOutputObserver safeObserver = new RedactingExecutionOutputObserver(asynchronous, environment);
+                process = session.execute(
+                        new SandboxExecution(
+                                request.command(), request.workingDirectory(), environment, request.limits()),
+                        safeObserver);
+            }
             byte[] stdoutBytes = redact(process.stdout(), environment);
             byte[] stderrBytes = redact(process.stderr(), environment);
             var stdout = outputs.store(

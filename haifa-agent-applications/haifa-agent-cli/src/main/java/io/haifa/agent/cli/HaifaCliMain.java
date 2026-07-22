@@ -38,26 +38,41 @@ public final class HaifaCliMain {
             Path workspace = parsed.workspace().orElseGet(() -> Path.of("."));
             if (!workspace.isAbsolute()) workspace = workspace.toAbsolutePath().normalize();
             CliConfiguration configuration = new CliConfigurationLoader().load(parsed, workspace);
-            LocalCodingAgent agent = LocalCodingAgent.create(workspace, configuration);
-            AtomicBoolean streamed = attachStreamingOutput(agent.runtime()::addOutputListener, output);
-            if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
-            if (parsed.verbose()) output.println("DeepSeek thinking enabled (effort=high). Waiting for stream...");
-            var accepted = agent.start(parsed.message().orElseThrow());
-            if (parsed.verbose()) output.println("Run " + accepted.runId().value() + " submitted.");
-            var completed = await(agent, accepted.runId(), configuration.timeout(), configuration.approval(), output);
-            if (streamed.get()) output.println();
-            else completed.output().ifPresent(output::println);
-            if (parsed.verbose()) output.println("Reasoning tokens: " + agent.reasoningTokens(accepted.runId()));
-            if (completed.status().isTerminal()
-                    && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
-                return 0;
+            try (LocalCodingAgent agent = LocalCodingAgent.create(workspace, configuration, output)) {
+                AtomicBoolean streamed = attachStreamingOutput(agent.runtime()::addOutputListener, output);
+                if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
+                if (parsed.verbose()) output.println("DeepSeek thinking enabled (effort=high). Waiting for stream...");
+                var accepted = agent.start(parsed.message().orElseThrow());
+                if (parsed.verbose()) output.println("Run " + accepted.runId().value() + " submitted.");
+                Thread shutdownHook = Thread.ofPlatform()
+                        .name("haifa-cli-cancel")
+                        .unstarted(() -> cancelAndAwait(agent, accepted.runId(), Duration.ofSeconds(3)));
+                Runtime.getRuntime().addShutdownHook(shutdownHook);
+                io.haifa.agent.runtime.api.AgentRunSnapshot completed;
+                try {
+                    completed =
+                            await(agent, accepted.runId(), configuration.timeout(), configuration.approval(), output);
+                } finally {
+                    removeShutdownHook(shutdownHook);
+                }
+                if (!completed.status().isTerminal()) {
+                    agent.cancel(accepted.runId());
+                    completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(3));
+                }
+                if (streamed.get()) output.println();
+                else completed.output().ifPresent(output::println);
+                if (parsed.verbose()) output.println("Reasoning tokens: " + agent.reasoningTokens(accepted.runId()));
+                if (completed.status().isTerminal()
+                        && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
+                    return 0;
+                }
+                completed
+                        .error()
+                        .ifPresent(value ->
+                                error.println("Task failed: " + value.code().value()));
+                if (!completed.status().isTerminal()) error.println("Task did not complete before the CLI timeout.");
+                return 2;
             }
-            completed
-                    .error()
-                    .ifPresent(value ->
-                            error.println("Task failed: " + value.code().value()));
-            if (!completed.status().isTerminal()) error.println("Task did not complete before the CLI timeout.");
-            return 2;
         } catch (IllegalArgumentException exception) {
             error.println("Invalid command: " + exception.getMessage());
             error.println("Use --help for usage.");
@@ -122,6 +137,37 @@ public final class HaifaCliMain {
                         List.of(),
                         "cli-interaction-" + request.id().value(),
                         agent.time().now()));
+    }
+
+    private static void cancelAndAwait(
+            LocalCodingAgent agent, io.haifa.agent.core.run.AgentRunId runId, Duration timeout) {
+        try {
+            agent.cancel(runId);
+            awaitTerminal(agent, runId, timeout);
+        } catch (RuntimeException | InterruptedException ignored) {
+            // JVM shutdown continues after a bounded best-effort cancellation.
+        }
+    }
+
+    private static io.haifa.agent.runtime.api.AgentRunSnapshot awaitTerminal(
+            LocalCodingAgent agent, io.haifa.agent.core.run.AgentRunId runId, Duration timeout)
+            throws InterruptedException {
+        Instant deadline = Instant.now().plus(timeout);
+        io.haifa.agent.runtime.api.AgentRunSnapshot snapshot =
+                agent.runtime().find(runId).orElseThrow();
+        while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            Thread.sleep(25);
+            snapshot = agent.runtime().find(runId).orElseThrow();
+        }
+        return snapshot;
+    }
+
+    private static void removeShutdownHook(Thread hook) {
+        try {
+            Runtime.getRuntime().removeShutdownHook(hook);
+        } catch (IllegalStateException ignored) {
+            // JVM shutdown already started and owns the hook.
+        }
     }
 
     private static boolean confirm(String prompt, BufferedReader input, PrintStream output) {

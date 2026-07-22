@@ -138,6 +138,86 @@ class HostSandboxTest {
     }
 
     @Test
+    void runsGeneralShellTextThroughConfiguredShellAndStreamsBoundedTail() throws Exception {
+        Fixture fixture = fixture(root, "workspace-shell", "binding-shell", "location-shell");
+        HostShell shell = HostShell.auto();
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, () -> "shell-session", Instant::now, shell);
+        SandboxProfile profile = new SandboxProfile(
+                new SandboxProfileRef("shell-test", "1"), Set.of(), Set.of(), true, NetworkPolicy.ALLOW);
+        String command = isWindows()
+                ? "$value = 'shell-ok'; $value | Set-Content result.txt; Get-Content result.txt"
+                : "printf 'shell-ok\\n' | tr a-z A-Z > result.txt; cat result.txt";
+        var streamed = new java.io.ByteArrayOutputStream();
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var result = session.execute(
+                    new SandboxExecution(
+                            ExecutionCommand.shell(command),
+                            WorkspacePath.root(fixture.workspaceId),
+                            Map.of(),
+                            new ExecutionLimits(Duration.ofSeconds(10), 8, 4096, 4)),
+                    chunk -> streamed.writeBytes(chunk.bytes()));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isZero();
+            assertThat(Files.readString(root.resolve("result.txt"))).containsIgnoringCase("shell-ok");
+            assertThat(new String(streamed.toByteArray(), java.nio.charset.StandardCharsets.UTF_8))
+                    .containsIgnoringCase("shell-ok");
+            assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8).replace("\r\n", "\n"))
+                    .endsWithIgnoringCase("ell-ok\n");
+        }
+
+        SandboxProfile secretProfile = new SandboxProfile(
+                new SandboxProfileRef("secret-test", "1"),
+                Set.of(),
+                Set.of("DEEPSEEK_API_KEY"),
+                true,
+                NetworkPolicy.ALLOW);
+        try (var session = provider.open(secretProfile, new WorkspaceMount(fixture.workspaceId, false))) {
+            assertThatThrownBy(() -> session.execute(new SandboxExecution(
+                            ExecutionCommand.shell(command),
+                            WorkspacePath.root(fixture.workspaceId),
+                            Map.of("DEEPSEEK_API_KEY", "must-not-be-inherited"),
+                            new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4))))
+                    .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
+                            .isEqualTo("ENVIRONMENT_DENIED"));
+        }
+
+        SandboxProfile shellDenied = new SandboxProfile(
+                new SandboxProfileRef("shell-denied", "1"), Set.of(), Set.of(), false, NetworkPolicy.ALLOW);
+        try (var session = provider.open(shellDenied, new WorkspaceMount(fixture.workspaceId, false))) {
+            assertThatThrownBy(() -> session.execute(new SandboxExecution(
+                            ExecutionCommand.shell(command),
+                            WorkspacePath.root(fixture.workspaceId),
+                            Map.of(),
+                            new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4))))
+                    .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
+                            .isEqualTo("SHELL_DENIED"));
+        }
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            assertThat(session.cancel()).isTrue();
+            var cancelledBeforeStart = session.execute(new SandboxExecution(
+                    ExecutionCommand.shell(command),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4)));
+            assertThat(cancelledBeforeStart.status()).isEqualTo(SandboxProcessStatus.CANCELLED);
+        }
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            assertThatThrownBy(() -> session.openManagedProcess(new SandboxExecution(
+                            ExecutionCommand.shell(command),
+                            WorkspacePath.root(fixture.workspaceId),
+                            Map.of(),
+                            new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4))))
+                    .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
+                            .isEqualTo("MANAGED_SHELL_DENIED"));
+        }
+    }
+
+    @Test
     void createsBudgetedEphemeralCopyWithNarrowedAuthorityAndSafeRelease() throws Exception {
         Files.writeString(root.resolve("visible.txt"), "visible");
         Files.writeString(root.resolve(".env"), "secret");
@@ -252,6 +332,12 @@ class HostSandboxTest {
         byte[] output = process.getInputStream().readAllBytes();
         assertThat(process.waitFor()).isZero();
         return new String(output, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "")
+                .toLowerCase(java.util.Locale.ROOT)
+                .contains("win");
     }
 
     private record Fixture(

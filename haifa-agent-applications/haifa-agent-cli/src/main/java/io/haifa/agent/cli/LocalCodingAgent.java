@@ -16,6 +16,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -49,6 +50,10 @@ import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
+import io.haifa.agent.runtime.api.RuntimeCommand;
+import io.haifa.agent.runtime.api.RuntimeCommandArguments;
+import io.haifa.agent.runtime.api.RuntimeCommandId;
+import io.haifa.agent.runtime.api.RuntimeCommandType;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
@@ -57,6 +62,7 @@ import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
+import java.io.PrintStream;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,28 +74,46 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Builds an in-process Coding Agent over one explicitly selected local workspace. */
-final class LocalCodingAgent {
+final class LocalCodingAgent implements AutoCloseable {
     private static final AgentDefinitionId DEFINITION_ID = new AgentDefinitionId("haifa-cli-coding-agent");
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final AgentRuntime runtime;
     private final InMemoryInteractionPort interactions;
     private final List<RuntimeTraceEvent> traces;
+    private final CliMcpPlatform mcpPlatform;
 
     private LocalCodingAgent(
             IdentifierGenerator identifiers,
             TimeProvider time,
             AgentRuntime runtime,
             InMemoryInteractionPort interactions,
-            List<RuntimeTraceEvent> traces) {
+            List<RuntimeTraceEvent> traces,
+            CliMcpPlatform mcpPlatform) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
         this.interactions = interactions;
         this.traces = traces;
+        this.mcpPlatform = mcpPlatform;
     }
 
-    static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration) {
+    static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
+        var model = new OpenAiCompatibleChatModel(
+                "openai-compatible",
+                "1.0.0",
+                HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NEVER)
+                        .build(),
+                new ObjectMapper(),
+                new EnvironmentCredentialResolver(),
+                false,
+                4 * 1024 * 1024);
+        return create(workspaceRoot, configuration, output, model);
+    }
+
+    static LocalCodingAgent create(
+            Path workspaceRoot, CliConfiguration configuration, PrintStream output, AgentChatModel model) {
         try {
             workspaceRoot = workspaceRoot.toRealPath();
         } catch (java.io.IOException exception) {
@@ -100,6 +124,7 @@ final class LocalCodingAgent {
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = new SystemTimeProvider();
         PrincipalRef principal = new PrincipalRef("local-user", "user");
+        CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();
         var locations = new LocalWorkspaceLocationStore();
@@ -107,13 +132,23 @@ final class LocalCodingAgent {
         WorkspaceBindingId bindingId = new WorkspaceBindingId(identifiers.nextValue());
         WorkspaceLocationRef locationRef = new WorkspaceLocationRef("local:" + identifiers.nextValue());
         locations.register(locationRef, workspaceRoot);
+        Set<String> configuredTools = effectiveBuiltInTools(configuration);
+        boolean executionEnabled = configuredTools.contains("execution.run");
+        WorkspaceCapabilitySet workspaceCapabilities = executionEnabled
+                ? new WorkspaceCapabilitySet(java.util.stream.Stream.concat(
+                                WorkspaceCapabilitySet.readWriteFiles().values().stream(),
+                                java.util.stream.Stream.of("execution.run"))
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet()))
+                : WorkspaceCapabilitySet.readWriteFiles();
+        WorkspacePermissionSet workspacePermissions =
+                executionEnabled ? WorkspacePermissionSet.readWriteExecute() : WorkspacePermissionSet.readWrite();
         bindings.create(WorkspaceBinding.provision(
                         bindingId,
                         locationRef,
                         WorkspaceBindingMode.DIRECT,
                         principal,
-                        WorkspaceCapabilitySet.readWriteFiles(),
-                        WorkspacePermissionSet.readWrite(),
+                        workspaceCapabilities,
+                        workspacePermissions,
                         LocalWorkspaceLocationStore.fingerprintFor(workspaceRoot),
                         time.now())
                 .activate(time.now()));
@@ -129,6 +164,7 @@ final class LocalCodingAgent {
         SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
         var changeSets = new InMemoryFileChangeSetStore();
+        var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
         var mutations = new LocalWorkspaceMutationService(
                 workspaces,
                 bindings,
@@ -136,28 +172,40 @@ final class LocalCodingAgent {
                 sensitivePaths,
                 new InMemoryWorkspaceWriteLeaseManager(),
                 changeSets,
-                new FileChangeSetService(changeSets, identifiers, time),
+                changeSetService,
                 new InMemoryQuarantineStore(),
                 identifiers,
                 time);
         var operations = new LocalFileToolOperations(workspaces, files, mutations, identifiers);
+        CliExecutionPlatform executionPlatform = executionEnabled
+                ? CliExecutionPlatform.create(
+                        configuration.execution(),
+                        workspaces,
+                        bindings,
+                        locations,
+                        files,
+                        changeSets,
+                        changeSetService,
+                        identifiers,
+                        time,
+                        output)
+                : null;
+        Set<String> effectiveCapabilities = executionEnabled
+                ? Set.of("file.read", "file.write", "execution.run")
+                : Set.of("file.read", "file.write");
         var provider = new ProjectToolExecutor(
                 (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
-                        workspaceId, configuration.enabledTools(), "cli-local-policy"),
-                operations);
+                        workspaceId, effectiveCapabilities, "cli-local-policy"),
+                operations,
+                executionPlatform == null ? null : executionPlatform.operations());
         var catalog = new ProjectToolCatalog()
-                .freeze(configuration.enabledTools(), Set.of("file.read", "file.write"), true, provider);
+                .freeze(
+                        Set.copyOf(configuredTools),
+                        effectiveCapabilities,
+                        true,
+                        provider,
+                        mcpPlatform.contributions());
         var interactions = new InMemoryInteractionPort();
-        var model = new OpenAiCompatibleChatModel(
-                "openai-compatible",
-                "1.0.0",
-                HttpClient.newBuilder()
-                        .followRedirects(HttpClient.Redirect.NEVER)
-                        .build(),
-                new ObjectMapper(),
-                new EnvironmentCredentialResolver(),
-                false,
-                4 * 1024 * 1024);
         ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
         List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
         var runtime = new RuntimeCoreBuilder()
@@ -167,6 +215,24 @@ final class LocalCodingAgent {
                 .interactions(interactions)
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
+                .toolApprovalPrompts((binding, call, reauthentication) -> {
+                    if (!binding.definition().name().value().equals("execution.run")) {
+                        return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter.defaultFormatter()
+                                .format(binding, call, reauthentication);
+                    }
+                    Map<String, Object> arguments = call.arguments().values();
+                    String command = String.valueOf(arguments.get("command"));
+                    String workdir = String.valueOf(arguments.getOrDefault("workdir", "."));
+                    Object timeout = arguments.getOrDefault(
+                            "timeoutMillis",
+                            configuration.execution().defaultTimeout().toMillis());
+                    String description = safeApprovalText(
+                            String.valueOf(arguments.getOrDefault("description", "Run shell command")));
+                    return description + "\nCommand: " + safeApprovalText(command) + "\nWorkdir: "
+                            + safeApprovalText(workdir) + "\nTimeout: " + timeout + " ms\nShell: "
+                            + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
+                            + "\nRisk: runs on the host with the current OS user's access; this is not strong isolation.";
+                })
                 .toolPolicy((run, binding, request) -> switch (configuration.approval()) {
                     case AUTO -> io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW;
                     case DENY ->
@@ -204,7 +270,7 @@ final class LocalCodingAgent {
                                 60_000),
                         modelSnapshot))
                 .build();
-        return new LocalCodingAgent(identifiers, time, runtime, interactions, traces);
+        return new LocalCodingAgent(identifiers, time, runtime, interactions, traces, mcpPlatform);
     }
 
     AgentRunSnapshot start(String message) {
@@ -222,6 +288,16 @@ final class LocalCodingAgent {
 
     AgentRuntime runtime() {
         return runtime;
+    }
+
+    void cancel(io.haifa.agent.core.run.AgentRunId runId) {
+        runtime.command(new RuntimeCommand(
+                new RuntimeCommandId(identifiers.nextValue()),
+                runId,
+                RuntimeCommandType.CANCEL,
+                RuntimeCommandArguments.NONE,
+                "cli-cancel-" + runId.value(),
+                time.now()));
     }
 
     InMemoryInteractionPort interactions() {
@@ -246,6 +322,28 @@ final class LocalCodingAgent {
                 .map(Number.class::cast)
                 .mapToLong(Number::longValue)
                 .sum();
+    }
+
+    static Set<String> effectiveBuiltInTools(CliConfiguration configuration) {
+        java.util.Set<String> configuredTools = new java.util.HashSet<>(configuration.enabledTools());
+        if (configuration.approval() == ApprovalMode.DENY) configuredTools.remove("execution.run");
+        return Set.copyOf(configuredTools);
+    }
+
+    private static String safeApprovalText(String value) {
+        String withoutAnsi = value.replaceAll("\\u001B\\[[;?0-9]*[ -/]*[@-~]", "");
+        StringBuilder safe = new StringBuilder(withoutAnsi.length());
+        withoutAnsi.codePoints().forEach(codePoint -> {
+            if (codePoint == '\n' || codePoint == '\r' || codePoint == '\t' || !Character.isISOControl(codePoint)) {
+                safe.appendCodePoint(codePoint);
+            }
+        });
+        return safe.toString();
+    }
+
+    @Override
+    public void close() {
+        mcpPlatform.close();
     }
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration configuration) {

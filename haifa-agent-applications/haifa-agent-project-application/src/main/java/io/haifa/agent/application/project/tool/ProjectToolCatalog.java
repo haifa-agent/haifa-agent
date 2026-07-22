@@ -70,8 +70,7 @@ public final class ProjectToolCatalog {
                 .sorted()
                 .filter(configuredTools::contains)
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
-                .forEach(
-                        name -> builder.register(new ToolAlias(name), definition(name), "project-workspace", provider));
+                .forEach(name -> builder.register(modelAlias(name), definition(name), "project-workspace", provider));
         mcpTools.stream()
                 .sorted(java.util.Comparator.comparing(McpToolCatalogContribution::alias))
                 .forEach(contribution -> builder.register(
@@ -109,10 +108,10 @@ public final class ProjectToolCatalog {
                 title(name),
                 description(name),
                 new ToolSchema("haifa." + name + ".input", "1.0.0", inputSchema(name)),
-                new ToolSchema("haifa." + name + ".output", "1.0.0", outputSchema()),
+                new ToolSchema("haifa." + name + ".output", "1.0.0", outputSchema(name)),
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
                 true,
-                execution ? Duration.ofMinutes(5) : Duration.ofSeconds(30),
+                execution ? Duration.ofMinutes(30) : Duration.ofSeconds(30),
                 write ? "per-workspace-write" : "per-workspace-read",
                 idempotency,
                 risk,
@@ -140,12 +139,15 @@ public final class ProjectToolCatalog {
             case "git.inspect" -> "Inspect Git repository";
             case "git.status" -> "Read Git status";
             case "git.diff" -> "Read Git diff";
-            case "execution.run" -> "Run approved execution profile";
+            case "execution.run" -> "Run a local shell command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         };
     }
 
     private static String description(String name) {
+        if (name.equals("execution.run")) {
+            return "Run complete command text through the configured host shell inside the frozen project workspace.";
+        }
         return title(name) + " within the frozen project workspace and capability boundary.";
     }
 
@@ -183,11 +185,11 @@ public final class ProjectToolCatalog {
                 properties.put("paths", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 100));
             }
             case "execution.run" -> {
-                string(properties, required, "profile");
-                properties.put(
-                        "arguments", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 128));
-                properties.put("workingDirectory", Map.of("type", "string"));
-                properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 300000));
+                properties.put("command", Map.of("type", "string", "minLength", 1, "maxLength", 32768));
+                required.add("command");
+                properties.put("workdir", Map.of("type", "string", "minLength", 1, "maxLength", 4096));
+                properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 1800000));
+                properties.put("description", Map.of("type", "string", "minLength", 1, "maxLength", 256));
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }
@@ -204,7 +206,31 @@ public final class ProjectToolCatalog {
                 false);
     }
 
-    private static Map<String, Object> outputSchema() {
+    private static Map<String, Object> outputSchema(String name) {
+        if (name.equals("execution.run")) {
+            return Map.of(
+                    "$schema",
+                    ToolSchema.DRAFT_2020_12,
+                    "type",
+                    "object",
+                    "properties",
+                    Map.ofEntries(
+                            Map.entry("executionId", Map.of("type", "string")),
+                            Map.entry("status", Map.of("type", "string")),
+                            Map.entry("exitCode", Map.of("type", "integer")),
+                            Map.entry("output", Map.of("type", "string")),
+                            Map.entry("truncated", Map.of("type", "boolean")),
+                            Map.entry("outputRef", Map.of("type", "string")),
+                            Map.entry("outputRefs", Map.of("type", "array", "items", Map.of("type", "string"))),
+                            Map.entry("fileChangeSetId", Map.of("type", "string")),
+                            Map.entry("durationMillis", Map.of("type", "integer", "minimum", 0)),
+                            Map.entry("failureCode", Map.of("type", "string")),
+                            Map.entry("failureDetail", Map.of("type", "string"))),
+                    "required",
+                    List.of("executionId", "status", "output", "truncated", "durationMillis"),
+                    "additionalProperties",
+                    false);
+        }
         return Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
     }
 

@@ -38,6 +38,7 @@ import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
+import io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoopContext;
@@ -68,6 +69,7 @@ public final class DecisionExecutor {
     private final CheckpointManager checkpoints;
     private final RunControlRegistry controls;
     private final RepairRetryPolicy repairRetry;
+    private final ToolApprovalPromptFormatter approvalPrompts;
 
     public DecisionExecutor(
             ToolPipeline tools,
@@ -82,6 +84,36 @@ public final class DecisionExecutor {
             CheckpointManager checkpoints,
             RunControlRegistry controls,
             RepairRetryPolicy repairRetry) {
+        this(
+                tools,
+                completionGuard,
+                finalizer,
+                interactions,
+                delegations,
+                state,
+                transitions,
+                ids,
+                time,
+                checkpoints,
+                controls,
+                repairRetry,
+                ToolApprovalPromptFormatter.defaultFormatter());
+    }
+
+    public DecisionExecutor(
+            ToolPipeline tools,
+            CompletionGuard completionGuard,
+            RunFinalizer finalizer,
+            InteractionPort interactions,
+            DelegationPort delegations,
+            RuntimeStateRepository state,
+            RunTransitionCoordinator transitions,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            CheckpointManager checkpoints,
+            RunControlRegistry controls,
+            RepairRetryPolicy repairRetry,
+            ToolApprovalPromptFormatter approvalPrompts) {
         this.tools = Objects.requireNonNull(tools);
         this.completionGuard = Objects.requireNonNull(completionGuard);
         this.finalizer = Objects.requireNonNull(finalizer);
@@ -94,6 +126,7 @@ public final class DecisionExecutor {
         this.checkpoints = Objects.requireNonNull(checkpoints);
         this.controls = Objects.requireNonNull(controls);
         this.repairRetry = Objects.requireNonNull(repairRetry);
+        this.approvalPrompts = Objects.requireNonNull(approvalPrompts);
     }
 
     public AgentLoopDirective execute(AgentRun run, AgentDecision decision, AgentLoopContext loopContext) {
@@ -220,9 +253,7 @@ public final class DecisionExecutor {
                 run.tenant(),
                 run.principal(),
                 interactionType,
-                (approval.reauthentication() ? "Reauthenticate and approve tool " : "Approve tool ")
-                        + binding.alias().value() + " ("
-                        + binding.coordinate().externalForm() + ")",
+                approvalPrompts.format(binding, call, approval.reauthentication()),
                 true,
                 new ToolApprovalTarget(
                         call.id(),
