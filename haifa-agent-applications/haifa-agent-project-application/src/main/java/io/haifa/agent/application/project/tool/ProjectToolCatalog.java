@@ -1,5 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
+import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -49,6 +50,35 @@ public final class ProjectToolCatalog {
                 .filter(configuredTools::contains)
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
                 .forEach(name -> builder.register(modelAlias(name), definition(name), "project-workspace", provider));
+        return builder.freeze();
+    }
+
+    /** Coding profile assembly path for locally reviewed MCP imports and built-in project tools. */
+    public DefaultToolCatalog freeze(
+            Set<String> configuredTools,
+            Set<String> effectiveCapabilities,
+            boolean modelSupportsTools,
+            ToolProvider provider,
+            List<McpToolCatalogContribution> mcpTools) {
+        Objects.requireNonNull(mcpTools, "mcpTools");
+        Objects.requireNonNull(configuredTools, "configuredTools");
+        Objects.requireNonNull(effectiveCapabilities, "effectiveCapabilities");
+        Objects.requireNonNull(provider, "provider");
+        ToolCatalogBuilder builder = new ToolCatalogBuilder();
+        if (!modelSupportsTools) return builder.freeze();
+        REQUIRED_CAPABILITY.keySet().stream()
+                .sorted()
+                .filter(configuredTools::contains)
+                .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
+                .forEach(
+                        name -> builder.register(new ToolAlias(name), definition(name), "project-workspace", provider));
+        mcpTools.stream()
+                .sorted(java.util.Comparator.comparing(McpToolCatalogContribution::alias))
+                .forEach(contribution -> builder.register(
+                        contribution.alias(),
+                        contribution.definition(),
+                        contribution.providerBindingReference(),
+                        contribution.provider()));
         return builder.freeze();
     }
 

@@ -128,6 +128,11 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-mcp</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-contract</artifactId>
                 <version>${project.version}</version>
             </dependency>

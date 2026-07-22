@@ -25,6 +25,7 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-credential-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-git</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-mcp</artifactId></dependency>
         <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-api</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><scope>test</scope></dependency>
         <dependency><groupId>com.tngtech.archunit</groupId><artifactId>archunit</artifactId><scope>test</scope></dependency>
