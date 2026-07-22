@@ -13,5 +13,6 @@
     <packaging>pom</packaging>
     <modules>
         <module>haifa-agent-project-application</module>
+        <module>haifa-agent-cli</module>
     </modules>
 </project>
