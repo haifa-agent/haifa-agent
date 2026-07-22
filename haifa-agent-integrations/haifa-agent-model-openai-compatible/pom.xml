@@ -35,5 +35,10 @@
             <artifactId>haifa-agent-runtime-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-tool-core</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

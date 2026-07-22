@@ -1,14 +1,14 @@
 package io.haifa.agent.application.project.tool;
 
-import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.runtime.core.decision.ToolRequest;
-import io.haifa.agent.runtime.core.tool.ToolDefinition;
-import io.haifa.agent.runtime.core.tool.ToolExecutor;
+import io.haifa.agent.tool.api.ToolInvocationRequest;
+import io.haifa.agent.tool.api.ToolProvider;
+import io.haifa.agent.tool.api.ToolProviderId;
 import java.util.Objects;
 
 /** Adapter installed into the existing Runtime ToolPipeline; it is not a registry or policy engine. */
-public final class ProjectToolExecutor implements ToolExecutor {
+public final class ProjectToolExecutor implements ToolProvider {
+    public static final ToolProviderId PROVIDER_ID = new ToolProviderId("haifa-project");
     private final RunWorkspaceAccessResolver access;
     private final ProjectToolOperations operations;
 
@@ -18,14 +18,22 @@ public final class ProjectToolExecutor implements ToolExecutor {
     }
 
     @Override
-    public ToolResult execute(AgentRun run, ToolDefinition definition, ToolRequest request) {
-        if (run.project().isEmpty()) throw new SecurityException("project tool requires a project-bound run");
-        RunWorkspaceAccess binding = access.resolve(run);
+    public ToolProviderId id() {
+        return PROVIDER_ID;
+    }
+
+    @Override
+    public ToolResult invoke(ToolInvocationRequest request) {
+        RunWorkspaceAccess binding = access.resolve(request.runId(), request.principal());
+        var requiredCapabilities = request.binding().definition().resources().filesystemCapabilities();
+        if (!binding.capabilities().containsAll(requiredCapabilities)) {
+            throw new SecurityException("run workspace access does not authorize the frozen tool capability");
+        }
         return operations.execute(
-                definition.name(),
+                request.binding().definition().name().value(),
                 binding.workspaceId(),
-                run.principal(),
-                run.id().value(),
+                request.principal(),
+                request.runId().value(),
                 binding.policyDecisionRef(),
                 request.arguments());
     }

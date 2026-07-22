@@ -13,11 +13,17 @@ import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.credential.api.CredentialBindingScope;
+import io.haifa.agent.credential.api.CredentialBroker;
+import io.haifa.agent.credential.api.CredentialLease;
+import io.haifa.agent.credential.api.CredentialRequest;
+import io.haifa.agent.credential.api.CredentialScopeKind;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
+import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
@@ -26,17 +32,24 @@ import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.runtime.core.trace.TracePort;
+import io.haifa.agent.tool.api.FrozenToolBinding;
+import io.haifa.agent.tool.api.ToolCancellation;
+import io.haifa.agent.tool.api.ToolInvocationRequest;
+import io.haifa.agent.tool.api.ToolInvoker;
+import io.haifa.agent.tool.api.ToolSchemaValidationResult;
+import io.haifa.agent.tool.api.ToolSchemaValidator;
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /** Sequential validate-authorize-policy-approve-execute-persist tool pipeline. */
 public final class ToolPipeline {
-    private final ToolRegistry registry;
+    private final ToolInvoker invoker;
     private final ToolSchemaValidator schemaValidator;
     private final CapabilityAuthorizer capabilityAuthorizer;
     private final ToolPolicy policy;
-    private final ApprovalGateway approval;
-    private final ToolExecutor executor;
+    private final CredentialBroker credentials;
     private final ToolExecutionJournal journal;
     private final RuntimeStateRepository state;
     private final IdentifierGenerator ids;
@@ -51,14 +64,14 @@ public final class ToolPipeline {
     private final RunTransitionCoordinator transitions;
     private final ToolResultAssetStore resultAssets;
     private final LargeToolResultPolicy largeResultPolicy;
+    private final FrozenToolBindingResolver bindings = new FrozenToolBindingResolver();
 
     public ToolPipeline(
-            ToolRegistry registry,
+            ToolInvoker invoker,
             ToolSchemaValidator schemaValidator,
             CapabilityAuthorizer capabilityAuthorizer,
             ToolPolicy policy,
-            ApprovalGateway approval,
-            ToolExecutor executor,
+            CredentialBroker credentials,
             ToolExecutionJournal journal,
             RuntimeStateRepository state,
             IdentifierGenerator ids,
@@ -73,12 +86,11 @@ public final class ToolPipeline {
             RunTransitionCoordinator transitions,
             ToolResultAssetStore resultAssets,
             LargeToolResultPolicy largeResultPolicy) {
-        this.registry = Objects.requireNonNull(registry);
+        this.invoker = Objects.requireNonNull(invoker);
         this.schemaValidator = Objects.requireNonNull(schemaValidator);
         this.capabilityAuthorizer = Objects.requireNonNull(capabilityAuthorizer);
         this.policy = Objects.requireNonNull(policy);
-        this.approval = Objects.requireNonNull(approval);
-        this.executor = Objects.requireNonNull(executor);
+        this.credentials = credentials;
         this.journal = Objects.requireNonNull(journal);
         this.state = Objects.requireNonNull(state);
         this.ids = Objects.requireNonNull(ids);
@@ -95,7 +107,7 @@ public final class ToolPipeline {
         this.largeResultPolicy = Objects.requireNonNull(largeResultPolicy);
     }
 
-    public ToolResult execute(AgentRun run, AgentStepId stepId, ToolRequest request) {
+    public ToolPipelineOutcome execute(AgentRun run, AgentStepId stepId, ToolRequest request) {
         ToolCall call = prepare(run, stepId, request);
         return execute(run, call, request);
     }
@@ -128,42 +140,50 @@ public final class ToolPipeline {
         return call;
     }
 
-    public ToolResult execute(AgentRun run, ToolCall call, ToolRequest request) {
-        if (call.result().isPresent()) return call.result().orElseThrow();
-        return journal.completed(run.id(), request.idempotencyKey())
-                .or(() -> journal.pendingResult(run.id(), request.idempotencyKey())
-                        .map(result -> persistResult(run, call, request, result)))
-                .orElseGet(() -> executeNew(run, call, request));
+    public ToolPipelineOutcome execute(AgentRun run, ToolCall call, ToolRequest request) {
+        if (call.result().isPresent())
+            return new ToolPipelineOutcome.Completed(call.result().orElseThrow());
+        var completed = journal.completed(run.id(), request.idempotencyKey());
+        if (completed.isPresent()) return new ToolPipelineOutcome.Completed(completed.orElseThrow());
+        var pending = journal.pendingResult(run.id(), request.idempotencyKey());
+        if (pending.isPresent()) {
+            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, pending.orElseThrow()));
+        }
+        return executeNew(run, call, request);
     }
 
-    private ToolResult executeNew(AgentRun run, ToolCall call, ToolRequest request) {
+    private ToolPipelineOutcome executeNew(AgentRun run, ToolCall call, ToolRequest request) {
         checkCancellation(run);
-        ToolDefinition definition = registry.find(request.toolName(), request.toolVersion())
-                .orElseThrow(() -> new IllegalArgumentException("unknown tool: " + request.toolName()));
-        call.beginValidation();
-        if (!capabilityAuthorizer.isAllowed(run, definition)) {
-            call.cancel(time.now());
-            throw new SecurityException("tool capability is not allowed: " + definition.name());
-        }
-        try {
-            schemaValidator.validate(definition, request.arguments());
-        } catch (IllegalArgumentException invalidArguments) {
-            call.cancel(time.now());
-            throw invalidArguments;
-        }
-        call.beginPolicyCheck();
-        ToolPolicyDecision policyDecision = policy.evaluate(run, definition, request);
-        if (policyDecision == ToolPolicyDecision.DENY) {
-            call.deny(time.now());
-            throw new SecurityException("tool policy denied: " + definition.name());
-        }
-        if (policyDecision == ToolPolicyDecision.REQUIRE_APPROVAL) {
-            call.waitForApproval();
-            if (!approval.approve(run, request)) {
-                call.deny(time.now());
-                throw new SecurityException("tool approval denied: " + definition.name());
+        FrozenToolBinding binding = binding(run, request);
+        var definition = binding.definition();
+        if (call.status() != io.haifa.agent.core.tool.ToolCallStatus.APPROVED) {
+            call.beginValidation();
+            if (!capabilityAuthorizer.isAllowed(run, binding)) {
+                call.cancel(time.now());
+                throw new SecurityException(
+                        "tool capability is not allowed: " + definition.name().value());
             }
-            call.approve();
+            ToolSchemaValidationResult inputValidation = schemaValidator.validate(
+                    definition.inputSchema(), request.arguments().values());
+            if (!inputValidation.valid()) {
+                call.cancel(time.now());
+                throw new IllegalArgumentException("tool input failed schema validation: " + inputValidation.errors());
+            }
+            call.beginPolicyCheck();
+            ToolPolicyDecision policyDecision = policy.evaluate(run, binding, request);
+            if (policyDecision == ToolPolicyDecision.DENY) {
+                call.deny(time.now());
+                throw new SecurityException(
+                        "tool policy denied: " + definition.name().value());
+            }
+            if (policyDecision == ToolPolicyDecision.REQUIRE_APPROVAL
+                    || policyDecision == ToolPolicyDecision.REQUIRE_REAUTHENTICATION) {
+                call.waitForApproval();
+                return new ToolPipelineOutcome.ApprovalRequired(
+                        binding,
+                        argumentsDigest(request),
+                        policyDecision == ToolPolicyDecision.REQUIRE_REAUTHENTICATION);
+            }
         }
         journal.recordIntent(run.id(), request.idempotencyKey());
         call.start(time.now());
@@ -178,32 +198,193 @@ public final class ToolPipeline {
                 0,
                 RuntimePhase.BEFORE_DECISION_EXECUTION,
                 "tool.execute",
-                java.util.Map.of("toolName", definition.name(), "toolVersion", definition.version()),
+                java.util.Map.of(
+                        "toolName", definition.name().value(),
+                        "toolVersion", definition.version().value(),
+                        "providerId", definition.providerId().value(),
+                        "definitionHash", binding.coordinate().definitionHash().value()),
                 time.now()));
-        try (var permit = environment.acquire(run, definition)) {
+        try (var permit = environment.acquire(run, binding)) {
             ToolResult rawResult = retries.execute(
                     () -> {
                         if (run.usage().toolCalls() >= run.budget().maxToolCalls()) {
                             throw new RuntimeLimitExceededException("tool call budget exhausted");
                         }
                         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 1, 0, 0, 0));
-                        return executor.execute(run, definition, request);
+                        journal.recordDispatched(run.id(), request.idempotencyKey());
+                        ToolResult providerResult = invokeProvider(run, call, request, binding);
+                        journal.recordAcknowledged(run.id(), request.idempotencyKey());
+                        return providerResult;
                     },
-                    retryPolicy.forTool(definition));
+                    retryPolicy.forTool(binding));
+            ToolSchemaValidationResult outputValidation =
+                    schemaValidator.validate(definition.outputSchema(), rawResult.structuredData());
+            if (!outputValidation.valid()) {
+                throw new IllegalStateException("tool output failed schema validation: " + outputValidation.errors());
+            }
             journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
-            return persistResult(run, call, request, rawResult);
+            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, rawResult));
         } catch (CancellationObservedException cancelled) {
             throw cancelled;
         } catch (RuntimeException exception) {
-            journal.recordUncertain(run.id(), request.idempotencyKey());
+            ToolJournalState journalState =
+                    journal.state(run.id(), request.idempotencyKey()).orElse(ToolJournalState.INTENT_RECORDED);
+            if (journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.PENDING_RESULT) {
+                journal.recordFailed(run.id(), request.idempotencyKey());
+            } else {
+                journal.recordUncertain(run.id(), request.idempotencyKey());
+            }
             throw exception;
         }
     }
 
+    private ToolResult invokeProvider(AgentRun run, ToolCall call, ToolRequest request, FrozenToolBinding binding) {
+        var definition = binding.definition();
+        var now = time.now();
+        var deadline = now.plus(definition.timeout());
+        List<CredentialLease> leases = new ArrayList<>();
+        try {
+            if (!definition.credentialRequirements().isEmpty() && credentials == null) {
+                throw new SecurityException("tool requires credentials but no credential broker is configured");
+            }
+            for (var requirement : definition.credentialRequirements()) {
+                List<CredentialBindingScope> scopes = new ArrayList<>();
+                scopes.add(new CredentialBindingScope(
+                        CredentialScopeKind.SESSION, run.sessionId().value()));
+                run.project()
+                        .ifPresent(project -> scopes.add(
+                                new CredentialBindingScope(CredentialScopeKind.PROJECT, project.projectId())));
+                scopes.add(new CredentialBindingScope(
+                        CredentialScopeKind.USER, run.principal().principalId()));
+                scopes.add(new CredentialBindingScope(CredentialScopeKind.SYSTEM, "system"));
+                leases.add(credentials.issue(new CredentialRequest(
+                        run.tenant(),
+                        run.principal(),
+                        run.id(),
+                        binding.coordinate().externalForm(),
+                        requirement,
+                        scopes,
+                        java.util.Optional.empty(),
+                        now,
+                        deadline)));
+            }
+            try {
+                ToolResult result = invoker.invoke(new ToolInvocationRequest(
+                        binding,
+                        call.id(),
+                        run.id(),
+                        run.tenant(),
+                        run.principal(),
+                        request.arguments(),
+                        deadline,
+                        java.util.Optional.of(request.idempotencyKey().value()),
+                        (ToolCancellation) () -> controls.signal(run.id()) == RunControlSignal.CANCEL,
+                        leases));
+                return leases.isEmpty() ? result : redactResult(result, credentials.redactor());
+            } catch (RuntimeException exception) {
+                if (leases.isEmpty()) throw exception;
+                String detail = credentials.redactor().redact(exception.getMessage());
+                throw new IllegalStateException(
+                        detail == null || detail.isBlank()
+                                ? "tool provider invocation failed"
+                                : "tool provider invocation failed: " + detail);
+            }
+        } finally {
+            for (int index = leases.size() - 1; index >= 0; index--)
+                leases.get(index).close();
+        }
+    }
+
+    static ToolResult redactResult(ToolResult result, io.haifa.agent.credential.api.SecretRedactor redactor) {
+        return new ToolResult(
+                result.successful(),
+                redactor.redact(result.summary()),
+                redactObject(result.structuredData(), redactor),
+                result.assets(),
+                result.artifacts(),
+                result.truncated());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> redactObject(
+            Map<String, Object> value, io.haifa.agent.credential.api.SecretRedactor redactor) {
+        var redacted = new java.util.LinkedHashMap<String, Object>();
+        value.forEach((key, element) -> redacted.put(redactor.redact(key), redactValue(element, redactor)));
+        return redacted;
+    }
+
+    private static Object redactValue(Object value, io.haifa.agent.credential.api.SecretRedactor redactor) {
+        if (value instanceof String text) return redactor.redact(text);
+        if (value instanceof Map<?, ?> map) return redactObject((Map<String, Object>) map, redactor);
+        if (value instanceof List<?> list)
+            return list.stream().map(element -> redactValue(element, redactor)).toList();
+        return value;
+    }
+
+    static String argumentsDigest(ToolRequest request) {
+        try {
+            StringBuilder canonical = new StringBuilder();
+            appendCanonical(canonical, request.arguments().schemaId());
+            appendCanonical(canonical, request.arguments().schemaVersion());
+            appendCanonical(canonical, request.arguments().values());
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private static void appendCanonical(StringBuilder target, Object value) {
+        if (value == null) {
+            target.append('n');
+        } else if (value instanceof String text) {
+            target.append('s').append(text.length()).append(':').append(text);
+        } else if (value instanceof Boolean bool) {
+            target.append(bool ? "b1" : "b0");
+        } else if (value instanceof Number number) {
+            target.append('d')
+                    .append(new java.math.BigDecimal(number.toString())
+                            .stripTrailingZeros()
+                            .toPlainString())
+                    .append(';');
+        } else if (value instanceof Map<?, ?> map) {
+            target.append("m{");
+            map.entrySet().stream()
+                    .sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey())))
+                    .forEach(entry -> {
+                        appendCanonical(target, String.valueOf(entry.getKey()));
+                        appendCanonical(target, entry.getValue());
+                    });
+            target.append('}');
+        } else if (value instanceof Iterable<?> iterable) {
+            target.append("l[");
+            iterable.forEach(element -> appendCanonical(target, element));
+            target.append(']');
+        } else {
+            throw new IllegalArgumentException("tool arguments contain a non-JSON value");
+        }
+    }
+
+    public void validateApprovalTarget(AgentRun run, ToolCall call, ToolRequest request, ToolApprovalTarget target) {
+        FrozenToolBinding binding = binding(run, request);
+        if (!call.id().equals(target.toolCallId())
+                || !binding.coordinate().externalForm().equals(target.coordinate())
+                || !binding.coordinate().definitionHash().value().equals(target.definitionHash())
+                || !argumentsDigest(request).equals(target.argumentsDigest())) {
+            throw new SecurityException("tool approval target drifted from the frozen invocation");
+        }
+        String principalScope = run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
+                + run.principal().principalId();
+        if (!principalScope.equals(target.principalScope())) {
+            throw new SecurityException("tool approval principal scope changed");
+        }
+    }
+
     private ToolResult persistResult(AgentRun run, ToolCall call, ToolRequest request, ToolResult rawResult) {
-        ToolDefinition definition =
-                registry.find(request.toolName(), request.toolVersion()).orElseThrow();
-        ToolResult result = resultNormalizer.normalize(definition, rawResult);
+        FrozenToolBinding binding = binding(run, request);
+        var definition = binding.definition();
+        ToolResult result = resultNormalizer.normalize(binding, rawResult);
         if (largeResultPolicy.requiresExternalization(rawResult)) {
             var reference = putResultAssetWithOnePersistenceRetry(call, rawResult);
             var assets = new ArrayList<>(result.assets());
@@ -222,7 +403,7 @@ public final class ToolPipeline {
                             Retryability.NOT_RETRYABLE,
                             result.summary(),
                             null,
-                            java.util.Map.of("tool", definition.name()),
+                            java.util.Map.of("tool", definition.name().value()),
                             time.now())),
                     time.now());
         }
@@ -230,7 +411,11 @@ public final class ToolPipeline {
         events.append(
                 run.id(),
                 result.successful() ? "tool.completed" : "tool.business-failed",
-                java.util.Map.of("toolCallId", call.id().value(), "toolName", definition.name()),
+                java.util.Map.of(
+                        "toolCallId", call.id().value(),
+                        "toolName", definition.name().value(),
+                        "providerId", binding.coordinate().providerId().value(),
+                        "definitionHash", binding.coordinate().definitionHash().value()),
                 time.now());
         trace.record(new RuntimeTraceEvent(
                 ids.nextValue(),
@@ -262,6 +447,12 @@ public final class ToolPipeline {
 
     public boolean hasUncertainExecution(AgentRun run) {
         return journal.hasUncertain(run.id());
+    }
+
+    private FrozenToolBinding binding(AgentRun run, ToolRequest request) {
+        var configuration = state.configuration(run.configurationSnapshot())
+                .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
+        return bindings.resolve(configuration.toolBindings(), request);
     }
 
     private void checkCancellation(AgentRun run) {

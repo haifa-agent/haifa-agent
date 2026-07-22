@@ -7,13 +7,16 @@ import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 public final class InMemoryInteractionPort implements InteractionPort {
     private final Map<InteractionRequestId, InteractionRequest> requests = new HashMap<>();
     private final Map<String, InteractionResponse> responses = new HashMap<>();
     private final Map<InteractionRequestId, InteractionResponse> resolved = new HashMap<>();
+    private final Set<InteractionRequestId> applied = new HashSet<>();
 
     @Override
     public synchronized void create(InteractionRequest request) {
@@ -32,6 +35,26 @@ public final class InMemoryInteractionPort implements InteractionPort {
     @Override
     public synchronized Optional<InteractionRequest> find(InteractionRequestId requestId) {
         return Optional.ofNullable(requests.get(requestId));
+    }
+
+    @Override
+    public synchronized Optional<ResolvedInteraction> unappliedToolResolution(AgentRunId runId) {
+        return requests.values().stream()
+                .filter(request -> request.runId().equals(runId))
+                .filter(request -> request.target() instanceof ToolApprovalTarget)
+                .filter(request -> resolved.containsKey(request.id()))
+                .filter(request -> !applied.contains(request.id()))
+                .sorted(java.util.Comparator.comparing(InteractionRequest::createdAt))
+                .map(request -> new ResolvedInteraction(request, resolved.get(request.id())))
+                .findFirst();
+    }
+
+    @Override
+    public synchronized void markResolutionApplied(InteractionRequestId requestId) {
+        if (!resolved.containsKey(requestId)) {
+            throw new IllegalArgumentException("interaction is not resolved");
+        }
+        applied.add(requestId);
     }
 
     @Override

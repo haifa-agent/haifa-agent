@@ -54,7 +54,6 @@ import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.tool.BoundedToolResultNormalizer;
-import io.haifa.agent.runtime.core.tool.ToolDefinition;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -256,7 +255,7 @@ class RuntimeCoreHardeningTest {
     void toolResultsAreBoundedAndSecretsAreRedacted() {
         var normalizer = new BoundedToolResultNormalizer(4, 3);
         ToolResult normalized = normalizer.normalize(
-                new ToolDefinition("read", "1", "input", false),
+                TestToolPlatform.binding("read", "1.0.0", "input", false),
                 new ToolResult(
                         true,
                         "123456",
@@ -294,12 +293,17 @@ class RuntimeCoreHardeningTest {
 
     @Test
     void businessToolFailureReturnsToContextAndExecutionCanComplete() {
-        ToolRequest request = toolRequest("tool-key", "shell", "1", new ToolArguments("shell.input", "1", Map.of()));
+        ToolRequest request =
+                toolRequest("tool-key", "shell", "1.0.0", new ToolArguments("shell.input", "1", Map.of()));
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(request)), finalDecision("handled")),
-                builder -> builder.registerTool(new ToolDefinition("shell", "1", "shell.input", true))
-                        .registerModelTool(toolSpecification("shell", "1", "shell.input"))
-                        .toolExecutor((run, definition, ignored) ->
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "shell",
+                        "1.0.0",
+                        "shell.input",
+                        true,
+                        ignored ->
                                 new ToolResult(false, "exit 2", Map.of("exitCode", 2), List.of(), List.of(), false)));
         var accepted = fixture.runtime.start(request("business-failure"));
         fixture.scheduler.runAll();
@@ -331,11 +335,10 @@ class RuntimeCoreHardeningTest {
     void recoveryNeverBlindlyReplaysAnUncertainSideEffectingTool() {
         AtomicInteger calls = new AtomicInteger();
         ToolRequest tool =
-                toolRequest("write-once", "write", "1", new ToolArguments("write.input", "1", Map.of("value", 1)));
-        Fixture fixture = fixture(model(new ToolCallDecision(List.of(tool))), builder -> builder.registerTool(
-                        new ToolDefinition("write", "1", "write.input", true))
-                .registerModelTool(toolSpecification("write", "1", "write.input"))
-                .toolExecutor((run, definition, request) -> {
+                toolRequest("write-once", "write", "1.0.0", new ToolArguments("write.input", "1", Map.of("value", 1)));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(tool))),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, request -> {
                     calls.incrementAndGet();
                     throw new AssertionError("process died after external side effect");
                 }));
@@ -356,23 +359,21 @@ class RuntimeCoreHardeningTest {
     @Test
     void semanticDuplicateToolCallsAreDetected() {
         ToolRequest first =
-                toolRequest("key-1", "read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")));
+                toolRequest("key-1", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of("path", "same")));
         ToolRequest second =
-                toolRequest("key-2", "read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")));
+                toolRequest("key-2", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of("path", "same")));
         ToolRequest third =
-                toolRequest("key-3", "read", "1", new ToolArguments("read.input", "1", Map.of("path", "same")));
+                toolRequest("key-3", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of("path", "same")));
         AtomicInteger executions = new AtomicInteger();
         Fixture duplicate = fixture(
                 model(
                         new ToolCallDecision(List.of(first)),
                         new ToolCallDecision(List.of(second)),
                         new ToolCallDecision(List.of(third))),
-                builder -> builder.registerTool(new ToolDefinition("read", "1", "read.input", false))
-                        .registerModelTool(toolSpecification("read", "1", "read.input"))
-                        .toolExecutor((run, definition, request) -> {
-                            executions.incrementAndGet();
-                            return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
-                        }));
+                builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
+                    executions.incrementAndGet();
+                    return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
+                }));
         var duplicateRun = duplicate.runtime.start(request("semantic-duplicate"));
         duplicate.scheduler.runAll();
         assertThat(executions).hasValue(2);

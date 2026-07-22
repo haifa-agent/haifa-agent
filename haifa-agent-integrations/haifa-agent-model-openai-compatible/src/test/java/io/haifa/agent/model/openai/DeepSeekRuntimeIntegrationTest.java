@@ -16,7 +16,6 @@ import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.ModelProviderDefinition;
-import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.AgentRunRequest;
@@ -25,7 +24,22 @@ import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
-import io.haifa.agent.runtime.core.tool.ToolDefinition;
+import io.haifa.agent.tool.api.SemanticVersion;
+import io.haifa.agent.tool.api.ToolAlias;
+import io.haifa.agent.tool.api.ToolApprovalRequirement;
+import io.haifa.agent.tool.api.ToolDefinition;
+import io.haifa.agent.tool.api.ToolExecutionMode;
+import io.haifa.agent.tool.api.ToolIdempotency;
+import io.haifa.agent.tool.api.ToolName;
+import io.haifa.agent.tool.api.ToolProvider;
+import io.haifa.agent.tool.api.ToolProviderId;
+import io.haifa.agent.tool.api.ToolResourceRequirements;
+import io.haifa.agent.tool.api.ToolRisk;
+import io.haifa.agent.tool.api.ToolSchema;
+import io.haifa.agent.tool.api.ToolSideEffect;
+import io.haifa.agent.tool.core.DefaultToolInvoker;
+import io.haifa.agent.tool.core.JsonSchema202012Validator;
+import io.haifa.agent.tool.core.ToolCatalogBuilder;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -92,6 +106,61 @@ class DeepSeekRuntimeIntegrationTest {
                     modelDefinition.maxOutputTokens(),
                     provider.options(),
                     modelDefinition.options());
+            ToolProviderId toolProviderId = new ToolProviderId("integration-test");
+            ToolProvider toolProvider = new ToolProvider() {
+                @Override
+                public ToolProviderId id() {
+                    return toolProviderId;
+                }
+
+                @Override
+                public ToolResult invoke(io.haifa.agent.tool.api.ToolInvocationRequest request) {
+                    return new ToolResult(
+                            true,
+                            "echoed: " + request.arguments().values().get("text"),
+                            request.arguments().values(),
+                            List.of(),
+                            List.of(),
+                            false);
+                }
+            };
+            Map<String, Object> inputSchema = Map.of(
+                    "$schema",
+                    ToolSchema.DRAFT_2020_12,
+                    "type",
+                    "object",
+                    "properties",
+                    Map.of("text", Map.of("type", "string")),
+                    "required",
+                    List.of("text"),
+                    "additionalProperties",
+                    false);
+            Map<String, Object> outputSchema =
+                    Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+            ToolDefinition echo = new ToolDefinition(
+                    new ToolName("echo"),
+                    new SemanticVersion("1.0.0"),
+                    toolProviderId,
+                    "Echo",
+                    "Echo a text value",
+                    new ToolSchema("echo.input", "1.0", inputSchema),
+                    new ToolSchema("echo.output", "1.0", outputSchema),
+                    ToolExecutionMode.IN_PROCESS,
+                    true,
+                    java.time.Duration.ofSeconds(10),
+                    "single",
+                    ToolIdempotency.IDEMPOTENT,
+                    ToolRisk.LOW,
+                    java.util.Set.of(ToolSideEffect.FILE_READ),
+                    ToolResourceRequirements.none(),
+                    List.of(),
+                    ToolApprovalRequirement.NEVER,
+                    "integration-test",
+                    false,
+                    java.util.Set.of("test"));
+            var toolCatalog = new ToolCatalogBuilder()
+                    .register(new ToolAlias("echo"), echo, "integration-test", toolProvider)
+                    .freeze();
             var runtime = new RuntimeCoreBuilder()
                     .registerChatModel("openai-compatible", "1.0.0", adapter)
                     .profiles((id, overrides) -> new ResolvedProfile(
@@ -101,25 +170,7 @@ class DeepSeekRuntimeIntegrationTest {
                             new AgentRunBudget(1_000_000, 1_000_000, 1_000_000, 32, 64, 8, "USD", 1_000_000),
                             new AgentRunLimits(50, 4, 1, 300_000, 60_000),
                             frozenModel))
-                    .registerTool(new ToolDefinition("echo", "1.0", "echo.input", false))
-                    .registerModelTool(new ModelToolSpecification(
-                            "echo",
-                            "1.0",
-                            "Echo a text value",
-                            "echo.input",
-                            "1.0",
-                            Map.of(
-                                    "type", "object",
-                                    "properties", Map.of("text", Map.of("type", "string")),
-                                    "required", List.of("text")),
-                            false))
-                    .toolExecutor((run, definition, request) -> new ToolResult(
-                            true,
-                            "echoed: " + request.arguments().values().get("text"),
-                            request.arguments().values(),
-                            List.of(),
-                            List.of(),
-                            false))
+                    .toolPlatform(toolCatalog, new DefaultToolInvoker(toolCatalog), new JsonSchema202012Validator())
                     .scheduler(scheduler)
                     .store(store)
                     .identifierGenerator(ids)

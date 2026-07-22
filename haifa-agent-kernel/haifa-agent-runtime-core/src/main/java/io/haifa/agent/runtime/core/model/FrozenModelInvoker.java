@@ -10,6 +10,7 @@ import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -19,20 +20,14 @@ import java.util.Objects;
 public final class FrozenModelInvoker {
     private final RuntimeStateRepository state;
     private final Map<ModelAdapterKey, AgentChatModel> adapters;
-    private final Map<String, ModelToolSpecification> toolSpecifications;
     private final IdentifierGenerator ids;
     private final ModelMessageAssembler messages;
     private final AgentChatResponseMapper responses;
 
     public FrozenModelInvoker(
-            RuntimeStateRepository state,
-            Map<ModelAdapterKey, AgentChatModel> adapters,
-            Map<String, ModelToolSpecification> toolSpecifications,
-            IdentifierGenerator ids) {
+            RuntimeStateRepository state, Map<ModelAdapterKey, AgentChatModel> adapters, IdentifierGenerator ids) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
-        this.toolSpecifications =
-                Map.copyOf(Objects.requireNonNull(toolSpecifications, "toolSpecifications must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
         this.messages = new ModelMessageAssembler(state);
         this.responses = new AgentChatResponseMapper(ids);
@@ -49,17 +44,23 @@ public final class FrozenModelInvoker {
             throw new IllegalStateException(
                     "frozen model adapter is unavailable: " + key.adapterType() + "@" + key.adapterVersion());
         }
-        List<ModelToolSpecification> tools = configuration.allowedTools().stream()
-                .sorted()
-                .map(name -> {
-                    ModelToolSpecification specification = toolSpecifications.get(name);
-                    if (specification == null) {
-                        throw new IllegalStateException("frozen tool specification is unavailable: " + name);
-                    }
-                    return specification;
-                })
+        List<ModelToolSpecification> tools = configuration.toolBindings().stream()
+                .map(FrozenModelInvoker::toModelSpecification)
                 .toList();
         return new FrozenModelBinding(configuration, adapter, tools);
+    }
+
+    private static ModelToolSpecification toModelSpecification(FrozenToolBinding binding) {
+        var definition = binding.definition();
+        var schema = definition.inputSchema();
+        return new ModelToolSpecification(
+                binding.alias().value(),
+                definition.version().value(),
+                definition.description(),
+                schema.id(),
+                schema.version(),
+                schema.document(),
+                true);
     }
 
     public ModelInvocationResult invoke(FrozenModelBinding binding, AgentRun run, int iteration, AgentContext context) {

@@ -2,14 +2,27 @@ package io.haifa.agent.runtime.core.bootstrap;
 
 import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.tool.api.FrozenToolBinding;
+import io.haifa.agent.tool.api.ToolCatalogSnapshot;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 
 /** Deterministic content-addressed configuration snapshot suitable for adapters to persist. */
 public final class ContentAddressedSnapshotFactory implements ConfigurationSnapshotFactory {
+    private final ToolCatalogSnapshot tools;
+
+    public ContentAddressedSnapshotFactory() {
+        this(io.haifa.agent.tool.api.ToolCatalog.empty().snapshot());
+    }
+
+    public ContentAddressedSnapshotFactory(ToolCatalogSnapshot tools) {
+        this.tools = Objects.requireNonNull(tools, "tools");
+    }
+
     public RuntimeConfigurationSnapshot create(
             AgentRunRequest request,
             ResolvedDefinition definition,
@@ -25,8 +38,20 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
             ResolvedProfile profile,
             RuntimeCallerContext caller,
             List<EffectiveCapability> capabilities) {
+        List<FrozenToolBinding> frozenTools = definition.allowedTools().stream()
+                .sorted()
+                .map(alias -> tools.bindings().stream()
+                        .filter(binding -> binding.alias().value().equals(alias))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException("allowed tool is absent from catalog: " + alias)))
+                .toList();
         String canonical = definition.id().value() + "|" + definition.version() + "|"
-                + new java.util.TreeSet<>(definition.allowedTools()) + "|"
+                + frozenTools.stream()
+                        .map(binding -> binding.alias().value() + "="
+                                + binding.coordinate().externalForm() + ":" + binding.providerBindingReference() + ":"
+                                + binding.catalogDigest())
+                        .toList()
+                + "|"
                 + definition.allowedChildAgents().stream()
                         .map(value -> value.value())
                         .sorted()
@@ -63,7 +88,7 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                     profile.runType(),
                     profile.budget(),
                     profile.limits(),
-                    definition.allowedTools(),
+                    frozenTools,
                     definition.allowedChildAgents(),
                     definition.instruction(),
                     request.overrides(),

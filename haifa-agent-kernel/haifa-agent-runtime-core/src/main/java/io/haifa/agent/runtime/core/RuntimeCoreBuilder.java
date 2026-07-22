@@ -18,6 +18,7 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.credential.api.CredentialBroker;
 import io.haifa.agent.memory.api.MemoryActor;
 import io.haifa.agent.memory.api.MemoryAuditSink;
 import io.haifa.agent.memory.api.MemoryRetriever;
@@ -28,7 +29,6 @@ import io.haifa.agent.memory.core.DefaultMemoryPolicy;
 import io.haifa.agent.memory.core.DefaultMemoryRetriever;
 import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import io.haifa.agent.model.api.AgentChatModel;
-import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
@@ -96,21 +96,20 @@ import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.Sleeper;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
-import io.haifa.agent.runtime.core.tool.ApprovalGateway;
 import io.haifa.agent.runtime.core.tool.BoundedToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.CapabilityAuthorizer;
+import io.haifa.agent.runtime.core.tool.DefaultToolPolicy;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.LargeToolResultPolicy;
-import io.haifa.agent.runtime.core.tool.ToolDefinition;
 import io.haifa.agent.runtime.core.tool.ToolExecutionEnvironment;
-import io.haifa.agent.runtime.core.tool.ToolExecutor;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPolicy;
-import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
-import io.haifa.agent.runtime.core.tool.ToolRegistry;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
-import io.haifa.agent.runtime.core.tool.ToolSchemaValidator;
 import io.haifa.agent.runtime.core.trace.TracePort;
+import io.haifa.agent.tool.api.ToolCatalog;
+import io.haifa.agent.tool.api.ToolInvoker;
+import io.haifa.agent.tool.api.ToolSchemaValidationResult;
+import io.haifa.agent.tool.api.ToolSchemaValidator;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -130,7 +129,7 @@ public final class RuntimeCoreBuilder {
     private RunAccessValidator access = RunAccessValidator.allowLocalReferences();
     private DefinitionResolver definitions;
     private ProfileResolver profiles;
-    private ConfigurationSnapshotFactory snapshots = new ContentAddressedSnapshotFactory();
+    private ConfigurationSnapshotFactory snapshots;
     private InteractionPort interactions = new InMemoryInteractionPort();
     private DelegationPort delegations = (parent, decision) -> new AgentRunResult(
             AgentRunOutcome.INSUFFICIENT_INFORMATION,
@@ -140,14 +139,16 @@ public final class RuntimeCoreBuilder {
             Map.of(),
             List.of(),
             List.of("delegation adapter unavailable"));
-    private final Map<String, ToolDefinition> tools = new LinkedHashMap<>();
     private final Map<ModelAdapterKey, AgentChatModel> chatModels = new LinkedHashMap<>();
-    private final Map<String, ModelToolSpecification> modelToolSpecifications = new LinkedHashMap<>();
-    private ToolExecutor toolExecutor = (run, definition, request) -> {
-        throw new IllegalStateException("no tool executor configured for " + definition.name());
+    private ToolCatalog toolCatalog = ToolCatalog.empty();
+    private ToolInvoker toolInvoker = request -> {
+        throw new IllegalStateException("no tool invoker configured for "
+                + request.binding().coordinate().externalForm());
     };
-    private ToolPolicy toolPolicy = (run, definition, request) -> ToolPolicyDecision.ALLOW;
-    private ApprovalGateway approvals = (run, request) -> false;
+    private ToolSchemaValidator toolSchemaValidator = (schema, instance) -> new ToolSchemaValidationResult(List.of());
+    private boolean toolPlatformConfigured;
+    private ToolPolicy toolPolicy = new DefaultToolPolicy();
+    private CredentialBroker credentialBroker;
     private ModelRetryPolicy modelRetry = ModelRetryPolicy.none();
     private ToolRetryPolicy toolRetry = ToolRetryPolicy.none();
     private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
@@ -172,14 +173,6 @@ public final class RuntimeCoreBuilder {
         if (chatModels.putIfAbsent(key, Objects.requireNonNull(value, "value must not be null")) != null) {
             throw new IllegalArgumentException(
                     "duplicate model adapter: " + key.adapterType() + "@" + key.adapterVersion());
-        }
-        return this;
-    }
-
-    public RuntimeCoreBuilder registerModelTool(ModelToolSpecification specification) {
-        Objects.requireNonNull(specification, "specification must not be null");
-        if (modelToolSpecifications.putIfAbsent(specification.name(), specification) != null) {
-            throw new IllegalArgumentException("duplicate model tool specification: " + specification.name());
         }
         return this;
     }
@@ -264,13 +257,12 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder registerTool(ToolDefinition definition) {
-        tools.put(definition.name() + "@" + definition.version(), definition);
-        return this;
-    }
-
-    public RuntimeCoreBuilder toolExecutor(ToolExecutor value) {
-        toolExecutor = value;
+    public RuntimeCoreBuilder toolPlatform(
+            ToolCatalog catalog, ToolInvoker invoker, ToolSchemaValidator schemaValidator) {
+        toolCatalog = Objects.requireNonNull(catalog, "catalog");
+        toolInvoker = Objects.requireNonNull(invoker, "invoker");
+        toolSchemaValidator = Objects.requireNonNull(schemaValidator, "schemaValidator");
+        toolPlatformConfigured = true;
         return this;
     }
 
@@ -279,8 +271,8 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder approvals(ApprovalGateway value) {
-        approvals = value;
+    public RuntimeCoreBuilder credentialBroker(CredentialBroker value) {
+        credentialBroker = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -353,23 +345,10 @@ public final class RuntimeCoreBuilder {
 
     public DefaultAgentRuntime build() {
         if (chatModels.isEmpty()) throw new NullPointerException("a versioned Model API adapter must be configured");
-        modelToolSpecifications.forEach((name, specification) -> {
-            boolean matchingTool = tools.values().stream()
-                    .anyMatch(tool -> tool.name().equals(name) && tool.version().equals(specification.version()));
-            if (!matchingTool) {
-                throw new IllegalStateException("model tool specification has no matching registered tool: " + name);
-            }
-        });
-        tools.values().forEach(tool -> {
-            ModelToolSpecification specification = modelToolSpecifications.get(tool.name());
-            if (specification == null || !specification.version().equals(tool.version())) {
-                throw new IllegalStateException("registered model-visible tool has no exact Model API specification: "
-                        + tool.name()
-                        + "@"
-                        + tool.version());
-            }
-        });
-        FrozenModelInvoker models = new FrozenModelInvoker(store, chatModels, modelToolSpecifications, ids);
+        if (!toolCatalog.snapshot().bindings().isEmpty() && !toolPlatformConfigured) {
+            throw new IllegalStateException("non-empty tool catalog requires an invoker and schema validator");
+        }
+        FrozenModelInvoker models = new FrozenModelInvoker(store, chatModels, ids);
         InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
         var defaultMemoryPolicy = new DefaultMemoryPolicy();
         MemoryRetriever configuredMemoryRetriever = memoryRetriever != null
@@ -385,8 +364,9 @@ public final class RuntimeCoreBuilder {
                             "source message redacted",
                             new MemoryActor(run.tenant(), run.principal(), Set.of("memory:review")))));
         }
-        Set<String> toolNames =
-                tools.values().stream().map(ToolDefinition::name).collect(java.util.stream.Collectors.toSet());
+        Set<String> toolNames = toolCatalog.snapshot().bindings().stream()
+                .map(binding -> binding.alias().value())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         DefinitionResolver definitionResolver = definitions != null
                 ? definitions
                 : (id, requested) -> new ResolvedDefinition(
@@ -409,20 +389,14 @@ public final class RuntimeCoreBuilder {
                 new RetryExecutor(Sleeper.threadSleep()),
                 PersistenceRetryPolicy.none());
         RunControlService controlService = new DefaultRunControlService(controls, transitions);
-        ToolRegistry registry = (name, version) -> java.util.Optional.ofNullable(tools.get(name + "@" + version));
-        ToolSchemaValidator schema = (definition, arguments) -> {
-            if (!definition.inputSchemaId().equals(arguments.schemaId())) {
-                throw new IllegalArgumentException("tool input schema does not match definition");
-            }
-        };
-        CapabilityAuthorizer authorizer = (run, definition) -> toolNames.contains(definition.name());
+        CapabilityAuthorizer authorizer =
+                (run, binding) -> toolNames.contains(binding.alias().value());
         ToolPipeline pipeline = new ToolPipeline(
-                registry,
-                schema,
+                toolInvoker,
+                toolSchemaValidator,
                 authorizer,
                 toolPolicy,
-                approvals,
-                toolExecutor,
+                credentialBroker,
                 new InMemoryToolExecutionJournal(),
                 store,
                 ids,
@@ -483,7 +457,7 @@ public final class RuntimeCoreBuilder {
                 controls,
                 repairRetry);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
-                interactions, store, checkpointSelections, transitions, store, access, checkpoints);
+                interactions, store, checkpointSelections, transitions, store, access, checkpoints, toolInvoker);
         var compressor = new DeterministicContextCompressor();
         var compressionPolicy = CompressionPolicy.defaults();
         var sessionMessageSource = new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time);
@@ -513,8 +487,10 @@ public final class RuntimeCoreBuilder {
                 new RuntimeStateReconciler(store, store, interactions, pipeline, time, ownership),
                 middleware);
         AttemptExecutor attemptExecutor = new AttemptExecutor(store, loop, transitions, time, workerId);
+        ConfigurationSnapshotFactory configuredSnapshots =
+                snapshots != null ? snapshots : new ContentAddressedSnapshotFactory(toolCatalog.snapshot());
         RunBootstrapper bootstrapper =
-                new RunBootstrapper(definitionResolver, profileResolver, access, snapshots, ids, time);
+                new RunBootstrapper(definitionResolver, profileResolver, access, configuredSnapshots, ids, time);
         return new DefaultAgentRuntime(
                 callers,
                 bootstrapper,

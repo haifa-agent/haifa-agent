@@ -19,6 +19,10 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-context</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-core</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-tool-api</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-tool-core</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-credential-api</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-credential-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-git</artifactId></dependency>
         <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter-api</artifactId><scope>test</scope></dependency>

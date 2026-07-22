@@ -8,6 +8,7 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -22,73 +23,12 @@ public record RuntimeConfigurationSnapshot(
         AgentRunType runType,
         AgentRunBudget budget,
         AgentRunLimits limits,
-        Set<String> allowedTools,
+        List<FrozenToolBinding> toolBindings,
         Set<AgentDefinitionId> allowedChildAgents,
         String agentInstruction,
         RuntimeOverrides overrides,
         List<EffectiveCapability> capabilities,
         ResolvedModelSnapshot model) {
-    public RuntimeConfigurationSnapshot(
-            RunConfigurationSnapshotRef reference,
-            AgentDefinitionId definitionId,
-            AgentDefinitionVersion definitionVersion,
-            String profileId,
-            String profileVersion,
-            AgentRunType runType,
-            AgentRunBudget budget,
-            AgentRunLimits limits,
-            Set<String> allowedTools,
-            Set<AgentDefinitionId> allowedChildAgents,
-            String agentInstruction,
-            RuntimeOverrides overrides,
-            ResolvedModelSnapshot model) {
-        this(
-                reference,
-                definitionId,
-                definitionVersion,
-                profileId,
-                profileVersion,
-                runType,
-                budget,
-                limits,
-                allowedTools,
-                allowedChildAgents,
-                agentInstruction,
-                overrides,
-                List.of(),
-                model);
-    }
-
-    public RuntimeConfigurationSnapshot(
-            RunConfigurationSnapshotRef reference,
-            AgentDefinitionId definitionId,
-            AgentDefinitionVersion definitionVersion,
-            String profileId,
-            String profileVersion,
-            AgentRunType runType,
-            AgentRunBudget budget,
-            AgentRunLimits limits,
-            Set<String> allowedTools,
-            Set<AgentDefinitionId> allowedChildAgents,
-            String agentInstruction,
-            RuntimeOverrides overrides) {
-        this(
-                reference,
-                definitionId,
-                definitionVersion,
-                profileId,
-                profileVersion,
-                runType,
-                budget,
-                limits,
-                allowedTools,
-                allowedChildAgents,
-                agentInstruction,
-                overrides,
-                List.of(),
-                DefaultResolvedModelSnapshots.deepSeekV4Pro());
-    }
-
     public RuntimeConfigurationSnapshot {
         reference = Objects.requireNonNull(reference, "reference must not be null");
         definitionId = Objects.requireNonNull(definitionId, "definitionId must not be null");
@@ -98,13 +38,24 @@ public record RuntimeConfigurationSnapshot(
         runType = Objects.requireNonNull(runType, "runType must not be null");
         budget = Objects.requireNonNull(budget, "budget must not be null");
         limits = Objects.requireNonNull(limits, "limits must not be null");
-        allowedTools = Set.copyOf(Objects.requireNonNull(allowedTools, "allowedTools must not be null"));
+        toolBindings = List.copyOf(Objects.requireNonNull(toolBindings, "toolBindings must not be null"));
+        long distinctAliases =
+                toolBindings.stream().map(FrozenToolBinding::alias).distinct().count();
+        if (distinctAliases != toolBindings.size()) {
+            throw new IllegalArgumentException("frozen tool aliases must be unique");
+        }
         allowedChildAgents =
                 Set.copyOf(Objects.requireNonNull(allowedChildAgents, "allowedChildAgents must not be null"));
         agentInstruction = requireText(agentInstruction, "agentInstruction");
         overrides = Objects.requireNonNull(overrides, "overrides must not be null");
         capabilities = List.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
         model = Objects.requireNonNull(model, "model must not be null");
+    }
+
+    public Set<String> allowedTools() {
+        return toolBindings.stream()
+                .map(binding -> binding.alias().value())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     private static String requireText(String value, String field) {

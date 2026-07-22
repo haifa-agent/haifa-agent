@@ -43,6 +43,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Persisted, guarded and resumable observe-decide-act Agent loop. */
 public final class DefaultAgentLoop implements AgentLoop {
@@ -107,6 +108,7 @@ public final class DefaultAgentLoop implements AgentLoop {
         AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
                         value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
                 .orElseGet(() -> new AgentLoopContext(1, List.of()));
+        decisionExecutor.applyPendingToolApproval(run);
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         String traceId = ids.nextValue();
         while (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
@@ -127,6 +129,10 @@ public final class DefaultAgentLoop implements AgentLoop {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
             guards.forEach(guard -> guard.check(run, progress));
+            Optional<AgentLoopDirective> pendingTools = decisionExecutor.resumePendingTools(run, progress);
+            if (pendingTools.filter(value -> value == AgentLoopDirective.WAIT).isPresent()) {
+                return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.WAIT);
+            }
             reconciler.reconcile(run, attempt);
             trace.record(new RuntimeTraceEvent(
                     traceId,

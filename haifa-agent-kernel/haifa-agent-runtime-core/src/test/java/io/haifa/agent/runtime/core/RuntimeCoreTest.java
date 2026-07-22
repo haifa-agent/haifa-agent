@@ -26,6 +26,9 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.InteractionResponse;
+import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandArguments;
@@ -37,12 +40,14 @@ import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
+import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
-import io.haifa.agent.runtime.core.tool.ToolDefinition;
+import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -84,19 +89,16 @@ class RuntimeCoreTest {
     @Test
     void executesToolsSequentiallyThroughTheDurablePipeline() {
         ToolRequest first =
-                toolRequest("tool-1", "echo", "1.0", new ToolArguments("echo.input", "1.0", Map.of("v", 1)));
+                toolRequest("tool-1", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("v", 1)));
         ToolRequest second =
-                toolRequest("tool-2", "echo", "1.0", new ToolArguments("echo.input", "1.0", Map.of("v", 2)));
+                toolRequest("tool-2", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("v", 2)));
         List<Integer> order = new ArrayList<>();
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(first, second)), finalDecision("tools done")),
-                builder -> builder.registerTool(new ToolDefinition("echo", "1.0", "echo.input", false))
-                        .registerModelTool(toolSpecification("echo", "1.0", "echo.input"))
-                        .toolExecutor((run, definition, request) -> {
-                            order.add((Integer) request.arguments().values().get("v"));
-                            return new ToolResult(
-                                    true, "echoed", request.arguments().values(), List.of(), List.of(), false);
-                        }));
+                builder -> TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
+                    order.add((Integer) request.arguments().values().get("v"));
+                    return new ToolResult(true, "echoed", request.arguments().values(), List.of(), List.of(), false);
+                }));
 
         var accepted = fixture.runtime.start(request("tools"));
         fixture.scheduler.runAll();
@@ -112,17 +114,29 @@ class RuntimeCoreTest {
     @Test
     void providerToolArgumentsUseTheDisclosedRuntimeSchema() {
         ToolRequest invalid =
-                toolRequest("bad-tool", "echo", "1.0", new ToolArguments("wrong.schema", "1.0", Map.of()));
+                toolRequest("bad-tool", "echo", "1.0.0", new ToolArguments("wrong.schema", "1.0", Map.of()));
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(invalid)), finalDecision("repaired")),
-                builder -> builder.registerTool(new ToolDefinition("echo", "1.0", "echo.input", false))
-                        .registerModelTool(toolSpecification("echo", "1.0", "echo.input"))
-                        .toolExecutor((run, definition, request) ->
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "echo",
+                        "1.0.0",
+                        "echo.input",
+                        false,
+                        request ->
                                 new ToolResult(true, "used disclosed schema", Map.of(), List.of(), List.of(), false)));
         var accepted = fixture.runtime.start(request("repair"));
         fixture.scheduler.runAll();
 
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .as(
+                        "attempts=%s events=%s steps=%s calls=%s",
+                        fixture.store.attemptsFor(accepted.runId()).stream()
+                                .map(attempt -> attempt.error())
+                                .toList(),
+                        fixture.store.eventsFor(accepted.runId()),
+                        fixture.store.steps(accepted.runId()),
+                        fixture.store.toolCalls(accepted.runId()))
                 .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(fixture.store.toolCalls(accepted.runId()))
                 .allMatch(call -> call.status().name().equals("COMPLETED"))
@@ -162,6 +176,26 @@ class RuntimeCoreTest {
         assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.COMPLETED);
+    }
+
+    @Test
+    void rejectsUnknownAliasWithoutInvokingProvider() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(
+                        toolRequest("unknown", "missing", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()))))),
+                builder -> TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
+                    providerCalls.incrementAndGet();
+                    return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
+                }));
+
+        var accepted = fixture.runtime.start(request("invalid-tool-identity"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(providerCalls).hasValue(0);
+        assertThat(fixture.store.toolCalls(accepted.runId())).isEmpty();
     }
 
     @Test
@@ -229,14 +263,17 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.COMPLETED);
 
         ToolRequest readRequest =
-                toolRequest("read-1", "read", "1.0", new ToolArguments("read.input", "1.0", Map.of()));
+                toolRequest("read-1", "read", "1.0.0", new ToolArguments("read.input", "1.0", Map.of()));
         AtomicInteger readCalls = new AtomicInteger();
         Fixture readFixture = fixture(
                 model(new ToolCallDecision(List.of(readRequest)), finalDecision("read complete")),
-                builder -> builder.registerTool(new ToolDefinition("read", "1.0", "read.input", false))
-                        .registerModelTool(toolSpecification("read", "1.0", "read.input"))
-                        .toolRetry(new RetryPolicy(2, error -> true, BackoffStrategy.none()))
-                        .toolExecutor((run, definition, request) -> {
+                builder -> TestToolPlatform.install(
+                        builder.toolRetry(new RetryPolicy(2, error -> true, BackoffStrategy.none())),
+                        "read",
+                        "1.0.0",
+                        "read.input",
+                        false,
+                        request -> {
                             if (readCalls.incrementAndGet() == 1) throw new IllegalStateException("retry read");
                             return new ToolResult(true, "read", Map.of(), List.of(), List.of(), false);
                         }));
@@ -247,14 +284,17 @@ class RuntimeCoreTest {
                 .isEqualTo(AgentRunStatus.COMPLETED);
 
         ToolRequest writeRequest =
-                toolRequest("write-1", "write", "1.0", new ToolArguments("write.input", "1.0", Map.of()));
+                toolRequest("write-1", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
         AtomicInteger writeCalls = new AtomicInteger();
-        Fixture writeFixture =
-                fixture(model(new ToolCallDecision(List.of(writeRequest))), builder -> builder.registerTool(
-                                new ToolDefinition("write", "1.0", "write.input", true))
-                        .registerModelTool(toolSpecification("write", "1.0", "write.input"))
-                        .toolRetry(new RetryPolicy(3, error -> true, BackoffStrategy.none()))
-                        .toolExecutor((run, definition, request) -> {
+        Fixture writeFixture = fixture(
+                model(new ToolCallDecision(List.of(writeRequest))),
+                builder -> TestToolPlatform.install(
+                        builder.toolRetry(new RetryPolicy(3, error -> true, BackoffStrategy.none())),
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        request -> {
                             writeCalls.incrementAndGet();
                             throw new IllegalStateException("uncertain write");
                         }));
@@ -272,11 +312,16 @@ class RuntimeCoreTest {
     @Test
     void rejectsDuplicateToolCalls() {
         ToolRequest duplicate =
-                toolRequest("same-key", "echo", "1.0", new ToolArguments("echo.input", "1.0", Map.of()));
-        Fixture duplicateFixture =
-                fixture(model(new ToolCallDecision(List.of(duplicate, duplicate))), builder -> builder.registerTool(
-                                new ToolDefinition("echo", "1.0", "echo.input", false))
-                        .registerModelTool(toolSpecification("echo", "1.0", "echo.input")));
+                toolRequest("same-key", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));
+        Fixture duplicateFixture = fixture(
+                model(new ToolCallDecision(List.of(duplicate, duplicate))),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "echo",
+                        "1.0.0",
+                        "echo.input",
+                        false,
+                        request -> new ToolResult(true, "unused", Map.of(), List.of(), List.of(), false)));
         var duplicateRun = duplicateFixture.runtime.start(request("duplicate-tool"));
         duplicateFixture.scheduler.runAll();
         assertThat(duplicateFixture
@@ -300,18 +345,23 @@ class RuntimeCoreTest {
     @Test
     void recoversFromAnAbandonedAttemptAtTheLatestCheckpoint() {
         AtomicInteger calls = new AtomicInteger();
-        ToolRequest progress = toolRequest("progress", "read", "1.0", new ToolArguments("read.input", "1.0", Map.of()));
+        ToolRequest progress =
+                toolRequest("progress", "read", "1.0.0", new ToolArguments("read.input", "1.0", Map.of()));
         AgentChatModel model = request -> {
             int call = calls.incrementAndGet();
             if (call == 1) return response(new ToolCallDecision(List.of(progress)));
             if (call == 2) throw new AssertionError("simulated process loss");
             return response(finalDecision("recovered"));
         };
-        Fixture fixture =
-                fixture(model, builder -> builder.registerTool(new ToolDefinition("read", "1.0", "read.input", false))
-                        .registerModelTool(toolSpecification("read", "1.0", "read.input"))
-                        .toolExecutor((run, definition, request) ->
-                                new ToolResult(true, "progress", Map.of(), List.of(), List.of(), false)));
+        Fixture fixture = fixture(
+                model,
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "read",
+                        "1.0.0",
+                        "read.input",
+                        false,
+                        request -> new ToolResult(true, "progress", Map.of(), List.of(), List.of(), false)));
         var accepted = fixture.runtime.start(request("recover"));
 
         assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
@@ -363,6 +413,128 @@ class RuntimeCoreTest {
         assertThat(run.result().orElseThrow().outcome()).isEqualTo(AgentRunOutcome.SUCCESS);
     }
 
+    @Test
+    void asynchronousToolApprovalPausesWorkerAndResumesSameCallInANewAttempt() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        AgentChatModel model = ignored -> response(
+                modelCalls.incrementAndGet() == 1
+                        ? new ToolCallDecision(List.of(toolRequest(
+                                "approved", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("v", 1)))))
+                        : finalDecision("approved done"));
+        Fixture fixture = fixture(
+                model,
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        request -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                        }));
+
+        var accepted = fixture.runtime.start(request("async-approve"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        assertThat(fixture.store
+                        .attemptsFor(accepted.runId())
+                        .getFirst()
+                        .status()
+                        .name())
+                .isEqualTo("PAUSED");
+        assertThat(fixture.store.checkpointsFor(accepted.runId())).isNotEmpty();
+        assertThat(toolCalls).hasValue(0);
+        var interaction = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        ToolCallId originalToolCallId =
+                fixture.store.toolCalls(accepted.runId()).getFirst().id();
+        assertThat(interaction.target()).isInstanceOf(ToolApprovalTarget.class);
+        var response = new InteractionResponse(
+                new InteractionResponseId("approval-response"),
+                interaction.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "approval-key",
+                Instant.parse("2026-07-21T00:00:00Z"));
+        fixture.runtime.respond(response);
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .as(
+                        "attempts=%s events=%s steps=%s calls=%s",
+                        fixture.store.attemptsFor(accepted.runId()).stream()
+                                .map(attempt -> attempt.error())
+                                .toList(),
+                        fixture.store.eventsFor(accepted.runId()),
+                        fixture.store.steps(accepted.runId()),
+                        fixture.store.toolCalls(accepted.runId()))
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(toolCalls).hasValue(1);
+        assertThat(modelCalls).hasValue(2);
+        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> assertThat(call.id())
+                .isEqualTo(originalToolCallId));
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
+    }
+
+    @Test
+    void rejectedToolApprovalDoesNotCancelRunAndDuplicateResponseIsIdempotent() {
+        AtomicInteger toolCalls = new AtomicInteger();
+        Fixture fixture = fixture(
+                model(
+                        new ToolCallDecision(List.of(toolRequest(
+                                "rejected", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of())))),
+                        finalDecision("continued after rejection")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        request -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false);
+                        }));
+        var accepted = fixture.runtime.start(request("async-reject"));
+        fixture.scheduler.runAll();
+        var interaction = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        var response = new InteractionResponse(
+                new InteractionResponseId("rejection-response"),
+                interaction.id(),
+                accepted.runId(),
+                InteractionResponseType.REJECT,
+                List.of(),
+                "rejection-key",
+                Instant.parse("2026-07-21T00:00:00Z"));
+
+        fixture.runtime.respond(response);
+        fixture.scheduler.runAll();
+        var duplicate = fixture.runtime.respond(response);
+
+        assertThat(duplicate.status())
+                .as(
+                        "attempts=%s events=%s steps=%s calls=%s",
+                        fixture.store.attemptsFor(accepted.runId()).stream()
+                                .map(attempt -> attempt.error())
+                                .toList(),
+                        fixture.store.eventsFor(accepted.runId()),
+                        fixture.store.steps(accepted.runId()),
+                        fixture.store.toolCalls(accepted.runId()))
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(toolCalls).hasValue(0);
+        assertThat(fixture.store.toolCalls(accepted.runId()).getFirst().status().name())
+                .isEqualTo("DENIED");
+        assertThat(fixture.store.messages(accepted.runId()).stream()
+                        .flatMap(message -> message.contents().stream())
+                        .map(Object::toString))
+                .anyMatch(text -> text.contains("rejected by the operator"));
+    }
+
     private static Fixture fixture(AgentChatModel model) {
         return fixture(model, builder -> builder);
     }
@@ -371,6 +543,7 @@ class RuntimeCoreTest {
             AgentChatModel model, java.util.function.UnaryOperator<RuntimeCoreBuilder> customizer) {
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        InMemoryInteractionPort interactions = new InMemoryInteractionPort();
         AtomicInteger sequence = new AtomicInteger();
         IdentifierGenerator ids = () -> "id-" + sequence.incrementAndGet();
         TimeProvider time = () -> Instant.parse("2026-07-21T00:00:00Z");
@@ -378,10 +551,11 @@ class RuntimeCoreTest {
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)
                 .store(store)
+                .interactions(interactions)
                 .identifierGenerator(ids)
                 .timeProvider(time);
         DefaultAgentRuntime runtime = customizer.apply(builder).build();
-        return new Fixture(runtime, scheduler, store);
+        return new Fixture(runtime, scheduler, store, interactions);
     }
 
     private static AgentChatModel model(io.haifa.agent.runtime.core.decision.AgentDecision... decisions) {
@@ -465,5 +639,8 @@ class RuntimeCoreTest {
     }
 
     private record Fixture(
-            DefaultAgentRuntime runtime, ManualExecutionScheduler scheduler, InMemoryRuntimeStore store) {}
+            DefaultAgentRuntime runtime,
+            ManualExecutionScheduler scheduler,
+            InMemoryRuntimeStore store,
+            InMemoryInteractionPort interactions) {}
 }

@@ -23,7 +23,6 @@ import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
-import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
@@ -34,7 +33,6 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
-import io.haifa.agent.runtime.core.tool.ToolDefinition;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
 import java.util.List;
@@ -96,28 +94,21 @@ class ExternalModelRuntimeTest {
                     "fp-test",
                     Map.of());
         };
-        ModelToolSpecification specification = new ModelToolSpecification(
-                "echo",
-                "1.0",
-                "Echo text",
-                "echo.input",
-                "1.0",
-                Map.of(
-                        "type", "object",
-                        "properties", Map.of("text", Map.of("type", "string")),
-                        "required", List.of("text")),
-                false);
-        DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
-                .registerChatModel("openai-compatible", "1.0.0", chatModel)
-                .registerTool(new ToolDefinition("echo", "1.0", "echo.input", false))
-                .registerModelTool(specification)
-                .toolExecutor((run, definition, request) -> new ToolResult(
-                        true,
-                        "echoed: " + request.arguments().values().get("text"),
-                        request.arguments().values(),
-                        List.of(),
-                        List.of(),
-                        false))
+        RuntimeCoreBuilder builder =
+                new RuntimeCoreBuilder().registerChatModel("openai-compatible", "1.0.0", chatModel);
+        DefaultAgentRuntime runtime = TestToolPlatform.install(
+                        builder,
+                        "echo",
+                        "1.0.0",
+                        "echo.input",
+                        false,
+                        request -> new ToolResult(
+                                true,
+                                "echoed: " + request.arguments().values().get("text"),
+                                request.arguments().values(),
+                                List.of(),
+                                List.of(),
+                                false))
                 .scheduler(scheduler)
                 .store(store)
                 .identifierGenerator(identifierGenerator)

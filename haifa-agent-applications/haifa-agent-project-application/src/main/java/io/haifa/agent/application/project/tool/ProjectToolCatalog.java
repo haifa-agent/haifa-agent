@@ -1,17 +1,27 @@
 package io.haifa.agent.application.project.tool;
 
-import io.haifa.agent.runtime.core.tool.ToolDefinition;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Comparator;
-import java.util.HexFormat;
+import io.haifa.agent.tool.api.SemanticVersion;
+import io.haifa.agent.tool.api.ToolAlias;
+import io.haifa.agent.tool.api.ToolApprovalRequirement;
+import io.haifa.agent.tool.api.ToolDefinition;
+import io.haifa.agent.tool.api.ToolExecutionMode;
+import io.haifa.agent.tool.api.ToolIdempotency;
+import io.haifa.agent.tool.api.ToolName;
+import io.haifa.agent.tool.api.ToolProvider;
+import io.haifa.agent.tool.api.ToolResourceRequirements;
+import io.haifa.agent.tool.api.ToolRisk;
+import io.haifa.agent.tool.api.ToolSchema;
+import io.haifa.agent.tool.api.ToolSideEffect;
+import io.haifa.agent.tool.core.DefaultToolCatalog;
+import io.haifa.agent.tool.core.ToolCatalogBuilder;
+import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** Produces a frozen subset of definitions for the existing Runtime ToolRegistry. */
+/** Builds the project product's model-visible tools through the platform Tool catalog. */
 public final class ProjectToolCatalog {
     private static final Map<String, String> REQUIRED_CAPABILITY = Map.ofEntries(
             Map.entry("file.list", "file.read"), Map.entry("file.stat", "file.read"),
@@ -21,52 +31,157 @@ public final class ProjectToolCatalog {
             Map.entry("file.diff", "file.read"), Map.entry("file.patch", "file.write"),
             Map.entry("git.inspect", "git.read"), Map.entry("git.status", "git.read"),
             Map.entry("git.diff", "git.read"), Map.entry("execution.run", "execution.run"));
+    private static final Set<String> WRITES =
+            Set.of("file.create", "file.write", "file.delete", "file.move", "file.patch");
 
-    private static final List<ToolDefinition> DEFINITIONS = REQUIRED_CAPABILITY.keySet().stream()
-            .sorted()
-            .map(name -> new ToolDefinition(
-                    name,
-                    "1.0",
-                    "haifa." + name + ".input.v1",
-                    name.startsWith("file.")
-                                    && Set.of("file.create", "file.write", "file.delete", "file.move", "file.patch")
-                                            .contains(name)
-                            || name.equals("execution.run")))
-            .toList();
-
-    public FrozenToolDisclosure disclose(
-            Set<String> configuredTools, Set<String> effectiveCapabilities, boolean modelSupportsTools) {
-        Objects.requireNonNull(configuredTools, "configuredTools must not be null");
-        Objects.requireNonNull(effectiveCapabilities, "effectiveCapabilities must not be null");
-        if (!modelSupportsTools) return new FrozenToolDisclosure(List.of(), digest(List.of()));
-        List<ToolDefinition> disclosed = DEFINITIONS.stream()
-                .filter(tool -> configuredTools.contains(tool.name()))
-                .filter(tool -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(tool.name())))
-                .sorted(Comparator.comparing(ToolDefinition::name))
-                .toList();
-        return new FrozenToolDisclosure(disclosed, digest(disclosed));
-    }
-
-    private static String digest(List<ToolDefinition> tools) {
-        String canonical = tools.stream()
-                .map(tool ->
-                        tool.name() + "@" + tool.version() + ":" + tool.inputSchemaId() + ":" + tool.sideEffecting())
+    public DefaultToolCatalog freeze(
+            Set<String> configuredTools,
+            Set<String> effectiveCapabilities,
+            boolean modelSupportsTools,
+            ToolProvider provider) {
+        Objects.requireNonNull(configuredTools, "configuredTools");
+        Objects.requireNonNull(effectiveCapabilities, "effectiveCapabilities");
+        Objects.requireNonNull(provider, "provider");
+        ToolCatalogBuilder builder = new ToolCatalogBuilder();
+        if (!modelSupportsTools) return builder.freeze();
+        REQUIRED_CAPABILITY.keySet().stream()
                 .sorted()
-                .reduce("", (left, right) -> left + "\n" + right);
-        try {
-            return "sha256:"
-                    + HexFormat.of()
-                            .formatHex(MessageDigest.getInstance("SHA-256")
-                                    .digest(canonical.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required", exception);
-        }
+                .filter(configuredTools::contains)
+                .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
+                .forEach(
+                        name -> builder.register(new ToolAlias(name), definition(name), "project-workspace", provider));
+        return builder.freeze();
     }
 
-    public record FrozenToolDisclosure(List<ToolDefinition> definitions, String digest) {
-        public FrozenToolDisclosure {
-            definitions = List.copyOf(definitions);
-            digest = Objects.requireNonNull(digest, "digest must not be null");
+    public Set<String> names() {
+        return REQUIRED_CAPABILITY.keySet();
+    }
+
+    private static ToolDefinition definition(String name) {
+        boolean execution = name.equals("execution.run");
+        boolean write = WRITES.contains(name);
+        ToolRisk risk = execution ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
+        ToolIdempotency idempotency = execution || write ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
+        Set<ToolSideEffect> effects = execution
+                ? Set.of(ToolSideEffect.PROCESS_EXECUTION)
+                : write ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ);
+        ToolApprovalRequirement approval =
+                execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
+        ToolResourceRequirements resources = new ToolResourceRequirements(
+                Set.of(REQUIRED_CAPABILITY.get(name)), Set.of(), execution ? Set.of("project-safe") : Set.of());
+        return new ToolDefinition(
+                new ToolName(name),
+                new SemanticVersion("1.0.0"),
+                ProjectToolExecutor.PROVIDER_ID,
+                title(name),
+                description(name),
+                new ToolSchema("haifa." + name + ".input", "1.0.0", inputSchema(name)),
+                new ToolSchema("haifa." + name + ".output", "1.0.0", outputSchema()),
+                execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
+                true,
+                execution ? Duration.ofMinutes(5) : Duration.ofSeconds(30),
+                write ? "per-workspace-write" : "per-workspace-read",
+                idempotency,
+                risk,
+                effects,
+                resources,
+                List.of(),
+                approval,
+                "haifa-project-application",
+                false,
+                Set.of("project", name.substring(0, name.indexOf('.'))));
+    }
+
+    private static String title(String name) {
+        return switch (name) {
+            case "file.list" -> "List workspace files";
+            case "file.stat" -> "Inspect workspace path";
+            case "file.read" -> "Read workspace file";
+            case "file.search" -> "Search workspace files";
+            case "file.create" -> "Create workspace file";
+            case "file.write" -> "Write workspace file";
+            case "file.delete" -> "Delete workspace path";
+            case "file.move" -> "Move workspace path";
+            case "file.diff" -> "Preview file diff";
+            case "file.patch" -> "Apply workspace patch";
+            case "git.inspect" -> "Inspect Git repository";
+            case "git.status" -> "Read Git status";
+            case "git.diff" -> "Read Git diff";
+            case "execution.run" -> "Run approved execution profile";
+            default -> throw new IllegalArgumentException("unknown project tool " + name);
+        };
+    }
+
+    private static String description(String name) {
+        return title(name) + " within the frozen project workspace and capability boundary.";
+    }
+
+    private static Map<String, Object> inputSchema(String name) {
+        var properties = new LinkedHashMap<String, Object>();
+        var required = new java.util.ArrayList<String>();
+        switch (name) {
+            case "file.list" -> {
+                path(properties, required, "path");
+                properties.put("recursive", Map.of("type", "boolean"));
+                properties.put("maxDepth", Map.of("type", "integer", "minimum", 1, "maximum", 32));
+            }
+            case "file.stat", "file.read", "file.delete" -> path(properties, required, "path");
+            case "file.search" -> {
+                path(properties, required, "path");
+                string(properties, required, "query");
+                properties.put("glob", Map.of("type", "string"));
+                properties.put("maxResults", Map.of("type", "integer", "minimum", 1, "maximum", 1000));
+            }
+            case "file.create", "file.write", "file.diff" -> {
+                path(properties, required, "path");
+                string(properties, required, "content");
+            }
+            case "file.move" -> {
+                path(properties, required, "source");
+                path(properties, required, "destination");
+            }
+            case "file.patch" -> {
+                path(properties, required, "path");
+                string(properties, required, "patch");
+            }
+            case "git.inspect", "git.status" -> properties.put("includeIgnored", Map.of("type", "boolean"));
+            case "git.diff" -> {
+                properties.put("staged", Map.of("type", "boolean"));
+                properties.put("paths", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 100));
+            }
+            case "execution.run" -> {
+                string(properties, required, "profile");
+                properties.put(
+                        "arguments", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 128));
+                properties.put("workingDirectory", Map.of("type", "string"));
+                properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 300000));
+            }
+            default -> throw new IllegalArgumentException("unknown project tool " + name);
         }
+        return Map.of(
+                "$schema",
+                ToolSchema.DRAFT_2020_12,
+                "type",
+                "object",
+                "properties",
+                Map.copyOf(properties),
+                "required",
+                List.copyOf(required),
+                "additionalProperties",
+                false);
+    }
+
+    private static Map<String, Object> outputSchema() {
+        return Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+    }
+
+    private static void path(Map<String, Object> properties, List<String> required, String name) {
+        properties.put(name, Map.of("type", "string", "minLength", 1));
+        required.add(name);
+    }
+
+    private static void string(Map<String, Object> properties, List<String> required, String name) {
+        properties.put(name, Map.of("type", "string"));
+        required.add(name);
     }
 }

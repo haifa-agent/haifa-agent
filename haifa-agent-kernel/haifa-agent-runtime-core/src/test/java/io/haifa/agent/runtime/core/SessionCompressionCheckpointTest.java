@@ -39,7 +39,6 @@ import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
-import io.haifa.agent.runtime.core.tool.ToolDefinition;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -196,11 +195,8 @@ class SessionCompressionCheckpointTest {
                     "model context is too long",
                     null);
         };
-        var runtime = new RuntimeCoreBuilder()
-                .registerChatModel("openai-compatible", "1.0.0", model)
-                .registerTool(new ToolDefinition("echo", "1.0", "echo.input", false))
-                .registerModelTool(toolSpec())
-                .toolExecutor((run, definition, request) -> {
+        RuntimeCoreBuilder builder = new RuntimeCoreBuilder().registerChatModel("openai-compatible", "1.0.0", model);
+        var runtime = TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
                     toolExecutions.incrementAndGet();
                     return new ToolResult(true, "echoed", Map.of("text", "hello"), List.of(), List.of(), false);
                 })
@@ -254,11 +250,8 @@ class SessionCompressionCheckpointTest {
                         "",
                         Map.of())
                 : finalResponse("done");
-        var runtime = new RuntimeCoreBuilder()
-                .registerChatModel("openai-compatible", "1.0.0", model)
-                .registerTool(new ToolDefinition("echo", "1.0", "echo.input", false))
-                .registerModelTool(toolSpec())
-                .toolExecutor((run, definition, request) -> {
+        RuntimeCoreBuilder builder = new RuntimeCoreBuilder().registerChatModel("openai-compatible", "1.0.0", model);
+        var runtime = TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
                     executions.incrementAndGet();
                     return new ToolResult(
                             true, "x".repeat(20_000), Map.of("full", "y".repeat(20_000)), List.of(), List.of(), false);

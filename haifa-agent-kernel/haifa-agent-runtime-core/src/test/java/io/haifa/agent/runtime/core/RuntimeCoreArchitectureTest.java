@@ -3,6 +3,7 @@ package io.haifa.agent.runtime.core;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 import com.tngtech.archunit.core.importer.ClassFileImporter;
+import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 
 class RuntimeCoreArchitectureTest {
@@ -18,12 +19,15 @@ class RuntimeCoreArchitectureTest {
                         "jakarta.persistence..",
                         "io.haifa.agent.product..",
                         "io.haifa.agent.integration..",
+                        "io.haifa.agent.tool.core..",
                         "io.haifa.agent.model.openai..",
                         "com.openai..",
                         "dev.langchain4j..",
                         "org.testcontainers..",
                         "io.haifa.agent.admin..")
-                .check(new ClassFileImporter().importPackages("io.haifa.agent.runtime.core"));
+                .check(new ClassFileImporter()
+                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.runtime.core"));
     }
 
     @Test
@@ -32,6 +36,8 @@ class RuntimeCoreArchitectureTest {
                 .should()
                 .dependOnClassesThat()
                 .haveFullyQualifiedName("java.lang.ProcessBuilder")
-                .check(new ClassFileImporter().importPackages("io.haifa.agent.runtime.core"));
+                .check(new ClassFileImporter()
+                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.runtime.core"));
     }
 }

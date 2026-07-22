@@ -1,16 +1,21 @@
 package io.haifa.agent.application.project;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.InMemoryProjectProductSessionStore;
 import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
+import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.configuration.InMemoryProjectConfigurationStore;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
@@ -37,12 +42,16 @@ import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandResult;
+import io.haifa.agent.tool.api.ToolInvocationRequest;
+import io.haifa.agent.tool.api.ToolProvider;
+import io.haifa.agent.tool.api.ToolProviderId;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ProjectApplicationTest {
@@ -51,18 +60,113 @@ class ProjectApplicationTest {
     @Test
     void freezesToolDisclosureAndKeepsOrdinaryChatEmpty() {
         var catalog = new ProjectToolCatalog();
-        assertThat(catalog.disclose(Set.of("file.read", "execution.run"), Set.of(), true)
-                        .definitions())
+        ToolProvider provider = new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return ProjectToolExecutor.PROVIDER_ID;
+            }
+
+            @Override
+            public io.haifa.agent.core.tool.ToolResult invoke(ToolInvocationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        assertThat(catalog.freeze(Set.of("file.read", "execution.run"), Set.of(), true, provider)
+                        .snapshot()
+                        .bindings())
                 .isEmpty();
-        var disclosed = catalog.disclose(
-                Set.of("file.read", "file.write", "execution.run"), Set.of("file.read", "execution.run"), true);
-        assertThat(disclosed.definitions())
-                .extracting(tool -> tool.name())
+        var disclosed = catalog.freeze(
+                Set.of("file.read", "file.write", "execution.run"),
+                Set.of("file.read", "execution.run"),
+                true,
+                provider);
+        assertThat(disclosed.snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
                 .containsExactly("execution.run", "file.read");
-        assertThat(disclosed.digest()).startsWith("sha256:");
-        assertThat(catalog.disclose(Set.of("file.read"), Set.of("file.read"), false)
-                        .definitions())
+        assertThat(disclosed.snapshot().digest()).matches("[0-9a-f]{64}");
+        assertThat(catalog.freeze(Set.of("file.read"), Set.of("file.read"), false, provider)
+                        .snapshot()
+                        .bindings())
                 .isEmpty();
+    }
+
+    @Test
+    void publishesAllFourteenProjectToolsWithCompleteFrozenDefinitions() {
+        var catalog = new ProjectToolCatalog();
+        var frozen = catalog.freeze(
+                catalog.names(),
+                Set.of("file.read", "file.write", "git.read", "execution.run"),
+                true,
+                providerThatMustNotRun());
+
+        assertThat(frozen.snapshot().bindings())
+                .hasSize(14)
+                .extracting(binding -> binding.alias().value())
+                .containsExactly(
+                        "execution.run",
+                        "file.create",
+                        "file.delete",
+                        "file.diff",
+                        "file.list",
+                        "file.move",
+                        "file.patch",
+                        "file.read",
+                        "file.search",
+                        "file.stat",
+                        "file.write",
+                        "git.diff",
+                        "git.inspect",
+                        "git.status");
+        assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
+            assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
+            assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
+            assertThat(binding.definition().sideEffects()).isNotEmpty();
+            assertThat(binding.definition().resources().filesystemCapabilities())
+                    .isNotEmpty();
+            assertThat(binding.coordinate().definitionHash().value()).matches("[0-9a-f]{64}");
+        });
+    }
+
+    @Test
+    void projectProviderPreservesRunWorkspaceAndCapabilityBoundary() {
+        var binding = new ProjectToolCatalog()
+                .freeze(Set.of("file.read"), Set.of("file.read"), true, providerThatMustNotRun())
+                .snapshot()
+                .bindings()
+                .getFirst();
+        WorkspaceId workspaceId = new WorkspaceId("workspace-tool");
+        PrincipalRef principal = new PrincipalRef("operator", "user");
+        AtomicReference<String> observed = new AtomicReference<>();
+        ProjectToolExecutor executor = new ProjectToolExecutor(
+                (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
+                        workspaceId, Set.of("file.read"), "policy-1"),
+                (toolName, workspace, actor, runRef, policy, arguments) -> {
+                    observed.set(toolName + "|" + workspace.value() + "|" + actor.principalId() + "|" + runRef + "|"
+                            + policy);
+                    return new ToolResult(true, "read", java.util.Map.of(), List.of(), List.of(), false);
+                });
+        var request = new ToolInvocationRequest(
+                binding,
+                new ToolCallId("tool-call"),
+                new AgentRunId("run-tool"),
+                new TenantRef("tenant"),
+                principal,
+                new ToolArguments("haifa.file.read.input", "1.0.0", java.util.Map.of("path", "README.md")),
+                NOW.plusSeconds(30),
+                Optional.of("key"),
+                () -> false,
+                List.of());
+
+        assertThat(executor.invoke(request).successful()).isTrue();
+        assertThat(observed).hasValue("file.read|workspace-tool|operator|run-tool|policy-1");
+
+        ProjectToolExecutor denied = new ProjectToolExecutor(
+                (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
+                        workspaceId, Set.of(), "policy-2"),
+                (toolName, workspace, actor, runRef, policy, arguments) -> {
+                    throw new AssertionError("unauthorized operation must not execute");
+                });
+        assertThatThrownBy(() -> denied.invoke(request)).isInstanceOf(SecurityException.class);
     }
 
     @Test
@@ -179,5 +283,19 @@ class ProjectApplicationTest {
 
         @Override
         public void addListener(AgentRunListener listener) {}
+    }
+
+    private static ToolProvider providerThatMustNotRun() {
+        return new ToolProvider() {
+            @Override
+            public ToolProviderId id() {
+                return ProjectToolExecutor.PROVIDER_ID;
+            }
+
+            @Override
+            public ToolResult invoke(ToolInvocationRequest request) {
+                throw new AssertionError("catalog test provider must not run");
+            }
+        };
     }
 }

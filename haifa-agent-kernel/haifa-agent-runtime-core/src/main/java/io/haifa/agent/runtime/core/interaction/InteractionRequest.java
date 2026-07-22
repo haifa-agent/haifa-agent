@@ -15,8 +15,32 @@ public record InteractionRequest(
         String type,
         String prompt,
         boolean approval,
+        InteractionTarget target,
         Instant createdAt,
         Instant expiresAt) {
+    public InteractionRequest(
+            InteractionRequestId id,
+            AgentRunId runId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            String type,
+            String prompt,
+            boolean approval,
+            Instant createdAt,
+            Instant expiresAt) {
+        this(
+                id,
+                runId,
+                tenant,
+                principal,
+                type,
+                prompt,
+                approval,
+                new GenericInteractionTarget(type),
+                createdAt,
+                expiresAt);
+    }
+
     public InteractionRequest {
         id = Objects.requireNonNull(id, "id must not be null");
         runId = Objects.requireNonNull(runId, "runId must not be null");
@@ -24,6 +48,7 @@ public record InteractionRequest(
         principal = Objects.requireNonNull(principal, "principal must not be null");
         type = requireText(type, "type");
         prompt = requireText(prompt, "prompt");
+        target = Objects.requireNonNull(target, "target must not be null");
         createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         if (!expiresAt.isAfter(createdAt)) throw new IllegalArgumentException("expiresAt must be after createdAt");

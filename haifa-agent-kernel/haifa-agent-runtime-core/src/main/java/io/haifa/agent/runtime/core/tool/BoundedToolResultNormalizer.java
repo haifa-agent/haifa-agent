@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.tool;
 
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,7 +22,7 @@ public final class BoundedToolResultNormalizer implements ToolResultNormalizer {
     }
 
     @Override
-    public ToolResult normalize(ToolDefinition definition, ToolResult result) {
+    public ToolResult normalize(FrozenToolBinding binding, ToolResult result) {
         String summary = result.summary();
         boolean truncated = result.truncated();
         if (summary.length() > maxSummaryCharacters) {

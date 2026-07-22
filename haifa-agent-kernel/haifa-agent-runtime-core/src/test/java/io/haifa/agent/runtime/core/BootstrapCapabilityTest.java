@@ -24,6 +24,7 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RunBootstrapper;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
+import io.haifa.agent.tool.api.ToolCatalogSnapshot;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -122,6 +123,31 @@ class BootstrapCapabilityTest {
 
         assertThat(snapshot.capabilities()).isEmpty();
         assertThat(request(false).project()).isEmpty();
+    }
+
+    @Test
+    void runConfigurationFreezesExactToolBindingAndCatalogChangesOnlyAffectNewSnapshots() {
+        var firstBinding = TestToolPlatform.binding("read", "1.0.0", "read.input", false);
+        var changedBinding = TestToolPlatform.binding("read", "1.0.0", "read.input", true);
+        var toolDefinition = new ResolvedDefinition(
+                new AgentDefinitionId("agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                Set.of("read"),
+                Set.of(),
+                "Complete the objective.");
+
+        var first = new ContentAddressedSnapshotFactory(
+                        new ToolCatalogSnapshot(firstBinding.catalogDigest(), List.of(firstBinding)))
+                .create(request(false), toolDefinition, profile(Map.of()), CALLER, List.of());
+        var changed = new ContentAddressedSnapshotFactory(
+                        new ToolCatalogSnapshot(changedBinding.catalogDigest(), List.of(changedBinding)))
+                .create(request(false), toolDefinition, profile(Map.of()), CALLER, List.of());
+
+        assertThat(first.toolBindings()).containsExactly(firstBinding);
+        assertThat(first.toolBindings().getFirst().coordinate().definitionHash())
+                .isNotEqualTo(changed.toolBindings().getFirst().coordinate().definitionHash());
+        assertThat(first.reference()).isNotEqualTo(changed.reference());
+        assertThat(first.toolBindings()).containsExactly(firstBinding);
     }
 
     private static void assertCode(

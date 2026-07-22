@@ -237,6 +237,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 return null;
             });
         }
+        if (resolution.request().target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget) {
+            return resume(new ResumeAgentRunRequest(
+                    "tool-approval-response:" + response.idempotencyKey(), run.id(), List.of()));
+        }
         if (response.type() == InteractionResponseType.REJECT) {
             if (!run.status().isTerminal()) {
                 transitions.cancelled(

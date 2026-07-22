@@ -23,9 +23,12 @@ import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.step.AgentStepError;
 import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.step.AgentStepResult;
+import io.haifa.agent.core.step.AgentStepStatus;
 import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.runtime.api.InteractionRequestId;
+import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
 import io.haifa.agent.runtime.core.completion.RunFinalizer;
@@ -35,12 +38,14 @@ import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
+import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoopContext;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
+import io.haifa.agent.runtime.core.tool.ToolPipelineOutcome;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -134,7 +139,13 @@ public final class DecisionExecutor {
             AgentStep step = preparedTool.step();
             step.start(time.now());
             try {
-                var result = tools.execute(run, call, request);
+                ToolPipelineOutcome outcome = tools.execute(run, call, request);
+                if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
+                    step.waitForExternalInput();
+                    createToolApproval(run, call, approval, loopContext);
+                    return AgentLoopDirective.WAIT;
+                }
+                var result = ((ToolPipelineOutcome.Completed) outcome).result();
                 step.complete(
                         new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
                 appendToolResult(run, call, result.summary());
@@ -150,6 +161,7 @@ public final class DecisionExecutor {
                 if (controls.signal(run.id()) == RunControlSignal.PAUSE) break;
             } catch (IllegalArgumentException | SecurityException repairable) {
                 repairRetry.check(loopContext.recordRepairAttempt());
+                cancelRejectedCall(call);
                 step.fail(
                         new AgentStepError(new AgentError(
                                 new AgentErrorCode("TOOL_REQUEST_REJECTED"),
@@ -166,6 +178,133 @@ public final class DecisionExecutor {
             }
         }
         return AgentLoopDirective.CONTINUE;
+    }
+
+    private void cancelRejectedCall(ToolCall call) {
+        switch (call.status()) {
+            case COMPLETED, FAILED, DENIED, CANCELLED, TIMEOUT -> {
+                // Validation or policy may already have closed the call.
+            }
+            default -> call.cancel(time.now());
+        }
+    }
+
+    private void createToolApproval(
+            AgentRun run, ToolCall call, ToolPipelineOutcome.ApprovalRequired approval, AgentLoopContext loopContext) {
+        String requestId = ids.nextValue();
+        var binding = approval.binding();
+        String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
+        interactions.create(new InteractionRequest(
+                new InteractionRequestId(requestId),
+                run.id(),
+                run.tenant(),
+                run.principal(),
+                interactionType,
+                (approval.reauthentication() ? "Reauthenticate and approve tool " : "Approve tool ")
+                        + binding.alias().value() + " ("
+                        + binding.coordinate().externalForm() + ")",
+                true,
+                new ToolApprovalTarget(
+                        call.id(),
+                        binding.coordinate().externalForm(),
+                        binding.coordinate().definitionHash().value(),
+                        approval.argumentsDigest(),
+                        run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
+                                + run.principal().principalId()),
+                time.now(),
+                time.now().plus(java.time.Duration.ofHours(1))));
+        checkpoints.capture(
+                run,
+                loopContext.iteration(),
+                loopContext.fingerprints(),
+                loopContext.forcedContextRebuildAttempts(),
+                CheckpointType.INTERACTION);
+        transitions.waiting(run, new InteractionRequestRef(requestId, interactionType), true);
+    }
+
+    public Optional<AgentLoopDirective> resumePendingTools(AgentRun run, AgentLoopContext loopContext) {
+        List<ToolCall> pending = state.toolCalls(run.id()).stream()
+                .filter(call -> call.status() == ToolCallStatus.REQUESTED || call.status() == ToolCallStatus.APPROVED)
+                .toList();
+        if (pending.isEmpty()) return Optional.empty();
+        for (ToolCall call : pending) {
+            AgentStep step = state.steps(run.id()).stream()
+                    .filter(candidate -> candidate.id().equals(call.stepId()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException("tool step is unavailable"));
+            if (call.status() == ToolCallStatus.APPROVED && step.status() == AgentStepStatus.WAITING) step.resume();
+            else if (call.status() == ToolCallStatus.REQUESTED) step.start(time.now());
+            ToolRequest request = requestFrom(call);
+            ToolPipelineOutcome outcome = tools.execute(run, call, request);
+            if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
+                step.waitForExternalInput();
+                createToolApproval(run, call, approval, loopContext);
+                return Optional.of(AgentLoopDirective.WAIT);
+            }
+            var result = ((ToolPipelineOutcome.Completed) outcome).result();
+            step.complete(
+                    new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
+            appendToolResult(run, call, result.summary());
+            checkpoints.capture(
+                    run,
+                    loopContext.iteration(),
+                    loopContext.fingerprints(),
+                    loopContext.forcedContextRebuildAttempts(),
+                    CheckpointType.AUTOMATIC);
+        }
+        return Optional.of(AgentLoopDirective.CONTINUE);
+    }
+
+    public void resolveToolApproval(AgentRun run, ToolApprovalTarget target, InteractionResponseType responseType) {
+        ToolCall call = state.toolCalls(run.id()).stream()
+                .filter(candidate -> candidate.id().equals(target.toolCallId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("tool approval target is unavailable"));
+        tools.validateApprovalTarget(run, call, requestFrom(call), target);
+        if (responseType == InteractionResponseType.APPROVE) {
+            call.approve();
+            return;
+        }
+        if (responseType != InteractionResponseType.REJECT) {
+            throw new IllegalArgumentException("tool approval requires approve or reject");
+        }
+        call.deny(time.now());
+        AgentStep step = state.steps(run.id()).stream()
+                .filter(candidate -> candidate.id().equals(call.stepId()))
+                .findFirst()
+                .orElseThrow();
+        step.resume();
+        step.fail(
+                new AgentStepError(new AgentError(
+                        new AgentErrorCode("TOOL_APPROVAL_REJECTED"),
+                        AgentErrorCategory.TOOL,
+                        AgentErrorSeverity.WARNING,
+                        Retryability.NOT_RETRYABLE,
+                        "Tool execution was rejected by the operator",
+                        null,
+                        Map.of("toolCallId", call.id().value()),
+                        time.now())),
+                time.now());
+        appendToolResult(run, call, "Tool execution was rejected by the operator.");
+    }
+
+    public void applyPendingToolApproval(AgentRun run) {
+        interactions.unappliedToolResolution(run.id()).ifPresent(resolution -> {
+            ToolApprovalTarget target =
+                    (ToolApprovalTarget) resolution.request().target();
+            resolveToolApproval(run, target, resolution.response().type());
+            interactions.markResolutionApplied(resolution.request().id());
+        });
+    }
+
+    private static ToolRequest requestFrom(ToolCall call) {
+        return new ToolRequest(
+                call.id(),
+                call.providerCorrelationId(),
+                call.idempotencyKey(),
+                call.toolName(),
+                call.toolVersion(),
+                call.arguments());
     }
 
     private AgentLoopDirective executeDelegation(

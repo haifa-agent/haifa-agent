@@ -14,5 +14,9 @@ public interface InteractionPort {
 
     Optional<InteractionRequest> find(InteractionRequestId requestId);
 
+    Optional<ResolvedInteraction> unappliedToolResolution(AgentRunId runId);
+
+    void markResolutionApplied(InteractionRequestId requestId);
+
     InteractionResolution respond(InteractionResponse response, RuntimeCallerContext caller, Instant receivedAt);
 }
