@@ -2,7 +2,7 @@
 
 Haifa Agent 是面向 Java / Spring 生态的通用 Agent Runtime 与 Agent 产品开发平台。
 
-当前仓库处于 `0.1.0-SNAPSHOT` 的内核建设阶段，已完成 Core 领域模型、Runtime/AgentLoop、首个 DeepSeek 外部模型纵向集成，以及 Phase 1 Tool/Credential 平台与 Project Tool 迁移。
+当前仓库处于 `0.1.0-SNAPSHOT` 的内核建设阶段，已完成 Core 领域模型、Runtime/AgentLoop、首个 DeepSeek 外部模型纵向集成、Phase 1 Tool/Credential 平台，以及固定协议 `2025-11-25` 的 MCP Client Integration。
 
 ## 当前模块
 
@@ -36,6 +36,7 @@ haifa-agent-capabilities/
 haifa-agent-integrations/
   haifa-agent-model-openai-compatible/  DeepSeek/OpenAI 兼容协议适配
   haifa-agent-git/                      经 Broker 执行的只读 Git 适配器
+  haifa-agent-mcp/                      MCP 2025-11-25 HTTP/stdio Tool Provider
 haifa-agent-applications/
   haifa-agent-project-application/      Project Context、Tool 与产品外观
 ```
@@ -49,7 +50,9 @@ common <- core <- runtime-api <- runtime-core -> model-api / memory-api / memory
              \----------> model-api
              credential-api <- credential-core
         credential-api <- tool-api <- tool-core -> model-api
+        tool-api / credential-api / execution-api <- mcp
                        project-application -> tool-api / tool-core / credential-api / credential-core
+                                           -> mcp
                   model-api <- model-core
                  memory-api <- memory-core
                   model-api <- model-openai-compatible
@@ -60,6 +63,8 @@ common <- core <- runtime-api <- runtime-core -> model-api / memory-api / memory
 `contract` 不依赖 `core`，所有已初始化的 Kernel 模块均保持纯 Java。
 
 Tool 的内部精确身份为 `name + semanticVersion + providerId + definitionHash`，模型只看到当前 Run 冻结后的 alias、描述与输入 Schema。Runtime 的配置快照保存完整 `FrozenToolBinding`，历史 Run 不按名称重新读取当前目录。Credential 明文只通过短生命周期 Lease 交给执行边界，不进入 Prompt、Tool 参数、Checkpoint、Trace 或 Workspace。
+
+MCP Client 固定使用官方 Java SDK 2.0.0 和协议 `2025-11-25`，只接入 `tools/list`、`tools/call`、Streamable HTTP 与受 `ExecutionBroker` 管理的 stdio。远端 Tool 先经过本地 allowlist、alias、风险和 Schema 审查，再与内建 Tool 一起进入同一 Catalog 和 Runtime Tool Pipeline；历史 Run 通过内容寻址的 `providerBindingReference` 恢复精确 MCP binding，不按远端当前目录热替换。
 
 Project 模块提供可选的长期 Project、受控 Workspace、跨平台逻辑路径和安全只读文件 Provider。普通对话 Run 不要求 Project 或 Workspace；声明相关能力的 Run 才在 Bootstrap 时解析、授权并冻结有效 Capability。
 

@@ -29,12 +29,15 @@ public final class ProjectToolExecutor implements ToolProvider {
         if (!binding.capabilities().containsAll(requiredCapabilities)) {
             throw new SecurityException("run workspace access does not authorize the frozen tool capability");
         }
-        return operations.execute(
+        request.observer().dispatched();
+        ToolResult result = operations.execute(
                 request.binding().definition().name().value(),
                 binding.workspaceId(),
                 request.principal(),
                 request.runId().value(),
                 binding.policyDecisionRef(),
                 request.arguments());
+        request.observer().acknowledged();
+        return result;
     }
 }
