@@ -88,6 +88,7 @@ import io.haifa.agent.runtime.core.middleware.ToolDisclosureMiddleware;
 import io.haifa.agent.runtime.core.middleware.TraceMiddleware;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
+import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
@@ -348,7 +349,8 @@ public final class RuntimeCoreBuilder {
         if (!toolCatalog.snapshot().bindings().isEmpty() && !toolPlatformConfigured) {
             throw new IllegalStateException("non-empty tool catalog requires an invoker and schema validator");
         }
-        FrozenModelInvoker models = new FrozenModelInvoker(store, chatModels, ids);
+        RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(store, time);
+        FrozenModelInvoker models = new FrozenModelInvoker(store, chatModels, ids, modelOutput, controls);
         InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
         var defaultMemoryPolicy = new DefaultMemoryPolicy();
         MemoryRetriever configuredMemoryRetriever = memoryRetriever != null
@@ -510,7 +512,8 @@ public final class RuntimeCoreBuilder {
                 ids,
                 time,
                 awaiter,
-                resumeCoordinator);
+                resumeCoordinator,
+                modelOutput);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {

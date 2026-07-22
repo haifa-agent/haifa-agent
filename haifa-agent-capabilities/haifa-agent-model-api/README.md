@@ -1,5 +1,12 @@
 # Haifa Agent Model API
 
+## Streaming invocation
+
+`AgentChatModel.invoke` remains the compatible synchronous entry point. `invokeStreaming` publishes ordered
+`ModelStreamEvent` values through a synchronous callback and stops the physical call when the callback returns
+`CANCEL`. The default implementation projects a synchronous result as one completed content delta. Provider raw
+chunks, SDK types, and reasoning text must not cross this module boundary.
+
 纯 Java、供应商无关的模型能力契约。
 
 本模块定义：

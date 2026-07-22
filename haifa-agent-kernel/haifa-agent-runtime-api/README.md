@@ -1,5 +1,12 @@
 # Haifa Agent Runtime API
 
+## Replayable model output
+
+`outputEvents` and `addOutputListener` expose a replayable, transport-neutral projection of model output. Public
+events contain only assistant text deltas and committed/failed/superseded lifecycle state. They never contain
+reasoning, unvalidated tool arguments, prompts, credentials, or provider responses. Callers resume from a
+`RunOutputCursor` whose sequence is monotonic within the Run.
+
 定义 Runtime 的稳定入口、查询、恢复、命令、Interaction Response、Handle 和监听契约，不包含默认 AgentLoop 实现。
 
 - 允许依赖：`haifa-agent-core`（传递依赖 `common`）和 JDK。

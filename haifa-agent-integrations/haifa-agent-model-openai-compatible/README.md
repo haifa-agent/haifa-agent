@@ -1,5 +1,16 @@
 # Haifa Agent OpenAI-Compatible Model Adapter
 
+## Synchronous and streaming boundaries
+
+The adapter supports synchronous JSON Chat Completions and `text/event-stream`. Streaming requests send
+`stream=true` and `stream_options.include_usage=true`, then aggregate content, reasoning, tool-call arguments,
+and final usage. A normalized `AgentChatResponse` is returned only after identity, finish reason, usage, and tool
+JSON validation. Reasoning is an internal sensitive event and is never projected to public Runtime output.
+
+The parser bounds each SSE event, the total response, delta count, content, reasoning, and tool arguments.
+Consumer cancellation closes the response body and maps to standard `CANCELLED`; synchronous behavior remains
+compatible.
+
 使用 Java 21 `HttpClient` 与 Jackson 实现的同步 OpenAI Chat Completions 协议适配器。首个配置目标为 DeepSeek `deepseek-v4-pro`。
 
 ## 默认配置

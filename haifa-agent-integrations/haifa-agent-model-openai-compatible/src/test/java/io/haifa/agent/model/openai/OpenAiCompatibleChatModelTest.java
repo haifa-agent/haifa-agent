@@ -23,6 +23,8 @@ import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelStatus;
+import io.haifa.agent.model.api.ModelStreamControl;
+import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ProviderStatus;
@@ -38,6 +40,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -94,6 +97,117 @@ class OpenAiCompatibleChatModelTest {
         assertThat(sent.path("thinking").path("type").asText()).isEqualTo("disabled");
         assertThat(sent.path("max_tokens").asInt()).isEqualTo(1024);
         assertThat(authorization.get()).isEqualTo("Bearer test-secret");
+    }
+
+    @Test
+    void streamsReasoningContentAndUsageWithoutReturningRawReasoning() throws Exception {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-1","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"reasoning_content":"secret thought"},"finish_reason":null}]}
+
+                data: {"id":"stream-1","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"hel"},"finish_reason":null}]}
+
+                data: {"id":"stream-1","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}]}
+
+                data: {"id":"stream-1","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3}}
+
+                data: [DONE]
+
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var result = model().invokeStreaming(simpleRequest(), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(result.content()).isEqualTo("hello");
+        assertThat(result.metadata()).containsEntry("reasoningCharacters", 14);
+        assertThat(result.toString()).doesNotContain("secret thought");
+        assertThat(events)
+                .extracting(Object::getClass)
+                .containsExactly(
+                        ModelStreamEvent.Started.class,
+                        ModelStreamEvent.ReasoningDelta.class,
+                        ModelStreamEvent.ContentDelta.class,
+                        ModelStreamEvent.ContentDelta.class,
+                        ModelStreamEvent.UsageReported.class);
+        assertThat(events.get(1).toString()).doesNotContain("secret thought");
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("stream").asBoolean()).isTrue();
+        assertThat(sent.path("stream_options").path("include_usage").asBoolean())
+                .isTrue();
+    }
+
+    @Test
+    void assemblesStreamedToolCallFragmentsByStableIndex() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-tool","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"provider-call-1","type":"function","function":{"name":"weather","arguments":"{\\\"city\\\":"}}]},"finish_reason":null}]}
+
+                data: {"id":"stream-tool","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"Paris\\\"}"}}]},"finish_reason":"tool_calls"}]}
+
+                data: {"id":"stream-tool","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2}}
+
+                data: [DONE]
+
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var result = model().invokeStreaming(simpleRequest(), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(result.finishReason()).isEqualTo(ModelFinishReason.TOOL_CALLS);
+        assertThat(result.toolCalls()).singleElement().satisfies(tool -> {
+            assertThat(tool.providerCorrelationId().value()).isEqualTo("provider-call-1");
+            assertThat(tool.name()).isEqualTo("weather");
+            assertThat(tool.arguments()).containsEntry("city", "Paris");
+        });
+        assertThat(events)
+                .filteredOn(ModelStreamEvent.ToolCallDelta.class::isInstance)
+                .hasSize(2);
+    }
+
+    @Test
+    void closesStreamWhenConsumerCancels() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-cancel","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"first"},"finish_reason":null}]}
+
+                data: {"id":"stream-cancel","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"second"},"finish_reason":"stop"}]}
+
+                data: [DONE]
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(
+                                simpleRequest(),
+                                event -> event instanceof ModelStreamEvent.ContentDelta
+                                        ? ModelStreamControl.CANCEL
+                                        : ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).category())
+                        .isEqualTo(ModelErrorCategory.CANCELLED));
+    }
+
+    @Test
+    void rejectsStreamThatEndsWithoutDoneSentinel() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-cut","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":"stop"}]}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).providerCode())
+                        .isEqualTo("stream_ended_without_done"));
     }
 
     @Test
@@ -499,6 +613,10 @@ class OpenAiCompatibleChatModelTest {
 
         static Response delayedJson(int status, String body, long delayMillis) {
             return new Response(status, "application/json; charset=utf-8", body, delayMillis);
+        }
+
+        static Response sse(String body) {
+            return new Response(200, "text/event-stream; charset=utf-8", body);
         }
     }
 }

@@ -14,25 +14,31 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderDefinition;
+import io.haifa.agent.model.api.ModelStreamControl;
+import io.haifa.agent.model.api.ModelStreamEvent;
+import io.haifa.agent.model.api.ModelStreamSink;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedCredential;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
-/** Synchronous bounded OpenAI Chat Completions adapter. */
+/** Bounded synchronous and SSE OpenAI Chat Completions adapter. */
 public final class OpenAiCompatibleChatModel implements AgentChatModel {
     private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
     private final String adapterType;
@@ -96,7 +102,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         }
         byte[] body;
         try {
-            body = json.writeValueAsBytes(requestBody(request));
+            body = json.writeValueAsBytes(requestBody(request, false));
         } catch (JsonProcessingException | IllegalArgumentException exception) {
             throw failure(
                     request,
@@ -173,6 +179,99 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         }
     }
 
+    @Override
+    public AgentChatResponse invokeStreaming(AgentChatRequest request, ModelStreamSink sink) {
+        Objects.requireNonNull(request, "request must not be null");
+        Objects.requireNonNull(sink, "sink must not be null");
+        validateSelection(request);
+        ResolvedCredential credential;
+        try {
+            credential = credentials.resolve(request.model().credentialRef());
+        } catch (RuntimeException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.AUTHENTICATION_FAILED,
+                    false,
+                    0,
+                    "credential_unavailable",
+                    "model credential is unavailable",
+                    null);
+        }
+        byte[] body;
+        try {
+            body = json.writeValueAsBytes(requestBody(request, true));
+        } catch (JsonProcessingException | IllegalArgumentException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "request_serialization_failed",
+                    "model request cannot be serialized",
+                    exception);
+        }
+        HttpRequest httpRequest = HttpRequest.newBuilder(
+                        chatCompletionsUri(request.model().endpoint()))
+                .timeout(request.timeout())
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .header("Authorization", "Bearer " + credential.value())
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .build();
+        try {
+            HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                byte[] responseBody;
+                try (InputStream stream = response.body()) {
+                    responseBody = stream.readNBytes(maxResponseBytes + 1);
+                }
+                if (responseBody.length > maxResponseBytes) responseBody = new byte[0];
+                throw httpFailure(request, response.statusCode(), responseBody, credential.value());
+            }
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            if (!contentType.toLowerCase(Locale.ROOT).contains("text/event-stream")) {
+                try (InputStream ignored = response.body()) {
+                    // Close the unexpected response without retaining its contents.
+                }
+                throw failure(
+                        request,
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        false,
+                        response.statusCode(),
+                        "unexpected_content_type",
+                        "provider returned a non-SSE response",
+                        null);
+            }
+            try (InputStream stream = response.body()) {
+                return parseStream(request, stream, sink);
+            }
+        } catch (HttpTimeoutException exception) {
+            throw failure(
+                    request, ModelErrorCategory.TIMEOUT, true, 0, "timeout", "model request timed out", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw failure(
+                    request,
+                    ModelErrorCategory.CANCELLED,
+                    false,
+                    0,
+                    "interrupted",
+                    "model request was cancelled",
+                    exception);
+        } catch (ModelInvocationException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.PROVIDER_UNAVAILABLE,
+                    true,
+                    0,
+                    "stream_io_failure",
+                    "model provider stream was interrupted",
+                    exception);
+        }
+    }
+
     private void validateSelection(AgentChatRequest request) {
         if (!adapterType.equals(request.model().adapterType())
                 || !adapterVersion.equals(request.model().adapterVersion())) {
@@ -204,7 +303,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         return URI.create(base + "/chat/completions");
     }
 
-    private Map<String, Object> requestBody(AgentChatRequest request) {
+    private Map<String, Object> requestBody(AgentChatRequest request, boolean stream) {
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model().providerModelId());
         body.put("messages", request.messages().stream().map(this::message).toList());
@@ -214,13 +313,122 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         }
         body.put("max_tokens", request.maxOutputTokens());
         body.put("thinking", Map.of("type", frozenThinking(request)));
-        body.put("stream", false);
+        body.put("stream", stream);
+        if (stream) body.put("stream_options", Map.of("include_usage", true));
         Object responseFormat = request.options().get("response_format");
         if (responseFormat != null) body.put("response_format", validateResponseFormat(responseFormat));
         if (request.options().keySet().stream().anyMatch(key -> !key.equals("response_format"))) {
             throw new IllegalArgumentException("unsupported model invocation option");
         }
         return body;
+    }
+
+    private AgentChatResponse parseStream(AgentChatRequest request, InputStream stream, ModelStreamSink sink)
+            throws IOException {
+        long[] eventIndex = {1};
+        emit(request, sink, new ModelStreamEvent.Started(request.callId(), eventIndex[0]++));
+        StreamAccumulator accumulator = new StreamAccumulator(request);
+        int totalBytes = 0;
+        int eventBytes = 0;
+        StringBuilder data = new StringBuilder();
+        boolean done = false;
+        try (BufferedReader reader =
+                new BufferedReader(new InputStreamReader(stream, java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                int lineBytes = line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1;
+                totalBytes = Math.addExact(totalBytes, lineBytes);
+                eventBytes = Math.addExact(eventBytes, lineBytes);
+                if (totalBytes > maxResponseBytes || eventBytes > Math.min(maxResponseBytes, 1024 * 1024)) {
+                    throw failure(
+                            request,
+                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            false,
+                            200,
+                            "stream_response_too_large",
+                            "provider stream exceeds the configured size limit",
+                            null);
+                }
+                if (line.isEmpty()) {
+                    if (!data.isEmpty()) {
+                        done = dispatchStreamEvent(request, data.toString(), accumulator, sink, eventIndex);
+                        data.setLength(0);
+                        if (done) break;
+                    }
+                    eventBytes = 0;
+                    continue;
+                }
+                if (line.startsWith(":")) continue;
+                if (line.startsWith("data:")) {
+                    String value = line.substring(5);
+                    if (value.startsWith(" ")) value = value.substring(1);
+                    if (!data.isEmpty()) data.append('\n');
+                    data.append(value);
+                }
+            }
+        }
+        if (!done && !data.isEmpty()) {
+            done = dispatchStreamEvent(request, data.toString(), accumulator, sink, eventIndex);
+        }
+        if (!done) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "stream_ended_without_done",
+                    "provider stream ended before completion",
+                    null);
+        }
+        return accumulator.finish();
+    }
+
+    private boolean dispatchStreamEvent(
+            AgentChatRequest request,
+            String data,
+            StreamAccumulator accumulator,
+            ModelStreamSink sink,
+            long[] eventIndex) {
+        if ("[DONE]".equals(data.trim())) return true;
+        JsonNode chunk;
+        try {
+            chunk = json.readTree(data);
+        } catch (JsonProcessingException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "invalid_stream_json",
+                    "provider returned invalid stream JSON",
+                    exception);
+        }
+        if (chunk.path("error").isObject()) {
+            String code = truncate(chunk.path("error").path("code").asText("stream_error"), 80);
+            throw failure(
+                    request,
+                    ModelErrorCategory.UNKNOWN_PROVIDER_ERROR,
+                    false,
+                    200,
+                    code,
+                    "model provider returned an error in the response stream",
+                    null);
+        }
+        accumulator.accept(chunk, sink, eventIndex);
+        return false;
+    }
+
+    private void emit(AgentChatRequest request, ModelStreamSink sink, ModelStreamEvent event) {
+        if (sink.emit(event) == ModelStreamControl.CANCEL) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.CANCELLED,
+                    false,
+                    0,
+                    "stream_cancelled",
+                    "model stream was cancelled",
+                    null);
+        }
     }
 
     private String frozenThinking(AgentChatRequest request) {
@@ -511,6 +719,246 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             case "insufficient_system_resource" -> ModelFinishReason.INSUFFICIENT_SYSTEM_RESOURCE;
             default -> ModelFinishReason.UNKNOWN;
         };
+    }
+
+    private final class StreamAccumulator {
+        private final AgentChatRequest request;
+        private final StringBuilder content = new StringBuilder();
+        private final StringBuilder reasoning = new StringBuilder();
+        private final Map<Integer, StreamToolCall> tools = new LinkedHashMap<>();
+        private String responseId = "";
+        private String actualModelId = "";
+        private String systemFingerprint = "";
+        private ModelFinishReason finalReason;
+        private ModelUsage usage;
+        private int chunks;
+
+        private StreamAccumulator(AgentChatRequest request) {
+            this.request = request;
+        }
+
+        private void accept(JsonNode chunk, ModelStreamSink sink, long[] eventIndex) {
+            chunks++;
+            if (chunks > 100_000) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        false,
+                        200,
+                        "too_many_stream_chunks",
+                        "provider stream contains too many chunks",
+                        null);
+            }
+            responseId = consistentText(chunk, "id", responseId);
+            actualModelId = consistentText(chunk, "model", actualModelId);
+            String fingerprint = chunk.path("system_fingerprint").asText("");
+            if (!fingerprint.isBlank())
+                systemFingerprint = consistent("system_fingerprint", systemFingerprint, fingerprint);
+
+            JsonNode usageNode = chunk.path("usage");
+            if (usageNode.isObject()) {
+                ModelUsage parsed = parseUsage(request, usageNode);
+                if (usage != null && !usage.equals(parsed)) {
+                    throw failure(
+                            request,
+                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            false,
+                            200,
+                            "conflicting_stream_usage",
+                            "provider stream contains conflicting token usage",
+                            null);
+                }
+                usage = parsed;
+                emit(request, sink, new ModelStreamEvent.UsageReported(request.callId(), eventIndex[0]++, parsed));
+            }
+
+            JsonNode choices = chunk.path("choices");
+            if (!choices.isArray()) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        false,
+                        200,
+                        "invalid_stream_choices",
+                        "provider stream choices must be an array",
+                        null);
+            }
+            if (choices.isEmpty()) return;
+            if (choices.size() != 1 || choices.get(0).path("index").asInt(-1) != 0) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        false,
+                        200,
+                        "invalid_stream_choice",
+                        "provider stream must contain exactly choice zero",
+                        null);
+            }
+            JsonNode choice = choices.get(0);
+            String finish = choice.path("finish_reason").asText("");
+            if (!finish.isBlank()) {
+                ModelFinishReason parsed = finishReason(finish);
+                if (finalReason != null && finalReason != parsed) {
+                    throw failure(
+                            request,
+                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            false,
+                            200,
+                            "conflicting_finish_reason",
+                            "provider stream contains conflicting finish reasons",
+                            null);
+                }
+                finalReason = parsed;
+            }
+            JsonNode delta = choice.path("delta");
+            if (!delta.isObject()) return;
+            String text = nullableText(delta.path("content"));
+            if (!text.isEmpty()) {
+                content.append(text);
+                if (content.length() > maxResponseBytes) tooLarge("stream content");
+                emit(request, sink, new ModelStreamEvent.ContentDelta(request.callId(), eventIndex[0]++, text));
+            }
+            String thought = nullableText(delta.path("reasoning_content"));
+            if (!thought.isEmpty()) {
+                reasoning.append(thought);
+                if (reasoning.length() > maxResponseBytes) tooLarge("stream reasoning");
+                emit(request, sink, new ModelStreamEvent.ReasoningDelta(request.callId(), eventIndex[0]++, thought));
+            }
+            JsonNode toolDeltas = delta.path("tool_calls");
+            if (!toolDeltas.isMissingNode() && !toolDeltas.isNull()) {
+                if (!toolDeltas.isArray()) malformed("invalid_stream_tool_calls", "stream tool_calls must be an array");
+                for (JsonNode toolDelta : toolDeltas) acceptTool(toolDelta, sink, eventIndex);
+            }
+        }
+
+        private void acceptTool(JsonNode node, ModelStreamSink sink, long[] eventIndex) {
+            int index = node.path("index").asInt(-1);
+            if (index < 0) malformed("missing_stream_tool_index", "stream tool call is missing its index");
+            StreamToolCall tool = tools.computeIfAbsent(index, StreamToolCall::new);
+            String id = node.path("id").asText("");
+            if (!id.isEmpty()) tool.id = consistent("tool id", tool.id, id);
+            String type = node.path("type").asText("");
+            if (!type.isEmpty() && !"function".equals(type)) {
+                malformed("unsupported_tool_type", "provider returned an unsupported tool type");
+            }
+            JsonNode function = node.path("function");
+            String name = function.path("name").asText("");
+            if (!name.isEmpty()) tool.name = consistent("tool name", tool.name, name);
+            String arguments = nullableText(function.path("arguments"));
+            if (!arguments.isEmpty()) {
+                tool.arguments.append(arguments);
+                if (tool.arguments.length() > Math.min(maxResponseBytes, 1024 * 1024)) {
+                    tooLarge("stream tool arguments");
+                }
+            }
+            emit(
+                    request,
+                    sink,
+                    new ModelStreamEvent.ToolCallDelta(
+                            request.callId(), eventIndex[0]++, 0, index, id, name, arguments));
+        }
+
+        private AgentChatResponse finish() {
+            if (responseId.isBlank() || actualModelId.isBlank()) {
+                malformed("missing_stream_identity", "provider stream is missing response identity");
+            }
+            if (finalReason == null) malformed("missing_finish_reason", "provider stream is missing finish reason");
+            if (finalReason == ModelFinishReason.CONTENT_FILTER) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.CONTENT_REJECTED,
+                        false,
+                        200,
+                        "content_filter",
+                        "provider rejected the generated content",
+                        null);
+            }
+            if (finalReason == ModelFinishReason.INSUFFICIENT_SYSTEM_RESOURCE) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.PROVIDER_UNAVAILABLE,
+                        true,
+                        200,
+                        "insufficient_system_resource",
+                        "provider lacks inference capacity",
+                        null);
+            }
+            if (usage == null) malformed("missing_usage", "provider stream is missing token usage");
+            List<ModelToolCall> calls = tools.values().stream()
+                    .sorted(Comparator.comparingInt(value -> value.index))
+                    .map(StreamToolCall::finish)
+                    .toList();
+            if (content.toString().isBlank() && calls.isEmpty()) {
+                malformed("empty_message", "provider response message is empty");
+            }
+            return new AgentChatResponse(
+                    responseId,
+                    actualModelId,
+                    content.toString(),
+                    calls,
+                    finalReason,
+                    usage,
+                    systemFingerprint,
+                    Map.of("reasoningCharacters", reasoning.length()));
+        }
+
+        private String consistentText(JsonNode node, String field, String current) {
+            String value = node.path(field).asText("");
+            return value.isBlank() ? current : consistent(field, current, value);
+        }
+
+        private String consistent(String field, String current, String value) {
+            if (!current.isEmpty() && !current.equals(value)) {
+                malformed(
+                        "conflicting_stream_" + field.replace(' ', '_'), "provider stream contains conflicting fields");
+            }
+            return value;
+        }
+
+        private String nullableText(JsonNode value) {
+            return value.isMissingNode() || value.isNull() ? "" : value.asText("");
+        }
+
+        private void tooLarge(String field) {
+            malformed("stream_field_too_large", field + " exceeds the configured size limit");
+        }
+
+        private void malformed(String code, String message) {
+            throw failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 200, code, message, null);
+        }
+
+        private final class StreamToolCall {
+            private final int index;
+            private String id = "";
+            private String name = "";
+            private final StringBuilder arguments = new StringBuilder();
+
+            private StreamToolCall(int index) {
+                this.index = index;
+            }
+
+            private ModelToolCall finish() {
+                if (id.isBlank() || name.isBlank() || arguments.isEmpty()) {
+                    malformed("incomplete_stream_tool_call", "provider returned an incomplete tool call");
+                }
+                try {
+                    JsonNode parsed = json.readTree(arguments.toString());
+                    if (!parsed.isObject()) throw new JsonProcessingException("tool arguments must be an object") {};
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> values = json.convertValue(parsed, LinkedHashMap.class);
+                    return new ModelToolCall(new ProviderToolCallCorrelationId(id), name, values);
+                } catch (JsonProcessingException | IllegalArgumentException exception) {
+                    throw failure(
+                            request,
+                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            false,
+                            200,
+                            "invalid_tool_arguments",
+                            "provider returned invalid tool arguments",
+                            exception);
+                }
+            }
+        }
     }
 
     private ModelInvocationException httpFailure(AgentChatRequest request, int status, byte[] body, String credential) {

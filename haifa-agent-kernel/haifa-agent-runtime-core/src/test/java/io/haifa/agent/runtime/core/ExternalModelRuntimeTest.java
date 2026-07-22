@@ -24,7 +24,9 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
@@ -118,6 +120,9 @@ class ExternalModelRuntimeTest {
                 .timeProvider(time)
                 .trace(traces::add)
                 .build();
+        runtime.addOutputListener(ignored -> {
+            throw new IllegalStateException("listener isolation");
+        });
 
         var accepted = runtime.start(request("external-run"));
         var frozen = store.configuration(
@@ -128,6 +133,18 @@ class ExternalModelRuntimeTest {
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(runtime.find(accepted.runId()).orElseThrow().output()).contains("done");
+        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100))
+                .extracting(event -> event.type())
+                .containsExactly(
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED,
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_DELTA,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED);
+        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100))
+                .filteredOn(event -> event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA)
+                .singleElement()
+                .satisfies(event -> assertThat(event.textDelta()).isEqualTo("done"));
         assertThat(calls).hasValue(2);
         assertThat(store.find(accepted.runId()).orElseThrow().usage().inputTokens())
                 .isEqualTo(25);
