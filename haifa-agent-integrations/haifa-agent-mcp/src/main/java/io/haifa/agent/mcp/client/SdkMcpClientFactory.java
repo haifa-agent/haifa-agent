@@ -51,7 +51,12 @@ public final class SdkMcpClientFactory implements McpClientFactory {
                                 .connectTimeout(http.connectTimeout())
                                 .followRedirects(HttpClient.Redirect.NEVER),
                         http.maxBodyBytes(),
-                        http.maxHeaderBytes()))
+                        http.maxHeaderBytes(),
+                        server.connectionPolicy().maxReconnectAttempts(),
+                        java.time.Duration.ofMillis(25),
+                        server.discoveryCredentials().stream()
+                                .map(injection -> injection.targetName().toLowerCase(java.util.Locale.ROOT))
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet())))
                 .requestBuilder(HttpRequest.newBuilder().timeout(http.requestTimeout()))
                 .resumableStreams(true)
                 .openConnectionOnStartup(false)

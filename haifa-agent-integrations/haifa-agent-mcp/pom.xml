@@ -64,6 +64,16 @@
             <artifactId>archunit</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-execution-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-sandbox-host</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
