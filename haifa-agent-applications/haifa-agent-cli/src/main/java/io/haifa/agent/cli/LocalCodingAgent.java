@@ -12,6 +12,7 @@ import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.run.AgentRunBudget;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -53,6 +54,7 @@ import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.net.http.HttpClient;
@@ -63,6 +65,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Builds an in-process Coding Agent over one explicitly selected local workspace. */
 final class LocalCodingAgent {
@@ -71,16 +74,19 @@ final class LocalCodingAgent {
     private final TimeProvider time;
     private final AgentRuntime runtime;
     private final InMemoryInteractionPort interactions;
+    private final List<RuntimeTraceEvent> traces;
 
     private LocalCodingAgent(
             IdentifierGenerator identifiers,
             TimeProvider time,
             AgentRuntime runtime,
-            InMemoryInteractionPort interactions) {
+            InMemoryInteractionPort interactions,
+            List<RuntimeTraceEvent> traces) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
         this.interactions = interactions;
+        this.traces = traces;
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration) {
@@ -153,9 +159,11 @@ final class LocalCodingAgent {
                 false,
                 4 * 1024 * 1024);
         ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
+        List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
         var runtime = new RuntimeCoreBuilder()
                 .identifierGenerator(identifiers)
                 .timeProvider(time)
+                .trace(traces::add)
                 .interactions(interactions)
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
@@ -196,7 +204,7 @@ final class LocalCodingAgent {
                                 60_000),
                         modelSnapshot))
                 .build();
-        return new LocalCodingAgent(identifiers, time, runtime, interactions);
+        return new LocalCodingAgent(identifiers, time, runtime, interactions, traces);
     }
 
     AgentRunSnapshot start(String message) {
@@ -228,7 +236,19 @@ final class LocalCodingAgent {
         return time;
     }
 
-    private static ResolvedModelSnapshot modelSnapshot(CliConfiguration configuration) {
+    long reasoningTokens(AgentRunId runId) {
+        return traces.stream()
+                .filter(event ->
+                        event.runId().equals(runId) && event.operation().equals("model.invoke"))
+                .map(RuntimeTraceEvent::safeAttributes)
+                .map(attributes -> attributes.get("reasoningTokens"))
+                .filter(Number.class::isInstance)
+                .map(Number.class::cast)
+                .mapToLong(Number::longValue)
+                .sum();
+    }
+
+    static ResolvedModelSnapshot modelSnapshot(CliConfiguration configuration) {
         CliConfiguration.Model model = configuration.model();
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
@@ -240,13 +260,21 @@ final class LocalCodingAgent {
                 "1.0.0",
                 model.endpoint(),
                 new CredentialRef(model.credentialRef()),
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT),
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING),
                 131_072,
                 8_192,
                 Map.of(
                         "dialect_id", "deepseek-openai-chat",
                         "dialect_version", "1.0",
-                        "thinking", "disabled"),
-                Map.of("thinking", "disabled"));
+                        "thinking", "enabled",
+                        "reasoning_effort", "high"),
+                Map.of(
+                        "thinking", "enabled",
+                        "reasoning_effort", "high",
+                        "requires_reasoning_continuation", true));
     }
 }
