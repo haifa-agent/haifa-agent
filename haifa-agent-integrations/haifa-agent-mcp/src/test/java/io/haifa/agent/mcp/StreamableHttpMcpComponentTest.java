@@ -7,10 +7,14 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.haifa.agent.credential.api.CredentialDefinitionId;
+import io.haifa.agent.credential.api.CredentialExposureMode;
+import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.mcp.client.McpConnectionManager;
 import io.haifa.agent.mcp.client.McpConnectionState;
 import io.haifa.agent.mcp.client.McpTelemetry;
 import io.haifa.agent.mcp.client.SdkMcpClientFactory;
+import io.haifa.agent.mcp.config.McpCredentialInjection;
 import io.haifa.agent.mcp.transport.http.BoundedHttpClientBuilder;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
@@ -169,6 +173,45 @@ class StreamableHttpMcpComponentTest {
     }
 
     @Test
+    void mapsAuthorizationResponsesToUnsupportedFlowOrReauthenticationWithoutLeakingSecrets() throws Exception {
+        try (FaultStubServer stub = new FaultStubServer(Fault.AUTHORIZATION_REQUIRED)) {
+            var client = new SdkMcpClientFactory()
+                    .create(McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now")), McpTestFixtures.IDENTITY);
+
+            assertThatThrownBy(() -> client.initialize(List.of()))
+                    .isInstanceOf(ToolInvocationException.class)
+                    .satisfies(error -> {
+                        var invocation = (ToolInvocationException) error;
+                        assertThat(invocation.failureCode()).isEqualTo("MCP_AUTH_FLOW_UNSUPPORTED");
+                        assertThat(invocation.dispatchState()).isEqualTo(ToolDispatchState.ACKNOWLEDGED);
+                    });
+        }
+        try (FaultStubServer stub = new FaultStubServer(Fault.CREDENTIAL_REJECTED)) {
+            var requirement = new CredentialRequirement(
+                    new CredentialDefinitionId("utility-token"),
+                    "utility authentication",
+                    Set.of("mcp:tools:list", "mcp:tools:call"),
+                    CredentialExposureMode.HTTP_HEADER);
+            var injection = new McpCredentialInjection(requirement, "Authorization", "Bearer ");
+            var definition = McpTestFixtures.withDiscoveryCredentials(
+                    McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now")), List.of(injection));
+            var lease = McpTestFixtures.lease("utility-token-binding", "never-log-this-secret");
+            var client = new SdkMcpClientFactory().create(definition, McpTestFixtures.IDENTITY);
+
+            assertThatThrownBy(() -> client.initialize(List.of(lease)))
+                    .isInstanceOf(ToolInvocationException.class)
+                    .satisfies(error -> {
+                        var invocation = (ToolInvocationException) error;
+                        assertThat(invocation.failureCode()).isEqualTo("MCP_REAUTH_REQUIRED");
+                        assertThat(invocation.dispatchState()).isEqualTo(ToolDispatchState.ACKNOWLEDGED);
+                        assertThat(invocation)
+                                .hasMessageNotContaining("never-log-this-secret")
+                                .hasNoCause();
+                    });
+        }
+    }
+
+    @Test
     void invalidatesUnknownSessionAndReinitializesWithoutReplayingDispatchedCall() throws Exception {
         try (FaultStubServer stub = new FaultStubServer(Fault.SESSION_INVALID_ON_CALL)) {
             var definition = McpTestFixtures.httpServer(stub.endpoint(), Set.of("time_now"));
@@ -269,6 +312,8 @@ class StreamableHttpMcpComponentTest {
         OVERSIZE_HEADERS,
         MALFORMED_INITIALIZE,
         SLOW_INITIALIZE,
+        AUTHORIZATION_REQUIRED,
+        CREDENTIAL_REJECTED,
         SESSION_INVALID_ON_CALL,
         RESUMABLE_NOTIFICATION
     }
@@ -360,6 +405,11 @@ class StreamableHttpMcpComponentTest {
 
         private void handleInitialize(HttpExchange exchange, Map<String, Object> request) throws IOException {
             int number = initializeCount.incrementAndGet();
+            if (fault == Fault.AUTHORIZATION_REQUIRED || fault == Fault.CREDENTIAL_REJECTED) {
+                exchange.sendResponseHeaders(fault == Fault.AUTHORIZATION_REQUIRED ? 401 : 403, -1);
+                exchange.close();
+                return;
+            }
             if (fault == Fault.SLOW_INITIALIZE) {
                 try {
                     Thread.sleep(150);
