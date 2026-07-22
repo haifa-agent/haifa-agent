@@ -164,7 +164,7 @@ class HostSandboxTest {
             assertThat(Files.readString(root.resolve("result.txt"))).containsIgnoringCase("shell-ok");
             assertThat(new String(streamed.toByteArray(), java.nio.charset.StandardCharsets.UTF_8))
                     .containsIgnoringCase("shell-ok");
-            assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+            assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8).replace("\r\n", "\n"))
                     .endsWithIgnoringCase("ell-ok\n");
         }
 

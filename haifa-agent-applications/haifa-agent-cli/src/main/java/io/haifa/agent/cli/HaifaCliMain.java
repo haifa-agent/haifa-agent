@@ -1,5 +1,7 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.runtime.api.AgentRunOutputEventType;
+import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
@@ -10,6 +12,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 /** Entry point for the one-shot Haifa coding-agent command. */
 public final class HaifaCliMain {
@@ -35,7 +39,9 @@ public final class HaifaCliMain {
             if (!workspace.isAbsolute()) workspace = workspace.toAbsolutePath().normalize();
             CliConfiguration configuration = new CliConfigurationLoader().load(parsed, workspace);
             try (LocalCodingAgent agent = LocalCodingAgent.create(workspace, configuration, output)) {
+                AtomicBoolean streamed = attachStreamingOutput(agent.runtime()::addOutputListener, output);
                 if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
+                if (parsed.verbose()) output.println("DeepSeek thinking enabled (effort=high). Waiting for stream...");
                 var accepted = agent.start(parsed.message().orElseThrow());
                 if (parsed.verbose()) output.println("Run " + accepted.runId().value() + " submitted.");
                 Thread shutdownHook = Thread.ofPlatform()
@@ -53,7 +59,9 @@ public final class HaifaCliMain {
                     agent.cancel(accepted.runId());
                     completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(3));
                 }
-                completed.output().ifPresent(output::println);
+                if (streamed.get()) output.println();
+                else completed.output().ifPresent(output::println);
+                if (parsed.verbose()) output.println("Reasoning tokens: " + agent.reasoningTokens(accepted.runId()));
                 if (completed.status().isTerminal()
                         && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
                     return 0;
@@ -73,6 +81,18 @@ public final class HaifaCliMain {
             error.println("Unable to run haifa-cli: " + exception.getClass().getSimpleName());
             return 1;
         }
+    }
+
+    static AtomicBoolean attachStreamingOutput(Consumer<AgentRunOutputListener> registrar, PrintStream output) {
+        AtomicBoolean streamed = new AtomicBoolean();
+        registrar.accept(event -> {
+            if (event.type() != AgentRunOutputEventType.ASSISTANT_TEXT_DELTA
+                    || event.textDelta().isEmpty()) return;
+            if (streamed.compareAndSet(false, true)) output.print("[stream] ");
+            output.print(event.textDelta());
+            output.flush();
+        });
+        return streamed;
     }
 
     private static io.haifa.agent.runtime.api.AgentRunSnapshot await(

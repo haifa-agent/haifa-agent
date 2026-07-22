@@ -7,8 +7,12 @@ import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelCallId;
+import io.haifa.agent.model.api.ModelStreamControl;
+import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
+import io.haifa.agent.runtime.core.control.RunControlRegistry;
+import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.time.Duration;
@@ -23,14 +27,22 @@ public final class FrozenModelInvoker {
     private final IdentifierGenerator ids;
     private final ModelMessageAssembler messages;
     private final AgentChatResponseMapper responses;
+    private final RuntimeModelOutputPublisher output;
+    private final RunControlRegistry controls;
 
     public FrozenModelInvoker(
-            RuntimeStateRepository state, Map<ModelAdapterKey, AgentChatModel> adapters, IdentifierGenerator ids) {
+            RuntimeStateRepository state,
+            Map<ModelAdapterKey, AgentChatModel> adapters,
+            IdentifierGenerator ids,
+            RuntimeModelOutputPublisher output,
+            RunControlRegistry controls) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
         this.messages = new ModelMessageAssembler(state);
         this.responses = new AgentChatResponseMapper(ids);
+        this.output = Objects.requireNonNull(output, "output must not be null");
+        this.controls = Objects.requireNonNull(controls, "controls must not be null");
     }
 
     public FrozenModelBinding bind(AgentRun run) {
@@ -76,12 +88,26 @@ public final class FrozenModelInvoker {
                 iteration,
                 attempt,
                 binding.configuration().model(),
-                messages.assemble(run.id(), context),
+                messages.assemble(run.id(), context, binding.configuration().model()),
                 context.tools(),
                 Math.toIntExact(context.budget().outputReserve()),
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
                 Map.of());
-        AgentChatResponse response = binding.chatModel().invoke(request);
+        output.started(run.id(), callId.value(), attempt, iteration);
+        AgentChatResponse response;
+        try {
+            response = binding.chatModel().invokeStreaming(request, event -> {
+                if (controls.signal(run.id()) != RunControlSignal.NONE) return ModelStreamControl.CANCEL;
+                if (event instanceof ModelStreamEvent.ContentDelta content) {
+                    output.content(run.id(), callId.value(), attempt, content.delta());
+                }
+                return ModelStreamControl.CONTINUE;
+            });
+            output.committed(run.id(), callId.value(), attempt, iteration);
+        } catch (RuntimeException exception) {
+            output.failed(run.id(), callId.value(), attempt, iteration);
+            throw exception;
+        }
         var decision = responses.map(request, response, binding.tools());
         return new ModelInvocationResult(
                 decision,
@@ -109,6 +135,9 @@ public final class FrozenModelInvoker {
                         Map.entry("finishReason", response.finishReason().name()),
                         Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
                         Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
-                        Map.entry("reasoningTokens", response.usage().reasoningTokens())));
+                        Map.entry("reasoningTokens", response.usage().reasoningTokens())),
+                callId.value(),
+                binding.configuration().model(),
+                response.reasoning());
     }
 }

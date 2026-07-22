@@ -1,5 +1,19 @@
 # Haifa Agent Runtime Core
 
+## Provider continuation
+
+When an assistant response contains both reasoning and Tool Calls, Runtime atomically associates a safe
+continuation reference with the assistant Tool Call message and stores the reasoning as AES-GCM protected data.
+The next model request resolves it only after provider, model, configuration digest, message, and tool correlation
+validation. Checkpoints contain refs/digests/versions only and validate payload integrity before resume.
+
+## Model stream
+
+`FrozenModelInvoker` 消费 Provider-neutral `ModelStreamEvent`。公共 Runtime 只持久化/发布 answer content、
+finish 与 usage；reasoning delta 不进入公共输出。输出按 Run 维护稳定 cursor，可重放并支持 listener，监听器
+失败不回滚已提交状态。Provider 要求 Tool reasoning 连续性时，只有冻结 profile 显式声明后 adapter 才把
+Tool Call reasoning 交给受保护 continuation。
+
 纯 Java 的 Agent 执行内核，负责 Bootstrap、`AgentRunExecutionAttempt`、AgentLoop、工具管线、完成门禁、检查点、恢复、控制命令以及线程安全的内存存储实现。
 
 - 依赖方向：`runtime-core -> context/model-api/runtime-api/tool-api/credential-api -> core -> common`；Runtime 不依赖 Tool Core 或 Provider Integration。

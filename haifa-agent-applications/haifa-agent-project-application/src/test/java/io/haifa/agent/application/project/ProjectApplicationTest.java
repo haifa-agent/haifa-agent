@@ -35,11 +35,14 @@ import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunListener;
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
+import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandResult;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
@@ -297,6 +300,14 @@ class ProjectApplicationTest {
 
         @Override
         public void addListener(AgentRunListener listener) {}
+
+        @Override
+        public List<AgentRunOutputEvent> outputEvents(AgentRunId runId, RunOutputCursor after, int limit) {
+            return List.of();
+        }
+
+        @Override
+        public void addOutputListener(AgentRunOutputListener listener) {}
     }
 
     private static ToolProvider providerThatMustNotRun() {

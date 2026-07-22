@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -24,7 +25,10 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
+import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
@@ -32,6 +36,8 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
@@ -72,13 +78,18 @@ class ExternalModelRuntimeTest {
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unpriced(10, 3),
                         "fp-test",
-                        Map.of());
+                        Map.of(),
+                        Optional.of(SensitiveModelReasoning.of("private tool reasoning")));
             }
             assertThat(request.messages())
                     .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
                             && message.toolCalls().stream().anyMatch(toolCall -> toolCall.providerCorrelationId()
                                     .value()
-                                    .equals("provider-call-1")))
+                                    .equals("provider-call-1"))
+                            && message.reasoning()
+                                    .orElseThrow()
+                                    .use(java.util.function.Function.identity())
+                                    .equals("private tool reasoning"))
                     .anyMatch(message -> message.role() == ModelMessageRole.TOOL
                             && message.providerCorrelationId()
                                     .orElseThrow()
@@ -118,6 +129,9 @@ class ExternalModelRuntimeTest {
                 .timeProvider(time)
                 .trace(traces::add)
                 .build();
+        runtime.addOutputListener(ignored -> {
+            throw new IllegalStateException("listener isolation");
+        });
 
         var accepted = runtime.start(request("external-run"));
         var frozen = store.configuration(
@@ -128,7 +142,32 @@ class ExternalModelRuntimeTest {
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(runtime.find(accepted.runId()).orElseThrow().output()).contains("done");
+        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100))
+                .extracting(event -> event.type())
+                .containsExactly(
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED,
+                        AgentRunOutputEventType.RUN_OUTPUT_STARTED,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_DELTA,
+                        AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED);
+        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100))
+                .filteredOn(event -> event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA)
+                .singleElement()
+                .satisfies(event -> assertThat(event.textDelta()).isEqualTo("done"));
         assertThat(calls).hasValue(2);
+        assertThat(store.modelContinuations(accepted.runId())).singleElement().satisfies(record -> {
+            assertThat(record.reference().digest()).startsWith("sha256:");
+            assertThat(record.toString()).doesNotContain("private tool reasoning");
+        });
+        var continuation = store.modelContinuations(accepted.runId()).getFirst();
+        assertThatThrownBy(() -> store.resolveContinuation(
+                        continuation.assistantMessageId(), frozen.model(), Set.of("wrong-correlation")))
+                .isInstanceOf(ModelContinuationException.class)
+                .satisfies(error -> assertThat(((ModelContinuationException) error).failure())
+                        .isEqualTo(ModelContinuationFailure.BINDING_MISMATCH));
+        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100)
+                        .toString())
+                .doesNotContain("private tool reasoning");
         assertThat(store.find(accepted.runId()).orElseThrow().usage().inputTokens())
                 .isEqualTo(25);
         assertThat(store.find(accepted.runId()).orElseThrow().usage().outputTokens())

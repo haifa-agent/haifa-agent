@@ -3,11 +3,26 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.model.api.ModelCapability;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 class CliConfigurationLoaderTest {
+    @Test
+    void freezesDeepSeekThinkingForCliRuns() {
+        var snapshot = LocalCodingAgent.modelSnapshot(CliConfiguration.defaults());
+
+        assertThat(snapshot.capabilities()).contains(ModelCapability.REASONING);
+        assertThat(snapshot.providerOptions())
+                .containsEntry("thinking", "enabled")
+                .containsEntry("reasoning_effort", "high");
+        assertThat(snapshot.invocationOptions())
+                .containsEntry("thinking", "enabled")
+                .containsEntry("reasoning_effort", "high")
+                .containsEntry("requires_reasoning_continuation", true);
+    }
+
     @Test
     void loadsExplicitYamlConfiguration() throws Exception {
         Path configuration = Files.createTempFile("haifa-cli", ".yaml");

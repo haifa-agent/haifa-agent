@@ -14,12 +14,15 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.RunTerminationReason;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunListener;
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
+import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
@@ -39,6 +42,7 @@ import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
+import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.IdempotencyRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
@@ -78,6 +82,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final TimeProvider time;
     private final RunAwaiter awaiter;
     private final ResumeCoordinator resumeCoordinator;
+    private final RuntimeModelOutputPublisher modelOutput;
 
     public DefaultAgentRuntime(
             CallerContextProvider callers,
@@ -98,7 +103,8 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             IdentifierGenerator ids,
             TimeProvider time,
             RunAwaiter awaiter,
-            ResumeCoordinator resumeCoordinator) {
+            ResumeCoordinator resumeCoordinator,
+            RuntimeModelOutputPublisher modelOutput) {
         this.callers = Objects.requireNonNull(callers);
         this.bootstrapper = Objects.requireNonNull(bootstrapper);
         this.runs = Objects.requireNonNull(runs);
@@ -118,6 +124,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.time = Objects.requireNonNull(time);
         this.awaiter = Objects.requireNonNull(awaiter);
         this.resumeCoordinator = Objects.requireNonNull(resumeCoordinator);
+        this.modelOutput = Objects.requireNonNull(modelOutput);
     }
 
     @Override
@@ -324,6 +331,18 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     @Override
     public void addListener(AgentRunListener listener) {
         transitions.addListener(listener);
+    }
+
+    @Override
+    public List<AgentRunOutputEvent> outputEvents(AgentRunId runId, RunOutputCursor after, int limit) {
+        AgentRun run = requireRun(runId);
+        requireCaller(run);
+        return modelOutput.after(runId, after, limit);
+    }
+
+    @Override
+    public void addOutputListener(AgentRunOutputListener listener) {
+        modelOutput.addListener(listener);
     }
 
     /** Reclaims a run whose physical executor disappeared after durable checkpointing. */

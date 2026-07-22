@@ -13,13 +13,15 @@ public record ModelMessage(
         List<ModelToolCall> toolCalls,
         Optional<ProviderToolCallCorrelationId> providerCorrelationId,
         Map<String, Object> toolResultData,
-        boolean toolResultTruncated) {
+        boolean toolResultTruncated,
+        Optional<SensitiveModelReasoning> reasoning) {
     public ModelMessage {
         role = Objects.requireNonNull(role, "role must not be null");
         content = Objects.requireNonNull(content, "content must not be null");
         toolCalls = List.copyOf(Objects.requireNonNull(toolCalls, "toolCalls must not be null"));
         providerCorrelationId = Objects.requireNonNull(providerCorrelationId, "providerCorrelationId must not be null");
         toolResultData = ModelValues.map(toolResultData, "toolResultData");
+        reasoning = Objects.requireNonNull(reasoning, "reasoning must not be null");
         if (role == ModelMessageRole.ASSISTANT && content.isBlank() && toolCalls.isEmpty()) {
             throw new IllegalArgumentException("assistant message must contain content or tool calls");
         }
@@ -35,6 +37,19 @@ public record ModelMessage(
         if (role != ModelMessageRole.TOOL && (!toolResultData.isEmpty() || toolResultTruncated)) {
             throw new IllegalArgumentException("only tool messages may contain tool result data");
         }
+        if (role != ModelMessageRole.ASSISTANT && reasoning.isPresent()) {
+            throw new IllegalArgumentException("only assistant messages may contain reasoning");
+        }
+    }
+
+    public ModelMessage(
+            ModelMessageRole role,
+            String content,
+            List<ModelToolCall> toolCalls,
+            Optional<ProviderToolCallCorrelationId> providerCorrelationId,
+            Map<String, Object> toolResultData,
+            boolean toolResultTruncated) {
+        this(role, content, toolCalls, providerCorrelationId, toolResultData, toolResultTruncated, Optional.empty());
     }
 
     public ModelMessage(
@@ -64,5 +79,17 @@ public record ModelMessage(
 
     public static ModelMessage assistant(String content, List<ModelToolCall> toolCalls) {
         return new ModelMessage(ModelMessageRole.ASSISTANT, content, toolCalls, Optional.empty());
+    }
+
+    public static ModelMessage assistant(
+            String content, List<ModelToolCall> toolCalls, SensitiveModelReasoning reasoning) {
+        return new ModelMessage(
+                ModelMessageRole.ASSISTANT,
+                content,
+                toolCalls,
+                Optional.empty(),
+                Map.of(),
+                false,
+                Optional.of(reasoning));
     }
 }

@@ -185,12 +185,14 @@ class DeepSeekRuntimeIntegrationTest {
             assertThat(calls).hasValue(2);
             assertThat(requests).hasSize(2).allSatisfy(request -> {
                 assertThat(request.path("model").asText()).isEqualTo("deepseek-v4-pro");
-                assertThat(request.path("stream").asBoolean()).isFalse();
-                assertThat(request.path("thinking").path("type").asText()).isEqualTo("disabled");
+                assertThat(request.path("stream").asBoolean()).isTrue();
+                assertThat(request.path("thinking").path("type").asText()).isEqualTo("enabled");
+                assertThat(request.path("reasoning_effort").asText()).isEqualTo("high");
             });
             JsonNode second = requests.get(1);
             assertThat(second.path("messages").toString()).contains("provider-tool-1");
             assertThat(second.path("messages").toString()).contains("echoed: hello");
+            assertThat(second.path("messages").toString()).contains("private runtime reasoning");
             JsonNode toolMessage = java.util.stream.StreamSupport.stream(
                             second.path("messages").spliterator(), false)
                     .filter(message -> message.path("role").asText().equals("tool"))
@@ -223,18 +225,25 @@ class DeepSeekRuntimeIntegrationTest {
         int call = calls.incrementAndGet();
         String body = call == 1
                 ? """
-                  {"id":"stub-1","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"tool_calls",
-                   "message":{"role":"assistant","content":null,"tool_calls":[{"id":"provider-tool-1","type":"function",
-                   "function":{"name":"echo","arguments":"{\\"text\\":\\"hello\\"}"}}]}}],
-                   "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}
+                  data: {"id":"stub-1","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":null,"delta":{"reasoning_content":"private runtime reasoning"}}]}
+
+                  data: {"id":"stub-1","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"tool_calls","delta":{"tool_calls":[{"index":0,"id":"provider-tool-1","type":"function","function":{"name":"echo","arguments":"{\\"text\\":\\"hello\\"}"}}]}}]}
+
+                  data: {"id":"stub-1","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":2}}}
+
+                  data: [DONE]
+
                   """
                 : """
-                  {"id":"stub-2","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"stop",
-                   "message":{"role":"assistant","content":"adapter done"}}],
-                   "usage":{"prompt_tokens":15,"completion_tokens":4,"total_tokens":19}}
+                  data: {"id":"stub-2","model":"deepseek-v4-pro","choices":[{"index":0,"finish_reason":"stop","delta":{"content":"adapter done"}}]}
+
+                  data: {"id":"stub-2","model":"deepseek-v4-pro","choices":[],"usage":{"prompt_tokens":15,"completion_tokens":4}}
+
+                  data: [DONE]
+
                   """;
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
         exchange.sendResponseHeaders(200, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
