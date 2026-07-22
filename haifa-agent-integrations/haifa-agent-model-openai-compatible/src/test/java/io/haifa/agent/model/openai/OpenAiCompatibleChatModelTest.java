@@ -112,7 +112,8 @@ class OpenAiCompatibleChatModelTest {
         List<ModelMessage> messages = List.of(
                 ModelMessage.text(ModelMessageRole.USER, "weather"),
                 ModelMessage.assistant("", List.of(previous)),
-                ModelMessage.tool(new ProviderToolCallCorrelationId("call-1"), "sunny"));
+                ModelMessage.tool(
+                        new ProviderToolCallCorrelationId("call-1"), "sunny", Map.of("temperatureCelsius", 24), true));
         ModelToolSpecification tool = new ModelToolSpecification(
                 "weather",
                 "1.0",
@@ -141,6 +142,12 @@ class OpenAiCompatibleChatModelTest {
                         .asText())
                 .isEqualTo("call-1");
         assertThat(sent.path("messages").get(2).path("tool_call_id").asText()).isEqualTo("call-1");
+        JsonNode toolResult =
+                json.readTree(sent.path("messages").get(2).path("content").asText());
+        assertThat(toolResult.path("summary").asText()).isEqualTo("sunny");
+        assertThat(toolResult.path("structuredData").path("temperatureCelsius").asInt())
+                .isEqualTo(24);
+        assertThat(toolResult.path("truncated").asBoolean()).isTrue();
         assertThat(sent.path("tools")
                         .get(0)
                         .path("function")

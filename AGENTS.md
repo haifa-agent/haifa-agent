@@ -15,7 +15,7 @@
 ## Git 分支与交付规则
 
 - 开发功能特性必须使用以 `feat-` 开头的特性分支，例如 `feat-agent-memory`；不要直接在 `main` 分支上开发。
-- 功能开发完成并通过验证后，向 GitHub 发起 Pull Request。
+- 功能开发完成并通过验证后，向 GitHub 发起 Pull Request；除非当前任务明确指定其他目标，PR 的目标分支必须是 `dev`。
 
 ## 事实来源与冲突处理
 

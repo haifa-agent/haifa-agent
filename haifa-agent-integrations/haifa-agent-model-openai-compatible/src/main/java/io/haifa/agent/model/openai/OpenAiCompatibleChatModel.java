@@ -12,6 +12,7 @@ import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
+import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
@@ -270,7 +271,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     private Map<String, Object> message(ModelMessage message) {
         LinkedHashMap<String, Object> mapped = new LinkedHashMap<>();
         mapped.put("role", message.role().name().toLowerCase(Locale.ROOT));
-        mapped.put("content", message.content());
+        mapped.put("content", messageContent(message));
         if (!message.toolCalls().isEmpty()) {
             mapped.put(
                     "tool_calls",
@@ -278,6 +279,22 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         }
         message.providerCorrelationId().ifPresent(value -> mapped.put("tool_call_id", value.value()));
         return mapped;
+    }
+
+    private String messageContent(ModelMessage message) {
+        if (message.role() != ModelMessageRole.TOOL
+                || (message.toolResultData().isEmpty() && !message.toolResultTruncated())) {
+            return message.content();
+        }
+        LinkedHashMap<String, Object> content = new LinkedHashMap<>();
+        content.put("summary", message.content());
+        content.put("structuredData", message.toolResultData());
+        content.put("truncated", message.toolResultTruncated());
+        try {
+            return json.writeValueAsString(content);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalArgumentException("tool result content cannot be serialized", exception);
+        }
     }
 
     private Map<String, Object> toolCall(ModelToolCall call) {

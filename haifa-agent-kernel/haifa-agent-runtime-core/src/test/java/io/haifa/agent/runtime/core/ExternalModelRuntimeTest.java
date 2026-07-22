@@ -84,7 +84,9 @@ class ExternalModelRuntimeTest {
                                     .orElseThrow()
                                     .value()
                                     .equals("provider-call-1")
-                            && message.content().equals("echoed: hello"));
+                            && message.content().equals("echoed: hello")
+                            && message.toolResultData().equals(Map.of("text", "hello"))
+                            && !message.toolResultTruncated());
             return new AgentChatResponse(
                     "response-2",
                     "deepseek-v4-pro",
