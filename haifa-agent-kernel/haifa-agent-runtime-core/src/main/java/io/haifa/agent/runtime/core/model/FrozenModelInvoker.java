@@ -60,7 +60,7 @@ public final class FrozenModelInvoker {
                 schema.id(),
                 schema.version(),
                 schema.document(),
-                true);
+                false);
     }
 
     public ModelInvocationResult invoke(FrozenModelBinding binding, AgentRun run, int iteration, AgentContext context) {

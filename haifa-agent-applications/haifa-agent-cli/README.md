@@ -35,6 +35,8 @@ runtime:
   maxWallTimeMillis: 300000
 ```
 
+`tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_write` 等 Provider-safe function name。
+
 写文件、删除文件和移动文件默认要求控制台确认。`--approval auto` 仅适用于受信任的本地工作区；`--approval deny` 会拒绝这些操作。
 
 本期不包含 Terminal UI、Git/命令工具装配、跨进程会话恢复或持久化运行记录。

@@ -18,6 +18,8 @@ class ToolIdentityTest {
     void rejectsMalformedNamesAliasesProvidersAndSemanticVersions() {
         assertThrows(IllegalArgumentException.class, () -> new ToolName("workspace/file/read"));
         assertThrows(IllegalArgumentException.class, () -> new ToolAlias("file read"));
+        assertThrows(IllegalArgumentException.class, () -> new ToolAlias("file.read"));
+        assertThrows(IllegalArgumentException.class, () -> new ToolAlias("a".repeat(65)));
         assertThrows(IllegalArgumentException.class, () -> new ToolProviderId("mcp/server"));
         assertThrows(IllegalArgumentException.class, () -> new SemanticVersion("1.0"));
         assertThrows(IllegalArgumentException.class, () -> new SemanticVersion("01.0.0"));

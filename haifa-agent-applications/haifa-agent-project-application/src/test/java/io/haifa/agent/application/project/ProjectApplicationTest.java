@@ -82,7 +82,7 @@ class ProjectApplicationTest {
                 provider);
         assertThat(disclosed.snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
-                .containsExactly("execution.run", "file.read");
+                .containsExactly("execution_run", "file_read");
         assertThat(disclosed.snapshot().digest()).matches("[0-9a-f]{64}");
         assertThat(catalog.freeze(Set.of("file.read"), Set.of("file.read"), false, provider)
                         .snapshot()
@@ -103,20 +103,20 @@ class ProjectApplicationTest {
                 .hasSize(14)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
-                        "execution.run",
-                        "file.create",
-                        "file.delete",
-                        "file.diff",
-                        "file.list",
-                        "file.move",
-                        "file.patch",
-                        "file.read",
-                        "file.search",
-                        "file.stat",
-                        "file.write",
-                        "git.diff",
-                        "git.inspect",
-                        "git.status");
+                        "execution_run",
+                        "file_create",
+                        "file_delete",
+                        "file_diff",
+                        "file_list",
+                        "file_move",
+                        "file_patch",
+                        "file_read",
+                        "file_search",
+                        "file_stat",
+                        "file_write",
+                        "git_diff",
+                        "git_inspect",
+                        "git_status");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
