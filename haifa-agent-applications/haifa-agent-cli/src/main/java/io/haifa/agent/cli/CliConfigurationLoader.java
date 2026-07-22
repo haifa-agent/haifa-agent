@@ -44,6 +44,7 @@ final class CliConfigurationLoader {
                 .orElseGet(() -> text(model, "credentialRef", defaults.model().credentialRef()));
         Set<String> tools = stringSet(object(source, "tools").get("enabled"), defaults.enabledTools());
         List<CliConfiguration.McpServer> mcpServers = mcpServers(object(source, "mcp"));
+        CliConfiguration.Execution execution = execution(object(source, "execution"), defaults.execution());
         ApprovalMode approval = arguments
                 .approval()
                 .orElseGet(() -> ApprovalMode.parse(text(
@@ -57,10 +58,31 @@ final class CliConfigurationLoader {
                 new CliConfiguration.Model(providerId, modelId, java.net.URI.create(endpoint), credential),
                 tools,
                 mcpServers,
+                execution,
                 approval,
                 timeout,
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()));
+    }
+
+    private static CliConfiguration.Execution execution(
+            Map<String, Object> source, CliConfiguration.Execution defaults) {
+        String shell = text(source, "shell", defaults.shell());
+        String shellPathValue = nullableText(source, "shellPath");
+        java.nio.file.Path shellPath = shellPathValue == null ? null : java.nio.file.Path.of(shellPathValue);
+        return new CliConfiguration.Execution(
+                shell,
+                shellPath,
+                Duration.ofMillis(number(
+                        source,
+                        "defaultTimeoutMillis",
+                        defaults.defaultTimeout().toMillis())),
+                Duration.ofMillis(number(
+                        source, "maxTimeoutMillis", defaults.maximumTimeout().toMillis())),
+                Math.toIntExact(number(source, "maxOutputBytes", defaults.maxOutputBytes())),
+                Math.toIntExact(number(source, "maxOutputLines", defaults.maxOutputLines())),
+                Math.toIntExact(number(source, "maxProcesses", defaults.maxProcesses())),
+                stringSet(source.get("inheritEnvironment"), defaults.inheritEnvironment()));
     }
 
     private static List<CliConfiguration.McpServer> mcpServers(Map<String, Object> mcp) {
@@ -136,6 +158,15 @@ final class CliConfigurationLoader {
         Object value = source.get(key);
         if (!(value instanceof String text)) throw new IllegalArgumentException(field + " must be text");
         return CliConfiguration.text(text, field);
+    }
+
+    private static String nullableText(Map<String, Object> source, String key) {
+        Object value = source.get(key);
+        if (value == null) return null;
+        if (!(value instanceof String text)) {
+            throw new IllegalArgumentException("configuration " + key + " must be text");
+        }
+        return CliConfiguration.text(text, "configuration " + key);
     }
 
     private static boolean bool(Map<String, Object> source, String key, boolean fallback) {

@@ -11,10 +11,19 @@ public final class ProjectToolExecutor implements ToolProvider {
     public static final ToolProviderId PROVIDER_ID = new ToolProviderId("haifa-project");
     private final RunWorkspaceAccessResolver access;
     private final ProjectToolOperations operations;
+    private final ProjectExecutionToolOperations executionOperations;
 
     public ProjectToolExecutor(RunWorkspaceAccessResolver access, ProjectToolOperations operations) {
+        this(access, operations, null);
+    }
+
+    public ProjectToolExecutor(
+            RunWorkspaceAccessResolver access,
+            ProjectToolOperations operations,
+            ProjectExecutionToolOperations executionOperations) {
         this.access = Objects.requireNonNull(access, "access must not be null");
         this.operations = Objects.requireNonNull(operations, "operations must not be null");
+        this.executionOperations = executionOperations;
     }
 
     @Override
@@ -30,13 +39,22 @@ public final class ProjectToolExecutor implements ToolProvider {
             throw new SecurityException("run workspace access does not authorize the frozen tool capability");
         }
         request.observer().dispatched();
-        ToolResult result = operations.execute(
-                request.binding().definition().name().value(),
-                binding.workspaceId(),
-                request.principal(),
-                request.runId().value(),
-                binding.policyDecisionRef(),
-                request.arguments());
+        String toolName = request.binding().definition().name().value();
+        ToolResult result;
+        if (toolName.equals("execution.run")) {
+            if (executionOperations == null) {
+                throw new IllegalStateException("execution.run is not configured for this application");
+            }
+            result = executionOperations.execute(request, binding);
+        } else {
+            result = operations.execute(
+                    toolName,
+                    binding.workspaceId(),
+                    request.principal(),
+                    request.runId().value(),
+                    binding.policyDecisionRef(),
+                    request.arguments());
+        }
         request.observer().acknowledged();
         return result;
     }
