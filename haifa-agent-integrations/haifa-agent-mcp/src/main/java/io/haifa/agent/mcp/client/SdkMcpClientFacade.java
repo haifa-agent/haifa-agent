@@ -15,6 +15,7 @@ import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.client.transport.McpHttpClientTransportAuthorizationException;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.util.List;
 import java.util.Map;
@@ -221,6 +222,21 @@ final class SdkMcpClientFacade implements McpClientFacade {
 
     private ToolInvocationException mapOperationalFailure(String defaultCode, RuntimeException exception) {
         Throwable transportFailure = transportFailures.consumeFailure().orElse(null);
+        McpHttpClientTransportAuthorizationException authorization =
+                find(exception, McpHttpClientTransportAuthorizationException.class);
+        if (authorization == null) {
+            authorization = find(transportFailure, McpHttpClientTransportAuthorizationException.class);
+        }
+        if (authorization != null) {
+            String code = server.discoveryCredentials().isEmpty() ? "MCP_AUTH_FLOW_UNSUPPORTED" : "MCP_REAUTH_REQUIRED";
+            telemetry.operationFailed(server.serverId(), code);
+            return new ToolInvocationException(
+                    code,
+                    ToolDispatchState.ACKNOWLEDGED,
+                    server.discoveryCredentials().isEmpty()
+                            ? "MCP server requires an unsupported authorization flow"
+                            : "MCP server rejected the configured credential");
+        }
         if (isSessionInvalid(exception) || isSessionInvalid(transportFailure)) {
             transition(McpConnectionState.FAILED);
             close();
