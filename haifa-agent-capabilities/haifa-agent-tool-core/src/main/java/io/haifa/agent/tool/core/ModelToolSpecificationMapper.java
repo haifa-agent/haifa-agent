@@ -14,6 +14,6 @@ public final class ModelToolSpecificationMapper {
                 schema.id(),
                 schema.version(),
                 schema.document(),
-                true);
+                false);
     }
 }

@@ -99,7 +99,18 @@ public final class ModelMessageAssembler {
                     .map(result -> {
                         ToolCall call = authoritativeCall(
                                 authoritativeCalls, result.toolCallId(), result.providerCorrelationId());
-                        return ModelMessage.tool(call.providerCorrelationId(), result.summary());
+                        return call.result()
+                                .map(canonical -> {
+                                    if (!canonical.summary().equals(result.summary())) {
+                                        throw new IllegalStateException("tool result summary does not match authority");
+                                    }
+                                    return ModelMessage.tool(
+                                            call.providerCorrelationId(),
+                                            canonical.summary(),
+                                            canonical.structuredData(),
+                                            canonical.truncated());
+                                })
+                                .orElseGet(() -> ModelMessage.tool(call.providerCorrelationId(), result.summary()));
                     })
                     .toList();
         }

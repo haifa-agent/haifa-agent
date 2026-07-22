@@ -191,6 +191,14 @@ class DeepSeekRuntimeIntegrationTest {
             JsonNode second = requests.get(1);
             assertThat(second.path("messages").toString()).contains("provider-tool-1");
             assertThat(second.path("messages").toString()).contains("echoed: hello");
+            JsonNode toolMessage = java.util.stream.StreamSupport.stream(
+                            second.path("messages").spliterator(), false)
+                    .filter(message -> message.path("role").asText().equals("tool"))
+                    .findFirst()
+                    .orElseThrow();
+            JsonNode toolResult = json.readTree(toolMessage.path("content").asText());
+            assertThat(toolResult.path("structuredData").path("text").asText()).isEqualTo("hello");
+            assertThat(toolResult.path("truncated").asBoolean()).isFalse();
         } finally {
             server.stop(0);
         }

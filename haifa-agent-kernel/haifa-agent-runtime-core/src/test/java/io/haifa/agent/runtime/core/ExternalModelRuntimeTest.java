@@ -61,6 +61,7 @@ class ExternalModelRuntimeTest {
                 assertThat(request.tools()).singleElement().satisfies(tool -> {
                     assertThat(tool.name()).isEqualTo("echo");
                     assertThat(tool.inputJsonSchema()).containsEntry("type", "object");
+                    assertThat(tool.strict()).isFalse();
                 });
                 return new AgentChatResponse(
                         "response-1",
@@ -83,7 +84,9 @@ class ExternalModelRuntimeTest {
                                     .orElseThrow()
                                     .value()
                                     .equals("provider-call-1")
-                            && message.content().equals("echoed: hello"));
+                            && message.content().equals("echoed: hello")
+                            && message.toolResultData().equals(Map.of("text", "hello"))
+                            && !message.toolResultTruncated());
             return new AgentChatResponse(
                     "response-2",
                     "deepseek-v4-pro",

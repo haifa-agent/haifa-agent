@@ -13,4 +13,6 @@
 
 本模块不得依赖 Jackson、HTTP Client、Spring、OpenAI、DeepSeek 或其他 Provider SDK。
 
+工具结果消息除有界摘要和 Provider correlation 外，还可携带已归一化、深度不可变的 `toolResultData` 与裁剪标记；具体协议序列化由 Provider Adapter 负责。
+
 `ResolvedModelSnapshot` 当前只接受严格的 `2.0` Schema。旧快照缺失冻结字段时必须由显式迁移程序处理；运行时不会用当前目录值或默认值补齐。
