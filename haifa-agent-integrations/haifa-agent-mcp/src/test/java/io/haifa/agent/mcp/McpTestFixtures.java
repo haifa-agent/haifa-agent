@@ -31,6 +31,11 @@ final class McpTestFixtures {
     private McpTestFixtures() {}
 
     static McpServerDefinition httpServer(URI endpoint, Set<String> allowedTools) {
+        return httpServer(endpoint, allowedTools, Duration.ofSeconds(3), 1024 * 1024, 16 * 1024);
+    }
+
+    static McpServerDefinition httpServer(
+            URI endpoint, Set<String> allowedTools, Duration requestTimeout, int maxBodyBytes, int maxHeaderBytes) {
         return McpServerDefinition.create(
                 new McpServerId("utility"),
                 "Utility",
@@ -41,10 +46,10 @@ final class McpTestFixtures {
                         true,
                         Set.of(StreamableHttpDefinition.origin(endpoint)),
                         Duration.ofSeconds(2),
-                        Duration.ofSeconds(3),
+                        requestTimeout,
                         Duration.ofSeconds(10),
-                        1024 * 1024,
-                        16 * 1024),
+                        maxBodyBytes,
+                        maxHeaderBytes),
                 new McpToolImportPolicy(
                         allowedTools,
                         Set.of(),
@@ -54,7 +59,7 @@ final class McpTestFixtures {
                         Map.of("time_now", Set.of(ToolSideEffect.NETWORK_ACCESS)),
                         Map.of("time_now", ToolApprovalRequirement.NEVER)),
                 new McpConnectionPolicy(
-                        Duration.ofSeconds(2), Duration.ofSeconds(3), Duration.ofSeconds(10), Duration.ofSeconds(2), 1),
+                        Duration.ofSeconds(2), requestTimeout, Duration.ofSeconds(10), Duration.ofSeconds(2), 1),
                 List.of(),
                 "1.0.0");
     }

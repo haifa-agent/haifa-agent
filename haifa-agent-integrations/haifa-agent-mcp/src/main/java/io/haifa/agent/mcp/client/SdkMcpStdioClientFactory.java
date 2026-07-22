@@ -36,7 +36,8 @@ public final class SdkMcpStdioClientFactory implements McpClientFactory {
         var credentials = new io.haifa.agent.mcp.transport.stdio.McpStdioCredentialContext();
         var transport = new io.haifa.agent.mcp.transport.stdio.ExecutionBrokerMcpTransport(
                 server, identity, executionBroker, launches, credentials, mapper);
-        var client = McpClient.sync(transport)
+        var trackedTransport = new TrackingMcpClientTransport(transport);
+        var client = McpClient.sync(trackedTransport)
                 .clientInfo(
                         McpSchema.Implementation.builder("haifa-agent", "0.1.0").build())
                 .capabilities(McpSchema.ClientCapabilities.builder().build())
@@ -44,6 +45,6 @@ public final class SdkMcpStdioClientFactory implements McpClientFactory {
                 .initializationTimeout(server.connectionPolicy().connectTimeout())
                 .transportContextProvider(credentials::snapshot)
                 .build();
-        return new SdkMcpClientFacade(server, client, credentials, objectMapper, telemetry);
+        return new SdkMcpClientFacade(server, client, credentials, objectMapper, telemetry, trackedTransport);
     }
 }
