@@ -49,8 +49,24 @@ class ModelApiTest {
         assertThatThrownBy(() -> ModelMessage.text(ModelMessageRole.TOOL, "result"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("providerCorrelationId");
-        ModelMessage message = ModelMessage.tool(new ProviderToolCallCorrelationId("call-1"), "result");
+        List<Object> nested = new ArrayList<>(List.of("value"));
+        ModelMessage message = ModelMessage.tool(
+                new ProviderToolCallCorrelationId("call-1"), "result", Map.of("nested", nested), true);
+        nested.add("changed");
         assertThat(message.providerCorrelationId().orElseThrow().value()).isEqualTo("call-1");
+        assertThat(message.toolResultData()).containsEntry("nested", List.of("value"));
+        assertThat(message.toolResultTruncated()).isTrue();
+        assertThatThrownBy(() -> message.toolResultData().put("other", "value"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> new ModelMessage(
+                        ModelMessageRole.USER,
+                        "result",
+                        List.of(),
+                        java.util.Optional.empty(),
+                        Map.of("unexpected", true),
+                        false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("only tool messages");
     }
 
     @Test
