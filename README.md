@@ -2,7 +2,7 @@
 
 Haifa Agent 是面向 Java / Spring 生态的通用 Agent Runtime 与 Agent 产品开发平台。
 
-当前仓库处于 `0.1.0-SNAPSHOT` 的内核建设阶段，已完成 Core 领域模型、Runtime/AgentLoop、首个 DeepSeek 外部模型纵向集成、Phase 1 Tool/Credential 平台，以及固定协议 `2025-11-25` 的 MCP Client Integration。
+当前仓库处于 `0.1.0-SNAPSHOT` 的内核建设阶段，已完成 Core 领域模型、Runtime/AgentLoop、首个 DeepSeek 外部模型纵向集成、Phase 1 Tool/Credential 平台、固定协议 `2025-11-25` 的 MCP Client Integration，以及经统一 Tool/Execution 链执行的本地通用 Shell 能力。
 
 ## 当前模块
 
@@ -39,6 +39,7 @@ haifa-agent-integrations/
   haifa-agent-mcp/                      MCP 2025-11-25 HTTP/stdio Tool Provider
 haifa-agent-applications/
   haifa-agent-project-application/      Project Context、Tool 与产品外观
+  haifa-agent-cli/                      本地 Coding Agent CLI 与 Host 执行装配
 ```
 
 依赖方向固定为：
@@ -68,7 +69,7 @@ MCP Client 固定使用官方 Java SDK 2.0.0 和协议 `2025-11-25`，只接入 
 
 Project 模块提供可选的长期 Project、受控 Workspace、跨平台逻辑路径和安全只读文件 Provider。普通对话 Run 不要求 Project 或 Workspace；声明相关能力的 Run 才在 Bootstrap 时解析、授权并冻结有效 Capability。
 
-ExecutionBroker 是本地命令的唯一应用层入口。首个 Host Provider 只提供白名单命令、逻辑工作目录、环境租约、超时、输出和进程树等可诚实执行的限制，不宣称具备网络、CPU、内存或文件系统挂载强隔离。Git inspect/status/diff 也通过 Broker；临时副本和 Git Worktree 子 Workspace 必须拥有收窄权限和独立生命周期。
+ExecutionBroker 是本地命令的唯一应用层入口。内部组件继续使用受 executable allowlist 约束的 DIRECT argv；模型可见的 `execution.run` / `execution_run` 将完整命令文本交给本地可信配置选择的 Bash 或 PowerShell，不解析具体 CLI 语义。Host Provider 约束逻辑工作目录、环境名称、超时、有界输出和进程树，但不宣称具备网络、CPU、内存或文件系统挂载强隔离。Git inspect/status/diff 也通过 Broker；临时副本和 Git Worktree 子 Workspace 必须拥有收窄权限和独立生命周期。
 
 Project 模块还提供可重建的 File/Java Symbol/Markdown Index 和内容寻址的版本化 ProjectConfiguration。高层 Project Application 复用现有 Context Source 与 Runtime Tool Pipeline，并提供只要求 ProjectId、消息和附件的产品入口；Workspace 仍是内部授权与执行概念。
 

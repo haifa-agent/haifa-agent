@@ -9,6 +9,8 @@ import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionOutputChannel;
+import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ManagedProcessRequest;
@@ -113,6 +115,86 @@ class ExecutionCoreTest {
         assertThatThrownBy(() -> broker.execute(fixture.request("execution-3", "key-3", Set.of(), List.of("fake"))))
                 .isInstanceOfSatisfying(ExecutionRejectedException.class, exception -> assertThat(exception.code())
                         .isEqualTo("CAPABILITY_DENIED"));
+    }
+
+    @Test
+    void streamingObserverRedactsSecretsSplitAcrossChunks() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "streaming-fake";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true, true, true, true, true);
+            }
+
+            @Override
+            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+                return new SandboxSession() {
+                    @Override
+                    public SandboxSessionId id() {
+                        return new SandboxSessionId("streaming-session");
+                    }
+
+                    @Override
+                    public SandboxProcessResult execute(SandboxExecution execution) {
+                        throw new UnsupportedOperationException();
+                    }
+
+                    @Override
+                    public SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
+                        observer.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                ExecutionOutputChannel.STDOUT,
+                                "secret-".getBytes(StandardCharsets.UTF_8),
+                                false,
+                                false));
+                        observer.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
+                                ExecutionOutputChannel.STDOUT,
+                                "token\n".getBytes(StandardCharsets.UTF_8),
+                                true,
+                                false));
+                        return new SandboxProcessResult(
+                                SandboxProcessStatus.EXITED,
+                                0,
+                                "secret-token\n".getBytes(StandardCharsets.UTF_8),
+                                new byte[0],
+                                NOW,
+                                NOW.plusSeconds(1),
+                                false,
+                                false,
+                                true,
+                                1);
+                    }
+
+                    @Override
+                    public boolean cancel() {
+                        return true;
+                    }
+
+                    @Override
+                    public void close() {}
+                };
+            }
+        };
+        DefaultExecutionBroker broker = fixture.broker(provider, request -> {});
+        var streamed = new java.io.ByteArrayOutputStream();
+
+        var result = broker.execute(
+                fixture.request("streamed", "streamed-key", Set.of("execution.run"), List.of("fake")),
+                chunk -> streamed.writeBytes(chunk.bytes()));
+
+        assertThat(new String(streamed.toByteArray(), StandardCharsets.UTF_8)).isEqualTo("***\n");
+        assertThat(result.stdout().summary()).isEqualTo("***\n");
+
+        var observerFailureResult = broker.execute(
+                fixture.request("observer-failure", "observer-failure-key", Set.of("execution.run"), List.of("fake")),
+                chunk -> {
+                    throw new IllegalStateException("presentation failed");
+                });
+        assertThat(observerFailureResult.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
     }
 
     @Test

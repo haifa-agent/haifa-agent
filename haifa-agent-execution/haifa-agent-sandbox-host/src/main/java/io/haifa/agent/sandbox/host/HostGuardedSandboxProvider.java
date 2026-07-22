@@ -3,6 +3,7 @@ package io.haifa.agent.sandbox.host;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
+import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceBindingStatus;
 import io.haifa.agent.project.path.WorkspacePath;
@@ -21,7 +22,6 @@ import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxSession;
 import io.haifa.agent.sandbox.api.SandboxSessionId;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -55,6 +55,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     private final LocalWorkspaceLocationStore locations;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
+    private final HostShell shell;
 
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
@@ -62,11 +63,26 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             LocalWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time) {
+        this(workspaces, bindings, locations, identifiers, time, HostShell.auto());
+    }
+
+    public HostGuardedSandboxProvider(
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            LocalWorkspaceLocationStore locations,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            HostShell shell) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
+        this.shell = Objects.requireNonNull(shell, "shell must not be null");
+    }
+
+    public String shellDisplayName() {
+        return shell.displayName();
     }
 
     @Override
@@ -139,6 +155,12 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
         @Override
         public synchronized SandboxProcessResult execute(SandboxExecution execution) {
+            return execute(execution, ExecutionOutputObserver.noop());
+        }
+
+        @Override
+        public synchronized SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
+            Objects.requireNonNull(observer, "observer must not be null");
             if (closed) throw failure("SESSION_CLOSED", "sandbox session is closed");
             if (!execution.workingDirectory().workspaceId().equals(workspaceId)) {
                 throw failure("WORKSPACE_MISMATCH", "working directory belongs to another workspace");
@@ -148,8 +170,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             Map<String, String> environment = validateEnvironment(execution.environment());
             Instant started = time.now();
             try {
-                cancelRequested = false;
-                ProcessBuilder builder = new ProcessBuilder(execution.command().argv());
+                ProcessBuilder builder = new ProcessBuilder(launchCommand(execution));
                 builder.directory(cwd.toFile());
                 builder.redirectInput(ProcessBuilder.Redirect.PIPE);
                 builder.environment().clear();
@@ -157,10 +178,16 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 Process process = builder.start();
                 current = process;
                 process.getOutputStream().close();
-                var stdout = CompletableFuture.supplyAsync(
-                        () -> read(process.getInputStream(), execution.limits().maxStdoutBytes()));
-                var stderr = CompletableFuture.supplyAsync(
-                        () -> read(process.getErrorStream(), execution.limits().maxStderrBytes()));
+                var stdout = CompletableFuture.supplyAsync(() -> read(
+                        process.getInputStream(),
+                        execution.limits().maxStdoutBytes(),
+                        io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
+                        observer));
+                var stderr = CompletableFuture.supplyAsync(() -> read(
+                        process.getErrorStream(),
+                        execution.limits().maxStderrBytes(),
+                        io.haifa.agent.execution.api.ExecutionOutputChannel.STDERR,
+                        observer));
                 WaitOutcome outcome = waitFor(
                         process,
                         execution.limits().timeout(),
@@ -210,6 +237,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         current == null ? 0 : observedProcesses(current));
             } finally {
                 current = null;
+                cancelRequested = false;
             }
         }
 
@@ -223,18 +251,20 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             if (!execution.workingDirectory().workspaceId().equals(workspaceId)) {
                 throw failure("WORKSPACE_MISMATCH", "working directory belongs to another workspace");
             }
+            if (execution.command().mode() != ExecutionCommandMode.DIRECT) {
+                throw failure("MANAGED_SHELL_DENIED", "managed process sessions require a direct command");
+            }
             validateCommand(execution);
             Path cwd = resolveDirectory(execution.workingDirectory());
             Map<String, String> environment = validateEnvironment(execution.environment());
             try {
-                ProcessBuilder builder = new ProcessBuilder(execution.command().argv());
+                ProcessBuilder builder = new ProcessBuilder(launchCommand(execution));
                 builder.directory(cwd.toFile());
                 builder.redirectInput(ProcessBuilder.Redirect.PIPE);
                 builder.environment().clear();
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
-                cancelRequested = false;
                 return new Managed(process, execution, time.now());
             } catch (IOException exception) {
                 throw failure("PROCESS_START_FAILED", "managed process could not be started");
@@ -268,8 +298,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         }
 
         private void validateCommand(SandboxExecution execution) {
-            if (execution.command().mode() == ExecutionCommandMode.SHELL && !profile.shellAllowed()) {
-                throw failure("SHELL_DENIED", "shell execution is denied by profile");
+            if (execution.command().mode() == ExecutionCommandMode.SHELL) {
+                if (!profile.shellAllowed()) throw failure("SHELL_DENIED", "shell execution is denied by profile");
+                return;
             }
             String executable = execution.command().executable();
             if (executable.contains("/") || executable.contains("\\") || executable.contains(":")) {
@@ -292,6 +323,12 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     throw failure("ARGUMENT_PATH_DENIED", "argument contains an unsafe path form");
                 }
             }
+        }
+
+        private List<String> launchCommand(SandboxExecution execution) {
+            return execution.command().mode() == ExecutionCommandMode.SHELL
+                    ? shell.launch(execution.command().shellCommand())
+                    : execution.command().argv();
         }
 
         private final class Managed implements io.haifa.agent.sandbox.api.SandboxManagedProcess {
@@ -329,7 +366,6 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                                 execution.limits().maxStderrBytes(),
                                 stderrBytes));
                 this.exit = process.onExit().thenApply(ignored -> {
-                    current = null;
                     var status = timedOut.get()
                             ? io.haifa.agent.execution.api.ExecutionStatus.TIMED_OUT
                             : cancelRequested
@@ -337,6 +373,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                                     : process.exitValue() == 0
                                             ? io.haifa.agent.execution.api.ExecutionStatus.SUCCEEDED
                                             : io.haifa.agent.execution.api.ExecutionStatus.FAILED;
+                    cancelRequested = false;
+                    current = null;
                     return new io.haifa.agent.execution.api.ProcessExit(status, process.exitValue(), true, time.now());
                 });
                 java.util.concurrent.CompletableFuture.delayedExecutor(
@@ -398,7 +436,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
             @Override
             public void close() {
-                if (managedClosed.compareAndSet(false, true)) cancel();
+                if (managedClosed.compareAndSet(false, true) && process.isAlive()) cancel();
             }
 
             private void pump(
@@ -446,12 +484,24 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             var safe = new java.util.HashMap<String, String>();
             requested.forEach((name, value) -> {
                 String upper = name.toUpperCase(Locale.ROOT);
-                if (!profile.allowedEnvironmentNames().contains(name) || FORBIDDEN_ENVIRONMENT.contains(upper)) {
+                if (!profile.allowedEnvironmentNames().contains(name)
+                        || FORBIDDEN_ENVIRONMENT.contains(upper)
+                        || looksLikeSecretName(upper)) {
                     throw failure("ENVIRONMENT_DENIED", "environment lease contains a denied name");
                 }
                 safe.put(name, value);
             });
             return Map.copyOf(safe);
+        }
+
+        private static boolean looksLikeSecretName(String upperName) {
+            return upperName.contains("API_KEY")
+                    || upperName.contains("ACCESS_KEY")
+                    || upperName.contains("PRIVATE_KEY")
+                    || upperName.contains("PASSWORD")
+                    || upperName.contains("SECRET")
+                    || upperName.contains("TOKEN")
+                    || upperName.contains("CREDENTIAL");
         }
 
         private Path resolveDirectory(WorkspacePath logical) {
@@ -468,27 +518,39 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         }
     }
 
-    private static BoundedBytes read(InputStream input, int maximum) {
-        try (input;
-                ByteArrayOutputStream output = new ByteArrayOutputStream(Math.min(maximum, 8192))) {
+    private static BoundedBytes read(
+            InputStream input,
+            int maximum,
+            io.haifa.agent.execution.api.ExecutionOutputChannel channel,
+            ExecutionOutputObserver observer) {
+        try (input) {
+            TailBuffer output = new TailBuffer(maximum);
             byte[] buffer = new byte[8192];
-            int total = 0;
-            boolean truncated = false;
             int count;
             while ((count = input.read(buffer)) >= 0) {
-                int remaining = maximum - total;
-                if (remaining > 0) {
-                    int accepted = Math.min(remaining, count);
-                    output.write(buffer, 0, accepted);
-                    total += accepted;
-                    if (accepted < count) truncated = true;
-                } else {
-                    truncated = true;
-                }
+                byte[] chunk = java.util.Arrays.copyOf(buffer, count);
+                output.write(chunk);
+                notifyObserver(
+                        observer, new io.haifa.agent.execution.api.ProcessOutputChunk(channel, chunk, false, false));
             }
-            return new BoundedBytes(output.toByteArray(), truncated);
+            notifyObserver(
+                    observer,
+                    new io.haifa.agent.execution.api.ProcessOutputChunk(
+                            channel, new byte[0], true, output.truncated()));
+            return new BoundedBytes(output.bytes(), output.truncated());
         } catch (IOException exception) {
+            notifyObserver(
+                    observer, new io.haifa.agent.execution.api.ProcessOutputChunk(channel, new byte[0], true, true));
             return new BoundedBytes(new byte[0], true);
+        }
+    }
+
+    private static void notifyObserver(
+            ExecutionOutputObserver observer, io.haifa.agent.execution.api.ProcessOutputChunk chunk) {
+        try {
+            observer.onOutput(chunk);
+        } catch (RuntimeException ignored) {
+            // Output presentation must not bypass process cleanup or execution audit.
         }
     }
 
@@ -533,6 +595,40 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     }
 
     private record BoundedBytes(byte[] bytes, boolean truncated) {}
+
+    private static final class TailBuffer {
+        private final byte[] values;
+        private long count;
+
+        private TailBuffer(int maximum) {
+            values = new byte[maximum];
+        }
+
+        private void write(byte[] bytes) {
+            for (byte value : bytes) {
+                values[(int) (count % values.length)] = value;
+                count++;
+            }
+        }
+
+        private byte[] bytes() {
+            int length = (int) Math.min(count, values.length);
+            byte[] result = new byte[length];
+            if (count <= values.length) {
+                System.arraycopy(values, 0, result, 0, length);
+                return result;
+            }
+            int start = (int) (count % values.length);
+            int first = values.length - start;
+            System.arraycopy(values, start, result, 0, first);
+            System.arraycopy(values, 0, result, first, start);
+            return result;
+        }
+
+        private boolean truncated() {
+            return count > values.length;
+        }
+    }
 
     private enum WaitOutcome {
         FINISHED,

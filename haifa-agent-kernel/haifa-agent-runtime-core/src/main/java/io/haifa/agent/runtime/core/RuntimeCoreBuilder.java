@@ -71,6 +71,7 @@ import io.haifa.agent.runtime.core.guard.IterationGuard;
 import io.haifa.agent.runtime.core.guard.LoopDetectionGuard;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
+import io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
@@ -148,6 +149,7 @@ public final class RuntimeCoreBuilder {
     private ToolSchemaValidator toolSchemaValidator = (schema, instance) -> new ToolSchemaValidationResult(List.of());
     private boolean toolPlatformConfigured;
     private ToolPolicy toolPolicy = new DefaultToolPolicy();
+    private ToolApprovalPromptFormatter toolApprovalPrompts = ToolApprovalPromptFormatter.defaultFormatter();
     private CredentialBroker credentialBroker;
     private ModelRetryPolicy modelRetry = ModelRetryPolicy.none();
     private ToolRetryPolicy toolRetry = ToolRetryPolicy.none();
@@ -268,6 +270,11 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder toolPolicy(ToolPolicy value) {
         toolPolicy = value;
+        return this;
+    }
+
+    public RuntimeCoreBuilder toolApprovalPrompts(ToolApprovalPromptFormatter value) {
+        toolApprovalPrompts = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -455,7 +462,8 @@ public final class RuntimeCoreBuilder {
                 time,
                 checkpoints,
                 controls,
-                repairRetry);
+                repairRetry,
+                toolApprovalPrompts);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
                 interactions, store, checkpointSelections, transitions, store, access, checkpoints, toolInvoker);
         var compressor = new DeterministicContextCompressor();
