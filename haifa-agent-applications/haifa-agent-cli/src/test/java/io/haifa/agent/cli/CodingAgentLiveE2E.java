@@ -58,6 +58,9 @@ class CodingAgentLiveE2E {
     private static final Map<String, CaseSpec> CASES = loadCases();
     private static Path approvedRoot;
     private static String runId;
+    private static String expectedProviderId;
+    private static String credentialEnvironmentName;
+    private static CliConfiguration.Model liveModel;
 
     @BeforeAll
     static void requireExplicitLiveEnvironment() throws Exception {
@@ -66,8 +69,11 @@ class CodingAgentLiveE2E {
                 "real-model CLI E2E requires " + LIVE_SWITCH + "=true");
         requireEnvironment("HAIFA_FT_ENABLED", "true");
         requireEnvironment("HAIFA_FT_MODE", "LIVE");
-        String apiKey = System.getenv("DEEPSEEK_API_KEY");
-        if (apiKey == null || apiKey.isBlank()) throw new IllegalStateException("DEEPSEEK_API_KEY is required");
+        liveModel = liveModel();
+        String apiKey = System.getenv(credentialEnvironmentName);
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException(credentialEnvironmentName + " is required");
+        }
         runId = requiredEnvironment("HAIFA_FT_RUN_ID");
         approvedRoot =
                 Path.of(requiredEnvironment("HAIFA_FT_ROOT")).toAbsolutePath().normalize();
@@ -211,7 +217,7 @@ class CodingAgentLiveE2E {
         CliConfiguration defaults = CliConfiguration.defaults();
         ApprovalMode approval = specification.approval().equals("ASK_REJECT") ? ApprovalMode.ASK : ApprovalMode.AUTO;
         return new CliConfiguration(
-                defaults.model(),
+                liveModel,
                 defaults.enabledTools(),
                 List.of(),
                 defaults.execution(),
@@ -379,7 +385,7 @@ class CodingAgentLiveE2E {
                 .toList();
         assertThat(modelCalls).isNotEmpty();
         modelCalls.forEach(event -> {
-            assertThat(String.valueOf(event.safeAttributes().get("providerId"))).isEqualTo("deepseek");
+            assertThat(String.valueOf(event.safeAttributes().get("providerId"))).isEqualTo(expectedProviderId);
             assertThat(String.valueOf(event.safeAttributes().get("modelId"))).isNotBlank();
             assertThat(String.valueOf(event.safeAttributes().get("adapterVersion")))
                     .isNotBlank();
@@ -537,7 +543,7 @@ class CodingAgentLiveE2E {
     }
 
     private static void rejectSensitiveOutput(String output, Path workspace) {
-        String apiKey = System.getenv("DEEPSEEK_API_KEY");
+        String apiKey = System.getenv(credentialEnvironmentName);
         if (apiKey != null && !apiKey.isBlank() && output.contains(apiKey)) {
             throw new AssertionError("captured CLI output contains a credential");
         }
@@ -656,6 +662,34 @@ class CodingAgentLiveE2E {
         String value = System.getenv(name);
         if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required");
         return value.trim();
+    }
+
+    private static CliConfiguration.Model liveModel() {
+        String provider = System.getenv()
+                .getOrDefault("HAIFA_CLI_LIVE_E2E_PROVIDER", "deepseek")
+                .trim()
+                .toLowerCase(java.util.Locale.ROOT);
+        expectedProviderId = provider;
+        return switch (provider) {
+            case "deepseek" -> {
+                credentialEnvironmentName = "DEEPSEEK_API_KEY";
+                yield CliConfiguration.defaults().model();
+            }
+            case "aliyun-bailian" -> {
+                credentialEnvironmentName = "DASHSCOPE_API_KEY";
+                String modelId = System.getenv().getOrDefault("HAIFA_BAILIAN_MODEL_ID", "qwen-plus");
+                String region = System.getenv().getOrDefault("HAIFA_BAILIAN_REGION", "cn-beijing");
+                yield new CliConfiguration.Model(
+                        provider,
+                        modelId,
+                        null,
+                        "env://" + credentialEnvironmentName,
+                        requiredEnvironment("HAIFA_BAILIAN_WORKSPACE_ID"),
+                        region);
+            }
+            default ->
+                throw new IllegalStateException("HAIFA_CLI_LIVE_E2E_PROVIDER must be deepseek or aliyun-bailian");
+        };
     }
 
     private static void requireEnvironment(String name, String expected) {
