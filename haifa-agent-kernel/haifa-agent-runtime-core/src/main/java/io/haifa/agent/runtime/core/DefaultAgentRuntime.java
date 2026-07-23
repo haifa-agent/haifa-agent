@@ -220,9 +220,12 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         requireCaller(run);
         var caller = callers.current();
         var resolution = interactions.respond(response, caller, time.now());
+        boolean toolApproval =
+                resolution.request().target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
         if (resolution.newlyRecorded()) {
             unitOfWork.execute(() -> {
-                appendInteractionResponseMessage(run, response);
+                appendInteractionResponseMessage(
+                        run, response, toolApproval ? MessageVisibility.INTERNAL : MessageVisibility.AGENT_VISIBLE);
                 events.append(
                         run.id(),
                         "interaction.responded",
@@ -244,7 +247,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 return null;
             });
         }
-        if (resolution.request().target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget) {
+        if (toolApproval) {
             return resume(new ResumeAgentRunRequest(
                     "tool-approval-response:" + response.idempotencyKey(), run.id(), List.of()));
         }
@@ -436,7 +439,8 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 time.now()));
     }
 
-    private void appendInteractionResponseMessage(AgentRun run, InteractionResponse response) {
+    private void appendInteractionResponseMessage(
+            AgentRun run, InteractionResponse response, MessageVisibility visibility) {
         List<ContentPart> contents = response.inputs().isEmpty()
                 ? List.of(new TextPart("Interaction response: " + response.type(), "plain"))
                 : response.inputs();
@@ -447,7 +451,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 Optional.empty(),
                 MessageRole.USER,
                 MessageStatus.COMPLETED,
-                MessageVisibility.AGENT_VISIBLE,
+                visibility,
                 contents,
                 Map.of(
                         "interactionRequestId", response.requestId().value(),

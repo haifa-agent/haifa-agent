@@ -10,17 +10,16 @@ import org.junit.jupiter.api.Test;
 
 class CliConfigurationLoaderTest {
     @Test
-    void freezesDeepSeekThinkingForCliRuns() {
+    void freezesDisabledDeepSeekThinkingForCliRuns() {
         var snapshot = LocalCodingAgent.modelSnapshot(CliConfiguration.defaults());
 
         assertThat(snapshot.capabilities()).contains(ModelCapability.REASONING);
+        assertThat(snapshot.providerOptions()).containsEntry("thinking", "disabled");
         assertThat(snapshot.providerOptions())
-                .containsEntry("thinking", "enabled")
-                .containsEntry("reasoning_effort", "high");
+                .doesNotContainKeys("reasoning_effort", "requires_reasoning_continuation");
+        assertThat(snapshot.invocationOptions()).containsEntry("thinking", "disabled");
         assertThat(snapshot.invocationOptions())
-                .containsEntry("thinking", "enabled")
-                .containsEntry("reasoning_effort", "high")
-                .containsEntry("requires_reasoning_continuation", true);
+                .doesNotContainKeys("reasoning_effort", "requires_reasoning_continuation");
     }
 
     @Test

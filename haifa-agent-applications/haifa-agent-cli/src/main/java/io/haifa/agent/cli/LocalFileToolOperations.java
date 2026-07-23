@@ -214,7 +214,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private static WorkspacePath path(WorkspaceId workspaceId, Map<String, Object> values, String key) {
-        return new WorkspacePath(workspaceId, ProjectPath.of(string(values, key)));
+        String value = string(values, key);
+        return new WorkspacePath(workspaceId, value.equals(".") ? ProjectPath.root() : ProjectPath.of(value));
     }
 
     private static String string(Map<String, Object> values, String key) {

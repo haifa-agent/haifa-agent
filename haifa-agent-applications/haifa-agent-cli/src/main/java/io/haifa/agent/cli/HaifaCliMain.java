@@ -41,7 +41,7 @@ public final class HaifaCliMain {
             try (LocalCodingAgent agent = LocalCodingAgent.create(workspace, configuration, output)) {
                 AtomicBoolean streamed = attachStreamingOutput(agent.runtime()::addOutputListener, output);
                 if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
-                if (parsed.verbose()) output.println("DeepSeek thinking enabled (effort=high). Waiting for stream...");
+                if (parsed.verbose()) output.println("DeepSeek thinking disabled. Waiting for stream...");
                 var accepted = agent.start(parsed.message().orElseThrow());
                 if (parsed.verbose()) output.println("Run " + accepted.runId().value() + " submitted.");
                 Thread shutdownHook = Thread.ofPlatform()

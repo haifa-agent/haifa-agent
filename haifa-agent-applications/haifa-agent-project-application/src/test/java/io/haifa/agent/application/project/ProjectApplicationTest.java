@@ -87,6 +87,7 @@ class ProjectApplicationTest {
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("execution_run", "file_read");
         var execution = disclosed.snapshot().bindings().getFirst();
+        var fileRead = disclosed.snapshot().bindings().get(1);
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
@@ -95,6 +96,13 @@ class ProjectApplicationTest {
                 .containsEntry("required", List.of("command"))
                 .containsEntry("additionalProperties", false);
         assertThat(execution.definition().outputSchema().document()).containsEntry("additionalProperties", false);
+        @SuppressWarnings("unchecked")
+        var fileProperties = (java.util.Map<String, Object>)
+                fileRead.definition().inputSchema().document().get("properties");
+        @SuppressWarnings("unchecked")
+        var pathSchema = (java.util.Map<String, Object>) fileProperties.get("path");
+        assertThat(pathSchema.get("description"))
+                .isEqualTo("Workspace-relative path; use '.' for the workspace root. Absolute paths are not allowed.");
         assertThat(disclosed.snapshot().digest()).matches("[0-9a-f]{64}");
         assertThat(catalog.freeze(Set.of("file.read"), Set.of("file.read"), false, provider)
                         .snapshot()
