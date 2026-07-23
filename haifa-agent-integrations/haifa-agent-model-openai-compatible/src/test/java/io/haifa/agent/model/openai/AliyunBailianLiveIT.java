@@ -13,7 +13,6 @@ import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.EnumSet;
@@ -27,21 +26,20 @@ class AliyunBailianLiveIT {
     void invokesBailianWhenExplicitlyEnabled() {
         boolean enabled = "true".equalsIgnoreCase(System.getenv("HAIFA_BAILIAN_LIVE_TEST"));
         String apiKey = System.getenv("DASHSCOPE_API_KEY");
-        String baseUrl = System.getenv("HAIFA_BAILIAN_BASE_URL");
+        String workspaceId = System.getenv("HAIFA_BAILIAN_WORKSPACE_ID");
         String modelId = System.getenv("HAIFA_BAILIAN_MODEL_ID");
         Assumptions.assumeTrue(enabled
                 && apiKey != null
                 && !apiKey.isBlank()
-                && baseUrl != null
-                && !baseUrl.isBlank()
+                && workspaceId != null
+                && !workspaceId.isBlank()
                 && modelId != null
                 && !modelId.isBlank());
         var provider = AliyunBailianProviderFactory.provider(
                 new AliyunBailianProviderFactory.ProviderConfiguration(
                         "live-v1",
-                        URI.create(baseUrl),
+                        workspaceId,
                         System.getenv().getOrDefault("HAIFA_BAILIAN_REGION", "cn-beijing"),
-                        Boolean.parseBoolean(System.getenv().getOrDefault("HAIFA_BAILIAN_WORKSPACE_SCOPED", "false")),
                         new CredentialRef("env://DASHSCOPE_API_KEY")),
                 List.of(new AliyunBailianProviderFactory.ModelProfile(
                         new ModelDefinitionId("bailian-live"),

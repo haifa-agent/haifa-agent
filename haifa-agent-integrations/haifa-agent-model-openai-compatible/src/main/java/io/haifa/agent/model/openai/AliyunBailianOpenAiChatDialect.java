@@ -8,11 +8,11 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
     static final AliyunBailianOpenAiChatDialect INSTANCE = new AliyunBailianOpenAiChatDialect();
-    private static final Set<String> HOSTS =
-            Set.of("dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com", "dashscope-us.aliyuncs.com");
+    private static final Pattern DNS_LABEL = Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
 
     private AliyunBailianOpenAiChatDialect() {}
 
@@ -29,7 +29,6 @@ final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
     @Override
     public void validateProvider(ModelProviderDefinition provider, boolean allowInsecureHttp) {
         validateEndpoint(provider.endpoint(), allowInsecureHttp, provider.options());
-        requireRegion(provider.options());
         provider.models()
                 .forEach(model ->
                         validateProfile(model.options(), model.capabilities().contains(ModelCapability.REASONING)));
@@ -38,7 +37,6 @@ final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
     @Override
     public void validateSnapshot(ResolvedModelSnapshot snapshot, boolean allowInsecureHttp) {
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, snapshot.providerOptions());
-        requireRegion(snapshot.providerOptions());
         validateProfile(snapshot.invocationOptions(), snapshot.capabilities().contains(ModelCapability.REASONING));
     }
 
@@ -80,24 +78,19 @@ final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
 
     private static void validateEndpoint(
             java.net.URI endpoint, boolean allowInsecureHttp, Map<String, Object> options) {
-        boolean workspaceScoped = booleanOption(options, "workspace_scoped", false);
-        if (workspaceScoped && !allowInsecureHttp) {
-            String host = endpoint.getHost() == null ? "" : endpoint.getHost().toLowerCase(Locale.ROOT);
-            if (!host.endsWith(".dashscope.aliyuncs.com") || HOSTS.contains(host)) {
-                throw new IllegalArgumentException("workspace-scoped Bailian endpoint must use its dedicated domain");
-            }
-            OpenAiCompatibleEndpointPolicy.validate(endpoint, false, Set.of(host), "/compatible-mode/v1");
-            return;
-        }
+        String workspaceId = requireDnsLabel(options, "workspace_id");
+        String region = requireDnsLabel(options, "region");
+        String expectedHost = workspaceId + "." + region + ".maas.aliyuncs.com";
         OpenAiCompatibleEndpointPolicy.validate(
-                endpoint, allowInsecureHttp, HOSTS, allowInsecureHttp ? null : "/compatible-mode/v1");
+                endpoint, allowInsecureHttp, Set.of(expectedHost), allowInsecureHttp ? null : "/compatible-mode/v1");
     }
 
-    private static void requireRegion(Map<String, Object> options) {
-        Object region = options.get("region");
-        if (!(region instanceof String value) || value.isBlank()) {
-            throw new IllegalArgumentException("Bailian provider region must be frozen");
+    private static String requireDnsLabel(Map<String, Object> options, String name) {
+        Object configured = options.get(name);
+        if (!(configured instanceof String value) || !DNS_LABEL.matcher(value).matches()) {
+            throw new IllegalArgumentException("Bailian provider " + name + " must be a valid frozen DNS label");
         }
+        return value;
     }
 
     private static void validateProfile(Map<String, Object> options, boolean reasoningCapability) {

@@ -153,39 +153,41 @@ class AliyunBailianOpenAiChatTest {
     }
 
     @Test
-    void validatesRegionWorkspaceAndDialectVersionAtBootstrap() {
-        ModelProviderDefinition publicAsWorkspace = provider(
-                URI.create("https://dashscope.aliyuncs.com/compatible-mode/v1"),
-                Map.of("thinking_profile", "none", "thinking_enabled", false));
-        publicAsWorkspace = new ModelProviderDefinition(
-                publicAsWorkspace.id(),
-                publicAsWorkspace.version(),
-                publicAsWorkspace.displayName(),
-                publicAsWorkspace.adapterType(),
-                publicAsWorkspace.endpoint(),
-                publicAsWorkspace.credentialRef(),
-                publicAsWorkspace.status(),
-                publicAsWorkspace.models(),
-                Map.of(
-                        "dialect_id", "aliyun-bailian-openai-chat",
-                        "dialect_version", "1.0",
-                        "region", "cn-beijing",
-                        "workspace_scoped", true),
-                publicAsWorkspace.metadata());
-        ModelProviderDefinition invalidWorkspace = publicAsWorkspace;
+    void derivesWorkspaceEndpointDefaultsRegionAndRejectsConfigurationDrift() {
+        var defaults = new AliyunBailianProviderFactory.ProviderConfiguration(
+                "provider-v1", "Workspace-123", new CredentialRef("env://DASHSCOPE_API_KEY"));
+        assertThat(defaults.workspaceId()).isEqualTo("workspace-123");
+        assertThat(defaults.region()).isEqualTo("cn-beijing");
+        assertThat(defaults.endpoint())
+                .hasToString("https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
+
+        assertThatThrownBy(() -> new AliyunBailianProviderFactory.ProviderConfiguration(
+                        "provider-v1", " ", null, new CredentialRef("env://DASHSCOPE_API_KEY")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("workspaceId");
+        assertThatThrownBy(() -> new AliyunBailianProviderFactory.ProviderConfiguration(
+                        "provider-v1", "workspace.example", "cn-beijing", new CredentialRef("env://DASHSCOPE_API_KEY")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("valid DNS label");
+
+        ModelProviderDefinition validWorkspace =
+                provider(Map.of("thinking_profile", "none", "thinking_enabled", false));
+        assertThat(validWorkspace.options())
+                .containsEntry("workspace_id", "workspace-123")
+                .containsEntry("region", "cn-beijing")
+                .doesNotContainKey("workspace_scoped");
+        new OpenAiCompatibleChatModel(
+                validWorkspace, HttpClient.newHttpClient(), json, ignored -> new ResolvedCredential("secret"));
+
+        ModelProviderDefinition invalidWorkspace = withEndpoint(
+                validWorkspace, URI.create("https://workspace-123.cn-shanghai.maas.aliyuncs.com/compatible-mode/v1"));
         assertThatThrownBy(() -> new OpenAiCompatibleChatModel(
                         invalidWorkspace,
                         HttpClient.newHttpClient(),
                         json,
                         ignored -> new ResolvedCredential("secret")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("dedicated domain");
-
-        ModelProviderDefinition validPublic = provider(
-                URI.create("https://dashscope.aliyuncs.com/compatible-mode/v1"),
-                Map.of("thinking_profile", "none", "thinking_enabled", false));
-        new OpenAiCompatibleChatModel(
-                validPublic, HttpClient.newHttpClient(), json, ignored -> new ResolvedCredential("secret"));
+                .hasMessageContaining("host is not allowed");
     }
 
     @Test
@@ -222,7 +224,22 @@ class AliyunBailianOpenAiChatTest {
 
     private ModelProviderDefinition provider(URI endpoint, Map<String, Object> modelOptions) {
         var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
-                "provider-v1", endpoint, "cn-beijing", false, new CredentialRef("env://DASHSCOPE_API_KEY"));
+                "provider-v1", "workspace-123", null, new CredentialRef("env://DASHSCOPE_API_KEY"));
+        var profile = new AliyunBailianProviderFactory.ModelProfile(
+                new ModelDefinitionId("configured-qwen"),
+                "profile-v1",
+                "configured-qwen",
+                "Configured Qwen",
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                131_072,
+                16_384,
+                modelOptions);
+        return withEndpoint(AliyunBailianProviderFactory.provider(configuration, List.of(profile)), endpoint);
+    }
+
+    private ModelProviderDefinition provider(Map<String, Object> modelOptions) {
+        var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
+                "provider-v1", "workspace-123", null, new CredentialRef("env://DASHSCOPE_API_KEY"));
         var profile = new AliyunBailianProviderFactory.ModelProfile(
                 new ModelDefinitionId("configured-qwen"),
                 "profile-v1",
@@ -233,6 +250,20 @@ class AliyunBailianOpenAiChatTest {
                 16_384,
                 modelOptions);
         return AliyunBailianProviderFactory.provider(configuration, List.of(profile));
+    }
+
+    private ModelProviderDefinition withEndpoint(ModelProviderDefinition definition, URI endpoint) {
+        return new ModelProviderDefinition(
+                definition.id(),
+                definition.version(),
+                definition.displayName(),
+                definition.adapterType(),
+                endpoint,
+                definition.credentialRef(),
+                definition.status(),
+                definition.models(),
+                definition.options(),
+                definition.metadata());
     }
 
     private ResolvedModelSnapshot snapshot(ModelProviderDefinition definition) {
