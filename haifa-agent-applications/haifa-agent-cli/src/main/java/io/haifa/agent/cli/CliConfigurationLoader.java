@@ -54,6 +54,7 @@ final class CliConfigurationLoader {
         if (!bailian && endpoint == null) endpoint = defaults.model().endpoint().toString();
         Set<String> tools = stringSet(object(source, "tools").get("enabled"), defaults.enabledTools());
         List<CliConfiguration.McpServer> mcpServers = mcpServers(object(source, "mcp"));
+        CliConfiguration.Web web = web(object(source, "web"), defaults.web());
         CliConfiguration.Execution execution = execution(object(source, "execution"), defaults.execution());
         ApprovalMode approval = arguments
                 .approval()
@@ -74,11 +75,62 @@ final class CliConfigurationLoader {
                         region),
                 tools,
                 mcpServers,
+                web,
                 execution,
                 approval,
                 timeout,
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()));
+    }
+
+    private static CliConfiguration.Web web(Map<String, Object> source, CliConfiguration.Web defaults) {
+        return new CliConfiguration.Web(
+                webProvider(object(source, "search"), "search", defaults.search()),
+                webProvider(object(source, "fetch"), "fetch", defaults.fetch()));
+    }
+
+    private static CliConfiguration.WebProvider webProvider(
+            Map<String, Object> source, String operation, CliConfiguration.WebProvider defaults) {
+        String providerId = text(source, "provider", defaults.providerId()).toLowerCase(java.util.Locale.ROOT);
+        String endpoint = nullableText(source, "endpoint");
+        if (endpoint == null)
+            endpoint = defaultWebEndpoint(operation, providerId).toString();
+        String credentialRef = nullableText(source, "credentialRef");
+        if (credentialRef == null) credentialRef = defaultWebCredential(providerId);
+        return new CliConfiguration.WebProvider(
+                bool(source, "enabled", defaults.enabled()),
+                providerId,
+                java.net.URI.create(endpoint),
+                credentialRef,
+                Duration.ofMillis(
+                        number(source, "timeoutMillis", defaults.timeout().toMillis())),
+                Math.toIntExact(number(source, "maxResponseBytes", defaults.maxResponseBytes())));
+    }
+
+    private static java.net.URI defaultWebEndpoint(String operation, String providerId) {
+        if (operation.equals("fetch")) {
+            if (!providerId.equals("aliyun")) {
+                throw new IllegalArgumentException("web.fetch.provider must be aliyun");
+            }
+            return io.haifa.agent.application.project.tool.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT;
+        }
+        return switch (providerId) {
+            case "aliyun" -> io.haifa.agent.application.project.tool.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT;
+            case "brave" ->
+                io.haifa.agent.application.project.tool.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT;
+            case "tavily" ->
+                io.haifa.agent.application.project.tool.web.provider.TavilyWebSearchProvider.DEFAULT_ENDPOINT;
+            default -> throw new IllegalArgumentException("web.search.provider is unsupported");
+        };
+    }
+
+    private static String defaultWebCredential(String providerId) {
+        return switch (providerId) {
+            case "aliyun" -> "env://ALIYUN_IQS_API_KEY";
+            case "brave" -> "env://BRAVE_SEARCH_API_KEY";
+            case "tavily" -> "env://TAVILY_API_KEY";
+            default -> throw new IllegalArgumentException("web providerId is unsupported");
+        };
     }
 
     private static CliConfiguration.Execution execution(

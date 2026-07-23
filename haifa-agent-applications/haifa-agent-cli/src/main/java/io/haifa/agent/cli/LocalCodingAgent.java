@@ -126,6 +126,7 @@ final class LocalCodingAgent implements AutoCloseable {
         TimeProvider time = new SystemTimeProvider();
         PrincipalRef principal = new PrincipalRef("local-user", "user");
         CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
+        CliWebPlatform webPlatform = CliWebPlatform.create(configuration.web(), principal);
         var workspaces = new InMemoryWorkspaceStore();
         var bindings = new InMemoryWorkspaceBindingStore();
         var locations = new LocalWorkspaceLocationStore();
@@ -205,7 +206,8 @@ final class LocalCodingAgent implements AutoCloseable {
                         effectiveCapabilities,
                         true,
                         provider,
-                        mcpPlatform.contributions());
+                        mcpPlatform.contributions(),
+                        webPlatform.contributions());
         var interactions = new InMemoryInteractionPort();
         ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
         List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
@@ -215,6 +217,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 .trace(traces::add)
                 .interactions(interactions)
                 .registerChatModel("openai-compatible", "1.0.0", model)
+                .credentialBroker(webPlatform.credentialBroker())
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
                 .toolApprovalPrompts((binding, call, reauthentication) -> {
                     if (!binding.definition().name().value().equals("execution.run")) {
