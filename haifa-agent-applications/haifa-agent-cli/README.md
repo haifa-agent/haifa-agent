@@ -54,9 +54,14 @@ runtime:
 
 `tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_write`、`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作目录和 timeout；任何本机已安装且可由配置 Shell 解析的普通 CLI 都走同一生产路径，文档中的具体命令仅是非穷举示例。
 
-CLI 的 DeepSeek 冻结配置强制关闭 thinking，并通过 Runtime output listener 实时打印安全的 answer delta；
+CLI 的 DeepSeek 和百炼冻结配置均强制关闭 thinking，并通过 Runtime output listener 实时打印安全的 answer delta；
 reasoning 原文不会进入终端。使用 `--verbose` 时只会打印供应商报告的 reasoning token 计数，不记录或展示
 reasoning 内容。
+
+百炼配置必须提供 `model.workspaceId`，`model.region` 缺省为 `cn-beijing`。CLI 不接受任意百炼主机，
+而是固定推导 `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`。也可分别通过
+`HAIFA_MODEL_PROVIDER_ID=aliyun-bailian`、`HAIFA_BAILIAN_WORKSPACE_ID`、`HAIFA_BAILIAN_REGION`、
+`HAIFA_MODEL_ID` 和 `HAIFA_CREDENTIAL_REF=env://DASHSCOPE_API_KEY` 覆盖本地配置。
 
 `mcp.servers` 在 CLI 启动时连接并发现远端工具。每个 Server 必须使用稳定的小写 `id`、显式 `allowedTools` 和唯一 `aliasNamespace`；示例工具向模型披露为 `utility_time_now`、`utility_calculate`。发现不到、Schema 不兼容或不在本地审核策略中的配置工具会使启动失败，不会静默降级。
 
@@ -70,7 +75,7 @@ reasoning 内容。
 
 ## 真实模型 Coding E2E
 
-CLI 模块包含 9 个真实 DeepSeek 驱动的编程 E2E，覆盖单文件修复、多文件功能、回归测试、Maven
+CLI 模块包含 9 个真实 DeepSeek/百炼模型驱动的编程 E2E，覆盖单文件修复、多文件功能、回归测试、Maven
 配置、等价重构、文件迁移、脏工作区保护、失败恢复和审批拒绝。用例清单及初始工程位于
 `src/test/resources/coding-e2e/`，每次执行都复制到新的隔离 Workspace；不会回放 Stub 或历史模型响应。
 
@@ -83,6 +88,16 @@ HAIFA_FT_MODE=LIVE
 HAIFA_FT_RUN_ID=<unique-batch-id>
 HAIFA_FT_ROOT=<new-empty-absolute-directory>
 DEEPSEEK_API_KEY=<secret-manager-injected-value>
+```
+
+百炼批次将最后一项替换为：
+
+```text
+HAIFA_CLI_LIVE_E2E_PROVIDER=aliyun-bailian
+HAIFA_BAILIAN_WORKSPACE_ID=<required-workspace-id>
+HAIFA_BAILIAN_REGION=cn-beijing
+HAIFA_BAILIAN_MODEL_ID=qwen-plus
+DASHSCOPE_API_KEY=<secret-manager-injected-value>
 ```
 
 `HAIFA_FT_ROOT` 必须包含 `.haifa-cli-live-e2e-root`，内容与 `HAIFA_FT_RUN_ID` 完全相同，且除该

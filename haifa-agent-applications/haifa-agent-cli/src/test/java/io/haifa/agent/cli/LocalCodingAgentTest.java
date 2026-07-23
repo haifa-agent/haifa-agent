@@ -173,6 +173,61 @@ class LocalCodingAgentTest {
         assertThat(calls).hasValue(2);
     }
 
+    @Test
+    void missingFileReadIsReturnedToTheModelAsARecoverableToolFailure() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (calls.incrementAndGet() == 1) {
+                return new AgentChatResponse(
+                        "cli-missing-1",
+                        "stub-model",
+                        "",
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("missing-call-1"),
+                                "file_read",
+                                Map.of("path", "missing.txt"))),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unpriced(10, 3),
+                        "stub",
+                        Map.of());
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("missing-call-1")
+                            && message.content().contains("PATH_NOT_FOUND"));
+            return new AgentChatResponse(
+                    "cli-missing-2",
+                    "stub-model",
+                    "recovered",
+                    List.of(),
+                    ModelFinishReason.STOP,
+                    ModelUsage.unpriced(15, 4),
+                    "stub",
+                    Map.of());
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                CliConfiguration.defaults(),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var accepted = agent.start("Inspect a missing file and recover.");
+            Instant deadline = Instant.now().plusSeconds(10);
+            var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
+            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+                Thread.sleep(25);
+                snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
+            }
+
+            assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(snapshot.output()).contains("recovered");
+        }
+        assertThat(calls).hasValue(2);
+    }
+
     private static boolean isWindows() {
         return System.getProperty("os.name", "")
                 .toLowerCase(java.util.Locale.ROOT)

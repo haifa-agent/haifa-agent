@@ -8,6 +8,7 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.filesystem.FileListRequest;
 import io.haifa.agent.project.filesystem.ReadOptions;
 import io.haifa.agent.project.filesystem.SearchRequest;
+import io.haifa.agent.project.filesystem.WorkspaceFileException;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
@@ -52,17 +53,33 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             String runRef,
             String policyDecisionRef,
             ToolArguments arguments) {
-        return switch (toolName) {
-            case "file.list" -> list(workspaceId, arguments.values());
-            case "file.stat" -> stat(workspaceId, arguments.values());
-            case "file.read" -> read(workspaceId, arguments.values());
-            case "file.search" -> search(workspaceId, arguments.values());
-            case "file.create" -> create(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
-            case "file.write" -> write(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
-            case "file.delete" -> delete(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
-            case "file.move" -> move(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
-            default -> throw new IllegalArgumentException("CLI does not support tool: " + toolName);
-        };
+        try {
+            return switch (toolName) {
+                case "file.list" -> list(workspaceId, arguments.values());
+                case "file.stat" -> stat(workspaceId, arguments.values());
+                case "file.read" -> read(workspaceId, arguments.values());
+                case "file.search" -> search(workspaceId, arguments.values());
+                case "file.create" -> create(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
+                case "file.write" -> write(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
+                case "file.delete" -> delete(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
+                case "file.move" -> move(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
+                default -> throw new IllegalStateException("CLI does not support tool: " + toolName);
+            };
+        } catch (WorkspaceFileException exception) {
+            Map<String, Object> data = new java.util.LinkedHashMap<>();
+            data.put("errorCode", exception.code().name());
+            String logicalPath = exception
+                    .logicalPath()
+                    .map(WorkspacePath::projectPath)
+                    .map(ProjectPath::toString)
+                    .orElse(null);
+            if (logicalPath != null) data.put("path", logicalPath);
+            String summary = "Workspace file operation failed: "
+                    + exception.code().name() + (logicalPath == null ? "" : " (path=" + logicalPath + ")");
+            return failure(summary, data);
+        } catch (IllegalArgumentException exception) {
+            return failure("Workspace file arguments are invalid", Map.of("errorCode", "INVALID_ARGUMENT"));
+        }
     }
 
     private ToolResult list(WorkspaceId workspaceId, Map<String, Object> values) {
@@ -235,5 +252,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private static ToolResult success(String summary, Map<String, Object> data) {
         return new ToolResult(true, summary, data, List.of(), List.of(), false);
+    }
+
+    private static ToolResult failure(String summary, Map<String, Object> data) {
+        return new ToolResult(false, summary, data, List.of(), List.of(), false);
     }
 }

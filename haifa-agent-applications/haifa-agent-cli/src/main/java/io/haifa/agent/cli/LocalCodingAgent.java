@@ -22,6 +22,7 @@ import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.project.binding.WorkspaceBinding;
@@ -352,6 +353,9 @@ final class LocalCodingAgent implements AutoCloseable {
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration configuration) {
         CliConfiguration.Model model = configuration.model();
+        if (model.providerId().equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
+            return bailianModelSnapshot(model);
+        }
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
                 "cli-v1",
@@ -374,5 +378,43 @@ final class LocalCodingAgent implements AutoCloseable {
                         "dialect_version", "1.0",
                         "thinking", "disabled"),
                 Map.of("thinking", "disabled"));
+    }
+
+    private static ResolvedModelSnapshot bailianModelSnapshot(CliConfiguration.Model model) {
+        var provider = AliyunBailianProviderFactory.provider(
+                new AliyunBailianProviderFactory.ProviderConfiguration(
+                        "cli-v1", model.workspaceId(), model.region(), new CredentialRef(model.credentialRef())),
+                List.of(new AliyunBailianProviderFactory.ModelProfile(
+                        new ModelDefinitionId(model.modelId()),
+                        "cli-v1",
+                        model.modelId(),
+                        model.modelId(),
+                        EnumSet.of(
+                                ModelCapability.TEXT_CHAT,
+                                ModelCapability.TOOL_CALLING,
+                                ModelCapability.STRUCTURED_OUTPUT),
+                        131_072,
+                        8_192,
+                        Map.of(
+                                "thinking_profile", "none",
+                                "thinking_enabled", false,
+                                "supports_tool_stream", false,
+                                "tool_stream", false))));
+        var definition = provider.models().getFirst();
+        return ResolvedModelSnapshot.create(
+                provider.id(),
+                provider.version(),
+                definition.id(),
+                definition.version(),
+                definition.providerModelId(),
+                provider.adapterType(),
+                "1.0.0",
+                provider.endpoint(),
+                provider.credentialRef(),
+                definition.capabilities(),
+                definition.contextWindow(),
+                definition.maxOutputTokens(),
+                provider.options(),
+                definition.options());
     }
 }

@@ -1,5 +1,7 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -73,15 +75,45 @@ record CliConfiguration(
                 32);
     }
 
-    record Model(String providerId, String modelId, URI endpoint, String credentialRef) {
+    record Model(
+            String providerId, String modelId, URI endpoint, String credentialRef, String workspaceId, String region) {
+        Model(String providerId, String modelId, URI endpoint, String credentialRef) {
+            this(providerId, modelId, endpoint, credentialRef, null, null);
+        }
+
         Model {
             providerId = text(providerId, "model.providerId");
             modelId = text(modelId, "model.modelId");
-            endpoint = Objects.requireNonNull(endpoint, "model.endpoint must not be null");
             credentialRef = text(credentialRef, "model.credentialRef");
             if (!credentialRef.startsWith("env://")) {
                 throw new IllegalArgumentException("model.credentialRef must use env://");
             }
+            if (providerId.equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
+                var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
+                        "cli-v1", workspaceId, region, new CredentialRef(credentialRef));
+                URI derivedEndpoint = configuration.endpoint();
+                if (endpoint != null && !normalizeEndpoint(endpoint).equals(derivedEndpoint)) {
+                    throw new IllegalArgumentException(
+                            "model.endpoint must match the endpoint derived from workspaceId and region");
+                }
+                workspaceId = configuration.workspaceId();
+                region = configuration.region();
+                endpoint = derivedEndpoint;
+            } else {
+                endpoint = normalizeEndpoint(Objects.requireNonNull(endpoint, "model.endpoint must not be null"));
+                workspaceId = optionalText(workspaceId);
+                region = optionalText(region);
+            }
+        }
+
+        private static URI normalizeEndpoint(URI endpoint) {
+            String value = endpoint.normalize().toString();
+            while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+            return URI.create(value);
+        }
+
+        private static String optionalText(String value) {
+            return value == null || value.isBlank() ? null : value.trim();
         }
     }
 

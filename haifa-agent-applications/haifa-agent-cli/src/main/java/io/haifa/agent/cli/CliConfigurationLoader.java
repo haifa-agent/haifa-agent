@@ -34,14 +34,24 @@ final class CliConfigurationLoader {
     private CliConfiguration resolve(Map<String, Object> source, CliArguments arguments) {
         CliConfiguration defaults = CliConfiguration.defaults();
         Map<String, Object> model = object(source, "model");
-        String providerId = text(model, "providerId", defaults.model().providerId());
+        String providerId = environment("HAIFA_MODEL_PROVIDER_ID")
+                .orElseGet(() -> text(model, "providerId", defaults.model().providerId()));
+        boolean bailian = providerId.equals("aliyun-bailian");
         String modelId = arguments.model().orElseGet(() -> environment("HAIFA_MODEL_ID")
-                .orElseGet(() -> text(model, "modelId", defaults.model().modelId())));
-        String endpoint = environment("HAIFA_MODEL_ENDPOINT")
-                .orElseGet(() ->
-                        text(model, "endpoint", defaults.model().endpoint().toString()));
+                .orElseGet(() -> text(
+                        model,
+                        "modelId",
+                        bailian ? "qwen-plus" : defaults.model().modelId())));
+        String endpoint = environment("HAIFA_MODEL_ENDPOINT").orElseGet(() -> nullableText(model, "endpoint"));
         String credential = environment("HAIFA_CREDENTIAL_REF")
-                .orElseGet(() -> text(model, "credentialRef", defaults.model().credentialRef()));
+                .orElseGet(() -> text(
+                        model,
+                        "credentialRef",
+                        bailian ? "env://DASHSCOPE_API_KEY" : defaults.model().credentialRef()));
+        String workspaceId =
+                environment("HAIFA_BAILIAN_WORKSPACE_ID").orElseGet(() -> nullableText(model, "workspaceId"));
+        String region = environment("HAIFA_BAILIAN_REGION").orElseGet(() -> nullableText(model, "region"));
+        if (!bailian && endpoint == null) endpoint = defaults.model().endpoint().toString();
         Set<String> tools = stringSet(object(source, "tools").get("enabled"), defaults.enabledTools());
         List<CliConfiguration.McpServer> mcpServers = mcpServers(object(source, "mcp"));
         CliConfiguration.Execution execution = execution(object(source, "execution"), defaults.execution());
@@ -55,7 +65,13 @@ final class CliConfigurationLoader {
                 .orElseGet(() -> Duration.ofMillis(
                         number(runtime, "maxWallTimeMillis", defaults.timeout().toMillis())));
         return new CliConfiguration(
-                new CliConfiguration.Model(providerId, modelId, java.net.URI.create(endpoint), credential),
+                new CliConfiguration.Model(
+                        providerId,
+                        modelId,
+                        endpoint == null ? null : java.net.URI.create(endpoint),
+                        credential,
+                        workspaceId,
+                        region),
                 tools,
                 mcpServers,
                 execution,

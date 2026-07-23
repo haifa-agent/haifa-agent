@@ -23,6 +23,49 @@ class CliConfigurationLoaderTest {
     }
 
     @Test
+    void derivesBailianEndpointAndFreezesThinkingDisabledProfile() {
+        var model = new CliConfiguration.Model(
+                "aliyun-bailian", "qwen-plus", null, "env://DASHSCOPE_API_KEY", "workspace-123", null);
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var snapshot = LocalCodingAgent.modelSnapshot(new CliConfiguration(
+                model,
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.execution(),
+                defaults.approval(),
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxToolCalls()));
+
+        assertThat(model.workspaceId()).isEqualTo("workspace-123");
+        assertThat(model.region()).isEqualTo("cn-beijing");
+        assertThat(model.endpoint())
+                .hasToString("https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
+        assertThat(snapshot.providerId().value()).isEqualTo("aliyun-bailian");
+        assertThat(snapshot.providerOptions())
+                .containsEntry("dialect_id", "aliyun-bailian-openai-chat")
+                .containsEntry("workspace_id", "workspace-123")
+                .containsEntry("region", "cn-beijing");
+        assertThat(snapshot.invocationOptions())
+                .containsEntry("thinking_profile", "none")
+                .containsEntry("thinking_enabled", false);
+        assertThat(snapshot.capabilities()).doesNotContain(ModelCapability.REASONING);
+    }
+
+    @Test
+    void rejectsBailianEndpointThatDoesNotMatchWorkspaceAndRegion() {
+        assertThatThrownBy(() -> new CliConfiguration.Model(
+                        "aliyun-bailian",
+                        "qwen-plus",
+                        java.net.URI.create("https://example.com/compatible-mode/v1"),
+                        "env://DASHSCOPE_API_KEY",
+                        "workspace-123",
+                        "cn-beijing"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("derived from workspaceId and region");
+    }
+
+    @Test
     void loadsExplicitYamlConfiguration() throws Exception {
         Path configuration = Files.createTempFile("haifa-cli", ".yaml");
         Files.writeString(
