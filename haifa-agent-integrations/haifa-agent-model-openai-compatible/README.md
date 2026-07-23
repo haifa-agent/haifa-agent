@@ -17,9 +17,11 @@ transport 实现；厂商请求扩展、Endpoint policy 与错误分类由冻结
 ## 阿里云百炼
 
 使用 `AliyunBailianProviderFactory` 从外部治理配置构造 Provider 和模型 profile，不在 adapter 中固定
-易变的 Qwen 型号、版本或限额。Provider 配置必须包含完整的 `compatible-mode/v1` Base URL、region、
-`workspace_scoped` 与 CredentialRef；公共域名和 Workspace 专属域名不可混用。本地示例可使用
-`env://DASHSCOPE_API_KEY`，生产应接入现有 Credential binding/lease。
+易变的 Qwen 型号、版本或限额。Provider 配置必须包含 `workspaceId` 与 CredentialRef，region 缺省为
+`cn-beijing`。Endpoint 不接受外部自由注入，而是固定构造成
+`https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`；`workspaceId` 和 region
+都必须是合法 DNS label。本地示例可使用 `env://DASHSCOPE_API_KEY`，生产应接入现有 Credential
+binding/lease。
 
 模型 profile 显式声明 `thinking_profile=none|hybrid|always`、`thinking_enabled`、
 `supports_tool_stream` 等能力。只有受支持且显式启用时才发送 `thinking_budget`、
@@ -52,7 +54,7 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Provider | Endpoint 示例 | Credential 示例 | 模型引用 | 厂商扩展 |
 | --- | --- | --- | --- | --- |
 | DeepSeek | `https://api.deepseek.com` | `env://DEEPSEEK_API_KEY` | model id | thinking object |
-| Bailian | region/Workspace `compatible-mode/v1` | `env://DASHSCOPE_API_KEY` | Qwen model id/alias | enable_thinking/tool_stream |
+| Bailian | `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1` | `env://DASHSCOPE_API_KEY` | Qwen model id/alias | enable_thinking/tool_stream |
 | Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |
 
 ## DeepSeek thinking
@@ -136,7 +138,7 @@ DEEPSEEK_API_KEY=<secret>
 ```text
 HAIFA_BAILIAN_LIVE_TEST=true
 DASHSCOPE_API_KEY=<secret>
-HAIFA_BAILIAN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+HAIFA_BAILIAN_WORKSPACE_ID=<required-workspace-id>
 HAIFA_BAILIAN_MODEL_ID=<governed-model-id>
 HAIFA_BAILIAN_REGION=cn-beijing
 ```

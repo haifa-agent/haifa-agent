@@ -14,11 +14,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /** Configuration factory for governed Bailian OpenAI Chat model profiles. */
 public final class AliyunBailianProviderFactory {
     public static final ModelProviderId PROVIDER_ID = new ModelProviderId("aliyun-bailian");
     public static final String ADAPTER_TYPE = "openai-compatible";
+    public static final String DEFAULT_REGION = "cn-beijing";
+    private static final String COMPATIBLE_MODE_PATH = "/compatible-mode/v1";
+    private static final Pattern DNS_LABEL = Pattern.compile("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?");
 
     private AliyunBailianProviderFactory() {}
 
@@ -29,7 +33,7 @@ public final class AliyunBailianProviderFactory {
         providerOptions.put(OpenAiCompatibleDialects.DIALECT_ID, OpenAiCompatibleDialects.ALIYUN_BAILIAN);
         providerOptions.put(OpenAiCompatibleDialects.DIALECT_VERSION, OpenAiCompatibleDialects.VERSION_1);
         providerOptions.put("region", configuration.region());
-        providerOptions.put("workspace_scoped", configuration.workspaceScoped());
+        providerOptions.put("workspace_id", configuration.workspaceId());
         List<ModelDefinition> models =
                 profiles.stream().map(ModelProfile::definition).toList();
         return new ModelProviderDefinition(
@@ -46,18 +50,26 @@ public final class AliyunBailianProviderFactory {
     }
 
     public record ProviderConfiguration(
-            String providerVersion, URI endpoint, String region, boolean workspaceScoped, CredentialRef credentialRef) {
+            String providerVersion, String workspaceId, String region, CredentialRef credentialRef) {
         public ProviderConfiguration {
             if (providerVersion == null || providerVersion.isBlank())
                 throw new IllegalArgumentException("providerVersion must not be blank");
-            Objects.requireNonNull(endpoint, "endpoint must not be null");
-            if (region == null || region.isBlank()) throw new IllegalArgumentException("region must not be blank");
+            workspaceId = dnsLabel(workspaceId, "workspaceId");
+            region = region == null || region.isBlank() ? DEFAULT_REGION : dnsLabel(region, "region");
             Objects.requireNonNull(credentialRef, "credentialRef must not be null");
         }
 
-        public static ProviderConfiguration localExample(URI endpoint, String region, boolean workspaceScoped) {
+        public ProviderConfiguration(String providerVersion, String workspaceId, CredentialRef credentialRef) {
+            this(providerVersion, workspaceId, DEFAULT_REGION, credentialRef);
+        }
+
+        public URI endpoint() {
+            return URI.create("https://" + workspaceId + "." + region + ".maas.aliyuncs.com" + COMPATIBLE_MODE_PATH);
+        }
+
+        public static ProviderConfiguration localExample(String workspaceId) {
             return new ProviderConfiguration(
-                    "configured-v1", endpoint, region, workspaceScoped, new CredentialRef("env://DASHSCOPE_API_KEY"));
+                    "configured-v1", workspaceId, DEFAULT_REGION, new CredentialRef("env://DASHSCOPE_API_KEY"));
         }
     }
 
@@ -95,5 +107,14 @@ public final class AliyunBailianProviderFactory {
                     options,
                     Map.of("profile_source", "governed-configuration"));
         }
+    }
+
+    private static String dnsLabel(String value, String field) {
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(field + " must not be blank");
+        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!DNS_LABEL.matcher(normalized).matches()) {
+            throw new IllegalArgumentException(field + " must be a valid DNS label");
+        }
+        return normalized;
     }
 }
