@@ -246,16 +246,16 @@ final class LocalCodingAgent implements AutoCloseable {
                                 ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
                                 : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.REQUIRE_APPROVAL;
                 })
-                .definitions(
-                        (id, requested) -> new ResolvedDefinition(
-                                id,
-                                requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
-                                catalog.snapshot().bindings().stream()
-                                        .map(binding -> binding.alias().value())
-                                        .collect(java.util.stream.Collectors.toUnmodifiableSet()),
-                                Set.of(),
-                                "You are a careful local coding agent. Inspect relevant files before editing. "
-                                        + "Use tools for workspace facts, preserve existing changes, and summarize completed work."))
+                .definitions((id, requested) -> new ResolvedDefinition(
+                        id,
+                        requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
+                        catalog.snapshot().bindings().stream()
+                                .map(binding -> binding.alias().value())
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                        Set.of(),
+                        "You are a careful local coding agent. Inspect relevant files before editing. "
+                                + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
+                                + "Pass only workspace-relative paths to file tools; never pass an absolute path."))
                 .profiles((profileId, overrides) -> new ResolvedProfile(
                         profileId,
                         "1.0.0",
@@ -324,6 +324,10 @@ final class LocalCodingAgent implements AutoCloseable {
                 .sum();
     }
 
+    List<RuntimeTraceEvent> traceEvents() {
+        return List.copyOf(traces);
+    }
+
     static Set<String> effectiveBuiltInTools(CliConfiguration configuration) {
         java.util.Set<String> configuredTools = new java.util.HashSet<>(configuration.enabledTools());
         if (configuration.approval() == ApprovalMode.DENY) configuredTools.remove("execution.run");
@@ -368,11 +372,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 Map.of(
                         "dialect_id", "deepseek-openai-chat",
                         "dialect_version", "1.0",
-                        "thinking", "enabled",
-                        "reasoning_effort", "high"),
-                Map.of(
-                        "thinking", "enabled",
-                        "reasoning_effort", "high",
-                        "requires_reasoning_continuation", true));
+                        "thinking", "disabled"),
+                Map.of("thinking", "disabled"));
     }
 }

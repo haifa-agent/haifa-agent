@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.plan.AgentPlan;
 import io.haifa.agent.core.plan.AgentPlanId;
 import io.haifa.agent.core.plan.TodoItem;
@@ -20,8 +21,10 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
@@ -484,11 +487,17 @@ class RuntimeCoreTest {
     @Test
     void rejectedToolApprovalDoesNotCancelRunAndDuplicateResponseIsIdempotent() {
         AtomicInteger toolCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> resumedModelRequest = new AtomicReference<>();
+        Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions = new ArrayDeque<>(List.of(
+                new ToolCallDecision(List.of(
+                        toolRequest("rejected", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of())))),
+                finalDecision("continued after rejection")));
+        AgentChatModel approvalModel = request -> {
+            if (request.iteration() == 2) resumedModelRequest.set(request);
+            return response(decisions.remove());
+        };
         Fixture fixture = fixture(
-                model(
-                        new ToolCallDecision(List.of(toolRequest(
-                                "rejected", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of())))),
-                        finalDecision("continued after rejection")),
+                approvalModel,
                 builder -> TestToolPlatform.install(
                         builder,
                         "write",
@@ -533,6 +542,12 @@ class RuntimeCoreTest {
                         .flatMap(message -> message.contents().stream())
                         .map(Object::toString))
                 .anyMatch(text -> text.contains("rejected by the operator"));
+        assertThat(fixture.store.messages(accepted.runId()))
+                .anyMatch(message -> message.metadata().containsKey("interactionResponseType")
+                        && message.visibility() == MessageVisibility.INTERNAL);
+        assertThat(resumedModelRequest.get().messages())
+                .extracting(message -> message.role())
+                .containsSequence(ModelMessageRole.ASSISTANT, ModelMessageRole.TOOL);
     }
 
     private static Fixture fixture(AgentChatModel model) {

@@ -121,6 +121,58 @@ class LocalCodingAgentTest {
         assertThat(calls).hasValue(2);
     }
 
+    @Test
+    void fileListAcceptsTheDisclosedDotWorkspaceRoot() throws Exception {
+        Files.writeString(workspace.resolve("visible.txt"), "fixture", StandardCharsets.UTF_8);
+        AtomicInteger calls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (calls.incrementAndGet() == 1) {
+                return new AgentChatResponse(
+                        "cli-list-1",
+                        "stub-model",
+                        "",
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("list-call-1"), "file_list", Map.of("path", "."))),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unpriced(10, 3),
+                        "stub",
+                        Map.of());
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("list-call-1"));
+            return new AgentChatResponse(
+                    "cli-list-2",
+                    "stub-model",
+                    "listed root",
+                    List.of(),
+                    ModelFinishReason.STOP,
+                    ModelUsage.unpriced(15, 4),
+                    "stub",
+                    Map.of());
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                CliConfiguration.defaults(),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var accepted = agent.start("List the workspace root.");
+            Instant deadline = Instant.now().plusSeconds(10);
+            var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
+            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+                Thread.sleep(25);
+                snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
+            }
+
+            assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        }
+        assertThat(calls).hasValue(2);
+    }
+
     private static boolean isWindows() {
         return System.getProperty("os.name", "")
                 .toLowerCase(java.util.Locale.ROOT)

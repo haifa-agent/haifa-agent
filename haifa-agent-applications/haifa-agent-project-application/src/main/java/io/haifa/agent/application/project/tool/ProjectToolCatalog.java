@@ -235,7 +235,15 @@ public final class ProjectToolCatalog {
     }
 
     private static void path(Map<String, Object> properties, List<String> required, String name) {
-        properties.put(name, Map.of("type", "string", "minLength", 1));
+        properties.put(
+                name,
+                Map.of(
+                        "type",
+                        "string",
+                        "minLength",
+                        1,
+                        "description",
+                        "Workspace-relative path; use '.' for the workspace root. Absolute paths are not allowed."));
         required.add(name);
     }
 
