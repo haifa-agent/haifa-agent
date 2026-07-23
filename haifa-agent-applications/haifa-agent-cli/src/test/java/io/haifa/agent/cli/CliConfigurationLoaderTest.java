@@ -153,4 +153,55 @@ class CliConfigurationLoaderTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("unsupported");
     }
+
+    @Test
+    void loadsExplicitWebSearchConfigurationWithProviderDefaults() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-web", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                tools:
+                  enabled: [file.read, web.search]
+                web:
+                  search:
+                    enabled: true
+                    provider: brave
+                  fetch:
+                    enabled: false
+                    provider: aliyun
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "web", "--config", configuration.toString()}),
+                        Path.of("."));
+
+        assertThat(result.web().search().enabled()).isTrue();
+        assertThat(result.web().search().providerId()).isEqualTo("brave");
+        assertThat(result.web().search().endpoint())
+                .isEqualTo(
+                        io.haifa.agent.application.project.tool.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT);
+        assertThat(result.web().search().credentialRef()).isEqualTo("env://BRAVE_SEARCH_API_KEY");
+        assertThat(result.web().fetch().enabled()).isFalse();
+    }
+
+    @Test
+    void rejectsWebToolAndProviderEnablementMismatch() {
+        CliConfiguration defaults = CliConfiguration.defaults();
+
+        assertThatThrownBy(() -> new CliConfiguration(
+                        defaults.model(),
+                        java.util.stream.Stream.concat(
+                                        defaults.enabledTools().stream(), java.util.stream.Stream.of("web.search"))
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                        defaults.mcpServers(),
+                        defaults.web(),
+                        defaults.execution(),
+                        defaults.approval(),
+                        defaults.timeout(),
+                        defaults.maxIterations(),
+                        defaults.maxToolCalls()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must match");
+    }
 }

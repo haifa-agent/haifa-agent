@@ -1,5 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
+import io.haifa.agent.application.project.tool.web.WebToolCatalogContribution;
 import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
@@ -60,7 +61,19 @@ public final class ProjectToolCatalog {
             boolean modelSupportsTools,
             ToolProvider provider,
             List<McpToolCatalogContribution> mcpTools) {
+        return freeze(configuredTools, effectiveCapabilities, modelSupportsTools, provider, mcpTools, List.of());
+    }
+
+    /** Coding profile assembly path for reviewed MCP imports, Web capabilities, and built-in project tools. */
+    public DefaultToolCatalog freeze(
+            Set<String> configuredTools,
+            Set<String> effectiveCapabilities,
+            boolean modelSupportsTools,
+            ToolProvider provider,
+            List<McpToolCatalogContribution> mcpTools,
+            List<WebToolCatalogContribution> webTools) {
         Objects.requireNonNull(mcpTools, "mcpTools");
+        Objects.requireNonNull(webTools, "webTools");
         Objects.requireNonNull(configuredTools, "configuredTools");
         Objects.requireNonNull(effectiveCapabilities, "effectiveCapabilities");
         Objects.requireNonNull(provider, "provider");
@@ -73,6 +86,13 @@ public final class ProjectToolCatalog {
                 .forEach(name -> builder.register(modelAlias(name), definition(name), "project-workspace", provider));
         mcpTools.stream()
                 .sorted(java.util.Comparator.comparing(McpToolCatalogContribution::alias))
+                .forEach(contribution -> builder.register(
+                        contribution.alias(),
+                        contribution.definition(),
+                        contribution.providerBindingReference(),
+                        contribution.provider()));
+        webTools.stream()
+                .sorted(java.util.Comparator.comparing(WebToolCatalogContribution::alias))
                 .forEach(contribution -> builder.register(
                         contribution.alias(),
                         contribution.definition(),

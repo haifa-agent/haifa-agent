@@ -14,6 +14,7 @@ record CliConfiguration(
         Model model,
         Set<String> enabledTools,
         List<McpServer> mcpServers,
+        Web web,
         Execution execution,
         ApprovalMode approval,
         Duration timeout,
@@ -29,6 +30,9 @@ record CliConfiguration(
             "file.delete",
             "file.move",
             "execution.run");
+    private static final Set<String> SUPPORTED_TOOLS = java.util.stream.Stream.concat(
+                    DEFAULT_TOOLS.stream(), java.util.stream.Stream.of("web.search", "web.fetch"))
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
     private static final Set<String> DEFAULT_ENVIRONMENT = Set.of(
             "PATH", "HOME", "USERPROFILE", "TMP", "TEMP", "SystemRoot", "JAVA_HOME", "MAVEN_OPTS", "GRADLE_USER_HOME");
 
@@ -37,9 +41,14 @@ record CliConfiguration(
         enabledTools =
                 Set.copyOf(new LinkedHashSet<>(Objects.requireNonNull(enabledTools, "enabledTools must not be null")));
         mcpServers = List.copyOf(Objects.requireNonNull(mcpServers, "mcpServers must not be null"));
+        web = Objects.requireNonNull(web, "web must not be null");
         execution = Objects.requireNonNull(execution, "execution must not be null");
-        if (!DEFAULT_TOOLS.containsAll(enabledTools)) {
-            throw new IllegalArgumentException("CLI supports only built-in local tools: " + DEFAULT_TOOLS);
+        if (!SUPPORTED_TOOLS.containsAll(enabledTools)) {
+            throw new IllegalArgumentException("CLI supports only configured tools: " + SUPPORTED_TOOLS);
+        }
+        if (enabledTools.contains("web.search") != web.search().enabled()
+                || enabledTools.contains("web.fetch") != web.fetch().enabled()) {
+            throw new IllegalArgumentException("tools.enabled and web provider enabled flags must match");
         }
         if (mcpServers.stream().map(McpServer::id).distinct().count() != mcpServers.size()) {
             throw new IllegalArgumentException("MCP server ids must be unique");
@@ -60,6 +69,7 @@ record CliConfiguration(
                         "env://DEEPSEEK_API_KEY"),
                 DEFAULT_TOOLS,
                 List.of(),
+                Web.defaults(),
                 new Execution(
                         "auto",
                         null,
@@ -73,6 +83,27 @@ record CliConfiguration(
                 Duration.ofMinutes(5),
                 50,
                 32);
+    }
+
+    CliConfiguration(
+            Model model,
+            Set<String> enabledTools,
+            List<McpServer> mcpServers,
+            Execution execution,
+            ApprovalMode approval,
+            Duration timeout,
+            int maxIterations,
+            long maxToolCalls) {
+        this(
+                model,
+                enabledTools,
+                mcpServers,
+                Web.defaults(),
+                execution,
+                approval,
+                timeout,
+                maxIterations,
+                maxToolCalls);
     }
 
     record Model(
@@ -176,6 +207,67 @@ record CliConfiguration(
         private static void positive(Duration value, String field) {
             Objects.requireNonNull(value, field + " must not be null");
             if (value.isZero() || value.isNegative()) throw new IllegalArgumentException(field + " must be positive");
+        }
+    }
+
+    record Web(WebProvider search, WebProvider fetch) {
+        Web {
+            search = Objects.requireNonNull(search, "web.search must not be null");
+            fetch = Objects.requireNonNull(fetch, "web.fetch must not be null");
+            if (!Set.of("aliyun", "brave", "tavily").contains(search.providerId())) {
+                throw new IllegalArgumentException("web.search.provider must be aliyun, brave, or tavily");
+            }
+            if (!fetch.providerId().equals("aliyun")) {
+                throw new IllegalArgumentException("web.fetch.provider must be aliyun");
+            }
+        }
+
+        static Web defaults() {
+            return new Web(
+                    new WebProvider(
+                            false,
+                            "aliyun",
+                            io.haifa.agent.application.project.tool.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
+                            "env://ALIYUN_IQS_API_KEY",
+                            Duration.ofSeconds(30),
+                            2 * 1024 * 1024),
+                    new WebProvider(
+                            false,
+                            "aliyun",
+                            io.haifa.agent.application.project.tool.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT,
+                            "env://ALIYUN_IQS_API_KEY",
+                            Duration.ofSeconds(30),
+                            4 * 1024 * 1024));
+        }
+    }
+
+    record WebProvider(
+            boolean enabled,
+            String providerId,
+            URI endpoint,
+            String credentialRef,
+            Duration timeout,
+            int maxResponseBytes) {
+        WebProvider {
+            providerId = text(providerId, "web providerId").toLowerCase(java.util.Locale.ROOT);
+            endpoint = Objects.requireNonNull(endpoint, "web endpoint must not be null")
+                    .normalize();
+            if (!endpoint.isAbsolute()
+                    || endpoint.getHost() == null
+                    || !endpoint.getScheme().equalsIgnoreCase("https")) {
+                throw new IllegalArgumentException("web endpoint must be an absolute HTTPS URI");
+            }
+            credentialRef = text(credentialRef, "web credentialRef");
+            if (!credentialRef.startsWith("env://") || credentialRef.length() == "env://".length()) {
+                throw new IllegalArgumentException("web credentialRef must use env://");
+            }
+            Objects.requireNonNull(timeout, "web timeout must not be null");
+            if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(Duration.ofMinutes(2)) > 0) {
+                throw new IllegalArgumentException("web timeout is out of range");
+            }
+            if (maxResponseBytes < 1024 || maxResponseBytes > 16 * 1024 * 1024) {
+                throw new IllegalArgumentException("web maxResponseBytes is out of range");
+            }
         }
     }
 

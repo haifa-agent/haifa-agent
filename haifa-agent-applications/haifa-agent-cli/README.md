@@ -1,6 +1,6 @@
 # Haifa Agent CLI
 
-`haifa-agent-cli` 是用于验证 Haifa Agent 现有 Runtime、OpenAI-compatible 模型、受控本地文件工具、通用本地 Shell Tool 和 Streamable HTTP MCP Tool 的最小 Coding Agent 命令行入口。
+`haifa-agent-cli` 是用于验证 Haifa Agent 现有 Runtime、OpenAI-compatible 模型、受控本地文件工具、通用本地 Shell Tool、Streamable HTTP MCP Tool 和可选 Web Tool 的最小 Coding Agent 命令行入口。
 
 ## 构建与运行
 
@@ -27,6 +27,15 @@ model:
   credentialRef: env://DEEPSEEK_API_KEY
 tools:
   enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.delete, file.move, execution.run]
+web:
+  search:
+    enabled: false
+    provider: aliyun
+    credentialRef: env://ALIYUN_IQS_API_KEY
+  fetch:
+    enabled: false
+    provider: aliyun
+    credentialRef: env://ALIYUN_IQS_API_KEY
 mcp:
   servers:
     - id: utility
@@ -53,6 +62,13 @@ runtime:
 ```
 
 `tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_write`、`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作目录和 timeout；任何本机已安装且可由配置 Shell 解析的普通 CLI 都走同一生产路径，文档中的具体命令仅是非穷举示例。
+
+Web Tool 默认关闭。启用 Search 时需同时把 `web.search` 加入 `tools.enabled` 并设置
+`web.search.enabled: true`；可选 Provider 为 `aliyun`、`brave`、`tavily`。启用 Fetch 时同理加入
+`web.fetch`，但当前 `web.fetch.provider` 只能是 `aliyun`。Provider 不读取环境变量；CLI 根据
+`env://` 引用在启动期把密钥写入进程内加密 Credential Store，Runtime 在实际 Tool 调用期签发短期
+`CredentialLease`。网络与凭据 Tool 默认仍按 `approval.mode` 进入审批策略，不会自动切换 Provider
+或在失败时返回示例内容。
 
 CLI 的 DeepSeek 和百炼冻结配置均强制关闭 thinking，并通过 Runtime output listener 实时打印安全的 answer delta；
 reasoning 原文不会进入终端。使用 `--verbose` 时只会打印供应商报告的 reasoning token 计数，不记录或展示
