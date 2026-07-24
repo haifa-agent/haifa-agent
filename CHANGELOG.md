@@ -15,3 +15,7 @@
 - CLI 新增受控的 Streamable HTTP MCP Server 配置、启动期工具发现与 allowlist/profile 审查，并把已审核远端工具接入现有 Catalog、Runtime Policy 和结构化 Tool Result 链路。
 - 新增通用 `execution.run` / `execution_run` Shell Tool：明确区分 DIRECT argv 与 SHELL 文本，由可信 Host 配置选择 Bash/PowerShell，经唯一 ExecutionBroker 执行并关联 FileChangeSet。
 - CLI 默认启用 ask 审批的本地 Shell 能力，支持 auto/deny disclosure、实时有界脱敏输出、Output Ref、timeout/Runtime/Ctrl+C 取消和受限环境名称继承；具体 CLI 命令均走同一实现，不含逐命令适配。
+- 新增纯 Java Skill API/Core/Base，兼容 `SKILL.md`，提供 SDK/Product/Tenant/User/Project 分层发现、确定性解析、内容寻址冻结、渐进披露、Run 级受控激活、资源读取和两个无外部依赖的基础 Skill。
+- Runtime 新增最弱 `SKILL` Context 层与 `skill.load` / `skill.resource.read` Tool；Skill 激活和精确内容引用进入 Checkpoint/Resume，脚本只索引审查而不执行。
+- CLI 支持从可信配置装配绝对路径的只读本地用户 Skill 目录，并以显式 `skills.allowed` 控制冻结、摘要披露和激活范围。
+- CLI 新增 `--trace summary|detail|jsonl` 与 `--trace-file <path>`，实时输出现有 Runtime 安全 Trace，并按 Provider 区分模型、普通 Tool、MCP 与 Skill 调用；Trace 不包含 Prompt、Tool 原始参数、Credential、reasoning 原文或供应商原始响应。

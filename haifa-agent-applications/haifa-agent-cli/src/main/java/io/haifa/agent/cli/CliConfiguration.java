@@ -2,6 +2,9 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
+import io.haifa.agent.skill.api.SkillAlias;
+import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillParserMode;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -15,6 +18,7 @@ record CliConfiguration(
         Set<String> enabledTools,
         List<McpServer> mcpServers,
         Web web,
+        Skills skills,
         Execution execution,
         ApprovalMode approval,
         Duration timeout,
@@ -42,6 +46,7 @@ record CliConfiguration(
                 Set.copyOf(new LinkedHashSet<>(Objects.requireNonNull(enabledTools, "enabledTools must not be null")));
         mcpServers = List.copyOf(Objects.requireNonNull(mcpServers, "mcpServers must not be null"));
         web = Objects.requireNonNull(web, "web must not be null");
+        skills = Objects.requireNonNull(skills, "skills must not be null");
         execution = Objects.requireNonNull(execution, "execution must not be null");
         if (!SUPPORTED_TOOLS.containsAll(enabledTools)) {
             throw new IllegalArgumentException("CLI supports only configured tools: " + SUPPORTED_TOOLS);
@@ -70,6 +75,7 @@ record CliConfiguration(
                 DEFAULT_TOOLS,
                 List.of(),
                 Web.defaults(),
+                Skills.defaults(),
                 new Execution(
                         "auto",
                         null,
@@ -99,6 +105,30 @@ record CliConfiguration(
                 enabledTools,
                 mcpServers,
                 Web.defaults(),
+                Skills.defaults(),
+                execution,
+                approval,
+                timeout,
+                maxIterations,
+                maxToolCalls);
+    }
+
+    CliConfiguration(
+            Model model,
+            Set<String> enabledTools,
+            List<McpServer> mcpServers,
+            Web web,
+            Execution execution,
+            ApprovalMode approval,
+            Duration timeout,
+            int maxIterations,
+            long maxToolCalls) {
+        this(
+                model,
+                enabledTools,
+                mcpServers,
+                web,
+                Skills.defaults(),
                 execution,
                 approval,
                 timeout,
@@ -267,6 +297,58 @@ record CliConfiguration(
             }
             if (maxResponseBytes < 1024 || maxResponseBytes > 16 * 1024 * 1024) {
                 throw new IllegalArgumentException("web maxResponseBytes is out of range");
+            }
+        }
+    }
+
+    record Skills(Set<String> allowedAliases, List<LocalSkillDirectory> localDirectories) {
+        Skills {
+            Objects.requireNonNull(allowedAliases, "skill allowedAliases must not be null");
+            allowedAliases = allowedAliases.stream()
+                    .map(SkillAlias::new)
+                    .map(SkillAlias::value)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            localDirectories =
+                    List.copyOf(Objects.requireNonNull(localDirectories, "skill localDirectories must not be null"));
+            if (localDirectories.stream()
+                            .map(LocalSkillDirectory::id)
+                            .distinct()
+                            .count()
+                    != localDirectories.size()) {
+                throw new IllegalArgumentException("skill local directory ids must be unique");
+            }
+            if (localDirectories.stream()
+                            .map(LocalSkillDirectory::root)
+                            .distinct()
+                            .count()
+                    != localDirectories.size()) {
+                throw new IllegalArgumentException("skill local directory roots must be unique");
+            }
+        }
+
+        static Skills defaults() {
+            return new Skills(Set.of("task-planning", "result-verification"), List.of());
+        }
+    }
+
+    record LocalSkillDirectory(String id, Path root, int priority, SkillParserMode parserMode, SkillOrigin origin) {
+        LocalSkillDirectory {
+            id = text(id, "skill local directory id").toLowerCase(java.util.Locale.ROOT);
+            if (!id.matches("[a-z][a-z0-9-]{0,63}")) {
+                throw new IllegalArgumentException("skill local directory id must be lowercase kebab-case");
+            }
+            Path configuredRoot = Objects.requireNonNull(root, "skill local directory root must not be null");
+            if (!configuredRoot.isAbsolute()) {
+                throw new IllegalArgumentException("skill local directory root must be absolute");
+            }
+            root = configuredRoot.normalize();
+            if (priority < 0 || priority > 10_000) {
+                throw new IllegalArgumentException("skill local directory priority is out of range");
+            }
+            parserMode = Objects.requireNonNull(parserMode, "skill parserMode must not be null");
+            origin = Objects.requireNonNull(origin, "skill origin must not be null");
+            if (origin != SkillOrigin.CREATED && origin != SkillOrigin.IMPORTED) {
+                throw new IllegalArgumentException("skill local directory origin must be CREATED or IMPORTED");
             }
         }
     }

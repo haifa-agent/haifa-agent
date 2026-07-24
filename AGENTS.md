@@ -83,7 +83,7 @@ common <- core <- runtime-api <- runtime-core -> model-api
 | 首个模型纵向集成 | [`docs/04-post-first-integration-model.md`](docs/04-post-first-integration-model.md) | 修改模型快照、DeepSeek 或 OpenAI-compatible 适配前阅读 |
 | Context 与 Memory | [`docs/05-context-memory-and-compression.md`](docs/05-context-memory-and-compression.md) | 未来设计输入；先核对代码是否已落地 |
 | Project、Workspace 与文件系统 | [`docs/06-project-workspace-and-filesystem.md`](docs/06-project-workspace-and-filesystem.md) | 未来设计输入，尤其关注路径与执行安全 |
-| Tool、MCP 与 Skill | [`docs/07-implementation-overview.md`](docs/07-implementation-overview.md) | 活动总览；依次阅读 `07-tool-platform.md`、`07-mcp-client-2025-11-25.md`、`07-skill-mvp-and-deer-flow-import.md`，开发按 `docs/prompts/07-phase-*.md` 顺序执行 |
+| Tool、MCP 与 Skill | [`docs/07-implementation-overview.md`](docs/07-implementation-overview.md) | 活动总览；依次阅读 `07-tool-platform.md`、`07-mcp-client-2025-11-25.md`、`07-skill-platform.md`，开发按 `docs/prompts/07-phase-*.md` 顺序执行 |
 | 已知待办 | [`docs/00-to-do-note.md`](docs/00-to-do-note.md) | 核对明确延期能力，避免意外启用 |
 
 `docs/prompts/` 和 `docs/ai-coding-report/` 用于追溯阶段目标、验收过程和历史决策，不替代当前代码、测试或架构基线。

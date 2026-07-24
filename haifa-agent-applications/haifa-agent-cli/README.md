@@ -1,6 +1,6 @@
 # Haifa Agent CLI
 
-`haifa-agent-cli` 是用于验证 Haifa Agent 现有 Runtime、OpenAI-compatible 模型、受控本地文件工具、通用本地 Shell Tool、Streamable HTTP MCP Tool 和可选 Web Tool 的最小 Coding Agent 命令行入口。
+`haifa-agent-cli` 是用于验证 Haifa Agent 现有 Runtime、OpenAI-compatible 模型、受控本地文件工具、通用本地 Shell Tool、基础 Skill、Streamable HTTP MCP Tool 和可选 Web Tool 的最小 Coding Agent 命令行入口。
 
 ## 构建与运行
 
@@ -10,6 +10,35 @@ java -jar .\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.
 ```
 
 构建后也可以将 `bin` 目录加入 `PATH`，使用 `haifa-cli.ps1` 启动。
+
+## 安全 Trace
+
+CLI 可实时订阅现有 `RuntimeTraceEvent`，不需要启用 `--verbose`：
+
+```powershell
+$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
+
+# 只显示关键模型、Tool、MCP 与 Skill 生命周期
+java -jar $jar --config D:\haifa-agent-config\haifa-skill-live.yaml `
+  --workspace D:\haifa-agent-config\workspaces\ascii-art `
+  -m "使用 ascii-art Skill 创作一只帆船" `
+  --trace summary
+
+# 将所有安全 Runtime 事件写成 JSON Lines
+java -jar $jar --config D:\haifa-agent-config\haifa-skill-live.yaml `
+  --workspace D:\haifa-agent-config\workspaces\ascii-art `
+  -m "使用 ascii-art Skill 创作一只帆船" `
+  --trace jsonl `
+  --trace-file D:\haifa-agent-config\ascii-art.trace.jsonl
+```
+
+- `--trace summary`：只输出模型完成/失败、Context 强制重建以及 Tool、MCP、Skill 开始/完成事件；
+- `--trace detail`：输出每个 Runtime Trace envelope 和全部安全属性；
+- `--trace jsonl`：每个安全事件输出为一行独立 JSON，适合脚本、日志采集和 E2E 证据；
+- `--trace-file <path>`：将所选格式写入文件，必须与 `--trace` 一起使用；父目录必须已存在，目标不能是目录或符号链接，已有普通文件会被覆盖；
+- 未指定 `--trace-file` 时 Trace 写入 stderr，模型的流式回答继续写入 stdout。
+
+三个模式都只消费 Runtime 的 `safeAttributes`，并在 CLI 边界再次移除敏感键、ANSI/控制字符，限制字符串、集合和嵌套深度。不会输出 Prompt、Tool 原始参数/完整结果、Credential、reasoning 原文或供应商原始响应。`summary` 根据冻结 Tool Provider 区分普通 Tool、`mcp.<serverId>` MCP Tool 和 `haifa-runtime-skill` Skill Tool；它不会建立第二套调用链。
 
 ## 配置
 
@@ -27,6 +56,14 @@ model:
   credentialRef: env://DEEPSEEK_API_KEY
 tools:
   enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.delete, file.move, execution.run]
+skills:
+  allowed: [task-planning, result-verification, my-test-skill]
+  localDirectories:
+    - id: personal
+      root: D:\haifa-agent-config\skills
+      priority: 100
+      parserMode: strict
+      origin: created
 web:
   search:
     enabled: false
@@ -62,6 +99,24 @@ runtime:
 ```
 
 `tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_write`、`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作目录和 timeout；任何本机已安装且可由配置 Shell 解析的普通 CLI 都走同一生产路径，文档中的具体命令仅是非穷举示例。
+
+CLI Coding Profile 显式允许 `task-planning` 与 `result-verification` 两个 SDK 基础 Skill，并把
+`skill_load`、`skill_resource_read` 注册到同一个 Runtime Tool Pipeline。模型开始时只看到 Skill
+名称、描述和摘要；调用 `skill_load` 后，精确冻结版本的指令才进入后续上下文。资源必须再通过
+`skill_resource_read` 按需读取。基础 Skill 不含外部 Tool、网络、Credential 或脚本依赖，运行时也不执行
+Skill 包中的脚本。
+
+`skills.localDirectories` 是 CLI 可信控制面配置，不接受模型或 Run 参数提供目录。每个 `root` 必须是
+已存在、可读、非符号链接的绝对目录。Source 会有界递归穿过分类目录，并把首个包含 `SKILL.md`
+的目录视为包根，不再进入该包的资源子目录；例如可发现
+`D:\haifa-agent-config\skills\creative\ascii-art\SKILL.md`。当前 CLI 把这些来源绑定为本地用户的
+`USER` Scope；`origin` 只允许 `created` 或 `imported`，`parserMode` 只允许 `strict` 或
+`compatible`。目录中被发现的 Skill 还必须显式列入 `skills.allowed`，否则不会进入 Run 冻结、
+模型摘要或激活范围。`USER` Scope 优先于 SDK Scope；同 Scope、同 priority 的同名冲突会使启动
+fail closed。Source root 不进入 Prompt、Tool 参数或 Runtime 配置快照，也不得与 CLI Workspace
+互相包含，否则普通文件 Tool 可能绕过 Skill 门禁，CLI 会在连接外部 MCP 或调用模型前拒绝启动。
+可使用 `D:\haifa-agent-config` 作为测试配置根，把 Skill 放在 `skills\`，实际 Workspace 放在
+同级的 `workspaces\<case>\`。
 
 Web Tool 默认关闭。启用 Search 时需同时把 `web.search` 加入 `tools.enabled` 并设置
 `web.search.enabled: true`；可选 Provider 为 `aliyun`、`brave`、`tavily`。启用 Fetch 时同理加入
