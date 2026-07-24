@@ -32,6 +32,8 @@ import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRecord;
 import io.haifa.agent.runtime.core.tool.ToolResultAssetStore;
+import io.haifa.agent.skill.api.SkillActivation;
+import io.haifa.agent.skill.api.SkillAlias;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -85,6 +87,8 @@ public final class InMemoryRuntimeStore
             new HashMap<>();
     private final Map<String, ToolResult> toolResultAssets = new HashMap<>();
     private final Map<AgentRunId, RuntimeMemorySelection> memorySelections = new HashMap<>();
+    private final Map<AgentRunId, Map<SkillAlias, SkillActivation>> skillActivations = new HashMap<>();
+    private final Map<AgentRunId, Long> skillResourceReadBytes = new HashMap<>();
     private boolean failNextToolResultAssetWrite;
     private final List<MessageRedactionListener> messageRedactionListeners = new ArrayList<>();
 
@@ -528,6 +532,58 @@ public final class InMemoryRuntimeStore
     public synchronized Optional<RuntimeConfigurationSnapshot> configuration(RunConfigurationSnapshotRef reference) {
         return Optional.ofNullable(configurations.get(reference.snapshotId()))
                 .filter(configuration -> configuration.reference().contentHash().equals(reference.contentHash()));
+    }
+
+    @Override
+    public synchronized SkillActivation saveSkillActivation(
+            AgentRunId runId, SkillActivation activation, long maximumInstructionBytes, long maximumEstimatedTokens) {
+        if (maximumInstructionBytes < 1 || maximumEstimatedTokens < 1) {
+            throw new IllegalArgumentException("invalid skill activation budget");
+        }
+        Map<SkillAlias, SkillActivation> activations =
+                skillActivations.computeIfAbsent(runId, ignored -> new HashMap<>());
+        SkillActivation existing = activations.get(activation.binding().alias());
+        if (existing != null && !existing.binding().equals(activation.binding())) {
+            throw new IllegalStateException("skill alias is already activated with a different frozen binding");
+        }
+        if (existing != null) return existing;
+        long instructionBytes = Math.addExact(
+                activations.values().stream()
+                        .mapToLong(SkillActivation::instructionBytes)
+                        .sum(),
+                activation.instructionBytes());
+        long estimatedTokens = Math.addExact(
+                activations.values().stream()
+                        .mapToLong(SkillActivation::estimatedTokens)
+                        .sum(),
+                activation.estimatedTokens());
+        if (instructionBytes > maximumInstructionBytes || estimatedTokens > maximumEstimatedTokens) {
+            throw new IllegalStateException("skill activation instruction budget exceeded");
+        }
+        activations.put(activation.binding().alias(), activation);
+        return activation;
+    }
+
+    @Override
+    public synchronized Optional<SkillActivation> skillActivation(AgentRunId runId, SkillAlias alias) {
+        return Optional.ofNullable(
+                skillActivations.getOrDefault(runId, Map.of()).get(alias));
+    }
+
+    @Override
+    public synchronized List<SkillActivation> skillActivations(AgentRunId runId) {
+        return skillActivations.getOrDefault(runId, Map.of()).values().stream()
+                .sorted(Comparator.comparing(activation -> activation.binding().alias()))
+                .toList();
+    }
+
+    @Override
+    public synchronized long addSkillResourceReadBytes(AgentRunId runId, long bytes, long maximum) {
+        if (bytes < 0 || maximum < 1) throw new IllegalArgumentException("invalid skill resource budget");
+        long updated = Math.addExact(skillResourceReadBytes.getOrDefault(runId, 0L), bytes);
+        if (updated > maximum) throw new IllegalStateException("skill resource read budget exceeded");
+        skillResourceReadBytes.put(runId, updated);
+        return updated;
     }
 
     @Override

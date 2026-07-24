@@ -8,6 +8,8 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.skill.api.FrozenSkillBinding;
+import io.haifa.agent.skill.api.SkillContentDigest;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.List;
 import java.util.Objects;
@@ -24,6 +26,9 @@ public record RuntimeConfigurationSnapshot(
         AgentRunBudget budget,
         AgentRunLimits limits,
         List<FrozenToolBinding> toolBindings,
+        List<FrozenSkillBinding> skillBindings,
+        SkillContentDigest skillCatalogDigest,
+        String skillResolutionPolicyRef,
         Set<AgentDefinitionId> allowedChildAgents,
         String agentInstruction,
         RuntimeOverrides overrides,
@@ -44,6 +49,14 @@ public record RuntimeConfigurationSnapshot(
         if (distinctAliases != toolBindings.size()) {
             throw new IllegalArgumentException("frozen tool aliases must be unique");
         }
+        skillBindings = List.copyOf(Objects.requireNonNull(skillBindings, "skillBindings must not be null"));
+        long distinctSkillAliases =
+                skillBindings.stream().map(FrozenSkillBinding::alias).distinct().count();
+        if (distinctSkillAliases != skillBindings.size()) {
+            throw new IllegalArgumentException("frozen skill aliases must be unique");
+        }
+        skillCatalogDigest = Objects.requireNonNull(skillCatalogDigest, "skillCatalogDigest must not be null");
+        skillResolutionPolicyRef = requireText(skillResolutionPolicyRef, "skillResolutionPolicyRef");
         allowedChildAgents =
                 Set.copyOf(Objects.requireNonNull(allowedChildAgents, "allowedChildAgents must not be null"));
         agentInstruction = requireText(agentInstruction, "agentInstruction");
@@ -54,6 +67,12 @@ public record RuntimeConfigurationSnapshot(
 
     public Set<String> allowedTools() {
         return toolBindings.stream()
+                .map(binding -> binding.alias().value())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    public Set<String> allowedSkills() {
+        return skillBindings.stream()
                 .map(binding -> binding.alias().value())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }

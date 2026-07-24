@@ -38,6 +38,7 @@ public record RuntimeCheckpointState(
         String memoryRetrievalPolicyVersion,
         String memoryQueryDigest,
         List<ModelContinuationRef> modelContinuations,
+        List<SkillCheckpointRef> skillActivations,
         List<CapabilityCheckpointRef> capabilityCheckpoints,
         Instant capturedAt) {
     public RuntimeCheckpointState(
@@ -84,6 +85,7 @@ public record RuntimeCheckpointState(
                 selectedMemories,
                 memoryRetrievalPolicyVersion,
                 memoryQueryDigest,
+                List.of(),
                 List.of(),
                 capabilityCheckpoints,
                 capturedAt);
@@ -134,6 +136,7 @@ public record RuntimeCheckpointState(
                 memoryQueryDigest,
                 List.of(),
                 List.of(),
+                List.of(),
                 capturedAt);
     }
 
@@ -164,6 +167,7 @@ public record RuntimeCheckpointState(
         memoryQueryDigest = requireText(memoryQueryDigest, "memoryQueryDigest");
         modelContinuations =
                 List.copyOf(Objects.requireNonNull(modelContinuations, "modelContinuations must not be null"));
+        skillActivations = List.copyOf(Objects.requireNonNull(skillActivations, "skillActivations must not be null"));
         capabilityCheckpoints =
                 List.copyOf(Objects.requireNonNull(capabilityCheckpoints, "capabilityCheckpoints must not be null"));
         capturedAt = Objects.requireNonNull(capturedAt, "capturedAt must not be null");

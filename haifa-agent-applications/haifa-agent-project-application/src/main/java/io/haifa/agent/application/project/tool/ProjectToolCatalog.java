@@ -2,6 +2,7 @@ package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.application.project.tool.web.WebToolCatalogContribution;
 import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
+import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -72,8 +73,22 @@ public final class ProjectToolCatalog {
             ToolProvider provider,
             List<McpToolCatalogContribution> mcpTools,
             List<WebToolCatalogContribution> webTools) {
+        return freeze(
+                configuredTools, effectiveCapabilities, modelSupportsTools, provider, mcpTools, webTools, List.of());
+    }
+
+    /** Full project product assembly path; Skill tools are supplied only by Skill-enabled profiles. */
+    public DefaultToolCatalog freeze(
+            Set<String> configuredTools,
+            Set<String> effectiveCapabilities,
+            boolean modelSupportsTools,
+            ToolProvider provider,
+            List<McpToolCatalogContribution> mcpTools,
+            List<WebToolCatalogContribution> webTools,
+            List<SkillToolCatalogContribution> skillTools) {
         Objects.requireNonNull(mcpTools, "mcpTools");
         Objects.requireNonNull(webTools, "webTools");
+        Objects.requireNonNull(skillTools, "skillTools");
         Objects.requireNonNull(configuredTools, "configuredTools");
         Objects.requireNonNull(effectiveCapabilities, "effectiveCapabilities");
         Objects.requireNonNull(provider, "provider");
@@ -93,6 +108,13 @@ public final class ProjectToolCatalog {
                         contribution.provider()));
         webTools.stream()
                 .sorted(java.util.Comparator.comparing(WebToolCatalogContribution::alias))
+                .forEach(contribution -> builder.register(
+                        contribution.alias(),
+                        contribution.definition(),
+                        contribution.providerBindingReference(),
+                        contribution.provider()));
+        skillTools.stream()
+                .sorted(java.util.Comparator.comparing(SkillToolCatalogContribution::alias))
                 .forEach(contribution -> builder.register(
                         contribution.alias(),
                         contribution.definition(),

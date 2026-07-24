@@ -15,6 +15,10 @@ import io.haifa.agent.context.source.ContextSource;
 import io.haifa.agent.context.trace.ContextSelectionDecision;
 import io.haifa.agent.context.trace.ContextTrace;
 import io.haifa.agent.context.trace.ContextTraceItem;
+import io.haifa.agent.context.trace.PromptTraceItem;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -123,6 +127,7 @@ public final class DefaultAgentContextBuilder implements AgentContextBuilder {
                 promptTokens,
                 toolTokens,
                 itemTokens,
+                request.prompts().stream().map(this::trace).toList(),
                 traceItems);
         return new ContextBuildResult(context, trace);
     }
@@ -138,6 +143,28 @@ public final class DefaultAgentContextBuilder implements AgentContextBuilder {
                 decision,
                 item.provenance().contentHash(),
                 item.security().labels());
+    }
+
+    private PromptTraceItem trace(io.haifa.agent.context.prompt.PromptComponent prompt) {
+        return new PromptTraceItem(
+                prompt.id(),
+                prompt.layer(),
+                prompt.role(),
+                prompt.version(),
+                estimator.estimate(prompt),
+                sha256(prompt.text()),
+                prompt.securityLabels());
+    }
+
+    private static String sha256(String value) {
+        try {
+            return "sha256:"
+                    + java.util.HexFormat.of()
+                            .formatHex(MessageDigest.getInstance("SHA-256")
+                                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required by the Java runtime", exception);
+        }
     }
 
     private record IndexedItem(int index, ContextItem item) {}

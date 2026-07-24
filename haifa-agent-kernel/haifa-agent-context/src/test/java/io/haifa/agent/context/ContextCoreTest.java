@@ -95,6 +95,11 @@ class ContextCoreTest {
                         ContextSelectionDecision.DROPPED_DUPLICATE,
                         ContextSelectionDecision.SELECTED,
                         ContextSelectionDecision.DROPPED_BUDGET);
+        assertThat(result.trace().prompts()).singleElement().satisfies(prompt -> {
+            assertThat(prompt.componentId().value()).isEqualTo("safety");
+            assertThat(prompt.contentHash()).startsWith("sha256:");
+            assertThat(prompt.securityLabels()).containsExactly("internal");
+        });
         assertThat(result.trace().toString()).doesNotContain(SECRET_BODY).doesNotContain("invoice total 42");
     }
 

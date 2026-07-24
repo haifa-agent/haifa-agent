@@ -9,6 +9,9 @@ import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.storage.CheckpointRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.skill.api.SkillContentLoader;
+import io.haifa.agent.skill.api.SkillScope;
+import io.haifa.agent.skill.api.SkillVisibilityContext;
 import io.haifa.agent.tool.api.ToolInvoker;
 import java.util.Objects;
 import java.util.Optional;
@@ -23,6 +26,7 @@ public final class ResumeCoordinator {
     private final RunAccessValidator access;
     private final CheckpointManager checkpointManager;
     private final ToolInvoker tools;
+    private final SkillContentLoader skills;
 
     public ResumeCoordinator(
             InteractionPort interactions,
@@ -33,6 +37,28 @@ public final class ResumeCoordinator {
             RunAccessValidator access,
             CheckpointManager checkpointManager,
             ToolInvoker tools) {
+        this(
+                interactions,
+                checkpoints,
+                selections,
+                transitions,
+                state,
+                access,
+                checkpointManager,
+                tools,
+                SkillContentLoader.empty());
+    }
+
+    public ResumeCoordinator(
+            InteractionPort interactions,
+            CheckpointRepository checkpoints,
+            ResumeCheckpointSelector selections,
+            RunTransitionCoordinator transitions,
+            RuntimeStateRepository state,
+            RunAccessValidator access,
+            CheckpointManager checkpointManager,
+            ToolInvoker tools,
+            SkillContentLoader skills) {
         this.interactions = Objects.requireNonNull(interactions);
         this.checkpoints = Objects.requireNonNull(checkpoints);
         this.selections = Objects.requireNonNull(selections);
@@ -41,6 +67,7 @@ public final class ResumeCoordinator {
         this.access = Objects.requireNonNull(access);
         this.checkpointManager = Objects.requireNonNull(checkpointManager);
         this.tools = Objects.requireNonNull(tools);
+        this.skills = Objects.requireNonNull(skills);
     }
 
     public Optional<CheckpointId> prepare(AgentRun run, ResumeAgentRunRequest request, RuntimeCallerContext caller) {
@@ -65,6 +92,13 @@ public final class ResumeCoordinator {
             throw new IllegalStateException("run configuration snapshot does not match the frozen run configuration");
         }
         configuration.toolBindings().forEach(tools::validateBinding);
+        var visibility = new SkillVisibilityContext(
+                run.tenant(),
+                run.principal(),
+                run.project(),
+                run.project().isPresent(),
+                java.util.EnumSet.allOf(SkillScope.class));
+        configuration.skillBindings().forEach(binding -> skills.validateBinding(binding, visibility));
         if (interactions.pending(run.id()).isPresent()) {
             throw new IllegalStateException("pending interaction must be resolved through InteractionResponse");
         }
