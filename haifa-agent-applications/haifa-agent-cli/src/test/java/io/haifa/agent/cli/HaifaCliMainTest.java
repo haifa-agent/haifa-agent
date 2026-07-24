@@ -30,6 +30,15 @@ class HaifaCliMainTest {
         assertThat(bytes.toString(StandardCharsets.UTF_8)).isEqualTo("[stream] hello world");
     }
 
+    @Test
+    void usageDocumentsSafeTraceOptions() {
+        assertThat(HaifaCliMain.usage())
+                .contains("--trace <mode>")
+                .contains("summary, detail, or jsonl")
+                .contains("--trace-file <path>")
+                .contains("requires --trace");
+    }
+
     private static AgentRunOutputEvent event(long sequence, AgentRunOutputEventType type, String text) {
         return new AgentRunOutputEvent(
                 new AgentRunId("cli-run"), "call-1", "generation-1", 1, sequence, type, text, Instant.EPOCH);

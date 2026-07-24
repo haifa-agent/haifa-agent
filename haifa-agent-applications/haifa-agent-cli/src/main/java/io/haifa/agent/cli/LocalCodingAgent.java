@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -11,6 +12,7 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunLimits;
@@ -60,6 +62,10 @@ import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
+import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
+import io.haifa.agent.runtime.core.skill.SkillToolProvider;
+import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
@@ -73,6 +79,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /** Builds an in-process Coding Agent over one explicitly selected local workspace. */
 final class LocalCodingAgent implements AutoCloseable {
@@ -100,6 +107,14 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
+        return createWithTrace(workspaceRoot, configuration, output, event -> {});
+    }
+
+    static LocalCodingAgent createWithTrace(
+            Path workspaceRoot,
+            CliConfiguration configuration,
+            PrintStream output,
+            Consumer<RuntimeTraceEvent> traceObserver) {
         var model = new OpenAiCompatibleChatModel(
                 "openai-compatible",
                 "1.0.0",
@@ -110,11 +125,20 @@ final class LocalCodingAgent implements AutoCloseable {
                 new EnvironmentCredentialResolver(),
                 false,
                 4 * 1024 * 1024);
-        return create(workspaceRoot, configuration, output, model);
+        return create(workspaceRoot, configuration, output, model, traceObserver);
     }
 
     static LocalCodingAgent create(
             Path workspaceRoot, CliConfiguration configuration, PrintStream output, AgentChatModel model) {
+        return create(workspaceRoot, configuration, output, model, event -> {});
+    }
+
+    static LocalCodingAgent create(
+            Path workspaceRoot,
+            CliConfiguration configuration,
+            PrintStream output,
+            AgentChatModel model,
+            Consumer<RuntimeTraceEvent> traceObserver) {
         try {
             workspaceRoot = workspaceRoot.toRealPath();
         } catch (java.io.IOException exception) {
@@ -125,6 +149,18 @@ final class LocalCodingAgent implements AutoCloseable {
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = new SystemTimeProvider();
         PrincipalRef principal = new PrincipalRef("local-user", "user");
+        TenantRef tenant = new TenantRef("local");
+        validateSkillWorkspaceIsolation(workspaceRoot, configuration.skills().localDirectories());
+        var skillDirectories = configuration.skills().localDirectories().stream()
+                .map(directory -> new ProjectSkillPlatform.UserDirectorySource(
+                        directory.id(),
+                        directory.root(),
+                        directory.priority(),
+                        directory.parserMode(),
+                        directory.origin()))
+                .toList();
+        var skillPlatform = ProjectSkillPlatform.baseAndUserDirectorySkills(
+                tenant, principal, Optional.empty(), false, skillDirectories);
         CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
         CliWebPlatform webPlatform = CliWebPlatform.create(configuration.web(), principal);
         var workspaces = new InMemoryWorkspaceStore();
@@ -200,6 +236,13 @@ final class LocalCodingAgent implements AutoCloseable {
                         workspaceId, effectiveCapabilities, "cli-local-policy"),
                 operations,
                 executionPlatform == null ? null : executionPlatform.operations());
+        var runtimeStore = new InMemoryRuntimeStore();
+        var skillService =
+                new DefaultSkillActivationService(runtimeStore, runtimeStore, skillPlatform.contentLoader(), time);
+        List<SkillToolCatalogContribution> skillTools =
+                configuration.skills().allowedAliases().isEmpty()
+                        ? List.of()
+                        : new SkillToolProvider(skillService).contributions();
         var catalog = new ProjectToolCatalog()
                 .freeze(
                         Set.copyOf(configuredTools),
@@ -207,18 +250,24 @@ final class LocalCodingAgent implements AutoCloseable {
                         true,
                         provider,
                         mcpPlatform.contributions(),
-                        webPlatform.contributions());
+                        webPlatform.contributions(),
+                        skillTools);
         var interactions = new InMemoryInteractionPort();
         ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
         List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
         var runtime = new RuntimeCoreBuilder()
                 .identifierGenerator(identifiers)
                 .timeProvider(time)
-                .trace(traces::add)
+                .store(runtimeStore)
+                .trace(event -> {
+                    traces.add(event);
+                    traceObserver.accept(event);
+                })
                 .interactions(interactions)
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .credentialBroker(webPlatform.credentialBroker())
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
+                .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
                 .toolApprovalPrompts((binding, call, reauthentication) -> {
                     if (!binding.definition().name().value().equals("execution.run")) {
                         return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter.defaultFormatter()
@@ -256,10 +305,12 @@ final class LocalCodingAgent implements AutoCloseable {
                         catalog.snapshot().bindings().stream()
                                 .map(binding -> binding.alias().value())
                                 .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                        configuration.skills().allowedAliases(),
                         Set.of(),
                         "You are a careful local coding agent. Inspect relevant files before editing. "
                                 + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
-                                + "Pass only workspace-relative paths to file tools; never pass an absolute path."))
+                                + "Pass only workspace-relative paths to file tools; never pass an absolute path.",
+                        List.of()))
                 .profiles((profileId, overrides) -> new ResolvedProfile(
                         profileId,
                         "1.0.0",
@@ -336,6 +387,22 @@ final class LocalCodingAgent implements AutoCloseable {
         java.util.Set<String> configuredTools = new java.util.HashSet<>(configuration.enabledTools());
         if (configuration.approval() == ApprovalMode.DENY) configuredTools.remove("execution.run");
         return Set.copyOf(configuredTools);
+    }
+
+    private static void validateSkillWorkspaceIsolation(
+            Path workspaceRoot, List<CliConfiguration.LocalSkillDirectory> localDirectories) {
+        for (CliConfiguration.LocalSkillDirectory directory : localDirectories) {
+            Path skillRoot;
+            try {
+                skillRoot = directory.root().toRealPath();
+            } catch (java.io.IOException exception) {
+                throw new IllegalArgumentException("local Skill source is unavailable: " + directory.id(), exception);
+            }
+            if (workspaceRoot.startsWith(skillRoot) || skillRoot.startsWith(workspaceRoot)) {
+                throw new IllegalArgumentException(
+                        "local Skill source root must not overlap the CLI workspace: " + directory.id());
+            }
+        }
     }
 
     private static String safeApprovalText(String value) {

@@ -3,6 +3,8 @@ package io.haifa.agent.cli;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillParserMode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -55,6 +57,7 @@ final class CliConfigurationLoader {
         Set<String> tools = stringSet(object(source, "tools").get("enabled"), defaults.enabledTools());
         List<CliConfiguration.McpServer> mcpServers = mcpServers(object(source, "mcp"));
         CliConfiguration.Web web = web(object(source, "web"), defaults.web());
+        CliConfiguration.Skills skills = skills(object(source, "skills"), defaults.skills());
         CliConfiguration.Execution execution = execution(object(source, "execution"), defaults.execution());
         ApprovalMode approval = arguments
                 .approval()
@@ -76,11 +79,47 @@ final class CliConfigurationLoader {
                 tools,
                 mcpServers,
                 web,
+                skills,
                 execution,
                 approval,
                 timeout,
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()));
+    }
+
+    private static CliConfiguration.Skills skills(Map<String, Object> source, CliConfiguration.Skills defaults) {
+        Set<String> allowed =
+                stringSet(source.get("allowed"), defaults.allowedAliases(), "configuration skills.allowed");
+        Object configured = source.get("localDirectories");
+        if (configured == null) return new CliConfiguration.Skills(allowed, defaults.localDirectories());
+        if (!(configured instanceof List<?> directories)) {
+            throw new IllegalArgumentException("configuration skills.localDirectories must be a list");
+        }
+        List<CliConfiguration.LocalSkillDirectory> result = new ArrayList<>();
+        for (Object item : directories) {
+            if (!(item instanceof Map<?, ?> raw)) {
+                throw new IllegalArgumentException("configuration skills.localDirectories must contain objects");
+            }
+            Map<String, Object> directory = new LinkedHashMap<>();
+            raw.forEach((key, value) -> directory.put(String.valueOf(key), value));
+            String id = requiredText(directory, "id", "configuration skill local directory id");
+            String root = requiredText(directory, "root", "configuration skill local directory root");
+            SkillParserMode parserMode = enumValue(
+                    SkillParserMode.class,
+                    text(directory, "parserMode", SkillParserMode.STRICT.name()),
+                    "configuration skill parserMode");
+            SkillOrigin origin = enumValue(
+                    SkillOrigin.class,
+                    text(directory, "origin", SkillOrigin.CREATED.name()),
+                    "configuration skill origin");
+            result.add(new CliConfiguration.LocalSkillDirectory(
+                    id,
+                    Path.of(root),
+                    Math.toIntExact(nonNegativeNumber(directory, "priority", 100)),
+                    parserMode,
+                    origin));
+        }
+        return new CliConfiguration.Skills(allowed, result);
     }
 
     private static CliConfiguration.Web web(Map<String, Object> source, CliConfiguration.Web defaults) {
@@ -265,17 +304,28 @@ final class CliConfigurationLoader {
     }
 
     private static Set<String> stringSet(Object value, Set<String> fallback) {
+        return stringSet(value, fallback, "configuration tools.enabled");
+    }
+
+    private static Set<String> stringSet(Object value, Set<String> fallback, String field) {
         if (value == null) return fallback;
-        if (!(value instanceof List<?> values))
-            throw new IllegalArgumentException("configuration tools.enabled must be a list");
+        if (!(value instanceof List<?> values)) throw new IllegalArgumentException(field + " must be a list");
         List<String> names = new ArrayList<>();
         for (Object item : values) {
             if (!(item instanceof String name) || name.isBlank()) {
-                throw new IllegalArgumentException("configuration tools.enabled must contain names");
+                throw new IllegalArgumentException(field + " must contain names");
             }
             names.add(name.trim());
         }
         return Set.copyOf(names);
+    }
+
+    private static <E extends Enum<E>> E enumValue(Class<E> type, String value, String field) {
+        try {
+            return Enum.valueOf(type, value.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException(field + " is unsupported");
+        }
     }
 
     private static Optional<String> environment(String key) {

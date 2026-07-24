@@ -14,6 +14,8 @@ record CliArguments(
         Optional<String> model,
         Optional<ApprovalMode> approval,
         Optional<Duration> timeout,
+        Optional<CliTraceMode> trace,
+        Optional<Path> traceFile,
         boolean verbose,
         boolean help) {
     static CliArguments parse(String[] arguments) {
@@ -24,6 +26,8 @@ record CliArguments(
         String model = null;
         ApprovalMode approval = null;
         Duration timeout = null;
+        CliTraceMode trace = null;
+        Path traceFile = null;
         boolean verbose = false;
         boolean help = false;
         List<String> values = new ArrayList<>(List.of(arguments));
@@ -38,8 +42,13 @@ record CliArguments(
                 case "--model" -> model = requireValue(values, ++index, value);
                 case "--approval" -> approval = ApprovalMode.parse(requireValue(values, ++index, value));
                 case "--timeout" -> timeout = Duration.parse(requireValue(values, ++index, value));
+                case "--trace" -> trace = CliTraceMode.parse(requireValue(values, ++index, value));
+                case "--trace-file" -> traceFile = Path.of(requireValue(values, ++index, value));
                 default -> throw new IllegalArgumentException("unknown option: " + value);
             }
+        }
+        if (traceFile != null && trace == null) {
+            throw new IllegalArgumentException("--trace-file requires --trace");
         }
         return new CliArguments(
                 optionalText(message),
@@ -48,6 +57,8 @@ record CliArguments(
                 optionalText(model),
                 Optional.ofNullable(approval),
                 Optional.ofNullable(timeout),
+                Optional.ofNullable(trace),
+                Optional.ofNullable(traceFile),
                 verbose,
                 help);
     }

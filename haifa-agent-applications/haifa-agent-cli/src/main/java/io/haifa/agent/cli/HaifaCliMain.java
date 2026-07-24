@@ -38,7 +38,9 @@ public final class HaifaCliMain {
             Path workspace = parsed.workspace().orElseGet(() -> Path.of("."));
             if (!workspace.isAbsolute()) workspace = workspace.toAbsolutePath().normalize();
             CliConfiguration configuration = new CliConfigurationLoader().load(parsed, workspace);
-            try (LocalCodingAgent agent = LocalCodingAgent.create(workspace, configuration, output)) {
+            try (CliTraceOutput trace = CliTraceOutput.open(parsed.trace(), parsed.traceFile(), error);
+                    LocalCodingAgent agent =
+                            LocalCodingAgent.createWithTrace(workspace, configuration, output, trace)) {
                 AtomicBoolean streamed = attachStreamingOutput(agent.runtime()::addOutputListener, output);
                 if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
                 if (parsed.verbose()) output.println("DeepSeek thinking disabled. Waiting for stream...");
@@ -190,6 +192,8 @@ public final class HaifaCliMain {
                       --model <model-id>     Override configured model
                       --approval <mode>      ask, auto, or deny (default: ask)
                       --timeout <duration>   ISO-8601 duration, e.g. PT5M
+                      --trace <mode>         summary, detail, or jsonl
+                      --trace-file <path>    Write trace to a file (requires --trace)
                       --verbose              Print lifecycle details
                   -h, --help                 Show this help
                 """;

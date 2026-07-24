@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillParserMode;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -124,6 +126,60 @@ class CliConfigurationLoaderTest {
             assertThat(server.allowedTools()).containsExactlyInAnyOrder("time_now", "calculate");
             assertThat(server.policyProfile()).isEqualTo("utility");
         });
+    }
+
+    @Test
+    void loadsExplicitLocalUserSkillDirectoryAndAllowlist() throws Exception {
+        Path skillRoot = Files.createTempDirectory("haifa-cli-skills").toAbsolutePath();
+        Path configuration = Files.createTempFile("haifa-cli-skills", ".yaml");
+        String yamlRoot = skillRoot.toString().replace("'", "''");
+        Files.writeString(
+                configuration,
+                """
+                skills:
+                  allowed: [task-planning, local-test]
+                  localDirectories:
+                    - id: personal
+                      root: '%s'
+                      priority: 250
+                      parserMode: compatible
+                      origin: imported
+                """
+                        .formatted(yamlRoot));
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "skills", "--config", configuration.toString()}),
+                        Path.of("."));
+
+        assertThat(result.skills().allowedAliases()).containsExactlyInAnyOrder("task-planning", "local-test");
+        assertThat(result.skills().localDirectories()).singleElement().satisfies(directory -> {
+            assertThat(directory.id()).isEqualTo("personal");
+            assertThat(directory.root()).isEqualTo(skillRoot.normalize());
+            assertThat(directory.priority()).isEqualTo(250);
+            assertThat(directory.parserMode()).isEqualTo(SkillParserMode.COMPATIBLE);
+            assertThat(directory.origin()).isEqualTo(SkillOrigin.IMPORTED);
+        });
+    }
+
+    @Test
+    void rejectsRelativeOrDuplicateLocalSkillDirectories() {
+        assertThatThrownBy(() -> new CliConfiguration.LocalSkillDirectory(
+                        "personal", Path.of("skills"), 100, SkillParserMode.STRICT, SkillOrigin.CREATED))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absolute");
+
+        Path root = Path.of(System.getProperty("java.io.tmpdir"))
+                .resolve("haifa-cli-skill-root")
+                .toAbsolutePath();
+        var first = new CliConfiguration.LocalSkillDirectory(
+                "personal", root, 100, SkillParserMode.STRICT, SkillOrigin.CREATED);
+        var duplicate = new CliConfiguration.LocalSkillDirectory(
+                "personal", root.resolve("other"), 100, SkillParserMode.STRICT, SkillOrigin.CREATED);
+        assertThatThrownBy(() -> new CliConfiguration.Skills(
+                        java.util.Set.of("local-test"), java.util.List.of(first, duplicate)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ids must be unique");
     }
 
     @Test
