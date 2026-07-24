@@ -16,6 +16,9 @@
         <module>haifa-agent-credential-core</module>
         <module>haifa-agent-tool-api</module>
         <module>haifa-agent-tool-core</module>
+        <module>haifa-agent-skill-api</module>
+        <module>haifa-agent-skill-core</module>
+        <module>haifa-agent-skill-base</module>
         <module>haifa-agent-model-api</module>
         <module>haifa-agent-model-core</module>
         <module>haifa-agent-memory-api</module>
