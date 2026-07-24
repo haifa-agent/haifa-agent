@@ -200,6 +200,18 @@ public final class CheckpointManager {
                         exception);
             }
         }
+        var authoritativeSkills = state.skillActivations(run.id()).stream()
+                .map(value -> new SkillCheckpointRef(
+                        value.binding().alias(),
+                        value.binding().coordinate(),
+                        value.binding().registrationDigest(),
+                        value.activatedAt()))
+                .toList();
+        if (!authoritativeSkills.equals(checkpoint.skillActivations())) {
+            throw new CheckpointRestoreException(
+                    CheckpointRestoreFailure.CAPABILITY_STATE_INVALID,
+                    "checkpoint Skill activation state is unavailable or does not match exact frozen bindings");
+        }
         memoryValidator.validate(run, checkpoint);
     }
 }

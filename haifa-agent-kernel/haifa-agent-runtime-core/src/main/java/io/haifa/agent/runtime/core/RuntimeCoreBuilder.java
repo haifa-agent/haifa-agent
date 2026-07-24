@@ -108,6 +108,8 @@ import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPolicy;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
 import io.haifa.agent.runtime.core.trace.TracePort;
+import io.haifa.agent.skill.api.SkillCatalog;
+import io.haifa.agent.skill.api.SkillContentLoader;
 import io.haifa.agent.tool.api.ToolCatalog;
 import io.haifa.agent.tool.api.ToolInvoker;
 import io.haifa.agent.tool.api.ToolSchemaValidationResult;
@@ -143,6 +145,8 @@ public final class RuntimeCoreBuilder {
             List.of("delegation adapter unavailable"));
     private final Map<ModelAdapterKey, AgentChatModel> chatModels = new LinkedHashMap<>();
     private ToolCatalog toolCatalog = ToolCatalog.empty();
+    private SkillCatalog skillCatalog = SkillCatalog.empty();
+    private SkillContentLoader skillContentLoader = SkillContentLoader.empty();
     private ToolInvoker toolInvoker = request -> {
         throw new IllegalStateException("no tool invoker configured for "
                 + request.binding().coordinate().externalForm());
@@ -266,6 +270,12 @@ public final class RuntimeCoreBuilder {
         toolInvoker = Objects.requireNonNull(invoker, "invoker");
         toolSchemaValidator = Objects.requireNonNull(schemaValidator, "schemaValidator");
         toolPlatformConfigured = true;
+        return this;
+    }
+
+    public RuntimeCoreBuilder skillPlatform(SkillCatalog catalog, SkillContentLoader contentLoader) {
+        skillCatalog = Objects.requireNonNull(catalog, "catalog");
+        skillContentLoader = Objects.requireNonNull(contentLoader, "contentLoader");
         return this;
     }
 
@@ -467,7 +477,15 @@ public final class RuntimeCoreBuilder {
                 repairRetry,
                 toolApprovalPrompts);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
-                interactions, store, checkpointSelections, transitions, store, access, checkpoints, toolInvoker);
+                interactions,
+                store,
+                checkpointSelections,
+                transitions,
+                store,
+                access,
+                checkpoints,
+                toolInvoker,
+                skillContentLoader);
         var compressor = new DeterministicContextCompressor();
         var compressionPolicy = CompressionPolicy.defaults();
         var sessionMessageSource = new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time);
@@ -481,7 +499,8 @@ public final class RuntimeCoreBuilder {
                         new DefaultAgentContextBuilder(
                                 new HeuristicTokenEstimator(), new ContextSelectionPolicy(), additionalContextSources),
                         sessionMessageSource,
-                        memoryContextSource),
+                        memoryContextSource,
+                        skillContentLoader),
                 models,
                 new DefaultDecisionValidator(new DuplicateToolCallGuard(store), new ChildRunGuard(store)),
                 decisionExecutor,
@@ -497,8 +516,9 @@ public final class RuntimeCoreBuilder {
                 new RuntimeStateReconciler(store, store, interactions, pipeline, time, ownership),
                 middleware);
         AttemptExecutor attemptExecutor = new AttemptExecutor(store, loop, transitions, time, workerId);
-        ConfigurationSnapshotFactory configuredSnapshots =
-                snapshots != null ? snapshots : new ContentAddressedSnapshotFactory(toolCatalog.snapshot());
+        ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
+                ? snapshots
+                : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot());
         RunBootstrapper bootstrapper =
                 new RunBootstrapper(definitionResolver, profileResolver, access, configuredSnapshots, ids, time);
         return new DefaultAgentRuntime(

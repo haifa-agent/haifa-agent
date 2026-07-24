@@ -83,6 +83,13 @@ public final class CheckpointSnapshotBuilder {
         var modelContinuations = state.modelContinuations(run.id()).stream()
                 .map(value -> value.reference())
                 .toList();
+        var skillActivations = state.skillActivations(run.id()).stream()
+                .map(value -> new SkillCheckpointRef(
+                        value.binding().alias(),
+                        value.binding().coordinate(),
+                        value.binding().registrationDigest(),
+                        value.activatedAt()))
+                .toList();
         RuntimeCheckpointState checkpointState = new RuntimeCheckpointState(
                 run.id(),
                 run.sessionId(),
@@ -105,6 +112,7 @@ public final class CheckpointSnapshotBuilder {
                 memorySelection.retrievalPolicyVersion(),
                 memorySelection.queryDigest(),
                 modelContinuations,
+                skillActivations,
                 capabilityReferences,
                 capturedAt);
         Checkpoint checkpoint = new Checkpoint(
@@ -114,7 +122,7 @@ public final class CheckpointSnapshotBuilder {
                 type,
                 CheckpointStatus.VERIFIED,
                 sequence,
-                new CheckpointPayloadRef("runtime-store", "checkpoint/" + id, "runtime-loop-state", "3.0"),
+                new CheckpointPayloadRef("runtime-store", "checkpoint/" + id, "runtime-loop-state", "4.0"),
                 RuntimeCheckpointStateHasher.digest(checkpointState),
                 time.now());
         return new Snapshot(checkpoint, checkpointState);

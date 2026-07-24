@@ -18,6 +18,7 @@ public record ContextTrace(
         long promptTokens,
         long toolTokens,
         long selectedItemTokens,
+        List<PromptTraceItem> prompts,
         List<ContextTraceItem> items) {
     public ContextTrace {
         runId = Objects.requireNonNull(runId, "runId must not be null");
@@ -34,6 +35,7 @@ public record ContextTrace(
         if (promptTokens < 0 || toolTokens < 0 || selectedItemTokens < 0) {
             throw new IllegalArgumentException("trace token values must not be negative");
         }
+        prompts = List.copyOf(Objects.requireNonNull(prompts, "prompts must not be null"));
         items = List.copyOf(Objects.requireNonNull(items, "items must not be null"));
     }
 }

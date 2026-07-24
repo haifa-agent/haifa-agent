@@ -20,17 +20,28 @@ import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.skill.api.SkillContentLoader;
+import io.haifa.agent.skill.api.SkillScope;
+import io.haifa.agent.skill.api.SkillVisibilityContext;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
 /** Builds trusted Context IR from frozen run state and persisted facts. */
 public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder {
+    private static final int MAX_SKILL_DESCRIPTION_CHARS = 240;
+
     private final RuntimeStateRepository state;
     private final AgentRuntimeMiddlewareChain middleware;
     private final AgentContextBuilder contexts;
     private final SessionMessageSource sessionMessages;
     private final MemoryContextSource memorySource;
+    private final SkillContentLoader skillContentLoader;
 
     public DefaultRuntimeContextBuilder(
             RuntimeStateRepository state,
@@ -38,11 +49,22 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
             AgentContextBuilder contexts,
             SessionMessageSource sessionMessages,
             MemoryContextSource memorySource) {
+        this(state, middleware, contexts, sessionMessages, memorySource, SkillContentLoader.empty());
+    }
+
+    public DefaultRuntimeContextBuilder(
+            RuntimeStateRepository state,
+            AgentRuntimeMiddlewareChain middleware,
+            AgentContextBuilder contexts,
+            SessionMessageSource sessionMessages,
+            MemoryContextSource memorySource,
+            SkillContentLoader skillContentLoader) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.middleware = Objects.requireNonNull(middleware, "middleware must not be null");
         this.contexts = Objects.requireNonNull(contexts, "contexts must not be null");
         this.sessionMessages = Objects.requireNonNull(sessionMessages, "sessionMessages must not be null");
         this.memorySource = Objects.requireNonNull(memorySource, "memorySource must not be null");
+        this.skillContentLoader = Objects.requireNonNull(skillContentLoader, "skillContentLoader must not be null");
     }
 
     @Override
@@ -60,6 +82,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                     java.util.Set.of("internal")));
         }
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
+        addSkillPrompts(run, middlewareContext);
 
         SessionMessageSource.Selection selection =
                 sessionMessages.select(run, loopContext.forcedContextRebuildAttempts());
@@ -92,6 +115,85 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 selection.compressorVersion(),
                 loopContext.forcedContextRebuildAttempts());
         return new RuntimeContextBuildResult(contexts.build(request), middlewareContext);
+    }
+
+    private void addSkillPrompts(AgentRun run, RuntimeMiddlewareContext context) {
+        var configuration = state.configuration(run.configurationSnapshot())
+                .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
+        if (!configuration.skillBindings().isEmpty()) {
+            String index = configuration.skillBindings().stream()
+                    .map(binding -> "- " + binding.alias().value() + ": "
+                            + boundedDescription(binding.metadata().description()))
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            context.addPrompt(new PromptComponent(
+                    new PromptComponentId("skill-catalog"),
+                    configuration.skillCatalogDigest().value(),
+                    PromptLayer.TOOL_PROTOCOL,
+                    PromptRole.RUNTIME,
+                    "Available Skills are metadata-only until skill_load activates one:\n" + index,
+                    true,
+                    java.util.Set.of(
+                            "skill",
+                            "progressive-disclosure",
+                            "skill-catalog:"
+                                    + configuration.skillCatalogDigest().value(),
+                            "skill-policy:" + configuration.skillResolutionPolicyRef())));
+        }
+        var visibility = new SkillVisibilityContext(
+                run.tenant(),
+                run.principal(),
+                run.project(),
+                run.project().isPresent(),
+                java.util.EnumSet.allOf(SkillScope.class));
+        state.skillActivations(run.id()).forEach(activation -> {
+            var content = skillContentLoader.load(activation.binding(), visibility);
+            context.addPrompt(new PromptComponent(
+                    new PromptComponentId(
+                            "skill-" + activation.binding().alias().value()),
+                    activation.binding().coordinate().contentDigest().value(),
+                    PromptLayer.SKILL,
+                    PromptRole.RUNTIME,
+                    content.instructions(),
+                    true,
+                    java.util.Set.of(
+                            "skill",
+                            "activated",
+                            "skill-alias:" + activation.binding().alias().value(),
+                            "skill-scope:"
+                                    + activation
+                                            .binding()
+                                            .coordinate()
+                                            .scope()
+                                            .scope()
+                                            .name()
+                                            .toLowerCase(Locale.ROOT),
+                            "skill-source:"
+                                    + activation.binding().coordinate().source().externalForm(),
+                            "skill-content:"
+                                    + activation
+                                            .binding()
+                                            .coordinate()
+                                            .contentDigest()
+                                            .value(),
+                            "skill-activation-reason:" + sha256(activation.reason()))));
+        });
+    }
+
+    private static String boundedDescription(String value) {
+        return value.length() <= MAX_SKILL_DESCRIPTION_CHARS
+                ? value
+                : value.substring(0, MAX_SKILL_DESCRIPTION_CHARS - 1) + "…";
+    }
+
+    private static String sha256(String value) {
+        try {
+            return "sha256:"
+                    + HexFormat.of()
+                            .formatHex(MessageDigest.getInstance("SHA-256")
+                                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required by the Java runtime", exception);
+        }
     }
 
     private void validateContents(AgentMessage message) {

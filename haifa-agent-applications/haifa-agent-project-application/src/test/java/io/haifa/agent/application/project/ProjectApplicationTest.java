@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.application.project.product.InMemoryProjectProductSessionStore;
 import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
+import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.core.agent.AgentDefinitionId;
@@ -45,6 +46,12 @@ import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandResult;
+import io.haifa.agent.runtime.core.skill.SkillActivationService;
+import io.haifa.agent.runtime.core.skill.SkillResourceRead;
+import io.haifa.agent.runtime.core.skill.SkillToolProvider;
+import io.haifa.agent.skill.api.SkillActivation;
+import io.haifa.agent.skill.api.SkillActivationRequest;
+import io.haifa.agent.skill.api.SkillContent;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
@@ -113,6 +120,45 @@ class ProjectApplicationTest {
                         .bindings())
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("file_read");
+    }
+
+    @Test
+    void skillEnabledProfileDiscoversBaseSkillsAndExplicitlyAddsProgressiveDisclosureTools() {
+        TenantRef tenant = new TenantRef("tenant");
+        PrincipalRef principal = new PrincipalRef("principal", "user");
+        var skills = ProjectSkillPlatform.baseSkills(tenant, principal, Optional.empty(), false);
+        assertThat(skills.catalog().snapshot().bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("result-verification", "task-planning");
+
+        SkillActivationService unusedService = new SkillActivationService() {
+            @Override
+            public SkillActivation activate(SkillActivationRequest request) {
+                throw new AssertionError("catalog assembly must not activate a Skill");
+            }
+
+            @Override
+            public SkillContent content(SkillActivationRequest request) {
+                throw new AssertionError("catalog assembly must not load Skill content");
+            }
+
+            @Override
+            public SkillResourceRead readResource(SkillActivationRequest request, String relativePath) {
+                throw new AssertionError("catalog assembly must not read Skill resources");
+            }
+        };
+        var skillTools = new SkillToolProvider(unusedService).contributions();
+        var catalog = new ProjectToolCatalog();
+
+        assertThat(catalog.freeze(Set.of(), Set.of(), true, providerThatMustNotRun())
+                        .snapshot()
+                        .bindings())
+                .isEmpty();
+        assertThat(catalog.freeze(Set.of(), Set.of(), true, providerThatMustNotRun(), List.of(), List.of(), skillTools)
+                        .snapshot()
+                        .bindings())
+                .extracting(binding -> binding.alias().value())
+                .containsExactly("skill_load", "skill_resource_read");
     }
 
     @Test

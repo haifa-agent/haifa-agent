@@ -36,11 +36,25 @@
         </dependency>
         <dependency>
             <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-skill-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-credential-api</artifactId>
         </dependency>
         <dependency>
             <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-tool-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-skill-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-skill-base</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

@@ -31,6 +31,8 @@ final class RuntimeCheckpointStateHasher {
                 + "|"
                 + state.modelContinuations()
                 + "|"
+                + state.skillActivations()
+                + "|"
                 + state.capabilityCheckpoints();
         try {
             return "sha256:"
