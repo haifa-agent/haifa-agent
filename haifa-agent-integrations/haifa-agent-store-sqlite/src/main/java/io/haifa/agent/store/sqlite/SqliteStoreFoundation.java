@@ -1,31 +1,40 @@
 package io.haifa.agent.store.sqlite;
 
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
 import io.haifa.agent.store.sqlite.migration.RuntimeStoreMigrations;
 import io.haifa.agent.store.sqlite.migration.SqliteMigrationRunner;
 import io.haifa.agent.store.sqlite.mybatis.SqliteMyBatisSessionFactory;
+import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import java.time.Clock;
 import java.util.Objects;
 
-/**
- * Task 03 infrastructure assembly. Business repositories are intentionally added only by the
- * subsequent persistence-adapter task.
- */
+/** SQLite store assembly for the complete runtime persistence-port adapter set. */
 public final class SqliteStoreFoundation {
     private final SqliteConnectionFactory connections;
     private final SqliteMyBatisSessionFactory myBatis;
     private final SqliteRuntimeUnitOfWork unitOfWork;
     private final VersionedPayloadCodecRegistry.Builder codecs;
+    private final VersionedPayloadCodecRegistry runtimeCodecs;
+    private final Clock clock;
+    private final int maximumPayloadBytes;
 
     private SqliteStoreFoundation(
             SqliteConnectionFactory connections,
             SqliteMyBatisSessionFactory myBatis,
             SqliteRuntimeUnitOfWork unitOfWork,
-            VersionedPayloadCodecRegistry.Builder codecs) {
+            VersionedPayloadCodecRegistry.Builder codecs,
+            VersionedPayloadCodecRegistry runtimeCodecs,
+            Clock clock,
+            int maximumPayloadBytes) {
         this.connections = connections;
         this.myBatis = myBatis;
         this.unitOfWork = unitOfWork;
         this.codecs = codecs;
+        this.runtimeCodecs = runtimeCodecs;
+        this.clock = clock;
+        this.maximumPayloadBytes = maximumPayloadBytes;
     }
 
     public static SqliteStoreFoundation initialize(SqliteStoreConfiguration configuration, Clock clock) {
@@ -40,7 +49,10 @@ public final class SqliteStoreFoundation {
                 connections,
                 myBatis,
                 unitOfWork,
-                VersionedPayloadCodecRegistry.builder(configuration.maximumPayloadBytes()));
+                VersionedPayloadCodecRegistry.builder(configuration.maximumPayloadBytes()),
+                SqliteRuntimePayloadTypes.create(configuration.maximumPayloadBytes()),
+                clock,
+                configuration.maximumPayloadBytes());
     }
 
     public SqliteConnectionFactory connections() {
@@ -57,5 +69,98 @@ public final class SqliteStoreFoundation {
 
     public VersionedPayloadCodecRegistry.Builder codecs() {
         return codecs;
+    }
+
+    public SqliteAgentSessionRepository agentSessions() {
+        return new SqliteAgentSessionRepository(unitOfWork, runtimeCodecs);
+    }
+
+    public SqliteRunStateRepository runs() {
+        return new SqliteRunStateRepository(unitOfWork, runtimeCodecs);
+    }
+
+    public SqliteExecutionAttemptRepository attempts() {
+        return new SqliteExecutionAttemptRepository(unitOfWork, runtimeCodecs);
+    }
+
+    public SqliteSessionMessageRepository messages() {
+        return new SqliteSessionMessageRepository(unitOfWork, runtimeCodecs);
+    }
+
+    public SqliteCheckpointRepository checkpoints() {
+        return new SqliteCheckpointRepository(unitOfWork, runtimeCodecs);
+    }
+
+    public SqliteRuntimeEventAppender events() {
+        return new SqliteRuntimeEventAppender(unitOfWork, runtimeCodecs);
+    }
+
+    public SqliteRuntimeOutboxPublisher outbox() {
+        return new SqliteRuntimeOutboxPublisher(unitOfWork, runtimeCodecs, clock);
+    }
+
+    public SqliteIdempotencyRepository idempotency() {
+        return new SqliteIdempotencyRepository(unitOfWork, runtimeCodecs, clock);
+    }
+
+    public SqliteToolExecutionJournal toolJournal() {
+        return new SqliteToolExecutionJournal(unitOfWork, runtimeCodecs, clock);
+    }
+
+    public SqliteInteractionPort interactions() {
+        return new SqliteInteractionPort(unitOfWork, runtimeCodecs, clock, maximumPayloadBytes);
+    }
+
+    public SqliteConversationSummaryRepository summaries() {
+        return new SqliteConversationSummaryRepository(unitOfWork, runtimeCodecs);
+    }
+
+    public SqliteRuntimeMemorySelectionRepository memorySelections() {
+        return new SqliteRuntimeMemorySelectionRepository(unitOfWork, runtimeCodecs, clock);
+    }
+
+    public SqliteSkillActivationRepository skillActivations() {
+        return new SqliteSkillActivationRepository(unitOfWork, runtimeCodecs, clock);
+    }
+
+    public SqliteToolResultAssetStore toolResultAssets() {
+        return new SqliteToolResultAssetStore(unitOfWork, runtimeCodecs, clock);
+    }
+
+    public SqliteRuntimeStateRepository runtimeState(ModelContinuationProtector protector) {
+        SqliteSessionMessageRepository messages = messages();
+        SqliteModelContinuationRepository continuations =
+                new SqliteModelContinuationRepository(unitOfWork, runtimeCodecs, messages, protector);
+        return new SqliteRuntimeStateRepository(
+                messages,
+                new SqliteLoopStateComponent(unitOfWork, runtimeCodecs, messages, clock),
+                memorySelections(),
+                continuations,
+                skillActivations());
+    }
+
+    public RuntimePersistencePorts persistencePorts(ModelContinuationProtector protector) {
+        SqliteSessionMessageRepository messages = messages();
+        SqliteRuntimeStateRepository state = new SqliteRuntimeStateRepository(
+                messages,
+                new SqliteLoopStateComponent(unitOfWork, runtimeCodecs, messages, clock),
+                memorySelections(),
+                new SqliteModelContinuationRepository(unitOfWork, runtimeCodecs, messages, protector),
+                skillActivations());
+        return new RuntimePersistencePorts(
+                agentSessions(),
+                runs(),
+                attempts(),
+                checkpoints(),
+                state,
+                events(),
+                outbox(),
+                idempotency(),
+                unitOfWork,
+                toolJournal(),
+                interactions(),
+                summaries(),
+                toolResultAssets(),
+                messages);
     }
 }

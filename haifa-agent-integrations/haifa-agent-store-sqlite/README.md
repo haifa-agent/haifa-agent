@@ -1,8 +1,8 @@
 # Haifa Agent SQLite Runtime Store
 
-本模块提供纯 Java 的 SQLite/MyBatis 持久化基础设施。当前完成 Task 03：受控数据库配置、V1 Schema、
-Migration、版本化 Codec、MyBatis Session 与线程绑定 UoW；尚未实现任何 Runtime 业务 Repository，
-也未接入 Application/CLI 或 Runtime 写路径。
+本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1/V2 Migration、
+版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
+Application/CLI 的默认装配与进程重启恢复编排仍由后续任务接入。
 
 ## 边界
 
@@ -11,7 +11,7 @@ Migration、版本化 Codec、MyBatis Session 与线程绑定 UoW；尚未实现
 - 只使用 MyBatis Core 和 Xerial SQLite JDBC；不使用 Spring、连接池、ORM、自动生成器或动态 SQL。
 - 数据库路径由调用方提供，必须是父目录已存在且可写的绝对文件路径。
 - 默认不开启 SQL 日志；Mapper XML 禁止 `${}`，所有值只能使用 `#{}`。
-- 本阶段不实现 Session、Run、Checkpoint、Journal、Interaction 等业务 Mapper/Repository。
+- `SqliteStoreFoundation.persistencePorts(protector)` 组合完整持久化端口；Model Continuation 必须注入可跨实例恢复的 protector。
 
 ## 初始化与所有权
 
@@ -28,7 +28,7 @@ UoW 始终保持 JDBC `autoCommit=true`，在同一 Connection 上执行 SQL 级
 外层上下文，任何嵌套失败都会把外层标记为 rollback-only。MyBatis 使用 `MANAGED` 且
 `closeConnection=false`，不会提交、回滚或关闭 UoW Connection。
 
-## V1 Schema
+## Schema 与 Migration
 
 V1 一次性创建 26 张逻辑表：
 
@@ -50,9 +50,12 @@ V1 一次性创建 26 张逻辑表：
 外键、Run 内序号唯一约束、Session Message 序号、Attempt 编号、Interaction/Idempotency 去重，以及
 同一 Run 最多一个 `QUEUED`/`RUNNING` Attempt 的部分唯一索引。
 
+V2 只补充无损恢复所需字段：Run 的 waiting request/termination description，以及 Configuration 与
+Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校验并在 `BEGIN IMMEDIATE` 中执行。
+
 ## Port—表—Codec 对照
 
-| Runtime 边界 | V1 表/关键列 | 后续 Codec |
+| Runtime 边界 | 表/关键列 | Codec |
 | --- | --- | --- |
 | `AgentSessionRepository` | `session`; tenant/owner/project/status/version | metadata DTO |
 | `RunStateRepository` | `run`; budget/limits/usage/status/version | result/error DTO |
@@ -63,8 +66,8 @@ V1 一次性创建 26 张逻辑表：
 | Journal/Interaction | tool_journal + interaction 三表 | ToolResult、Target、inputs DTO |
 | Summary/Memory/Continuation/Skill/Asset | extended-state 六表 | 对应显式 DTO；Continuation 只保存 protector 输出 |
 
-Task 01 快照中的标量字段均有固定列；嵌套值只落入上表列出的版本化 Payload。Task 04—10 必须逐字段完成
-Row DTO 与业务 Codec，使用 Task 01 的受控重建入口，不得把领域对象直接交给 MyBatis。
+Task 01 快照中的标量字段均有固定列；嵌套值只落入上表列出的版本化 Payload。所有 Row DTO 与业务
+Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 
 ## Codec 与 MyBatis
 
@@ -73,7 +76,22 @@ Row DTO 与业务 Codec，使用 Task 01 的受控重建入口，不得把领域
 - JSON 使用稳定属性/Map 顺序生成字节，再计算 SHA-256；
 - `InstantEpochMillisTypeHandler` 与 `BoundedBlobTypeHandler` 是基础 TypeHandler；
 - ID 和 Enum 通过显式 `StringIdentifierCodec`、`StableEnumCodec` 转换，未知值不回退；
-- Mapper 使用显式 constructor/resultMap；当前唯一 Mapper 只读取 Migration 元数据，用于启动和所有权契约验证。
+- Mapper 使用显式 constructor/resultMap 与 `#{}` 参数；禁止 `${}` 和任意类名反序列化。
+
+## Port 覆盖矩阵
+
+| Port | SQLite 实现 |
+| --- | --- |
+| Session / Run / Attempt | `SqliteAgentSessionRepository`、`SqliteRunStateRepository`、`SqliteExecutionAttemptRepository` |
+| Runtime state / Message / Configuration | `SqliteRuntimeStateRepository`、`SqliteSessionMessageRepository` |
+| Checkpoint | `SqliteCheckpointRepository` |
+| Event / Outbox / Idempotency | `SqliteRuntimeEventAppender`、`SqliteRuntimeOutboxPublisher`、`SqliteIdempotencyRepository` |
+| Tool journal / Interaction | `SqliteToolExecutionJournal`、`SqliteInteractionPort` |
+| Summary / Memory / Continuation / Skill / Asset | 对应 `Sqlite*Repository` / `SqliteToolResultAssetStore` |
+| Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
+
+仍未接入的边界：Application/CLI 默认选择 SQLite、Runtime 启动时的恢复扫描与调度、Outbox 后台投递器，
+以及生产环境 KMS/Vault 密钥解析与轮换。这些不影响本模块作为完整持久化 Port 集合使用。
 
 ## 验证
 
@@ -81,6 +99,7 @@ Row DTO 与业务 Codec，使用 Task 01 的受控重建入口，不得把领域
 .\mvnw.cmd -pl :haifa-agent-store-sqlite -am test
 ```
 
-测试覆盖首次建库、重复启动、checksum 漂移、Migration 故障回滚、SQL parser 的注释/引号/trigger、
-WAL/foreign key/busy timeout、路径失败、完整 Schema 元数据、Codec fail-closed、MyBatis Mapper 启动校验、
-未知列/TypeHandler、单 Connection/SqlSession UoW、嵌套、`BEGIN IMMEDIATE`、commit 与 rollback。
+测试覆盖首次建库、重复启动、checksum 漂移、Migration 故障回滚、完整 Schema、Codec fail-closed、
+全部主要 Port 的文件重开 round-trip、乐观锁、活动 Attempt、消息 cursor/脱敏、Checkpoint 完整性、
+Event sequence、Outbox/Idempotency、Journal 状态机、Interaction 竞争、Continuation 固定密钥恢复/错误密钥/
+篡改、Skill/Memory/Asset，以及数据库/WAL 中不出现 reasoning 明文或测试密钥。

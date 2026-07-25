@@ -14,20 +14,31 @@ import javax.crypto.spec.GCMParameterSpec;
 public final class AesGcmModelContinuationProtector implements ModelContinuationProtector {
     private final SecretKey key;
     private final SecureRandom random;
+    private final boolean persistent;
 
     public AesGcmModelContinuationProtector(SecretKey key, SecureRandom random) {
+        this(key, random, true);
+    }
+
+    private AesGcmModelContinuationProtector(SecretKey key, SecureRandom random, boolean persistent) {
         this.key = Objects.requireNonNull(key, "key must not be null");
         this.random = Objects.requireNonNull(random, "random must not be null");
+        this.persistent = persistent;
     }
 
     public static AesGcmModelContinuationProtector ephemeral() {
         try {
             KeyGenerator generator = KeyGenerator.getInstance("AES");
             generator.init(256);
-            return new AesGcmModelContinuationProtector(generator.generateKey(), new SecureRandom());
+            return new AesGcmModelContinuationProtector(generator.generateKey(), new SecureRandom(), false);
         } catch (GeneralSecurityException exception) {
             throw new IllegalStateException("AES-GCM is required", exception);
         }
+    }
+
+    @Override
+    public boolean supportsPersistentStorage() {
+        return persistent;
     }
 
     @Override

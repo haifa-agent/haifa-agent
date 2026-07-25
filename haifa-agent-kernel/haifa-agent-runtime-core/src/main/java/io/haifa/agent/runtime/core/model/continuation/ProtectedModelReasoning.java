@@ -24,6 +24,15 @@ public final class ProtectedModelReasoning {
         return ciphertext.clone();
     }
 
+    public ProtectedModelReasoningEnvelope persistenceEnvelope() {
+        return new ProtectedModelReasoningEnvelope(nonce, ciphertext);
+    }
+
+    public static ProtectedModelReasoning fromPersistenceEnvelope(ProtectedModelReasoningEnvelope envelope) {
+        Objects.requireNonNull(envelope, "envelope must not be null");
+        return new ProtectedModelReasoning(envelope.nonce(), envelope.ciphertext());
+    }
+
     @Override
     public String toString() {
         return "ProtectedModelReasoning[bytes=" + ciphertext.length + "]";

@@ -33,11 +33,15 @@ import org.apache.ibatis.type.JdbcType;
 public final class SqliteMyBatisSessionFactory {
     private static final String MIGRATION_MAPPER_RESOURCE =
             "/io/haifa/agent/store/sqlite/mybatis/MigrationMetadataMapper.xml";
+    private static final String RUNTIME_STORE_MAPPER_RESOURCE =
+            "/io/haifa/agent/store/sqlite/mybatis/RuntimeStoreMapper.xml";
 
     private final SqlSessionFactory sessions;
 
     public SqliteMyBatisSessionFactory(int maximumPayloadBytes) {
-        this(maximumPayloadBytes, List.of(loadMapper(MIGRATION_MAPPER_RESOURCE)));
+        this(
+                maximumPayloadBytes,
+                List.of(loadMapper(MIGRATION_MAPPER_RESOURCE), loadMapper(RUNTIME_STORE_MAPPER_RESOURCE)));
     }
 
     public SqliteMyBatisSessionFactory(int maximumPayloadBytes, List<MapperXml> mapperResources) {

@@ -13,10 +13,10 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - 可冻结的 `web.search` / `web.fetch` Tool：Search 支持 Aliyun、Brave、Tavily，Fetch 当前只支持 Aliyun；
 - Project/Workspace 的受控文件访问、变更集、补丁、索引、快照与显式 Artifact 导出；
 - ExecutionBroker、Sandbox SPI、受控 Host Provider，以及只读 Git 适配；
-- SQLite V1 Schema、checksum Migration、版本化 Codec、MyBatis Session 与线程绑定 UoW 基础；
+- SQLite V1/V2 Migration、版本化 Codec、线程绑定 UoW 与完整 Runtime Persistence Port 适配器；
 - Project Application 和本地一次性 Coding Agent CLI。
 
-尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy 独立模块、可用的持久化 Store（SQLite Schema/UoW 基础已存在，但业务 Repository 尚未实现），以及容器或 microVM Sandbox。
+尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy 独立模块、SQLite Store 的 Application 默认装配与进程重启恢复编排，以及容器或 microVM Sandbox。
 
 ## 当前 Reactor
 

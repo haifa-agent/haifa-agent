@@ -158,6 +158,7 @@ class V1SchemaMetadataTest {
                             "content_schema_version",
                             "content_payload",
                             "content_hash",
+                            "content_payload_hash",
                             "created_at")),
             entry(
                     "run",
@@ -209,7 +210,9 @@ class V1SchemaMetadataTest {
                             "error_payload",
                             "error_hash",
                             "waiting_request_id",
+                            "waiting_request_type",
                             "termination_reason",
+                            "termination_description",
                             "created_at",
                             "queued_at",
                             "started_at",
@@ -331,7 +334,13 @@ class V1SchemaMetadataTest {
                             "created_at")),
             entry(
                     "checkpoint_payload",
-                    set("checkpoint_id", "state_schema_version", "state_payload", "state_hash", "created_at")),
+                    set(
+                            "checkpoint_id",
+                            "state_schema_version",
+                            "state_payload",
+                            "state_hash",
+                            "payload_hash",
+                            "created_at")),
             entry(
                     "runtime_event",
                     set(
