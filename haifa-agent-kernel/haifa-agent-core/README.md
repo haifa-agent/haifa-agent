@@ -12,3 +12,6 @@
 - 最终结构化结果为 Core 的 `AgentRunResult`；Message 原生使用不可变 `List<ContentPart>`；Asset 与 Artifact 只以 Ref 进入 Core。
 - ID 和时间由调用方生成后传入，Core 不调用随机生成或 `Instant.now()`。
 - 集合及 Metadata 均进行防御性复制；聚合不公开 Setter。
+- `AgentRun`、`AgentSession`、`AgentStep`、`ToolCall`、`AgentPlan`/`TodoItem` 提供带
+  `schemaVersion` 的纯 Java 持久化快照和受控 `reconstitute` 入口；未知版本、未知枚举和非法历史组合
+  按 `DomainReconstitutionFailure` 分类失败。快照不使用 Java 原生序列化、反射、Jackson 或 ORM。

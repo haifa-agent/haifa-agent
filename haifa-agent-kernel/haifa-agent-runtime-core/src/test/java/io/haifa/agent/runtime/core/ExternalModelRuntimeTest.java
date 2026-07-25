@@ -39,6 +39,7 @@ import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationException;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationFailure;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
 import java.util.List;
@@ -124,7 +125,7 @@ class ExternalModelRuntimeTest {
                                 List.of(),
                                 false))
                 .scheduler(scheduler)
-                .store(store)
+                .persistence(RuntimePersistencePorts.inMemory(store))
                 .identifierGenerator(identifierGenerator)
                 .timeProvider(time)
                 .trace(traces::add)
@@ -221,7 +222,7 @@ class ExternalModelRuntimeTest {
                                 "",
                                 Map.of()))
                 .scheduler(scheduler)
-                .store(store)
+                .persistence(RuntimePersistencePorts.inMemory(store))
                 .identifierGenerator(() -> "unknown-tool-id-" + ids.incrementAndGet())
                 .timeProvider(() -> Instant.parse("2026-07-21T00:00:00Z"))
                 .trace(traces::add)
@@ -249,10 +250,17 @@ class ExternalModelRuntimeTest {
         assertThat(List.of(RuntimeCoreBuilder.class.getMethods()))
                 .noneMatch(method -> method.getName().equals("modelClient"))
                 .noneMatch(method -> method.getName().equals("modelSelector"))
+                .noneMatch(method -> method.getName().equals("store"))
+                .noneMatch(method -> method.getName().equals("interactions"))
                 .filteredOn(method -> method.getName().equals("registerChatModel"))
                 .singleElement()
                 .satisfies(method -> assertThat(method.getParameterTypes())
                         .containsExactly(String.class, String.class, io.haifa.agent.model.api.AgentChatModel.class));
+        assertThat(List.of(RuntimeCoreBuilder.class.getMethods()))
+                .filteredOn(method -> method.getName().equals("persistence"))
+                .singleElement()
+                .satisfies(method ->
+                        assertThat(method.getParameterTypes()).containsExactly(RuntimePersistencePorts.class));
     }
 
     @Test

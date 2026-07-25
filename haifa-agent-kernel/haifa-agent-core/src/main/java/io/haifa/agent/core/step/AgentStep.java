@@ -2,6 +2,8 @@ package io.haifa.agent.core.step;
 
 import static io.haifa.agent.core.support.DomainValues.optionalText;
 
+import io.haifa.agent.core.persistence.DomainReconstitution;
+import io.haifa.agent.core.persistence.DomainReconstitutionException;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Instant;
 import java.util.Objects;
@@ -45,6 +47,110 @@ public final class AgentStep {
         }
         this.sequence = sequence;
         this.createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
+    }
+
+    public static AgentStep reconstitute(AgentStepPersistenceSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        DomainReconstitution.requireSupportedVersion(snapshot.schemaVersion(), "AgentStep");
+        AgentStepStatus restoredStatus =
+                DomainReconstitution.enumValue(AgentStepStatus.class, snapshot.status(), "step status");
+        DomainReconstitution.requireVersion(snapshot.version(), "step");
+        validatePersistedState(snapshot, restoredStatus);
+        try {
+            AgentStep step = new AgentStep(
+                    snapshot.id(),
+                    snapshot.runId(),
+                    snapshot.parentStepId(),
+                    snapshot.branchId(),
+                    snapshot.type(),
+                    snapshot.sequence(),
+                    snapshot.createdAt());
+            step.status = restoredStatus;
+            step.startedAt = snapshot.startedAt();
+            step.completedAt = snapshot.completedAt();
+            step.result = snapshot.result();
+            step.error = snapshot.error();
+            step.version = snapshot.version();
+            return step;
+        } catch (DomainReconstitutionException exception) {
+            throw exception;
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            throw DomainReconstitution.invalid("AgentStep", exception);
+        }
+    }
+
+    private static void validatePersistedState(AgentStepPersistenceSnapshot snapshot, AgentStepStatus status) {
+        Instant createdAt = snapshot.createdAt();
+        Instant updatedAt = snapshot.completedAt() != null
+                ? snapshot.completedAt()
+                : snapshot.startedAt() != null ? snapshot.startedAt() : createdAt;
+        DomainReconstitution.requireChronological(createdAt, updatedAt, "step");
+        DomainReconstitution.requireWithinHistory(snapshot.startedAt(), createdAt, updatedAt, "startedAt", "step");
+        boolean valid =
+                switch (status) {
+                    case PENDING ->
+                        snapshot.startedAt() == null
+                                && snapshot.completedAt() == null
+                                && snapshot.result() == null
+                                && snapshot.error() == null
+                                && snapshot.version() == 0;
+                    case RUNNING ->
+                        snapshot.startedAt() != null
+                                && snapshot.completedAt() == null
+                                && snapshot.result() == null
+                                && snapshot.error() == null
+                                && snapshot.version() >= 1;
+                    case WAITING ->
+                        snapshot.startedAt() != null
+                                && snapshot.completedAt() == null
+                                && snapshot.result() == null
+                                && snapshot.error() == null
+                                && snapshot.version() >= 2;
+                    case COMPLETED ->
+                        snapshot.startedAt() != null
+                                && snapshot.completedAt() != null
+                                && snapshot.result() != null
+                                && snapshot.error() == null
+                                && snapshot.version() >= 2;
+                    case FAILED ->
+                        snapshot.startedAt() != null
+                                && snapshot.completedAt() != null
+                                && snapshot.result() == null
+                                && snapshot.error() != null
+                                && snapshot.version() >= 2;
+                    case CANCELLED ->
+                        snapshot.completedAt() != null
+                                && snapshot.result() == null
+                                && snapshot.error() == null
+                                && snapshot.version() >= 1;
+                    case SKIPPED ->
+                        snapshot.startedAt() == null
+                                && snapshot.completedAt() != null
+                                && snapshot.result() == null
+                                && snapshot.error() == null
+                                && snapshot.version() == 1;
+                };
+        if (!valid) {
+            DomainReconstitution.invalid("step state is inconsistent for status " + status);
+        }
+    }
+
+    public AgentStepPersistenceSnapshot persistenceSnapshot() {
+        return new AgentStepPersistenceSnapshot(
+                DomainReconstitution.SCHEMA_VERSION,
+                id,
+                runId,
+                parentStepId,
+                branchId,
+                type,
+                sequence,
+                createdAt,
+                status.name(),
+                startedAt,
+                completedAt,
+                result,
+                error,
+                version);
     }
 
     public void start(Instant at) {

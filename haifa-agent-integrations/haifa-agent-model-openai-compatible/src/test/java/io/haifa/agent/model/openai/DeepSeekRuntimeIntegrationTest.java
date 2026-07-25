@@ -24,6 +24,7 @@ import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -172,7 +173,7 @@ class DeepSeekRuntimeIntegrationTest {
                             frozenModel))
                     .toolPlatform(toolCatalog, new DefaultToolInvoker(toolCatalog), new JsonSchema202012Validator())
                     .scheduler(scheduler)
-                    .store(store)
+                    .persistence(RuntimePersistencePorts.inMemory(store))
                     .identifierGenerator(ids)
                     .timeProvider(time)
                     .build();

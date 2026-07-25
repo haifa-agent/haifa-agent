@@ -16,6 +16,7 @@ import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
+import io.haifa.agent.runtime.core.storage.RuntimeEvent;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
@@ -113,7 +114,7 @@ public final class RunTransitionCoordinator {
                         state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
                         run.complete(result, time.now());
                         runs.save(run, expectedVersion);
-                        events.append(
+                        RuntimeEvent event = events.append(
                                 run.id(),
                                 "run.completed",
                                 Map.of(
@@ -126,10 +127,12 @@ public final class RunTransitionCoordinator {
                                 time.now());
                         outbox.append(new OutboxMessage(
                                 ids.nextValue(),
-                                run.id(),
-                                "run.completed",
+                                event.runId(),
+                                event.sequence(),
+                                event.type(),
+                                OutboxMessage.CURRENT_SCHEMA_VERSION,
                                 Map.of("status", run.status().name(), "version", run.version()),
-                                time.now()));
+                                event.occurredAt()));
                         return AgentRunSnapshot.from(run, state.output(run.id()));
                     }),
                     persistenceRetry.policy());
@@ -173,7 +176,7 @@ public final class RunTransitionCoordinator {
                         AgentRunStatus previous = run.status();
                         mutation.accept(run);
                         runs.save(run, expectedVersion);
-                        events.append(
+                        RuntimeEvent event = events.append(
                                 run.id(),
                                 eventType,
                                 Map.of(
@@ -186,10 +189,12 @@ public final class RunTransitionCoordinator {
                                 time.now());
                         outbox.append(new OutboxMessage(
                                 ids.nextValue(),
-                                run.id(),
-                                eventType,
+                                event.runId(),
+                                event.sequence(),
+                                event.type(),
+                                OutboxMessage.CURRENT_SCHEMA_VERSION,
                                 Map.of("status", run.status().name(), "version", run.version()),
-                                time.now()));
+                                event.occurredAt()));
                         return AgentRunSnapshot.from(run, state.output(run.id()));
                     }),
                     persistenceRetry.policy());

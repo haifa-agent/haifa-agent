@@ -3,6 +3,8 @@ package io.haifa.agent.core.run;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.persistence.DomainReconstitution;
+import io.haifa.agent.core.persistence.DomainReconstitutionException;
 import io.haifa.agent.core.reference.InteractionRequestRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.ProjectRef;
@@ -105,6 +107,192 @@ public final class AgentRun {
             throw new IllegalArgumentException("child run depth exceeds configured limit");
         }
         return new AgentRun(id, parent.rootRunId, parent.id, invocationMode, childDepth, spec, createdAt);
+    }
+
+    public static AgentRun reconstitute(AgentRunPersistenceSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        DomainReconstitution.requireSupportedVersion(snapshot.schemaVersion(), "AgentRun");
+        AgentInvocationMode restoredInvocationMode = DomainReconstitution.enumValue(
+                AgentInvocationMode.class, snapshot.invocationMode(), "run invocation mode");
+        AgentRunStatus restoredStatus =
+                DomainReconstitution.enumValue(AgentRunStatus.class, snapshot.status(), "run status");
+        DomainReconstitution.requireVersion(snapshot.version(), "run");
+        validatePersistedState(snapshot, restoredStatus);
+        try {
+            AgentRunSpec spec = new AgentRunSpec(
+                    snapshot.sessionId(),
+                    snapshot.project(),
+                    snapshot.tenant(),
+                    snapshot.principal(),
+                    snapshot.agentDefinitionId(),
+                    snapshot.agentDefinitionVersion(),
+                    snapshot.productProfileId(),
+                    snapshot.productProfileVersion(),
+                    snapshot.runType(),
+                    snapshot.objective(),
+                    snapshot.budget(),
+                    snapshot.limits(),
+                    snapshot.configurationSnapshot());
+            AgentRun run = new AgentRun(
+                    snapshot.id(),
+                    snapshot.rootRunId(),
+                    snapshot.parentRunId(),
+                    restoredInvocationMode,
+                    snapshot.depth(),
+                    spec,
+                    snapshot.createdAt());
+            run.status = restoredStatus;
+            run.usage = Objects.requireNonNull(snapshot.usage(), "usage must not be null");
+            run.result = snapshot.result();
+            run.error = snapshot.error();
+            run.waitingFor = snapshot.waitingFor();
+            run.terminationReason = snapshot.terminationReason();
+            run.queuedAt = snapshot.queuedAt();
+            run.startedAt = snapshot.startedAt();
+            run.suspendedAt = snapshot.suspendedAt();
+            run.resumedAt = snapshot.resumedAt();
+            run.completedAt = snapshot.completedAt();
+            run.updatedAt = snapshot.updatedAt();
+            run.version = snapshot.version();
+            return run;
+        } catch (DomainReconstitutionException exception) {
+            throw exception;
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            throw DomainReconstitution.invalid("AgentRun", exception);
+        }
+    }
+
+    private static void validatePersistedState(AgentRunPersistenceSnapshot snapshot, AgentRunStatus status) {
+        DomainReconstitution.requireChronological(snapshot.createdAt(), snapshot.updatedAt(), "run");
+        DomainReconstitution.requireWithinHistory(
+                snapshot.queuedAt(), snapshot.createdAt(), snapshot.updatedAt(), "queuedAt", "run");
+        DomainReconstitution.requireWithinHistory(
+                snapshot.startedAt(), snapshot.createdAt(), snapshot.updatedAt(), "startedAt", "run");
+        DomainReconstitution.requireWithinHistory(
+                snapshot.suspendedAt(), snapshot.createdAt(), snapshot.updatedAt(), "suspendedAt", "run");
+        DomainReconstitution.requireWithinHistory(
+                snapshot.resumedAt(), snapshot.createdAt(), snapshot.updatedAt(), "resumedAt", "run");
+        DomainReconstitution.requireWithinHistory(
+                snapshot.completedAt(), snapshot.createdAt(), snapshot.updatedAt(), "completedAt", "run");
+        if (snapshot.queuedAt() != null
+                && snapshot.startedAt() != null
+                && snapshot.startedAt().isBefore(snapshot.queuedAt())) {
+            DomainReconstitution.invalid("run startedAt must not precede queuedAt");
+        }
+        boolean noTerminalValue =
+                snapshot.result() == null && snapshot.error() == null && snapshot.terminationReason() == null;
+        boolean valid =
+                switch (status) {
+                    case PENDING ->
+                        snapshot.queuedAt() == null
+                                && snapshot.startedAt() == null
+                                && snapshot.completedAt() == null
+                                && snapshot.waitingFor() == null
+                                && noTerminalValue;
+                    case QUEUED ->
+                        snapshot.queuedAt() != null
+                                && snapshot.startedAt() == null
+                                && snapshot.completedAt() == null
+                                && snapshot.waitingFor() == null
+                                && noTerminalValue
+                                && snapshot.version() >= 1;
+                    case RUNNING ->
+                        snapshot.startedAt() != null
+                                && snapshot.completedAt() == null
+                                && snapshot.waitingFor() == null
+                                && noTerminalValue
+                                && snapshot.version() >= 1;
+                    case SUSPENDING ->
+                        snapshot.startedAt() != null
+                                && snapshot.completedAt() == null
+                                && snapshot.waitingFor() == null
+                                && noTerminalValue
+                                && snapshot.version() >= 2;
+                    case SUSPENDED ->
+                        snapshot.startedAt() != null
+                                && snapshot.suspendedAt() != null
+                                && snapshot.completedAt() == null
+                                && snapshot.waitingFor() == null
+                                && noTerminalValue
+                                && snapshot.version() >= 3;
+                    case WAITING_INTERACTION, WAITING_APPROVAL ->
+                        snapshot.startedAt() != null
+                                && snapshot.completedAt() == null
+                                && snapshot.waitingFor() != null
+                                && noTerminalValue
+                                && snapshot.version() >= 2;
+                    case COMPLETING ->
+                        snapshot.startedAt() != null
+                                && snapshot.completedAt() == null
+                                && snapshot.waitingFor() == null
+                                && noTerminalValue
+                                && snapshot.version() >= 2;
+                    case COMPLETED ->
+                        snapshot.startedAt() != null
+                                && completedAtMatches(snapshot)
+                                && snapshot.result() != null
+                                && COMPLETED_OUTCOMES.contains(snapshot.result().outcome())
+                                && snapshot.error() == null
+                                && snapshot.waitingFor() == null
+                                && snapshot.terminationReason() == null
+                                && snapshot.version() >= 3;
+                    case FAILED ->
+                        completedAtMatches(snapshot)
+                                && snapshot.result() == null
+                                && snapshot.error() != null
+                                && snapshot.terminationReason() == null
+                                && snapshot.version() >= 1;
+                    case CANCELLED, TIMEOUT ->
+                        completedAtMatches(snapshot)
+                                && snapshot.result() == null
+                                && snapshot.error() == null
+                                && snapshot.terminationReason() != null
+                                && snapshot.version() >= 1;
+                };
+        if (!valid) {
+            DomainReconstitution.invalid("run state is inconsistent for status " + status);
+        }
+    }
+
+    private static boolean completedAtMatches(AgentRunPersistenceSnapshot snapshot) {
+        return snapshot.completedAt() != null && snapshot.completedAt().equals(snapshot.updatedAt());
+    }
+
+    public AgentRunPersistenceSnapshot persistenceSnapshot() {
+        return new AgentRunPersistenceSnapshot(
+                DomainReconstitution.SCHEMA_VERSION,
+                id,
+                rootRunId,
+                parentRunId,
+                sessionId,
+                project,
+                tenant,
+                principal,
+                agentDefinitionId,
+                agentDefinitionVersion,
+                productProfileId,
+                productProfileVersion,
+                runType,
+                invocationMode.name(),
+                depth,
+                objective,
+                budget,
+                limits,
+                configurationSnapshot,
+                createdAt,
+                status.name(),
+                usage,
+                result,
+                error,
+                waitingFor,
+                terminationReason,
+                queuedAt,
+                startedAt,
+                suspendedAt,
+                resumedAt,
+                completedAt,
+                updatedAt,
+                version);
     }
 
     private void validateHierarchy() {

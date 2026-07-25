@@ -150,17 +150,19 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             if (!recorded.equals(generatedId)) return requireRun(recorded);
             created.set(true);
             appendInitialMessage(generated, request);
-            events.append(
+            var event = events.append(
                     generatedId,
                     "run.created",
                     Map.of("definitionVersion", definition.version().toString()),
                     time.now());
             outbox.append(new OutboxMessage(
                     ids.nextValue(),
-                    generatedId,
-                    "run.created",
+                    event.runId(),
+                    event.sequence(),
+                    event.type(),
+                    OutboxMessage.CURRENT_SCHEMA_VERSION,
                     Map.of("profileVersion", profile.version()),
-                    time.now()));
+                    event.occurredAt()));
             transitions.queued(generated);
             attempts.insert(new AgentRunExecutionAttempt(
                     new ExecutionAttemptId(ids.nextValue()), generatedId, 1, time.now(), Optional.empty()));
@@ -226,7 +228,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             unitOfWork.execute(() -> {
                 appendInteractionResponseMessage(
                         run, response, toolApproval ? MessageVisibility.INTERNAL : MessageVisibility.AGENT_VISIBLE);
-                events.append(
+                var event = events.append(
                         run.id(),
                         "interaction.responded",
                         Map.of(
@@ -236,14 +238,16 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         time.now());
                 outbox.append(new OutboxMessage(
                         ids.nextValue(),
-                        run.id(),
-                        "interaction.responded",
+                        event.runId(),
+                        event.sequence(),
+                        event.type(),
+                        OutboxMessage.CURRENT_SCHEMA_VERSION,
                         Map.of(
                                 "requestId",
                                 response.requestId().value(),
                                 "responseType",
                                 response.type().name()),
-                        time.now()));
+                        event.occurredAt()));
                 return null;
             });
         }
@@ -293,7 +297,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             case CANCEL -> applyCancel(run);
             case TERMINATE_CHILDREN -> delegations.terminateChildren(run);
         }
-        events.append(
+        var event = events.append(
                 run.id(),
                 "runtime.command-" + resultStatus.name().toLowerCase(java.util.Locale.ROOT),
                 Map.of(
@@ -303,14 +307,16 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 time.now());
         outbox.append(new OutboxMessage(
                 ids.nextValue(),
-                run.id(),
-                "runtime.command-" + resultStatus.name().toLowerCase(java.util.Locale.ROOT),
+                event.runId(),
+                event.sequence(),
+                event.type(),
+                OutboxMessage.CURRENT_SCHEMA_VERSION,
                 Map.of(
                         "commandId",
                         command.commandId().value(),
                         "commandType",
                         command.type().name()),
-                time.now()));
+                event.occurredAt()));
         RuntimeCommandResult result = new RuntimeCommandResult(command, resultStatus, snapshot(run.id()));
         idempotency.recordCommandResult(scope, idempotencyKey, result);
         return result;
