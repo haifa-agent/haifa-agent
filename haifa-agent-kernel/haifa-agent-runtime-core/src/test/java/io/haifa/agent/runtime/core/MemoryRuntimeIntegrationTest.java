@@ -32,6 +32,7 @@ import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -83,7 +84,7 @@ class MemoryRuntimeIntegrationTest {
                             "",
                             Map.of());
                 })
-                .store(runtimeStore)
+                .persistence(RuntimePersistencePorts.inMemory(runtimeStore))
                 .scheduler(scheduler)
                 .identifierGenerator(() -> "runtime-memory-" + runtimeIds.incrementAndGet())
                 .timeProvider(() -> NOW)

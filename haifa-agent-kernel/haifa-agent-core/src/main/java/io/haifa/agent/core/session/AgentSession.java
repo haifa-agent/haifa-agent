@@ -2,6 +2,8 @@ package io.haifa.agent.core.session;
 
 import static io.haifa.agent.core.support.DomainValues.immutableMap;
 
+import io.haifa.agent.core.persistence.DomainReconstitution;
+import io.haifa.agent.core.persistence.DomainReconstitutionException;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -56,6 +58,69 @@ public final class AgentSession {
             Instant createdAt,
             Map<String, Object> metadata) {
         return new AgentSession(id, tenant, owner, project, scope, createdAt, metadata);
+    }
+
+    public static AgentSession reconstitute(AgentSessionPersistenceSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        DomainReconstitution.requireSupportedVersion(snapshot.schemaVersion(), "AgentSession");
+        AgentSessionStatus restoredStatus =
+                DomainReconstitution.enumValue(AgentSessionStatus.class, snapshot.status(), "session status");
+        SessionScope restoredScope =
+                DomainReconstitution.enumValue(SessionScope.class, snapshot.scope(), "session scope");
+        DomainReconstitution.requireVersion(snapshot.version(), "session");
+        DomainReconstitution.requireChronological(snapshot.createdAt(), snapshot.updatedAt(), "session");
+        DomainReconstitution.requireWithinHistory(
+                snapshot.closedAt(), snapshot.createdAt(), snapshot.updatedAt(), "closedAt", "session");
+        validatePersistedState(restoredStatus, snapshot.closedAt(), snapshot.updatedAt(), snapshot.version());
+        try {
+            AgentSession session = new AgentSession(
+                    snapshot.id(),
+                    snapshot.tenant(),
+                    snapshot.owner(),
+                    snapshot.project(),
+                    restoredScope,
+                    snapshot.createdAt(),
+                    snapshot.metadata());
+            session.status = restoredStatus;
+            session.updatedAt = snapshot.updatedAt();
+            session.closedAt = snapshot.closedAt();
+            session.version = snapshot.version();
+            return session;
+        } catch (DomainReconstitutionException exception) {
+            throw exception;
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            throw DomainReconstitution.invalid("AgentSession", exception);
+        }
+    }
+
+    private static void validatePersistedState(
+            AgentSessionStatus status, Instant closedAt, Instant updatedAt, long version) {
+        if ((status == AgentSessionStatus.ACTIVE || status == AgentSessionStatus.ARCHIVED) && closedAt != null) {
+            DomainReconstitution.invalid("active or archived session must not have closedAt");
+        }
+        if ((status == AgentSessionStatus.CLOSED || status == AgentSessionStatus.DELETED)
+                && (closedAt == null || !closedAt.equals(updatedAt))) {
+            DomainReconstitution.invalid("closed or deleted session must close at updatedAt");
+        }
+        if (status != AgentSessionStatus.ACTIVE && version < 1) {
+            DomainReconstitution.invalid("non-active session must have a positive version");
+        }
+    }
+
+    public AgentSessionPersistenceSnapshot persistenceSnapshot() {
+        return new AgentSessionPersistenceSnapshot(
+                DomainReconstitution.SCHEMA_VERSION,
+                id,
+                tenant,
+                owner,
+                project,
+                scope.name(),
+                createdAt,
+                status.name(),
+                updatedAt,
+                closedAt,
+                version,
+                metadata);
     }
 
     public void archive(Instant at) {

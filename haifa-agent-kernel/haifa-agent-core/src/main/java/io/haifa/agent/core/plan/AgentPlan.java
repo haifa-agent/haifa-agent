@@ -2,6 +2,8 @@ package io.haifa.agent.core.plan;
 
 import static io.haifa.agent.core.support.DomainValues.requireText;
 
+import io.haifa.agent.core.persistence.DomainReconstitution;
+import io.haifa.agent.core.persistence.DomainReconstitutionException;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Instant;
 import java.util.List;
@@ -26,6 +28,40 @@ public final class AgentPlan {
         this.createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
         this.updatedAt = createdAt;
         this.revision = 1;
+    }
+
+    public static AgentPlan reconstitute(AgentPlanPersistenceSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        DomainReconstitution.requireSupportedVersion(snapshot.schemaVersion(), "AgentPlan");
+        if (snapshot.revision() < 1) {
+            DomainReconstitution.invalid("plan revision must be positive");
+        }
+        DomainReconstitution.requireChronological(snapshot.createdAt(), snapshot.updatedAt(), "plan");
+        try {
+            List<TodoItem> restoredItems =
+                    snapshot.items().stream().map(TodoItem::reconstitute).toList();
+            AgentPlan plan = new AgentPlan(
+                    snapshot.id(), snapshot.runId(), snapshot.objective(), restoredItems, snapshot.createdAt());
+            plan.revision = snapshot.revision();
+            plan.updatedAt = snapshot.updatedAt();
+            return plan;
+        } catch (DomainReconstitutionException exception) {
+            throw exception;
+        } catch (IllegalArgumentException | NullPointerException exception) {
+            throw DomainReconstitution.invalid("AgentPlan", exception);
+        }
+    }
+
+    public AgentPlanPersistenceSnapshot persistenceSnapshot() {
+        return new AgentPlanPersistenceSnapshot(
+                DomainReconstitution.SCHEMA_VERSION,
+                id,
+                runId,
+                createdAt,
+                objective,
+                items.stream().map(TodoItem::persistenceSnapshot).toList(),
+                revision,
+                updatedAt);
     }
 
     public void revise(String objective, List<TodoItem> items, Instant at) {

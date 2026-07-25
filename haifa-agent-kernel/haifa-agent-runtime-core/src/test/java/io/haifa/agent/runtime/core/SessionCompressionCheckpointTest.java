@@ -38,6 +38,7 @@ import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
@@ -200,7 +201,7 @@ class SessionCompressionCheckpointTest {
                     toolExecutions.incrementAndGet();
                     return new ToolResult(true, "echoed", Map.of("text", "hello"), List.of(), List.of(), false);
                 })
-                .store(store)
+                .persistence(RuntimePersistencePorts.inMemory(store))
                 .scheduler(scheduler)
                 .identifierGenerator(() -> "ctx-id-" + ids.incrementAndGet())
                 .timeProvider(() -> NOW)
@@ -256,7 +257,7 @@ class SessionCompressionCheckpointTest {
                     return new ToolResult(
                             true, "x".repeat(20_000), Map.of("full", "y".repeat(20_000)), List.of(), List.of(), false);
                 })
-                .store(store)
+                .persistence(RuntimePersistencePorts.inMemory(store))
                 .scheduler(scheduler)
                 .identifierGenerator(() -> "asset-id-" + ids.incrementAndGet())
                 .timeProvider(() -> NOW)
@@ -284,7 +285,7 @@ class SessionCompressionCheckpointTest {
         IdentifierGenerator generator = () -> "test-id-" + ids.incrementAndGet();
         return new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", model)
-                .store(store)
+                .persistence(RuntimePersistencePorts.inMemory(store))
                 .scheduler(scheduler)
                 .identifierGenerator(generator)
                 .timeProvider(() -> NOW)

@@ -16,6 +16,8 @@ import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.session.AgentSession;
+import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
@@ -47,7 +49,8 @@ import java.util.function.Supplier;
 
 /** Thread-safe deterministic store used by local embeddings and tests. */
 public final class InMemoryRuntimeStore
-        implements RunStateRepository,
+        implements AgentSessionRepository,
+                RunStateRepository,
                 ExecutionAttemptRepository,
                 RuntimeEventAppender,
                 RuntimeOutboxPublisher,
@@ -56,12 +59,14 @@ public final class InMemoryRuntimeStore
                 RuntimeStateRepository,
                 ConversationSummaryRepository,
                 ToolResultAssetStore,
+                MessageRedactionListenerRegistry,
                 RuntimeUnitOfWork {
 
     private record Versioned<T>(T value, long version) {}
 
     private record StoredCheckpoint(Checkpoint checkpoint, RuntimeCheckpointState state) {}
 
+    private final Map<AgentSessionId, Versioned<AgentSession>> sessions = new HashMap<>();
     private final Map<AgentRunId, Versioned<AgentRun>> runs = new HashMap<>();
     private final Map<ExecutionAttemptId, Versioned<AgentRunExecutionAttempt>> attempts = new HashMap<>();
     private final Map<AgentRunId, List<RuntimeEvent>> events = new HashMap<>();
@@ -91,6 +96,33 @@ public final class InMemoryRuntimeStore
     private final Map<AgentRunId, Long> skillResourceReadBytes = new HashMap<>();
     private boolean failNextToolResultAssetWrite;
     private final List<MessageRedactionListener> messageRedactionListeners = new ArrayList<>();
+
+    @Override
+    public synchronized void insert(AgentSession session) {
+        if (sessions.putIfAbsent(session.id(), new Versioned<>(session, session.version())) != null) {
+            throw new IllegalStateException(
+                    "session already exists: " + session.id().value());
+        }
+    }
+
+    @Override
+    public synchronized void save(AgentSession session, long expectedVersion) {
+        Versioned<AgentSession> current = sessions.get(session.id());
+        if (current == null) {
+            throw new IllegalStateException(
+                    "session does not exist: " + session.id().value());
+        }
+        if (current.version() != expectedVersion) {
+            throw new OptimisticLockException(
+                    "session version conflict: expected " + expectedVersion + " but was " + current.version());
+        }
+        sessions.put(session.id(), new Versioned<>(session, session.version()));
+    }
+
+    @Override
+    public synchronized Optional<AgentSession> find(AgentSessionId sessionId) {
+        return Optional.ofNullable(sessions.get(sessionId)).map(Versioned::value);
+    }
 
     @Override
     public synchronized void insert(AgentRun run) {
@@ -666,7 +698,8 @@ public final class InMemoryRuntimeStore
         failNextToolResultAssetWrite = true;
     }
 
-    public synchronized void addMessageRedactionListener(MessageRedactionListener listener) {
+    @Override
+    public synchronized void register(MessageRedactionListener listener) {
         messageRedactionListeners.add(Objects.requireNonNull(listener));
     }
 

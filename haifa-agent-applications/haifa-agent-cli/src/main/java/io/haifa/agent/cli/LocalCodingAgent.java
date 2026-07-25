@@ -66,6 +66,8 @@ import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
@@ -258,12 +260,12 @@ final class LocalCodingAgent implements AutoCloseable {
         var runtime = new RuntimeCoreBuilder()
                 .identifierGenerator(identifiers)
                 .timeProvider(time)
-                .store(runtimeStore)
+                .persistence(RuntimePersistencePorts.inMemory(
+                        runtimeStore, new InMemoryToolExecutionJournal(), interactions))
                 .trace(event -> {
                     traces.add(event);
                     traceObserver.accept(event);
                 })
-                .interactions(interactions)
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .credentialBroker(webPlatform.credentialBroker())
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())

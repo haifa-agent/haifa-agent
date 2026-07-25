@@ -50,6 +50,9 @@ import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
+import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
+import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
 import java.time.Duration;
 import java.time.Instant;
@@ -87,6 +90,15 @@ class RuntimeCoreTest {
                                 1, fixture.store.eventsFor(accepted.runId()).size())
                         .boxed()
                         .toList());
+        var events = fixture.store.eventsFor(accepted.runId());
+        assertThat(fixture.store.pending()).allSatisfy(message -> {
+            assertThat(message.schemaVersion()).isEqualTo("1");
+            assertThat(events).anySatisfy(event -> {
+                assertThat(event.runId()).isEqualTo(message.runId());
+                assertThat(event.sequence()).isEqualTo(message.sequence());
+                assertThat(event.type()).isEqualTo(message.type());
+            });
+        });
     }
 
     @Test
@@ -112,6 +124,10 @@ class RuntimeCoreTest {
                 .allMatch(call -> call.status().name().equals("COMPLETED"));
         assertThat(fixture.store.find(accepted.runId()).orElseThrow().usage().toolCalls())
                 .isEqualTo(2);
+        assertThat(fixture.journal.state(
+                        accepted.runId(),
+                        fixture.store.toolCalls(accepted.runId()).getFirst().idempotencyKey()))
+                .contains(ToolJournalState.COMPLETED);
     }
 
     @Test
@@ -559,18 +575,18 @@ class RuntimeCoreTest {
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        InMemoryToolExecutionJournal journal = new InMemoryToolExecutionJournal();
         AtomicInteger sequence = new AtomicInteger();
         IdentifierGenerator ids = () -> "id-" + sequence.incrementAndGet();
         TimeProvider time = () -> Instant.parse("2026-07-21T00:00:00Z");
         RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)
-                .store(store)
-                .interactions(interactions)
+                .persistence(RuntimePersistencePorts.inMemory(store, journal, interactions))
                 .identifierGenerator(ids)
                 .timeProvider(time);
         DefaultAgentRuntime runtime = customizer.apply(builder).build();
-        return new Fixture(runtime, scheduler, store, interactions);
+        return new Fixture(runtime, scheduler, store, interactions, journal);
     }
 
     private static AgentChatModel model(io.haifa.agent.runtime.core.decision.AgentDecision... decisions) {
@@ -657,5 +673,6 @@ class RuntimeCoreTest {
             DefaultAgentRuntime runtime,
             ManualExecutionScheduler scheduler,
             InMemoryRuntimeStore store,
-            InMemoryInteractionPort interactions) {}
+            InMemoryInteractionPort interactions,
+            InMemoryToolExecutionJournal journal) {}
 }

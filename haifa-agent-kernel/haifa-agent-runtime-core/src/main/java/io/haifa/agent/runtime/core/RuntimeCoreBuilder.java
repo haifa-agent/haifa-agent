@@ -69,7 +69,6 @@ import io.haifa.agent.runtime.core.guard.ChildRunGuard;
 import io.haifa.agent.runtime.core.guard.DuplicateToolCallGuard;
 import io.haifa.agent.runtime.core.guard.IterationGuard;
 import io.haifa.agent.runtime.core.guard.LoopDetectionGuard;
-import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
@@ -97,11 +96,10 @@ import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.Sleeper;
 import io.haifa.agent.runtime.core.retry.ToolRetryPolicy;
-import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.BoundedToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.CapabilityAuthorizer;
 import io.haifa.agent.runtime.core.tool.DefaultToolPolicy;
-import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.LargeToolResultPolicy;
 import io.haifa.agent.runtime.core.tool.ToolExecutionEnvironment;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
@@ -127,14 +125,13 @@ public final class RuntimeCoreBuilder {
     private TimeProvider time = new SystemTimeProvider();
     private ExecutionScheduler scheduler = new LocalExecutionScheduler();
     private RunControlRegistry controls = new RunControlRegistry();
-    private InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+    private RuntimePersistencePorts persistence = RuntimePersistencePorts.inMemory();
     private CallerContextProvider callers =
             () -> new RuntimeCallerContext(new TenantRef("local"), new PrincipalRef("local-user", "user"));
     private RunAccessValidator access = RunAccessValidator.allowLocalReferences();
     private DefinitionResolver definitions;
     private ProfileResolver profiles;
     private ConfigurationSnapshotFactory snapshots;
-    private InteractionPort interactions = new InMemoryInteractionPort();
     private DelegationPort delegations = (parent, decision) -> new AgentRunResult(
             AgentRunOutcome.INSUFFICIENT_INFORMATION,
             "No delegation adapter configured",
@@ -169,8 +166,8 @@ public final class RuntimeCoreBuilder {
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
     private final List<ContextSource> additionalContextSources = new ArrayList<>();
     private final List<CapabilityCheckpointParticipant> capabilityCheckpointParticipants = new ArrayList<>();
-    private String workerId = "local-runtime";
-    private ExecutionOwnershipPort ownership = ExecutionOwnershipPort.local();
+    private String workerId = "local-runtime-" + ids.nextValue();
+    private ExecutionOwnershipPort ownership;
     private MemoryRetriever memoryRetriever;
     private MemoryAuditSink memoryAudit;
     private MemoryService memoryService;
@@ -224,8 +221,8 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
-    public RuntimeCoreBuilder store(InMemoryRuntimeStore value) {
-        store = value;
+    public RuntimeCoreBuilder persistence(RuntimePersistencePorts value) {
+        persistence = Objects.requireNonNull(value, "persistence must not be null");
         return this;
     }
 
@@ -251,11 +248,6 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder snapshotFactory(ConfigurationSnapshotFactory value) {
         snapshots = value;
-        return this;
-    }
-
-    public RuntimeCoreBuilder interactions(InteractionPort value) {
-        interactions = value;
         return this;
     }
 
@@ -366,8 +358,23 @@ public final class RuntimeCoreBuilder {
         if (!toolCatalog.snapshot().bindings().isEmpty() && !toolPlatformConfigured) {
             throw new IllegalStateException("non-empty tool catalog requires an invoker and schema validator");
         }
-        RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(store, time);
-        FrozenModelInvoker models = new FrozenModelInvoker(store, chatModels, ids, modelOutput, controls);
+        var runs = persistence.runs();
+        var attempts = persistence.attempts();
+        var checkpointsRepository = persistence.checkpoints();
+        var state = persistence.state();
+        var events = persistence.events();
+        var outbox = persistence.outbox();
+        var idempotency = persistence.idempotency();
+        var unitOfWork = persistence.unitOfWork();
+        var toolJournal = persistence.toolJournal();
+        InteractionPort interactions = persistence.interactions();
+        var summaries = persistence.conversationSummaries();
+        var toolResultAssets = persistence.toolResultAssets();
+        var messageRedactions = persistence.messageRedactions();
+        ExecutionOwnershipPort configuredOwnership =
+                ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
+        RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(events, time);
+        FrozenModelInvoker models = new FrozenModelInvoker(state, chatModels, ids, modelOutput, controls);
         InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
         var defaultMemoryPolicy = new DefaultMemoryPolicy();
         MemoryRetriever configuredMemoryRetriever = memoryRetriever != null
@@ -375,8 +382,8 @@ public final class RuntimeCoreBuilder {
                 : new DefaultMemoryRetriever(defaultMemoryStore, defaultMemoryPolicy);
         MemoryAuditSink configuredMemoryAudit = memoryAudit != null ? memoryAudit : defaultMemoryStore;
         if (memoryService != null) {
-            store.addMessageRedactionListener(message -> message.runId()
-                    .flatMap(store::find)
+            messageRedactions.register(message -> message.runId()
+                    .flatMap(runs::find)
                     .ifPresent(run -> memoryService.invalidateSource(
                             new MemorySourceRef(
                                     MemorySourceType.MESSAGE, message.id().value(), java.util.Optional.empty()),
@@ -397,14 +404,14 @@ public final class RuntimeCoreBuilder {
         ProfileResolver profileResolver = profiles != null ? profiles : RuntimeCoreBuilder::defaultProfile;
         RunAwaiter awaiter = new RunAwaiter();
         RunTransitionCoordinator transitions = new RunTransitionCoordinator(
-                store,
-                store,
-                store,
-                store,
+                runs,
+                state,
+                events,
+                outbox,
                 ids,
                 time,
                 awaiter,
-                store,
+                unitOfWork,
                 new RetryExecutor(Sleeper.threadSleep()),
                 PersistenceRetryPolicy.none());
         RunControlService controlService = new DefaultRunControlService(controls, transitions);
@@ -416,11 +423,11 @@ public final class RuntimeCoreBuilder {
                 authorizer,
                 toolPolicy,
                 credentialBroker,
-                new InMemoryToolExecutionJournal(),
-                store,
+                toolJournal,
+                state,
                 ids,
                 time,
-                store,
+                events,
                 controls,
                 ToolExecutionEnvironment.local(),
                 toolResultNormalizer,
@@ -428,7 +435,7 @@ public final class RuntimeCoreBuilder {
                 toolRetry,
                 trace,
                 transitions,
-                store,
+                toolResultAssets,
                 LargeToolResultPolicy.defaults());
         List<AgentRuntimeMiddleware> configuredMiddleware = new ArrayList<>(List.of(
                 new RunMetadataMiddleware(),
@@ -439,9 +446,9 @@ public final class RuntimeCoreBuilder {
         configuredMiddleware.addAll(additionalMiddleware);
         AgentRuntimeMiddlewareChain middleware = new AgentRuntimeMiddlewareChain(configuredMiddleware);
         TodoReconciliationService todoReconciliation =
-                new TodoReconciliationService(store, new TodoConvergenceChecker());
+                new TodoReconciliationService(state, new TodoConvergenceChecker());
         DefaultCompletionGuard completion = new DefaultCompletionGuard(
-                store,
+                state,
                 pipeline,
                 interactions,
                 delegations,
@@ -453,12 +460,12 @@ public final class RuntimeCoreBuilder {
         CapabilityCheckpointRegistry capabilityCheckpointRegistry =
                 new CapabilityCheckpointRegistry(capabilityCheckpointParticipants);
         CheckpointManager checkpoints = new CheckpointManager(
-                store,
+                checkpointsRepository,
                 CheckpointPolicy.everyIteration(),
-                new CheckpointSnapshotBuilder(ids, time, store, store, interactions, capabilityCheckpointRegistry),
+                new CheckpointSnapshotBuilder(ids, time, state, summaries, interactions, capabilityCheckpointRegistry),
                 checkpointSelections,
-                store,
-                store,
+                state,
+                summaries,
                 new MemoryCheckpointValidator(configuredMemoryRetriever, configuredMemoryAudit, time),
                 capabilityCheckpointRegistry,
                 time);
@@ -468,7 +475,7 @@ public final class RuntimeCoreBuilder {
                 new DefaultRunFinalizer(),
                 interactions,
                 delegations,
-                store,
+                state,
                 transitions,
                 ids,
                 time,
@@ -478,23 +485,23 @@ public final class RuntimeCoreBuilder {
                 toolApprovalPrompts);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
                 interactions,
-                store,
+                checkpointsRepository,
                 checkpointSelections,
                 transitions,
-                store,
+                state,
                 access,
                 checkpoints,
                 toolInvoker,
                 skillContentLoader);
         var compressor = new DeterministicContextCompressor();
         var compressionPolicy = CompressionPolicy.defaults();
-        var sessionMessageSource = new SessionMessageSource(store, store, compressor, compressionPolicy, ids, time);
-        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, store, time);
+        var sessionMessageSource = new SessionMessageSource(state, summaries, compressor, compressionPolicy, ids, time);
+        var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
                 new DefaultRuntimeContextBuilder(
-                        store,
+                        state,
                         middleware,
                         new DefaultAgentContextBuilder(
                                 new HeuristicTokenEstimator(), new ContextSelectionPolicy(), additionalContextSources),
@@ -502,20 +509,20 @@ public final class RuntimeCoreBuilder {
                         memoryContextSource,
                         skillContentLoader),
                 models,
-                new DefaultDecisionValidator(new DuplicateToolCallGuard(store), new ChildRunGuard(store)),
+                new DefaultDecisionValidator(new DuplicateToolCallGuard(state), new ChildRunGuard(state)),
                 decisionExecutor,
                 checkpoints,
                 transitions,
-                store,
-                store,
+                state,
+                events,
                 new RetryExecutor(Sleeper.threadSleep()),
                 modelRetry,
                 ids,
                 time,
                 trace,
-                new RuntimeStateReconciler(store, store, interactions, pipeline, time, ownership),
+                new RuntimeStateReconciler(state, attempts, interactions, pipeline, time, configuredOwnership),
                 middleware);
-        AttemptExecutor attemptExecutor = new AttemptExecutor(store, loop, transitions, time, workerId);
+        AttemptExecutor attemptExecutor = new AttemptExecutor(attempts, loop, transitions, time, workerId);
         ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
                 ? snapshots
                 : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot());
@@ -524,13 +531,13 @@ public final class RuntimeCoreBuilder {
         return new DefaultAgentRuntime(
                 callers,
                 bootstrapper,
-                store,
-                store,
-                store,
-                store,
-                store,
-                store,
-                store,
+                runs,
+                attempts,
+                state,
+                events,
+                outbox,
+                idempotency,
+                unitOfWork,
                 transitions,
                 controlService,
                 interactions,

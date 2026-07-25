@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.lang.ArchRule;
+import java.io.Serializable;
 import org.junit.jupiter.api.Test;
 
 class CoreArchitectureTest {
@@ -39,5 +40,15 @@ class CoreArchitectureTest {
                         .map(method -> method.getName())
                         .filter(name -> name.startsWith("set")))
                 .isEmpty();
+    }
+
+    @Test
+    void persistenceSnapshotsDoNotUseJavaNativeSerialization() {
+        noClasses()
+                .that()
+                .haveSimpleNameEndingWith("PersistenceSnapshot")
+                .should()
+                .implement(Serializable.class)
+                .check(new ClassFileImporter().importPackages("io.haifa.agent.core"));
     }
 }

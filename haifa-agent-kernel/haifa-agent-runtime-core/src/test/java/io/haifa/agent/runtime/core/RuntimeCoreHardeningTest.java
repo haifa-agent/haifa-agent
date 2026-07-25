@@ -53,6 +53,7 @@ import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
+import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.BoundedToolResultNormalizer;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.time.Instant;
@@ -241,7 +242,8 @@ class RuntimeCoreHardeningTest {
     @Test
     void outboxSupportsAtLeastOncePublishingAndConsumerDeduplication() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
-        OutboxMessage message = new OutboxMessage("event-1", new AgentRunId("run-1"), "created", Map.of(), NOW);
+        OutboxMessage message = new OutboxMessage(
+                "event-1", new AgentRunId("run-1"), 1, "created", OutboxMessage.CURRENT_SCHEMA_VERSION, Map.of(), NOW);
         store.append(message);
         assertThat(store.pending()).containsExactly(message);
         assertThat(store.markConsumed("consumer-a", message.id())).isTrue();
@@ -514,7 +516,7 @@ class RuntimeCoreHardeningTest {
         RuntimeCoreBuilder builder = new RuntimeCoreBuilder()
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)
-                .store(store)
+                .persistence(RuntimePersistencePorts.inMemory(store))
                 .identifierGenerator(ids)
                 .timeProvider(time);
         return new Fixture(customizer.apply(builder).build(), scheduler, store);
