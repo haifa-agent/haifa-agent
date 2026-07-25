@@ -13,10 +13,11 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - 可冻结的 `web.search` / `web.fetch` Tool：Search 支持 Aliyun、Brave、Tavily，Fetch 当前只支持 Aliyun；
 - Project/Workspace 的受控文件访问、变更集、补丁、索引、快照与显式 Artifact 导出；
 - ExecutionBroker、Sandbox SPI、受控 Host Provider，以及只读 Git 适配；
-- SQLite V1/V2 Migration、版本化 Codec、线程绑定 UoW 与完整 Runtime Persistence Port 适配器；
-- Project Application 和本地一次性 Coding Agent CLI。
+- SQLite V1/V2 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、事务恢复与故障收敛；
+- 可选的安全 JSONL Transcript 投影，支持 at-least-once 去重、截断诊断、跨进程锁与原子轮转；
+- Project Application 和 Coding Agent CLI，可显式选择 `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
 
-尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy 独立模块、SQLite Store 的 Application 默认装配与进程重启恢复编排，以及容器或 microVM Sandbox。
+尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy 独立模块、分布式 Store/Lease、生产 KMS/Vault、容器或 microVM Sandbox。
 
 ## 当前 Reactor
 
@@ -55,6 +56,7 @@ haifa-agent-integrations/
   haifa-agent-git/
   haifa-agent-mcp/
   haifa-agent-store-sqlite/
+  haifa-agent-store-jsonl/
 haifa-agent-applications/
   haifa-agent-project-application/
   haifa-agent-cli/
@@ -98,7 +100,10 @@ flowchart LR
   MCP --> EAPI
   OAI[model-openai-compatible] --> MAPI
   SQLITE[store-sqlite] --> RCORE
+  JSONL[store-jsonl] --> RCORE
   PAPP[project-application + built-in Web Tool] --> RCORE
+  PAPP --> SQLITE
+  PAPP --> JSONL
   PAPP --> PROJECT
   PAPP --> TCORE
   PAPP --> CCORE
@@ -114,6 +119,8 @@ flowchart LR
 - `common`、`core`、`runtime-api`、`context`、`project`、`artifact`、各 Capability API、Execution API 和 Sandbox API 保持纯 Java；
 - `AgentRun` 生命周期只由 Core 的命名领域行为决定，Runtime 不维护第二份状态转换表；
 - Runtime 只依赖 API/SPI，不依赖具体模型、MCP 或 Sandbox Provider；
+- SQLite 是恢复的唯一事实源；JSONL 只是可删除、可重建的安全投影，不能反向恢复 Runtime；
+- 持久文件在 POSIX 使用目录 `0700`/文件 `0600`，在 Windows 使用当前用户独占 ACL；权限无法验证时 fail closed；
 - 凭据明文只在短生命周期 `CredentialLease` 中使用，不进入 Prompt、Tool 参数、Checkpoint、Trace 或 Workspace；
 - 对模型暴露的 Tool alias 与内部精确坐标分离；Run 创建后冻结 Tool Binding 与模型快照；
 - Definition/Profile 允许的 Skill 在 Run 创建时冻结为精确内容摘要；模型先看到元数据摘要，只有通过统一 Tool Pipeline 激活后才注入 `SKILL` 层内容；
@@ -137,7 +144,7 @@ Windows PowerShell：
 
 - [架构基线](docs/architecture-baseline.md)
 - [当前模块与依赖](docs/02-repository-modules-and-dependencies.md)
-- [持久化与存储架构（Proposed，尚未实现）](docs/08-persistence-and-storage-architecture.md)
+- [持久化与存储架构（已实现基线）](docs/08-persistence-and-storage-architecture.md)
 - [SDK 基建与多产品演进路线](docs/roadmap/sdk-foundation-and-multi-product-roadmap.md)
 - [Agent 产品文档索引](docs/products/README.md)
 - [Pi Coding Agent 功能差距与迭代路线图（产品 PRD）](docs/prd/pi-coding-agent-capability-gap-and-iteration-roadmap.md)

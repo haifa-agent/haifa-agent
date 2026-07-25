@@ -157,6 +157,11 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-store-jsonl</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.mybatis</groupId>
                 <artifactId>mybatis</artifactId>
                 <version>${mybatis.version}</version>

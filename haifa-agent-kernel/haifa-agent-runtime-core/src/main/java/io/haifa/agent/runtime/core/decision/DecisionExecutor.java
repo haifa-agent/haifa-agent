@@ -191,16 +191,20 @@ public final class DecisionExecutor {
             ToolCall call = preparedTool.call();
             AgentStep step = preparedTool.step();
             step.start(time.now());
+            state.appendStep(step);
             try {
                 ToolPipelineOutcome outcome = tools.execute(run, call, request);
                 if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
                     step.waitForExternalInput();
+                    state.appendStep(step);
+                    state.appendToolCall(call);
                     createToolApproval(run, call, approval, loopContext);
                     return AgentLoopDirective.WAIT;
                 }
                 var result = ((ToolPipelineOutcome.Completed) outcome).result();
                 step.complete(
                         new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
+                state.appendStep(step);
                 appendToolResult(run, call, result.summary());
                 checkpoints.capture(
                         run,
@@ -215,6 +219,7 @@ public final class DecisionExecutor {
             } catch (IllegalArgumentException | SecurityException repairable) {
                 repairRetry.check(loopContext.recordRepairAttempt());
                 cancelRejectedCall(call);
+                state.appendToolCall(call);
                 step.fail(
                         new AgentStepError(new AgentError(
                                 new AgentErrorCode("TOOL_REQUEST_REJECTED"),
@@ -226,6 +231,7 @@ public final class DecisionExecutor {
                                 Map.of("reason", repairable.getClass().getSimpleName()),
                                 time.now())),
                         time.now());
+                state.appendStep(step);
                 appendToolResult(
                         run, call, "Tool request rejected; repair the arguments or choose another capability.");
             }
@@ -285,16 +291,20 @@ public final class DecisionExecutor {
                     .orElseThrow(() -> new IllegalStateException("tool step is unavailable"));
             if (call.status() == ToolCallStatus.APPROVED && step.status() == AgentStepStatus.WAITING) step.resume();
             else if (call.status() == ToolCallStatus.REQUESTED) step.start(time.now());
+            state.appendStep(step);
             ToolRequest request = requestFrom(call);
             ToolPipelineOutcome outcome = tools.execute(run, call, request);
             if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
                 step.waitForExternalInput();
+                state.appendStep(step);
+                state.appendToolCall(call);
                 createToolApproval(run, call, approval, loopContext);
                 return Optional.of(AgentLoopDirective.WAIT);
             }
             var result = ((ToolPipelineOutcome.Completed) outcome).result();
             step.complete(
                     new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
+            state.appendStep(step);
             appendToolResult(run, call, result.summary());
             checkpoints.capture(
                     run,
@@ -314,12 +324,14 @@ public final class DecisionExecutor {
         tools.validateApprovalTarget(run, call, requestFrom(call), target);
         if (responseType == InteractionResponseType.APPROVE) {
             call.approve();
+            state.appendToolCall(call);
             return;
         }
         if (responseType != InteractionResponseType.REJECT) {
             throw new IllegalArgumentException("tool approval requires approve or reject");
         }
         call.deny(time.now());
+        state.appendToolCall(call);
         AgentStep step = state.steps(run.id()).stream()
                 .filter(candidate -> candidate.id().equals(call.stepId()))
                 .findFirst()
@@ -336,6 +348,7 @@ public final class DecisionExecutor {
                         Map.of("toolCallId", call.id().value()),
                         time.now())),
                 time.now());
+        state.appendStep(step);
         appendToolResult(run, call, "Tool execution was rejected by the operator.");
     }
 

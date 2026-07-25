@@ -194,6 +194,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     time.now());
             state.appendStep(modelStep);
             modelStep.start(time.now());
+            state.appendStep(modelStep);
             AgentStep[] modelStepRef = {modelStep};
             AgentDecision decision;
             ModelInvocationResult response;
@@ -272,6 +273,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         time.now());
                                 state.appendStep(recoveryStep);
                                 recoveryStep.start(time.now());
+                                state.appendStep(recoveryStep);
                                 modelStepRef[0] = recoveryStep;
                                 if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
                                     throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
@@ -346,6 +348,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     new AgentStepResult(
                             "Model decision: " + decision.getClass().getSimpleName(), stepMetadata, List.of()),
                     time.now());
+            state.appendStep(modelStepRef[0]);
 
             if (applyControl(run, progress, SafePoint.AFTER_MODEL_CALL, progress.iteration() - 1)) {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
@@ -449,6 +452,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                         Map.of("exceptionType", error.getClass().getSimpleName()),
                         time.now())),
                 time.now());
+        state.appendStep(step);
     }
 
     private boolean isContextTooLong(RuntimeException error) {

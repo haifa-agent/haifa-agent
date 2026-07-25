@@ -94,6 +94,7 @@ public final class InMemoryRuntimeStore
     private final Map<AgentRunId, RuntimeMemorySelection> memorySelections = new HashMap<>();
     private final Map<AgentRunId, Map<SkillAlias, SkillActivation>> skillActivations = new HashMap<>();
     private final Map<AgentRunId, Long> skillResourceReadBytes = new HashMap<>();
+    private final ThreadLocal<List<Runnable>> afterCommitListeners = new ThreadLocal<>();
     private boolean failNextToolResultAssetWrite;
     private final List<MessageRedactionListener> messageRedactionListeners = new ArrayList<>();
 
@@ -494,14 +495,16 @@ public final class InMemoryRuntimeStore
 
     @Override
     public synchronized void appendStep(AgentStep step) {
-        steps.computeIfAbsent(step.runId(), ignored -> new ArrayList<>()).add(step);
+        List<AgentStep> current = steps.computeIfAbsent(step.runId(), ignored -> new ArrayList<>());
+        current.removeIf(existing -> existing.id().equals(step.id()));
+        current.add(step);
     }
 
     @Override
     public synchronized void appendToolCall(ToolCall toolCall) {
-        toolCalls
-                .computeIfAbsent(toolCall.runId(), ignored -> new ArrayList<>())
-                .add(toolCall);
+        List<ToolCall> current = toolCalls.computeIfAbsent(toolCall.runId(), ignored -> new ArrayList<>());
+        current.removeIf(existing -> existing.id().equals(toolCall.id()));
+        current.add(toolCall);
     }
 
     @Override
@@ -715,7 +718,25 @@ public final class InMemoryRuntimeStore
 
     @Override
     public synchronized <T> T execute(Supplier<T> work) {
-        return work.get();
+        if (afterCommitListeners.get() != null) return work.get();
+        List<Runnable> listeners = new ArrayList<>();
+        afterCommitListeners.set(listeners);
+        T result;
+        try {
+            result = work.get();
+        } finally {
+            afterCommitListeners.remove();
+        }
+        listeners.forEach(Runnable::run);
+        return result;
+    }
+
+    @Override
+    public synchronized void afterCommit(Runnable listener) {
+        Objects.requireNonNull(listener, "listener must not be null");
+        List<Runnable> listeners = afterCommitListeners.get();
+        if (listeners == null) listener.run();
+        else listeners.add(listener);
     }
 
     private static String idempotencyKey(String callerScope, String operation, String key) {

@@ -11,6 +11,7 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.credential.api.CredentialBindingScope;
@@ -144,10 +145,24 @@ public final class ToolPipeline {
         if (call.result().isPresent())
             return new ToolPipelineOutcome.Completed(call.result().orElseThrow());
         var completed = journal.completed(run.id(), request.idempotencyKey());
-        if (completed.isPresent()) return new ToolPipelineOutcome.Completed(completed.orElseThrow());
+        if (completed.isPresent()) {
+            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, completed.orElseThrow()));
+        }
         var pending = journal.pendingResult(run.id(), request.idempotencyKey());
         if (pending.isPresent()) {
             return new ToolPipelineOutcome.Completed(persistResult(run, call, request, pending.orElseThrow()));
+        }
+        var journalState = journal.state(run.id(), request.idempotencyKey());
+        if (journalState
+                .filter(value -> value == ToolJournalState.DISPATCHED || value == ToolJournalState.ACKNOWLEDGED)
+                .isPresent()) {
+            journal.recordUncertain(run.id(), request.idempotencyKey());
+            throw new IllegalStateException("tool outcome is unknown after dispatch; automatic replay is forbidden");
+        }
+        if (journalState
+                .filter(value -> value == ToolJournalState.OUTCOME_UNKNOWN)
+                .isPresent()) {
+            throw new IllegalStateException("tool outcome is unknown; automatic replay is forbidden");
         }
         return executeNew(run, call, request);
     }
@@ -160,6 +175,7 @@ public final class ToolPipeline {
             call.beginValidation();
             if (!capabilityAuthorizer.isAllowed(run, binding)) {
                 call.cancel(time.now());
+                state.appendToolCall(call);
                 throw new SecurityException(
                         "tool capability is not allowed: " + definition.name().value());
             }
@@ -167,18 +183,21 @@ public final class ToolPipeline {
                     definition.inputSchema(), request.arguments().values());
             if (!inputValidation.valid()) {
                 call.cancel(time.now());
+                state.appendToolCall(call);
                 throw new IllegalArgumentException("tool input failed schema validation: " + inputValidation.errors());
             }
             call.beginPolicyCheck();
             ToolPolicyDecision policyDecision = policy.evaluate(run, binding, request);
             if (policyDecision == ToolPolicyDecision.DENY) {
                 call.deny(time.now());
+                state.appendToolCall(call);
                 throw new SecurityException(
                         "tool policy denied: " + definition.name().value());
             }
             if (policyDecision == ToolPolicyDecision.REQUIRE_APPROVAL
                     || policyDecision == ToolPolicyDecision.REQUIRE_REAUTHENTICATION) {
                 call.waitForApproval();
+                state.appendToolCall(call);
                 return new ToolPipelineOutcome.ApprovalRequired(
                         binding,
                         argumentsDigest(request),
@@ -187,6 +206,7 @@ public final class ToolPipeline {
         }
         journal.recordIntent(run.id(), request.idempotencyKey());
         call.start(time.now());
+        state.appendToolCall(call);
         trace.record(new RuntimeTraceEvent(
                 ids.nextValue(),
                 run.id(),
@@ -242,9 +262,7 @@ public final class ToolPipeline {
             }
             ToolJournalState journalState =
                     journal.state(run.id(), request.idempotencyKey()).orElse(ToolJournalState.INTENT_RECORDED);
-            if (journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.PENDING_RESULT) {
-                journal.recordFailed(run.id(), request.idempotencyKey());
-            } else if (journalState == ToolJournalState.DISPATCHED) {
+            if (journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.DISPATCHED) {
                 journal.recordUncertain(run.id(), request.idempotencyKey());
             } else {
                 journal.recordFailed(run.id(), request.idempotencyKey());
@@ -453,6 +471,9 @@ public final class ToolPipeline {
             result = new ToolResult(
                     result.successful(), result.summary(), result.structuredData(), assets, result.artifacts(), true);
         }
+        if (call.status() == ToolCallStatus.POLICY_CHECK || call.status() == ToolCallStatus.APPROVED) {
+            call.start(time.now());
+        }
         if (result.successful()) {
             call.complete(result, time.now());
         } else {
@@ -468,6 +489,7 @@ public final class ToolPipeline {
                             time.now())),
                     time.now());
         }
+        state.appendToolCall(call);
         journal.recordCompleted(run.id(), request.idempotencyKey(), result);
         events.append(
                 run.id(),

@@ -3,6 +3,8 @@ package io.haifa.agent.cli;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
+import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import java.io.IOException;
@@ -64,6 +66,7 @@ final class CliConfigurationLoader {
                 .orElseGet(() -> ApprovalMode.parse(text(
                         object(source, "approval"), "mode", defaults.approval().name())));
         Map<String, Object> runtime = object(source, "runtime");
+        ProjectPersistenceConfiguration persistence = persistence(object(source, "persistence"));
         Duration timeout = arguments
                 .timeout()
                 .orElseGet(() -> Duration.ofMillis(
@@ -84,7 +87,32 @@ final class CliConfigurationLoader {
                 approval,
                 timeout,
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
-                number(runtime, "maxToolCalls", defaults.maxToolCalls()));
+                number(runtime, "maxToolCalls", defaults.maxToolCalls()),
+                persistence);
+    }
+
+    private static ProjectPersistenceConfiguration persistence(Map<String, Object> source) {
+        String configuredMode = environment("HAIFA_PERSISTENCE_MODE").orElseGet(() -> text(source, "mode", "MEMORY"));
+        ProjectPersistenceMode mode = ProjectPersistenceMode.parse(configuredMode);
+        String database =
+                environment("HAIFA_SQLITE_DATABASE_PATH").orElseGet(() -> nullableText(source, "databasePath"));
+        String transcript =
+                environment("HAIFA_TRANSCRIPT_ROOT").orElseGet(() -> nullableText(source, "transcriptRoot"));
+        String protector =
+                environment("HAIFA_CONTINUATION_PROTECTOR_REF").orElseGet(() -> nullableText(source, "protectorRef"));
+        return new ProjectPersistenceConfiguration(
+                mode,
+                optionalPath(database),
+                optionalPath(transcript),
+                Optional.ofNullable(protector),
+                Math.toIntExact(number(
+                        source, "busyTimeoutMillis", ProjectPersistenceConfiguration.DEFAULT_BUSY_TIMEOUT_MILLIS)),
+                Math.toIntExact(number(
+                        source, "maximumPayloadBytes", ProjectPersistenceConfiguration.DEFAULT_MAXIMUM_PAYLOAD_BYTES)));
+    }
+
+    private static Optional<Path> optionalPath(String value) {
+        return value == null ? Optional.empty() : Optional.of(Path.of(value));
     }
 
     private static CliConfiguration.Skills skills(Map<String, Object> source, CliConfiguration.Skills defaults) {

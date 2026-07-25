@@ -65,6 +65,7 @@ import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -376,19 +377,21 @@ class RuntimeCoreHardeningTest {
     @Test
     void recoveryNeverBlindlyReplaysAnUncertainSideEffectingTool() {
         AtomicInteger calls = new AtomicInteger();
+        AtomicBoolean owned = new AtomicBoolean(true);
         ToolRequest tool =
                 toolRequest("write-once", "write", "1.0.0", new ToolArguments("write.input", "1", Map.of("value", 1)));
-        Fixture fixture = fixture(
-                model(new ToolCallDecision(List.of(tool))),
-                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, request -> {
-                    calls.incrementAndGet();
-                    throw new AssertionError("process died after external side effect");
-                }));
+        Fixture fixture = fixture(model(new ToolCallDecision(List.of(tool))), builder -> TestToolPlatform.install(
+                        builder, "write", "1.0.0", "write.input", true, request -> {
+                            calls.incrementAndGet();
+                            throw new AssertionError("process died after external side effect");
+                        })
+                .executionOwnership(attempt -> owned.get() || attempt.attemptNumber() > 1));
         var accepted = fixture.runtime.start(request("uncertain-write"));
         assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
         assertThat(fixture.store.toolCalls(accepted.runId()).getFirst().status().name())
                 .isEqualTo("RUNNING");
 
+        owned.set(false);
         fixture.runtime.recover(accepted.runId());
         fixture.scheduler.runAll();
         assertThat(calls).hasValue(1);

@@ -64,6 +64,7 @@ import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -364,6 +365,7 @@ class RuntimeCoreTest {
     @Test
     void recoversFromAnAbandonedAttemptAtTheLatestCheckpoint() {
         AtomicInteger calls = new AtomicInteger();
+        AtomicBoolean owned = new AtomicBoolean(true);
         ToolRequest progress =
                 toolRequest("progress", "read", "1.0.0", new ToolArguments("read.input", "1.0", Map.of()));
         AgentChatModel model = request -> {
@@ -372,21 +374,21 @@ class RuntimeCoreTest {
             if (call == 2) throw new AssertionError("simulated process loss");
             return response(finalDecision("recovered"));
         };
-        Fixture fixture = fixture(
-                model,
-                builder -> TestToolPlatform.install(
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
                         builder,
                         "read",
                         "1.0.0",
                         "read.input",
                         false,
-                        request -> new ToolResult(true, "progress", Map.of(), List.of(), List.of(), false)));
+                        request -> new ToolResult(true, "progress", Map.of(), List.of(), List.of(), false))
+                .executionOwnership(attempt -> owned.get() || attempt.attemptNumber() > 1));
         var accepted = fixture.runtime.start(request("recover"));
 
         assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
         assertThat(fixture.store.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.RUNNING);
         assertThat(fixture.store.checkpointsFor(accepted.runId())).isNotEmpty();
 
+        owned.set(false);
         fixture.runtime.recover(accepted.runId());
         fixture.scheduler.runAll();
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())

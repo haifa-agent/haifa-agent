@@ -2,17 +2,14 @@ package io.haifa.agent.runtime.core.control;
 
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
-import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import java.util.Objects;
 import java.util.Optional;
 
 public final class DefaultRunControlService implements RunControlService {
     private final RunControlRegistry controls;
-    private final RunTransitionCoordinator transitions;
 
-    public DefaultRunControlService(RunControlRegistry controls, RunTransitionCoordinator transitions) {
+    public DefaultRunControlService(RunControlRegistry controls) {
         this.controls = Objects.requireNonNull(controls);
-        this.transitions = Objects.requireNonNull(transitions);
     }
 
     @Override
@@ -23,7 +20,6 @@ public final class DefaultRunControlService implements RunControlService {
 
     @Override
     public void requestPause(AgentRun run) {
-        transitions.requestPause(run);
         controls.requestPause(run.id());
     }
 

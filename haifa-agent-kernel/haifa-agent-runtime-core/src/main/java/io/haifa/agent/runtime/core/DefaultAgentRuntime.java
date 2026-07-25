@@ -38,11 +38,14 @@ import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
 import io.haifa.agent.runtime.core.control.RunControlService;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.execution.AttemptExecutor;
+import io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
+import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
+import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.IdempotencyRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
@@ -83,6 +86,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final RunAwaiter awaiter;
     private final ResumeCoordinator resumeCoordinator;
     private final RuntimeModelOutputPublisher modelOutput;
+    private final ExecutionOwnershipPort ownership;
+    private final RetryExecutor persistenceRetries;
+    private final PersistenceRetryPolicy persistenceRetry;
 
     public DefaultAgentRuntime(
             CallerContextProvider callers,
@@ -104,7 +110,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             TimeProvider time,
             RunAwaiter awaiter,
             ResumeCoordinator resumeCoordinator,
-            RuntimeModelOutputPublisher modelOutput) {
+            RuntimeModelOutputPublisher modelOutput,
+            ExecutionOwnershipPort ownership,
+            RetryExecutor persistenceRetries,
+            PersistenceRetryPolicy persistenceRetry) {
         this.callers = Objects.requireNonNull(callers);
         this.bootstrapper = Objects.requireNonNull(bootstrapper);
         this.runs = Objects.requireNonNull(runs);
@@ -125,6 +134,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.awaiter = Objects.requireNonNull(awaiter);
         this.resumeCoordinator = Objects.requireNonNull(resumeCoordinator);
         this.modelOutput = Objects.requireNonNull(modelOutput);
+        this.ownership = Objects.requireNonNull(ownership);
+        this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
+        this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
     }
 
     @Override
@@ -132,7 +144,8 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         Objects.requireNonNull(request, "request must not be null");
         var caller = callers.current();
         String callerScope = callerScope(caller);
-        Optional<AgentRunId> existing = idempotency.findRun(callerScope, "start", request.idempotencyKey());
+        Optional<AgentRunId> existing = persistenceRetries.execute(
+                () -> idempotency.findRun(callerScope, "start", request.idempotencyKey()), persistenceRetry.policy());
         if (existing.isPresent()) return snapshot(existing.orElseThrow());
 
         var bootstrap = bootstrapper.bootstrap(request, caller);
@@ -141,33 +154,36 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRun generated = bootstrap.run();
         AgentRunId generatedId = generated.id();
         AtomicBoolean created = new AtomicBoolean();
-        AgentRun run = unitOfWork.execute(() -> {
-            Optional<AgentRunId> raced = idempotency.findRun(callerScope, "start", request.idempotencyKey());
-            if (raced.isPresent()) return requireRun(raced.orElseThrow());
-            runs.insert(generated);
-            state.saveConfiguration(bootstrap.configuration());
-            AgentRunId recorded = idempotency.recordRun(callerScope, "start", request.idempotencyKey(), generatedId);
-            if (!recorded.equals(generatedId)) return requireRun(recorded);
-            created.set(true);
-            appendInitialMessage(generated, request);
-            var event = events.append(
-                    generatedId,
-                    "run.created",
-                    Map.of("definitionVersion", definition.version().toString()),
-                    time.now());
-            outbox.append(new OutboxMessage(
-                    ids.nextValue(),
-                    event.runId(),
-                    event.sequence(),
-                    event.type(),
-                    OutboxMessage.CURRENT_SCHEMA_VERSION,
-                    Map.of("profileVersion", profile.version()),
-                    event.occurredAt()));
-            transitions.queued(generated);
-            attempts.insert(new AgentRunExecutionAttempt(
-                    new ExecutionAttemptId(ids.nextValue()), generatedId, 1, time.now(), Optional.empty()));
-            return generated;
-        });
+        AgentRun run = persistenceRetries.execute(
+                () -> unitOfWork.execute(() -> {
+                    Optional<AgentRunId> raced = idempotency.findRun(callerScope, "start", request.idempotencyKey());
+                    if (raced.isPresent()) return requireRun(raced.orElseThrow());
+                    state.saveConfiguration(bootstrap.configuration());
+                    runs.insert(generated);
+                    AgentRunId recorded =
+                            idempotency.recordRun(callerScope, "start", request.idempotencyKey(), generatedId);
+                    if (!recorded.equals(generatedId)) return requireRun(recorded);
+                    created.set(true);
+                    appendInitialMessage(generated, request);
+                    var event = events.append(
+                            generatedId,
+                            "run.created",
+                            Map.of("definitionVersion", definition.version().toString()),
+                            time.now());
+                    outbox.append(new OutboxMessage(
+                            ids.nextValue(),
+                            event.runId(),
+                            event.sequence(),
+                            event.type(),
+                            OutboxMessage.CURRENT_SCHEMA_VERSION,
+                            Map.of("profileVersion", profile.version()),
+                            event.occurredAt()));
+                    transitions.queued(generated);
+                    attempts.insert(new AgentRunExecutionAttempt(
+                            new ExecutionAttemptId(ids.nextValue()), generatedId, 1, time.now(), Optional.empty()));
+                    return generated;
+                }),
+                persistenceRetry.policy());
         AgentRunSnapshot accepted = AgentRunSnapshot.from(run, state.output(run.id()));
         if (created.get()) submitActive(run);
         return accepted;
@@ -363,20 +379,26 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         }
         AgentRunExecutionAttempt active = attempts.activeFor(runId)
                 .orElseThrow(() -> new IllegalStateException("run has no active attempt to recover"));
-        long expected = active.version();
-        active.finish(ExecutionAttemptStatus.ABANDONED, time.now(), Optional.empty());
-        attempts.save(active, expected);
-        reconcileAbandonedModelSteps(run);
-        if (run.status() == AgentRunStatus.RUNNING) transitions.requestPause(run);
-        transitions.suspended(run);
-        transitions.resumed(run);
-        AgentRunExecutionAttempt replacement = new AgentRunExecutionAttempt(
-                new ExecutionAttemptId(ids.nextValue()),
-                run.id(),
-                attempts.attemptsFor(run.id()).size() + 1,
-                time.now(),
-                resumeCoordinator.latestFor(run));
-        attempts.insert(replacement);
+        if (ownership.stillOwned(active)) {
+            throw new IllegalStateException("active execution attempt is still owned by this runtime");
+        }
+        AgentRunExecutionAttempt replacement = unitOfWork.execute(() -> {
+            long expected = active.version();
+            active.finish(ExecutionAttemptStatus.ABANDONED, time.now(), Optional.empty());
+            attempts.save(active, expected);
+            reconcileAbandonedModelSteps(run);
+            if (run.status() == AgentRunStatus.RUNNING) transitions.requestPause(run);
+            transitions.suspended(run);
+            transitions.resumed(run);
+            AgentRunExecutionAttempt created = new AgentRunExecutionAttempt(
+                    new ExecutionAttemptId(ids.nextValue()),
+                    run.id(),
+                    attempts.attemptsFor(run.id()).size() + 1,
+                    time.now(),
+                    resumeCoordinator.latestFor(run));
+            attempts.insert(created);
+            return created;
+        });
         AgentRunSnapshot accepted = snapshot(run.id());
         scheduler.submit(run.id(), () -> attemptExecutor.execute(run, replacement));
         return accepted;
@@ -390,7 +412,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 .filter(step -> step.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING
                         || step.status() == io.haifa.agent.core.step.AgentStepStatus.WAITING)
                 .filter(step -> !toolStepIds.contains(step.id()))
-                .forEach(step -> step.cancel(time.now()));
+                .forEach(step -> {
+                    step.cancel(time.now());
+                    state.appendStep(step);
+                });
     }
 
     private void applyCancel(AgentRun run) {

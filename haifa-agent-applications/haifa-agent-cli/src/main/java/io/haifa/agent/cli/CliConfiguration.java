@@ -1,5 +1,6 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.skill.api.SkillAlias;
@@ -23,7 +24,8 @@ record CliConfiguration(
         ApprovalMode approval,
         Duration timeout,
         int maxIterations,
-        long maxToolCalls) {
+        long maxToolCalls,
+        ProjectPersistenceConfiguration persistence) {
     private static final Set<String> DEFAULT_TOOLS = Set.of(
             "file.list",
             "file.stat",
@@ -48,6 +50,7 @@ record CliConfiguration(
         web = Objects.requireNonNull(web, "web must not be null");
         skills = Objects.requireNonNull(skills, "skills must not be null");
         execution = Objects.requireNonNull(execution, "execution must not be null");
+        persistence = Objects.requireNonNull(persistence, "persistence must not be null");
         if (!SUPPORTED_TOOLS.containsAll(enabledTools)) {
             throw new IllegalArgumentException("CLI supports only configured tools: " + SUPPORTED_TOOLS);
         }
@@ -88,7 +91,33 @@ record CliConfiguration(
                 ApprovalMode.ASK,
                 Duration.ofMinutes(5),
                 50,
-                32);
+                32,
+                ProjectPersistenceConfiguration.memory());
+    }
+
+    CliConfiguration(
+            Model model,
+            Set<String> enabledTools,
+            List<McpServer> mcpServers,
+            Web web,
+            Skills skills,
+            Execution execution,
+            ApprovalMode approval,
+            Duration timeout,
+            int maxIterations,
+            long maxToolCalls) {
+        this(
+                model,
+                enabledTools,
+                mcpServers,
+                web,
+                skills,
+                execution,
+                approval,
+                timeout,
+                maxIterations,
+                maxToolCalls,
+                ProjectPersistenceConfiguration.memory());
     }
 
     CliConfiguration(

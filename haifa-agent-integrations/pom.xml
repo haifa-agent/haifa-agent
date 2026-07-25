@@ -16,5 +16,6 @@
         <module>haifa-agent-model-openai-compatible</module>
         <module>haifa-agent-git</module>
         <module>haifa-agent-store-sqlite</module>
+        <module>haifa-agent-store-jsonl</module>
     </modules>
 </project>
