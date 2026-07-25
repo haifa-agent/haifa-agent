@@ -84,6 +84,9 @@ common <- core <- runtime-api <- runtime-core -> model-api
 | Context 与 Memory | [`docs/05-context-memory-and-compression.md`](docs/05-context-memory-and-compression.md) | 未来设计输入；先核对代码是否已落地 |
 | Project、Workspace 与文件系统 | [`docs/06-project-workspace-and-filesystem.md`](docs/06-project-workspace-and-filesystem.md) | 未来设计输入，尤其关注路径与执行安全 |
 | Tool、MCP 与 Skill | [`docs/07-implementation-overview.md`](docs/07-implementation-overview.md) | 活动总览；依次阅读 `07-tool-platform.md`、`07-mcp-client-2025-11-25.md`、`07-skill-platform.md`，开发按 `docs/prompts/07-phase-*.md` 顺序执行 |
+| 持久化与存储 | [`docs/08-persistence-and-storage-architecture.md`](docs/08-persistence-and-storage-architecture.md) | SQLite 是唯一事实源，JSONL 仅为可选 Outbox 投影；实现按 `docs/prompts/08-persistence-task-*.md` 顺序执行 |
+| SDK 基建与多产品路线 | [`docs/roadmap/sdk-foundation-and-multi-product-roadmap.md`](docs/roadmap/sdk-foundation-and-multi-product-roadmap.md) | 09～18 是产品无关的 SDK/平台能力专题；实现状态与优先级以路线图为准 |
+| 产品架构与 PRD | [`docs/products/README.md`](docs/products/README.md) | Coding、Document、Research、Enterprise、Personal 是上层产品；Pi 对标仅作为 Coding Agent 产品输入 |
 | 已知待办 | [`docs/00-to-do-note.md`](docs/00-to-do-note.md) | 核对明确延期能力，避免意外启用 |
 
 `docs/prompts/` 和 `docs/ai-coding-report/` 用于追溯阶段目标、验收过程和历史决策，不替代当前代码、测试或架构基线。

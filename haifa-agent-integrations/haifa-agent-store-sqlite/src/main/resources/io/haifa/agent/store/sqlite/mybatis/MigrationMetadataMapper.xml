@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.haifa.agent.store.sqlite.mybatis.MigrationMetadataMapper">
+    <resultMap id="migrationRow" type="io.haifa.agent.store.sqlite.mybatis.MigrationRow"
+               autoMapping="false">
+        <constructor>
+            <arg column="version" javaType="_long"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="checksum" javaType="java.lang.String"/>
+            <arg column="applied_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findByVersion" resultMap="migrationRow">
+        SELECT version, name, checksum, applied_at
+        FROM schema_migration
+        WHERE version = #{version, jdbcType=BIGINT}
+    </select>
+</mapper>

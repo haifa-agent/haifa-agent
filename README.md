@@ -13,9 +13,10 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - 可冻结的 `web.search` / `web.fetch` Tool：Search 支持 Aliyun、Brave、Tavily，Fetch 当前只支持 Aliyun；
 - Project/Workspace 的受控文件访问、变更集、补丁、索引、快照与显式 Artifact 导出；
 - ExecutionBroker、Sandbox SPI、受控 Host Provider，以及只读 Git 适配；
+- SQLite V1 Schema、checksum Migration、版本化 Codec、MyBatis Session 与线程绑定 UoW 基础；
 - Project Application 和本地一次性 Coding Agent CLI。
 
-尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy 独立模块、持久化 Store，以及容器或 microVM Sandbox。
+尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy 独立模块、可用的持久化 Store（SQLite Schema/UoW 基础已存在，但业务 Repository 尚未实现），以及容器或 microVM Sandbox。
 
 ## 当前 Reactor
 
@@ -53,6 +54,7 @@ haifa-agent-integrations/
   haifa-agent-model-openai-compatible/
   haifa-agent-git/
   haifa-agent-mcp/
+  haifa-agent-store-sqlite/
 haifa-agent-applications/
   haifa-agent-project-application/
   haifa-agent-cli/
@@ -95,6 +97,7 @@ flowchart LR
   MCP --> CAPI
   MCP --> EAPI
   OAI[model-openai-compatible] --> MAPI
+  SQLITE[store-sqlite] --> RCORE
   PAPP[project-application + built-in Web Tool] --> RCORE
   PAPP --> PROJECT
   PAPP --> TCORE
@@ -134,3 +137,7 @@ Windows PowerShell：
 
 - [架构基线](docs/architecture-baseline.md)
 - [当前模块与依赖](docs/02-repository-modules-and-dependencies.md)
+- [持久化与存储架构（Proposed，尚未实现）](docs/08-persistence-and-storage-architecture.md)
+- [SDK 基建与多产品演进路线](docs/roadmap/sdk-foundation-and-multi-product-roadmap.md)
+- [Agent 产品文档索引](docs/products/README.md)
+- [Pi Coding Agent 功能差距与迭代路线图（产品 PRD）](docs/prd/pi-coding-agent-capability-gap-and-iteration-roadmap.md)
