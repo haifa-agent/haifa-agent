@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatResponse;
@@ -10,8 +11,10 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
+import io.haifa.agent.store.jsonl.JsonlTranscriptReader;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -49,6 +53,88 @@ class LocalCodingAgentTest {
 
         assertThat(LocalCodingAgent.effectiveBuiltInTools(denied)).doesNotContain("execution.run");
         assertThat(LocalCodingAgent.effectiveBuiltInTools(defaults)).contains("execution.run");
+    }
+
+    @Test
+    void sqliteWithJsonlPersistsCliRunAndReleasesDatabaseOnClose() throws Exception {
+        Path database = configuredSkillRoot.resolve("cli-runtime.db");
+        Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("transcripts"));
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var configuration = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                defaults.execution(),
+                defaults.approval(),
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxToolCalls(),
+                ProjectPersistenceConfiguration.sqliteWithJsonl(
+                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> new AgentChatResponse(
+                "cli-persistence",
+                "stub-model",
+                "persisted",
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(5, 2),
+                "stub",
+                Map.of());
+        io.haifa.agent.core.run.AgentRunId runId;
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream()),
+                model,
+                ignored -> {},
+                new AesGcmModelContinuationProtector(
+                        new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            var accepted = agent.start("Persist this run.");
+            runId = accepted.runId();
+            Instant deadline = Instant.now().plusSeconds(10);
+            var snapshot = agent.runtime().find(runId).orElseThrow();
+            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+                Thread.sleep(25);
+                snapshot = agent.runtime().find(runId).orElseThrow();
+            }
+            assertThat(snapshot.status()).as("final snapshot: %s", snapshot).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(snapshot.output()).contains("persisted");
+        }
+
+        assertThat(new JsonlTranscriptReader(transcripts).read(runId.value()).events())
+                .extracting(event -> event.eventType())
+                .contains("run.created", "run.completed");
+        assertThat(Files.deleteIfExists(database)).isTrue();
+    }
+
+    @Test
+    void sqliteStartupFailsClosedWhenStableProtectorSecretIsUnavailable() {
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var configuration = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                defaults.execution(),
+                defaults.approval(),
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxToolCalls(),
+                ProjectPersistenceConfiguration.sqlite(
+                        configuredSkillRoot.resolve("unopened.db"),
+                        "env://HAIFA_TEST_SECRET_THAT_MUST_NOT_EXIST_7E8297"));
+
+        assertThatThrownBy(() -> LocalCodingAgent.create(
+                        workspace, configuration, new PrintStream(new ByteArrayOutputStream()), request -> {
+                            throw new AssertionError("model must not run");
+                        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("durable continuation protector secret is unavailable");
+        assertThat(configuredSkillRoot.resolve("unopened.db")).doesNotExist();
     }
 
     @Test

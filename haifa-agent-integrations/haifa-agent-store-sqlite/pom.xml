@@ -16,6 +16,10 @@
     <dependencies>
         <dependency>
             <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-runtime-core</artifactId>
         </dependency>
         <dependency>
@@ -56,6 +60,11 @@
         <dependency>
             <groupId>com.tngtech.archunit</groupId>
             <artifactId>archunit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-tool-core</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

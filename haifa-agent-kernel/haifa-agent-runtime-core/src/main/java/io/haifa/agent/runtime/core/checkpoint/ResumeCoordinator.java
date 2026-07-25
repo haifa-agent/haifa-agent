@@ -82,14 +82,18 @@ public final class ResumeCoordinator {
         access.validate(caller, run.sessionId(), run.project());
         var configuration = state.configuration(run.configurationSnapshot())
                 .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable or corrupt"));
-        if (!configuration.definitionId().equals(run.agentDefinitionId())
-                || !configuration.definitionVersion().equals(run.agentDefinitionVersion())
-                || !configuration.profileId().equals(run.productProfileId())
-                || !configuration.profileVersion().equals(run.productProfileVersion())
-                || configuration.runType() != run.runType()
-                || !configuration.budget().equals(run.budget())
-                || !configuration.limits().equals(run.limits())) {
-            throw new IllegalStateException("run configuration snapshot does not match the frozen run configuration");
+        java.util.List<String> mismatches = new java.util.ArrayList<>();
+        if (!configuration.definitionId().equals(run.agentDefinitionId())) mismatches.add("definitionId");
+        if (!configuration.definitionVersion().equals(run.agentDefinitionVersion()))
+            mismatches.add("definitionVersion");
+        if (!configuration.profileId().equals(run.productProfileId())) mismatches.add("profileId");
+        if (!configuration.profileVersion().equals(run.productProfileVersion())) mismatches.add("profileVersion");
+        if (!configuration.runType().equals(run.runType())) mismatches.add("runType");
+        if (!configuration.budget().equals(run.budget())) mismatches.add("budget");
+        if (!configuration.limits().equals(run.limits())) mismatches.add("limits");
+        if (!mismatches.isEmpty()) {
+            throw new IllegalStateException(
+                    "run configuration snapshot does not match frozen fields: " + String.join(",", mismatches));
         }
         configuration.toolBindings().forEach(tools::validateBinding);
         var visibility = new SkillVisibilityContext(

@@ -1,6 +1,8 @@
 package io.haifa.agent.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
+import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
@@ -61,13 +63,12 @@ import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
-import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.interaction.InteractionPort;
+import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
-import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
-import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
-import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
@@ -75,13 +76,17 @@ import java.io.PrintStream;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.time.Clock;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import javax.crypto.spec.SecretKeySpec;
 
 /** Builds an in-process Coding Agent over one explicitly selected local workspace. */
 final class LocalCodingAgent implements AutoCloseable {
@@ -89,23 +94,36 @@ final class LocalCodingAgent implements AutoCloseable {
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final AgentRuntime runtime;
-    private final InMemoryInteractionPort interactions;
+    private final InteractionPort interactions;
     private final List<RuntimeTraceEvent> traces;
     private final CliMcpPlatform mcpPlatform;
+    private final ProjectPersistenceAssembly persistence;
+    private final TenantRef tenant;
+    private final PrincipalRef principal;
+    private final Clock clock;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     private LocalCodingAgent(
             IdentifierGenerator identifiers,
             TimeProvider time,
             AgentRuntime runtime,
-            InMemoryInteractionPort interactions,
+            InteractionPort interactions,
             List<RuntimeTraceEvent> traces,
-            CliMcpPlatform mcpPlatform) {
+            CliMcpPlatform mcpPlatform,
+            ProjectPersistenceAssembly persistence,
+            TenantRef tenant,
+            PrincipalRef principal,
+            Clock clock) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
         this.interactions = interactions;
         this.traces = traces;
         this.mcpPlatform = mcpPlatform;
+        this.persistence = persistence;
+        this.tenant = tenant;
+        this.principal = principal;
+        this.clock = clock;
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
@@ -141,6 +159,22 @@ final class LocalCodingAgent implements AutoCloseable {
             PrintStream output,
             AgentChatModel model,
             Consumer<RuntimeTraceEvent> traceObserver) {
+        return create(
+                workspaceRoot,
+                configuration,
+                output,
+                model,
+                traceObserver,
+                resolveContinuationProtector(configuration));
+    }
+
+    static LocalCodingAgent create(
+            Path workspaceRoot,
+            CliConfiguration configuration,
+            PrintStream output,
+            AgentChatModel model,
+            Consumer<RuntimeTraceEvent> traceObserver,
+            ModelContinuationProtector continuationProtector) {
         try {
             workspaceRoot = workspaceRoot.toRealPath();
         } catch (java.io.IOException exception) {
@@ -150,193 +184,226 @@ final class LocalCodingAgent implements AutoCloseable {
 
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = new SystemTimeProvider();
+        Clock clock = Clock.systemUTC();
         PrincipalRef principal = new PrincipalRef("local-user", "user");
         TenantRef tenant = new TenantRef("local");
-        validateSkillWorkspaceIsolation(workspaceRoot, configuration.skills().localDirectories());
-        var skillDirectories = configuration.skills().localDirectories().stream()
-                .map(directory -> new ProjectSkillPlatform.UserDirectorySource(
-                        directory.id(),
-                        directory.root(),
-                        directory.priority(),
-                        directory.parserMode(),
-                        directory.origin()))
-                .toList();
-        var skillPlatform = ProjectSkillPlatform.baseAndUserDirectorySkills(
-                tenant, principal, Optional.empty(), false, skillDirectories);
-        CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
-        CliWebPlatform webPlatform = CliWebPlatform.create(configuration.web(), principal);
-        var workspaces = new InMemoryWorkspaceStore();
-        var bindings = new InMemoryWorkspaceBindingStore();
-        var locations = new LocalWorkspaceLocationStore();
-        WorkspaceId workspaceId = new WorkspaceId(identifiers.nextValue());
-        WorkspaceBindingId bindingId = new WorkspaceBindingId(identifiers.nextValue());
-        WorkspaceLocationRef locationRef = new WorkspaceLocationRef("local:" + identifiers.nextValue());
-        locations.register(locationRef, workspaceRoot);
-        Set<String> configuredTools = effectiveBuiltInTools(configuration);
-        boolean executionEnabled = configuredTools.contains("execution.run");
-        WorkspaceCapabilitySet workspaceCapabilities = executionEnabled
-                ? new WorkspaceCapabilitySet(java.util.stream.Stream.concat(
-                                WorkspaceCapabilitySet.readWriteFiles().values().stream(),
-                                java.util.stream.Stream.of("execution.run"))
-                        .collect(java.util.stream.Collectors.toUnmodifiableSet()))
-                : WorkspaceCapabilitySet.readWriteFiles();
-        WorkspacePermissionSet workspacePermissions =
-                executionEnabled ? WorkspacePermissionSet.readWriteExecute() : WorkspacePermissionSet.readWrite();
-        bindings.create(WorkspaceBinding.provision(
-                        bindingId,
-                        locationRef,
-                        WorkspaceBindingMode.DIRECT,
-                        principal,
-                        workspaceCapabilities,
-                        workspacePermissions,
-                        LocalWorkspaceLocationStore.fingerprintFor(workspaceRoot),
-                        time.now())
-                .activate(time.now()));
-        workspaces.create(Workspace.provision(
-                        workspaceId,
-                        new ProjectId("cli-" + identifiers.nextValue()),
-                        WorkspacePurpose.PRIMARY,
-                        new WorkspaceRoot(ProjectPath.root(), bindingId, "local-guarded"),
-                        WorkspaceRevision.initial("cli-initial"),
-                        time.now())
-                .activate(time.now()));
+        ProjectPersistenceAssembly persistence =
+                ProjectPersistenceAssembly.open(configuration.persistence(), clock, identifiers, continuationProtector);
+        try {
+            validateSkillWorkspaceIsolation(
+                    workspaceRoot, configuration.skills().localDirectories());
+            var skillDirectories = configuration.skills().localDirectories().stream()
+                    .map(directory -> new ProjectSkillPlatform.UserDirectorySource(
+                            directory.id(),
+                            directory.root(),
+                            directory.priority(),
+                            directory.parserMode(),
+                            directory.origin()))
+                    .toList();
+            var skillPlatform = ProjectSkillPlatform.baseAndUserDirectorySkills(
+                    tenant, principal, Optional.empty(), false, skillDirectories);
+            CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
+            CliWebPlatform webPlatform = CliWebPlatform.create(configuration.web(), principal);
+            var workspaces = new InMemoryWorkspaceStore();
+            var bindings = new InMemoryWorkspaceBindingStore();
+            var locations = new LocalWorkspaceLocationStore();
+            WorkspaceId workspaceId = new WorkspaceId(identifiers.nextValue());
+            WorkspaceBindingId bindingId = new WorkspaceBindingId(identifiers.nextValue());
+            WorkspaceLocationRef locationRef = new WorkspaceLocationRef("local:" + identifiers.nextValue());
+            locations.register(locationRef, workspaceRoot);
+            Set<String> configuredTools = effectiveBuiltInTools(configuration);
+            boolean executionEnabled = configuredTools.contains("execution.run");
+            WorkspaceCapabilitySet workspaceCapabilities = executionEnabled
+                    ? new WorkspaceCapabilitySet(java.util.stream.Stream.concat(
+                                    WorkspaceCapabilitySet.readWriteFiles().values().stream(),
+                                    java.util.stream.Stream.of("execution.run"))
+                            .collect(java.util.stream.Collectors.toUnmodifiableSet()))
+                    : WorkspaceCapabilitySet.readWriteFiles();
+            WorkspacePermissionSet workspacePermissions =
+                    executionEnabled ? WorkspacePermissionSet.readWriteExecute() : WorkspacePermissionSet.readWrite();
+            bindings.create(WorkspaceBinding.provision(
+                            bindingId,
+                            locationRef,
+                            WorkspaceBindingMode.DIRECT,
+                            principal,
+                            workspaceCapabilities,
+                            workspacePermissions,
+                            LocalWorkspaceLocationStore.fingerprintFor(workspaceRoot),
+                            time.now())
+                    .activate(time.now()));
+            workspaces.create(Workspace.provision(
+                            workspaceId,
+                            new ProjectId("cli-" + identifiers.nextValue()),
+                            WorkspacePurpose.PRIMARY,
+                            new WorkspaceRoot(ProjectPath.root(), bindingId, "local-guarded"),
+                            WorkspaceRevision.initial("cli-initial"),
+                            time.now())
+                    .activate(time.now()));
 
-        SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
-        var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
-        var changeSets = new InMemoryFileChangeSetStore();
-        var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
-        var mutations = new LocalWorkspaceMutationService(
-                workspaces,
-                bindings,
-                locations,
-                sensitivePaths,
-                new InMemoryWorkspaceWriteLeaseManager(),
-                changeSets,
-                changeSetService,
-                new InMemoryQuarantineStore(),
-                identifiers,
-                time);
-        var operations = new LocalFileToolOperations(workspaces, files, mutations, identifiers);
-        CliExecutionPlatform executionPlatform = executionEnabled
-                ? CliExecutionPlatform.create(
-                        configuration.execution(),
-                        workspaces,
-                        bindings,
-                        locations,
-                        files,
-                        changeSets,
-                        changeSetService,
-                        identifiers,
-                        time,
-                        output)
-                : null;
-        Set<String> effectiveCapabilities = executionEnabled
-                ? Set.of("file.read", "file.write", "execution.run")
-                : Set.of("file.read", "file.write");
-        var provider = new ProjectToolExecutor(
-                (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
-                        workspaceId, effectiveCapabilities, "cli-local-policy"),
-                operations,
-                executionPlatform == null ? null : executionPlatform.operations());
-        var runtimeStore = new InMemoryRuntimeStore();
-        var skillService =
-                new DefaultSkillActivationService(runtimeStore, runtimeStore, skillPlatform.contentLoader(), time);
-        List<SkillToolCatalogContribution> skillTools =
-                configuration.skills().allowedAliases().isEmpty()
-                        ? List.of()
-                        : new SkillToolProvider(skillService).contributions();
-        var catalog = new ProjectToolCatalog()
-                .freeze(
-                        Set.copyOf(configuredTools),
-                        effectiveCapabilities,
-                        true,
-                        provider,
-                        mcpPlatform.contributions(),
-                        webPlatform.contributions(),
-                        skillTools);
-        var interactions = new InMemoryInteractionPort();
-        ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
-        List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
-        var runtime = new RuntimeCoreBuilder()
-                .identifierGenerator(identifiers)
-                .timeProvider(time)
-                .persistence(RuntimePersistencePorts.inMemory(
-                        runtimeStore, new InMemoryToolExecutionJournal(), interactions))
-                .trace(event -> {
-                    traces.add(event);
-                    traceObserver.accept(event);
-                })
-                .registerChatModel("openai-compatible", "1.0.0", model)
-                .credentialBroker(webPlatform.credentialBroker())
-                .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
-                .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
-                .toolApprovalPrompts((binding, call, reauthentication) -> {
-                    if (!binding.definition().name().value().equals("execution.run")) {
-                        return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter.defaultFormatter()
-                                .format(binding, call, reauthentication);
-                    }
-                    Map<String, Object> arguments = call.arguments().values();
-                    String command = String.valueOf(arguments.get("command"));
-                    String workdir = String.valueOf(arguments.getOrDefault("workdir", "."));
-                    Object timeout = arguments.getOrDefault(
-                            "timeoutMillis",
-                            configuration.execution().defaultTimeout().toMillis());
-                    String description = safeApprovalText(
-                            String.valueOf(arguments.getOrDefault("description", "Run shell command")));
-                    return description + "\nCommand: " + safeApprovalText(command) + "\nWorkdir: "
-                            + safeApprovalText(workdir) + "\nTimeout: " + timeout + " ms\nShell: "
-                            + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
-                            + "\nRisk: runs on the host with the current OS user's access; this is not strong isolation.";
-                })
-                .toolPolicy((run, binding, request) -> switch (configuration.approval()) {
-                    case AUTO -> io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW;
-                    case DENY ->
-                        binding.definition().approvalRequirement()
-                                        == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
-                                ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
-                                : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.DENY;
-                    case ASK ->
-                        binding.definition().approvalRequirement()
-                                        == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
-                                ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
-                                : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.REQUIRE_APPROVAL;
-                })
-                .definitions((id, requested) -> new ResolvedDefinition(
-                        id,
-                        requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
-                        catalog.snapshot().bindings().stream()
-                                .map(binding -> binding.alias().value())
-                                .collect(java.util.stream.Collectors.toUnmodifiableSet()),
-                        configuration.skills().allowedAliases(),
-                        Set.of(),
-                        "You are a careful local coding agent. Inspect relevant files before editing. "
-                                + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
-                                + "Pass only workspace-relative paths to file tools; never pass an absolute path.",
-                        List.of()))
-                .profiles((profileId, overrides) -> new ResolvedProfile(
-                        profileId,
-                        "1.0.0",
-                        AgentRunType.CHAT,
-                        new AgentRunBudget(
-                                1_000_000, 1_000_000, 1_000_000, configuration.maxToolCalls(), 64, 8, "USD", 1_000_000),
-                        new AgentRunLimits(
-                                configuration.maxIterations(),
-                                4,
-                                1,
-                                configuration.timeout().toMillis(),
-                                60_000),
-                        modelSnapshot))
-                .build();
-        return new LocalCodingAgent(identifiers, time, runtime, interactions, traces, mcpPlatform);
+            SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
+            var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
+            var changeSets = new InMemoryFileChangeSetStore();
+            var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
+            var mutations = new LocalWorkspaceMutationService(
+                    workspaces,
+                    bindings,
+                    locations,
+                    sensitivePaths,
+                    new InMemoryWorkspaceWriteLeaseManager(),
+                    changeSets,
+                    changeSetService,
+                    new InMemoryQuarantineStore(),
+                    identifiers,
+                    time);
+            var operations = new LocalFileToolOperations(workspaces, files, mutations, identifiers);
+            CliExecutionPlatform executionPlatform = executionEnabled
+                    ? CliExecutionPlatform.create(
+                            configuration.execution(),
+                            workspaces,
+                            bindings,
+                            locations,
+                            files,
+                            changeSets,
+                            changeSetService,
+                            identifiers,
+                            time,
+                            output)
+                    : null;
+            Set<String> effectiveCapabilities = executionEnabled
+                    ? Set.of("file.read", "file.write", "execution.run")
+                    : Set.of("file.read", "file.write");
+            var provider = new ProjectToolExecutor(
+                    (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
+                            workspaceId, effectiveCapabilities, "cli-local-policy"),
+                    operations,
+                    executionPlatform == null ? null : executionPlatform.operations());
+            var skillService = new DefaultSkillActivationService(
+                    persistence.ports().runs(), persistence.ports().state(), skillPlatform.contentLoader(), time);
+            List<SkillToolCatalogContribution> skillTools =
+                    configuration.skills().allowedAliases().isEmpty()
+                            ? List.of()
+                            : new SkillToolProvider(skillService).contributions();
+            var catalog = new ProjectToolCatalog()
+                    .freeze(
+                            Set.copyOf(configuredTools),
+                            effectiveCapabilities,
+                            true,
+                            provider,
+                            mcpPlatform.contributions(),
+                            webPlatform.contributions(),
+                            skillTools);
+            var interactions = persistence.ports().interactions();
+            ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
+            List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
+            var runtime = persistence
+                    .configure(new RuntimeCoreBuilder())
+                    .identifierGenerator(identifiers)
+                    .timeProvider(time)
+                    .trace(event -> {
+                        traces.add(event);
+                        traceObserver.accept(event);
+                    })
+                    .registerChatModel("openai-compatible", "1.0.0", model)
+                    .credentialBroker(webPlatform.credentialBroker())
+                    .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
+                    .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
+                    .toolApprovalPrompts((binding, call, reauthentication) -> {
+                        if (!binding.definition().name().value().equals("execution.run")) {
+                            return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter
+                                    .defaultFormatter()
+                                    .format(binding, call, reauthentication);
+                        }
+                        Map<String, Object> arguments = call.arguments().values();
+                        String command = String.valueOf(arguments.get("command"));
+                        String workdir = String.valueOf(arguments.getOrDefault("workdir", "."));
+                        Object timeout = arguments.getOrDefault(
+                                "timeoutMillis",
+                                configuration.execution().defaultTimeout().toMillis());
+                        String description = safeApprovalText(
+                                String.valueOf(arguments.getOrDefault("description", "Run shell command")));
+                        return description + "\nCommand: " + safeApprovalText(command) + "\nWorkdir: "
+                                + safeApprovalText(workdir) + "\nTimeout: " + timeout + " ms\nShell: "
+                                + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
+                                + "\nRisk: runs on the host with the current OS user's access; this is not strong isolation.";
+                    })
+                    .toolPolicy((run, binding, request) -> switch (configuration.approval()) {
+                        case AUTO -> io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW;
+                        case DENY ->
+                            binding.definition().approvalRequirement()
+                                            == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
+                                    ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
+                                    : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.DENY;
+                        case ASK ->
+                            binding.definition().approvalRequirement()
+                                            == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
+                                    ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
+                                    : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.REQUIRE_APPROVAL;
+                    })
+                    .definitions((id, requested) -> new ResolvedDefinition(
+                            id,
+                            requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
+                            catalog.snapshot().bindings().stream()
+                                    .map(binding -> binding.alias().value())
+                                    .collect(java.util.stream.Collectors.toUnmodifiableSet()),
+                            configuration.skills().allowedAliases(),
+                            Set.of(),
+                            "You are a careful local coding agent. Inspect relevant files before editing. "
+                                    + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
+                                    + "Pass only workspace-relative paths to file tools; never pass an absolute path.",
+                            List.of()))
+                    .profiles((profileId, overrides) -> new ResolvedProfile(
+                            profileId,
+                            "1.0.0",
+                            AgentRunType.CHAT,
+                            new AgentRunBudget(
+                                    1_000_000,
+                                    1_000_000,
+                                    1_000_000,
+                                    configuration.maxToolCalls(),
+                                    64,
+                                    8,
+                                    "USD",
+                                    1_000_000),
+                            new AgentRunLimits(
+                                    configuration.maxIterations(),
+                                    4,
+                                    1,
+                                    configuration.timeout().toMillis(),
+                                    60_000),
+                            modelSnapshot))
+                    .build();
+            persistence.attachProjection(runtime);
+            return new LocalCodingAgent(
+                    identifiers,
+                    time,
+                    runtime,
+                    interactions,
+                    traces,
+                    mcpPlatform,
+                    persistence,
+                    tenant,
+                    principal,
+                    clock);
+        } catch (RuntimeException | Error exception) {
+            try {
+                persistence.close();
+            } catch (RuntimeException closeFailure) {
+                exception.addSuppressed(closeFailure);
+            }
+            throw exception;
+        }
     }
 
     AgentRunSnapshot start(String message) {
+        if (closed.get()) throw new IllegalStateException("coding agent is closed");
+        AgentSessionId sessionId = new AgentSessionId(identifiers.nextValue());
+        persistence.provisionUserSession(sessionId, tenant, principal, clock);
         return runtime.start(new AgentRunRequest(
                 identifiers.nextValue(),
                 DEFINITION_ID,
                 Optional.empty(),
                 "cli-coding",
-                new AgentSessionId(identifiers.nextValue()),
+                sessionId,
                 Optional.empty(),
                 message,
                 List.of(new TextPart(message, "text/plain")),
@@ -357,7 +424,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 time.now()));
     }
 
-    InMemoryInteractionPort interactions() {
+    InteractionPort interactions() {
         return interactions;
     }
 
@@ -420,7 +487,45 @@ final class LocalCodingAgent implements AutoCloseable {
 
     @Override
     public void close() {
-        mcpPlatform.close();
+        if (!closed.compareAndSet(false, true)) return;
+        RuntimeException failure = null;
+        try {
+            mcpPlatform.close();
+        } catch (RuntimeException exception) {
+            failure = exception;
+        }
+        try {
+            persistence.close();
+        } catch (RuntimeException exception) {
+            if (failure == null) failure = exception;
+            else failure.addSuppressed(exception);
+        }
+        if (failure != null) throw failure;
+    }
+
+    private static ModelContinuationProtector resolveContinuationProtector(CliConfiguration configuration) {
+        if (configuration.persistence().mode() == ProjectPersistenceMode.MEMORY) return null;
+        String reference = configuration
+                .persistence()
+                .protectorReference()
+                .orElseThrow(() -> new IllegalArgumentException("durable continuation protector is not configured"));
+        String environmentName = reference.substring("env://".length());
+        String encoded = System.getenv(environmentName);
+        if (encoded == null || encoded.isBlank()) {
+            throw new IllegalArgumentException("durable continuation protector secret is unavailable");
+        }
+        try {
+            byte[] key = java.util.Base64.getDecoder().decode(encoded.trim());
+            if (key.length != 32) {
+                throw new IllegalArgumentException("durable continuation protector secret must be a 256-bit key");
+            }
+            return new AesGcmModelContinuationProtector(new SecretKeySpec(key, "AES"), new SecureRandom());
+        } catch (IllegalArgumentException exception) {
+            if (exception.getMessage() != null && exception.getMessage().startsWith("durable continuation protector")) {
+                throw exception;
+            }
+            throw new IllegalArgumentException("durable continuation protector secret is invalid");
+        }
     }
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration configuration) {

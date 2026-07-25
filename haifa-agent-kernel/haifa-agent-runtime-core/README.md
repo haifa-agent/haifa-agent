@@ -39,6 +39,10 @@ Tool Call reasoning 交给受保护 continuation。
 - `RuntimePersistencePorts` 显式组合 Session、Run、Attempt、Checkpoint、Runtime State、Event、Outbox、
   Idempotency、Unit of Work、Tool Journal、Interaction、Summary、Tool Result Asset 与消息脱敏监听注册边界；
   `RuntimeCoreBuilder` 只接受该组合并提供默认内存组合，不依赖 SQLite、JDBC、Jackson 或 JSONL。
+- Application 可通过 `RuntimeCoreBuilder.persistence(...)`、`workerId(...)` 与
+  `persistenceRetry(...)` 注入完整适配器装配。Runtime 的持久化重试每次重新加载聚合并重新执行事务；
+  具体 Application 只能把“事务工作开始前未取得数据库写锁”这类安全失败列入有限重试，不能对未知提交
+  结果或已经变更的内存聚合盲目重放。
 - `OutboxMessage` 保存与对应 `RuntimeEvent` 相同的 Run 内 `sequence` 和稳定 `schemaVersion`。本地
   `ExecutionOwnershipPort` 以当前进程实例 ID 精确匹配 Attempt `workerId`，进程重启后的旧 Attempt
   不再被误判为仍由本地持有。

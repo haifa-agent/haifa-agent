@@ -10,6 +10,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ibatis.session.SqlSession;
 import org.junit.jupiter.api.Test;
@@ -103,6 +104,28 @@ class SqliteRuntimeUnitOfWorkTest {
             }
             return null;
         });
+    }
+
+    @Test
+    void classifiesBusyBeforeTransactionWorkCanMutateAnAggregate() throws Exception {
+        Path database = directory.resolve("busy.db");
+        try (SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(
+                        new SqliteStoreConfiguration(database, 25, 4 * 1024 * 1024), java.time.Clock.systemUTC());
+                Connection blocker = foundation.connections().openConnection();
+                Statement statement = blocker.createStatement()) {
+            statement.execute("BEGIN IMMEDIATE");
+            AtomicInteger workCalls = new AtomicInteger();
+
+            assertThatThrownBy(() -> foundation.unitOfWork().execute(() -> {
+                        workCalls.incrementAndGet();
+                        return null;
+                    }))
+                    .isInstanceOf(SqliteStoreException.class)
+                    .extracting(exception -> ((SqliteStoreException) exception).failure())
+                    .isEqualTo(SqliteStoreFailure.DATABASE_BUSY);
+            assertThat(workCalls).hasValue(0);
+            statement.execute("ROLLBACK");
+        }
     }
 
     @Test

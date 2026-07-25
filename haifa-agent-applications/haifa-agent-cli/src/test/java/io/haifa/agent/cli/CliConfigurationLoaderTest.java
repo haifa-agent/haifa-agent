@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -126,6 +127,40 @@ class CliConfigurationLoaderTest {
             assertThat(server.allowedTools()).containsExactlyInAnyOrder("time_now", "calculate");
             assertThat(server.policyProfile()).isEqualTo("utility");
         });
+    }
+
+    @Test
+    void loadsExplicitSqliteWithJsonlPersistenceConfiguration() throws Exception {
+        Path root = Files.createTempDirectory("haifa-cli-persistence").toAbsolutePath();
+        Path transcriptRoot = Files.createDirectory(root.resolve("transcripts"));
+        Path database = root.resolve("runtime.db");
+        Path configuration = Files.createTempFile("haifa-cli-persistence", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                persistence:
+                  mode: SQLITE_WITH_JSONL
+                  databasePath: '%s'
+                  transcriptRoot: '%s'
+                  protectorRef: env://HAIFA_TEST_CONTINUATION_KEY
+                  busyTimeoutMillis: 750
+                  maximumPayloadBytes: 1048576
+                """
+                        .formatted(
+                                database.toString().replace("'", "''"),
+                                transcriptRoot.toString().replace("'", "''")));
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "persistence", "--config", configuration.toString()}),
+                        Path.of("."));
+
+        assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.SQLITE_WITH_JSONL);
+        assertThat(result.persistence().databasePath()).contains(database);
+        assertThat(result.persistence().transcriptRoot()).contains(transcriptRoot);
+        assertThat(result.persistence().protectorReference()).contains("env://HAIFA_TEST_CONTINUATION_KEY");
+        assertThat(result.persistence().busyTimeoutMillis()).isEqualTo(750);
+        assertThat(result.persistence().maximumPayloadBytes()).isEqualTo(1_048_576);
     }
 
     @Test

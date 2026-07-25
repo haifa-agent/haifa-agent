@@ -2,7 +2,8 @@
 
 本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1/V2 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
-Application/CLI 的默认装配与进程重启恢复编排仍由后续任务接入。
+Project Application/CLI 已可显式选择本模块；Runtime 的进程重启恢复由注入的 Port 与每次启动唯一
+worker ID 驱动。
 
 ## 边界
 
@@ -10,12 +11,15 @@ Application/CLI 的默认装配与进程重启恢复编排仍由后续任务接�
 - Runtime Core 只暴露 Port。本模块作为 Integration 依赖 `runtime-core`，反向依赖被架构测试禁止。
 - 只使用 MyBatis Core 和 Xerial SQLite JDBC；不使用 Spring、连接池、ORM、自动生成器或动态 SQL。
 - 数据库路径由调用方提供，必须是父目录已存在且可写的绝对文件路径。
+- 初始化会把数据库目录设为 POSIX `0700` 或 Windows 当前用户独占 ACL，并对主文件、WAL、SHM
+  和 rollback journal 应用文件 `0600`/等价 ACL；无法复核时分类为 `FILE_PERMISSION_FAILED`。
 - 默认不开启 SQL 日志；Mapper XML 禁止 `${}`，所有值只能使用 `#{}`。
 - `SqliteStoreFoundation.persistencePorts(protector)` 组合完整持久化端口；Model Continuation 必须注入可跨实例恢复的 protector。
 
 ## 初始化与所有权
 
-调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成：
+调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成纯 Runtime 初始化；拥有额外
+Schema 的 Application 使用三参数重载，在一次校验中传入包含 Runtime V1/V2 原文的完整 Migration 集合：
 
 1. 打开受控 JDBC Connection，设置并验证 WAL；
 2. 在每个 Connection 上设置并验证 `foreign_keys=ON` 与 `busy_timeout`；
@@ -27,6 +31,10 @@ UoW 始终保持 JDBC `autoCommit=true`，在同一 Connection 上执行 SQL 级
 `BEGIN IMMEDIATE`、`COMMIT`、`ROLLBACK`。外层 UoW 独占 Connection 和 SqlSession；同线程嵌套调用复用
 外层上下文，任何嵌套失败都会把外层标记为 rollback-only。MyBatis 使用 `MANAGED` 且
 `closeConnection=false`，不会提交、回滚或关闭 UoW Connection。
+
+`BEGIN IMMEDIATE` 在事务工作执行前遇到 SQLite `BUSY/LOCKED` 时分类为 `DATABASE_BUSY`。这只是供
+Application 选择安全、有界重试的精确信号；事务工作开始后的 SQL、提交不确定性或其他数据库错误不会被
+归入该类别。
 
 ## Schema 与 Migration
 
@@ -90,8 +98,9 @@ Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 | Summary / Memory / Continuation / Skill / Asset | 对应 `Sqlite*Repository` / `SqliteToolResultAssetStore` |
 | Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
-仍未接入的边界：Application/CLI 默认选择 SQLite、Runtime 启动时的恢复扫描与调度、Outbox 后台投递器，
-以及生产环境 KMS/Vault 密钥解析与轮换。这些不影响本模块作为完整持久化 Port 集合使用。
+Project Application/CLI 已实现显式 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL` 选择，并在启动时注入
+Runtime Port、唯一 worker ID 与安全 busy retry。仍未接入的边界包括常驻 Outbox 后台投递器，以及生产
+环境 KMS/Vault 密钥解析与轮换；当前 CLI 只解析稳定 `env://` secret reference。
 
 ## 验证
 
@@ -102,4 +111,5 @@ Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 测试覆盖首次建库、重复启动、checksum 漂移、Migration 故障回滚、完整 Schema、Codec fail-closed、
 全部主要 Port 的文件重开 round-trip、乐观锁、活动 Attempt、消息 cursor/脱敏、Checkpoint 完整性、
 Event sequence、Outbox/Idempotency、Journal 状态机、Interaction 竞争、Continuation 固定密钥恢复/错误密钥/
-篡改、Skill/Memory/Asset，以及数据库/WAL 中不出现 reasoning 明文或测试密钥。
+篡改、Skill/Memory/Asset、busy/locked 分类、权限策略，以及数据库/WAL/SHM 中不出现 Credential、
+reasoning、Provider 原文或测试密钥。

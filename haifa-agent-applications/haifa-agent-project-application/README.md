@@ -7,6 +7,25 @@ Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Po
 按包分层放在 `io.haifa.agent.application.project.tool.web` 内，不形成独立 Capability 或 Maven Artifact。
 本模块不建立第二套 Context、Tool Registry、Policy、Credential Broker 或 Session 聚合。
 
+## 持久化装配
+
+`ProjectPersistenceAssembly` 是产品层唯一持久化装配入口，只接受三种显式模式：
+
+- `MEMORY`：默认模式，使用 Runtime 内存 Port；
+- `SQLITE`：SQLite 是 Session、Run、Attempt、Checkpoint、Runtime State、Event/Outbox 与产品会话映射的唯一事实源；
+- `SQLITE_WITH_JSONL`：在 `SQLITE` 基础上，把已提交 Outbox 的安全事件投影为可删除的 JSONL。
+
+SQLite 模式要求数据库文件绝对路径和 `env://` 形式的稳定 continuation protector 引用；JSONL 模式还要求
+已存在、可写、非符号链接的受控绝对目录。Application 在一次 checksum 校验中组合 Runtime V1/V2 与自己
+拥有的 `project_product_session` Migration，不修改 Runtime Schema。每次进程启动生成新的 worker ID，
+并把完整 `RuntimePersistencePorts`、worker ID 和仅针对安全 `SQLITE_BUSY/LOCKED` 获取失败的有界重试策略
+注入 `RuntimeCoreBuilder`。
+
+Core `AgentSession` 与 `ProjectProductSession` 使用同一个 `AgentSessionId`。产品映射显式保存
+tenant、principal、project、workspace、配置 ID/版本/digest 和 product profile；每次读取都与 Core
+Session 重新核对，漂移时 fail closed。JSONL projector 只在 Runtime 提交后触发；关闭时先停止上层新请求，
+再冲刷投影，最后关闭 SQLite 连接。
+
 `ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`git.inspect/status/diff` 与 `execution.run` 共 14 个能力注册到唯一 Tool Catalog。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供

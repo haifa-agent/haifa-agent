@@ -13,6 +13,8 @@ import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
+import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
+import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import java.util.Map;
 import java.util.Objects;
@@ -23,25 +25,31 @@ public final class AttemptExecutor {
     private final RunTransitionCoordinator transitions;
     private final TimeProvider time;
     private final String owner;
+    private final RetryExecutor persistenceRetries;
+    private final PersistenceRetryPolicy persistenceRetry;
 
     public AttemptExecutor(
             ExecutionAttemptRepository attempts,
             AgentLoop loop,
             RunTransitionCoordinator transitions,
             TimeProvider time,
-            String owner) {
+            String owner,
+            RetryExecutor persistenceRetries,
+            PersistenceRetryPolicy persistenceRetry) {
         this.attempts = Objects.requireNonNull(attempts);
         this.loop = Objects.requireNonNull(loop);
         this.transitions = Objects.requireNonNull(transitions);
         this.time = Objects.requireNonNull(time);
         this.owner = Objects.requireNonNull(owner);
+        this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
+        this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
     }
 
     public void execute(AgentRun run, AgentRunExecutionAttempt attempt) {
-        long expected = attempt.version();
-        attempt.start(owner, time.now());
-        attempts.save(attempt, expected);
         try {
+            long expected = attempt.version();
+            attempt.start(owner, time.now());
+            persist(() -> attempts.save(attempt, expected));
             if (run.status() == AgentRunStatus.QUEUED || run.status() == AgentRunStatus.PENDING)
                 transitions.started(run);
             loop.run(run, attempt);
@@ -64,7 +72,16 @@ public final class AttemptExecutor {
     private void finish(AgentRunExecutionAttempt attempt, ExecutionAttemptStatus status, AgentError error) {
         long expected = attempt.version();
         attempt.finish(status, time.now(), java.util.Optional.ofNullable(error));
-        attempts.save(attempt, expected);
+        persist(() -> attempts.save(attempt, expected));
+    }
+
+    private void persist(Runnable work) {
+        persistenceRetries.execute(
+                () -> {
+                    work.run();
+                    return null;
+                },
+                persistenceRetry.policy());
     }
 
     private static ExecutionAttemptStatus statusFor(AgentRunStatus status) {

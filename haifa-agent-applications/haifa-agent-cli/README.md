@@ -96,7 +96,29 @@ runtime:
   maxIterations: 50
   maxToolCalls: 32
   maxWallTimeMillis: 300000
+persistence:
+  mode: MEMORY
 ```
+
+`persistence.mode` 只允许 `MEMORY`、`SQLITE` 和 `SQLITE_WITH_JSONL`；默认 `MEMORY` 保持现有一次性
+CLI 行为。持久模式示例：
+
+```yaml
+persistence:
+  mode: SQLITE_WITH_JSONL
+  databasePath: D:\haifa-agent-data\runtime.db
+  transcriptRoot: D:\haifa-agent-data\transcripts
+  protectorRef: env://HAIFA_CONTINUATION_KEY
+  busyTimeoutMillis: 5000
+  maximumPayloadBytes: 4194304
+```
+
+数据库与 transcript 路径必须是绝对路径，父目录/Transcript 目录必须预先受控创建。`SQLITE` 不会创建
+JSONL；JSONL 从不参与恢复。`protectorRef` 只保存环境变量引用，变量值必须是 Base64 编码的 32 字节
+AES key，且必须由用户的 Secret Manager 或环境注入并在重启间保持稳定。缺失、临时生成或长度错误都会使
+持久模式在启动期 fail closed。对应环境变量覆盖为 `HAIFA_PERSISTENCE_MODE`、
+`HAIFA_SQLITE_DATABASE_PATH`、`HAIFA_TRANSCRIPT_ROOT` 和
+`HAIFA_CONTINUATION_PROTECTOR_REF`。
 
 `tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_write`、`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作目录和 timeout；任何本机已安装且可由配置 Shell 解析的普通 CLI 都走同一生产路径，文档中的具体命令仅是非穷举示例。
 
@@ -142,7 +164,9 @@ reasoning 内容。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；默认不继承 API Key、`*_TOKEN`、`*_SECRET`、云凭据或代理凭据。命令输出实时脱敏展示，最终模型结果默认限制为最后 2000 行且最多 50KB；较大分通道输出通过 Output Ref 访问。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
-本期不包含 Terminal UI、PTY/交互式命令、后台守护进程、跨进程会话恢复或持久化运行记录。Host Provider 不是容器或虚拟机，不能阻止当前 OS 用户本来可访问的 Workspace 外文件、网络或系统资源。
+本期不包含 Terminal UI、PTY/交互式命令或后台守护进程。SQLite 模式可恢复 Runtime 事实和
+Project Product Session 映射；CLI 当前每次 `start` 仍创建新 User Session，尚未提供选择历史 Session
+的交互命令。Host Provider 不是容器或虚拟机，不能阻止当前 OS 用户本来可访问的 Workspace 外文件、网络或系统资源。
 
 ## 真实模型 Coding E2E
 

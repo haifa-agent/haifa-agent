@@ -133,17 +133,11 @@ public final class RunTransitionCoordinator {
                                 OutboxMessage.CURRENT_SCHEMA_VERSION,
                                 Map.of("status", run.status().name(), "version", run.version()),
                                 event.occurredAt()));
-                        return AgentRunSnapshot.from(run, state.output(run.id()));
+                        AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                        unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                        return committed;
                     }),
                     persistenceRetry.policy());
-            awaiter.signal(run.id());
-            for (AgentRunListener listener : listeners) {
-                try {
-                    listener.onRunChanged(snapshot);
-                } catch (RuntimeException ignored) {
-                    // Listener delivery is observational and must not change committed state.
-                }
-            }
             return snapshot;
         }
     }
@@ -195,18 +189,23 @@ public final class RunTransitionCoordinator {
                                 OutboxMessage.CURRENT_SCHEMA_VERSION,
                                 Map.of("status", run.status().name(), "version", run.version()),
                                 event.occurredAt()));
-                        return AgentRunSnapshot.from(run, state.output(run.id()));
+                        AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                        unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                        return committed;
                     }),
                     persistenceRetry.policy());
-            awaiter.signal(run.id());
-            for (AgentRunListener listener : listeners) {
-                try {
-                    listener.onRunChanged(snapshot);
-                } catch (RuntimeException ignored) {
-                    // Listener delivery is observational and must not change a committed lifecycle transition.
-                }
-            }
             return snapshot;
+        }
+    }
+
+    private void notifyCommitted(AgentRunSnapshot snapshot) {
+        awaiter.signal(snapshot.runId());
+        for (AgentRunListener listener : listeners) {
+            try {
+                listener.onRunChanged(snapshot);
+            } catch (RuntimeException ignored) {
+                // Listener delivery is observational and must not change committed state.
+            }
         }
     }
 }

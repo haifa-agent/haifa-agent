@@ -83,9 +83,9 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
             CheckpointRow metadata = mapper.findCheckpoint(checkpointId);
             if (metadata == null) return Optional.empty();
             CheckpointPayloadRow payload = mapper.findCheckpointPayload(checkpointId);
-            if (payload == null) throw new IllegalStateException("checkpoint payload is missing");
+            if (payload == null) throw corruption("checkpoint payload is missing");
             if (!metadata.stateHash().equals(payload.stateHash())) {
-                throw new IllegalStateException("checkpoint metadata and payload hashes differ");
+                throw corruption("checkpoint metadata and payload hashes differ");
             }
             RuntimeCheckpointState restored = codecs.decode(
                     SqliteRuntimePayloadTypes.CHECKPOINT_STATE,
@@ -95,10 +95,14 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
                             payload.statePayload(),
                             payload.payloadHash()));
             if (!payload.stateHash().equals(RuntimeCheckpointStateHasher.digest(restored))) {
-                throw new IllegalStateException("checkpoint state integrity validation failed");
+                throw corruption("checkpoint state integrity validation failed");
             }
             return Optional.of(restored);
         });
+    }
+
+    private static SqliteStoreException corruption(String message) {
+        return new SqliteStoreException(SqliteStoreFailure.CHECKPOINT_CORRUPTION, message);
     }
 
     @Override

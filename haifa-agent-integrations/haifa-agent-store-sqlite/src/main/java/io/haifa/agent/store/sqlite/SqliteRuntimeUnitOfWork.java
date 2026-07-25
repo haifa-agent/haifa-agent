@@ -45,6 +45,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         return requireContext().session();
     }
 
+    @Override
     public void afterCommit(Runnable listener) {
         requireContext().afterCommit.add(Objects.requireNonNull(listener, "listener must not be null"));
     }
@@ -70,7 +71,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
             active.set(context);
             boolean transactionStarted = false;
             try {
-                executeControl(connection, "BEGIN IMMEDIATE");
+                beginImmediate(connection);
                 transactionStarted = true;
                 result = work.get();
                 if (context.rollbackOnly) {
@@ -114,6 +115,20 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     private static void executeControl(Connection connection, String sql) throws SQLException {
         try (Statement statement = connection.createStatement()) {
             statement.execute(sql);
+        }
+    }
+
+    private static void beginImmediate(Connection connection) throws SQLException {
+        try {
+            executeControl(connection, "BEGIN IMMEDIATE");
+        } catch (SQLException exception) {
+            if (exception.getErrorCode() == 5 || exception.getErrorCode() == 6) {
+                throw new SqliteStoreException(
+                        SqliteStoreFailure.DATABASE_BUSY,
+                        "SQLite writer is busy before the unit of work began",
+                        exception);
+            }
+            throw exception;
         }
     }
 

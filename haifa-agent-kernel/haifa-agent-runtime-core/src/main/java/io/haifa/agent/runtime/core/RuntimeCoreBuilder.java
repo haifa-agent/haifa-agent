@@ -155,6 +155,7 @@ public final class RuntimeCoreBuilder {
     private CredentialBroker credentialBroker;
     private ModelRetryPolicy modelRetry = ModelRetryPolicy.none();
     private ToolRetryPolicy toolRetry = ToolRetryPolicy.none();
+    private PersistenceRetryPolicy persistenceRetry = PersistenceRetryPolicy.none();
     private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
     private TracePort trace = TracePort.noop();
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
@@ -296,6 +297,11 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    public RuntimeCoreBuilder persistenceRetry(RetryPolicy value) {
+        persistenceRetry = new PersistenceRetryPolicy(value);
+        return this;
+    }
+
     public RuntimeCoreBuilder repairRetry(RepairRetryPolicy value) {
         repairRetry = Objects.requireNonNull(value);
         return this;
@@ -413,8 +419,8 @@ public final class RuntimeCoreBuilder {
                 awaiter,
                 unitOfWork,
                 new RetryExecutor(Sleeper.threadSleep()),
-                PersistenceRetryPolicy.none());
-        RunControlService controlService = new DefaultRunControlService(controls, transitions);
+                persistenceRetry);
+        RunControlService controlService = new DefaultRunControlService(controls);
         CapabilityAuthorizer authorizer =
                 (run, binding) -> toolNames.contains(binding.alias().value());
         ToolPipeline pipeline = new ToolPipeline(
@@ -522,7 +528,14 @@ public final class RuntimeCoreBuilder {
                 trace,
                 new RuntimeStateReconciler(state, attempts, interactions, pipeline, time, configuredOwnership),
                 middleware);
-        AttemptExecutor attemptExecutor = new AttemptExecutor(attempts, loop, transitions, time, workerId);
+        AttemptExecutor attemptExecutor = new AttemptExecutor(
+                attempts,
+                loop,
+                transitions,
+                time,
+                workerId,
+                new RetryExecutor(Sleeper.threadSleep()),
+                persistenceRetry);
         ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
                 ? snapshots
                 : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot());
@@ -548,7 +561,10 @@ public final class RuntimeCoreBuilder {
                 time,
                 awaiter,
                 resumeCoordinator,
-                modelOutput);
+                modelOutput,
+                configuredOwnership,
+                new RetryExecutor(Sleeper.threadSleep()),
+                persistenceRetry);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {
