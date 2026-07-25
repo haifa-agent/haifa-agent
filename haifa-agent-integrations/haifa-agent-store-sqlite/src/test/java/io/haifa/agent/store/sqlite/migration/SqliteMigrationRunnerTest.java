@@ -29,7 +29,7 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(1);
+                    .isEqualTo(2);
             assertThat(queryLong(connection, "SELECT applied_at FROM schema_migration WHERE version = 1"))
                     .isEqualTo(SqliteTestSupport.NOW.toEpochMilli());
         }

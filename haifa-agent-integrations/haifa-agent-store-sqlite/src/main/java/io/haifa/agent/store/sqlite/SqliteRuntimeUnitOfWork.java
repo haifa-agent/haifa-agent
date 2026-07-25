@@ -45,6 +45,10 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         return requireContext().session();
     }
 
+    public void afterCommit(Runnable listener) {
+        requireContext().afterCommit.add(Objects.requireNonNull(listener, "listener must not be null"));
+    }
+
     private <T> T executeNested(Context context, Supplier<T> work) {
         context.depth++;
         try {
@@ -58,6 +62,8 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     }
 
     private <T> T executeOutermost(Supplier<T> work) {
+        T result;
+        java.util.List<Runnable> committedListeners;
         try (Connection connection = connections.openConnection();
                 SqlSession session = myBatis.openSession(connection)) {
             Context context = new Context(connection, session);
@@ -66,7 +72,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
             try {
                 executeControl(connection, "BEGIN IMMEDIATE");
                 transactionStarted = true;
-                T result = work.get();
+                result = work.get();
                 if (context.rollbackOnly) {
                     throw new SqliteStoreException(
                             SqliteStoreFailure.TRANSACTION_FAILED,
@@ -75,7 +81,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
                 session.flushStatements();
                 executeControl(connection, "COMMIT");
                 transactionStarted = false;
-                return result;
+                committedListeners = java.util.List.copyOf(context.afterCommit);
             } catch (RuntimeException | Error | SQLException exception) {
                 if (transactionStarted) {
                     rollback(connection, exception);
@@ -92,6 +98,8 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
             throw new SqliteStoreException(
                     SqliteStoreFailure.TRANSACTION_FAILED, "Unable to close SQLite unit of work", exception);
         }
+        committedListeners.forEach(Runnable::run);
+        return result;
     }
 
     private Context requireContext() {
@@ -122,6 +130,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         private final SqlSession session;
         private int depth = 1;
         private boolean rollbackOnly;
+        private final java.util.List<Runnable> afterCommit = new java.util.ArrayList<>();
 
         private Context(Connection connection, SqlSession session) {
             this.connection = connection;

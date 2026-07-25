@@ -135,6 +135,29 @@ class SqliteRuntimeUnitOfWorkTest {
                 .isEqualTo(SqliteStoreFailure.NO_ACTIVE_UNIT_OF_WORK);
     }
 
+    @Test
+    void runsAfterCommitListenersOutsideTheCommittedContext() {
+        SqliteRuntimeUnitOfWork unitOfWork =
+                SqliteTestSupport.foundation(directory).unitOfWork();
+        AtomicReference<Boolean> activeInListener = new AtomicReference<>();
+        AtomicReference<Boolean> nestedWorkActive = new AtomicReference<>();
+
+        unitOfWork.execute(() -> {
+            unitOfWork.afterCommit(() -> {
+                activeInListener.set(unitOfWork.isActive());
+                unitOfWork.execute(() -> {
+                    nestedWorkActive.set(unitOfWork.isActive());
+                    return null;
+                });
+            });
+            return null;
+        });
+
+        assertThat(activeInListener.get()).isFalse();
+        assertThat(nestedWorkActive.get()).isTrue();
+        assertThat(unitOfWork.isActive()).isFalse();
+    }
+
     private static void execute(Connection connection, String sql) {
         try (Statement statement = connection.createStatement()) {
             statement.execute(sql);
