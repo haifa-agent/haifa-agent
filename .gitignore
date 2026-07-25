@@ -10,3 +10,5 @@ target/
 Thumbs.db
 docs/
 docs/*
+local-tmp/
+third-agent/
