@@ -8,9 +8,11 @@ import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -60,12 +62,21 @@ public final class RuntimeModelOutputPublisher {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(after, "after must not be null");
         if (limit < 1 || limit > 10_000) throw new IllegalArgumentException("limit must be between 1 and 10000");
-        return events.eventsFor(runId).stream()
-                .filter(event -> event.sequence() > after.sequence())
-                .filter(event -> event.type().startsWith(PREFIX))
-                .limit(limit)
-                .map(RuntimeModelOutputPublisher::project)
-                .toList();
+        OptionalLong head = events.headSequence(runId);
+        if (head.isEmpty() || after.sequence() >= head.getAsLong()) return List.of();
+        List<AgentRunOutputEvent> projected = new ArrayList<>(limit);
+        long cursor = after.sequence();
+        while (cursor < head.getAsLong() && projected.size() < limit) {
+            var slice =
+                    events.eventsAfter(runId, cursor, head, Math.min(1_000, Math.max(32, limit - projected.size())));
+            if (slice.events().isEmpty()) break;
+            for (RuntimeEvent event : slice.events()) {
+                cursor = event.sequence();
+                if (event.type().startsWith(PREFIX)) projected.add(project(event));
+                if (projected.size() == limit) break;
+            }
+        }
+        return List.copyOf(projected);
     }
 
     public void addListener(AgentRunOutputListener listener) {

@@ -49,7 +49,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                 if (ToolJournalState.valueOf(existing.state()) == ToolJournalState.INTENT_RECORDED) return null;
                 throw new IllegalStateException("tool journal intent already advanced");
             }
-            Instant now = clock.instant();
+            Instant now = Instant.ofEpochMilli(clock.millis());
             mapper.insertToolJournal(new ToolJournalRow(
                     runId.value(),
                     key.value(),
@@ -176,7 +176,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                     payload == null ? null : payload.bytes(),
                     payload == null ? null : payload.hash(),
                     current.createdAt(),
-                    clock.instant());
+                    Instant.ofEpochMilli(clock.millis()));
             if (mapper.updateToolJournal(updated, current.state()) != 1) {
                 throw new IllegalStateException("concurrent tool journal transition conflict");
             }

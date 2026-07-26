@@ -27,6 +27,7 @@ import io.haifa.agent.policy.core.InMemoryPolicyAuthorizationEvidenceStore;
 import io.haifa.agent.policy.core.InMemoryPolicyStore;
 import io.haifa.agent.policy.core.LocalCapabilityAuthorityVerifier;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -177,7 +178,7 @@ public final class CodingAgentPolicyAssembly {
                 "coding-default-v1",
                 Optional.empty(),
                 digest,
-                clock.instant());
+                Instant.ofEpochMilli(clock.millis()));
     }
 
     private static PolicyRule rule(

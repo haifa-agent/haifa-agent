@@ -77,7 +77,8 @@ public final class McpToolRefreshCoordinator implements AutoCloseable {
             long generation = generations
                     .computeIfAbsent(serverId, ignored -> new AtomicLong())
                     .incrementAndGet();
-            var snapshot = new McpToolCatalogCandidateSnapshot(serverId, generation, clock.instant(), candidates);
+            var snapshot = new McpToolCatalogCandidateSnapshot(
+                    serverId, generation, java.time.Instant.ofEpochMilli(clock.millis()), candidates);
             latest.put(serverId, snapshot);
             resultConsumer.accept(snapshot, null);
         } catch (RuntimeException exception) {

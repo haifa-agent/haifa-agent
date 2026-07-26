@@ -32,6 +32,135 @@ class SafeTranscriptMapperRegistryTest {
     }
 
     @Test
+    void mapsInteractionApprovalPolicyAndInputEventsWithExplicitSafeFields() {
+        var registry = SafeTranscriptMapperRegistry.defaults();
+
+        assertThat(registry.map(message(
+                                "approval.requested",
+                                "1",
+                                Map.of(
+                                        "requestId",
+                                        "request-1",
+                                        "decisionId",
+                                        "decision-1",
+                                        "challenge",
+                                        "APPROVAL",
+                                        "semantics",
+                                        "CAPABILITY_CONFIRMATION",
+                                        "targetPayload",
+                                        "must-not-project")))
+                        .payload())
+                .containsExactlyInAnyOrderEntriesOf(Map.of(
+                        "requestId",
+                        "request-1",
+                        "decisionId",
+                        "decision-1",
+                        "challenge",
+                        "APPROVAL",
+                        "semantics",
+                        "CAPABILITY_CONFIRMATION"));
+        assertThat(registry.map(message(
+                                "approval.responded",
+                                "1",
+                                Map.of(
+                                        "requestId",
+                                        "request-1",
+                                        "responseType",
+                                        "REJECT",
+                                        "responder",
+                                        "must-not-project")))
+                        .payload())
+                .containsExactlyInAnyOrderEntriesOf(Map.of("requestId", "request-1", "responseType", "REJECT"));
+        assertThat(registry.map(message(
+                                "approval.authority.verified",
+                                "1",
+                                Map.of(
+                                        "requestId",
+                                        "request-1",
+                                        "responseId",
+                                        "response-1",
+                                        "outcome",
+                                        "ACCEPTED",
+                                        "reasonCode",
+                                        "AUTHORITY_VERIFIED")))
+                        .payload())
+                .containsEntry("outcome", "ACCEPTED");
+        assertThat(registry.map(message(
+                                "approval.target.validated",
+                                "1",
+                                Map.of(
+                                        "requestId",
+                                        "request-1",
+                                        "responseId",
+                                        "response-1",
+                                        "outcome",
+                                        "CURRENT",
+                                        "reasonCode",
+                                        "TARGET_CURRENT")))
+                        .payload())
+                .containsEntry("outcome", "CURRENT");
+        assertThat(registry.map(message(
+                                "policy.decision.made",
+                                "1",
+                                Map.of(
+                                        "decisionId",
+                                        "decision-1",
+                                        "snapshotId",
+                                        "snapshot-internal",
+                                        "effect",
+                                        "ASK",
+                                        "challenge",
+                                        "APPROVAL",
+                                        "reasonCode",
+                                        "NETWORK_REQUIRES_APPROVAL")))
+                        .payload())
+                .containsExactlyInAnyOrderEntriesOf(Map.of(
+                        "decisionId",
+                        "decision-1",
+                        "effect",
+                        "ASK",
+                        "challenge",
+                        "APPROVAL",
+                        "reasonCode",
+                        "NETWORK_REQUIRES_APPROVAL"));
+        assertThat(registry.map(message(
+                                "interaction.requested",
+                                "1",
+                                Map.of("requestId", "request-2", "kind", "clarification")))
+                        .payload())
+                .containsExactlyInAnyOrderEntriesOf(Map.of("requestId", "request-2", "kind", "clarification"));
+        assertThat(registry.map(message(
+                                "interaction.expired", "1", Map.of("requestId", "request-2", "outcome", "FAIL_RUN")))
+                        .payload())
+                .containsExactlyInAnyOrderEntriesOf(Map.of("requestId", "request-2", "outcome", "FAIL_RUN"));
+        assertThat(registry.map(message("run.input.accepted", "1", Map.of("inputId", "input-1", "kind", "steer")))
+                        .payload())
+                .containsExactlyInAnyOrderEntriesOf(Map.of("inputId", "input-1", "kind", "steer"));
+        assertThat(registry.map(message(
+                                "run.input.applied",
+                                "1",
+                                Map.of(
+                                        "inputId",
+                                        "input-1",
+                                        "attemptId",
+                                        "attempt-2",
+                                        "iteration",
+                                        3,
+                                        "safePoint",
+                                        "BEFORE_ITERATION")))
+                        .payload())
+                .containsExactlyInAnyOrderEntriesOf(Map.of(
+                        "inputId",
+                        "input-1",
+                        "attemptId",
+                        "attempt-2",
+                        "iteration",
+                        3,
+                        "safePoint",
+                        "BEFORE_ITERATION"));
+    }
+
+    @Test
     void unknownTypeAndSchemaFailClosed() {
         assertThatThrownBy(() -> SafeTranscriptMapperRegistry.defaults()
                         .map(message("model.raw-response", "1", Map.of("response", "secret"))))

@@ -81,11 +81,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -94,6 +96,7 @@ import javax.crypto.spec.SecretKeySpec;
 /** Builds an in-process Coding Agent over one explicitly selected local workspace. */
 final class LocalCodingAgent implements AutoCloseable {
     private static final AgentDefinitionId DEFINITION_ID = new AgentDefinitionId("haifa-cli-coding-agent");
+    private static final Duration CLOSE_SETTLE_TIMEOUT = Duration.ofSeconds(3);
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final AgentRuntime runtime;
@@ -105,6 +108,7 @@ final class LocalCodingAgent implements AutoCloseable {
     private final PrincipalRef principal;
     private final Clock clock;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final Set<AgentRunId> startedRuns = ConcurrentHashMap.newKeySet();
 
     private LocalCodingAgent(
             IdentifierGenerator identifiers,
@@ -402,7 +406,7 @@ final class LocalCodingAgent implements AutoCloseable {
         if (closed.get()) throw new IllegalStateException("coding agent is closed");
         AgentSessionId sessionId = new AgentSessionId(identifiers.nextValue());
         persistence.provisionUserSession(sessionId, tenant, principal, clock);
-        return runtime.start(new AgentRunRequest(
+        AgentRunSnapshot accepted = runtime.start(new AgentRunRequest(
                 identifiers.nextValue(),
                 DEFINITION_ID,
                 Optional.empty(),
@@ -412,6 +416,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 message,
                 List.of(new TextPart(message, "text/plain")),
                 RuntimeOverrides.NONE));
+        startedRuns.add(accepted.runId());
+        return accepted;
     }
 
     AgentRuntime runtime() {
@@ -456,6 +462,10 @@ final class LocalCodingAgent implements AutoCloseable {
         return List.copyOf(traces);
     }
 
+    boolean executionSettled(AgentRunId runId) {
+        return persistence.ports().attempts().activeFor(runId).isEmpty();
+    }
+
     static Set<String> effectiveBuiltInTools(CliConfiguration configuration) {
         java.util.Set<String> configuredTools = new java.util.HashSet<>(configuration.enabledTools());
         if (configuration.approval() == ApprovalMode.DENY) configuredTools.remove("execution.run");
@@ -496,11 +506,12 @@ final class LocalCodingAgent implements AutoCloseable {
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
-        RuntimeException failure = null;
+        RuntimeException failure = awaitTerminalAttempts();
         try {
             mcpPlatform.close();
         } catch (RuntimeException exception) {
-            failure = exception;
+            if (failure == null) failure = exception;
+            else failure.addSuppressed(exception);
         }
         try {
             persistence.close();
@@ -509,6 +520,28 @@ final class LocalCodingAgent implements AutoCloseable {
             else failure.addSuppressed(exception);
         }
         if (failure != null) throw failure;
+    }
+
+    private RuntimeException awaitTerminalAttempts() {
+        long deadlineMillis = System.currentTimeMillis() + CLOSE_SETTLE_TIMEOUT.toMillis();
+        for (AgentRunId runId : startedRuns) {
+            if (runtime.find(runId)
+                    .filter(snapshot -> snapshot.status().isTerminal())
+                    .isEmpty()) continue;
+            while (!executionSettled(runId) && System.currentTimeMillis() < deadlineMillis) {
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return new IllegalStateException(
+                            "interrupted while waiting for execution attempt persistence", exception);
+                }
+            }
+            if (!executionSettled(runId)) {
+                return new IllegalStateException("execution attempt did not settle before coding agent close");
+            }
+        }
+        return null;
     }
 
     private static ModelContinuationProtector resolveContinuationProtector(CliConfiguration configuration) {

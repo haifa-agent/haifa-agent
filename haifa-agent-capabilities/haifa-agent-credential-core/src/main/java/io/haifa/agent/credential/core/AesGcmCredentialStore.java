@@ -74,7 +74,7 @@ public final class AesGcmCredentialStore implements CredentialStore {
     public CredentialLease lease(
             CredentialReference reference, TenantRef tenant, CredentialDefinitionId definitionId, Instant expiresAt) {
         Objects.requireNonNull(expiresAt, "expiresAt");
-        if (!expiresAt.isAfter(clock.instant())) {
+        if (!expiresAt.isAfter(Instant.ofEpochMilli(clock.millis()))) {
             throw new CredentialException("credential lease expiry must be in the future");
         }
         EncryptedCredentialPayload encrypted =
@@ -150,7 +150,7 @@ public final class AesGcmCredentialStore implements CredentialStore {
             if (secret == null) {
                 throw new IllegalStateException("credential lease is closed");
             }
-            if (!expiresAt.isAfter(clock.instant())) {
+            if (!expiresAt.isAfter(Instant.ofEpochMilli(clock.millis()))) {
                 close();
                 throw new IllegalStateException("credential lease is expired");
             }

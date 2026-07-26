@@ -96,7 +96,7 @@ class UtilityMcpCompatibilityLiveIT {
                     names.stream().sorted().toList(),
                     token == null || token.isBlank(),
                     token != null && !token.isBlank(),
-                    Instant.now());
+                    Instant.ofEpochMilli(System.currentTimeMillis()));
 
             assertThat(snapshot.negotiatedProtocolVersion()).isEqualTo("2025-11-25");
             assertThat(snapshot.toolsCapability()).isTrue();

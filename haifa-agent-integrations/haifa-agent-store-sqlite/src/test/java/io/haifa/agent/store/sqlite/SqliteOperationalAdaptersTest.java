@@ -10,16 +10,24 @@ import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.api.InteractionState;
+import io.haifa.agent.runtime.api.RunInputId;
+import io.haifa.agent.runtime.api.RunInputReceiptStatus;
+import io.haifa.agent.runtime.api.RunInputSubmission;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
 import io.haifa.agent.runtime.api.RuntimeCommandResult;
 import io.haifa.agent.runtime.api.RuntimeCommandStatus;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
+import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
+import io.haifa.agent.runtime.core.attempt.ExecutionAttemptId;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
@@ -28,6 +36,8 @@ import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -43,7 +53,7 @@ class SqliteOperationalAdaptersTest {
         var run = SqliteAggregateTestData.prepareRun(first);
         var event = first.events().append(run.id(), "run.started", Map.of("phase", "start"), NOW);
         OutboxMessage message = new OutboxMessage(
-                "event-1",
+                event.eventId(),
                 run.id(),
                 event.sequence(),
                 event.type(),
@@ -77,9 +87,9 @@ class SqliteOperationalAdaptersTest {
                 .contains(run.id());
         assertThat(reopened.idempotency().findCommandResult("tenant:principal", "command-result-key"))
                 .contains(commandResult);
-        assertThat(reopened.outbox().markConsumed("worker", "event-1")).isTrue();
-        assertThat(reopened.outbox().markConsumed("worker", "event-1")).isFalse();
-        reopened.outbox().markPublished("event-1");
+        assertThat(reopened.outbox().markConsumed("worker", event.eventId())).isTrue();
+        assertThat(reopened.outbox().markConsumed("worker", event.eventId())).isFalse();
+        reopened.outbox().markPublished(event.eventId());
         assertThat(reopened.outbox().pending()).isEmpty();
         assertThatThrownBy(() -> reopened.idempotency()
                         .recordRun("tenant:principal", "start", "key", new io.haifa.agent.core.run.AgentRunId("other")))
@@ -221,6 +231,120 @@ class SqliteOperationalAdaptersTest {
             responseStart.countDown();
             assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(true, false);
         }
+    }
+
+    @Test
+    void interactionAndSteerStateSurviveReopenAndApplyExactlyOnce(@TempDir java.nio.file.Path directory) {
+        SqliteStoreFoundation first = SqliteTestSupport.foundation(directory);
+        var run = SqliteAggregateTestData.prepareRun(first);
+        var tenant = new TenantRef("tenant");
+        var principal = new PrincipalRef("principal", "user");
+        RuntimeCallerContext caller = new RuntimeCallerContext(tenant, principal);
+        var request = new InteractionRequest(
+                new InteractionRequestId("recoverable-request"),
+                run.id(),
+                tenant,
+                principal,
+                "clarification",
+                "Provide a safe value",
+                false,
+                NOW,
+                NOW.plusSeconds(60));
+        first.interactions().create(request);
+
+        SqliteStoreFoundation afterRequest = SqliteTestSupport.foundation(directory);
+        assertThat(afterRequest.interactions().pendingRecord(run.id()))
+                .get()
+                .extracting(record -> record.revision(), record -> record.state())
+                .containsExactly(0L, InteractionState.PENDING);
+        InteractionResponseSubmission response = new InteractionResponseSubmission(
+                new InteractionResponseId("recoverable-response"),
+                request.id(),
+                run.id(),
+                0,
+                InteractionAction.SUBMIT,
+                List.of(new TextPart("safe answer", "plain")),
+                "response-key",
+                NOW.plusSeconds(1));
+        assertThat(afterRequest
+                        .interactions()
+                        .respond(response, caller, NOW.plusSeconds(2))
+                        .newlyRecorded())
+                .isTrue();
+        assertThat(afterRequest
+                        .interactions()
+                        .respond(response, caller, NOW.plusSeconds(2))
+                        .newlyRecorded())
+                .isFalse();
+
+        SqliteStoreFoundation afterResponse = SqliteTestSupport.foundation(directory);
+        assertThat(afterResponse.interactions().record(request.id())).get().satisfies(record -> {
+            assertThat(record.revision()).isEqualTo(1);
+            assertThat(record.state()).isEqualTo(InteractionState.RESPONDED);
+            assertThat(record.action()).contains(InteractionAction.SUBMIT);
+        });
+        afterResponse.interactions().markResolutionApplied(request.id());
+        afterResponse.interactions().markResolutionApplied(request.id());
+        assertThat(SqliteTestSupport.foundation(directory).interactions().record(request.id()))
+                .get()
+                .extracting(record -> record.revision(), record -> record.state())
+                .containsExactly(2L, InteractionState.APPLIED);
+
+        RunInputSubmission input = new RunInputSubmission(
+                new RunInputId("recoverable-input"),
+                run.id(),
+                OptionalLong.of(run.version()),
+                List.of(new TextPart("steer safely", "plain")),
+                "input-key",
+                NOW.plusSeconds(3));
+        SqliteStoreFoundation inputStore = SqliteTestSupport.foundation(directory);
+        assertThat(inputStore
+                        .runInputs()
+                        .accept(input, "tenant|user|principal", NOW.plusSeconds(3))
+                        .newlyAccepted())
+                .isTrue();
+        assertThat(inputStore
+                        .runInputs()
+                        .accept(input, "tenant|user|principal", NOW.plusSeconds(3))
+                        .newlyAccepted())
+                .isFalse();
+
+        SqliteStoreFoundation afterInput = SqliteTestSupport.foundation(directory);
+        assertThat(afterInput.runInputs().pending(run.id(), 10))
+                .singleElement()
+                .satisfies(record -> assertThat(record.status()).isEqualTo(RunInputReceiptStatus.ACCEPTED));
+        assertThatThrownBy(() -> afterInput
+                        .runInputs()
+                        .accept(
+                                new RunInputSubmission(
+                                        new RunInputId("different-input-id"),
+                                        run.id(),
+                                        OptionalLong.of(run.version()),
+                                        List.of(new TextPart("different", "plain")),
+                                        "input-key",
+                                        NOW.plusSeconds(3)),
+                                "tenant|user|principal",
+                                NOW.plusSeconds(3)))
+                .isInstanceOf(io.haifa.agent.runtime.api.RuntimeContractException.class)
+                .satisfies(exception -> assertThat(
+                                ((io.haifa.agent.runtime.api.RuntimeContractException) exception).code())
+                        .isEqualTo(io.haifa.agent.runtime.api.RuntimeErrorCode.IDEMPOTENCY_CONFLICT));
+
+        var attempt = new AgentRunExecutionAttempt(
+                new ExecutionAttemptId("input-attempt"), run.id(), 1, NOW.plusSeconds(4), Optional.empty());
+        afterInput.attempts().insert(attempt);
+        assertThat(afterInput
+                        .runInputs()
+                        .markApplied(input.inputId(), attempt.attemptId().value(), 7, NOW.plusSeconds(5))
+                        .status())
+                .isEqualTo(RunInputReceiptStatus.APPLIED);
+        assertThat(SqliteTestSupport.foundation(directory).runInputs().find(input.inputId()))
+                .get()
+                .satisfies(record -> {
+                    assertThat(record.status()).isEqualTo(RunInputReceiptStatus.APPLIED);
+                    assertThat(record.attemptId()).contains(attempt.attemptId().value());
+                    assertThat(record.iteration()).hasValue(7);
+                });
     }
 
     private static boolean attemptResponse(

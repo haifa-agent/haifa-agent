@@ -15,3 +15,7 @@ Runner 默认只生成计划。附加的 `runner` JAR 由私有 `test-config/scr
 - 不读取环境中的 Secret，不记录完整 Prompt、reasoning 或原始 Provider 响应；
 - 产品模块不得依赖本模块；
 - 当前模块不作为发布制品部署。
+
+Task 02 没有把 SQLite、Cursor Codec 或 Subscription 状态机复制到 Testkit；共享 Journal 契约由
+Adapter 相邻测试直接对内存与 SQLite 两个实现执行。等 Task 03 至少有两个 Transport 实现/装配消费
+相同 Fixture 时，再把 transport-neutral Fixture 提升到 Testkit/TCK。

@@ -243,6 +243,12 @@ class ExternalModelRuntimeTest {
                         .containsEntry("category", "MALFORMED_RESPONSE")
                         .containsEntry("providerCode", "undisclosed_tool")
                         .containsEntry("providerId", "deepseek"));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("runtime.error"))
+                .singleElement()
+                .satisfies(trace -> assertThat(trace.safeAttributes())
+                        .containsEntry("errorCode", "RUNTIME_EXECUTION_FAILED")
+                        .containsKeys("exceptionType", "rootExceptionType", "failureTypes"));
     }
 
     @Test

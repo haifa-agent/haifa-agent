@@ -108,7 +108,11 @@ final class SqliteLoopStateComponent {
             int inserted = unitOfWork
                     .mapper(RuntimeStoreMapper.class)
                     .insertOutput(new RunOutputRow(
-                            runId.value(), encoded.schemaVersion(), encoded.bytes(), encoded.hash(), clock.instant()));
+                            runId.value(),
+                            encoded.schemaVersion(),
+                            encoded.bytes(),
+                            encoded.hash(),
+                            java.time.Instant.ofEpochMilli(clock.millis())));
             if (inserted != 1) throw new IllegalStateException("run output is already stored");
             return null;
         });
@@ -162,7 +166,7 @@ final class SqliteLoopStateComponent {
                     content.bytes(),
                     configuration.reference().contentHash(),
                     content.hash(),
-                    clock.instant());
+                    java.time.Instant.ofEpochMilli(clock.millis()));
             mapper.insertConfiguration(row);
             ConfigurationRow stored =
                     mapper.findConfiguration(configuration.reference().snapshotId());

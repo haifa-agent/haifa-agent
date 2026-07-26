@@ -75,7 +75,7 @@ public final class PolicyDecisionExecutionPolicy implements ExecutionPolicy {
                     .filter(value -> value.requester()
                             .principal()
                             .equals(request.context().actor()))
-                    .filter(value -> value.validAt(clock.instant()));
+                    .filter(value -> value.validAt(java.time.Instant.ofEpochMilli(clock.millis())));
             if (satisfied.isEmpty()) {
                 throw reject("POLICY_CHALLENGE_UNSATISFIED", "policy approval evidence is unavailable");
             }

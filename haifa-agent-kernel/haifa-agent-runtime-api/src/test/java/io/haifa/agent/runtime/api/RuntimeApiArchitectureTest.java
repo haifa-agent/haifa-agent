@@ -16,6 +16,9 @@ class RuntimeApiArchitectureTest {
                     "org.springframework.ai..",
                     "com.alibaba.cloud.ai..",
                     "jakarta.persistence..",
+                    "com.fasterxml.jackson..",
+                    "reactor..",
+                    "io.haifa.agent.contract..",
                     "io.haifa.agent.product..",
                     "io.haifa.agent.integration..",
                     "io.haifa.agent.runtime.core..");

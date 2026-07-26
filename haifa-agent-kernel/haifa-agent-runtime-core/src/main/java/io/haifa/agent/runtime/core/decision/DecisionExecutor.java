@@ -325,7 +325,7 @@ public final class DecisionExecutor {
     private void appendSecurityEvent(AgentRun run, String type, Map<String, Object> data, java.time.Instant at) {
         var event = events.append(run.id(), type, data, at);
         outbox.append(new OutboxMessage(
-                ids.nextValue(),
+                event.eventId(),
                 event.runId(),
                 event.sequence(),
                 event.type(),
@@ -470,23 +470,33 @@ public final class DecisionExecutor {
     private AgentLoopDirective executeInteraction(
             AgentRun run, InteractionDecision decision, AgentLoopContext loopContext) {
         String requestId = ids.nextValue();
-        interactions.create(new InteractionRequest(
-                new InteractionRequestId(requestId),
-                run.id(),
-                run.tenant(),
-                run.principal(),
-                decision.interactionType(),
-                decision.prompt(),
-                decision.approval(),
-                time.now(),
-                time.now().plus(java.time.Duration.ofHours(1))));
-        checkpoints.capture(
-                run,
-                loopContext.iteration(),
-                loopContext.fingerprints(),
-                loopContext.forcedContextRebuildAttempts(),
-                CheckpointType.INTERACTION);
-        transitions.waiting(run, new InteractionRequestRef(requestId, decision.interactionType()), decision.approval());
+        var createdAt = time.now();
+        unitOfWork.execute(() -> {
+            interactions.create(new InteractionRequest(
+                    new InteractionRequestId(requestId),
+                    run.id(),
+                    run.tenant(),
+                    run.principal(),
+                    decision.interactionType(),
+                    decision.prompt(),
+                    decision.approval(),
+                    createdAt,
+                    createdAt.plus(java.time.Duration.ofHours(1))));
+            checkpoints.capture(
+                    run,
+                    loopContext.iteration(),
+                    loopContext.fingerprints(),
+                    loopContext.forcedContextRebuildAttempts(),
+                    CheckpointType.INTERACTION);
+            transitions.waiting(
+                    run, new InteractionRequestRef(requestId, decision.interactionType()), decision.approval());
+            appendSecurityEvent(
+                    run,
+                    "interaction.requested",
+                    Map.of("requestId", requestId, "kind", decision.interactionType()),
+                    createdAt);
+            return null;
+        });
         return AgentLoopDirective.WAIT;
     }
 

@@ -10,7 +10,6 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -104,12 +103,16 @@ public final class HaifaCliMain {
             ApprovalMode approval,
             PrintStream output)
             throws InterruptedException {
-        Instant deadline = Instant.now().plus(timeout);
+        long deadlineMillis = System.currentTimeMillis() + timeout.toMillis();
         BufferedReader input = new BufferedReader(new InputStreamReader(System.in));
-        while (Instant.now().isBefore(deadline)) {
+        while (System.currentTimeMillis() < deadlineMillis) {
             var snapshot = agent.runtime().find(runId).orElseThrow();
             if (snapshot.status().isTerminal()) return snapshot;
-            agent.interactions().pending(runId).ifPresent(request -> respond(agent, request, approval, input, output));
+            if (agent.executionSettled(runId)) {
+                agent.interactions()
+                        .pending(runId)
+                        .ifPresent(request -> respond(agent, request, approval, input, output));
+            }
             Thread.sleep(50);
         }
         return agent.runtime().find(runId).orElseThrow();
@@ -154,10 +157,10 @@ public final class HaifaCliMain {
     private static io.haifa.agent.runtime.api.AgentRunSnapshot awaitTerminal(
             LocalCodingAgent agent, io.haifa.agent.core.run.AgentRunId runId, Duration timeout)
             throws InterruptedException {
-        Instant deadline = Instant.now().plus(timeout);
+        long deadlineMillis = System.currentTimeMillis() + timeout.toMillis();
         io.haifa.agent.runtime.api.AgentRunSnapshot snapshot =
                 agent.runtime().find(runId).orElseThrow();
-        while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+        while (!snapshot.status().isTerminal() && System.currentTimeMillis() < deadlineMillis) {
             Thread.sleep(25);
             snapshot = agent.runtime().find(runId).orElseThrow();
         }

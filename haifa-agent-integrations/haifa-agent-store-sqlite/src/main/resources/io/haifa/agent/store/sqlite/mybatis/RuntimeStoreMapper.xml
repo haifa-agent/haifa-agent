@@ -677,27 +677,60 @@
             <arg column="run_id" javaType="java.lang.String"/>
             <arg column="sequence" javaType="_long"/>
             <arg column="type" javaType="java.lang.String"/>
+            <arg column="event_schema_version" javaType="java.lang.String"/>
             <arg column="data_schema_version" javaType="java.lang.String"/>
             <arg column="data_payload" javaType="[B"/>
             <arg column="data_hash" javaType="java.lang.String"/>
             <arg column="occurred_at" javaType="java.time.Instant"
                  typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="correlation_id" javaType="java.lang.String"/>
+            <arg column="causation_id" javaType="java.lang.String"/>
         </constructor>
     </resultMap>
 
     <sql id="eventColumns">
-        event_id, run_id, sequence, type, data_schema_version, data_payload, data_hash, occurred_at
+        event_id, run_id, sequence, type, event_schema_version,
+        data_schema_version, data_payload, data_hash, occurred_at, correlation_id, causation_id
     </sql>
 
-    <select id="nextEventSequence" resultType="long">
-        SELECT COALESCE(MAX(sequence), 0) + 1 FROM runtime_event WHERE run_id = #{runId}
+    <insert id="ensureEventStream">
+        INSERT INTO runtime_event_stream (
+            run_id, head_sequence, earliest_sequence, updated_at
+        ) VALUES (
+            #{runId}, #{headSequence}, #{earliestSequence}, #{updatedAt}
+        )
+        ON CONFLICT(run_id) DO NOTHING
+    </insert>
+
+    <select id="eventHead" resultType="long">
+        SELECT head_sequence FROM runtime_event_stream WHERE run_id = #{runId}
     </select>
+
+    <select id="eventEarliest" resultType="long">
+        SELECT earliest_sequence FROM runtime_event_stream WHERE run_id = #{runId}
+    </select>
+
+    <select id="minimumStoredEventSequence" resultType="long">
+        SELECT MIN(sequence) FROM runtime_event WHERE run_id = #{runId}
+    </select>
+
+    <update id="advanceEventHead">
+        UPDATE runtime_event_stream
+        SET head_sequence = #{newHead},
+            earliest_sequence = CASE
+                WHEN head_sequence = 0 THEN #{newHead}
+                ELSE earliest_sequence
+            END,
+            updated_at = #{updatedAt}
+        WHERE run_id = #{runId} AND head_sequence = #{expectedHead}
+    </update>
 
     <insert id="insertEvent">
         INSERT INTO runtime_event (<include refid="eventColumns"/>)
         VALUES (
-            #{row.eventId}, #{row.runId}, #{row.sequence}, #{row.type},
-            #{row.dataSchemaVersion}, #{row.dataPayload}, #{row.dataHash}, #{row.occurredAt}
+            #{row.eventId}, #{row.runId}, #{row.sequence}, #{row.type}, #{row.eventSchemaVersion},
+            #{row.dataSchemaVersion}, #{row.dataPayload}, #{row.dataHash}, #{row.occurredAt},
+            #{row.correlationId}, #{row.causationId}
         )
     </insert>
 
@@ -706,14 +739,41 @@
         WHERE run_id = #{runId} ORDER BY sequence ASC
     </select>
 
+    <select id="eventsAfter" resultMap="runtimeEventRow">
+        SELECT <include refid="eventColumns"/> FROM runtime_event
+        WHERE run_id = #{runId}
+          AND sequence > #{exclusiveSequence}
+          AND sequence &lt;= #{observedHead}
+        ORDER BY sequence ASC
+        LIMIT #{limit}
+    </select>
+
     <select id="findEventBySequence" resultMap="runtimeEventRow">
         SELECT <include refid="eventColumns"/> FROM runtime_event
         WHERE run_id = #{runId} AND sequence = #{sequence}
     </select>
 
-    <update id="replaceEventId">
-        UPDATE runtime_event SET event_id = #{eventId}
-        WHERE run_id = #{runId} AND sequence = #{sequence} AND event_id = #{expectedId}
+    <delete id="deletePublishedOutboxBefore">
+        DELETE FROM outbox
+        WHERE run_id = #{runId}
+          AND sequence &lt; #{retainFromSequence}
+          AND published_at IS NOT NULL
+    </delete>
+
+    <delete id="deleteEventsBefore">
+        DELETE FROM runtime_event
+        WHERE run_id = #{runId}
+          AND sequence &lt; #{retainFromSequence}
+          AND NOT EXISTS (
+              SELECT 1 FROM outbox
+              WHERE outbox.event_id = runtime_event.event_id
+          )
+    </delete>
+
+    <update id="updateEventEarliest">
+        UPDATE runtime_event_stream
+        SET earliest_sequence = #{earliestSequence}, updated_at = #{updatedAt}
+        WHERE run_id = #{runId}
     </update>
 
     <resultMap id="outboxRow" type="io.haifa.agent.store.sqlite.mybatis.OutboxRow">
@@ -884,12 +944,20 @@
                  typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
             <arg column="expires_at" javaType="java.time.Instant"
                  typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revision" javaType="_long"/>
+            <arg column="kind" javaType="java.lang.String"/>
+            <arg column="state" javaType="java.lang.String"/>
+            <arg column="expiration_outcome" javaType="java.lang.String"/>
+            <arg column="state_reason_code" javaType="java.lang.String"/>
+            <arg column="state_changed_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
         </constructor>
     </resultMap>
 
     <sql id="interactionRequestColumns">
         request_id, run_id, tenant_id, principal_id, principal_type, type, prompt, approval,
-        target_type, target_schema_version, target_payload, target_hash, created_at, expires_at
+        target_type, target_schema_version, target_payload, target_hash, created_at, expires_at,
+        revision, kind, state, expiration_outcome, state_reason_code, state_changed_at
     </sql>
 
     <insert id="insertInteractionRequest">
@@ -898,7 +966,9 @@
             #{row.requestId}, #{row.runId}, #{row.tenantId}, #{row.principalId},
             #{row.principalType}, #{row.type}, #{row.prompt}, #{row.approval},
             #{row.targetType}, #{row.targetSchemaVersion}, #{row.targetPayload},
-            #{row.targetHash}, #{row.createdAt}, #{row.expiresAt}
+            #{row.targetHash}, #{row.createdAt}, #{row.expiresAt}, #{row.revision},
+            #{row.kind}, #{row.state}, #{row.expirationOutcome},
+            #{row.stateReasonCode}, #{row.stateChangedAt}
         )
     </insert>
 
@@ -914,12 +984,17 @@
 
     <select id="pendingInteraction" resultMap="interactionRequestRow">
         SELECT <include refid="interactionRequestColumns"/>
-        FROM interaction_request request
-        WHERE run_id = #{runId}
-          AND NOT EXISTS (
-              SELECT 1 FROM interaction_response response WHERE response.request_id = request.request_id
-          )
+        FROM interaction_request
+        WHERE run_id = #{runId} AND state = 'PENDING'
         ORDER BY created_at ASC, request_id ASC LIMIT 1
+    </select>
+
+    <select id="dueInteractions" resultMap="interactionRequestRow">
+        SELECT <include refid="interactionRequestColumns"/>
+        FROM interaction_request
+        WHERE run_id = #{runId} AND state = 'PENDING' AND expires_at &lt;= #{at}
+        ORDER BY expires_at ASC, request_id ASC
+        LIMIT #{limit}
     </select>
 
     <resultMap id="interactionResponseRow" type="io.haifa.agent.store.sqlite.mybatis.InteractionResponseRow">
@@ -936,44 +1011,98 @@
                  typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
             <arg column="resolved_at" javaType="java.time.Instant"
                  typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="action" javaType="java.lang.String"/>
+            <arg column="expected_revision" javaType="_long"/>
+            <arg column="caller_scope" javaType="java.lang.String"/>
+            <arg column="canonical_digest" javaType="java.lang.String"/>
+            <arg column="responder_tenant_id" javaType="java.lang.String"/>
+            <arg column="responder_principal_id" javaType="java.lang.String"/>
+            <arg column="responder_principal_type" javaType="java.lang.String"/>
+            <arg column="receipt_status" javaType="java.lang.String"/>
         </constructor>
     </resultMap>
 
+    <sql id="interactionResponseColumns">
+        response_id, request_id AS response_request_id, run_id AS response_run_id,
+        response_type, inputs_schema_version, inputs_payload, inputs_hash,
+        idempotency_key, responded_at, resolved_at, action, expected_revision,
+        caller_scope, canonical_digest, responder_tenant_id, responder_principal_id,
+        responder_principal_type, receipt_status
+    </sql>
+
     <select id="findInteractionResponse" resultMap="interactionResponseRow">
-        SELECT response_id, request_id AS response_request_id, run_id AS response_run_id,
-               response_type, inputs_schema_version, inputs_payload, inputs_hash,
-               idempotency_key, responded_at, resolved_at
+        SELECT <include refid="interactionResponseColumns"/>
         FROM interaction_response WHERE response_id = #{responseId}
     </select>
 
     <select id="findInteractionResponseForRequest" resultMap="interactionResponseRow">
-        SELECT response_id, request_id AS response_request_id, run_id AS response_run_id,
-               response_type, inputs_schema_version, inputs_payload, inputs_hash,
-               idempotency_key, responded_at, resolved_at
+        SELECT <include refid="interactionResponseColumns"/>
         FROM interaction_response WHERE request_id = #{requestId}
+    </select>
+
+    <select id="findInteractionResponseByIdempotency" resultMap="interactionResponseRow">
+        SELECT <include refid="interactionResponseColumns"/>
+        FROM interaction_response
+        WHERE caller_scope = #{callerScope}
+          AND request_id = #{requestId}
+          AND idempotency_key = #{idempotencyKey}
     </select>
 
     <insert id="insertInteractionResponse">
         INSERT INTO interaction_response (
             response_id, request_id, run_id, response_type, inputs_schema_version,
-            inputs_payload, inputs_hash, idempotency_key, responded_at, resolved_at
+            inputs_payload, inputs_hash, idempotency_key, responded_at, resolved_at,
+            action, expected_revision, caller_scope, canonical_digest,
+            responder_tenant_id, responder_principal_id, responder_principal_type, receipt_status
         ) VALUES (
             #{row.responseId}, #{row.requestId}, #{row.runId}, #{row.responseType},
             #{row.inputsSchemaVersion}, #{row.inputsPayload}, #{row.inputsHash},
-            #{row.idempotencyKey}, #{row.respondedAt}, #{row.resolvedAt}
+            #{row.idempotencyKey}, #{row.respondedAt}, #{row.resolvedAt},
+            #{row.action}, #{row.expectedRevision}, #{row.callerScope}, #{row.canonicalDigest},
+            #{row.responderTenantId}, #{row.responderPrincipalId},
+            #{row.responderPrincipalType}, #{row.receiptStatus}
         )
     </insert>
+
+    <update id="markInteractionResponded">
+        UPDATE interaction_request
+        SET state = 'RESPONDED', revision = revision + 1, state_changed_at = #{changedAt},
+            state_reason_code = NULL
+        WHERE request_id = #{requestId}
+          AND revision = #{expectedRevision}
+          AND state = 'PENDING'
+    </update>
+
+    <update id="transitionInteractionState">
+        UPDATE interaction_request
+        SET state = #{targetState}, revision = revision + 1,
+            state_reason_code = #{reasonCode}, state_changed_at = #{changedAt}
+        WHERE request_id = #{requestId}
+          AND revision = #{expectedRevision}
+          AND state = #{expectedState}
+    </update>
+
+    <update id="markInteractionStateApplied">
+        UPDATE interaction_request
+        SET state = 'APPLIED', revision = revision + 1, state_changed_at = #{appliedAt}
+        WHERE request_id = #{requestId}
+          AND revision = #{expectedRevision}
+          AND state = 'RESPONDED'
+    </update>
 
     <select id="unappliedToolResolution" resultMap="interactionRequestRow">
         SELECT request.request_id, request.run_id, request.tenant_id, request.principal_id,
                request.principal_type, request.type, request.prompt, request.approval,
                request.target_type, request.target_schema_version, request.target_payload,
-               request.target_hash, request.created_at, request.expires_at
+               request.target_hash, request.created_at, request.expires_at,
+               request.revision, request.kind, request.state, request.expiration_outcome,
+               request.state_reason_code, request.state_changed_at
         FROM interaction_request request
         JOIN interaction_response response ON response.request_id = request.request_id
         JOIN interaction_application application ON application.request_id = request.request_id
         WHERE request.run_id = #{runId} AND request.target_type = 'tool-approval'
           AND application.resolution_applied = 0
+          AND request.state = 'RESPONDED'
         ORDER BY request.created_at ASC, request.request_id ASC LIMIT 1
     </select>
 
@@ -984,6 +1113,75 @@
               SELECT 1 FROM interaction_response response
               WHERE response.request_id = interaction_application.request_id
           )
+    </update>
+
+    <resultMap id="runInputRow" type="io.haifa.agent.store.sqlite.mybatis.RunInputRow">
+        <constructor>
+            <arg column="input_id" javaType="java.lang.String"/>
+            <arg column="run_id" javaType="java.lang.String"/>
+            <arg column="expected_run_version" javaType="java.lang.Long"/>
+            <arg column="contents_schema_version" javaType="java.lang.String"/>
+            <arg column="contents_payload" javaType="[B"/>
+            <arg column="contents_hash" javaType="java.lang.String"/>
+            <arg column="caller_scope" javaType="java.lang.String"/>
+            <arg column="idempotency_key" javaType="java.lang.String"/>
+            <arg column="canonical_digest" javaType="java.lang.String"/>
+            <arg column="submitted_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="accepted_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="applied_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="attempt_id" javaType="java.lang.String"/>
+            <arg column="iteration" javaType="java.lang.Integer"/>
+            <arg column="reason_code" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="runInputColumns">
+        input_id, run_id, expected_run_version, contents_schema_version, contents_payload,
+        contents_hash, caller_scope, idempotency_key, canonical_digest, submitted_at,
+        accepted_at, status, applied_at, attempt_id, iteration, reason_code
+    </sql>
+
+    <insert id="insertRunInput">
+        INSERT INTO run_input (<include refid="runInputColumns"/>)
+        VALUES (
+            #{row.inputId}, #{row.runId}, #{row.expectedRunVersion},
+            #{row.contentsSchemaVersion}, #{row.contentsPayload}, #{row.contentsHash},
+            #{row.callerScope}, #{row.idempotencyKey}, #{row.canonicalDigest},
+            #{row.submittedAt}, #{row.acceptedAt}, #{row.status}, #{row.appliedAt},
+            #{row.attemptId}, #{row.iteration}, #{row.reasonCode}
+        )
+    </insert>
+
+    <select id="findRunInput" resultMap="runInputRow">
+        SELECT <include refid="runInputColumns"/>
+        FROM run_input WHERE input_id = #{inputId}
+    </select>
+
+    <select id="findRunInputByIdempotency" resultMap="runInputRow">
+        SELECT <include refid="runInputColumns"/>
+        FROM run_input
+        WHERE caller_scope = #{callerScope}
+          AND run_id = #{runId}
+          AND idempotency_key = #{idempotencyKey}
+    </select>
+
+    <select id="pendingRunInputs" resultMap="runInputRow">
+        SELECT <include refid="runInputColumns"/>
+        FROM run_input
+        WHERE run_id = #{runId} AND status = 'ACCEPTED'
+        ORDER BY accepted_at ASC, input_id ASC
+        LIMIT #{limit}
+    </select>
+
+    <update id="markRunInputApplied">
+        UPDATE run_input
+        SET status = 'APPLIED', applied_at = #{appliedAt},
+            attempt_id = #{attemptId}, iteration = #{iteration}
+        WHERE input_id = #{inputId} AND status = 'ACCEPTED'
     </update>
 
     <resultMap id="conversationSummaryRow" type="io.haifa.agent.store.sqlite.mybatis.ConversationSummaryRow">

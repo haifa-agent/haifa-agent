@@ -59,7 +59,7 @@ public final class McpToolDiscoveryService {
 
     public List<McpToolImportCandidate> discover(McpServerId serverId, McpDiscoveryContext context) {
         var server = connections.definition(serverId);
-        Instant started = clock.instant();
+        Instant started = Instant.ofEpochMilli(clock.millis());
         Instant expires = started.plus(deadline);
         List<CredentialLease> initializeLeases =
                 issue(serverId, context, CredentialOperation.MCP_CONNECTION_INITIALIZE, started, expires);
@@ -83,7 +83,8 @@ public final class McpToolDiscoveryService {
             String cursor = null;
             int schemaChars = 0;
             for (int pageNumber = 0; ; pageNumber++) {
-                if (pageNumber >= maxPages || !clock.instant().isBefore(expires)) {
+                if (pageNumber >= maxPages
+                        || !Instant.ofEpochMilli(clock.millis()).isBefore(expires)) {
                     throw new IllegalStateException("MCP discovery exceeded its page or time budget");
                 }
                 io.haifa.agent.mcp.protocol.McpListToolsPage page;

@@ -105,7 +105,7 @@ class WebToolTest {
                                 binding.definition().inputSchema().id(),
                                 binding.definition().inputSchema().version(),
                                 Map.of("url", "https://example.com/page", "maxCharacters", 100)),
-                        Instant.now().plusSeconds(30),
+                        Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                         Optional.empty(),
                         (ToolCancellation) () -> false,
                         List.of()));
@@ -153,7 +153,7 @@ class WebToolTest {
                                         binding.definition().inputSchema().id(),
                                         binding.definition().inputSchema().version(),
                                         Map.of("query", "agent", "language", "en")),
-                                Instant.now().plusSeconds(30),
+                                Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
                                 Optional.empty(),
                                 (ToolCancellation) () -> false,
                                 List.of())))

@@ -135,7 +135,12 @@ public final class DefaultCredentialBroker implements CredentialBroker {
         redactor.track(delegate);
         return new AuditedCredentialLease(delegate, () -> {
             redactor.forget(delegate);
-            audit.record(event(request, binding, delegate, clock.instant(), CredentialUsagePhase.CLOSED));
+            audit.record(event(
+                    request,
+                    binding,
+                    delegate,
+                    java.time.Instant.ofEpochMilli(clock.millis()),
+                    CredentialUsagePhase.CLOSED));
         });
     }
 
@@ -154,8 +159,12 @@ public final class DefaultCredentialBroker implements CredentialBroker {
         redactor.track(delegate);
         return new AuditedCredentialLease(delegate, () -> {
             redactor.forget(delegate);
-            operationAudit.record(
-                    operationEvent(request, binding, delegate, clock.instant(), CredentialUsagePhase.CLOSED));
+            operationAudit.record(operationEvent(
+                    request,
+                    binding,
+                    delegate,
+                    java.time.Instant.ofEpochMilli(clock.millis()),
+                    CredentialUsagePhase.CLOSED));
         });
     }
 

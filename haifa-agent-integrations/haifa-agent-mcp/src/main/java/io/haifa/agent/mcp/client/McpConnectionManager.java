@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.locks.LockSupport;
 
 public final class McpConnectionManager implements AutoCloseable {
     private final Map<McpServerId, McpServerDefinition> servers;
@@ -95,10 +94,11 @@ public final class McpConnectionManager implements AutoCloseable {
     private static void jitter(int attempt) {
         long upperMillis = Math.min(250L, 25L << Math.min(attempt, 3));
         long millis = ThreadLocalRandom.current().nextLong(1L, upperMillis + 1L);
-        LockSupport.parkNanos(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(millis));
-        if (Thread.interrupted()) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("MCP reconnect interrupted");
+            throw new IllegalStateException("MCP reconnect interrupted", exception);
         }
     }
 

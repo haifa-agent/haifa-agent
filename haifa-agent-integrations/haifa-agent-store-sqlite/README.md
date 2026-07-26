@@ -1,12 +1,32 @@
 # Haifa Agent SQLite Runtime Store
 
+## V4 Interaction / Run Input / Runtime Journal
+
+Runtime Migration V4 在不修改 V1～V3 的前提下完成 11 号能力 Task 02：
+
+- `runtime_event` 增加 event schema、correlation/causation；`runtime_event_stream` 保存每个 Run 的
+  head/earliest，并在 `BEGIN IMMEDIATE` 事务内分配单调 sequence；
+- Event ID 在 append 时一次确定，Outbox 必须引用同一 committed ID；范围查询使用
+  `(run_id, sequence)` 索引和排他 Cursor，不加载整 Run；
+- `interaction_request/response` 增加 revision、kind、state、expiration outcome、可信 responder、
+  canonical digest 和 receipt；部分唯一索引保证每个 Run 最多一个 Pending；
+- `run_input` 保存 caller-scoped 幂等键、content codec/hash、expected Run version、
+  `ACCEPTED/APPLIED/REJECTED`、Attempt/Iteration 与应用时间；
+- `SqliteInteractionPort` 提供条件响应、due/expire/cancel/invalidate 和 applied 恢复；
+  `SqliteRunInputPort` 提供 accepted/applied 去重与重启恢复；
+- retention 先清理已发布 Outbox，再删除保留下界之前且不再被 Outbox 引用的 Runtime Event；
+  未发布消息会阻止删除。
+
+SQLite 仍是 Client Event Page、Interaction、Run Input、Checkpoint 和 Runtime 恢复的唯一持久事实源。
+进程内 Subscription 只接收提交后唤醒，并始终返回 SQLite 范围读取。
+
 ## V3 Policy / Approval / Security
 
 Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_request_metadata`、`approval_response_metadata`、`policy_authorization_evidence`、`approval_grant` 与 `project_trust`。固定查询列、外键、状态 CHECK、版本/hash 交叉校验和条件更新共同构成权威恢复边界；JSONL/Event 仍只是提交后的安全投影，不参与恢复。
 
 `SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
 
-本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1/V2 Migration、
+本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V4 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
 Project Application/CLI 已可显式选择本模块；Runtime 的进程重启恢复由注入的 Port 与每次启动唯一
 worker ID 驱动。
@@ -25,7 +45,7 @@ worker ID 驱动。
 ## 初始化与所有权
 
 调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成纯 Runtime 初始化；拥有额外
-Schema 的 Application 使用三参数重载，在一次校验中传入包含 Runtime V1/V2 原文的完整 Migration 集合：
+Schema 的 Application 使用三参数重载，在一次校验中传入包含 Runtime V1～V4 原文的完整 Migration 集合：
 
 1. 打开受控 JDBC Connection，设置并验证 WAL；
 2. 在每个 Connection 上设置并验证 `foreign_keys=ON` 与 `busy_timeout`；
@@ -67,6 +87,9 @@ V1 一次性创建 26 张逻辑表：
 V2 只补充无损恢复所需字段：Run 的 waiting request/termination description，以及 Configuration 与
 Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校验并在 `BEGIN IMMEDIATE` 中执行。
 
+V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
+revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
+
 ## Port—表—Codec 对照
 
 | Runtime 边界 | 表/关键列 | Codec |
@@ -76,8 +99,8 @@ Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校
 | `ExecutionAttemptRepository` | `execution_attempt`; `(run_id, attempt_number)`, active index | error DTO |
 | `RuntimeStateRepository` | message/step/tool_call/plan/output/configuration | ContentPart、Step/Tool、Plan、Configuration DTO |
 | `CheckpointRepository` | checkpoint + checkpoint_payload | `RuntimeCheckpointState` DTO |
-| Event/Outbox/Idempotency | runtime_event/outbox/outbox_consumer/idempotency | bounded event/result DTO |
-| Journal/Interaction | tool_journal + interaction 三表 | ToolResult、Target、inputs DTO |
+| Event/Outbox/Idempotency | runtime_event/runtime_event_stream/outbox/outbox_consumer/idempotency | bounded event/result DTO |
+| Journal/Interaction/Input | tool_journal + interaction 三表 + run_input | ToolResult、Target、Content Parts DTO |
 | Summary/Memory/Continuation/Skill/Asset | extended-state 六表 | 对应显式 DTO；Continuation 只保存 protector 输出 |
 
 Task 01 快照中的标量字段均有固定列；嵌套值只落入上表列出的版本化 Payload。所有 Row DTO 与业务
@@ -100,7 +123,7 @@ Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 | Runtime state / Message / Configuration | `SqliteRuntimeStateRepository`、`SqliteSessionMessageRepository` |
 | Checkpoint | `SqliteCheckpointRepository` |
 | Event / Outbox / Idempotency | `SqliteRuntimeEventAppender`、`SqliteRuntimeOutboxPublisher`、`SqliteIdempotencyRepository` |
-| Tool journal / Interaction | `SqliteToolExecutionJournal`、`SqliteInteractionPort` |
+| Tool journal / Interaction / Input | `SqliteToolExecutionJournal`、`SqliteInteractionPort`、`SqliteRunInputPort` |
 | Summary / Memory / Continuation / Skill / Asset | 对应 `Sqlite*Repository` / `SqliteToolResultAssetStore` |
 | Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
@@ -116,6 +139,7 @@ Runtime Port、唯一 worker ID 与安全 busy retry。仍未接入的边界包�
 
 测试覆盖首次建库、重复启动、checksum 漂移、Migration 故障回滚、完整 Schema、Codec fail-closed、
 全部主要 Port 的文件重开 round-trip、乐观锁、活动 Attempt、消息 cursor/脱敏、Checkpoint 完整性、
-Event sequence、Outbox/Idempotency、Journal 状态机、Interaction 竞争、Continuation 固定密钥恢复/错误密钥/
+Event ID/范围/head/earliest/索引计划、Outbox/Idempotency、Journal 状态机、Interaction 与 Input
+重启恢复/竞争、Continuation 固定密钥恢复/错误密钥/
 篡改、Skill/Memory/Asset、busy/locked 分类、权限策略，以及数据库/WAL/SHM 中不出现 Credential、
 reasoning、Provider 原文或测试密钥。

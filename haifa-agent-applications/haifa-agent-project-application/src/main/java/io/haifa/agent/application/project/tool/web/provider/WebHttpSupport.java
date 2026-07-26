@@ -24,6 +24,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -47,7 +48,7 @@ final class WebHttpSupport {
                     "web provider credential is unavailable");
         }
         CredentialLease lease = context.credentialLeases().getFirst();
-        if (lease.isClosed() || !lease.expiresAt().isAfter(clock.instant())) {
+        if (lease.isClosed() || !lease.expiresAt().isAfter(Instant.ofEpochMilli(clock.millis()))) {
             throw failure(
                     WebFailureCode.WEB_CREDENTIAL_MISSING,
                     WebDispatchState.NOT_DISPATCHED,
@@ -238,7 +239,7 @@ final class WebHttpSupport {
     }
 
     private static Duration effectiveTimeout(Duration configured, WebProviderInvocationContext context, Clock clock) {
-        Duration remaining = Duration.between(clock.instant(), context.deadline());
+        Duration remaining = Duration.between(Instant.ofEpochMilli(clock.millis()), context.deadline());
         if (remaining.isZero() || remaining.isNegative()) {
             throw failure(
                     WebFailureCode.WEB_TIMEOUT, WebDispatchState.NOT_DISPATCHED, "web provider deadline has elapsed");

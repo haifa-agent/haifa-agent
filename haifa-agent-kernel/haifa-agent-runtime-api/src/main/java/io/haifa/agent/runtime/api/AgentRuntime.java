@@ -12,9 +12,25 @@ public interface AgentRuntime {
 
     AgentRunSnapshot respond(InteractionResponse response);
 
+    default InteractionResponseReceipt respond(InteractionResponseSubmission response) {
+        throw new UnsupportedOperationException("revision-aware interaction responses are not supported");
+    }
+
+    default RunInputReceipt submitInput(RunInputSubmission input) {
+        throw new UnsupportedOperationException("durable Run Input is not supported");
+    }
+
+    default Optional<InteractionView> pendingInteraction(io.haifa.agent.core.run.AgentRunId runId) {
+        throw new UnsupportedOperationException("public Interaction views are not supported");
+    }
+
     RuntimeCommandResult command(RuntimeCommand command);
 
     Optional<AgentRunSnapshot> find(io.haifa.agent.core.run.AgentRunId runId);
+
+    default Optional<AgentRunViewSnapshot> view(io.haifa.agent.core.run.AgentRunId runId) {
+        throw new UnsupportedOperationException("transport-ready Run views are not supported");
+    }
 
     AgentRunHandle handle(io.haifa.agent.core.run.AgentRunId runId);
 
@@ -24,4 +40,13 @@ public interface AgentRuntime {
     List<AgentRunOutputEvent> outputEvents(io.haifa.agent.core.run.AgentRunId runId, RunOutputCursor after, int limit);
 
     void addOutputListener(AgentRunOutputListener listener);
+
+    default RunEventPage events(io.haifa.agent.core.run.AgentRunId runId, RunEventCursor after, int limit) {
+        throw new UnsupportedOperationException("complete Run Event Feed is implemented by Task 02");
+    }
+
+    default RunEventSubscription subscribe(
+            io.haifa.agent.core.run.AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
+        throw new UnsupportedOperationException("Run Event Subscription is implemented by Task 02");
+    }
 }

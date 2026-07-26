@@ -25,6 +25,7 @@ import io.haifa.agent.runtime.core.decision.DecisionExecutor;
 import io.haifa.agent.runtime.core.decision.DecisionValidator;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.guard.AgentLoopGuard;
+import io.haifa.agent.runtime.core.input.RunInputApplier;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
@@ -64,6 +65,7 @@ public final class DefaultAgentLoop implements AgentLoop {
     private final TracePort trace;
     private final RuntimeStateReconciler reconciler;
     private final AgentRuntimeMiddlewareChain middleware;
+    private final RunInputApplier runInputs;
 
     public DefaultAgentLoop(
             RunControlRegistry controls,
@@ -82,7 +84,8 @@ public final class DefaultAgentLoop implements AgentLoop {
             TimeProvider time,
             TracePort trace,
             RuntimeStateReconciler reconciler,
-            AgentRuntimeMiddlewareChain middleware) {
+            AgentRuntimeMiddlewareChain middleware,
+            RunInputApplier runInputs) {
         this.controls = Objects.requireNonNull(controls);
         this.guards = List.copyOf(guards);
         this.contextBuilder = Objects.requireNonNull(contextBuilder);
@@ -100,6 +103,7 @@ public final class DefaultAgentLoop implements AgentLoop {
         this.trace = Objects.requireNonNull(trace);
         this.reconciler = Objects.requireNonNull(reconciler);
         this.middleware = Objects.requireNonNull(middleware);
+        this.runInputs = Objects.requireNonNull(runInputs);
     }
 
     @Override
@@ -116,6 +120,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             if (applyControl(run, progress, SafePoint.BEFORE_ITERATION, progress.iteration() - 1)) {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
+            runInputs.applyPending(run, attempt, progress.iteration());
             if (Duration.between(run.createdAt(), time.now()).toMillis()
                     > run.limits().maxWallTimeMillis()) {
                 transitions.timedOut(

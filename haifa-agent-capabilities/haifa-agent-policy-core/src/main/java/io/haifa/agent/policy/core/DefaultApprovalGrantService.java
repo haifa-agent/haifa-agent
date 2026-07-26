@@ -42,7 +42,7 @@ public final class DefaultApprovalGrantService {
             ApprovalGrantQuery query, Optional<ProjectTrustExpectation> projectExpectation) {
         Objects.requireNonNull(query, "query must not be null");
         Objects.requireNonNull(projectExpectation, "projectExpectation must not be null");
-        Instant now = clock.instant();
+        Instant now = Instant.ofEpochMilli(clock.millis());
         for (ApprovalGrant grant : grants.findCandidates(query)) {
             if (!matcher.matches(grant, query, now) || !validProjectTrust(grant, projectExpectation, now)) {
                 continue;

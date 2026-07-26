@@ -4,7 +4,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
 
-/** Clock-backed system time provider. */
+/** Clock-backed system time provider with millisecond precision. */
 public final class SystemTimeProvider implements TimeProvider {
 
     private final Clock clock;
@@ -19,6 +19,6 @@ public final class SystemTimeProvider implements TimeProvider {
 
     @Override
     public Instant now() {
-        return clock.instant();
+        return Instant.ofEpochMilli(clock.millis());
     }
 }

@@ -66,7 +66,7 @@ class HostSandboxTest {
                 fixture.bindings,
                 fixture.locations,
                 () -> "session-" + ids.incrementAndGet(),
-                () -> Instant.now());
+                () -> Instant.ofEpochMilli(System.currentTimeMillis()));
         assertThat(provider.capabilities().networkIsolation()).isFalse();
         assertThat(provider.capabilities().filesystemMountIsolation()).isFalse();
         SandboxProfile profile = new SandboxProfile(

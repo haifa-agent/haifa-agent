@@ -126,7 +126,7 @@ public final class RunTransitionCoordinator {
                                         run.version()),
                                 time.now());
                         outbox.append(new OutboxMessage(
-                                ids.nextValue(),
+                                event.eventId(),
                                 event.runId(),
                                 event.sequence(),
                                 event.type(),
@@ -182,7 +182,7 @@ public final class RunTransitionCoordinator {
                                         run.version()),
                                 time.now());
                         outbox.append(new OutboxMessage(
-                                ids.nextValue(),
+                                event.eventId(),
                                 event.runId(),
                                 event.sequence(),
                                 event.type(),

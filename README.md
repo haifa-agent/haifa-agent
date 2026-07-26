@@ -62,12 +62,14 @@ haifa-agent-integrations/
   haifa-agent-mcp/
   haifa-agent-store-sqlite/
   haifa-agent-store-jsonl/
+  haifa-agent-transport-http/
 haifa-agent-applications/
   haifa-agent-project-application/
   haifa-agent-cli/
 haifa-agent-testing/
   haifa-agent-testkit/
   haifa-agent-test-fixtures/
+  haifa-agent-transport-tck/
   haifa-agent-integration-tests/
   haifa-agent-live-tests/
   haifa-agent-e2e-tests/

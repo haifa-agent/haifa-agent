@@ -40,7 +40,7 @@ public final class SqliteRuntimeMemorySelectionRepository implements RuntimeMemo
                             payload.schemaVersion(),
                             payload.bytes(),
                             payload.hash(),
-                            clock.instant()));
+                            java.time.Instant.ofEpochMilli(clock.millis())));
             return null;
         });
     }

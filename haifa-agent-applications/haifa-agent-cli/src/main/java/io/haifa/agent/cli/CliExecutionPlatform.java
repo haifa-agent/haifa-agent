@@ -151,7 +151,7 @@ final class CliExecutionPlatform {
     private static final class CliOutputObserver implements ExecutionOutputObserver {
         private final PrintStream output;
         private final StringBuilder pending = new StringBuilder();
-        private long lastFlushNanos = System.nanoTime();
+        private long lastFlushMillis = System.currentTimeMillis();
 
         private CliOutputObserver(PrintStream output) {
             this.output = Objects.requireNonNull(output, "output must not be null");
@@ -168,15 +168,15 @@ final class CliExecutionPlatform {
                 }
             });
             pending.append(safe);
-            long now = System.nanoTime();
-            if (chunk.endOfStream() || now - lastFlushNanos >= 100_000_000L) flush(now);
+            long nowMillis = System.currentTimeMillis();
+            if (chunk.endOfStream() || nowMillis - lastFlushMillis >= 100L) flush(nowMillis);
         }
 
-        private void flush(long now) {
+        private void flush(long nowMillis) {
             if (!pending.isEmpty()) output.print(pending);
             output.flush();
             pending.setLength(0);
-            lastFlushNanos = now;
+            lastFlushMillis = nowMillis;
         }
     }
 }

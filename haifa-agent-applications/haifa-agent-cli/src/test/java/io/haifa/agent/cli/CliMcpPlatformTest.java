@@ -55,7 +55,7 @@ class CliMcpPlatformTest {
                                     binding.definition().inputSchema().id(),
                                     binding.definition().inputSchema().version(),
                                     Map.of("timezone", "UTC")),
-                            Instant.now().plusSeconds(10),
+                            Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(10),
                             Optional.empty(),
                             () -> false,
                             List.of()));

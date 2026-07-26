@@ -111,6 +111,6 @@ public final class DefaultPublicToolPolicy implements PublicToolPolicy {
                 explanation,
                 snapshot.ref(),
                 Optional.empty(),
-                clock.instant());
+                java.time.Instant.ofEpochMilli(clock.millis()));
     }
 }

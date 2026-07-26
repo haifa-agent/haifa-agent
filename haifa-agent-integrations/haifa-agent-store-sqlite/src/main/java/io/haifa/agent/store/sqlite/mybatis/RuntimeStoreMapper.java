@@ -84,19 +84,44 @@ public interface RuntimeStoreMapper {
 
     CheckpointPayloadRow findCheckpointPayload(@Param("checkpointId") String checkpointId);
 
-    long nextEventSequence(@Param("runId") String runId);
+    int ensureEventStream(
+            @Param("runId") String runId,
+            @Param("headSequence") long headSequence,
+            @Param("earliestSequence") long earliestSequence,
+            @Param("updatedAt") java.time.Instant updatedAt);
+
+    Long eventHead(@Param("runId") String runId);
+
+    Long eventEarliest(@Param("runId") String runId);
+
+    Long minimumStoredEventSequence(@Param("runId") String runId);
+
+    int advanceEventHead(
+            @Param("runId") String runId,
+            @Param("expectedHead") long expectedHead,
+            @Param("newHead") long newHead,
+            @Param("updatedAt") java.time.Instant updatedAt);
 
     int insertEvent(@Param("row") RuntimeEventRow row);
 
     List<RuntimeEventRow> eventsForRun(@Param("runId") String runId);
 
+    List<RuntimeEventRow> eventsAfter(
+            @Param("runId") String runId,
+            @Param("exclusiveSequence") long exclusiveSequence,
+            @Param("observedHead") long observedHead,
+            @Param("limit") int limit);
+
     RuntimeEventRow findEventBySequence(@Param("runId") String runId, @Param("sequence") long sequence);
 
-    int replaceEventId(
+    int deletePublishedOutboxBefore(@Param("runId") String runId, @Param("retainFromSequence") long retainFromSequence);
+
+    int deleteEventsBefore(@Param("runId") String runId, @Param("retainFromSequence") long retainFromSequence);
+
+    int updateEventEarliest(
             @Param("runId") String runId,
-            @Param("sequence") long sequence,
-            @Param("expectedId") String expectedId,
-            @Param("eventId") String eventId);
+            @Param("earliestSequence") long earliestSequence,
+            @Param("updatedAt") java.time.Instant updatedAt);
 
     int insertOutbox(@Param("row") OutboxRow row);
 
@@ -139,15 +164,58 @@ public interface RuntimeStoreMapper {
 
     InteractionRequestRow pendingInteraction(@Param("runId") String runId);
 
+    List<InteractionRequestRow> dueInteractions(
+            @Param("runId") String runId, @Param("at") java.time.Instant at, @Param("limit") int limit);
+
     InteractionResponseRow findInteractionResponse(@Param("responseId") String responseId);
 
     InteractionResponseRow findInteractionResponseForRequest(@Param("requestId") String requestId);
 
+    InteractionResponseRow findInteractionResponseByIdempotency(
+            @Param("callerScope") String callerScope,
+            @Param("requestId") String requestId,
+            @Param("idempotencyKey") String idempotencyKey);
+
     int insertInteractionResponse(@Param("row") InteractionResponseRow row);
+
+    int markInteractionResponded(
+            @Param("requestId") String requestId,
+            @Param("expectedRevision") long expectedRevision,
+            @Param("changedAt") java.time.Instant changedAt);
+
+    int transitionInteractionState(
+            @Param("requestId") String requestId,
+            @Param("expectedRevision") long expectedRevision,
+            @Param("expectedState") String expectedState,
+            @Param("targetState") String targetState,
+            @Param("reasonCode") String reasonCode,
+            @Param("changedAt") java.time.Instant changedAt);
+
+    int markInteractionStateApplied(
+            @Param("requestId") String requestId,
+            @Param("expectedRevision") long expectedRevision,
+            @Param("appliedAt") java.time.Instant appliedAt);
 
     InteractionRequestRow unappliedToolResolution(@Param("runId") String runId);
 
     int markInteractionApplied(@Param("requestId") String requestId, @Param("appliedAt") java.time.Instant appliedAt);
+
+    int insertRunInput(@Param("row") RunInputRow row);
+
+    RunInputRow findRunInput(@Param("inputId") String inputId);
+
+    RunInputRow findRunInputByIdempotency(
+            @Param("callerScope") String callerScope,
+            @Param("runId") String runId,
+            @Param("idempotencyKey") String idempotencyKey);
+
+    List<RunInputRow> pendingRunInputs(@Param("runId") String runId, @Param("limit") int limit);
+
+    int markRunInputApplied(
+            @Param("inputId") String inputId,
+            @Param("attemptId") String attemptId,
+            @Param("iteration") int iteration,
+            @Param("appliedAt") java.time.Instant appliedAt);
 
     ConversationSummaryRow latestValidSummary(@Param("sessionId") String sessionId);
 

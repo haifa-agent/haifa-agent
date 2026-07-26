@@ -254,7 +254,10 @@ class WebHttpProvidersTest {
     void rejectsMissingCredentialAndElapsedDeadlineBeforeDispatch() {
         CountingObserver missingObserver = new CountingObserver();
         var missingContext = new WebProviderInvocationContext(
-                Instant.now().plusSeconds(30), () -> false, List.of(), missingObserver);
+                Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
+                () -> false,
+                List.of(),
+                missingObserver);
         var provider = new BraveWebSearchProvider(
                 client(), mapper, baseUri.resolve("/brave"), Duration.ofSeconds(5), 64 * 1024);
 
@@ -305,7 +308,10 @@ class WebHttpProvidersTest {
 
     private WebProviderInvocationContext context(CountingObserver observer) {
         return new WebProviderInvocationContext(
-                Instant.now().plusSeconds(30), () -> false, List.of(new TestLease("test-key")), observer);
+                Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
+                () -> false,
+                List.of(new TestLease("test-key")),
+                observer);
     }
 
     private HttpClient client() {
@@ -365,7 +371,7 @@ class WebHttpProvidersTest {
 
         @Override
         public Instant expiresAt() {
-            return Instant.now().plusSeconds(60);
+            return Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(60);
         }
 
         @Override

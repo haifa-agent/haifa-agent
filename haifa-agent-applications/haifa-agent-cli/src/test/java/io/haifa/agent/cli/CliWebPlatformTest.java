@@ -44,7 +44,7 @@ class CliWebPlatformTest {
                     definition.version(),
                     definition.providerId(),
                     new ToolDefinitionCanonicalizer().hash(definition));
-            Instant now = Instant.now();
+            Instant now = Instant.ofEpochMilli(System.currentTimeMillis());
             var lease = platform.credentialBroker()
                     .issue(new CredentialRequest(
                             new TenantRef("local"),

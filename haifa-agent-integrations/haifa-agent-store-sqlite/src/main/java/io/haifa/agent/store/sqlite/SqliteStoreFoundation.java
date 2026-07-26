@@ -126,6 +126,10 @@ public final class SqliteStoreFoundation implements AutoCloseable {
         return new SqliteInteractionPort(unitOfWork, runtimeCodecs, clock, maximumPayloadBytes);
     }
 
+    public SqliteRunInputPort runInputs() {
+        return new SqliteRunInputPort(unitOfWork, runtimeCodecs);
+    }
+
     public SqlitePolicySnapshotStore policySnapshots() {
         return new SqlitePolicySnapshotStore(unitOfWork, runtimeCodecs);
     }
@@ -194,6 +198,7 @@ public final class SqliteStoreFoundation implements AutoCloseable {
                 unitOfWork,
                 toolJournal(),
                 interactions(),
+                runInputs(),
                 summaries(),
                 toolResultAssets(),
                 messages);

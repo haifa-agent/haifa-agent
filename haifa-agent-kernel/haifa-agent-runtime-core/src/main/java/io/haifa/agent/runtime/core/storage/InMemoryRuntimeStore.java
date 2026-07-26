@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
@@ -70,6 +71,10 @@ public final class InMemoryRuntimeStore
     private final Map<AgentRunId, Versioned<AgentRun>> runs = new HashMap<>();
     private final Map<ExecutionAttemptId, Versioned<AgentRunExecutionAttempt>> attempts = new HashMap<>();
     private final Map<AgentRunId, List<RuntimeEvent>> events = new HashMap<>();
+    private final Map<AgentRunId, Long> eventHeads = new HashMap<>();
+    private final Map<AgentRunId, Long> eventEarliest = new HashMap<>();
+    private final java.util.Set<String> eventIds = new java.util.HashSet<>();
+    private final RuntimeEventIdFactory eventIdsFactory;
     private final List<OutboxMessage> outbox = new ArrayList<>();
     private final java.util.Set<String> publishedOutbox = new java.util.HashSet<>();
     private final java.util.Set<String> consumedOutbox = new java.util.HashSet<>();
@@ -97,6 +102,14 @@ public final class InMemoryRuntimeStore
     private final ThreadLocal<List<Runnable>> afterCommitListeners = new ThreadLocal<>();
     private boolean failNextToolResultAssetWrite;
     private final List<MessageRedactionListener> messageRedactionListeners = new ArrayList<>();
+
+    public InMemoryRuntimeStore() {
+        this(RuntimeEventIdFactory.deterministic());
+    }
+
+    public InMemoryRuntimeStore(RuntimeEventIdFactory eventIdsFactory) {
+        this.eventIdsFactory = Objects.requireNonNull(eventIdsFactory, "eventIdsFactory must not be null");
+    }
 
     @Override
     public synchronized void insert(AgentSession session) {
@@ -202,14 +215,81 @@ public final class InMemoryRuntimeStore
     public synchronized RuntimeEvent append(
             AgentRunId runId, String type, Map<String, Object> data, Instant occurredAt) {
         List<RuntimeEvent> stream = events.computeIfAbsent(runId, ignored -> new ArrayList<>());
-        RuntimeEvent event = new RuntimeEvent(runId, stream.size() + 1L, type, data, occurredAt);
+        long sequence = Math.addExact(eventHeads.getOrDefault(runId, 0L), 1L);
+        String eventId = eventIdsFactory.create(runId, sequence);
+        if (!eventIds.add(eventId)) {
+            throw new IllegalStateException("runtime event id is already bound");
+        }
+        RuntimeEvent event = new RuntimeEvent(eventId, runId, sequence, type, data, occurredAt);
         stream.add(event);
+        eventHeads.put(runId, sequence);
+        eventEarliest.putIfAbsent(runId, sequence);
         return event;
     }
 
     @Override
     public synchronized List<RuntimeEvent> eventsFor(AgentRunId runId) {
         return List.copyOf(events.getOrDefault(runId, List.of()));
+    }
+
+    @Override
+    public synchronized RuntimeEventSlice eventsAfter(
+            AgentRunId runId, long exclusiveSequence, OptionalLong observedHead, int limit) {
+        validateEventRange(exclusiveSequence, observedHead, limit);
+        OptionalLong head = headSequence(runId);
+        long boundedHead =
+                observedHead.isPresent() ? Math.min(observedHead.getAsLong(), head.orElse(0L)) : head.orElse(0L);
+        List<RuntimeEvent> selected = events.getOrDefault(runId, List.of()).stream()
+                .filter(event -> event.sequence() > exclusiveSequence && event.sequence() <= boundedHead)
+                .limit(limit)
+                .toList();
+        long scannedThrough =
+                selected.isEmpty() ? exclusiveSequence : selected.getLast().sequence();
+        return new RuntimeEventSlice(
+                runId,
+                exclusiveSequence,
+                earliestSequence(runId),
+                boundedHead == 0 ? OptionalLong.empty() : OptionalLong.of(boundedHead),
+                scannedThrough,
+                selected);
+    }
+
+    @Override
+    public synchronized OptionalLong earliestSequence(AgentRunId runId) {
+        Long earliest = eventEarliest.get(runId);
+        return earliest == null ? OptionalLong.empty() : OptionalLong.of(earliest);
+    }
+
+    @Override
+    public synchronized OptionalLong headSequence(AgentRunId runId) {
+        Long head = eventHeads.get(runId);
+        return head == null ? OptionalLong.empty() : OptionalLong.of(head);
+    }
+
+    @Override
+    public synchronized long deleteBefore(AgentRunId runId, long retainFromSequence, Instant deletedAt) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        Objects.requireNonNull(deletedAt, "deletedAt must not be null");
+        if (retainFromSequence < 1) throw new IllegalArgumentException("retainFromSequence must be positive");
+        List<RuntimeEvent> stream = events.getOrDefault(runId, new ArrayList<>());
+        long before = stream.size();
+        stream.removeIf(event -> event.sequence() < retainFromSequence);
+        if (stream.isEmpty()) {
+            Long head = eventHeads.get(runId);
+            if (head != null) eventEarliest.put(runId, Math.addExact(head, 1L));
+        } else {
+            eventEarliest.put(runId, stream.getFirst().sequence());
+        }
+        return before - stream.size();
+    }
+
+    private static void validateEventRange(long exclusiveSequence, OptionalLong observedHead, int limit) {
+        if (exclusiveSequence < 0) throw new IllegalArgumentException("exclusiveSequence must not be negative");
+        Objects.requireNonNull(observedHead, "observedHead must not be null");
+        if (observedHead.isPresent() && observedHead.getAsLong() < 1) {
+            throw new IllegalArgumentException("observedHead must be positive");
+        }
+        if (limit < 1 || limit > 10_000) throw new IllegalArgumentException("limit must be in 1..10000");
     }
 
     @Override

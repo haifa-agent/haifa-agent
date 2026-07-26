@@ -5,6 +5,10 @@ Kernel、Capability、Integration 或 Application 的依赖方向。
 
 ## 分层模型
 
+- `haifa-agent-testkit`：后续承载跨模块共享的确定性 Fake、Assertion 和安全测试辅助能力；
+- `haifa-agent-test-fixtures`：保存多个测试模块共同使用、可安全进入源码仓库的小型 Fixture。
+- `haifa-agent-transport-tck`：不可部署的 HTTP/SSE Contract Test Kit，验证认证授权、协议映射、
+  Cursor 重连、背压、SQLite 重启恢复和 Coding/Document/Enterprise 公共语义。
 `Integration` 和 `E2E` 描述测试范围，`Live` 描述是否调用真实外部依赖。Live 不是严格位于
 Integration 与 E2E 之间的层级：
 
@@ -63,5 +67,12 @@ Suite、Matrix、Environment、Secret 引用和预算。Runner 通过 `HAIFA_TES
 - Suite Runner 在执行前必须验证开关、Secret、运行根和预算；JUnit assumption skip 不能被报告为通过；
 - 测试运行产物写入 `HAIFA_TEST_RUN_ROOT`，不得写入主仓或 `test-config`。
 
+当前只初始化 Testkit 与 Fixture 边界。集中式 Live、E2E 和 Eval 模块应在真实用例开始迁移时再加入，
+避免空模块先于可执行行为出现。
+
+11 号能力 Task 02 的 Journal Contract 测试与 SQLite Adapter 相邻放置，并以同一测试方法验证
+`InMemoryRuntimeStore` 与 `SqliteRuntimeEventAppender` 的 eventId、sequence、range、head/earliest、
+固定 observed head 和 retention。Task 03 已建立独立 `haifa-agent-transport-tck`：主源码只声明
+框架中立 Driver/Fixture，具体 Adapter、Runtime Core 与 SQLite 仅进入测试作用域。
 首版不创建独立 Contract Tests 和 Evals 模块。契约测试继续位于相邻产品模块；长期行为评估在评分集、
 Grader 和基线形成后再加入。
