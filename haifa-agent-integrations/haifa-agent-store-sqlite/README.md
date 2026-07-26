@@ -1,5 +1,11 @@
 # Haifa Agent SQLite Runtime Store
 
+## V3 Policy / Approval / Security
+
+Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_request_metadata`、`approval_response_metadata`、`policy_authorization_evidence`、`approval_grant` 与 `project_trust`。固定查询列、外键、状态 CHECK、版本/hash 交叉校验和条件更新共同构成权威恢复边界；JSONL/Event 仍只是提交后的安全投影，不参与恢复。
+
+`SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
+
 本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1/V2 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
 Project Application/CLI 已可显式选择本模块；Runtime 的进程重启恢复由注入的 Port 与每次启动唯一

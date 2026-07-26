@@ -210,7 +210,7 @@ class ProjectApplicationTest {
         AtomicReference<String> observed = new AtomicReference<>();
         ProjectToolExecutor executor = new ProjectToolExecutor(
                 (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
-                        workspaceId, Set.of("file.read"), "policy-1"),
+                        workspaceId, Set.of("file.read")),
                 (toolName, workspace, actor, runRef, policy, arguments) -> {
                     observed.set(toolName + "|" + workspace.value() + "|" + actor.principalId() + "|" + runRef + "|"
                             + policy);
@@ -225,15 +225,16 @@ class ProjectApplicationTest {
                 new ToolArguments("haifa.file.read.input", "1.0.0", java.util.Map.of("path", "README.md")),
                 NOW.plusSeconds(30),
                 Optional.of("key"),
+                Optional.of("policy-1"),
                 () -> false,
-                List.of());
+                List.of(),
+                io.haifa.agent.tool.api.ToolInvocationObserver.noop());
 
         assertThat(executor.invoke(request).successful()).isTrue();
         assertThat(observed).hasValue("file.read|workspace-tool|operator|run-tool|policy-1");
 
         ProjectToolExecutor denied = new ProjectToolExecutor(
-                (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
-                        workspaceId, Set.of(), "policy-2"),
+                (runId, actor) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(workspaceId, Set.of()),
                 (toolName, workspace, actor, runRef, policy, arguments) -> {
                     throw new AssertionError("unauthorized operation must not execute");
                 });

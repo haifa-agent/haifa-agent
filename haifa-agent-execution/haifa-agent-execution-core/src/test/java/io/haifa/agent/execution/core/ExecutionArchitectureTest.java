@@ -21,6 +21,13 @@ class ExecutionArchitectureTest {
                 .check(classes);
         noClasses()
                 .that()
+                .resideInAPackage("io.haifa.agent.execution.core..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.haifa.agent.policy.core..", "io.haifa.agent.runtime.core..")
+                .check(classes);
+        noClasses()
+                .that()
                 .resideOutsideOfPackage("io.haifa.agent.sandbox.host..")
                 .should()
                 .dependOnClassesThat()

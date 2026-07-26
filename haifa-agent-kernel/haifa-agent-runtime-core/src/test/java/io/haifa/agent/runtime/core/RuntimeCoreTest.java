@@ -500,6 +500,14 @@ class RuntimeCoreTest {
         assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> assertThat(call.id())
                 .isEqualTo(originalToolCallId));
         assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .contains(
+                        "policy.decision.made",
+                        "approval.requested",
+                        "approval.authority.verified",
+                        "approval.target.validated",
+                        "approval.responded");
     }
 
     @Test

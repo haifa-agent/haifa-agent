@@ -179,12 +179,14 @@ class ProjectExecutionToolOperationsTest {
                 new ToolArguments("haifa.execution.run.input", "1.0.0", arguments),
                 NOW.plusSeconds(30),
                 Optional.of("execution-key"),
+                Optional.of("policy-1"),
                 cancellation,
-                List.of());
+                List.of(),
+                io.haifa.agent.tool.api.ToolInvocationObserver.noop());
     }
 
     private static RunWorkspaceAccess access() {
-        return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution.run"), "policy-1");
+        return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution.run"));
     }
 
     private static ProcessOutputChunk chunk(String value) {

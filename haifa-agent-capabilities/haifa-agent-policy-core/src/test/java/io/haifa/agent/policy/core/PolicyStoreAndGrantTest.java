@@ -19,9 +19,12 @@ import io.haifa.agent.policy.api.PolicyContext;
 import io.haifa.agent.policy.api.PolicyDecisionId;
 import io.haifa.agent.policy.api.PolicySubject;
 import io.haifa.agent.policy.api.ProjectTrust;
+import io.haifa.agent.policy.api.ProjectTrustExpectation;
 import io.haifa.agent.policy.api.ProjectTrustRef;
 import io.haifa.agent.policy.api.ProjectTrustState;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -142,6 +145,48 @@ class PolicyStoreAndGrantTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void grantServiceConsumesOnceAndRequiresExactCurrentProjectTrust() {
+        InMemoryPolicyStore store = new InMemoryPolicyStore();
+        DefaultApprovalGrantService service =
+                new DefaultApprovalGrantService(store, store, new ApprovalGrantMatcher(), fixedClock());
+        ApprovalGrant once = grant(ApprovalReuseScope.ONCE);
+        service.create(once);
+
+        assertThat(service.authorize(query(SUBJECT, "session", TARGET), Optional.empty()))
+                .get()
+                .extracting(ApprovalGrant::state)
+                .isEqualTo(ApprovalGrantState.CONSUMED);
+        assertThat(service.authorize(query(SUBJECT, "session", TARGET), Optional.empty()))
+                .isEmpty();
+
+        ProjectTrust trust = trust();
+        store.save(trust);
+        ApprovalGrant project = grant(ApprovalReuseScope.PROJECT);
+        service.create(project);
+        ApprovalGrantQuery projectQuery = new ApprovalGrantQuery(
+                SUBJECT,
+                new PolicyContext(
+                        Optional.of("project"),
+                        Optional.of("session"),
+                        Optional.of("run"),
+                        Optional.empty(),
+                        ApprovalMode.ASK,
+                        Optional.of(trust.ref()),
+                        Optional.of("sha256:config")),
+                ACTION,
+                TARGET);
+
+        assertThat(service.authorize(projectQuery, Optional.of(expectation("sha256:changed"))))
+                .isEmpty();
+        assertThat(service.authorize(projectQuery, Optional.of(expectation("sha256:config"))))
+                .contains(project);
+
+        store.revoke(trust.ref(), trust.version(), NOW.plusSeconds(1));
+        assertThat(service.authorize(projectQuery, Optional.of(expectation("sha256:config"))))
+                .isEmpty();
+    }
+
     private static ApprovalGrant grant(ApprovalReuseScope scope) {
         return new ApprovalGrant(
                 new ApprovalGrantId("grant-" + scope.name().toLowerCase()),
@@ -163,6 +208,31 @@ class PolicyStoreAndGrantTest {
                 Optional.empty(),
                 Optional.empty(),
                 0);
+    }
+
+    private static ProjectTrust trust() {
+        return new ProjectTrust(
+                new ProjectTrustRef("trust"),
+                TENANT,
+                PRINCIPAL,
+                "project",
+                "project-id",
+                "root-id",
+                "sha256:config",
+                "coding",
+                ProjectTrustState.TRUSTED,
+                NOW,
+                Optional.of(NOW.plusSeconds(60)),
+                Optional.empty(),
+                0);
+    }
+
+    private static ProjectTrustExpectation expectation(String digest) {
+        return new ProjectTrustExpectation(TENANT, PRINCIPAL, "project", "project-id", "root-id", digest, "coding");
+    }
+
+    private static Clock fixedClock() {
+        return Clock.fixed(NOW, ZoneOffset.UTC);
     }
 
     private static ApprovalGrantQuery query(PolicySubject subject, String sessionRef, ApprovalTargetRef target) {

@@ -29,6 +29,11 @@ import io.haifa.agent.memory.core.DefaultMemoryPolicy;
 import io.haifa.agent.memory.core.DefaultMemoryRetriever;
 import io.haifa.agent.memory.core.InMemoryMemoryStore;
 import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.policy.api.ApprovalMode;
+import io.haifa.agent.policy.api.ApprovalVerification;
+import io.haifa.agent.policy.api.ApprovalVerificationService;
+import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
+import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
@@ -89,6 +94,8 @@ import io.haifa.agent.runtime.core.middleware.TraceMiddleware;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
+import io.haifa.agent.runtime.core.policy.RuntimePolicyAuthorizationEvidenceStore;
+import io.haifa.agent.runtime.core.policy.RuntimePolicyDecisionStore;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
@@ -100,7 +107,10 @@ import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.BoundedToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.CapabilityAuthorizer;
 import io.haifa.agent.runtime.core.tool.DefaultToolPolicy;
+import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.LargeToolResultPolicy;
+import io.haifa.agent.runtime.core.tool.LegacyToolPolicyAdapter;
+import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.ToolExecutionEnvironment;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPolicy;
@@ -151,6 +161,16 @@ public final class RuntimeCoreBuilder {
     private ToolSchemaValidator toolSchemaValidator = (schema, instance) -> new ToolSchemaValidationResult(List.of());
     private boolean toolPlatformConfigured;
     private ToolPolicy toolPolicy = new DefaultToolPolicy();
+    private PublicToolPolicy publicToolPolicy;
+    private PolicyDecisionStore policyDecisions = new RuntimePolicyDecisionStore();
+    private PolicyAuthorizationEvidenceStore policyAuthorizationEvidence =
+            new RuntimePolicyAuthorizationEvidenceStore();
+    private ApprovalVerificationService approvalVerification = (request, responder) -> {
+        boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
+                && request.requester().principal().equals(responder.principal());
+        return new ApprovalVerification(
+                samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
+    };
     private ToolApprovalPromptFormatter toolApprovalPrompts = ToolApprovalPromptFormatter.defaultFormatter();
     private CredentialBroker credentialBroker;
     private ModelRetryPolicy modelRetry = ModelRetryPolicy.none();
@@ -273,7 +293,25 @@ public final class RuntimeCoreBuilder {
     }
 
     public RuntimeCoreBuilder toolPolicy(ToolPolicy value) {
-        toolPolicy = value;
+        toolPolicy = Objects.requireNonNull(value, "value");
+        publicToolPolicy = null;
+        return this;
+    }
+
+    public RuntimeCoreBuilder publicToolPolicy(PublicToolPolicy value) {
+        publicToolPolicy = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
+    public RuntimeCoreBuilder policyStores(
+            PolicyDecisionStore decisions, PolicyAuthorizationEvidenceStore authorizationEvidence) {
+        policyDecisions = Objects.requireNonNull(decisions, "decisions");
+        policyAuthorizationEvidence = Objects.requireNonNull(authorizationEvidence, "authorizationEvidence");
+        return this;
+    }
+
+    public RuntimeCoreBuilder approvalVerification(ApprovalVerificationService value) {
+        approvalVerification = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -423,11 +461,19 @@ public final class RuntimeCoreBuilder {
         RunControlService controlService = new DefaultRunControlService(controls);
         CapabilityAuthorizer authorizer =
                 (run, binding) -> toolNames.contains(binding.alias().value());
+        PublicToolPolicy configuredToolPolicy = publicToolPolicy != null
+                ? publicToolPolicy
+                : new LegacyToolPolicyAdapter(
+                        toolPolicy,
+                        new DefaultToolPolicyRequestAdapter("runtime-compatibility", ApprovalMode.ASK),
+                        ids,
+                        time,
+                        policyDecisions);
         ToolPipeline pipeline = new ToolPipeline(
                 toolInvoker,
                 toolSchemaValidator,
                 authorizer,
-                toolPolicy,
+                configuredToolPolicy,
                 credentialBroker,
                 toolJournal,
                 state,
@@ -488,7 +534,11 @@ public final class RuntimeCoreBuilder {
                 checkpoints,
                 controls,
                 repairRetry,
-                toolApprovalPrompts);
+                toolApprovalPrompts,
+                policyDecisions,
+                unitOfWork,
+                events,
+                outbox);
         ResumeCoordinator resumeCoordinator = new ResumeCoordinator(
                 interactions,
                 checkpointsRepository,
@@ -564,7 +614,10 @@ public final class RuntimeCoreBuilder {
                 modelOutput,
                 configuredOwnership,
                 new RetryExecutor(Sleeper.threadSleep()),
-                persistenceRetry);
+                persistenceRetry,
+                approvalVerification,
+                policyAuthorizationEvidence,
+                policyDecisions);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {

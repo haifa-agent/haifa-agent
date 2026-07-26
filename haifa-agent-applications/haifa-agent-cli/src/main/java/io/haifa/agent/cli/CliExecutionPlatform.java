@@ -1,5 +1,6 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -7,6 +8,7 @@ import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
+import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
 import io.haifa.agent.execution.core.manifest.ManifestBudget;
 import io.haifa.agent.execution.core.manifest.ManifestDiffService;
 import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
@@ -26,6 +28,7 @@ import io.haifa.agent.sandbox.host.HostShell;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -54,6 +57,8 @@ final class CliExecutionPlatform {
             FileChangeSetService changeSetService,
             IdentifierGenerator identifiers,
             TimeProvider time,
+            Clock clock,
+            CodingAgentPolicyAssembly policy,
             PrintStream output) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         HostShell shell = shell(configuration);
@@ -71,7 +76,8 @@ final class CliExecutionPlatform {
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
                 ignored -> environment,
-                ignored -> {},
+                new PolicyDecisionExecutionPolicy(
+                        policy.decisionsStore(), policy.snapshots(), policy.evidence(), clock),
                 reference -> {
                     if (!PROFILE_REF.equals(reference)) throw new IllegalArgumentException("unknown sandbox profile");
                     return profile;

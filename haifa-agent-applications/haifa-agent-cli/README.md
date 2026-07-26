@@ -1,5 +1,16 @@
 # Haifa Agent CLI
 
+## Policy / Approval
+
+CLI 的 `ask / auto / deny` 继续保持 Coding Agent 级的简单权限体验；SQLite 模式下 Policy Snapshot、Decision 和审批证据与 Runtime 使用同一权威数据库。CLI 不提供企业审批路由、待办或业务单据提交能力。
+
+## Unified approval policy
+
+`ask/auto/deny` 由产品 Policy Snapshot 表达，默认仍为 `ask`。`auto` 只自动满足允许自动化的
+Capability Confirmation；Critical/Never 冲突、无目标网络、Credential 重认证和
+Broker/Workspace/Sandbox 硬边界仍 fail closed。`execution.run` 的 Tool Decision 沿调用链传给
+Broker 复核，不产生第二个控制台审批；`deny` 仍在 Catalog freeze 前移除该 Tool。
+
 `haifa-agent-cli` 是用于验证 Haifa Agent 现有 Runtime、OpenAI-compatible 模型、受控本地文件工具、通用本地 Shell Tool、基础 Skill、Streamable HTTP MCP Tool 和可选 Web Tool 的最小 Coding Agent 命令行入口。
 
 ## 构建与运行

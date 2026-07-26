@@ -47,6 +47,12 @@ public final class SqliteRuntimePayloadTypes {
             new PayloadType<>("protected-binary", "1", BinaryPayload.class);
     public static final PayloadType<SkillActivationPayload> SKILL_ACTIVATION =
             new PayloadType<>("skill-activation", "1", SkillActivationPayload.class);
+    public static final PayloadType<io.haifa.agent.policy.api.PolicySnapshot> POLICY_SNAPSHOT =
+            new PayloadType<>("policy-snapshot", "1", io.haifa.agent.policy.api.PolicySnapshot.class);
+    public static final PayloadType<io.haifa.agent.policy.api.PolicyRequest> POLICY_REQUEST =
+            new PayloadType<>("policy-request", "1", io.haifa.agent.policy.api.PolicyRequest.class);
+    public static final PayloadType<io.haifa.agent.policy.api.ApprovalRequestContext> APPROVAL_REQUEST_CONTEXT =
+            new PayloadType<>("approval-request-context", "1", io.haifa.agent.policy.api.ApprovalRequestContext.class);
 
     private SqliteRuntimePayloadTypes() {}
 
@@ -72,6 +78,9 @@ public final class SqliteRuntimePayloadTypes {
                 .register(STRING_SET)
                 .register(BINARY)
                 .register(SKILL_ACTIVATION)
+                .register(POLICY_SNAPSHOT)
+                .register(POLICY_REQUEST)
+                .register(APPROVAL_REQUEST_CONTEXT)
                 .build();
     }
 }

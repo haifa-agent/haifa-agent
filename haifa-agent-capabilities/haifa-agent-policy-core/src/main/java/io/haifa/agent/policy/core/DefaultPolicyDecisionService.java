@@ -5,6 +5,7 @@ import io.haifa.agent.policy.api.PolicyDecisionIdGenerator;
 import io.haifa.agent.policy.api.PolicyDecisionService;
 import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.policy.api.PolicyRequest;
+import io.haifa.agent.policy.api.PolicyRequestDigest;
 import io.haifa.agent.policy.api.PolicyRule;
 import io.haifa.agent.policy.api.PolicyRuleMatcher;
 import io.haifa.agent.policy.api.PolicySnapshot;
@@ -41,6 +42,8 @@ public final class DefaultPolicyDecisionService implements PolicyDecisionService
         if (selected == null) {
             return new PolicyDecision(
                     ids.nextId(),
+                    Optional.of(request),
+                    PolicyRequestDigest.compute(request),
                     PolicyEffect.DENY,
                     Optional.empty(),
                     "POLICY_NO_MATCH",
@@ -51,6 +54,8 @@ public final class DefaultPolicyDecisionService implements PolicyDecisionService
         }
         return new PolicyDecision(
                 ids.nextId(),
+                Optional.of(request),
+                PolicyRequestDigest.compute(request),
                 selected.effect(),
                 selected.challenge(),
                 selected.reasonCode(),

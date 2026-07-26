@@ -20,13 +20,59 @@ public record ApprovalGrant(
         Optional<String> securityConfigurationDigest,
         PolicyDecisionId sourceDecisionId,
         String sourceApprovalRequestRef,
+        String sourceApprovalResponseRef,
         ApprovalResponder createdBy,
         Instant createdAt,
         Optional<Instant> expiresAt,
         ApprovalGrantState state,
         Optional<Instant> revokedAt,
+        Optional<String> revocationReasonCode,
         Optional<Instant> consumedAt,
         long version) {
+    public ApprovalGrant(
+            ApprovalGrantId id,
+            ApprovalSemantics semantics,
+            ApprovalReuseScope reuseScope,
+            PolicySubject subject,
+            PolicyAction action,
+            ApprovalTargetRef target,
+            Optional<String> sessionRef,
+            Optional<String> projectRef,
+            Optional<ProjectTrustRef> projectTrustRef,
+            Optional<String> securityConfigurationDigest,
+            PolicyDecisionId sourceDecisionId,
+            String sourceApprovalRequestRef,
+            ApprovalResponder createdBy,
+            Instant createdAt,
+            Optional<Instant> expiresAt,
+            ApprovalGrantState state,
+            Optional<Instant> revokedAt,
+            Optional<Instant> consumedAt,
+            long version) {
+        this(
+                id,
+                semantics,
+                reuseScope,
+                subject,
+                action,
+                target,
+                sessionRef,
+                projectRef,
+                projectTrustRef,
+                securityConfigurationDigest,
+                sourceDecisionId,
+                sourceApprovalRequestRef,
+                "unrecorded-response",
+                createdBy,
+                createdAt,
+                expiresAt,
+                state,
+                revokedAt,
+                state == ApprovalGrantState.REVOKED ? Optional.of("GRANT_REVOKED") : Optional.empty(),
+                consumedAt,
+                version);
+    }
+
     public ApprovalGrant {
         id = Objects.requireNonNull(id, "id must not be null");
         semantics = Objects.requireNonNull(semantics, "semantics must not be null");
@@ -40,11 +86,13 @@ public record ApprovalGrant(
         securityConfigurationDigest = optionalIdentifier(securityConfigurationDigest, "securityConfigurationDigest");
         sourceDecisionId = Objects.requireNonNull(sourceDecisionId, "sourceDecisionId must not be null");
         sourceApprovalRequestRef = requireIdentifier(sourceApprovalRequestRef, "sourceApprovalRequestRef");
+        sourceApprovalResponseRef = requireIdentifier(sourceApprovalResponseRef, "sourceApprovalResponseRef");
         createdBy = Objects.requireNonNull(createdBy, "createdBy must not be null");
         createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         state = Objects.requireNonNull(state, "state must not be null");
         revokedAt = Objects.requireNonNull(revokedAt, "revokedAt must not be null");
+        revocationReasonCode = optionalIdentifier(revocationReasonCode, "revocationReasonCode");
         consumedAt = Objects.requireNonNull(consumedAt, "consumedAt must not be null");
         if (semantics != ApprovalSemantics.CAPABILITY_CONFIRMATION) {
             throw new IllegalArgumentException("business authorization cannot create a reusable grant");
@@ -54,7 +102,7 @@ public record ApprovalGrant(
             throw new IllegalArgumentException("expiresAt must be after createdAt");
         }
         validateScope(reuseScope, sessionRef, projectRef, projectTrustRef, securityConfigurationDigest);
-        validateState(state, revokedAt, consumedAt);
+        validateState(state, revokedAt, revocationReasonCode, consumedAt);
     }
 
     public boolean activeAt(Instant now) {
@@ -81,16 +129,22 @@ public record ApprovalGrant(
                 securityConfigurationDigest,
                 sourceDecisionId,
                 sourceApprovalRequestRef,
+                sourceApprovalResponseRef,
                 createdBy,
                 createdAt,
                 expiresAt,
                 ApprovalGrantState.CONSUMED,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.of(at),
                 version + 1);
     }
 
     public ApprovalGrant revoke(Instant at) {
+        return revoke(at, "GRANT_REVOKED");
+    }
+
+    public ApprovalGrant revoke(Instant at, String reasonCode) {
         Objects.requireNonNull(at, "at must not be null");
         if (state != ApprovalGrantState.ACTIVE) throw new IllegalStateException("only active grant can be revoked");
         return new ApprovalGrant(
@@ -106,11 +160,13 @@ public record ApprovalGrant(
                 securityConfigurationDigest,
                 sourceDecisionId,
                 sourceApprovalRequestRef,
+                sourceApprovalResponseRef,
                 createdBy,
                 createdAt,
                 expiresAt,
                 ApprovalGrantState.REVOKED,
                 Optional.of(at),
+                Optional.of(requireIdentifier(reasonCode, "reasonCode")),
                 Optional.empty(),
                 version + 1);
     }
@@ -131,14 +187,20 @@ public record ApprovalGrant(
     }
 
     private static void validateState(
-            ApprovalGrantState state, Optional<Instant> revokedAt, Optional<Instant> consumedAt) {
-        if (state == ApprovalGrantState.ACTIVE && (revokedAt.isPresent() || consumedAt.isPresent())) {
+            ApprovalGrantState state,
+            Optional<Instant> revokedAt,
+            Optional<String> revocationReasonCode,
+            Optional<Instant> consumedAt) {
+        if (state == ApprovalGrantState.ACTIVE
+                && (revokedAt.isPresent() || revocationReasonCode.isPresent() || consumedAt.isPresent())) {
             throw new IllegalArgumentException("active grant cannot have terminal timestamps");
         }
-        if (state == ApprovalGrantState.REVOKED && (revokedAt.isEmpty() || consumedAt.isPresent())) {
-            throw new IllegalArgumentException("revoked grant requires revokedAt only");
+        if (state == ApprovalGrantState.REVOKED
+                && (revokedAt.isEmpty() || revocationReasonCode.isEmpty() || consumedAt.isPresent())) {
+            throw new IllegalArgumentException("revoked grant requires revokedAt and reason only");
         }
-        if (state == ApprovalGrantState.CONSUMED && (consumedAt.isEmpty() || revokedAt.isPresent())) {
+        if (state == ApprovalGrantState.CONSUMED
+                && (consumedAt.isEmpty() || revokedAt.isPresent() || revocationReasonCode.isPresent())) {
             throw new IllegalArgumentException("consumed grant requires consumedAt only");
         }
     }

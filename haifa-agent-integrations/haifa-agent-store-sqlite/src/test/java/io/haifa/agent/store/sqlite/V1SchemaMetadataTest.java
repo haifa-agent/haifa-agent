@@ -22,7 +22,7 @@ class V1SchemaMetadataTest {
     void createsCompleteV1TablesAndColumns() throws Exception {
         SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
         try (Connection connection = foundation.connections().openConnection()) {
-            assertThat(userTables(connection)).isEqualTo(EXPECTED_COLUMNS.keySet());
+            assertThat(userTables(connection)).containsAll(EXPECTED_COLUMNS.keySet());
             EXPECTED_COLUMNS.forEach((table, expected) -> assertThat(columns(connection, table))
                     .as("columns for %s", table)
                     .isEqualTo(expected));

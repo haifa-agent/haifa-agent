@@ -21,7 +21,39 @@ public record ProjectTrust(
         Instant confirmedAt,
         Optional<Instant> expiresAt,
         Optional<Instant> revokedAt,
+        Optional<String> revocationReasonCode,
         long version) {
+    public ProjectTrust(
+            ProjectTrustRef ref,
+            TenantRef tenant,
+            PrincipalRef principal,
+            String projectRef,
+            String canonicalProjectIdentity,
+            String trustedRootIdentity,
+            String securityConfigurationDigest,
+            String productProfileRef,
+            ProjectTrustState state,
+            Instant confirmedAt,
+            Optional<Instant> expiresAt,
+            Optional<Instant> revokedAt,
+            long version) {
+        this(
+                ref,
+                tenant,
+                principal,
+                projectRef,
+                canonicalProjectIdentity,
+                trustedRootIdentity,
+                securityConfigurationDigest,
+                productProfileRef,
+                state,
+                confirmedAt,
+                expiresAt,
+                revokedAt,
+                state == ProjectTrustState.REVOKED ? Optional.of("PROJECT_TRUST_REVOKED") : Optional.empty(),
+                version);
+    }
+
     public ProjectTrust {
         ref = Objects.requireNonNull(ref, "ref must not be null");
         tenant = Objects.requireNonNull(tenant, "tenant must not be null");
@@ -35,15 +67,16 @@ public record ProjectTrust(
         confirmedAt = Objects.requireNonNull(confirmedAt, "confirmedAt must not be null");
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
         revokedAt = Objects.requireNonNull(revokedAt, "revokedAt must not be null");
+        revocationReasonCode = PolicyValues.optionalIdentifier(revocationReasonCode, "revocationReasonCode");
         if (version < 0) throw new IllegalArgumentException("version must not be negative");
         if (expiresAt.isPresent() && !expiresAt.orElseThrow().isAfter(confirmedAt)) {
             throw new IllegalArgumentException("expiresAt must be after confirmedAt");
         }
-        if (state == ProjectTrustState.TRUSTED && revokedAt.isPresent()) {
+        if (state == ProjectTrustState.TRUSTED && (revokedAt.isPresent() || revocationReasonCode.isPresent())) {
             throw new IllegalArgumentException("trusted project cannot have revokedAt");
         }
-        if (state == ProjectTrustState.REVOKED && revokedAt.isEmpty()) {
-            throw new IllegalArgumentException("revoked project requires revokedAt");
+        if (state == ProjectTrustState.REVOKED && (revokedAt.isEmpty() || revocationReasonCode.isEmpty())) {
+            throw new IllegalArgumentException("revoked project requires revokedAt and reason");
         }
     }
 
@@ -69,6 +102,10 @@ public record ProjectTrust(
     }
 
     public ProjectTrust revoke(Instant at) {
+        return revoke(at, "PROJECT_TRUST_REVOKED");
+    }
+
+    public ProjectTrust revoke(Instant at, String reasonCode) {
         Objects.requireNonNull(at, "at must not be null");
         if (state != ProjectTrustState.TRUSTED) throw new IllegalStateException("project trust is already revoked");
         return new ProjectTrust(
@@ -84,6 +121,7 @@ public record ProjectTrust(
                 confirmedAt,
                 expiresAt,
                 Optional.of(at),
+                Optional.of(requireIdentifier(reasonCode, "reasonCode")),
                 version + 1);
     }
 }

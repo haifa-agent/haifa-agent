@@ -3,6 +3,11 @@ package io.haifa.agent.store.sqlite;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.policy.api.ApprovalAuthorityRequirementRef;
+import io.haifa.agent.policy.api.ApprovalRequestContext;
+import io.haifa.agent.policy.api.ApprovalVerification;
+import io.haifa.agent.policy.api.PolicyDigest;
+import io.haifa.agent.policy.api.PolicyEffect;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
@@ -15,8 +20,11 @@ import io.haifa.agent.runtime.core.interaction.ResolvedInteraction;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.store.sqlite.codec.EncodedPayload;
 import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
+import io.haifa.agent.store.sqlite.mybatis.ApprovalRequestMetadataRow;
 import io.haifa.agent.store.sqlite.mybatis.InteractionRequestRow;
 import io.haifa.agent.store.sqlite.mybatis.InteractionResponseRow;
+import io.haifa.agent.store.sqlite.mybatis.PolicyDecisionRow;
+import io.haifa.agent.store.sqlite.mybatis.PolicyStoreMapper;
 import io.haifa.agent.store.sqlite.mybatis.RuntimeStoreMapper;
 import io.haifa.agent.store.sqlite.payload.ContentPartsPayload;
 import io.haifa.agent.store.sqlite.payload.InteractionTargetPayload;
@@ -24,6 +32,7 @@ import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -61,8 +70,8 @@ public final class SqliteInteractionPort implements InteractionPort {
                     request.id().value(),
                     request.runId().value(),
                     request.tenant().tenantId(),
-                    request.principal().principalId(),
-                    request.principal().principalType(),
+                    request.requester().principalId(),
+                    request.requester().principalType(),
                     request.type(),
                     request.prompt(),
                     request.approval(),
@@ -73,6 +82,7 @@ public final class SqliteInteractionPort implements InteractionPort {
                     request.createdAt(),
                     request.expiresAt()));
             mapper.insertInteractionApplication(request.id().value());
+            request.approvalContext().ifPresent(context -> insertApprovalMetadata(request, context));
             return null;
         });
     }
@@ -150,7 +160,56 @@ public final class SqliteInteractionPort implements InteractionPort {
                     response.idempotencyKey(),
                     response.respondedAt(),
                     receivedAt));
+            if (request.approvalContext().isPresent()) {
+                String selectedScope = request.approvalContext()
+                                        .orElseThrow()
+                                        .allowedReuseScopes()
+                                        .size()
+                                == 1
+                        ? request.approvalContext()
+                                .orElseThrow()
+                                .allowedReuseScopes()
+                                .iterator()
+                                .next()
+                                .name()
+                        : null;
+                String validationDigest = PolicyDigest.sha256Fields(List.of(
+                        response.responseId().value(),
+                        request.id().value(),
+                        caller.tenant().tenantId(),
+                        caller.principal().principalType(),
+                        caller.principal().principalId()));
+                unitOfWork
+                        .mapper(PolicyStoreMapper.class)
+                        .insertApprovalResponseMetadata(
+                                response.responseId().value(),
+                                caller.tenant().tenantId(),
+                                caller.principal().principalId(),
+                                caller.principal().principalType(),
+                                "PENDING",
+                                "VERIFICATION_PENDING",
+                                "PENDING",
+                                "VERIFICATION_PENDING",
+                                selectedScope,
+                                validationDigest);
+            }
             return new InteractionResolution(request, true);
+        });
+    }
+
+    @Override
+    public void recordApprovalVerification(InteractionResponseId responseId, ApprovalVerification verification) {
+        Objects.requireNonNull(responseId, "responseId must not be null");
+        Objects.requireNonNull(verification, "verification must not be null");
+        execute(() -> {
+            String outcome = verification.accepted() ? "ACCEPTED" : "REJECTED";
+            if (unitOfWork
+                            .mapper(PolicyStoreMapper.class)
+                            .updateApprovalResponseVerification(responseId.value(), outcome, verification.reasonCode())
+                    != 1) {
+                throw new IllegalStateException("approval response metadata is missing");
+            }
+            return null;
         });
     }
 
@@ -159,7 +218,8 @@ public final class SqliteInteractionPort implements InteractionPort {
         if (!request.runId().equals(response.runId())) {
             throw new IllegalArgumentException("response run does not match request");
         }
-        if (!request.tenant().equals(caller.tenant()) || !request.principal().equals(caller.principal())) {
+        if (!request.tenant().equals(caller.tenant())
+                || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
             throw new SecurityException("caller cannot respond to this interaction");
         }
         if (receivedAt.isAfter(request.expiresAt())) throw new IllegalStateException("interaction has expired");
@@ -192,6 +252,12 @@ public final class SqliteInteractionPort implements InteractionPort {
         if (!expectedKind.equals(target.kind())) {
             throw new IllegalStateException("interaction target discriminator does not match payload");
         }
+        Optional<ApprovalRequestContext> approvalContext = Optional.ofNullable(
+                        unitOfWork.mapper(PolicyStoreMapper.class).findApprovalRequestMetadata(row.requestId()))
+                .map(this::approvalContext);
+        if (approvalContext.isPresent() && !row.approval()) {
+            throw new IllegalStateException("non-approval interaction cannot carry approval metadata");
+        }
         return new InteractionRequest(
                 new InteractionRequestId(row.requestId()),
                 new AgentRunId(row.runId()),
@@ -202,7 +268,78 @@ public final class SqliteInteractionPort implements InteractionPort {
                 row.approval(),
                 target.toDomain(),
                 row.createdAt(),
-                row.expiresAt());
+                row.expiresAt(),
+                approvalContext);
+    }
+
+    private void insertApprovalMetadata(InteractionRequest request, ApprovalRequestContext context) {
+        PolicyStoreMapper mapper = unitOfWork.mapper(PolicyStoreMapper.class);
+        PolicyDecisionRow decision =
+                mapper.findPolicyDecision(context.decisionId().value());
+        if (decision == null) throw new IllegalStateException("approval policy decision is missing");
+        if (PolicyEffect.valueOf(decision.effect()) != PolicyEffect.ASK || decision.challenge() == null) {
+            throw new IllegalStateException("approval policy decision is not an ASK decision");
+        }
+        EncodedPayload payload = codecs.encode(SqliteRuntimePayloadTypes.APPROVAL_REQUEST_CONTEXT, context);
+        ApprovalAuthorityRequirementRef authority =
+                context.authorityRequirement().orElse(null);
+        mapper.insertApprovalRequestMetadata(new ApprovalRequestMetadataRow(
+                request.id().value(),
+                context.decisionId().value(),
+                context.semantics().name(),
+                decision.challenge(),
+                context.requester().tenant().tenantId(),
+                context.requester().principal().principalId(),
+                context.requester().principal().principalType(),
+                context.target().targetType(),
+                context.target().targetId(),
+                context.target().targetVersion(),
+                context.target().operation(),
+                context.target().targetDigest(),
+                context.target().safeSummary(),
+                authority == null ? null : authority.providerId(),
+                authority == null ? null : authority.requirementId(),
+                authority == null ? null : authority.version(),
+                context.externalCorrelationRef().orElse(null),
+                payload.schemaVersion(),
+                payload.bytes(),
+                payload.hash()));
+    }
+
+    private ApprovalRequestContext approvalContext(ApprovalRequestMetadataRow row) {
+        ApprovalRequestContext context = codecs.decode(
+                SqliteRuntimePayloadTypes.APPROVAL_REQUEST_CONTEXT,
+                new EncodedPayload(
+                        SqliteRuntimePayloadTypes.APPROVAL_REQUEST_CONTEXT.name(),
+                        row.metadataSchemaVersion(),
+                        row.metadataPayload(),
+                        row.metadataHash()));
+        ApprovalAuthorityRequirementRef authority =
+                context.authorityRequirement().orElse(null);
+        PolicyDecisionRow decision = unitOfWork.mapper(PolicyStoreMapper.class).findPolicyDecision(row.decisionId());
+        if (decision == null
+                || PolicyEffect.valueOf(decision.effect()) != PolicyEffect.ASK
+                || !Objects.equals(decision.challenge(), row.challenge())) {
+            throw new IllegalStateException("approval metadata decision binding is invalid");
+        }
+        if (!context.decisionId().value().equals(row.decisionId())
+                || !context.semantics().name().equals(row.semantics())
+                || !context.requester().tenant().tenantId().equals(row.requesterTenantId())
+                || !context.requester().principal().principalId().equals(row.requesterPrincipalId())
+                || !context.requester().principal().principalType().equals(row.requesterPrincipalType())
+                || !context.target().targetType().equals(row.targetType())
+                || !context.target().targetId().equals(row.targetId())
+                || !context.target().targetVersion().equals(row.targetVersion())
+                || !context.target().operation().equals(row.targetOperation())
+                || !context.target().targetDigest().equals(row.targetDigest())
+                || !context.target().safeSummary().equals(row.targetSafeSummary())
+                || !Objects.equals(authority == null ? null : authority.providerId(), row.authorityProviderId())
+                || !Objects.equals(authority == null ? null : authority.requirementId(), row.authorityRequirementId())
+                || !Objects.equals(authority == null ? null : authority.version(), row.authorityRequirementVersion())
+                || !context.externalCorrelationRef().equals(Optional.ofNullable(row.externalCorrelationRef()))) {
+            throw new IllegalStateException("approval metadata columns do not match payload");
+        }
+        return context;
     }
 
     private InteractionResponse fromResponseRow(InteractionResponseRow row) {

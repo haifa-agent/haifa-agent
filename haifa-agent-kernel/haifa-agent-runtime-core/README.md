@@ -1,5 +1,20 @@
 # Haifa Agent Runtime Core
 
+## Policy / Approval 原子边界
+
+Approval Request、Approval Metadata、Checkpoint、Run `WAITING_APPROVAL` 与 `policy.decision.made` / `approval.requested` Event-Outbox 在同一 Runtime UoW 中提交。响应侧把可信 Caller、验证结果、Authorization Evidence、响应消息和安全事件放入同一 UoW，再在提交后恢复 Run；Tool Resolution 只应用一次。
+
+## Public Policy integration
+
+Tool Pipeline 的权威策略结果是 `policy-api` 的 `PolicyDecision`。`ASK` 会创建关联 Decision、
+Requester、Challenge 与精确 Target 的既有 Runtime Interaction；可信 Caller 作为 Responder，
+经 `ApprovalVerificationService` 验证后只生成 challenge-satisfaction evidence。新 Attempt 恢复时
+重新检查 Capability、Schema、Policy 与 Tool Binding，然后才进入原 Journal、Credential 与 Provider
+链路。Runtime Core 只依赖 Policy API。
+
+`ToolPolicy`、`ToolPolicyDecision` 与 `DefaultToolPolicy` 是待删除的单向源码兼容层；Pipeline
+不会并行执行旧、新两套判断。新产品装配应使用 `publicToolPolicy(...)`。
+
 ## Provider continuation
 
 When an assistant response contains both reasoning and Tool Calls, Runtime atomically associates a safe

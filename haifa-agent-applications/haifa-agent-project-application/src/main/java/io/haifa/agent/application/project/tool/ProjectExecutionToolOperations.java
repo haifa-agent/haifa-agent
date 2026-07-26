@@ -108,10 +108,14 @@ public final class ProjectExecutionToolOperations {
                         .orElseGet(() -> invocation.runId().value() + ":"
                                 + invocation.toolCallId().value()),
                 new TrustedExecutionContext(
+                        invocation.tenant(),
                         invocation.runId().value(),
                         invocation.principal(),
                         access.capabilities(),
-                        access.policyDecisionRef()),
+                        invocation
+                                .policyDecisionRef()
+                                .orElseThrow(() ->
+                                        new SecurityException("execution tool requires a public policy decision"))),
                 access.workspaceId(),
                 workingDirectory,
                 ExecutionCommand.shell(command),

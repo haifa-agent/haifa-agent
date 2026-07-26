@@ -8,6 +8,7 @@ import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSideEffect;
 
 /** Conservative default: reads are automatic; writes, execution, network and credentials require approval. */
+@Deprecated(forRemoval = true)
 public final class DefaultToolPolicy implements ToolPolicy {
     @Override
     public ToolPolicyDecision evaluate(AgentRun run, FrozenToolBinding binding, ToolRequest request) {

@@ -12,6 +12,11 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.RunTerminationReason;
+import io.haifa.agent.policy.api.ApprovalResponder;
+import io.haifa.agent.policy.api.ApprovalVerificationService;
+import io.haifa.agent.policy.api.PolicyAuthorizationEvidence;
+import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
+import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunListener;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -89,6 +94,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final ExecutionOwnershipPort ownership;
     private final RetryExecutor persistenceRetries;
     private final PersistenceRetryPolicy persistenceRetry;
+    private final ApprovalVerificationService approvalVerification;
+    private final PolicyAuthorizationEvidenceStore policyAuthorizationEvidence;
+    private final PolicyDecisionStore policyDecisions;
 
     public DefaultAgentRuntime(
             CallerContextProvider callers,
@@ -113,7 +121,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             RuntimeModelOutputPublisher modelOutput,
             ExecutionOwnershipPort ownership,
             RetryExecutor persistenceRetries,
-            PersistenceRetryPolicy persistenceRetry) {
+            PersistenceRetryPolicy persistenceRetry,
+            ApprovalVerificationService approvalVerification,
+            PolicyAuthorizationEvidenceStore policyAuthorizationEvidence,
+            PolicyDecisionStore policyDecisions) {
         this.callers = Objects.requireNonNull(callers);
         this.bootstrapper = Objects.requireNonNull(bootstrapper);
         this.runs = Objects.requireNonNull(runs);
@@ -137,6 +148,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.ownership = Objects.requireNonNull(ownership);
         this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
         this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
+        this.approvalVerification = Objects.requireNonNull(approvalVerification);
+        this.policyAuthorizationEvidence = Objects.requireNonNull(policyAuthorizationEvidence);
+        this.policyDecisions = Objects.requireNonNull(policyDecisions);
     }
 
     @Override
@@ -234,40 +248,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     @Override
     public AgentRunSnapshot respond(InteractionResponse response) {
         Objects.requireNonNull(response, "response must not be null");
-        AgentRun run = requireRun(response.runId());
-        requireCaller(run);
-        var caller = callers.current();
-        var resolution = interactions.respond(response, caller, time.now());
-        boolean toolApproval =
-                resolution.request().target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
-        if (resolution.newlyRecorded()) {
-            unitOfWork.execute(() -> {
-                appendInteractionResponseMessage(
-                        run, response, toolApproval ? MessageVisibility.INTERNAL : MessageVisibility.AGENT_VISIBLE);
-                var event = events.append(
-                        run.id(),
-                        "interaction.responded",
-                        Map.of(
-                                "requestId", response.requestId().value(),
-                                "responseType", response.type().name(),
-                                "operator", caller.principal().principalId()),
-                        time.now());
-                outbox.append(new OutboxMessage(
-                        ids.nextValue(),
-                        event.runId(),
-                        event.sequence(),
-                        event.type(),
-                        OutboxMessage.CURRENT_SCHEMA_VERSION,
-                        Map.of(
-                                "requestId",
-                                response.requestId().value(),
-                                "responseType",
-                                response.type().name()),
-                        event.occurredAt()));
-                return null;
-            });
-        }
-        if (toolApproval) {
+        ResponseOutcome outcome = unitOfWork.execute(() -> recordResponse(response));
+        AgentRun run = outcome.run();
+        if (outcome.toolApproval()) {
             return resume(new ResumeAgentRunRequest(
                     "tool-approval-response:" + response.idempotencyKey(), run.id(), List.of()));
         }
@@ -282,6 +265,118 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         return resume(
                 new ResumeAgentRunRequest("interaction-response:" + response.idempotencyKey(), run.id(), List.of()));
     }
+
+    private ResponseOutcome recordResponse(InteractionResponse response) {
+        AgentRun run = requireRun(response.runId());
+        requireCaller(run);
+        var caller = callers.current();
+        var request = interactions
+                .find(response.requestId())
+                .orElseThrow(() -> new IllegalArgumentException("unknown interaction request"));
+        if (!request.tenant().equals(caller.tenant())) {
+            throw new SecurityException("response tenant does not match interaction");
+        }
+        io.haifa.agent.policy.api.ApprovalVerification approvalResult = null;
+        if (request.approval()) {
+            if (request.approvalContext().isPresent()) {
+                approvalResult = approvalVerification.verify(
+                        request.approvalContext().orElseThrow(),
+                        new ApprovalResponder(caller.tenant(), caller.principal()));
+                if (!approvalResult.accepted()) {
+                    throw new SecurityException("approval verification failed: " + approvalResult.reasonCode());
+                }
+            } else if (!request.requester().equals(caller.principal())) {
+                throw new SecurityException("legacy approval requires the requester principal");
+            }
+        }
+        var resolution = interactions.respond(response, caller, time.now());
+        if (resolution.newlyRecorded() && approvalResult != null) {
+            interactions.recordApprovalVerification(response.responseId(), approvalResult);
+        }
+        boolean toolApproval =
+                resolution.request().target() instanceof io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
+        if (resolution.newlyRecorded()) {
+            if (approvalResult != null) {
+                var securityAt = time.now();
+                appendSecurityEvent(
+                        run,
+                        "approval.authority.verified",
+                        Map.of(
+                                "requestId",
+                                response.requestId().value(),
+                                "responseId",
+                                response.responseId().value(),
+                                "outcome",
+                                approvalResult.accepted() ? "ACCEPTED" : "REJECTED",
+                                "reasonCode",
+                                approvalResult.reasonCode()),
+                        securityAt);
+                appendSecurityEvent(
+                        run,
+                        "approval.target.validated",
+                        Map.of(
+                                "requestId",
+                                response.requestId().value(),
+                                "responseId",
+                                response.responseId().value(),
+                                "outcome",
+                                approvalResult.accepted() ? "CURRENT" : "REJECTED",
+                                "reasonCode",
+                                approvalResult.reasonCode()),
+                        securityAt);
+            }
+            if (approvalResult != null && response.type() == InteractionResponseType.APPROVE) {
+                var context = request.approvalContext().orElseThrow();
+                var decision = policyDecisions
+                        .find(context.decisionId())
+                        .orElseThrow(() -> new SecurityException("policy decision is unavailable"));
+                policyAuthorizationEvidence.save(new PolicyAuthorizationEvidence(
+                        context.decisionId(),
+                        decision.requestDigest(),
+                        context.requester(),
+                        new ApprovalResponder(caller.tenant(), caller.principal()),
+                        time.now(),
+                        context.expiresAt()));
+            }
+            appendInteractionResponseMessage(
+                    run, response, toolApproval ? MessageVisibility.INTERNAL : MessageVisibility.AGENT_VISIBLE);
+            var event = events.append(
+                    run.id(),
+                    request.approval() ? "approval.responded" : "interaction.responded",
+                    Map.of(
+                            "requestId", response.requestId().value(),
+                            "responseType", response.type().name(),
+                            "responder", caller.principal().principalId()),
+                    time.now());
+            outbox.append(new OutboxMessage(
+                    ids.nextValue(),
+                    event.runId(),
+                    event.sequence(),
+                    event.type(),
+                    OutboxMessage.CURRENT_SCHEMA_VERSION,
+                    Map.of(
+                            "requestId",
+                            response.requestId().value(),
+                            "responseType",
+                            response.type().name()),
+                    event.occurredAt()));
+        }
+        return new ResponseOutcome(run, toolApproval);
+    }
+
+    private void appendSecurityEvent(AgentRun run, String type, Map<String, Object> data, java.time.Instant at) {
+        var event = events.append(run.id(), type, data, at);
+        outbox.append(new OutboxMessage(
+                ids.nextValue(),
+                event.runId(),
+                event.sequence(),
+                event.type(),
+                OutboxMessage.CURRENT_SCHEMA_VERSION,
+                event.data(),
+                event.occurredAt()));
+    }
+
+    private record ResponseOutcome(AgentRun run, boolean toolApproval) {}
 
     @Override
     public RuntimeCommandResult command(RuntimeCommand command) {

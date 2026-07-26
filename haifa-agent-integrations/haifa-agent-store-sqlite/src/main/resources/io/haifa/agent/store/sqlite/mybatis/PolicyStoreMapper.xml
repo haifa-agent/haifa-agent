@@ -1,0 +1,367 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.haifa.agent.store.sqlite.mybatis.PolicyStoreMapper">
+
+    <resultMap id="snapshotRow" type="io.haifa.agent.store.sqlite.mybatis.PolicySnapshotRow">
+        <constructor>
+            <arg column="snapshot_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="product_id" javaType="java.lang.String"/>
+            <arg column="approval_mode" javaType="java.lang.String"/>
+            <arg column="product_profile_ref" javaType="java.lang.String"/>
+            <arg column="project_trust_ref" javaType="java.lang.String"/>
+            <arg column="rules_schema_version" javaType="java.lang.String"/>
+            <arg column="rules_payload" javaType="[B"/>
+            <arg column="rules_hash" javaType="java.lang.String"/>
+            <arg column="content_digest" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insertPolicySnapshot">
+        INSERT INTO policy_snapshot (
+            snapshot_id, tenant_id, product_id, approval_mode, product_profile_ref,
+            project_trust_ref, rules_schema_version, rules_payload, rules_hash,
+            content_digest, created_at
+        ) VALUES (
+            #{row.snapshotId}, #{row.tenantId}, #{row.productId}, #{row.approvalMode},
+            #{row.productProfileRef}, #{row.projectTrustRef}, #{row.rulesSchemaVersion},
+            #{row.rulesPayload}, #{row.rulesHash}, #{row.contentDigest}, #{row.createdAt}
+        )
+    </insert>
+
+    <select id="findPolicySnapshot" resultMap="snapshotRow">
+        SELECT snapshot_id, tenant_id, product_id, approval_mode, product_profile_ref,
+               project_trust_ref, rules_schema_version, rules_payload, rules_hash,
+               content_digest, created_at
+        FROM policy_snapshot WHERE snapshot_id = #{snapshotId}
+    </select>
+
+    <resultMap id="decisionRow" type="io.haifa.agent.store.sqlite.mybatis.PolicyDecisionRow">
+        <constructor>
+            <arg column="decision_id" javaType="java.lang.String"/>
+            <arg column="snapshot_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="principal_id" javaType="java.lang.String"/>
+            <arg column="principal_type" javaType="java.lang.String"/>
+            <arg column="product_id" javaType="java.lang.String"/>
+            <arg column="project_ref" javaType="java.lang.String"/>
+            <arg column="session_ref" javaType="java.lang.String"/>
+            <arg column="run_id" javaType="java.lang.String"/>
+            <arg column="attempt_id" javaType="java.lang.String"/>
+            <arg column="capability" javaType="java.lang.String"/>
+            <arg column="operation" javaType="java.lang.String"/>
+            <arg column="resource_type" javaType="java.lang.String"/>
+            <arg column="resource_ref" javaType="java.lang.String"/>
+            <arg column="resource_digest" javaType="java.lang.String"/>
+            <arg column="effect" javaType="java.lang.String"/>
+            <arg column="challenge" javaType="java.lang.String"/>
+            <arg column="reason_code" javaType="java.lang.String"/>
+            <arg column="safe_explanation" javaType="java.lang.String"/>
+            <arg column="matched_rule_id" javaType="java.lang.String"/>
+            <arg column="matched_rule_version" javaType="java.lang.String"/>
+            <arg column="request_digest" javaType="java.lang.String"/>
+            <arg column="request_schema_version" javaType="java.lang.String"/>
+            <arg column="request_payload" javaType="[B"/>
+            <arg column="request_hash" javaType="java.lang.String"/>
+            <arg column="decided_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insertPolicyDecision">
+        INSERT INTO policy_decision (
+            decision_id, snapshot_id, tenant_id, principal_id, principal_type, product_id,
+            project_ref, session_ref, run_id, attempt_id, capability, operation,
+            resource_type, resource_ref, resource_digest, effect, challenge, reason_code,
+            safe_explanation, matched_rule_id, matched_rule_version, request_digest,
+            request_schema_version, request_payload, request_hash, decided_at
+        ) VALUES (
+            #{row.decisionId}, #{row.snapshotId}, #{row.tenantId}, #{row.principalId},
+            #{row.principalType}, #{row.productId}, #{row.projectRef}, #{row.sessionRef},
+            #{row.runId}, #{row.attemptId}, #{row.capability}, #{row.operation},
+            #{row.resourceType}, #{row.resourceRef}, #{row.resourceDigest}, #{row.effect},
+            #{row.challenge}, #{row.reasonCode}, #{row.safeExplanation}, #{row.matchedRuleId},
+            #{row.matchedRuleVersion}, #{row.requestDigest}, #{row.requestSchemaVersion},
+            #{row.requestPayload}, #{row.requestHash}, #{row.decidedAt}
+        )
+    </insert>
+
+    <select id="findPolicyDecision" resultMap="decisionRow">
+        SELECT decision_id, snapshot_id, tenant_id, principal_id, principal_type, product_id,
+               project_ref, session_ref, run_id, attempt_id, capability, operation,
+               resource_type, resource_ref, resource_digest, effect, challenge, reason_code,
+               safe_explanation, matched_rule_id, matched_rule_version, request_digest,
+               request_schema_version, request_payload, request_hash, decided_at
+        FROM policy_decision WHERE decision_id = #{decisionId}
+    </select>
+
+    <resultMap id="approvalRequestRow" type="io.haifa.agent.store.sqlite.mybatis.ApprovalRequestMetadataRow">
+        <constructor>
+            <arg column="request_id" javaType="java.lang.String"/>
+            <arg column="decision_id" javaType="java.lang.String"/>
+            <arg column="semantics" javaType="java.lang.String"/>
+            <arg column="challenge" javaType="java.lang.String"/>
+            <arg column="requester_tenant_id" javaType="java.lang.String"/>
+            <arg column="requester_principal_id" javaType="java.lang.String"/>
+            <arg column="requester_principal_type" javaType="java.lang.String"/>
+            <arg column="target_type" javaType="java.lang.String"/>
+            <arg column="target_id" javaType="java.lang.String"/>
+            <arg column="target_version" javaType="java.lang.String"/>
+            <arg column="target_operation" javaType="java.lang.String"/>
+            <arg column="target_digest" javaType="java.lang.String"/>
+            <arg column="target_safe_summary" javaType="java.lang.String"/>
+            <arg column="authority_provider_id" javaType="java.lang.String"/>
+            <arg column="authority_requirement_id" javaType="java.lang.String"/>
+            <arg column="authority_requirement_version" javaType="java.lang.String"/>
+            <arg column="external_correlation_ref" javaType="java.lang.String"/>
+            <arg column="metadata_schema_version" javaType="java.lang.String"/>
+            <arg column="metadata_payload" javaType="[B"/>
+            <arg column="metadata_hash" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insertApprovalRequestMetadata">
+        INSERT INTO approval_request_metadata (
+            request_id, decision_id, semantics, challenge,
+            requester_tenant_id, requester_principal_id, requester_principal_type,
+            target_type, target_id, target_version, target_operation, target_digest,
+            target_safe_summary, authority_provider_id, authority_requirement_id,
+            authority_requirement_version, external_correlation_ref,
+            metadata_schema_version, metadata_payload, metadata_hash
+        ) VALUES (
+            #{row.requestId}, #{row.decisionId}, #{row.semantics}, #{row.challenge},
+            #{row.requesterTenantId}, #{row.requesterPrincipalId}, #{row.requesterPrincipalType},
+            #{row.targetType}, #{row.targetId}, #{row.targetVersion}, #{row.targetOperation},
+            #{row.targetDigest}, #{row.targetSafeSummary}, #{row.authorityProviderId},
+            #{row.authorityRequirementId}, #{row.authorityRequirementVersion},
+            #{row.externalCorrelationRef}, #{row.metadataSchemaVersion},
+            #{row.metadataPayload}, #{row.metadataHash}
+        )
+    </insert>
+
+    <select id="findApprovalRequestMetadata" resultMap="approvalRequestRow">
+        SELECT request_id, decision_id, semantics, challenge,
+               requester_tenant_id, requester_principal_id, requester_principal_type,
+               target_type, target_id, target_version, target_operation, target_digest,
+               target_safe_summary, authority_provider_id, authority_requirement_id,
+               authority_requirement_version, external_correlation_ref,
+               metadata_schema_version, metadata_payload, metadata_hash
+        FROM approval_request_metadata WHERE request_id = #{requestId}
+    </select>
+
+    <insert id="insertApprovalResponseMetadata">
+        INSERT INTO approval_response_metadata (
+            response_id, responder_tenant_id, responder_principal_id, responder_principal_type,
+            authority_outcome, authority_reason_code, target_outcome, target_reason_code,
+            selected_reuse_scope, validation_digest
+        ) VALUES (
+            #{responseId}, #{responderTenantId}, #{responderPrincipalId}, #{responderPrincipalType},
+            #{authorityOutcome}, #{authorityReasonCode}, #{targetOutcome}, #{targetReasonCode},
+            #{selectedReuseScope}, #{validationDigest}
+        )
+    </insert>
+
+    <update id="updateApprovalResponseVerification">
+        UPDATE approval_response_metadata
+        SET authority_outcome = #{outcome},
+            authority_reason_code = #{reasonCode},
+            target_outcome = #{outcome},
+            target_reason_code = #{reasonCode}
+        WHERE response_id = #{responseId}
+          AND authority_outcome = 'PENDING'
+          AND target_outcome = 'PENDING'
+    </update>
+
+    <resultMap id="evidenceRow" type="io.haifa.agent.store.sqlite.mybatis.PolicyAuthorizationEvidenceRow">
+        <constructor>
+            <arg column="decision_id" javaType="java.lang.String"/>
+            <arg column="request_digest" javaType="java.lang.String"/>
+            <arg column="requester_tenant_id" javaType="java.lang.String"/>
+            <arg column="requester_principal_id" javaType="java.lang.String"/>
+            <arg column="requester_principal_type" javaType="java.lang.String"/>
+            <arg column="responder_tenant_id" javaType="java.lang.String"/>
+            <arg column="responder_principal_id" javaType="java.lang.String"/>
+            <arg column="responder_principal_type" javaType="java.lang.String"/>
+            <arg column="approved_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="expires_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insertPolicyAuthorizationEvidence">
+        INSERT INTO policy_authorization_evidence (
+            decision_id, request_digest, requester_tenant_id, requester_principal_id,
+            requester_principal_type, responder_tenant_id, responder_principal_id,
+            responder_principal_type, approved_at, expires_at
+        ) VALUES (
+            #{row.decisionId}, #{row.requestDigest}, #{row.requesterTenantId},
+            #{row.requesterPrincipalId}, #{row.requesterPrincipalType},
+            #{row.responderTenantId}, #{row.responderPrincipalId},
+            #{row.responderPrincipalType}, #{row.approvedAt}, #{row.expiresAt}
+        )
+    </insert>
+
+    <select id="findPolicyAuthorizationEvidence" resultMap="evidenceRow">
+        SELECT decision_id, request_digest, requester_tenant_id, requester_principal_id,
+               requester_principal_type, responder_tenant_id, responder_principal_id,
+               responder_principal_type, approved_at, expires_at
+        FROM policy_authorization_evidence WHERE decision_id = #{decisionId}
+    </select>
+
+    <resultMap id="grantRow" type="io.haifa.agent.store.sqlite.mybatis.ApprovalGrantRow">
+        <constructor>
+            <arg column="grant_id" javaType="java.lang.String"/>
+            <arg column="semantics" javaType="java.lang.String"/>
+            <arg column="reuse_scope" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="requester_principal_id" javaType="java.lang.String"/>
+            <arg column="requester_principal_type" javaType="java.lang.String"/>
+            <arg column="product_id" javaType="java.lang.String"/>
+            <arg column="capability" javaType="java.lang.String"/>
+            <arg column="operation" javaType="java.lang.String"/>
+            <arg column="target_type" javaType="java.lang.String"/>
+            <arg column="target_id" javaType="java.lang.String"/>
+            <arg column="target_version" javaType="java.lang.String"/>
+            <arg column="target_operation" javaType="java.lang.String"/>
+            <arg column="target_digest" javaType="java.lang.String"/>
+            <arg column="target_safe_summary" javaType="java.lang.String"/>
+            <arg column="session_ref" javaType="java.lang.String"/>
+            <arg column="project_ref" javaType="java.lang.String"/>
+            <arg column="project_trust_ref" javaType="java.lang.String"/>
+            <arg column="authorization_configuration_digest" javaType="java.lang.String"/>
+            <arg column="source_decision_id" javaType="java.lang.String"/>
+            <arg column="source_approval_request_id" javaType="java.lang.String"/>
+            <arg column="source_approval_response_id" javaType="java.lang.String"/>
+            <arg column="responder_tenant_id" javaType="java.lang.String"/>
+            <arg column="responder_principal_id" javaType="java.lang.String"/>
+            <arg column="responder_principal_type" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="expires_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revoked_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revocation_reason_code" javaType="java.lang.String"/>
+            <arg column="consumed_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="state" javaType="java.lang.String"/>
+            <arg column="version" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="grantColumns">
+        grant_id, semantics, reuse_scope, tenant_id, requester_principal_id,
+        requester_principal_type, product_id, capability, operation, target_type,
+        target_id, target_version, target_operation, target_digest, target_safe_summary,
+        session_ref, project_ref, project_trust_ref, authorization_configuration_digest,
+        source_decision_id, source_approval_request_id, source_approval_response_id,
+        responder_tenant_id, responder_principal_id, responder_principal_type,
+        created_at, expires_at, revoked_at, revocation_reason_code, consumed_at, state, version
+    </sql>
+
+    <insert id="insertApprovalGrant">
+        INSERT INTO approval_grant (<include refid="grantColumns"/>)
+        VALUES (
+            #{row.grantId}, #{row.semantics}, #{row.reuseScope}, #{row.tenantId},
+            #{row.requesterPrincipalId}, #{row.requesterPrincipalType}, #{row.productId},
+            #{row.capability}, #{row.operation}, #{row.targetType}, #{row.targetId},
+            #{row.targetVersion}, #{row.targetOperation}, #{row.targetDigest},
+            #{row.targetSafeSummary}, #{row.sessionRef}, #{row.projectRef},
+            #{row.projectTrustRef}, #{row.authorizationConfigurationDigest},
+            #{row.sourceDecisionId}, #{row.sourceApprovalRequestId},
+            #{row.sourceApprovalResponseId}, #{row.responderTenantId},
+            #{row.responderPrincipalId}, #{row.responderPrincipalType},
+            #{row.createdAt}, #{row.expiresAt}, #{row.revokedAt},
+            #{row.revocationReasonCode}, #{row.consumedAt}, #{row.state}, #{row.version}
+        )
+    </insert>
+
+    <select id="findApprovalGrant" resultMap="grantRow">
+        SELECT <include refid="grantColumns"/> FROM approval_grant WHERE grant_id = #{grantId}
+    </select>
+
+    <select id="findApprovalGrantCandidates" resultMap="grantRow">
+        SELECT <include refid="grantColumns"/> FROM approval_grant
+        WHERE tenant_id = #{tenantId}
+          AND requester_principal_id = #{principalId}
+          AND requester_principal_type = #{principalType}
+          AND product_id = #{productId}
+          AND capability = #{capability}
+          AND operation = #{operation}
+          AND target_type = #{targetType}
+        ORDER BY grant_id
+    </select>
+
+    <update id="consumeApprovalGrant">
+        UPDATE approval_grant
+        SET state = 'CONSUMED', consumed_at = #{consumedAt}, version = version + 1
+        WHERE grant_id = #{grantId} AND version = #{expectedVersion}
+          AND state = 'ACTIVE' AND reuse_scope = 'ONCE'
+          AND (expires_at IS NULL OR expires_at &gt; #{consumedAt})
+    </update>
+
+    <update id="revokeApprovalGrant">
+        UPDATE approval_grant
+        SET state = 'REVOKED', revoked_at = #{revokedAt},
+            revocation_reason_code = #{reasonCode}, version = version + 1
+        WHERE grant_id = #{grantId} AND version = #{expectedVersion} AND state = 'ACTIVE'
+    </update>
+
+    <resultMap id="trustRow" type="io.haifa.agent.store.sqlite.mybatis.ProjectTrustRow">
+        <constructor>
+            <arg column="trust_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="principal_id" javaType="java.lang.String"/>
+            <arg column="principal_type" javaType="java.lang.String"/>
+            <arg column="project_ref" javaType="java.lang.String"/>
+            <arg column="canonical_project_identity" javaType="java.lang.String"/>
+            <arg column="trusted_root_identity" javaType="java.lang.String"/>
+            <arg column="authorization_configuration_digest" javaType="java.lang.String"/>
+            <arg column="product_profile_ref" javaType="java.lang.String"/>
+            <arg column="state" javaType="java.lang.String"/>
+            <arg column="confirmed_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="expires_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revoked_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revocation_reason_code" javaType="java.lang.String"/>
+            <arg column="version" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insertProjectTrust">
+        INSERT INTO project_trust (
+            trust_id, tenant_id, principal_id, principal_type, project_ref,
+            canonical_project_identity, trusted_root_identity,
+            authorization_configuration_digest, product_profile_ref, state,
+            confirmed_at, expires_at, revoked_at, revocation_reason_code, version
+        ) VALUES (
+            #{row.trustId}, #{row.tenantId}, #{row.principalId}, #{row.principalType},
+            #{row.projectRef}, #{row.canonicalProjectIdentity}, #{row.trustedRootIdentity},
+            #{row.authorizationConfigurationDigest}, #{row.productProfileRef}, #{row.state},
+            #{row.confirmedAt}, #{row.expiresAt}, #{row.revokedAt},
+            #{row.revocationReasonCode}, #{row.version}
+        )
+    </insert>
+
+    <select id="findProjectTrust" resultMap="trustRow">
+        SELECT trust_id, tenant_id, principal_id, principal_type, project_ref,
+               canonical_project_identity, trusted_root_identity,
+               authorization_configuration_digest, product_profile_ref, state,
+               confirmed_at, expires_at, revoked_at, revocation_reason_code, version
+        FROM project_trust WHERE trust_id = #{trustId}
+    </select>
+
+    <update id="revokeProjectTrust">
+        UPDATE project_trust
+        SET state = 'REVOKED', revoked_at = #{revokedAt},
+            revocation_reason_code = #{reasonCode}, version = version + 1
+        WHERE trust_id = #{trustId} AND version = #{expectedVersion} AND state = 'TRUSTED'
+    </update>
+</mapper>
