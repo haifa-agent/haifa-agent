@@ -68,7 +68,8 @@ public final class InMemoryInteractionPort implements InteractionPort {
         InteractionRequest request = requireRequest(response.requestId());
         if (!request.runId().equals(response.runId()))
             throw new IllegalArgumentException("response run does not match request");
-        if (!request.tenant().equals(caller.tenant()) || !request.principal().equals(caller.principal())) {
+        if (!request.tenant().equals(caller.tenant())
+                || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
             throw new SecurityException("caller cannot respond to this interaction");
         }
         if (receivedAt.isAfter(request.expiresAt())) throw new IllegalStateException("interaction has expired");

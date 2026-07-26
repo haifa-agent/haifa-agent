@@ -35,13 +35,18 @@ public final class SqliteMyBatisSessionFactory {
             "/io/haifa/agent/store/sqlite/mybatis/MigrationMetadataMapper.xml";
     private static final String RUNTIME_STORE_MAPPER_RESOURCE =
             "/io/haifa/agent/store/sqlite/mybatis/RuntimeStoreMapper.xml";
+    private static final String POLICY_STORE_MAPPER_RESOURCE =
+            "/io/haifa/agent/store/sqlite/mybatis/PolicyStoreMapper.xml";
 
     private final SqlSessionFactory sessions;
 
     public SqliteMyBatisSessionFactory(int maximumPayloadBytes) {
         this(
                 maximumPayloadBytes,
-                List.of(loadMapper(MIGRATION_MAPPER_RESOURCE), loadMapper(RUNTIME_STORE_MAPPER_RESOURCE)));
+                List.of(
+                        loadMapper(MIGRATION_MAPPER_RESOURCE),
+                        loadMapper(RUNTIME_STORE_MAPPER_RESOURCE),
+                        loadMapper(POLICY_STORE_MAPPER_RESOURCE)));
     }
 
     public SqliteMyBatisSessionFactory(int maximumPayloadBytes, List<MapperXml> mapperResources) {

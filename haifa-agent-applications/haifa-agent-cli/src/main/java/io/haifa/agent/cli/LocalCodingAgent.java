@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
+import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
@@ -69,6 +70,8 @@ import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector
 import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
+import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
+import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
@@ -212,6 +215,8 @@ final class LocalCodingAgent implements AutoCloseable {
             WorkspaceLocationRef locationRef = new WorkspaceLocationRef("local:" + identifiers.nextValue());
             locations.register(locationRef, workspaceRoot);
             Set<String> configuredTools = effectiveBuiltInTools(configuration);
+            var policy = CodingAgentPolicyAssembly.create(
+                    policyMode(configuration.approval()), clock, identifiers::nextValue, persistence.policy());
             boolean executionEnabled = configuredTools.contains("execution.run");
             WorkspaceCapabilitySet workspaceCapabilities = executionEnabled
                     ? new WorkspaceCapabilitySet(java.util.stream.Stream.concat(
@@ -267,6 +272,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             changeSetService,
                             identifiers,
                             time,
+                            clock,
+                            policy,
                             output)
                     : null;
             Set<String> effectiveCapabilities = executionEnabled
@@ -274,7 +281,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     : Set.of("file.read", "file.write");
             var provider = new ProjectToolExecutor(
                     (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
-                            workspaceId, effectiveCapabilities, "cli-local-policy"),
+                            workspaceId, effectiveCapabilities),
                     operations,
                     executionPlatform == null ? null : executionPlatform.operations());
             var skillService = new DefaultSkillActivationService(
@@ -326,19 +333,16 @@ final class LocalCodingAgent implements AutoCloseable {
                                 + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
                                 + "\nRisk: runs on the host with the current OS user's access; this is not strong isolation.";
                     })
-                    .toolPolicy((run, binding, request) -> switch (configuration.approval()) {
-                        case AUTO -> io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW;
-                        case DENY ->
-                            binding.definition().approvalRequirement()
-                                            == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
-                                    ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
-                                    : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.DENY;
-                        case ASK ->
-                            binding.definition().approvalRequirement()
-                                            == io.haifa.agent.tool.api.ToolApprovalRequirement.NEVER
-                                    ? io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW
-                                    : io.haifa.agent.runtime.core.tool.ToolPolicyDecision.REQUIRE_APPROVAL;
-                    })
+                    .policyStores(policy.decisionsStore(), policy.evidence())
+                    .approvalVerification(policy.approvalVerification())
+                    .publicToolPolicy(new DefaultPublicToolPolicy(
+                            new DefaultToolPolicyRequestAdapter(
+                                    "haifa-coding-agent", policyMode(configuration.approval())),
+                            policy.decisions(),
+                            policy.decisionsStore(),
+                            policy.snapshot(),
+                            () -> new io.haifa.agent.policy.api.PolicyDecisionId(identifiers.nextValue()),
+                            clock))
                     .definitions((id, requested) -> new ResolvedDefinition(
                             id,
                             requested.orElse(new AgentDefinitionVersion(1, 0, 0)),
@@ -456,6 +460,10 @@ final class LocalCodingAgent implements AutoCloseable {
         java.util.Set<String> configuredTools = new java.util.HashSet<>(configuration.enabledTools());
         if (configuration.approval() == ApprovalMode.DENY) configuredTools.remove("execution.run");
         return Set.copyOf(configuredTools);
+    }
+
+    private static io.haifa.agent.policy.api.ApprovalMode policyMode(ApprovalMode mode) {
+        return io.haifa.agent.policy.api.ApprovalMode.valueOf(mode.name());
     }
 
     private static void validateSkillWorkspaceIsolation(

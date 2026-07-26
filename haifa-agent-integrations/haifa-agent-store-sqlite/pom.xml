@@ -23,6 +23,10 @@
             <artifactId>haifa-agent-runtime-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-policy-api</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.mybatis</groupId>
             <artifactId>mybatis</artifactId>
         </dependency>

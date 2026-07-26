@@ -31,6 +31,9 @@ import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.policy.api.ApprovalMode;
+import io.haifa.agent.policy.api.PolicySnapshot;
+import io.haifa.agent.policy.api.PolicySnapshotRef;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -452,7 +455,19 @@ class SqliteRuntimeRecoveryTest {
             IdentifierGenerator ids,
             AtomicInteger providerCalls,
             ToolPolicyDecision decision) {
-        return runtime(foundation, model, workerId, ids, builder -> installTool(builder, providerCalls, decision));
+        foundation
+                .policySnapshots()
+                .save(new PolicySnapshot(
+                        new PolicySnapshotRef("legacy-tool-policy-v1"),
+                        List.of(),
+                        Optional.empty(),
+                        ApprovalMode.ASK,
+                        "legacy-tool-policy",
+                        Optional.empty(),
+                        "legacy-tool-policy-v1",
+                        NOW));
+        return runtime(foundation, model, workerId, ids, builder -> installTool(builder, providerCalls, decision)
+                .policyStores(foundation.policyDecisions(), foundation.policyAuthorizationEvidence()));
     }
 
     private static RuntimeCoreBuilder installTool(

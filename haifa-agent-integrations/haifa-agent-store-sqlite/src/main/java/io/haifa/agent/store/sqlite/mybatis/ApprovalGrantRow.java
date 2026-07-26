@@ -1,0 +1,37 @@
+package io.haifa.agent.store.sqlite.mybatis;
+
+import java.time.Instant;
+
+public record ApprovalGrantRow(
+        String grantId,
+        String semantics,
+        String reuseScope,
+        String tenantId,
+        String requesterPrincipalId,
+        String requesterPrincipalType,
+        String productId,
+        String capability,
+        String operation,
+        String targetType,
+        String targetId,
+        String targetVersion,
+        String targetOperation,
+        String targetDigest,
+        String targetSafeSummary,
+        String sessionRef,
+        String projectRef,
+        String projectTrustRef,
+        String authorizationConfigurationDigest,
+        String sourceDecisionId,
+        String sourceApprovalRequestId,
+        String sourceApprovalResponseId,
+        String responderTenantId,
+        String responderPrincipalId,
+        String responderPrincipalType,
+        Instant createdAt,
+        Instant expiresAt,
+        Instant revokedAt,
+        String revocationReasonCode,
+        Instant consumedAt,
+        String state,
+        long version) {}

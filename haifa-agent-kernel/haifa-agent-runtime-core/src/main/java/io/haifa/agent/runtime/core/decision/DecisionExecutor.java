@@ -27,6 +27,12 @@ import io.haifa.agent.core.step.AgentStepStatus;
 import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
+import io.haifa.agent.policy.api.ApprovalRequestContext;
+import io.haifa.agent.policy.api.ApprovalRequester;
+import io.haifa.agent.policy.api.ApprovalReuseScope;
+import io.haifa.agent.policy.api.ApprovalSemantics;
+import io.haifa.agent.policy.api.ApprovalTargetRef;
+import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
@@ -46,7 +52,11 @@ import io.haifa.agent.runtime.core.model.ModelInvocationResult;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
+import io.haifa.agent.runtime.core.storage.OutboxMessage;
+import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
+import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPipelineOutcome;
@@ -70,35 +80,10 @@ public final class DecisionExecutor {
     private final RunControlRegistry controls;
     private final RepairRetryPolicy repairRetry;
     private final ToolApprovalPromptFormatter approvalPrompts;
-
-    public DecisionExecutor(
-            ToolPipeline tools,
-            CompletionGuard completionGuard,
-            RunFinalizer finalizer,
-            InteractionPort interactions,
-            DelegationPort delegations,
-            RuntimeStateRepository state,
-            RunTransitionCoordinator transitions,
-            IdentifierGenerator ids,
-            TimeProvider time,
-            CheckpointManager checkpoints,
-            RunControlRegistry controls,
-            RepairRetryPolicy repairRetry) {
-        this(
-                tools,
-                completionGuard,
-                finalizer,
-                interactions,
-                delegations,
-                state,
-                transitions,
-                ids,
-                time,
-                checkpoints,
-                controls,
-                repairRetry,
-                ToolApprovalPromptFormatter.defaultFormatter());
-    }
+    private final PolicyDecisionStore policyDecisions;
+    private final RuntimeUnitOfWork unitOfWork;
+    private final RuntimeEventAppender events;
+    private final RuntimeOutboxPublisher outbox;
 
     public DecisionExecutor(
             ToolPipeline tools,
@@ -113,7 +98,11 @@ public final class DecisionExecutor {
             CheckpointManager checkpoints,
             RunControlRegistry controls,
             RepairRetryPolicy repairRetry,
-            ToolApprovalPromptFormatter approvalPrompts) {
+            ToolApprovalPromptFormatter approvalPrompts,
+            PolicyDecisionStore policyDecisions,
+            RuntimeUnitOfWork unitOfWork,
+            RuntimeEventAppender events,
+            RuntimeOutboxPublisher outbox) {
         this.tools = Objects.requireNonNull(tools);
         this.completionGuard = Objects.requireNonNull(completionGuard);
         this.finalizer = Objects.requireNonNull(finalizer);
@@ -127,6 +116,10 @@ public final class DecisionExecutor {
         this.controls = Objects.requireNonNull(controls);
         this.repairRetry = Objects.requireNonNull(repairRetry);
         this.approvalPrompts = Objects.requireNonNull(approvalPrompts);
+        this.policyDecisions = Objects.requireNonNull(policyDecisions);
+        this.unitOfWork = Objects.requireNonNull(unitOfWork);
+        this.events = Objects.requireNonNull(events);
+        this.outbox = Objects.requireNonNull(outbox);
     }
 
     public AgentLoopDirective execute(AgentRun run, AgentDecision decision, AgentLoopContext loopContext) {
@@ -253,30 +246,92 @@ public final class DecisionExecutor {
         String requestId = ids.nextValue();
         var binding = approval.binding();
         String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
-        interactions.create(new InteractionRequest(
-                new InteractionRequestId(requestId),
-                run.id(),
-                run.tenant(),
-                run.principal(),
-                interactionType,
-                approvalPrompts.format(binding, call, approval.reauthentication()),
-                true,
-                new ToolApprovalTarget(
-                        call.id(),
-                        binding.coordinate().externalForm(),
+        var createdAt = time.now();
+        var expiresAt = createdAt.plus(java.time.Duration.ofHours(1));
+        var approvalContext = new ApprovalRequestContext(
+                approval.decision().id(),
+                ApprovalSemantics.CAPABILITY_CONFIRMATION,
+                java.util.Set.of(ApprovalReuseScope.ONCE),
+                new ApprovalRequester(run.tenant(), run.principal()),
+                new ApprovalTargetRef(
+                        "tool",
+                        call.id().value(),
                         binding.coordinate().definitionHash().value(),
+                        "invoke",
                         approval.argumentsDigest(),
-                        run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
-                                + run.principal().principalId()),
-                time.now(),
-                time.now().plus(java.time.Duration.ofHours(1))));
-        checkpoints.capture(
-                run,
-                loopContext.iteration(),
-                loopContext.fingerprints(),
-                loopContext.forcedContextRebuildAttempts(),
-                CheckpointType.INTERACTION);
-        transitions.waiting(run, new InteractionRequestRef(requestId, interactionType), true);
+                        binding.definition().title()),
+                Optional.empty(),
+                createdAt,
+                expiresAt,
+                Optional.empty());
+        unitOfWork.execute(() -> {
+            interactions.create(new InteractionRequest(
+                    new InteractionRequestId(requestId),
+                    run.id(),
+                    run.tenant(),
+                    run.principal(),
+                    interactionType,
+                    approvalPrompts.format(binding, call, approval.reauthentication()),
+                    true,
+                    new ToolApprovalTarget(
+                            call.id(),
+                            binding.coordinate().externalForm(),
+                            binding.coordinate().definitionHash().value(),
+                            approval.argumentsDigest(),
+                            run.tenant().tenantId() + ":" + run.principal().principalType() + ":"
+                                    + run.principal().principalId()),
+                    createdAt,
+                    expiresAt,
+                    Optional.of(approvalContext)));
+            checkpoints.capture(
+                    run,
+                    loopContext.iteration(),
+                    loopContext.fingerprints(),
+                    loopContext.forcedContextRebuildAttempts(),
+                    CheckpointType.INTERACTION);
+            transitions.waiting(run, new InteractionRequestRef(requestId, interactionType), true);
+            appendSecurityEvent(
+                    run,
+                    "policy.decision.made",
+                    Map.of(
+                            "decisionId",
+                            approval.decision().id().value(),
+                            "snapshotId",
+                            approval.decision().snapshot().value(),
+                            "effect",
+                            approval.decision().effect().name(),
+                            "challenge",
+                            approval.decision().challenge().orElseThrow().name(),
+                            "reasonCode",
+                            approval.decision().reasonCode()),
+                    createdAt);
+            appendSecurityEvent(
+                    run,
+                    "approval.requested",
+                    Map.of(
+                            "requestId",
+                            requestId,
+                            "decisionId",
+                            approval.decision().id().value(),
+                            "challenge",
+                            approval.reauthentication() ? "REAUTHENTICATE" : "APPROVAL",
+                            "semantics",
+                            ApprovalSemantics.CAPABILITY_CONFIRMATION.name()),
+                    createdAt);
+            return null;
+        });
+    }
+
+    private void appendSecurityEvent(AgentRun run, String type, Map<String, Object> data, java.time.Instant at) {
+        var event = events.append(run.id(), type, data, at);
+        outbox.append(new OutboxMessage(
+                ids.nextValue(),
+                event.runId(),
+                event.sequence(),
+                event.type(),
+                OutboxMessage.CURRENT_SCHEMA_VERSION,
+                event.data(),
+                event.occurredAt()));
     }
 
     public Optional<AgentLoopDirective> resumePendingTools(AgentRun run, AgentLoopContext loopContext) {
@@ -316,13 +371,23 @@ public final class DecisionExecutor {
         return Optional.of(AgentLoopDirective.CONTINUE);
     }
 
-    public void resolveToolApproval(AgentRun run, ToolApprovalTarget target, InteractionResponseType responseType) {
+    public void resolveToolApproval(
+            AgentRun run,
+            ToolApprovalTarget target,
+            Optional<ApprovalRequestContext> approvalContext,
+            InteractionResponseType responseType) {
         ToolCall call = state.toolCalls(run.id()).stream()
                 .filter(candidate -> candidate.id().equals(target.toolCallId()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("tool approval target is unavailable"));
         tools.validateApprovalTarget(run, call, requestFrom(call), target);
         if (responseType == InteractionResponseType.APPROVE) {
+            ApprovalRequestContext context =
+                    approvalContext.orElseThrow(() -> new SecurityException("approval context is unavailable"));
+            var decision = policyDecisions
+                    .find(context.decisionId())
+                    .orElseThrow(() -> new SecurityException("policy decision is unavailable"));
+            tools.recordApprovedDecision(call, decision);
             call.approve();
             state.appendToolCall(call);
             return;
@@ -353,11 +418,18 @@ public final class DecisionExecutor {
     }
 
     public void applyPendingToolApproval(AgentRun run) {
-        interactions.unappliedToolResolution(run.id()).ifPresent(resolution -> {
-            ToolApprovalTarget target =
-                    (ToolApprovalTarget) resolution.request().target();
-            resolveToolApproval(run, target, resolution.response().type());
-            interactions.markResolutionApplied(resolution.request().id());
+        unitOfWork.execute(() -> {
+            interactions.unappliedToolResolution(run.id()).ifPresent(resolution -> {
+                ToolApprovalTarget target =
+                        (ToolApprovalTarget) resolution.request().target();
+                resolveToolApproval(
+                        run,
+                        target,
+                        resolution.request().approvalContext(),
+                        resolution.response().type());
+                interactions.markResolutionApplied(resolution.request().id());
+            });
+            return null;
         });
     }
 

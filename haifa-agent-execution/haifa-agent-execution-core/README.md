@@ -1,5 +1,13 @@
 # Haifa Agent Execution Core
 
+## Public Policy integration
+
+`PolicyDecisionExecutionPolicy` 要求 `TrustedExecutionContext.policyDecisionRef` 真实可查，并复核
+Tenant、Principal、Run、Action、Execution 请求摘要、Snapshot，以及 `ASK` 的有效满足证据。
+它不会创建 Interaction，因此 `execution.run` 的用户可见审批只发生在 Tool/Runtime 层。公共
+Decision 不能覆盖 Broker 既有的 Frozen Capability、Workspace、Profile、Provider、Sandbox、
+deadline、输出和审计硬边界。
+
 实现 `ExecutionBroker`、内存 Journal/输出存储、执行前后 Workspace Manifest 及 `FileChangeSet` 对账。
 
 Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行的展示 observer 经过有界异步分发，不阻塞进程管道；环境值脱敏支持 secret 跨 chunk，observer 异常不影响进程收尾和 Execution Journal。

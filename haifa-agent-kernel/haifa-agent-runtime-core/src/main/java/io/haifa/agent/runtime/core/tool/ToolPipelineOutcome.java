@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.tool;
 
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.policy.api.PolicyDecision;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.Objects;
 
@@ -12,10 +13,12 @@ public sealed interface ToolPipelineOutcome
         }
     }
 
-    record ApprovalRequired(FrozenToolBinding binding, String argumentsDigest, boolean reauthentication)
+    record ApprovalRequired(
+            FrozenToolBinding binding, String argumentsDigest, boolean reauthentication, PolicyDecision decision)
             implements ToolPipelineOutcome {
         public ApprovalRequired {
             Objects.requireNonNull(binding, "binding");
+            Objects.requireNonNull(decision, "decision");
             if (argumentsDigest == null || argumentsDigest.isBlank()) {
                 throw new IllegalArgumentException("argumentsDigest must not be blank");
             }

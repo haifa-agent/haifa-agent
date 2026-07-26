@@ -2,9 +2,15 @@ package io.haifa.agent.runtime.core.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.credential.api.CredentialDefinitionId;
 import io.haifa.agent.credential.api.CredentialExposureMode;
 import io.haifa.agent.credential.api.CredentialRequirement;
+import io.haifa.agent.policy.api.PolicyDigest;
+import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
@@ -87,6 +93,20 @@ class DefaultToolPolicyTest {
                         List.of(),
                         ToolApprovalRequirement.ALWAYS))
                 .isEqualTo(ToolPolicyDecision.REQUIRE_APPROVAL);
+    }
+
+    @Test
+    void executionDigestUsesFrozenCapabilityRatherThanModelAlias() {
+        var request = new ToolRequest(
+                new ToolCallId("call"),
+                new ProviderToolCallCorrelationId("provider-call"),
+                new RuntimeIdempotencyKey("key"),
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.input", "1.0.0", Map.of("command", "echo ok", "workdir", ".")));
+
+        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.run", request))
+                .isEqualTo(PolicyDigest.sha256Fields(List.of("echo ok", ".")));
     }
 
     private ToolPolicyDecision evaluate(

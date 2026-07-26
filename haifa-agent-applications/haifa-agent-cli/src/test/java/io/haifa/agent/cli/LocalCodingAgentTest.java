@@ -208,7 +208,9 @@ class LocalCodingAgentTest {
                 snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
             }
 
-            assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(snapshot.status())
+                    .withFailMessage("run failed: %s", snapshot.error())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(snapshot.output()).contains("shell complete");
         }
         assertThat(Files.readString(workspace.resolve("shell-e2e.txt"))).isEqualTo("stub");

@@ -32,6 +32,13 @@ class RuntimeCoreArchitectureTest {
                 .check(new ClassFileImporter()
                         .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
                         .importPackages("io.haifa.agent.runtime.core"));
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.haifa.agent.policy.core..")
+                .check(new ClassFileImporter()
+                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.runtime.core"));
     }
 
     @Test
