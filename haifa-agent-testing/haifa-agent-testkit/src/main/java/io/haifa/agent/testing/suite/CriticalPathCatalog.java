@@ -85,7 +85,15 @@ public final class CriticalPathCatalog {
                         ":haifa-agent-e2e-tests",
                         "CriticalPathLiveE2E#persistsRunToSqliteAndJsonl",
                         true,
-                        List.of("DEEPSEEK_API_KEY", "HAIFA_CONTINUATION_KEY")));
+                        List.of("DEEPSEEK_API_KEY", "HAIFA_CONTINUATION_KEY")),
+                new CriticalPathCase(
+                        "CP-11",
+                        "Interaction, event journal, and HITL round trip",
+                        CriticalPathCase.TestScope.E2E,
+                        ":haifa-agent-e2e-tests",
+                        "InteractionEventHitlLiveE2E#completesInteractionEventAndHitlRoundTrip",
+                        true,
+                        List.of("DEEPSEEK_API_KEY", "ALIYUN_IQS_API_KEY", "HAIFA_CONTINUATION_KEY")));
         LinkedHashMap<String, CriticalPathCase> result = new LinkedHashMap<>();
         for (CriticalPathCase value : cases) {
             if (result.put(value.caseId(), value) != null) {
