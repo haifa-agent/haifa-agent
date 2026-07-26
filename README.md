@@ -70,6 +70,9 @@ haifa-agent-testing/
   haifa-agent-testkit/
   haifa-agent-test-fixtures/
   haifa-agent-transport-tck/
+  haifa-agent-integration-tests/
+  haifa-agent-live-tests/
+  haifa-agent-e2e-tests/
 ```
 
 实线表示编译期依赖，箭头从使用方指向被依赖方：
@@ -126,12 +129,18 @@ flowchart LR
   CLI --> SHOST
   TESTKIT[testkit]
   FIXTURES[test-fixtures]
+  ITEST[integration-tests] --> TESTKIT
+  ITEST --> FIXTURES
+  ITEST --> OAI
+  LIVETEST[live-tests] --> OAI
+  E2ETEST[e2e-tests] --> CLI
+  E2ETEST --> SQLITE
 ```
 
-`haifa-agent-testing` 位于 Reactor 末端，只承载测试基础设施。当前初始化了无产品依赖的
-`haifa-agent-testkit` 和 `haifa-agent-test-fixtures`；生产模块不得反向依赖测试模块。模块私有
-Fixture 继续就近保存在各模块的 `src/test/resources`，只有跨模块共享且可安全进入源码仓库的小型
-Fixture 才上移到 `haifa-agent-test-fixtures`。
+`haifa-agent-testing` 位于 Reactor 末端，只承载测试基础设施。Testkit 与 Test Fixtures 提供公共
+编排和安全输入；Integration、Live、E2E 模块分别承载确定性跨模块验证、真实 Provider 窄探针和完整
+产品路径。生产模块不得反向依赖测试模块。模块私有 Fixture 继续就近保存在各模块的
+`src/test/resources`，只有跨模块共享且可安全进入源码仓库的小型 Fixture 才上移到共享模块。
 
 ## 关键边界
 
