@@ -180,6 +180,16 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-policy-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-policy-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-model-openai-compatible</artifactId>
                 <version>${project.version}</version>
             </dependency>
