@@ -20,6 +20,7 @@ public record InteractionRequest(
         InteractionTarget target,
         Instant createdAt,
         Instant expiresAt,
+        InteractionExpirationOutcome expirationOutcome,
         Optional<ApprovalRequestContext> approvalContext) {
     public InteractionRequest(
             InteractionRequestId id,
@@ -31,8 +32,47 @@ public record InteractionRequest(
             boolean approval,
             InteractionTarget target,
             Instant createdAt,
+            Instant expiresAt,
+            Optional<ApprovalRequestContext> approvalContext) {
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                target,
+                createdAt,
+                expiresAt,
+                approval ? InteractionExpirationOutcome.CANCEL_RUN : InteractionExpirationOutcome.FAIL_RUN,
+                approvalContext);
+    }
+
+    public InteractionRequest(
+            InteractionRequestId id,
+            AgentRunId runId,
+            TenantRef tenant,
+            PrincipalRef requester,
+            String type,
+            String prompt,
+            boolean approval,
+            InteractionTarget target,
+            Instant createdAt,
             Instant expiresAt) {
-        this(id, runId, tenant, requester, type, prompt, approval, target, createdAt, expiresAt, Optional.empty());
+        this(
+                id,
+                runId,
+                tenant,
+                requester,
+                type,
+                prompt,
+                approval,
+                target,
+                createdAt,
+                expiresAt,
+                approval ? InteractionExpirationOutcome.CANCEL_RUN : InteractionExpirationOutcome.FAIL_RUN,
+                Optional.empty());
     }
 
     public InteractionRequest(
@@ -56,6 +96,7 @@ public record InteractionRequest(
                 new GenericInteractionTarget(type),
                 createdAt,
                 expiresAt,
+                approval ? InteractionExpirationOutcome.CANCEL_RUN : InteractionExpirationOutcome.FAIL_RUN,
                 Optional.empty());
     }
 
@@ -69,8 +110,12 @@ public record InteractionRequest(
         target = Objects.requireNonNull(target, "target must not be null");
         createdAt = Objects.requireNonNull(createdAt, "createdAt must not be null");
         expiresAt = Objects.requireNonNull(expiresAt, "expiresAt must not be null");
+        expirationOutcome = Objects.requireNonNull(expirationOutcome, "expirationOutcome must not be null");
         approvalContext = Objects.requireNonNull(approvalContext, "approvalContext must not be null");
         if (!expiresAt.isAfter(createdAt)) throw new IllegalArgumentException("expiresAt must be after createdAt");
+        if (approval && expirationOutcome == InteractionExpirationOutcome.RETURN_TO_AGENT) {
+            throw new IllegalArgumentException("approval interaction must not return to the agent on expiration");
+        }
         if (!approval && approvalContext.isPresent()) {
             throw new IllegalArgumentException("only approval interactions may carry approval context");
         }

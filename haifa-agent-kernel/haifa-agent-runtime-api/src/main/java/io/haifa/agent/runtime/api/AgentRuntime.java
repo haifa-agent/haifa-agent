@@ -12,6 +12,12 @@ public interface AgentRuntime {
 
     AgentRunSnapshot respond(InteractionResponse response);
 
+    InteractionResponseReceipt respond(InteractionResponseSubmission response);
+
+    RunInputReceipt submitInput(RunInputSubmission input);
+
+    Optional<InteractionView> pendingInteraction(io.haifa.agent.core.run.AgentRunId runId);
+
     RuntimeCommandResult command(RuntimeCommand command);
 
     Optional<AgentRunSnapshot> find(io.haifa.agent.core.run.AgentRunId runId);
@@ -24,4 +30,13 @@ public interface AgentRuntime {
     List<AgentRunOutputEvent> outputEvents(io.haifa.agent.core.run.AgentRunId runId, RunOutputCursor after, int limit);
 
     void addOutputListener(AgentRunOutputListener listener);
+
+    default RunEventPage events(io.haifa.agent.core.run.AgentRunId runId, RunEventCursor after, int limit) {
+        throw new UnsupportedOperationException("complete Run Event Feed is implemented by Task 02");
+    }
+
+    default RunEventSubscription subscribe(
+            io.haifa.agent.core.run.AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
+        throw new UnsupportedOperationException("Run Event Subscription is implemented by Task 02");
+    }
 }

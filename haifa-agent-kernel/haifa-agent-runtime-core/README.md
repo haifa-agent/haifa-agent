@@ -4,6 +4,21 @@
 
 Approval Request、Approval Metadata、Checkpoint、Run `WAITING_APPROVAL` 与 `policy.decision.made` / `approval.requested` Event-Outbox 在同一 Runtime UoW 中提交。响应侧把可信 Caller、验证结果、Authorization Evidence、响应消息和安全事件放入同一 UoW，再在提交后恢复 Run；Tool Resolution 只应用一次。
 
+## Interaction 与 Steer（Task 01）
+
+内存 Runtime 在既有 `InteractionPort` 上维护 `PENDING -> RESPONDED -> APPLIED` 以及
+`PENDING -> EXPIRED/CANCELLED/INVALIDATED` 的单一生命周期；同一 Run 同时最多一个阻塞式
+Pending Interaction。新的 revision-aware Response 返回稳定收据，按可信 caller scope、
+request 和幂等键去重；Approval 继续复用 Policy API 的 Authority/Target/Evidence 验证链。
+
+`RunInputPort` 独立保存 Steer 的 `ACCEPTED/APPLIED` 状态。AgentLoop 只在
+`BEFORE_ITERATION` safe point 将已接受输入追加为 Session 用户消息，并绑定 Attempt/Iteration，
+不会异步修改正在构造的模型请求或 Tool 参数。Task 01 的默认实现只保证进程内闭环；持久模式必须等
+Task 02 提供 SQLite Input/Interaction、条件更新、due query 和重启恢复后才能宣称 durable。
+
+`AgentRuntime.events/subscribe` 在 Runtime API 中已经占位，但 Runtime Core 尚未实现完整 Feed；
+现有 Runtime Event/Outbox 仍是内部事实，Task 02 才增加白名单 Client Event 投影与 Cursor 读取。
+
 ## Public Policy integration
 
 Tool Pipeline 的权威策略结果是 `policy-api` 的 `PolicyDecision`。`ASK` 会创建关联 Decision、

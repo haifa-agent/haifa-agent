@@ -14,6 +14,10 @@ class ContractArchitectureTest {
             .resideInAnyPackage(
                     "io.haifa.agent.core..",
                     "io.haifa.agent.runtime..",
+                    "io.haifa.agent.policy..",
+                    "io.haifa.agent.tool..",
+                    "com.fasterxml.jackson..",
+                    "reactor..",
                     "org.springframework..",
                     "jakarta.persistence..");
 

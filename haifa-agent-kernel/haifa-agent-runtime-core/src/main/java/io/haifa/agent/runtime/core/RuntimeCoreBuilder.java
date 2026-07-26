@@ -74,6 +74,9 @@ import io.haifa.agent.runtime.core.guard.ChildRunGuard;
 import io.haifa.agent.runtime.core.guard.DuplicateToolCallGuard;
 import io.haifa.agent.runtime.core.guard.IterationGuard;
 import io.haifa.agent.runtime.core.guard.LoopDetectionGuard;
+import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
+import io.haifa.agent.runtime.core.input.RunInputApplier;
+import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter;
 import io.haifa.agent.runtime.core.lifecycle.RunAwaiter;
@@ -178,6 +181,7 @@ public final class RuntimeCoreBuilder {
     private PersistenceRetryPolicy persistenceRetry = PersistenceRetryPolicy.none();
     private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
     private TracePort trace = TracePort.noop();
+    private RunInputPort runInputs = new InMemoryRunInputPort();
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
     private OutputContractValidator outputContract =
             (run, decision) -> !decision.outputSchemaId().isBlank()
@@ -244,6 +248,16 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder persistence(RuntimePersistencePorts value) {
         persistence = Objects.requireNonNull(value, "persistence must not be null");
+        return this;
+    }
+
+    /**
+     * Configures the durable Run Input boundary.
+     *
+     * <p>The default is in-memory. Persistent applications inject the Task 02 store adapter.
+     */
+    public RuntimeCoreBuilder runInputs(RunInputPort value) {
+        runInputs = Objects.requireNonNull(value, "runInputs must not be null");
         return this;
     }
 
@@ -553,6 +567,7 @@ public final class RuntimeCoreBuilder {
         var compressionPolicy = CompressionPolicy.defaults();
         var sessionMessageSource = new SessionMessageSource(state, summaries, compressor, compressionPolicy, ids, time);
         var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
+        RunInputApplier runInputApplier = new RunInputApplier(runInputs, state, events, outbox, unitOfWork, ids, time);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
@@ -577,7 +592,8 @@ public final class RuntimeCoreBuilder {
                 time,
                 trace,
                 new RuntimeStateReconciler(state, attempts, interactions, pipeline, time, configuredOwnership),
-                middleware);
+                middleware,
+                runInputApplier);
         AttemptExecutor attemptExecutor = new AttemptExecutor(
                 attempts,
                 loop,
@@ -617,7 +633,8 @@ public final class RuntimeCoreBuilder {
                 persistenceRetry,
                 approvalVerification,
                 policyAuthorizationEvidence,
-                policyDecisions);
+                policyDecisions,
+                runInputs);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {

@@ -19,3 +19,10 @@ reasoning, unvalidated tool arguments, prompts, credentials, or provider respons
 - `AgentRunSnapshot` 是某一时点的运行视图；Core `AgentRunResult` 是最终结构化业务结果；`AgentRunHandle` 只是基于 Snapshot/Command 的便利等待层，等待超时不会取消 Run。
 - Find、Resume 和 Command 均使用正式的 `AgentRunId`；Resume 可选择指定 Checkpoint。
 - 公共命令只有 `PAUSE`、`CANCEL`、`TERMINATE_CHILDREN`；`InteractionResponse` 以 Request/Response ID 关联 Clarification 或 Approval，并从可信 Caller Context 获取操作者。Timeout/Lease Lost 等只属于 Runtime 内部 Control Signal。
+- 新的 `InteractionView`、`InteractionResponseSubmission/Receipt` 使用稳定 Kind/Action/Input、
+  revision 和错误码；旧 `InteractionResponse`/Snapshot 返回路径暂时保留为单向兼容层。
+- `RunInputSubmission` 只表达活动 Run 的 Steer，拒绝 Tool 协议 Part；Follow-up 仍由产品层在同一
+  Session 创建新 Run。
+- `events`/`subscribe` 已冻结 provider-neutral 接口和可关闭订阅类型，但默认实现明确为
+  `UnsupportedOperationException`；完整 Journal 投影、Cursor range read 和 replay-then-tail 属于
+  Task 02，现有 `outputEvents` 不冒充完整 Run Feed。

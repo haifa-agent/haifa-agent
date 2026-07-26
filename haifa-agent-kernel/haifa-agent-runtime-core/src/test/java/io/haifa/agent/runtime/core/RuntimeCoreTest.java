@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.plan.AgentPlan;
 import io.haifa.agent.core.plan.AgentPlanId;
@@ -33,6 +34,9 @@ import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
+import io.haifa.agent.runtime.api.RunInputId;
+import io.haifa.agent.runtime.api.RunInputReceiptStatus;
+import io.haifa.agent.runtime.api.RunInputSubmission;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
@@ -43,6 +47,7 @@ import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
+import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
@@ -61,6 +66,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Queue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
@@ -70,6 +76,39 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class RuntimeCoreTest {
+    @Test
+    void appliesAcceptedSteerOnlyAtTheNextIterationSafePoint() {
+        AtomicReference<AgentChatRequest> captured = new AtomicReference<>();
+        Fixture fixture = fixture(request -> {
+            captured.set(request);
+            return response(finalDecision("steered"));
+        });
+        var accepted = fixture.runtime.start(request("steer-run"));
+        RunInputSubmission steer = new RunInputSubmission(
+                new RunInputId("input-1"),
+                accepted.runId(),
+                OptionalLong.of(accepted.version()),
+                List.of(new TextPart("Use the revised scope", "text/plain")),
+                "steer-key",
+                Instant.parse("2026-07-21T00:00:00Z"));
+
+        assertThat(fixture.runtime.submitInput(steer).status()).isEqualTo(RunInputReceiptStatus.ACCEPTED);
+        assertThat(fixture.runtime.submitInput(steer).status()).isEqualTo(RunInputReceiptStatus.DUPLICATE);
+        assertThat(captured.get()).isNull();
+
+        fixture.scheduler.runAll();
+
+        assertThat(captured.get().messages()).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+            assertThat(message.content()).contains("Use the revised scope");
+        });
+        assertThat(fixture.runInputs.find(steer.inputId()).orElseThrow().status())
+                .isEqualTo(RunInputReceiptStatus.APPLIED);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(event -> event.type())
+                .contains("run.input.accepted", "run.input.applied");
+    }
+
     @Test
     void startsAsQueuedFreezesConfigurationAndCompletesAsynchronously() throws Exception {
         Fixture fixture = fixture(model(finalDecision("done")));
@@ -441,7 +480,10 @@ class RuntimeCoreTest {
         AgentChatModel model = ignored -> response(
                 modelCalls.incrementAndGet() == 1
                         ? new ToolCallDecision(List.of(toolRequest(
-                                "approved", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("v", 1)))))
+                                "approved",
+                                "write",
+                                "1.0.0",
+                                new ToolArguments("write.input", "1.0", Map.of("v", 1, "apiKey", "sk-fake-secret")))))
                         : finalDecision("approved done"));
         Fixture fixture = fixture(
                 model,
@@ -474,6 +516,10 @@ class RuntimeCoreTest {
         ToolCallId originalToolCallId =
                 fixture.store.toolCalls(accepted.runId()).getFirst().id();
         assertThat(interaction.target()).isInstanceOf(ToolApprovalTarget.class);
+        var publicInteraction =
+                fixture.runtime.pendingInteraction(accepted.runId()).orElseThrow();
+        assertThat(publicInteraction.safePrompt()).doesNotContain("sk-fake-secret", "apiKey");
+        assertThat(publicInteraction.target().safeSummary()).doesNotContain("sk-fake-secret", "apiKey");
         var response = new InteractionResponse(
                 new InteractionResponseId("approval-response"),
                 interaction.id(),
@@ -585,6 +631,7 @@ class RuntimeCoreTest {
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         InMemoryInteractionPort interactions = new InMemoryInteractionPort();
+        InMemoryRunInputPort runInputs = new InMemoryRunInputPort();
         InMemoryToolExecutionJournal journal = new InMemoryToolExecutionJournal();
         AtomicInteger sequence = new AtomicInteger();
         IdentifierGenerator ids = () -> "id-" + sequence.incrementAndGet();
@@ -593,10 +640,11 @@ class RuntimeCoreTest {
                 .registerChatModel("openai-compatible", "1.0.0", model)
                 .scheduler(scheduler)
                 .persistence(RuntimePersistencePorts.inMemory(store, journal, interactions))
+                .runInputs(runInputs)
                 .identifierGenerator(ids)
                 .timeProvider(time);
         DefaultAgentRuntime runtime = customizer.apply(builder).build();
-        return new Fixture(runtime, scheduler, store, interactions, journal);
+        return new Fixture(runtime, scheduler, store, interactions, journal, runInputs);
     }
 
     private static AgentChatModel model(io.haifa.agent.runtime.core.decision.AgentDecision... decisions) {
@@ -684,5 +732,6 @@ class RuntimeCoreTest {
             ManualExecutionScheduler scheduler,
             InMemoryRuntimeStore store,
             InMemoryInteractionPort interactions,
-            InMemoryToolExecutionJournal journal) {}
+            InMemoryToolExecutionJournal journal,
+            InMemoryRunInputPort runInputs) {}
 }
