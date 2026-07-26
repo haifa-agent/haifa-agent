@@ -15,9 +15,11 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - ExecutionBroker、Sandbox SPI、受控 Host Provider，以及只读 Git 适配；
 - SQLite V1/V2 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、事务恢复与故障收敛；
 - 可选的安全 JSONL Transcript 投影，支持 at-least-once 去重、截断诊断、跨进程锁与原子轮转；
+- 纯 Java Policy API/Core，支持固定字段决策、`DENY > ASK > ALLOW`、受限 Approval Grant、
+  Project Trust、产品验证 SPI 和内存 Store；
 - Project Application 和 Coding Agent CLI，可显式选择 `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
 
-尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy 独立模块、分布式 Store/Lease、生产 KMS/Vault、容器或 microVM Sandbox。
+尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy 的 Runtime/SQLite 接入、分布式 Store/Lease、生产 KMS/Vault、容器或 microVM Sandbox。
 
 ## 当前 Reactor
 
@@ -48,6 +50,8 @@ haifa-agent-capabilities/
   haifa-agent-model-core/
   haifa-agent-memory-api/
   haifa-agent-memory-core/
+  haifa-agent-policy-api/
+  haifa-agent-policy-core/
   haifa-agent-skill-api/
   haifa-agent-skill-core/
   haifa-agent-skill-base/
@@ -84,6 +88,8 @@ flowchart LR
   MCORE[model-core] --> MAPI
   MEMAPI --> CORE
   MEMCORE --> MEMAPI
+  PAPI[policy-api] --> CORE
+  PCORE[policy-core] --> PAPI
   SKCORE[skill-core] --> SKAPI
   SKBASE[skill-base] --> SKAPI
   SKBASE --> SKCORE
@@ -119,6 +125,8 @@ flowchart LR
 - `common`、`core`、`runtime-api`、`context`、`project`、`artifact`、各 Capability API、Execution API 和 Sandbox API 保持纯 Java；
 - `AgentRun` 生命周期只由 Core 的命名领域行为决定，Runtime 不维护第二份状态转换表；
 - Runtime 只依赖 API/SPI，不依赖具体模型、MCP 或 Sandbox Provider；
+- Policy API/Core 只提供产品无关的决策、Approval 语义、Grant/Trust 和验证 SPI；Runtime
+  Interaction 接入、SQLite Adapter 与企业产品审批流程尚未在本阶段实现；
 - SQLite 是恢复的唯一事实源；JSONL 只是可删除、可重建的安全投影，不能反向恢复 Runtime；
 - 持久文件在 POSIX 使用目录 `0700`/文件 `0600`，在 Windows 使用当前用户独占 ACL；权限无法验证时 fail closed；
 - 凭据明文只在短生命周期 `CredentialLease` 中使用，不进入 Prompt、Tool 参数、Checkpoint、Trace 或 Workspace；

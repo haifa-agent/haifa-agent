@@ -23,5 +23,7 @@
         <module>haifa-agent-model-core</module>
         <module>haifa-agent-memory-api</module>
         <module>haifa-agent-memory-core</module>
+        <module>haifa-agent-policy-api</module>
+        <module>haifa-agent-policy-core</module>
     </modules>
 </project>
