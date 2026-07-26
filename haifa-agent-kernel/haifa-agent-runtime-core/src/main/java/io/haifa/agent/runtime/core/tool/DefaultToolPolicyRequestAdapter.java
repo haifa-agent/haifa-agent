@@ -31,7 +31,18 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
     @Override
     public PolicyRequest adapt(io.haifa.agent.core.run.AgentRun run, FrozenToolBinding binding, ToolRequest request) {
         var definition = binding.definition();
-        String resourceDigest = resourceDigest(definition.name().value(), request);
+        String invocationDigest = resourceDigest(definition.name().value(), request);
+        String resourceDigest;
+        if (definition.name().value().equals("execution.run")) {
+            String executionProfile = definition.resources().executionProfiles().stream()
+                    .reduce((first, ignored) -> {
+                        throw new IllegalArgumentException("execution.run must bind exactly one execution profile");
+                    })
+                    .orElseThrow(() -> new IllegalArgumentException("execution.run requires an execution profile"));
+            resourceDigest = PolicyDigest.sha256Fields(List.of(invocationDigest, executionProfile));
+        } else {
+            resourceDigest = invocationDigest;
+        }
         return new PolicyRequest(
                 new PolicySubject(run.tenant(), run.principal(), productId),
                 new PolicyContext(

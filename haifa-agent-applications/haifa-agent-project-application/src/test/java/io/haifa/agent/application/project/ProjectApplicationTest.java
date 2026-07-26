@@ -17,6 +17,7 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.configuration.InMemoryProjectConfigurationStore;
 import io.haifa.agent.project.configuration.ProjectConfiguration;
@@ -49,6 +50,12 @@ import io.haifa.agent.runtime.api.RuntimeCommandResult;
 import io.haifa.agent.runtime.core.skill.SkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillResourceRead;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
+import io.haifa.agent.sandbox.api.NetworkPolicy;
+import io.haifa.agent.sandbox.api.SandboxCapabilities;
+import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
+import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
+import io.haifa.agent.sandbox.api.SandboxProfile;
+import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.skill.api.SkillActivation;
 import io.haifa.agent.skill.api.SkillActivationRequest;
 import io.haifa.agent.skill.api.SkillContent;
@@ -89,7 +96,8 @@ class ProjectApplicationTest {
                 Set.of("file.read", "file.write", "execution.run"),
                 Set.of("file.read", "execution.run"),
                 true,
-                provider);
+                provider,
+                executionProfile("local-native", NetworkPolicy.DENY, "one"));
         assertThat(disclosed.snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
                 .containsExactly("execution_run", "file_read");
@@ -103,6 +111,12 @@ class ProjectApplicationTest {
                 .containsEntry("required", List.of("command"))
                 .containsEntry("additionalProperties", false);
         assertThat(execution.definition().outputSchema().document()).containsEntry("additionalProperties", false);
+        assertThat(execution.definition().resources().executionProfiles())
+                .singleElement()
+                .asString()
+                .contains("cli-local-native@1");
+        assertThat(execution.definition().sideEffects())
+                .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION);
         @SuppressWarnings("unchecked")
         var fileProperties = (java.util.Map<String, Object>)
                 fileRead.definition().inputSchema().document().get("properties");
@@ -168,7 +182,8 @@ class ProjectApplicationTest {
                 catalog.names(),
                 Set.of("file.read", "file.write", "git.read", "execution.run"),
                 true,
-                providerThatMustNotRun());
+                providerThatMustNotRun(),
+                executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
                 .hasSize(14)
@@ -196,6 +211,38 @@ class ProjectApplicationTest {
                     .isNotEmpty();
             assertThat(binding.coordinate().definitionHash().value()).matches("[0-9a-f]{64}");
         });
+    }
+
+    @Test
+    void executionProfileAndNetworkChangeFrozenToolIdentity() {
+        var catalog = new ProjectToolCatalog();
+        var denied = catalog.freeze(
+                        Set.of("execution.run"),
+                        Set.of("execution.run"),
+                        true,
+                        providerThatMustNotRun(),
+                        executionProfile("local-native", NetworkPolicy.DENY, "deny"))
+                .snapshot()
+                .bindings()
+                .getFirst();
+        var allowed = catalog.freeze(
+                        Set.of("execution.run"),
+                        Set.of("execution.run"),
+                        true,
+                        providerThatMustNotRun(),
+                        executionProfile("local-native", NetworkPolicy.ALLOW, "allow"))
+                .snapshot()
+                .bindings()
+                .getFirst();
+
+        assertThat(denied.coordinate().definitionHash())
+                .isNotEqualTo(allowed.coordinate().definitionHash());
+        assertThat(allowed.definition().sideEffects())
+                .containsExactlyInAnyOrder(
+                        io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION,
+                        io.haifa.agent.tool.api.ToolSideEffect.NETWORK_ACCESS);
+        assertThat(denied.definition().resources().networkHosts()).isEmpty();
+        assertThat(allowed.definition().resources().networkHosts()).containsExactly("unrestricted-network");
     }
 
     @Test
@@ -377,5 +424,21 @@ class ProjectApplicationTest {
                 throw new AssertionError("catalog test provider must not run");
             }
         };
+    }
+
+    private static SandboxProfile executionProfile(String provider, NetworkPolicy network, String configurationSeed) {
+        return new SandboxProfile(
+                new SandboxProfileRef("cli-" + provider, "1"),
+                provider,
+                SandboxConfigurationDigest.sha256Fields(List.of(configurationSeed)),
+                Set.of(),
+                Set.of(),
+                true,
+                network,
+                provider.equals("host-guarded")
+                        ? SandboxFilesystemPolicy.hostCompatible()
+                        : new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
+                new SandboxCapabilities(
+                        true, !provider.equals("host-guarded"), network == NetworkPolicy.DENY, false, false));
     }
 }

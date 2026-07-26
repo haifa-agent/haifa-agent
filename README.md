@@ -12,7 +12,8 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - 兼容 `SKILL.md` 的 Skill API/Core/Base，支持分层发现、内容寻址冻结、摘要披露、Run 级受控激活和资源按需读取；
 - 可冻结的 `web.search` / `web.fetch` Tool：Search 支持 Aliyun、Brave、Tavily，Fetch 当前只支持 Aliyun；
 - Project/Workspace 的受控文件访问、变更集、补丁、索引、快照与显式 Artifact 导出；
-- ExecutionBroker、Sandbox SPI、受控 Host Provider，以及只读 Git 适配；
+- ExecutionBroker、Sandbox SPI、受控 Host Provider、macOS Seatbelt/Linux bubblewrap Local Native
+  Provider，以及只读 Git 适配；
 - SQLite V1/V2 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、事务恢复与故障收敛；
 - 可选的安全 JSONL Transcript 投影，支持 at-least-once 去重、截断诊断、跨进程锁与原子轮转；
 - 纯 Java Policy API/Core，支持请求绑定决策、`DENY > ASK > ALLOW`、受限 Approval Grant、
@@ -129,6 +130,7 @@ flowchart LR
   CLI[cli] --> PAPP
   CLI --> MCP
   CLI --> SHOST
+  CLI --> SLOCAL
   TESTKIT[testkit]
   FIXTURES[test-fixtures]
   ITEST[integration-tests] --> TESTKIT
@@ -158,7 +160,12 @@ flowchart LR
 - Definition/Profile 允许的 Skill 在 Run 创建时冻结为精确内容摘要；模型先看到元数据摘要，只有通过统一 Tool Pipeline 激活后才注入 `SKILL` 层内容；
 - Skill 是不可信的方法与资源包，不扩大冻结 Tool 集，不直接执行脚本、读取凭据或访问网络；
 - CLI 可从可信配置装配绝对路径的本地用户 Skill 目录，但目录内容仍须经过解析门禁和显式 alias allowlist；
-- Host Sandbox 是受控执行，不等同于网络、CPU、内存或文件系统强隔离。
+- CLI 的通用一次性命令默认冻结为 `local-native + network deny`；Provider 或平台 Adapter
+  不可用时 fail closed，不会回退 Host。Windows 当前需要用户对可信 Workspace 显式选择
+  `host-guarded + network allow`。
+- Local Native 只声明已预检的 Workspace 文件策略、网络关闭和进程树收敛；它仍共享宿主
+  Kernel，不声明 CPU、内存、磁盘、PID、Container、VM 或多租户强隔离。
+- Host Sandbox 是用户显式选择的受控兼容执行，不等同于网络、CPU、内存或文件系统强隔离。
 
 ## 构建与验证
 

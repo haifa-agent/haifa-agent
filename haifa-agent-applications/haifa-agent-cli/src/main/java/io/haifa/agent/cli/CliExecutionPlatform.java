@@ -8,6 +8,8 @@ import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
+import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
+import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
 import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
 import io.haifa.agent.execution.core.manifest.ManifestBudget;
 import io.haifa.agent.execution.core.manifest.ManifestDiffService;
@@ -21,29 +23,45 @@ import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
+import io.haifa.agent.sandbox.api.NetworkPolicy;
+import io.haifa.agent.sandbox.api.SandboxCapabilities;
+import io.haifa.agent.sandbox.api.SandboxException;
+import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
+import io.haifa.agent.sandbox.api.SandboxPreflight;
 import io.haifa.agent.sandbox.api.SandboxProfile;
+import io.haifa.agent.sandbox.api.SandboxProvider;
+import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
+import io.haifa.agent.sandbox.localnative.LocalNativePathGrant;
+import io.haifa.agent.sandbox.localnative.LocalNativeSandboxConfiguration;
+import io.haifa.agent.sandbox.localnative.LocalNativeSandboxProvider;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
-/** Owns the CLI's trusted local execution assembly without exposing Host details to the Tool adapter. */
+/** Owns the CLI's trusted local execution assembly without exposing provider controls to the model. */
 final class CliExecutionPlatform {
-    private static final SandboxProfileRef PROFILE_REF = new SandboxProfileRef("cli-host-shell", "1");
-    private static final ExecutionEnvironmentRef ENVIRONMENT_REF =
-            new ExecutionEnvironmentRef(java.util.List.of("cli-host-environment"));
-
     private final ProjectExecutionToolOperations operations;
+    private final SandboxProfile profile;
     private final String shellDisplayName;
+    private final String securitySummary;
 
-    private CliExecutionPlatform(ProjectExecutionToolOperations operations, String shellDisplayName) {
+    private CliExecutionPlatform(
+            ProjectExecutionToolOperations operations,
+            SandboxProfile profile,
+            String shellDisplayName,
+            String securitySummary) {
         this.operations = operations;
+        this.profile = profile;
         this.shellDisplayName = shellDisplayName;
+        this.securitySummary = securitySummary;
     }
 
     static CliExecutionPlatform create(
@@ -62,9 +80,27 @@ final class CliExecutionPlatform {
         Objects.requireNonNull(configuration, "configuration must not be null");
         HostShell shell = shell(configuration);
         var host = new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell);
-        SandboxProfile profile = SandboxProfile.hostGuarded(
-                PROFILE_REF, host.configurationDigest(), java.util.Set.of(), configuration.inheritEnvironment(), true);
-        Map<String, String> environment = environment(configuration);
+        LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
+        var local =
+                new LocalNativeSandboxProvider(workspaces, bindings, locations, identifiers, time, localConfiguration);
+        Map<String, SandboxProvider> configuredProviders = Map.of(host.providerId(), host, local.providerId(), local);
+        SandboxProvider selected = configuredProviders.get(configuration.provider());
+        if (selected == null) {
+            throw new IllegalArgumentException(
+                    "SANDBOX_ADAPTER_UNAVAILABLE: configured execution provider is unavailable");
+        }
+        SandboxProfile profile = profile(configuration, selected);
+        var profileRegistry = new ImmutableSandboxProfileRegistry(List.of(profile));
+        var providerRegistry = new ImmutableSandboxProviderRegistry(configuredProviders.values());
+        SandboxPreflight preflight;
+        try {
+            preflight = providerRegistry.resolve(profile).preflight(profile);
+        } catch (SandboxException exception) {
+            throw diagnostic(configuration, exception);
+        }
+        Map<String, String> environment = environment(configuration, profile);
+        ExecutionEnvironmentRef environmentRef = new ExecutionEnvironmentRef(
+                List.of("cli-execution-" + profile.contentDigest().value()));
         var manifests = new WorkspaceManifestService(
                 workspaces,
                 files,
@@ -77,11 +113,8 @@ final class CliExecutionPlatform {
                 ignored -> environment,
                 new PolicyDecisionExecutionPolicy(
                         policy.decisionsStore(), policy.snapshots(), policy.evidence(), clock),
-                reference -> {
-                    if (!PROFILE_REF.equals(reference)) throw new IllegalArgumentException("unknown sandbox profile");
-                    return profile;
-                },
-                ignored -> host,
+                profileRegistry,
+                providerRegistry,
                 workspaces,
                 bindings,
                 manifests,
@@ -92,23 +125,33 @@ final class CliExecutionPlatform {
                 broker,
                 identifiers,
                 time,
-                ENVIRONMENT_REF,
-                PROFILE_REF,
+                environmentRef,
+                profile.ref(),
                 configuration.defaultTimeout(),
                 configuration.maximumTimeout(),
                 configuration.maxOutputBytes(),
                 configuration.maxOutputLines(),
                 configuration.maxProcesses(),
                 observer);
-        return new CliExecutionPlatform(operations, host.shellDisplayName());
+        String securitySummary = securitySummary(profile, preflight);
+        output.println("Execution security: " + securitySummary);
+        return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary);
     }
 
     ProjectExecutionToolOperations operations() {
         return operations;
     }
 
+    SandboxProfile profile() {
+        return profile;
+    }
+
     String shellDisplayName() {
         return shellDisplayName;
+    }
+
+    String securitySummary() {
+        return securitySummary;
     }
 
     private static HostShell shell(CliConfiguration.Execution configuration) {
@@ -138,13 +181,103 @@ final class CliExecutionPlatform {
                 java.util.List.of("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"));
     }
 
-    private static Map<String, String> environment(CliConfiguration.Execution configuration) {
+    static LocalNativeSandboxConfiguration localConfiguration(
+            CliConfiguration.Execution configuration, HostShell shell) {
+        LocalNativeSandboxConfiguration defaults = LocalNativeSandboxConfiguration.defaults();
+        Map<String, LocalNativePathGrant> extraPaths = configuration.extraPathPolicies().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        CliConfiguration.ExtraPathPolicy::id,
+                        value -> new LocalNativePathGrant(value.path(), value.readOnly())));
+        return new LocalNativeSandboxConfiguration(
+                shell.invocationPrefix(),
+                defaults.controlRoot(),
+                defaults.seatbeltExecutable(),
+                defaults.bubblewrapExecutable(),
+                extraPaths,
+                defaults.sensitivePaths());
+    }
+
+    static SandboxProfile profile(CliConfiguration.Execution configuration, SandboxProvider provider) {
+        NetworkPolicy network = NetworkPolicy.valueOf(configuration.network().toUpperCase(java.util.Locale.ROOT));
+        List<String> identityFields = new java.util.ArrayList<>();
+        identityFields.add("cli-execution-v1");
+        identityFields.add(provider.providerId());
+        identityFields.add(provider.configurationDigest().value());
+        identityFields.add(network.name());
+        configuration.inheritEnvironment().stream()
+                .sorted()
+                .forEach(value -> identityFields.add("environment:" + value));
+        configuration.extraPathPolicies().stream()
+                .map(CliConfiguration.ExtraPathPolicy::id)
+                .sorted()
+                .forEach(value -> identityFields.add("path-policy:" + value));
+        String version = "1-"
+                + io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(identityFields)
+                        .value()
+                        .substring("sha256:".length());
+        SandboxProfileRef reference = new SandboxProfileRef("cli-" + provider.providerId(), version);
+        if (provider.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
+            return SandboxProfile.hostGuarded(
+                    reference, provider.configurationDigest(), Set.of(), configuration.inheritEnvironment(), true);
+        }
+        return new SandboxProfile(
+                reference,
+                provider.providerId(),
+                provider.configurationDigest(),
+                Set.of(),
+                configuration.inheritEnvironment(),
+                true,
+                network,
+                new SandboxFilesystemPolicy(
+                        SandboxWorkspaceAccess.READ_WRITE,
+                        true,
+                        configuration.extraPathPolicies().stream()
+                                .map(CliConfiguration.ExtraPathPolicy::id)
+                                .collect(java.util.stream.Collectors.toUnmodifiableSet())),
+                new SandboxCapabilities(true, true, network == NetworkPolicy.DENY, false, false));
+    }
+
+    private static Map<String, String> environment(CliConfiguration.Execution configuration, SandboxProfile profile) {
         var values = new LinkedHashMap<String, String>();
         configuration.inheritEnvironment().stream().sorted().forEach(name -> {
+            if (profile.providerId().equals(LocalNativeSandboxProvider.PROVIDER_ID)
+                    && Set.of("HOME", "USERPROFILE", "TMP", "TEMP").contains(name)) {
+                return;
+            }
             String value = System.getenv(name);
             if (value != null) values.put(name, value);
         });
         return Map.copyOf(values);
+    }
+
+    static IllegalArgumentException diagnostic(CliConfiguration.Execution configuration, SandboxException exception) {
+        if (exception.code().equals("SANDBOX_ADAPTER_UNAVAILABLE")
+                && configuration.provider().equals(LocalNativeSandboxProvider.PROVIDER_ID)) {
+            return new IllegalArgumentException(
+                    "SANDBOX_ADAPTER_UNAVAILABLE: local-native is not implemented or its OS adapter "
+                            + "failed preflight on this platform; for an explicitly trusted workspace only, "
+                            + "configure execution.provider: host-guarded and execution.network: allow");
+        }
+        return new IllegalArgumentException(exception.code() + ": " + exception.getMessage());
+    }
+
+    private static String securitySummary(SandboxProfile profile, SandboxPreflight preflight) {
+        String digest = profile.contentDigest().value().substring(0, 12);
+        if (profile.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
+            return "provider=host-guarded (explicit trusted compatibility), adapter="
+                    + preflight.adapterId()
+                    + ", network=ALLOW, current OS user, workspace/outside files/network/CPU/memory/kernel "
+                    + "are not strongly isolated, approval is not isolation, profile="
+                    + digest;
+        }
+        return "provider=local-native, adapter="
+                + preflight.adapterId()
+                + ", workspace="
+                + profile.filesystemPolicy().workspaceAccess()
+                + ", network="
+                + profile.networkPolicy()
+                + ", credentials=none, CPU/memory/kernel not strongly isolated, profile="
+                + digest;
     }
 
     private static final class CliOutputObserver implements ExecutionOutputObserver {

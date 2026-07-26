@@ -41,6 +41,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 public final class HostGuardedSandboxProvider implements SandboxProvider {
+    public static final String PROVIDER_ID = "host-guarded";
     private static final Set<String> FORBIDDEN_ENVIRONMENT = Set.of(
             "HTTP_PROXY",
             "HTTPS_PROXY",
@@ -88,7 +89,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     @Override
     public String providerId() {
-        return "host-guarded";
+        return PROVIDER_ID;
     }
 
     @Override

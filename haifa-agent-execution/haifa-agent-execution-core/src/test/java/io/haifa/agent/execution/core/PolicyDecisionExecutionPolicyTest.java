@@ -95,6 +95,12 @@ class PolicyDecisionExecutionPolicyTest {
                         ExecutionRejectedException.class,
                         exception -> org.assertj.core.api.Assertions.assertThat(exception.code())
                                 .isEqualTo("POLICY_RESOURCE_MISMATCH"));
+        assertThatThrownBy(() -> policy.authorize(
+                        request("decision-1", "echo ok", ".", new SandboxProfileRef("profile", "2-new-config"))))
+                .isInstanceOfSatisfying(
+                        ExecutionRejectedException.class,
+                        exception -> org.assertj.core.api.Assertions.assertThat(exception.code())
+                                .isEqualTo("POLICY_RESOURCE_MISMATCH"));
         assertThatThrownBy(() -> policy.authorize(request("unknown", "echo ok", ".")))
                 .isInstanceOfSatisfying(
                         ExecutionRejectedException.class,
@@ -103,6 +109,11 @@ class PolicyDecisionExecutionPolicyTest {
     }
 
     private static ExecutionRequest request(String decisionId, String command, String workdir) {
+        return request(decisionId, command, workdir, new SandboxProfileRef("profile", "1"));
+    }
+
+    private static ExecutionRequest request(
+            String decisionId, String command, String workdir, SandboxProfileRef profileRef) {
         WorkspaceId workspace = new WorkspaceId("workspace");
         return new ExecutionRequest(
                 new ExecutionId("execution-" + decisionId),
@@ -117,7 +128,7 @@ class PolicyDecisionExecutionPolicyTest {
                 ExecutionCommand.shell(command),
                 ExecutionEnvironmentRef.empty(),
                 new ExecutionLimits(Duration.ofSeconds(5), 1024, 1024, 1),
-                new SandboxProfileRef("profile", "1"));
+                profileRef);
     }
 
     private static PolicyRequest policyRequest(ExecutionRequest request) {

@@ -80,6 +80,8 @@ record CliConfiguration(
                 Web.defaults(),
                 Skills.defaults(),
                 new Execution(
+                        "local-native",
+                        "deny",
                         "auto",
                         null,
                         Duration.ofMinutes(2),
@@ -87,7 +89,8 @@ record CliConfiguration(
                         50 * 1024,
                         2000,
                         8,
-                        DEFAULT_ENVIRONMENT),
+                        DEFAULT_ENVIRONMENT,
+                        List.of()),
                 ApprovalMode.ASK,
                 Duration.ofMinutes(5),
                 50,
@@ -208,6 +211,8 @@ record CliConfiguration(
     }
 
     record Execution(
+            String provider,
+            String network,
             String shell,
             Path shellPath,
             Duration defaultTimeout,
@@ -215,10 +220,24 @@ record CliConfiguration(
             int maxOutputBytes,
             int maxOutputLines,
             int maxProcesses,
-            Set<String> inheritEnvironment) {
+            Set<String> inheritEnvironment,
+            List<ExtraPathPolicy> extraPathPolicies) {
+        private static final Set<String> PROVIDERS = Set.of("local-native", "host-guarded");
+        private static final Set<String> NETWORK_MODES = Set.of("deny", "allow");
         private static final Set<String> SHELLS = Set.of("auto", "bash", "powershell");
 
         Execution {
+            provider = text(provider, "execution.provider").toLowerCase(java.util.Locale.ROOT);
+            if (!PROVIDERS.contains(provider)) {
+                throw new IllegalArgumentException("execution.provider is unsupported");
+            }
+            network = text(network, "execution.network").toLowerCase(java.util.Locale.ROOT);
+            if (!NETWORK_MODES.contains(network)) {
+                throw new IllegalArgumentException("execution.network is unsupported");
+            }
+            if (provider.equals("host-guarded") && network.equals("deny")) {
+                throw new IllegalArgumentException("execution.network deny is unavailable for host-guarded");
+            }
             shell = text(shell, "execution.shell").toLowerCase(java.util.Locale.ROOT);
             if (!SHELLS.contains(shell)) throw new IllegalArgumentException("execution.shell is unsupported");
             if (shellPath != null) {
@@ -251,6 +270,19 @@ record CliConfiguration(
                     .anyMatch(Execution::looksSensitive)) {
                 throw new IllegalArgumentException("execution.inheritEnvironment contains a secret-like name");
             }
+            extraPathPolicies = List.copyOf(
+                    Objects.requireNonNull(extraPathPolicies, "execution.extraPathPolicies must not be null"));
+            if (extraPathPolicies.size() > 32
+                    || extraPathPolicies.stream()
+                                    .map(ExtraPathPolicy::id)
+                                    .distinct()
+                                    .count()
+                            != extraPathPolicies.size()) {
+                throw new IllegalArgumentException("execution.extraPathPolicies is invalid");
+            }
+            if (provider.equals("host-guarded") && !extraPathPolicies.isEmpty()) {
+                throw new IllegalArgumentException("execution.extraPathPolicies requires local-native");
+            }
         }
 
         private static boolean looksSensitive(String name) {
@@ -260,12 +292,34 @@ record CliConfiguration(
                     || name.contains("PASSWORD")
                     || name.contains("SECRET")
                     || name.contains("TOKEN")
-                    || name.contains("CREDENTIAL");
+                    || name.contains("CREDENTIAL")
+                    || name.endsWith("_PROXY")
+                    || name.equals("NO_PROXY")
+                    || name.endsWith("_AUTH_SOCK")
+                    || name.equals("DOCKER_HOST")
+                    || name.equals("KUBECONFIG");
         }
 
         private static void positive(Duration value, String field) {
             Objects.requireNonNull(value, field + " must not be null");
             if (value.isZero() || value.isNegative()) throw new IllegalArgumentException(field + " must be positive");
+        }
+    }
+
+    record ExtraPathPolicy(String id, Path path, boolean readOnly) {
+        ExtraPathPolicy {
+            id = text(id, "execution.extraPathPolicies.id");
+            if (!id.matches("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")) {
+                throw new IllegalArgumentException("execution.extraPathPolicies.id is invalid");
+            }
+            Path configured = Objects.requireNonNull(path, "execution.extraPathPolicies.path must not be null");
+            if (!configured.isAbsolute()) {
+                throw new IllegalArgumentException("execution.extraPathPolicies.path must be absolute");
+            }
+            path = configured.normalize();
+            if (path.getParent() == null) {
+                throw new IllegalArgumentException("execution.extraPathPolicies.path cannot be a filesystem root");
+            }
         }
     }
 
