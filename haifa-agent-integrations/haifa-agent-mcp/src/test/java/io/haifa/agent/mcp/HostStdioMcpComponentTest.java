@@ -83,7 +83,15 @@ class HostStdioMcpComponentTest {
                         managedRequest(fixture.workspaceId(), executionId), () -> bindingClosed.set(true)));
         var client = factory.create(stdioServer(), McpTestFixtures.IDENTITY);
 
-        var initialized = client.initialize(List.of());
+        io.haifa.agent.mcp.client.McpServerSnapshot initialized;
+        try {
+            initialized = client.initialize(List.of());
+        } catch (RuntimeException exception) {
+            client.close();
+            var execution = awaitExecution(fixture.broker(), executionId);
+            throw new AssertionError(
+                    "Host stdio stub failed: " + execution.stderr().summary(), exception);
+        }
         var tools = client.listTools(null, List.of());
         var result = client.callTool(
                 "echo", Map.of("value", "hello"), List.of(), io.haifa.agent.tool.api.ToolInvocationObserver.noop());
@@ -136,13 +144,21 @@ class HostStdioMcpComponentTest {
         var changeSetService = new FileChangeSetService(changeSets, () -> "change-" + ids.incrementAndGet(), () -> NOW);
         var observed = new ObservedFileChangeService(workspaces, changeSets, changeSetService, () -> NOW);
         var profile = new SandboxProfile(
-                new SandboxProfileRef("host-guarded", "1"), Set.of("java"), Set.of(), false, NetworkPolicy.ALLOW);
+                new SandboxProfileRef("host-guarded", "1"),
+                Set.of("java"),
+                Set.of("JAVA_HOME", "PATH"),
+                false,
+                NetworkPolicy.ALLOW);
         var host = new HostGuardedSandboxProvider(
                 workspaces, bindings, locations, () -> "host-session-" + ids.incrementAndGet(), Instant::now);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
-                ignored -> Map.of(),
+                ignored -> Map.of(
+                        "JAVA_HOME",
+                        System.getProperty("java.home"),
+                        "PATH",
+                        Path.of(System.getProperty("java.home"), "bin").toString()),
                 ignored -> {},
                 ignored -> profile,
                 ignored -> host,
@@ -164,7 +180,7 @@ class HostStdioMcpComponentTest {
                 new ExecutionCommand(
                         ExecutionCommandMode.DIRECT,
                         List.of("java", "-cp", ".", "io.haifa.agent.mcp.HostStdioStubMain")),
-                new ExecutionEnvironmentRef(List.of()),
+                new ExecutionEnvironmentRef(List.of("mcp-host-java-path")),
                 new ExecutionLimits(Duration.ofSeconds(10), 64 * 1024, 16 * 1024, 2),
                 new SandboxProfileRef("host-guarded", "1")));
     }
