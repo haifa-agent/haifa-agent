@@ -32,6 +32,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Locale;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
@@ -101,6 +102,15 @@ class LocalWorkspaceFileServiceTest {
         var fixture = fixture();
 
         assertFailure(fixture, "link.txt", ReadOptions.defaults(), WorkspaceFileErrorCode.LINK_REJECTED);
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void fingerprintsCanonicalWindowsPathRepresentation() {
+        Path differentlyCasedRoot = Path.of(root.toString().toUpperCase(Locale.ROOT));
+
+        assertThat(LocalWorkspaceLocationStore.fingerprintFor(differentlyCasedRoot))
+                .isEqualTo(LocalWorkspaceLocationStore.fingerprintFor(root));
     }
 
     @Test

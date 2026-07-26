@@ -2,7 +2,9 @@ package io.haifa.agent.project.provider.local;
 
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.spi.WorkspaceLocationStore;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -50,15 +52,23 @@ public final class LocalWorkspaceLocationStore implements WorkspaceLocationStore
 
     public static String fingerprintFor(Path hostRoot) {
         try {
-            String canonical = Objects.requireNonNull(hostRoot, "hostRoot must not be null")
-                    .toAbsolutePath()
-                    .normalize()
-                    .toString();
+            String canonical = canonicalRoot(hostRoot).toString();
             String hash = HexFormat.of()
                     .formatHex(MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8)));
             return "sha256:" + hash;
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required", exception);
+        }
+    }
+
+    private static Path canonicalRoot(Path hostRoot) {
+        try {
+            return Objects.requireNonNull(hostRoot, "hostRoot must not be null")
+                    .toAbsolutePath()
+                    .normalize()
+                    .toRealPath(LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException exception) {
+            throw new IllegalStateException("workspace root is unavailable", exception);
         }
     }
 
