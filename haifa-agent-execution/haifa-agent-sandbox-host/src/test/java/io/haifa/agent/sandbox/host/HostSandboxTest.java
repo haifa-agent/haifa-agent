@@ -29,6 +29,7 @@ import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.sandbox.api.EphemeralCopyRequest;
 import io.haifa.agent.sandbox.api.GitWorktreeRequest;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
+import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxExecution;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
 import io.haifa.agent.sandbox.api.SandboxProfile;
@@ -69,8 +70,12 @@ class HostSandboxTest {
                 () -> Instant.ofEpochMilli(System.currentTimeMillis()));
         assertThat(provider.capabilities().networkIsolation()).isFalse();
         assertThat(provider.capabilities().filesystemMountIsolation()).isFalse();
-        SandboxProfile profile = new SandboxProfile(
-                new SandboxProfileRef("host-test", "1"), Set.of("java"), Set.of(), false, NetworkPolicy.ALLOW);
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("host-test", "1"),
+                provider.configurationDigest(),
+                Set.of("java"),
+                Set.of(),
+                false);
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
             var version = session.execute(new SandboxExecution(
                     new ExecutionCommand(ExecutionCommandMode.DIRECT, List.of("java", "-version")),
@@ -128,13 +133,17 @@ class HostSandboxTest {
         assertThatThrownBy(() -> provider.open(
                         new SandboxProfile(
                                 new SandboxProfileRef("deny", "1"),
+                                provider.providerId(),
+                                provider.configurationDigest(),
                                 Set.of("java"),
                                 Set.of(),
                                 false,
-                                NetworkPolicy.DENY),
+                                NetworkPolicy.DENY,
+                                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
+                                new SandboxCapabilities(true, false, true, false, false)),
                         new WorkspaceMount(fixture.workspaceId, false)))
                 .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
-                        .isEqualTo("NETWORK_ISOLATION_UNAVAILABLE"));
+                        .isEqualTo("NETWORK_POLICY_UNENFORCEABLE"));
     }
 
     @Test
@@ -143,8 +152,8 @@ class HostSandboxTest {
         HostShell shell = HostShell.auto();
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces, fixture.bindings, fixture.locations, () -> "shell-session", Instant::now, shell);
-        SandboxProfile profile = new SandboxProfile(
-                new SandboxProfileRef("shell-test", "1"), Set.of(), Set.of(), true, NetworkPolicy.ALLOW);
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("shell-test", "1"), provider.configurationDigest(), Set.of(), Set.of(), true);
         String command = isWindows()
                 ? "$value = 'shell-ok'; $value | Set-Content result.txt; Get-Content result.txt"
                 : "printf 'shell-ok\\n' | tr a-z A-Z > result.txt; cat result.txt";
@@ -168,12 +177,12 @@ class HostSandboxTest {
                     .endsWithIgnoringCase("ell-ok\n");
         }
 
-        SandboxProfile secretProfile = new SandboxProfile(
+        SandboxProfile secretProfile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("secret-test", "1"),
+                provider.configurationDigest(),
                 Set.of(),
                 Set.of("DEEPSEEK_API_KEY"),
-                true,
-                NetworkPolicy.ALLOW);
+                true);
         try (var session = provider.open(secretProfile, new WorkspaceMount(fixture.workspaceId, false))) {
             assertThatThrownBy(() -> session.execute(new SandboxExecution(
                             ExecutionCommand.shell(command),
@@ -184,8 +193,8 @@ class HostSandboxTest {
                             .isEqualTo("ENVIRONMENT_DENIED"));
         }
 
-        SandboxProfile shellDenied = new SandboxProfile(
-                new SandboxProfileRef("shell-denied", "1"), Set.of(), Set.of(), false, NetworkPolicy.ALLOW);
+        SandboxProfile shellDenied = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("shell-denied", "1"), provider.configurationDigest(), Set.of(), Set.of(), false);
         try (var session = provider.open(shellDenied, new WorkspaceMount(fixture.workspaceId, false))) {
             assertThatThrownBy(() -> session.execute(new SandboxExecution(
                             ExecutionCommand.shell(command),

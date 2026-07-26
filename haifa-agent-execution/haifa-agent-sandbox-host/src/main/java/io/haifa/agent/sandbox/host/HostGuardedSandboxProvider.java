@@ -14,6 +14,7 @@ import io.haifa.agent.project.workspace.WorkspacePermission;
 import io.haifa.agent.project.workspace.WorkspaceStatus;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
+import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxExecution;
 import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
@@ -96,9 +97,28 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     }
 
     @Override
+    public SandboxConfigurationDigest configurationDigest() {
+        var fields = new java.util.ArrayList<String>();
+        fields.add(providerId());
+        fields.add(shell.displayName());
+        fields.addAll(shell.invocationPrefix());
+        return SandboxConfigurationDigest.sha256Fields(fields);
+    }
+
+    @Override
+    public boolean supportsManagedProcess() {
+        return true;
+    }
+
+    @Override
     public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
         Objects.requireNonNull(profile, "profile must not be null");
         Objects.requireNonNull(mount, "mount must not be null");
+        try {
+            preflight(profile);
+        } catch (io.haifa.agent.sandbox.api.SandboxException exception) {
+            throw failure(exception.code(), exception.getMessage());
+        }
         var workspace = workspaces
                 .find(mount.workspaceId())
                 .orElseThrow(() -> failure("WORKSPACE_NOT_FOUND", "workspace not found"));

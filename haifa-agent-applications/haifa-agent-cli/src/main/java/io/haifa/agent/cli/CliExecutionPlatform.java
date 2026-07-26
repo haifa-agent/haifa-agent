@@ -21,7 +21,6 @@ import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
@@ -63,8 +62,8 @@ final class CliExecutionPlatform {
         Objects.requireNonNull(configuration, "configuration must not be null");
         HostShell shell = shell(configuration);
         var host = new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell);
-        SandboxProfile profile = new SandboxProfile(
-                PROFILE_REF, java.util.Set.of(), configuration.inheritEnvironment(), true, NetworkPolicy.ALLOW);
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                PROFILE_REF, host.configurationDigest(), java.util.Set.of(), configuration.inheritEnvironment(), true);
         Map<String, String> environment = environment(configuration);
         var manifests = new WorkspaceManifestService(
                 workspaces,

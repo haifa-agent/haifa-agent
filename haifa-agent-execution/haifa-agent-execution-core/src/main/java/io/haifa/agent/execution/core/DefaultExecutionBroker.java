@@ -19,11 +19,16 @@ import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.WorkspacePermission;
+import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.api.SandboxExecution;
+import io.haifa.agent.sandbox.api.SandboxPreflight;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
+import io.haifa.agent.sandbox.api.SandboxProfile;
+import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxProviderResolver;
 import io.haifa.agent.sandbox.api.SandboxResolver;
 import io.haifa.agent.sandbox.api.SandboxSession;
+import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.io.ByteArrayOutputStream;
 import java.time.Duration;
@@ -86,16 +91,16 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             if (!sameIntent(previous, request))
                 throw reject("IDEMPOTENCY_CONFLICT", "idempotency key has different intent");
             authorize(request);
+            policy.authorize(request);
             return replay.orElseThrow().asReplay();
         }
         authorize(request);
         policy.authorize(request);
-        var profile = profiles.resolve(request.sandboxProfileRef());
-        var provider = providers.resolve(profile);
+        ResolvedSandbox resolved = resolveSandbox(request, false);
         Map<String, String> environment = Map.copyOf(environments.resolve(request.environmentRef()));
         WorkspaceManifest before = manifests.capture(request.workspaceId());
         executions.create(request);
-        SandboxSession session = provider.open(profile, new WorkspaceMount(request.workspaceId(), false));
+        SandboxSession session = resolved.provider().open(resolved.profile(), resolved.mount());
         active.put(request.id(), session);
         try (session) {
             io.haifa.agent.sandbox.api.SandboxProcessResult process;
@@ -167,12 +172,11 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         }
         authorize(request);
         policy.authorize(request);
-        var profile = profiles.resolve(request.sandboxProfileRef());
-        var provider = providers.resolve(profile);
+        ResolvedSandbox resolved = resolveSandbox(request, true);
         Map<String, String> environment = Map.copyOf(environments.resolve(request.environmentRef()));
         WorkspaceManifest before = manifests.capture(request.workspaceId());
         executions.create(request);
-        SandboxSession sandbox = provider.open(profile, new WorkspaceMount(request.workspaceId(), false));
+        SandboxSession sandbox = resolved.provider().open(resolved.profile(), resolved.mount());
         active.put(request.id(), sandbox);
         try {
             var process = sandbox.openManagedProcess(
@@ -208,6 +212,28 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 || !binding.capabilities().allows("execution.run")) {
             throw reject("WORKSPACE_EXECUTION_DENIED", "workspace execution capability is denied");
         }
+    }
+
+    private ResolvedSandbox resolveSandbox(ExecutionRequest request, boolean managedProcess) {
+        SandboxProfile profile = profiles.resolve(request.sandboxProfileRef());
+        if (!request.sandboxProfileRef().equals(profile.ref())) {
+            throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox profile reference does not match");
+        }
+        SandboxProvider provider = providers.resolve(profile);
+        if (!profile.providerId().equals(provider.providerId())) {
+            throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox provider binding does not match");
+        }
+        SandboxPreflight preflight = provider.preflight(profile);
+        if (!preflight.providerId().equals(profile.providerId())
+                || !preflight.configurationDigest().equals(profile.providerConfigurationDigest())
+                || !preflight.capabilities().satisfies(profile.requiredCapabilities())) {
+            throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox preflight does not match the profile");
+        }
+        if (managedProcess && !preflight.managedProcessSupported()) {
+            throw new SandboxException("CAPABILITY_UNAVAILABLE", "sandbox provider does not support managed processes");
+        }
+        boolean readOnly = profile.filesystemPolicy().workspaceAccess() == SandboxWorkspaceAccess.READ_ONLY;
+        return new ResolvedSandbox(profile, provider, new WorkspaceMount(request.workspaceId(), readOnly));
     }
 
     private final class BrokerManagedSession implements io.haifa.agent.execution.api.ManagedProcessSession {
@@ -345,9 +371,12 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     }
 
     private static boolean sameIntent(ExecutionRequest first, ExecutionRequest second) {
-        return first.workspaceId().equals(second.workspaceId())
+        return first.context().equals(second.context())
+                && first.workspaceId().equals(second.workspaceId())
                 && first.workingDirectory().equals(second.workingDirectory())
                 && first.command().equals(second.command())
+                && first.environmentRef().equals(second.environmentRef())
+                && first.limits().equals(second.limits())
                 && first.sandboxProfileRef().equals(second.sandboxProfileRef());
     }
 
@@ -412,4 +441,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     private static ExecutionRejectedException reject(String code, String message) {
         return new ExecutionRejectedException(code, message);
     }
+
+    private record ResolvedSandbox(SandboxProfile profile, SandboxProvider provider, WorkspaceMount mount) {}
 }

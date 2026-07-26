@@ -49,7 +49,6 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
-import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import java.io.InputStream;
@@ -143,14 +142,14 @@ class HostStdioMcpComponentTest {
         var ids = new AtomicInteger();
         var changeSetService = new FileChangeSetService(changeSets, () -> "change-" + ids.incrementAndGet(), () -> NOW);
         var observed = new ObservedFileChangeService(workspaces, changeSets, changeSetService, () -> NOW);
-        var profile = new SandboxProfile(
-                new SandboxProfileRef("host-guarded", "1"),
-                Set.of("java"),
-                Set.of("JAVA_HOME", "PATH"),
-                false,
-                NetworkPolicy.ALLOW);
         var host = new HostGuardedSandboxProvider(
                 workspaces, bindings, locations, () -> "host-session-" + ids.incrementAndGet(), Instant::now);
+        var profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("host-guarded", "1"),
+                host.configurationDigest(),
+                Set.of("java"),
+                Set.of("JAVA_HOME", "PATH"),
+                false);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),

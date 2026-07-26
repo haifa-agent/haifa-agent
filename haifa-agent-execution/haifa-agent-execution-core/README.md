@@ -15,3 +15,14 @@ Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周�
 stdout/stderr 在各自执行预算内写入 `ExecutionOutputStore`，超过 inline 阈值后返回 `AssetRef`。Project Tool 只向模型返回按观察顺序合并的有界尾部，完整的分通道输出仍由 Execution Result 引用。
 
 长驻会话与一次性执行共享相同的可信上下文、授权、环境解析、Sandbox Profile、输出预算、脱敏、Manifest 和审计流程。会话关闭、取消或异常退出时，Broker 先收敛底层进程与输出，再释放环境租约并完成审计记录。
+
+## Sandbox resolution
+
+`ImmutableSandboxProfileRegistry` 拒绝重复或内容冲突的 Profile Ref；
+`ImmutableSandboxProviderRegistry` 按精确 Provider ID 解析且拒绝重复注册。`DefaultExecutionBroker`
+在环境解析、Manifest 和 Provider `open` 前依次验证 Profile Ref、Provider 绑定、配置摘要、预检
+Capability 与 Managed Process 支持状态。任何不匹配均 fail closed，不选择候选 Provider，也不回退
+Host。
+
+幂等重放重新执行 Capability、Workspace 和 Policy 授权；相同 idempotency key 的安全上下文、
+Environment、Limits 或 Sandbox Profile 漂移会返回 `IDEMPOTENCY_CONFLICT`。
