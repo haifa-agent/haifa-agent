@@ -60,6 +60,9 @@ haifa-agent-integrations/
 haifa-agent-applications/
   haifa-agent-project-application/
   haifa-agent-cli/
+haifa-agent-testing/
+  haifa-agent-testkit/
+  haifa-agent-test-fixtures/
 ```
 
 实线表示编译期依赖，箭头从使用方指向被依赖方：
@@ -112,7 +115,14 @@ flowchart LR
   CLI[cli] --> PAPP
   CLI --> MCP
   CLI --> SHOST
+  TESTKIT[testkit]
+  FIXTURES[test-fixtures]
 ```
+
+`haifa-agent-testing` 位于 Reactor 末端，只承载测试基础设施。当前初始化了无产品依赖的
+`haifa-agent-testkit` 和 `haifa-agent-test-fixtures`；生产模块不得反向依赖测试模块。模块私有
+Fixture 继续就近保存在各模块的 `src/test/resources`，只有跨模块共享且可安全进入源码仓库的小型
+Fixture 才上移到 `haifa-agent-test-fixtures`。
 
 ## 关键边界
 
