@@ -12,11 +12,17 @@ public interface AgentRuntime {
 
     AgentRunSnapshot respond(InteractionResponse response);
 
-    InteractionResponseReceipt respond(InteractionResponseSubmission response);
+    default InteractionResponseReceipt respond(InteractionResponseSubmission response) {
+        throw new UnsupportedOperationException("revision-aware interaction responses are not supported");
+    }
 
-    RunInputReceipt submitInput(RunInputSubmission input);
+    default RunInputReceipt submitInput(RunInputSubmission input) {
+        throw new UnsupportedOperationException("durable Run Input is not supported");
+    }
 
-    Optional<InteractionView> pendingInteraction(io.haifa.agent.core.run.AgentRunId runId);
+    default Optional<InteractionView> pendingInteraction(io.haifa.agent.core.run.AgentRunId runId) {
+        throw new UnsupportedOperationException("public Interaction views are not supported");
+    }
 
     RuntimeCommandResult command(RuntimeCommand command);
 

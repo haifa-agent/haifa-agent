@@ -43,6 +43,7 @@ class RuntimePersistencePortsTest {
 
         assertThat(ports.toolJournal()).isSameAs(journal);
         assertThat(ports.interactions()).isSameAs(interactions);
+        assertThat(ports.runInputs()).isNotNull();
         assertThat(ports.runs()).isSameAs(store);
         assertThat(ports.messageRedactions()).isSameAs(store);
     }
@@ -102,8 +103,9 @@ class RuntimePersistencePortsTest {
                 missing == 8 ? null : source.unitOfWork(),
                 missing == 9 ? null : source.toolJournal(),
                 missing == 10 ? null : source.interactions(),
-                missing == 11 ? null : source.conversationSummaries(),
-                missing == 12 ? null : source.toolResultAssets(),
-                missing == 13 ? null : source.messageRedactions());
+                missing == 11 ? null : source.runInputs(),
+                missing == 12 ? null : source.conversationSummaries(),
+                missing == 13 ? null : source.toolResultAssets(),
+                missing == 14 ? null : source.messageRedactions());
     }
 }

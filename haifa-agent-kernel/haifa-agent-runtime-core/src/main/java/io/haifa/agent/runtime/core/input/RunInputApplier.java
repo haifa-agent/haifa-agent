@@ -77,7 +77,7 @@ public final class RunInputApplier {
                                 "BEFORE_ITERATION"),
                         time.now());
                 outbox.append(new OutboxMessage(
-                        ids.nextValue(),
+                        event.eventId(),
                         event.runId(),
                         event.sequence(),
                         event.type(),

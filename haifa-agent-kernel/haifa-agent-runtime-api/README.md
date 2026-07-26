@@ -20,9 +20,15 @@ reasoning, unvalidated tool arguments, prompts, credentials, or provider respons
 - Find、Resume 和 Command 均使用正式的 `AgentRunId`；Resume 可选择指定 Checkpoint。
 - 公共命令只有 `PAUSE`、`CANCEL`、`TERMINATE_CHILDREN`；`InteractionResponse` 以 Request/Response ID 关联 Clarification 或 Approval，并从可信 Caller Context 获取操作者。Timeout/Lease Lost 等只属于 Runtime 内部 Control Signal。
 - 新的 `InteractionView`、`InteractionResponseSubmission/Receipt` 使用稳定 Kind/Action/Input、
-  revision 和错误码；旧 `InteractionResponse`/Snapshot 返回路径暂时保留为单向兼容层。
+  revision 和错误码；旧 `InteractionResponse`/Snapshot 返回路径暂时保留为单向兼容层。新增入口使用
+  fail-fast default method，既有第三方 `AgentRuntime` 实现保持源码兼容，支持新能力时再显式覆盖。
 - `RunInputSubmission` 只表达活动 Run 的 Steer，拒绝 Tool 协议 Part；Follow-up 仍由产品层在同一
   Session 创建新 Run。
-- `events`/`subscribe` 已冻结 provider-neutral 接口和可关闭订阅类型，但默认实现明确为
-  `UnsupportedOperationException`；完整 Journal 投影、Cursor range read 和 replay-then-tail 属于
-  Task 02，现有 `outputEvents` 不冒充完整 Run Feed。
+- `events`/`subscribe` 是 provider-neutral 的完整 Run Feed 接口。默认接口实现仍显式
+  `UnsupportedOperationException`，便于第三方旧实现 fail fast；`DefaultAgentRuntime` 已提供
+  排他 Cursor 范围读取和可关闭的 replay-then-tail 订阅。
+- `RunEventCursor` 是嵌入式结构化 Cursor；远程 Adapter 使用 Runtime Core 提供的
+  `OpaqueRunEventCursorCodec` 编解码不透明值。Cursor 绑定 Run、feed version 和最后已交付 sequence，
+  不能与 `RunOutputCursor`、Outbox offset 或数据库 rowid 混用。
+- `AgentRunEvent` 只携带 `RunEventPayloads` 的有界 typed payload。未知内部 Journal Event 不外发，
+  但 Feed Cursor 会继续推进；现有 `outputEvents` 仍是兼容的模型输出子视图。

@@ -348,10 +348,14 @@ class V1SchemaMetadataTest {
                             "run_id",
                             "sequence",
                             "type",
+                            "event_schema_version",
                             "data_schema_version",
                             "data_payload",
                             "data_hash",
+                            "correlation_id",
+                            "causation_id",
                             "occurred_at")),
+            entry("runtime_event_stream", set("run_id", "head_sequence", "earliest_sequence", "updated_at")),
             entry(
                     "outbox",
                     set(
@@ -371,13 +375,17 @@ class V1SchemaMetadataTest {
                             "caller_scope",
                             "operation",
                             "idempotency_key",
+                            "target_type",
+                            "target_id",
+                            "request_digest",
                             "run_id",
                             "command_applied",
                             "result_schema_version",
                             "result_payload",
                             "result_hash",
                             "created_at",
-                            "updated_at")),
+                            "updated_at",
+                            "expires_at")),
             entry(
                     "memory_selection",
                     set(
@@ -484,7 +492,13 @@ class V1SchemaMetadataTest {
                             "target_payload",
                             "target_hash",
                             "created_at",
-                            "expires_at")),
+                            "expires_at",
+                            "revision",
+                            "kind",
+                            "state",
+                            "expiration_outcome",
+                            "state_reason_code",
+                            "state_changed_at")),
             entry(
                     "interaction_response",
                     set(
@@ -497,7 +511,34 @@ class V1SchemaMetadataTest {
                             "inputs_hash",
                             "idempotency_key",
                             "responded_at",
-                            "resolved_at")),
+                            "resolved_at",
+                            "action",
+                            "expected_revision",
+                            "caller_scope",
+                            "canonical_digest",
+                            "responder_tenant_id",
+                            "responder_principal_id",
+                            "responder_principal_type",
+                            "receipt_status")),
+            entry(
+                    "run_input",
+                    set(
+                            "input_id",
+                            "run_id",
+                            "expected_run_version",
+                            "contents_schema_version",
+                            "contents_payload",
+                            "contents_hash",
+                            "caller_scope",
+                            "idempotency_key",
+                            "canonical_digest",
+                            "submitted_at",
+                            "accepted_at",
+                            "status",
+                            "applied_at",
+                            "attempt_id",
+                            "iteration",
+                            "reason_code")),
             entry("interaction_application", set("request_id", "resolution_applied", "applied_at")));
 
     private static final Set<String> EXPECTED_INDEXES = set(
@@ -512,7 +553,12 @@ class V1SchemaMetadataTest {
             "idx_outbox_pending",
             "idx_summary_latest_valid",
             "idx_tool_journal_uncertain",
-            "idx_interaction_request_pending");
+            "idx_interaction_request_pending",
+            "idx_runtime_event_run_sequence",
+            "uq_interaction_pending_per_run",
+            "idx_interaction_due",
+            "uq_interaction_response_idempotency",
+            "idx_run_input_pending");
 
     private static final Set<String> EXPECTED_FOREIGN_KEYS = set(
             "run.session_id->session.session_id",
@@ -526,8 +572,11 @@ class V1SchemaMetadataTest {
             "step.run_id->run.run_id",
             "tool_call.step_id->step.step_id",
             "checkpoint_payload.checkpoint_id->checkpoint.checkpoint_id",
+            "runtime_event_stream.run_id->run.run_id",
             "outbox.event_id->runtime_event.event_id",
             "model_continuation.assistant_message_id->session_message.message_id",
             "interaction_response.request_id->interaction_request.request_id",
+            "run_input.run_id->run.run_id",
+            "run_input.attempt_id->execution_attempt.attempt_id",
             "interaction_application.request_id->interaction_request.request_id");
 }

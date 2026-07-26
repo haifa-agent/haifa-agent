@@ -46,13 +46,8 @@ public final class SqliteRuntimeOutboxPublisher implements RuntimeOutboxPublishe
             if (event == null || !event.type().equals(message.type())) {
                 throw new IllegalStateException("outbox message has no matching runtime event");
             }
-            String provisional = SqliteRuntimeEventAppender.provisionalId(message.runId(), message.sequence());
             if (!event.eventId().equals(message.id())) {
-                if (!event.eventId().equals(provisional)
-                        || mapper.replaceEventId(message.runId().value(), message.sequence(), provisional, message.id())
-                                != 1) {
-                    throw new IllegalStateException("runtime event id cannot be paired with outbox message");
-                }
+                throw new IllegalStateException("outbox message must use the committed runtime event id");
             }
             EncodedPayload payload =
                     codecs.encode(SqliteRuntimePayloadTypes.OUTBOX, new OutboxPayload(message.payload()));

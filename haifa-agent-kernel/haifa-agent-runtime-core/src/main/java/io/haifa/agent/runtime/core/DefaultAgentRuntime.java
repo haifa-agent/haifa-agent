@@ -17,6 +17,7 @@ import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyAuthorizationEvidence;
 import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
 import io.haifa.agent.policy.api.PolicyDecisionStore;
+import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunListener;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -33,6 +34,9 @@ import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
+import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RunEventPage;
+import io.haifa.agent.runtime.api.RunEventSubscription;
 import io.haifa.agent.runtime.api.RunInputReceipt;
 import io.haifa.agent.runtime.api.RunInputReceiptStatus;
 import io.haifa.agent.runtime.api.RunInputSubmission;
@@ -51,6 +55,8 @@ import io.haifa.agent.runtime.core.bootstrap.RunBootstrapper;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
 import io.haifa.agent.runtime.core.control.RunControlService;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
+import io.haifa.agent.runtime.core.event.RuntimeEventFeed;
+import io.haifa.agent.runtime.core.event.RuntimeEventSubscriptions;
 import io.haifa.agent.runtime.core.execution.AttemptExecutor;
 import io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
@@ -110,6 +116,8 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private final PolicyAuthorizationEvidenceStore policyAuthorizationEvidence;
     private final PolicyDecisionStore policyDecisions;
     private final RunInputPort runInputs;
+    private final RuntimeEventFeed eventFeed;
+    private final RuntimeEventSubscriptions eventSubscriptions;
     private final InteractionViewProjector interactionViews = new InteractionViewProjector();
 
     public DefaultAgentRuntime(
@@ -139,7 +147,9 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             ApprovalVerificationService approvalVerification,
             PolicyAuthorizationEvidenceStore policyAuthorizationEvidence,
             PolicyDecisionStore policyDecisions,
-            RunInputPort runInputs) {
+            RunInputPort runInputs,
+            RuntimeEventFeed eventFeed,
+            RuntimeEventSubscriptions eventSubscriptions) {
         this.callers = Objects.requireNonNull(callers);
         this.bootstrapper = Objects.requireNonNull(bootstrapper);
         this.runs = Objects.requireNonNull(runs);
@@ -167,6 +177,8 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         this.policyAuthorizationEvidence = Objects.requireNonNull(policyAuthorizationEvidence);
         this.policyDecisions = Objects.requireNonNull(policyDecisions);
         this.runInputs = Objects.requireNonNull(runInputs);
+        this.eventFeed = Objects.requireNonNull(eventFeed);
+        this.eventSubscriptions = Objects.requireNonNull(eventSubscriptions);
     }
 
     @Override
@@ -198,10 +210,14 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                     var event = events.append(
                             generatedId,
                             "run.created",
-                            Map.of("definitionVersion", definition.version().toString()),
+                            Map.of(
+                                    "definitionVersion",
+                                    definition.version().toString(),
+                                    "version",
+                                    generated.version()),
                             time.now());
                     outbox.append(new OutboxMessage(
-                            ids.nextValue(),
+                            event.eventId(),
                             event.runId(),
                             event.sequence(),
                             event.type(),
@@ -471,7 +487,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         "responder", caller.principal().principalId()),
                 time.now());
         outbox.append(new OutboxMessage(
-                ids.nextValue(),
+                event.eventId(),
                 event.runId(),
                 event.sequence(),
                 event.type(),
@@ -495,7 +511,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private void appendSecurityEvent(AgentRun run, String type, Map<String, Object> data, java.time.Instant at) {
         var event = events.append(run.id(), type, data, at);
         outbox.append(new OutboxMessage(
-                ids.nextValue(),
+                event.eventId(),
                 event.runId(),
                 event.sequence(),
                 event.type(),
@@ -540,7 +556,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         Map.of("inputId", input.inputId().value(), "kind", "steer"),
                         time.now());
                 outbox.append(new OutboxMessage(
-                        ids.nextValue(),
+                        event.eventId(),
                         event.runId(),
                         event.sequence(),
                         event.type(),
@@ -581,7 +597,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                                 value.request().expirationOutcome().name()),
                         time.now());
                 outbox.append(new OutboxMessage(
-                        ids.nextValue(),
+                        event.eventId(),
                         event.runId(),
                         event.sequence(),
                         event.type(),
@@ -659,7 +675,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                         "operator", caller.principal().principalId()),
                 time.now());
         outbox.append(new OutboxMessage(
-                ids.nextValue(),
+                event.eventId(),
                 event.runId(),
                 event.sequence(),
                 event.type(),
@@ -705,6 +721,20 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     @Override
     public void addOutputListener(AgentRunOutputListener listener) {
         modelOutput.addListener(listener);
+    }
+
+    @Override
+    public RunEventPage events(AgentRunId runId, RunEventCursor after, int limit) {
+        AgentRun run = requireRunForContract(Objects.requireNonNull(runId, "runId must not be null"));
+        requireContractCaller(run);
+        return eventFeed.page(runId, after, limit);
+    }
+
+    @Override
+    public RunEventSubscription subscribe(AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
+        AgentRun run = requireRunForContract(Objects.requireNonNull(runId, "runId must not be null"));
+        requireContractCaller(run);
+        return eventSubscriptions.subscribe(runId, after, listener);
     }
 
     /** Reclaims a run whose physical executor disappeared after durable checkpointing. */

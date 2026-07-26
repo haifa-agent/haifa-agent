@@ -65,6 +65,11 @@ import io.haifa.agent.runtime.core.control.RunControlService;
 import io.haifa.agent.runtime.core.decision.DecisionExecutor;
 import io.haifa.agent.runtime.core.decision.DefaultDecisionValidator;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
+import io.haifa.agent.runtime.core.event.NotifyingRuntimeEventAppender;
+import io.haifa.agent.runtime.core.event.RuntimeClientEventProjector;
+import io.haifa.agent.runtime.core.event.RuntimeEventFeed;
+import io.haifa.agent.runtime.core.event.RuntimeEventSubscriptions;
+import io.haifa.agent.runtime.core.event.RuntimeEventWakeupRegistry;
 import io.haifa.agent.runtime.core.execution.AttemptExecutor;
 import io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
@@ -74,7 +79,6 @@ import io.haifa.agent.runtime.core.guard.ChildRunGuard;
 import io.haifa.agent.runtime.core.guard.DuplicateToolCallGuard;
 import io.haifa.agent.runtime.core.guard.IterationGuard;
 import io.haifa.agent.runtime.core.guard.LoopDetectionGuard;
-import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.input.RunInputApplier;
 import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
@@ -181,7 +185,7 @@ public final class RuntimeCoreBuilder {
     private PersistenceRetryPolicy persistenceRetry = PersistenceRetryPolicy.none();
     private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
     private TracePort trace = TracePort.noop();
-    private RunInputPort runInputs = new InMemoryRunInputPort();
+    private RunInputPort runInputs;
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
     private OutputContractValidator outputContract =
             (run, decision) -> !decision.outputSchemaId().isBlank()
@@ -254,7 +258,8 @@ public final class RuntimeCoreBuilder {
     /**
      * Configures the durable Run Input boundary.
      *
-     * <p>The default is in-memory. Persistent applications inject the Task 02 store adapter.
+     * <p>The default comes from {@link RuntimePersistencePorts}; this method is an explicit
+     * application override.
      */
     public RuntimeCoreBuilder runInputs(RunInputPort value) {
         runInputs = Objects.requireNonNull(value, "runInputs must not be null");
@@ -420,15 +425,19 @@ public final class RuntimeCoreBuilder {
         var attempts = persistence.attempts();
         var checkpointsRepository = persistence.checkpoints();
         var state = persistence.state();
-        var events = persistence.events();
+        RuntimeEventWakeupRegistry eventWakeups = new RuntimeEventWakeupRegistry();
+        var events = new NotifyingRuntimeEventAppender(persistence.events(), persistence.unitOfWork(), eventWakeups);
         var outbox = persistence.outbox();
         var idempotency = persistence.idempotency();
         var unitOfWork = persistence.unitOfWork();
         var toolJournal = persistence.toolJournal();
         InteractionPort interactions = persistence.interactions();
+        RunInputPort configuredRunInputs = runInputs != null ? runInputs : persistence.runInputs();
         var summaries = persistence.conversationSummaries();
         var toolResultAssets = persistence.toolResultAssets();
         var messageRedactions = persistence.messageRedactions();
+        RuntimeEventFeed eventFeed = new RuntimeEventFeed(events, new RuntimeClientEventProjector(runs));
+        RuntimeEventSubscriptions eventSubscriptions = new RuntimeEventSubscriptions(eventFeed, eventWakeups);
         ExecutionOwnershipPort configuredOwnership =
                 ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(events, time);
@@ -567,7 +576,8 @@ public final class RuntimeCoreBuilder {
         var compressionPolicy = CompressionPolicy.defaults();
         var sessionMessageSource = new SessionMessageSource(state, summaries, compressor, compressionPolicy, ids, time);
         var memoryContextSource = new MemoryContextSource(configuredMemoryRetriever, state, time);
-        RunInputApplier runInputApplier = new RunInputApplier(runInputs, state, events, outbox, unitOfWork, ids, time);
+        RunInputApplier runInputApplier =
+                new RunInputApplier(configuredRunInputs, state, events, outbox, unitOfWork, ids, time);
         AgentLoop loop = new DefaultAgentLoop(
                 controls,
                 List.of(new BudgetGuard(), new IterationGuard(), new LoopDetectionGuard(3)),
@@ -634,7 +644,9 @@ public final class RuntimeCoreBuilder {
                 approvalVerification,
                 policyAuthorizationEvidence,
                 policyDecisions,
-                runInputs);
+                configuredRunInputs,
+                eventFeed,
+                eventSubscriptions);
     }
 
     private static ResolvedProfile defaultProfile(String id, io.haifa.agent.runtime.api.RuntimeOverrides overrides) {

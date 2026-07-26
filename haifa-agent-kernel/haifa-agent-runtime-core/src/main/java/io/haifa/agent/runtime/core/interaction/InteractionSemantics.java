@@ -6,10 +6,10 @@ import io.haifa.agent.runtime.api.InteractionKind;
 import java.util.List;
 
 /** Single mapping from legacy internal request types to the authoritative public interaction semantics. */
-final class InteractionSemantics {
+public final class InteractionSemantics {
     private InteractionSemantics() {}
 
-    static InteractionKind kind(InteractionRequest request) {
+    public static InteractionKind kind(InteractionRequest request) {
         if (request.approval()) return InteractionKind.APPROVAL;
         return switch (request.type()) {
             case "clarification" -> InteractionKind.CLARIFICATION;
@@ -22,7 +22,7 @@ final class InteractionSemantics {
         };
     }
 
-    static List<InteractionAction> allowedActions(InteractionKind kind) {
+    public static List<InteractionAction> allowedActions(InteractionKind kind) {
         if (kind.equals(InteractionKind.APPROVAL)) {
             return List.of(InteractionAction.APPROVE, InteractionAction.REJECT);
         }
@@ -41,7 +41,7 @@ final class InteractionSemantics {
         return List.of();
     }
 
-    static InteractionInputContract inputContract(InteractionKind kind) {
+    public static InteractionInputContract inputContract(InteractionKind kind) {
         if (kind.equals(InteractionKind.APPROVAL) || !kind.known()) return InteractionInputContract.NONE;
         if (kind.equals(InteractionKind.CONFIRMATION)) return InteractionInputContract.NONE;
         return InteractionInputContract.contentParts(20, 1_048_576);

@@ -11,6 +11,8 @@ UTF-8 JSON Lines files.
   `RuntimeUnitOfWork` only after the line has been forced to stable storage.
 - Delivery is at least once. A crash after `force(true)` and before the SQLite acknowledgement can
   produce a duplicate line; readers deduplicate by event ID.
+- Runtime Journal and Outbox now share the committed stable Event ID. JSONL preserves that ID for
+  deduplication but never allocates, replaces, or interprets Run Feed cursors.
 - Only registered event types and explicitly selected payload fields are written. Unknown event
   types or schema versions fail closed.
 - Credentials, tokens, reasoning, prompts, raw tool arguments/results, and provider responses are
@@ -37,3 +39,7 @@ Project Application exposes this adapter only through `SQLITE_WITH_JSONL`. It at
 Runtime's post-commit listener, performs a final pending projection during ordered shutdown, and then
 closes SQLite. `SQLITE` mode does not create transcript files, and no JSONL-only configuration is
 accepted.
+
+Task 02 does not turn JSONL into a client-event feed. Run Event range reads, retention and
+replay-then-tail always read SQLite (or the in-memory journal in memory mode); deleting or failing a
+transcript write cannot remove authoritative Interaction, Run Input, Checkpoint or Runtime Event state.

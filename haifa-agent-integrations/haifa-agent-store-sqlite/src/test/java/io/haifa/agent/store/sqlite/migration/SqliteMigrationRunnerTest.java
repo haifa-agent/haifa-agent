@@ -29,9 +29,34 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(3);
+                    .isEqualTo(4);
             assertThat(queryLong(connection, "SELECT applied_at FROM schema_migration WHERE version = 1"))
                     .isEqualTo(SqliteTestSupport.NOW.toEpochMilli());
+        }
+    }
+
+    @Test
+    void upgradesAnExistingV3DatabaseToV4WithoutReapplyingHistory() throws Exception {
+        SqliteConnectionFactory connections = initializedConnections();
+        SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
+
+        runner.migrate(RuntimeStoreMigrations.all().subList(0, 3));
+        runner.migrate(RuntimeStoreMigrations.all());
+        runner.migrate(RuntimeStoreMigrations.all());
+
+        try (Connection connection = connections.openConnection()) {
+            assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
+                    .isEqualTo(4);
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM sqlite_master "
+                                    + "WHERE type='table' AND name IN ('runtime_event_stream', 'run_input')"))
+                    .isEqualTo(2);
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM pragma_table_info('runtime_event') "
+                                    + "WHERE name IN ('event_schema_version', 'correlation_id', 'causation_id')"))
+                    .isEqualTo(3);
         }
     }
 

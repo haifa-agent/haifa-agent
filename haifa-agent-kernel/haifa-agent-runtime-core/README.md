@@ -4,7 +4,7 @@
 
 Approval Request、Approval Metadata、Checkpoint、Run `WAITING_APPROVAL` 与 `policy.decision.made` / `approval.requested` Event-Outbox 在同一 Runtime UoW 中提交。响应侧把可信 Caller、验证结果、Authorization Evidence、响应消息和安全事件放入同一 UoW，再在提交后恢复 Run；Tool Resolution 只应用一次。
 
-## Interaction 与 Steer（Task 01）
+## Interaction、Steer 与 Client Event（Task 01～02）
 
 内存 Runtime 在既有 `InteractionPort` 上维护 `PENDING -> RESPONDED -> APPLIED` 以及
 `PENDING -> EXPIRED/CANCELLED/INVALIDATED` 的单一生命周期；同一 Run 同时最多一个阻塞式
@@ -13,11 +13,16 @@ request 和幂等键去重；Approval 继续复用 Policy API 的 Authority/Targ
 
 `RunInputPort` 独立保存 Steer 的 `ACCEPTED/APPLIED` 状态。AgentLoop 只在
 `BEFORE_ITERATION` safe point 将已接受输入追加为 Session 用户消息，并绑定 Attempt/Iteration，
-不会异步修改正在构造的模型请求或 Tool 参数。Task 01 的默认实现只保证进程内闭环；持久模式必须等
-Task 02 提供 SQLite Input/Interaction、条件更新、due query 和重启恢复后才能宣称 durable。
+不会异步修改正在构造的模型请求或 Tool 参数。内存与 SQLite 均实现该 Port；SQLite 使用条件更新、
+canonical digest 和 Attempt/Iteration 外键实现重启后的 exactly-once state application。
 
-`AgentRuntime.events/subscribe` 在 Runtime API 中已经占位，但 Runtime Core 尚未实现完整 Feed；
-现有 Runtime Event/Outbox 仍是内部事实，Task 02 才增加白名单 Client Event 投影与 Cursor 读取。
+`RuntimeEventFeed` 从权威 Journal 按排他 sequence 和固定 head 范围读取；`RuntimeClientEventProjector`
+只输出 P0 typed 白名单，未知内部事件只推进 Cursor。`RuntimeEventSubscriptions` 先注册 Run-scoped
+wake-up 再 drain 持久 Journal，通知丢失由有界轮询补偿，Listener 异常与 AgentLoop 隔离。
+`OpaqueRunEventCursorCodec` 为 Task 03 Adapter 提供带 HMAC 完整性校验的不透明 Cursor。
+
+`RuntimeEventAppender` 同时提供 earliest/head 和受控 retention。现有模型 `outputEvents` 继续作为
+兼容子视图，但已经使用范围查询；不再调用整 Run 的 `eventsFor`。HTTP/SSE 仍未实现。
 
 ## Public Policy integration
 
@@ -67,7 +72,7 @@ Tool Call reasoning 交给受保护 continuation。
 - Completion Guard 校验输出契约、Artifact、Todo、Pending Tool/Child/Interaction、Policy 和 Budget，并强制 `RUNNING -> COMPLETING -> COMPLETED`。
 - `RunTransitionCoordinator` 在 Unit of Work 内提交 Run、Runtime Event 和 Outbox；线程安全内存实现提供乐观锁、Run 内事件序号、稳定命令幂等结果、Outbox 发布/消费幂等和单活动 Attempt 约束。Listener 在提交后通知，异常不影响已提交状态。
 - `RuntimePersistencePorts` 显式组合 Session、Run、Attempt、Checkpoint、Runtime State、Event、Outbox、
-  Idempotency、Unit of Work、Tool Journal、Interaction、Summary、Tool Result Asset 与消息脱敏监听注册边界；
+  Idempotency、Unit of Work、Tool Journal、Interaction、Run Input、Summary、Tool Result Asset 与消息脱敏监听注册边界；
   `RuntimeCoreBuilder` 只接受该组合并提供默认内存组合，不依赖 SQLite、JDBC、Jackson 或 JSONL。
 - Application 可通过 `RuntimeCoreBuilder.persistence(...)`、`workerId(...)` 与
   `persistenceRetry(...)` 注入完整适配器装配。Runtime 的持久化重试每次重新加载聚合并重新执行事务；

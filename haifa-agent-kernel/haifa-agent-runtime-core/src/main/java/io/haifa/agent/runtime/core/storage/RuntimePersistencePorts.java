@@ -1,6 +1,8 @@
 package io.haifa.agent.runtime.core.storage;
 
 import io.haifa.agent.context.compression.ConversationSummaryRepository;
+import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
+import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
@@ -21,6 +23,7 @@ public record RuntimePersistencePorts(
         RuntimeUnitOfWork unitOfWork,
         ToolExecutionJournal toolJournal,
         InteractionPort interactions,
+        RunInputPort runInputs,
         ConversationSummaryRepository conversationSummaries,
         ToolResultAssetStore toolResultAssets,
         MessageRedactionListenerRegistry messageRedactions) {
@@ -37,9 +40,44 @@ public record RuntimePersistencePorts(
         unitOfWork = Objects.requireNonNull(unitOfWork, "unitOfWork must not be null");
         toolJournal = Objects.requireNonNull(toolJournal, "toolJournal must not be null");
         interactions = Objects.requireNonNull(interactions, "interactions must not be null");
+        runInputs = Objects.requireNonNull(runInputs, "runInputs must not be null");
         conversationSummaries = Objects.requireNonNull(conversationSummaries, "conversationSummaries must not be null");
         toolResultAssets = Objects.requireNonNull(toolResultAssets, "toolResultAssets must not be null");
         messageRedactions = Objects.requireNonNull(messageRedactions, "messageRedactions must not be null");
+    }
+
+    /** Compatibility constructor for Task 01 assemblies that have not selected a durable Run Input adapter. */
+    public RuntimePersistencePorts(
+            AgentSessionRepository sessions,
+            RunStateRepository runs,
+            ExecutionAttemptRepository attempts,
+            CheckpointRepository checkpoints,
+            RuntimeStateRepository state,
+            RuntimeEventAppender events,
+            RuntimeOutboxPublisher outbox,
+            IdempotencyRepository idempotency,
+            RuntimeUnitOfWork unitOfWork,
+            ToolExecutionJournal toolJournal,
+            InteractionPort interactions,
+            ConversationSummaryRepository conversationSummaries,
+            ToolResultAssetStore toolResultAssets,
+            MessageRedactionListenerRegistry messageRedactions) {
+        this(
+                sessions,
+                runs,
+                attempts,
+                checkpoints,
+                state,
+                events,
+                outbox,
+                idempotency,
+                unitOfWork,
+                toolJournal,
+                interactions,
+                new InMemoryRunInputPort(),
+                conversationSummaries,
+                toolResultAssets,
+                messageRedactions);
     }
 
     public static RuntimePersistencePorts inMemory() {
@@ -65,6 +103,7 @@ public record RuntimePersistencePorts(
                 store,
                 toolJournal,
                 interactions,
+                new InMemoryRunInputPort(),
                 store,
                 store,
                 store);

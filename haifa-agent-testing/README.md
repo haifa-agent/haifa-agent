@@ -19,3 +19,8 @@ Kernel、Capability、Integration 或 Application 的依赖方向。
 
 当前只初始化 Testkit 与 Fixture 边界。集中式 Live、E2E 和 Eval 模块应在真实用例开始迁移时再加入，
 避免空模块先于可执行行为出现。
+
+11 号能力 Task 02 的 Journal Contract 测试当前与 SQLite Adapter 相邻放置，并以同一测试方法验证
+`InMemoryRuntimeStore` 与 `SqliteRuntimeEventAppender` 的 eventId、sequence、range、head/earliest、
+固定 observed head 和 retention。Task 03 在出现 HTTP/SSE Adapter 后再建立独立
+`haifa-agent-transport-tck`；本阶段不创建空 Transport TCK 模块。
