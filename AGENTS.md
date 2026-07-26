@@ -58,6 +58,9 @@
 | [`haifa-agent-capabilities/haifa-agent-model-api/`](haifa-agent-capabilities/haifa-agent-model-api/README.md) | Provider-neutral 模型契约 | 不依赖 Jackson、HTTP、Spring 或具体 Provider SDK |
 | [`haifa-agent-capabilities/haifa-agent-model-core/`](haifa-agent-capabilities/haifa-agent-model-core/README.md) | 模型目录、选择、访问策略与健康状态 | 选择必须确定；首版无隐式 fallback/轮询 |
 | [`haifa-agent-integrations/haifa-agent-model-openai-compatible/`](haifa-agent-integrations/haifa-agent-model-openai-compatible/README.md) | OpenAI Chat Completions 兼容适配及 DeepSeek 默认配置 | Provider 细节留在适配层；首版强制关闭 thinking |
+| [`haifa-agent-testing/`](haifa-agent-testing/README.md) | Reactor 末端的测试基础设施聚合层 | 生产模块不得依赖测试模块；运行产物不得进入源码仓库 |
+| [`haifa-agent-testing/haifa-agent-testkit/`](haifa-agent-testing/haifa-agent-testkit/README.md) | 跨模块测试辅助能力 | 只提供确定性、无外部副作用的测试支持 |
+| [`haifa-agent-testing/haifa-agent-test-fixtures/`](haifa-agent-testing/haifa-agent-test-fixtures/README.md) | 可共享的小型安全 Fixture | 禁止秘密、生产数据、主机路径和运行产物 |
 
 固定依赖方向：
 
@@ -67,6 +70,8 @@ common <- core <- runtime-api <- runtime-core -> model-api
                   model-api <- model-openai-compatible
    ^
    └──── contract
+
+testing 位于 Reactor 末端，可按测试需要依赖产品模块；产品模块不得反向依赖 testing。
 ```
 
 高层可以依赖低层；低层不得依赖高层；禁止循环依赖。Spring Framework 从 Adapter/Integration 边界开始引入，Spring Boot 只进入 Starter、Server、Worker、Scheduler、Admin 或 Example Application。
