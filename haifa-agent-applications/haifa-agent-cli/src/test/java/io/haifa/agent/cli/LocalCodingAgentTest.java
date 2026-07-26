@@ -134,6 +134,7 @@ class LocalCodingAgentTest {
     @Test
     void sqliteAskPersistsApprovalAndContinuesAfterHumanRejection() throws Exception {
         Path database = configuredSkillRoot.resolve("approval-runtime.db");
+        Path transcripts = Files.createDirectory(configuredSkillRoot.resolve("approval-transcripts"));
         CliConfiguration defaults = CliConfiguration.defaults();
         var configuration = new CliConfiguration(
                 defaults.model(),
@@ -146,9 +147,11 @@ class LocalCodingAgentTest {
                 Duration.ofSeconds(15),
                 defaults.maxIterations(),
                 defaults.maxToolCalls(),
-                ProjectPersistenceConfiguration.sqlite(database, "env://HAIFA_TEST_CONTINUATION_KEY"));
+                ProjectPersistenceConfiguration.sqliteWithJsonl(
+                        database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"));
         AtomicInteger calls = new AtomicInteger();
         var traces = new CopyOnWriteArrayList<io.haifa.agent.runtime.core.trace.RuntimeTraceEvent>();
+        io.haifa.agent.core.run.AgentRunId runId;
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             if (calls.incrementAndGet() == 1) {
                 return new AgentChatResponse(
@@ -190,16 +193,17 @@ class LocalCodingAgentTest {
                 new AesGcmModelContinuationProtector(
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
             var accepted = agent.start("Try a write and honor a rejection.");
-            Instant deadline = now().plusSeconds(10);
+            runId = accepted.runId();
+            Instant pendingDeadline = now().plusSeconds(10);
             var pending = agent.interactions().pending(accepted.runId());
-            while (pending.isEmpty() && now().isBefore(deadline)) {
+            while (pending.isEmpty() && now().isBefore(pendingDeadline)) {
                 Thread.sleep(25);
                 pending = agent.interactions().pending(accepted.runId());
             }
             assertThat(pending).isPresent();
             assertThat(agent.runtime().find(accepted.runId()).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
-            while (!agent.executionSettled(accepted.runId()) && now().isBefore(deadline)) {
+            while (!agent.executionSettled(accepted.runId()) && now().isBefore(pendingDeadline)) {
                 Thread.sleep(25);
             }
             assertThat(agent.executionSettled(accepted.runId())).isTrue();
@@ -215,8 +219,9 @@ class LocalCodingAgentTest {
                             "test-reject-" + request.id().value(),
                             agent.time().now()));
 
+            Instant completionDeadline = now().plusSeconds(10);
             var completed = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!completed.status().isTerminal() && now().isBefore(deadline)) {
+            while (!completed.status().isTerminal() && now().isBefore(completionDeadline)) {
                 Thread.sleep(25);
                 completed = agent.runtime().find(accepted.runId()).orElseThrow();
             }
@@ -227,6 +232,15 @@ class LocalCodingAgentTest {
         assertThat(workspace.resolve("must-not-exist.txt")).doesNotExist();
         assertThat(calls).hasValue(2);
         assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
+        assertThat(new JsonlTranscriptReader(transcripts).read(runId.value()).events())
+                .extracting(event -> event.eventType())
+                .contains(
+                        "policy.decision.made",
+                        "approval.requested",
+                        "approval.authority.verified",
+                        "approval.target.validated",
+                        "approval.responded",
+                        "run.completed");
     }
 
     @Test

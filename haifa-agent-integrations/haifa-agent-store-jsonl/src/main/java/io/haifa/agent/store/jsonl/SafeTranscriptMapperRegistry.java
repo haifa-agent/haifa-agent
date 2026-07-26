@@ -35,6 +35,25 @@ public final class SafeTranscriptMapperRegistry {
         mappings.put("run.created", message -> select(message.payload(), "profileVersion"));
         STATUS_EVENTS.forEach(event -> mappings.put(event, message -> select(message.payload(), "status", "version")));
         mappings.put("interaction.responded", message -> select(message.payload(), "requestId", "responseType"));
+        mappings.put("interaction.requested", message -> select(message.payload(), "requestId", "kind"));
+        mappings.put("interaction.expired", message -> select(message.payload(), "requestId", "outcome"));
+        mappings.put(
+                "approval.requested",
+                message -> select(message.payload(), "requestId", "decisionId", "challenge", "semantics"));
+        mappings.put("approval.responded", message -> select(message.payload(), "requestId", "responseType"));
+        mappings.put(
+                "approval.authority.verified",
+                message -> select(message.payload(), "requestId", "responseId", "outcome", "reasonCode"));
+        mappings.put(
+                "approval.target.validated",
+                message -> select(message.payload(), "requestId", "responseId", "outcome", "reasonCode"));
+        mappings.put(
+                "policy.decision.made",
+                message -> select(message.payload(), "decisionId", "effect", "challenge", "reasonCode"));
+        mappings.put("run.input.accepted", message -> select(message.payload(), "inputId", "kind"));
+        mappings.put(
+                "run.input.applied",
+                message -> select(message.payload(), "inputId", "attemptId", "iteration", "safePoint"));
         mappings.put("runtime.command-accepted", message -> select(message.payload(), "commandId", "commandType"));
         mappings.put("runtime.command-rejected", message -> select(message.payload(), "commandId", "commandType"));
         return new SafeTranscriptMapperRegistry(mappings);
