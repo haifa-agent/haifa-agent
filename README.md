@@ -42,6 +42,7 @@ haifa-agent-execution/
   haifa-agent-sandbox-api/
   haifa-agent-execution-core/
   haifa-agent-sandbox-host/
+  haifa-agent-sandbox-local-native/
 haifa-agent-capabilities/
   haifa-agent-credential-api/
   haifa-agent-credential-core/
@@ -109,6 +110,7 @@ flowchart LR
   ECORE[execution-core] --> EAPI
   ECORE --> SAPI
   SHOST[sandbox-host] --> SAPI
+  SLOCAL[sandbox-local-native] --> SAPI
   GIT[git] --> EAPI
   MCP[mcp] --> TAPI
   MCP --> CAPI

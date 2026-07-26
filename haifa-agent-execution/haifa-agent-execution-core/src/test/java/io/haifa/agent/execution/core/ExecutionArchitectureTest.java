@@ -8,13 +8,13 @@ import org.junit.jupiter.api.Test;
 
 class ExecutionArchitectureTest {
     @Test
-    void onlyHostSandboxCreatesProcesses() {
+    void onlyConcreteLocalSandboxProvidersCreateProcesses() {
         var classes = new ClassFileImporter()
                 .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
                 .importPackages("io.haifa.agent");
         noClasses()
                 .that()
-                .resideOutsideOfPackage("io.haifa.agent.sandbox.host..")
+                .resideOutsideOfPackages("io.haifa.agent.sandbox.host..", "io.haifa.agent.sandbox.localnative..")
                 .should()
                 .dependOnClassesThat()
                 .haveFullyQualifiedName("java.lang.ProcessBuilder")
@@ -28,7 +28,7 @@ class ExecutionArchitectureTest {
                 .check(classes);
         noClasses()
                 .that()
-                .resideOutsideOfPackage("io.haifa.agent.sandbox.host..")
+                .resideOutsideOfPackages("io.haifa.agent.sandbox.host..", "io.haifa.agent.sandbox.localnative..")
                 .should()
                 .dependOnClassesThat()
                 .haveFullyQualifiedName("java.lang.Runtime")

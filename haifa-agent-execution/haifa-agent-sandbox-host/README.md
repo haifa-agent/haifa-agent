@@ -11,3 +11,7 @@ Provider 约束 Workspace cwd、允许继承的非 secret 环境名称、超时�
 Host Profile 必须精确绑定 `host-guarded` 与当前受信 Shell 配置摘要。Provider 在打开 Workspace 前执行
 统一预检；网络 `DENY` 返回 `NETWORK_POLICY_UNENFORCEABLE`，只读或要求文件隔离的 Profile 也会
 fail closed。该摘要只用于冻结配置身份，不暴露 Shell 路径或扩大 Host 保证。
+
+Host Guarded 是用户明确选择的可信兼容模式，不是 Local Native 不可用时的隐式回退。需要 OS 原生
+文件与网络边界的一次性命令使用独立 `local-native` Provider；Host 的 Managed Process 能力不会因此
+扩展到 Local Native。

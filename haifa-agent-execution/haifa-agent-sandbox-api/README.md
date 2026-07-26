@@ -13,3 +13,6 @@
 
 当前文件策略只区分 Workspace `READ_ONLY/READ_WRITE`、敏感路径拒读要求和有界额外路径策略引用。
 CPU、内存、磁盘、PID、Kernel、Container 与多租户保证没有进入该最小模型。
+
+当前具体实现包括 `host-guarded` 和 `local-native`。后者仅在平台 Adapter 预检成功后兑现文件系统、
+进程树和 `NetworkPolicy.DENY` 隔离；公共 API 不暴露 Seatbelt、bubblewrap 或宿主路径。
