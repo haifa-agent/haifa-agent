@@ -187,7 +187,13 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
             if (ports.sessions().find(sessionId).isEmpty()) {
                 ports.sessions()
                         .insert(AgentSession.open(
-                                sessionId, tenant, principal, null, SessionScope.USER, clock.instant(), Map.of()));
+                                sessionId,
+                                tenant,
+                                principal,
+                                null,
+                                SessionScope.USER,
+                                java.time.Instant.ofEpochMilli(clock.millis()),
+                                Map.of()));
             }
             return null;
         });
@@ -234,7 +240,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                                 session.principal(),
                                 new ProjectRef(session.projectId().value()),
                                 SessionScope.PROJECT,
-                                clock.instant(),
+                                java.time.Instant.ofEpochMilli(clock.millis()),
                                 Map.of()));
             }
             return null;

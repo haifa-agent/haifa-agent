@@ -42,7 +42,10 @@ class McpToolProviderTest {
     @Test
     void mapsCancellationBeforeDispatchToStableMcpFailure() {
         var fixture = fixture(null);
-        var request = request(fixture.binding(), () -> true, Instant.now().plusSeconds(5));
+        var request = request(
+                fixture.binding(),
+                () -> true,
+                Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(5));
 
         assertThatThrownBy(() -> fixture.provider().invoke(request))
                 .isInstanceOfSatisfying(ToolInvocationException.class, failure -> {
@@ -56,7 +59,10 @@ class McpToolProviderTest {
         var client = new BlockingClient();
         var fixture = fixture(client);
         var cancelled = new AtomicBoolean();
-        var request = request(fixture.binding(), cancelled::get, Instant.now().plusSeconds(5));
+        var request = request(
+                fixture.binding(),
+                cancelled::get,
+                Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(5));
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var invocation = executor.submit(() -> fixture.provider().invoke(request));

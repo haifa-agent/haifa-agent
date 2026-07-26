@@ -42,7 +42,7 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
         Objects.requireNonNull(runId, "runId must not be null");
         return execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            Instant now = clock.instant();
+            Instant now = Instant.ofEpochMilli(clock.millis());
             mapper.insertIdempotency(
                     new IdempotencyRow(callerScope, operation, key, runId.value(), false, null, null, null, now, now));
             IdempotencyRow stored = mapper.findIdempotency(callerScope, operation, key);
@@ -57,7 +57,7 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
     public boolean markCommandApplied(String callerScope, String key) {
         return execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            Instant now = clock.instant();
+            Instant now = Instant.ofEpochMilli(clock.millis());
             mapper.insertIdempotency(
                     new IdempotencyRow(callerScope, COMMAND, key, null, false, null, null, null, now, now));
             return mapper.markCommandApplied(callerScope, key, now) == 1;
@@ -87,7 +87,7 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             EncodedPayload payload =
                     codecs.encode(SqliteRuntimePayloadTypes.COMMAND_RESULT, CommandResultPayload.from(result));
-            Instant now = clock.instant();
+            Instant now = Instant.ofEpochMilli(clock.millis());
             IdempotencyRow row = new IdempotencyRow(
                     callerScope,
                     COMMAND_RESULT,

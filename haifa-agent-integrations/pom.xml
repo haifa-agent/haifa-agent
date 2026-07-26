@@ -17,5 +17,6 @@
         <module>haifa-agent-git</module>
         <module>haifa-agent-store-sqlite</module>
         <module>haifa-agent-store-jsonl</module>
+        <module>haifa-agent-transport-http</module>
     </modules>
 </project>

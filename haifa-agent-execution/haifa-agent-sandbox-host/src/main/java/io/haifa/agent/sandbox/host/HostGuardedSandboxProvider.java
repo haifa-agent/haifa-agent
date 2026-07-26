@@ -279,13 +279,13 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         }
 
         private WaitOutcome waitFor(Process process, Duration timeout, int maxProcesses) throws InterruptedException {
-            long deadline = System.nanoTime() + timeout.toNanos();
+            long deadlineMillis = System.currentTimeMillis() + timeout.toMillis();
             while (process.isAlive()) {
                 if (cancelRequested) return WaitOutcome.CANCELLED;
                 if (observedProcesses(process) > maxProcesses) return WaitOutcome.PROCESS_LIMIT_EXCEEDED;
-                long remainingNanos = deadline - System.nanoTime();
-                if (remainingNanos <= 0) return WaitOutcome.TIMED_OUT;
-                long waitMillis = Math.max(1, Math.min(20, TimeUnit.NANOSECONDS.toMillis(remainingNanos)));
+                long remainingMillis = deadlineMillis - System.currentTimeMillis();
+                if (remainingMillis <= 0) return WaitOutcome.TIMED_OUT;
+                long waitMillis = Math.max(1, Math.min(20, remainingMillis));
                 process.waitFor(waitMillis, TimeUnit.MILLISECONDS);
             }
             return WaitOutcome.FINISHED;
@@ -411,7 +411,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             public java.util.Optional<io.haifa.agent.execution.api.ProcessOutputChunk> read(Duration timeout) {
                 try {
                     return java.util.Optional.ofNullable(
-                            output.poll(timeout.toNanos(), java.util.concurrent.TimeUnit.NANOSECONDS));
+                            output.poll(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS));
                 } catch (InterruptedException exception) {
                     Thread.currentThread().interrupt();
                     return java.util.Optional.empty();

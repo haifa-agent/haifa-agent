@@ -312,7 +312,8 @@ class StdioMcpComponentTest {
         public void close() {
             if (closed) return;
             closed = true;
-            exit.complete(new ProcessExit(ExecutionStatus.CANCELLED, null, true, Instant.now()));
+            exit.complete(new ProcessExit(
+                    ExecutionStatus.CANCELLED, null, true, Instant.ofEpochMilli(System.currentTimeMillis())));
         }
     }
 

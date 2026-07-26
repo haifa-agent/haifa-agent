@@ -611,7 +611,8 @@ public final class RuntimeCoreBuilder {
                 time,
                 workerId,
                 new RetryExecutor(Sleeper.threadSleep()),
-                persistenceRetry);
+                persistenceRetry,
+                trace);
         ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
                 ? snapshots
                 : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot());

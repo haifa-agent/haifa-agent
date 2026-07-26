@@ -11,6 +11,9 @@ import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.runtime.api.InteractionResponse;
+import io.haifa.agent.runtime.api.InteractionResponseId;
+import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -94,9 +97,9 @@ class LocalCodingAgentTest {
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
             var accepted = agent.start("Persist this run.");
             runId = accepted.runId();
-            Instant deadline = Instant.now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(10);
             var snapshot = agent.runtime().find(runId).orElseThrow();
-            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
                 snapshot = agent.runtime().find(runId).orElseThrow();
             }
@@ -107,7 +110,123 @@ class LocalCodingAgentTest {
         assertThat(new JsonlTranscriptReader(transcripts).read(runId.value()).events())
                 .extracting(event -> event.eventType())
                 .contains("run.created", "run.completed");
+        try (var reopened = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream()),
+                model,
+                ignored -> {},
+                new AesGcmModelContinuationProtector(
+                        new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            assertThat(reopened.executionSettled(runId)).isTrue();
+            var second = reopened.start("Persist a second run.");
+            Instant deadline = now().plusSeconds(10);
+            var snapshot = reopened.runtime().find(second.runId()).orElseThrow();
+            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
+                Thread.sleep(25);
+                snapshot = reopened.runtime().find(second.runId()).orElseThrow();
+            }
+            assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        }
         assertThat(Files.deleteIfExists(database)).isTrue();
+    }
+
+    @Test
+    void sqliteAskPersistsApprovalAndContinuesAfterHumanRejection() throws Exception {
+        Path database = configuredSkillRoot.resolve("approval-runtime.db");
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var configuration = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                defaults.execution(),
+                ApprovalMode.ASK,
+                Duration.ofSeconds(15),
+                defaults.maxIterations(),
+                defaults.maxToolCalls(),
+                ProjectPersistenceConfiguration.sqlite(database, "env://HAIFA_TEST_CONTINUATION_KEY"));
+        AtomicInteger calls = new AtomicInteger();
+        var traces = new CopyOnWriteArrayList<io.haifa.agent.runtime.core.trace.RuntimeTraceEvent>();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (calls.incrementAndGet() == 1) {
+                return new AgentChatResponse(
+                        "approval-model-1",
+                        "stub-model",
+                        "",
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("approval-tool-call-1"),
+                                "file_write",
+                                Map.of("path", "must-not-exist.txt", "content", "rejected"))),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unpriced(5, 2),
+                        "stub",
+                        Map.of());
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("approval-tool-call-1"));
+            return new AgentChatResponse(
+                    "approval-model-2",
+                    "stub-model",
+                    "rejection respected",
+                    List.of(),
+                    ModelFinishReason.STOP,
+                    ModelUsage.unpriced(5, 2),
+                    "stub",
+                    Map.of());
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream()),
+                model,
+                traces::add,
+                new AesGcmModelContinuationProtector(
+                        new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
+            var accepted = agent.start("Try a write and honor a rejection.");
+            Instant deadline = now().plusSeconds(10);
+            var pending = agent.interactions().pending(accepted.runId());
+            while (pending.isEmpty() && now().isBefore(deadline)) {
+                Thread.sleep(25);
+                pending = agent.interactions().pending(accepted.runId());
+            }
+            assertThat(pending).isPresent();
+            assertThat(agent.runtime().find(accepted.runId()).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            while (!agent.executionSettled(accepted.runId()) && now().isBefore(deadline)) {
+                Thread.sleep(25);
+            }
+            assertThat(agent.executionSettled(accepted.runId())).isTrue();
+
+            var request = pending.orElseThrow();
+            agent.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId(agent.identifiers().nextValue()),
+                            request.id(),
+                            request.runId(),
+                            InteractionResponseType.REJECT,
+                            List.of(),
+                            "test-reject-" + request.id().value(),
+                            agent.time().now()));
+
+            var completed = agent.runtime().find(accepted.runId()).orElseThrow();
+            while (!completed.status().isTerminal() && now().isBefore(deadline)) {
+                Thread.sleep(25);
+                completed = agent.runtime().find(accepted.runId()).orElseThrow();
+            }
+            assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(completed.output()).contains("rejection respected");
+        }
+
+        assertThat(workspace.resolve("must-not-exist.txt")).doesNotExist();
+        assertThat(calls).hasValue(2);
+        assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
     }
 
     @Test
@@ -201,9 +320,9 @@ class LocalCodingAgentTest {
         try (var agent = LocalCodingAgent.create(
                 workspace, automatic, new PrintStream(renderedOutput, true, StandardCharsets.UTF_8), model)) {
             var accepted = agent.start("Write the representative file with the general shell tool.");
-            Instant deadline = Instant.now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(10);
             var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
                 snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
             }
@@ -276,9 +395,9 @@ class LocalCodingAgentTest {
                 model,
                 observedTraces::add)) {
             var accepted = agent.start("Plan and complete a dependent task.");
-            Instant deadline = Instant.now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(10);
             var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
                 snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
             }
@@ -360,9 +479,9 @@ class LocalCodingAgentTest {
         try (var agent = LocalCodingAgent.create(
                 workspace, configuration, new PrintStream(new ByteArrayOutputStream()), model)) {
             var accepted = agent.start("Use the configured local procedure.");
-            Instant deadline = Instant.now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(10);
             var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
                 snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
             }
@@ -409,9 +528,9 @@ class LocalCodingAgentTest {
         try (var agent = LocalCodingAgent.create(
                 workspace, configuration, new PrintStream(new ByteArrayOutputStream()), model)) {
             var accepted = agent.start("Complete without skills.");
-            Instant deadline = Instant.now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(10);
             var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
                 snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
             }
@@ -487,9 +606,9 @@ class LocalCodingAgentTest {
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                 model)) {
             var accepted = agent.start("List the workspace root.");
-            Instant deadline = Instant.now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(10);
             var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
                 snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
             }
@@ -541,9 +660,9 @@ class LocalCodingAgentTest {
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                 model)) {
             var accepted = agent.start("Inspect a missing file and recover.");
-            Instant deadline = Instant.now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(10);
             var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
                 snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
             }
@@ -558,6 +677,10 @@ class LocalCodingAgentTest {
         return System.getProperty("os.name", "")
                 .toLowerCase(java.util.Locale.ROOT)
                 .contains("win");
+    }
+
+    private static Instant now() {
+        return Instant.ofEpochMilli(System.currentTimeMillis());
     }
 
     private void writeSkill(String name, String description, String instructions) throws Exception {

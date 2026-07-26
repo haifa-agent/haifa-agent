@@ -154,7 +154,7 @@ public final class SqliteInteractionPort implements InteractionPort {
             if (current.state() != InteractionState.RESPONDED) {
                 throw new IllegalArgumentException("interaction is not resolved");
             }
-            Instant appliedAt = clock.instant();
+            Instant appliedAt = Instant.ofEpochMilli(clock.millis());
             if (mapper.markInteractionApplied(requestId.value(), appliedAt) != 1) {
                 if (requireRecord(mapper, requestId).state() == InteractionState.APPLIED) return null;
                 throw new IllegalStateException("interaction application state changed concurrently");

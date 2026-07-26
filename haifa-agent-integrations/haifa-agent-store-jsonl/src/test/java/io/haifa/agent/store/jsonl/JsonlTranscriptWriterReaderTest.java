@@ -151,8 +151,8 @@ class JsonlTranscriptWriterReaderTest {
     }
 
     private static void awaitReady(Process process, Path ready) throws Exception {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (!Files.exists(ready) && process.isAlive() && System.nanoTime() < deadline) {
+        long deadlineMillis = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10);
+        while (!Files.exists(ready) && process.isAlive() && System.currentTimeMillis() < deadlineMillis) {
             Thread.sleep(20);
         }
         if (!Files.exists(ready)) {

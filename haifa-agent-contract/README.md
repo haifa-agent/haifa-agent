@@ -10,5 +10,7 @@ Run、Steer、Runtime Command、Interaction 和 Run Event 的 transport-neutral 
   Authority 和配置快照必须由可信 Adapter 上下文解析，不能从 DTO Body 接受。
 - `InteractionView` 只携带安全展示字段和有界输入约束；未知 Kind/Action/Input 可以作为字符串读取，
   但 Adapter 不得猜测映射或执行。
-- Event DTO 的 `eventSchemaVersion` 与 `ApiVersion` 分离。当前模块只冻结 Envelope、Cursor、Page
-  和 P0 typed payload 形状；Journal 投影、range read 与订阅由后续任务实现。
+- Event DTO 的 `eventSchemaVersion` 与 `ApiVersion` 分离。当前模块冻结 Envelope、Cursor、Page
+  和 P0 typed payload 形状；Journal 投影、range read、订阅和 HTTP/SSE 映射由相邻模块实现。
+- `AUTHENTICATION_REQUIRED` 等错误码是跨 Transport 的稳定机器语义；HTTP 状态和安全 Problem
+  Details 由 Transport Adapter 映射。

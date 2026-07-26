@@ -89,8 +89,10 @@ public final class SqliteSkillActivationRepository implements SkillActivationRep
         if (bytes < 0 || maximum < 1) throw new IllegalArgumentException("invalid skill resource budget");
         return execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            mapper.insertSkillResourceUsage(runId.value(), clock.instant());
-            if (mapper.addSkillResourceBytes(runId.value(), bytes, maximum, clock.instant()) != 1) {
+            mapper.insertSkillResourceUsage(runId.value(), java.time.Instant.ofEpochMilli(clock.millis()));
+            if (mapper.addSkillResourceBytes(
+                            runId.value(), bytes, maximum, java.time.Instant.ofEpochMilli(clock.millis()))
+                    != 1) {
                 throw new IllegalStateException("skill resource read budget exceeded");
             }
             return Optional.ofNullable(mapper.skillResourceBytes(runId.value())).orElseThrow();

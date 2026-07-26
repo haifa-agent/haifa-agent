@@ -50,7 +50,7 @@ public final class DefaultPolicyDecisionService implements PolicyDecisionService
                     "No explicit policy rule allows this action",
                     snapshot.ref(),
                     Optional.empty(),
-                    clock.instant());
+                    java.time.Instant.ofEpochMilli(clock.millis()));
         }
         return new PolicyDecision(
                 ids.nextId(),
@@ -62,7 +62,7 @@ public final class DefaultPolicyDecisionService implements PolicyDecisionService
                 selected.safeExplanation(),
                 snapshot.ref(),
                 Optional.of(selected.ref()),
-                clock.instant());
+                java.time.Instant.ofEpochMilli(clock.millis()));
     }
 
     private static boolean matches(PolicyRule rule, PolicyRequest request) {

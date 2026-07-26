@@ -16,5 +16,6 @@
     <modules>
         <module>haifa-agent-testkit</module>
         <module>haifa-agent-test-fixtures</module>
+        <module>haifa-agent-transport-tck</module>
     </modules>
 </project>

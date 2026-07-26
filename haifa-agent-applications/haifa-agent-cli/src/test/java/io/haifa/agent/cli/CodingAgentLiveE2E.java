@@ -27,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -148,7 +147,7 @@ class CodingAgentLiveE2E {
         ByteArrayOutputStream capturedBytes = new ByteArrayOutputStream();
         PrintStream captured = new PrintStream(capturedBytes, true, StandardCharsets.UTF_8);
         CliConfiguration configuration = configuration(specification);
-        Instant startedAt = Instant.now();
+        Instant startedAt = now();
         int rejectedApprovals = 0;
         io.haifa.agent.runtime.api.AgentRunSnapshot completed;
         List<RuntimeTraceEvent> traces;
@@ -157,7 +156,7 @@ class CodingAgentLiveE2E {
             var accepted = agent.start(specification.task());
             Instant deadline = startedAt.plusSeconds(specification.timeoutSeconds());
             completed = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!completed.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            while (!completed.status().isTerminal() && now().isBefore(deadline)) {
                 var pending = agent.interactions().pending(accepted.runId());
                 if (pending.isPresent()) {
                     if (!specification.approval().equals("ASK_REJECT")) {
@@ -176,7 +175,7 @@ class CodingAgentLiveE2E {
                                     agent.time().now()));
                     rejectedApprovals++;
                 }
-                LockSupport.parkNanos(Duration.ofMillis(25).toNanos());
+                Thread.sleep(25);
                 completed = agent.runtime().find(accepted.runId()).orElseThrow();
             }
             if (!completed.status().isTerminal()) {
@@ -208,7 +207,7 @@ class CodingAgentLiveE2E {
                 completed,
                 traces,
                 fixtureDigest,
-                Duration.between(startedAt, Instant.now()),
+                Duration.between(startedAt, now()),
                 rejectedApprovals,
                 changedPaths);
     }
@@ -696,6 +695,10 @@ class CodingAgentLiveE2E {
         if (!expected.equalsIgnoreCase(requiredEnvironment(name))) {
             throw new IllegalStateException(name + " must be " + expected);
         }
+    }
+
+    private static Instant now() {
+        return Instant.ofEpochMilli(System.currentTimeMillis());
     }
 
     private record CaseCatalog(List<CaseSpec> cases) {

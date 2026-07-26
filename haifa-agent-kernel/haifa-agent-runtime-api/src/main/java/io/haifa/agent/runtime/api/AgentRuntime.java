@@ -28,6 +28,10 @@ public interface AgentRuntime {
 
     Optional<AgentRunSnapshot> find(io.haifa.agent.core.run.AgentRunId runId);
 
+    default Optional<AgentRunViewSnapshot> view(io.haifa.agent.core.run.AgentRunId runId) {
+        throw new UnsupportedOperationException("transport-ready Run views are not supported");
+    }
+
     AgentRunHandle handle(io.haifa.agent.core.run.AgentRunId runId);
 
     void addListener(AgentRunListener listener);

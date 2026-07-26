@@ -4,7 +4,7 @@
 
 Approval Request、Approval Metadata、Checkpoint、Run `WAITING_APPROVAL` 与 `policy.decision.made` / `approval.requested` Event-Outbox 在同一 Runtime UoW 中提交。响应侧把可信 Caller、验证结果、Authorization Evidence、响应消息和安全事件放入同一 UoW，再在提交后恢复 Run；Tool Resolution 只应用一次。
 
-## Interaction、Steer 与 Client Event（Task 01～02）
+## Interaction、Steer 与 Client Event（Task 01～03）
 
 内存 Runtime 在既有 `InteractionPort` 上维护 `PENDING -> RESPONDED -> APPLIED` 以及
 `PENDING -> EXPIRED/CANCELLED/INVALIDATED` 的单一生命周期；同一 Run 同时最多一个阻塞式
@@ -22,7 +22,12 @@ wake-up 再 drain 持久 Journal，通知丢失由有界轮询补偿，Listener 
 `OpaqueRunEventCursorCodec` 为 Task 03 Adapter 提供带 HMAC 完整性校验的不透明 Cursor。
 
 `RuntimeEventAppender` 同时提供 earliest/head 和受控 retention。现有模型 `outputEvents` 继续作为
-兼容子视图，但已经使用范围查询；不再调用整 Run 的 `eventsFor`。HTTP/SSE 仍未实现。
+兼容子视图，但已经使用范围查询；不再调用整 Run 的 `eventsFor`。Task 03 的 HTTP/SSE 参考
+Adapter 位于 Integration 层，只通过 Runtime API 访问本模块。
+
+Resume、Steer 和 Runtime Command 的 expected Run version 由 Runtime 校验；Resume/Command 的
+校验位于 UoW 执行路径，实际状态写入仍服从 Store 的 optimistic locking。Transport 的 `If-Match`
+不会成为第二份版本事实。
 
 ## Public Policy integration
 

@@ -18,6 +18,8 @@ reasoning, unvalidated tool arguments, prompts, credentials, or provider respons
 - Session 与 Definition 没有固定绑定，同一 Session 可按每次请求选择不同的版本化 Definition。
 - `AgentRunSnapshot` 是某一时点的运行视图；Core `AgentRunResult` 是最终结构化业务结果；`AgentRunHandle` 只是基于 Snapshot/Command 的便利等待层，等待超时不会取消 Run。
 - Find、Resume 和 Command 均使用正式的 `AgentRunId`；Resume 可选择指定 Checkpoint。
+  Resume 与 Command 可携带 expected Run version，供 HTTP `If-Match` 映射；版本检查仍由
+  Runtime 事实执行，Transport 不维护第二份版本。
 - 公共命令只有 `PAUSE`、`CANCEL`、`TERMINATE_CHILDREN`；`InteractionResponse` 以 Request/Response ID 关联 Clarification 或 Approval，并从可信 Caller Context 获取操作者。Timeout/Lease Lost 等只属于 Runtime 内部 Control Signal。
 - 新的 `InteractionView`、`InteractionResponseSubmission/Receipt` 使用稳定 Kind/Action/Input、
   revision 和错误码；旧 `InteractionResponse`/Snapshot 返回路径暂时保留为单向兼容层。新增入口使用
@@ -32,3 +34,5 @@ reasoning, unvalidated tool arguments, prompts, credentials, or provider respons
   不能与 `RunOutputCursor`、Outbox offset 或数据库 rowid 混用。
 - `AgentRunEvent` 只携带 `RunEventPayloads` 的有界 typed payload。未知内部 Journal Event 不外发，
   但 Feed Cursor 会继续推进；现有 `outputEvents` 仍是兼容的模型输出子视图。
+- `AgentRunViewSnapshot` 组合可信 Session ID 与 Run Snapshot，供 Adapter 显式投影外部
+  `RunView`；它不改变 Core Run 状态机。

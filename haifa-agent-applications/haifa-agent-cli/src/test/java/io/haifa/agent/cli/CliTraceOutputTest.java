@@ -42,6 +42,16 @@ class CliTraceOutputTest {
                     "tool.persisted",
                     Optional.of(new ToolCallId("tool-call-1")),
                     Map.of("successful", true, "truncated", false, "externalized", false)));
+            trace.accept(event(
+                    "runtime.error",
+                    Optional.empty(),
+                    Map.of(
+                            "errorCode",
+                            "RUNTIME_EXECUTION_FAILED",
+                            "exceptionType",
+                            "SqliteStoreException",
+                            "rootExceptionType",
+                            "IllegalArgumentException")));
         }
 
         String output = bytes.toString(StandardCharsets.UTF_8);
@@ -51,7 +61,10 @@ class CliTraceOutputTest {
                 .contains("toolName=skill.load")
                 .contains("skill completed")
                 .contains("successful=true")
-                .contains("toolCallId=tool-call-1");
+                .contains("toolCallId=tool-call-1")
+                .contains("runtime failed")
+                .contains("errorCode=RUNTIME_EXECUTION_FAILED")
+                .contains("rootExceptionType=IllegalArgumentException");
     }
 
     @Test

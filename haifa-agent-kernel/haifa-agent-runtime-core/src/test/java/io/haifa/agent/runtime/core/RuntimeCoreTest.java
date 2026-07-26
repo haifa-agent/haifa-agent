@@ -42,6 +42,8 @@ import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
 import io.haifa.agent.runtime.api.RuntimeCommandStatus;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
+import io.haifa.agent.runtime.api.RuntimeContractException;
+import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
@@ -225,6 +227,12 @@ class RuntimeCoreTest {
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .anyMatch(event -> event.type().equals("run.safe-point"));
 
+        var staleResume = new ResumeAgentRunRequest(
+                "resume-stale", accepted.runId(), Optional.empty(), OptionalLong.of(999), List.of());
+        assertThatThrownBy(() -> fixture.runtime.resume(staleResume))
+                .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(RuntimeErrorCode.RUN_VERSION_CONFLICT));
+
         decisions.add(response(finalDecision("resumed")));
         var resumeRequest = new ResumeAgentRunRequest("resume-1", accepted.runId(), List.of());
         var resumed = fixture.runtime.resume(resumeRequest);
@@ -261,6 +269,18 @@ class RuntimeCoreTest {
     void cancelAndCommandsAreIdempotent() {
         Fixture fixture = fixture(model(finalDecision("unused")));
         var accepted = fixture.runtime.start(request("cancel"));
+        RuntimeCommand staleCommand = new RuntimeCommand(
+                new RuntimeCommandId("command-cancel-stale"),
+                accepted.runId(),
+                RuntimeCommandType.CANCEL,
+                RuntimeCommandArguments.NONE,
+                OptionalLong.of(999),
+                "cancel-stale",
+                Instant.parse("2026-07-21T00:00:00Z"));
+        assertThatThrownBy(() -> fixture.runtime.command(staleCommand))
+                .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(RuntimeErrorCode.RUN_VERSION_CONFLICT));
+
         RuntimeCommand command = command(accepted.runId().value(), RuntimeCommandType.CANCEL, "cancel-1");
         assertThat(fixture.runtime.command(command).status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
         assertThat(fixture.runtime.command(command).status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);

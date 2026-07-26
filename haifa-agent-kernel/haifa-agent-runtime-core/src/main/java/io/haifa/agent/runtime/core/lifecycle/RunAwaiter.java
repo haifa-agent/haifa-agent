@@ -30,15 +30,14 @@ public final class RunAwaiter {
             AgentRunId runId, Duration timeout, Supplier<T> snapshot, java.util.function.Predicate<T> terminal)
             throws InterruptedException {
         if (timeout.isNegative()) throw new IllegalArgumentException("timeout must not be negative");
-        long deadline = System.nanoTime() + timeout.toNanos();
+        long deadlineMillis = System.currentTimeMillis() + timeout.toMillis();
         Object monitor = monitors.computeIfAbsent(runId, ignored -> new Object());
         synchronized (monitor) {
             T value;
             while (!terminal.test(value = snapshot.get())) {
-                long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) return Optional.empty();
-                long millis = Math.max(1, remaining / 1_000_000L);
-                monitor.wait(millis);
+                long remainingMillis = deadlineMillis - System.currentTimeMillis();
+                if (remainingMillis <= 0) return Optional.empty();
+                monitor.wait(Math.max(1, remainingMillis));
             }
             return Optional.of(value);
         }

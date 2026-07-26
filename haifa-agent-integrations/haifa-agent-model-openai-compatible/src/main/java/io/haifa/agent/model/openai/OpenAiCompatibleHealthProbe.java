@@ -57,7 +57,7 @@ public final class OpenAiCompatibleHealthProbe implements ProviderHealthProbe {
 
     @Override
     public ProviderHealth check() {
-        Instant observedAt = clock.instant();
+        Instant observedAt = Instant.ofEpochMilli(clock.millis());
         try {
             String secret = credentials.resolve(provider.credentialRef()).value();
             HttpRequest request = HttpRequest.newBuilder(modelsUri())

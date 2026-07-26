@@ -30,6 +30,7 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
             "model.invoke",
             "model.error",
             "model.context-too-long",
+            "runtime.error",
             "context.forced-rebuild",
             "tool.execute",
             "tool.persisted");
@@ -135,6 +136,9 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
                                 "retryable",
                                 "httpStatus",
                                 "exceptionType");
+            case "runtime.error" ->
+                prefix + " runtime failed"
+                        + selected(attributes, "errorCode", "exceptionType", "rootExceptionType", "failureTypes");
             case "context.forced-rebuild" ->
                 prefix + " context rebuilt" + selected(attributes, "forcedRebuildAttempt", "estimatedInputTokens");
             case "tool.execute" ->

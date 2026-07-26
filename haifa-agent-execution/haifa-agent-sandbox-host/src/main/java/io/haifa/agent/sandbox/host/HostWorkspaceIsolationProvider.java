@@ -89,7 +89,7 @@ public final class HostWorkspaceIsolationProvider implements WorkspaceIsolationP
             }
             Files.createDirectory(target);
             CopyCounter counter = new CopyCounter(
-                    System.nanoTime() + request.budget().timeout().toNanos());
+                    System.currentTimeMillis() + request.budget().timeout().toMillis());
             try {
                 copyTree(source, target, request, counter);
                 locations.register(request.childLocationRef(), target);
@@ -201,7 +201,7 @@ public final class HostWorkspaceIsolationProvider implements WorkspaceIsolationP
             BasicFileAttributes attributes,
             EphemeralCopyRequest request,
             CopyCounter counter) {
-        if (System.nanoTime() > counter.deadlineNanos) throw failure("copy timeout exceeded");
+        if (System.currentTimeMillis() > counter.deadlineMillis) throw failure("copy timeout exceeded");
         if (++counter.files > request.budget().maxFiles()) throw failure("copy file budget exceeded");
         if (!current.normalize().startsWith(source)
                 || attributes.isSymbolicLink()
@@ -260,12 +260,12 @@ public final class HostWorkspaceIsolationProvider implements WorkspaceIsolationP
             io.haifa.agent.project.binding.WorkspaceBindingId bindingId) {}
 
     private static final class CopyCounter {
-        private final long deadlineNanos;
+        private final long deadlineMillis;
         private int files;
         private long totalBytes;
 
-        private CopyCounter(long deadlineNanos) {
-            this.deadlineNanos = deadlineNanos;
+        private CopyCounter(long deadlineMillis) {
+            this.deadlineMillis = deadlineMillis;
         }
     }
 }

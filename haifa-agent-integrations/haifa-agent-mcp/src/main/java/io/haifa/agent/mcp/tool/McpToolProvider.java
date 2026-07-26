@@ -78,7 +78,7 @@ public final class McpToolProvider implements ToolProvider {
         McpConnection connection =
                 connections.acquire(serverId, request.tenant(), request.principal(), request.credentialLeases());
         rejectCancellationBeforeDispatch(request);
-        if (!clock.instant().isBefore(request.deadline())) {
+        if (!Instant.ofEpochMilli(clock.millis()).isBefore(request.deadline())) {
             throw failure("MCP_CALL_DEADLINE_EXCEEDED", "MCP tool call deadline elapsed before dispatch");
         }
         try {
@@ -144,7 +144,7 @@ public final class McpToolProvider implements ToolProvider {
             AtomicBoolean dispatched) {
         while (true) {
             if (result.isDone()) return completed(result);
-            Instant now = clock.instant();
+            Instant now = Instant.ofEpochMilli(clock.millis());
             boolean cancelled = request.cancellation().isCancellationRequested();
             boolean deadlineExceeded = !now.isBefore(request.deadline());
             if (cancelled || deadlineExceeded) {

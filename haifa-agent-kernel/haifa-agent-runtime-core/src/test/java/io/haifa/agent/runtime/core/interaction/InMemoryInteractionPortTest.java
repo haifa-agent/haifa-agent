@@ -87,7 +87,7 @@ class InMemoryInteractionPortTest {
         InteractionRequest request = request("request-1", "run-1", false);
         port.create(request);
 
-        assertThat(port.due(request.runId(), request.expiresAt().minusNanos(1), 10))
+        assertThat(port.due(request.runId(), request.expiresAt().minusMillis(1), 10))
                 .isEmpty();
         assertThat(port.due(request.runId(), request.expiresAt(), 10)).hasSize(1);
         assertThatThrownBy(() -> port.respond(

@@ -80,7 +80,7 @@ public final class SqliteRuntimeOutboxPublisher implements RuntimeOutboxPublishe
             if (mapper.findOutbox(eventId) == null) {
                 throw new IllegalStateException("outbox message does not exist");
             }
-            mapper.markOutboxPublished(eventId, clock.instant());
+            mapper.markOutboxPublished(eventId, java.time.Instant.ofEpochMilli(clock.millis()));
             return null;
         });
     }
@@ -89,9 +89,10 @@ public final class SqliteRuntimeOutboxPublisher implements RuntimeOutboxPublishe
     public boolean markConsumed(String consumerId, String eventId) {
         Objects.requireNonNull(consumerId, "consumerId must not be null");
         Objects.requireNonNull(eventId, "eventId must not be null");
-        return execute(() ->
-                unitOfWork.mapper(RuntimeStoreMapper.class).insertOutboxConsumer(consumerId, eventId, clock.instant())
-                        == 1);
+        return execute(() -> unitOfWork
+                        .mapper(RuntimeStoreMapper.class)
+                        .insertOutboxConsumer(consumerId, eventId, java.time.Instant.ofEpochMilli(clock.millis()))
+                == 1);
     }
 
     private OutboxMessage fromRow(OutboxRow row) {

@@ -43,7 +43,7 @@ public final class SqliteToolResultAssetStore implements ToolResultAssetStore {
                     payload.bytes(),
                     payload.hash(),
                     payload.bytes().length,
-                    clock.instant()));
+                    java.time.Instant.ofEpochMilli(clock.millis())));
             ToolResultAssetRow stored = mapper.findToolResultAsset(id);
             ToolResult restored = decode(stored);
             if (!stored.toolCallId().equals(toolCallId.value()) || !restored.equals(result)) {

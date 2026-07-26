@@ -20,6 +20,7 @@ public record ErrorCode(String value) {
     public static final ErrorCode CONTRACT_VERSION_UNSUPPORTED = new ErrorCode("CONTRACT_VERSION_UNSUPPORTED");
     public static final ErrorCode PAYLOAD_TOO_LARGE = new ErrorCode("PAYLOAD_TOO_LARGE");
     public static final ErrorCode RATE_LIMITED = new ErrorCode("RATE_LIMITED");
+    public static final ErrorCode AUTHENTICATION_REQUIRED = new ErrorCode("AUTHENTICATION_REQUIRED");
     public static final ErrorCode INTERNAL_ERROR = new ErrorCode("INTERNAL_ERROR");
 
     public ErrorCode {

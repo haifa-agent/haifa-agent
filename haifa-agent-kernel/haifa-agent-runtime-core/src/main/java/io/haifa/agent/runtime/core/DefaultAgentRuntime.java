@@ -249,6 +249,12 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRun run = unitOfWork.execute(() -> {
             Optional<AgentRunId> raced = idempotency.findRun(callerScope, "resume", request.idempotencyKey());
             if (raced.isPresent()) return requireRun(raced.orElseThrow());
+            if (request.expectedRunVersion().isPresent()
+                    && request.expectedRunVersion().getAsLong() != resumable.version()) {
+                throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                        io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_VERSION_CONFLICT,
+                        "The expected Run version is stale");
+            }
             if (resumable.status() != AgentRunStatus.SUSPENDED
                     && resumable.status() != AgentRunStatus.WAITING_INTERACTION
                     && resumable.status() != AgentRunStatus.WAITING_APPROVAL) {
@@ -651,6 +657,12 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         String idempotencyKey = command.idempotencyKey();
         Optional<RuntimeCommandResult> existing = idempotency.findCommandResult(scope, idempotencyKey);
         if (existing.isPresent()) return existing.orElseThrow();
+        if (command.expectedRunVersion().isPresent()
+                && command.expectedRunVersion().getAsLong() != run.version()) {
+            throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                    io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_VERSION_CONFLICT,
+                    "The expected Run version is stale");
+        }
         if (!idempotency.markCommandApplied(scope, idempotencyKey)) {
             throw new IllegalStateException("command was reserved without a durable result");
         }
@@ -698,6 +710,16 @@ public final class DefaultAgentRuntime implements AgentRuntime {
                 .filter(run -> caller.tenant().equals(run.tenant())
                         && caller.principal().equals(run.principal()))
                 .map(run -> AgentRunSnapshot.from(run, state.output(run.id())));
+    }
+
+    @Override
+    public Optional<io.haifa.agent.runtime.api.AgentRunViewSnapshot> view(AgentRunId runId) {
+        var caller = callers.current();
+        return runs.find(Objects.requireNonNull(runId))
+                .filter(run -> caller.tenant().equals(run.tenant())
+                        && caller.principal().equals(run.principal()))
+                .map(run -> new io.haifa.agent.runtime.api.AgentRunViewSnapshot(
+                        run.sessionId(), AgentRunSnapshot.from(run, state.output(run.id()))));
     }
 
     @Override
