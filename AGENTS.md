@@ -2,7 +2,7 @@
 
 本文件是仓库级 Coding Agent 入口，适用于整个仓库。它只记录稳定约定、事实来源和任务路由，不复制详细设计文档。
 
-当前没有更深层的 `AGENTS.md` 或 `AGENTS.override.md`。若后续某个模块需要特殊约定，请在该模块目录新增精简的 `AGENTS.md`；只写与本文件不同或更具体的规则。
+主仓当前没有更深层的 `AGENTS.md` 或 `AGENTS.override.md`。独立的 `test-config/` 仓库有自己的 `AGENTS.md`，修改该仓库内容时必须同时遵守。若后续某个主仓模块需要特殊约定，请在该模块目录新增精简的 `AGENTS.md`；只写与本文件不同或更具体的规则。
 
 ## 开始工作前
 
@@ -18,7 +18,8 @@
 - 根目录仓库的功能开发完成并通过验证后，向 GitHub 发起 Pull Request；除非当前任务明确指定其他目标，PR 的目标分支必须是 `dev`。
 - `docs/` 是独立 Git 仓库 `haifa-agent-internal-docs`，不参与根目录仓库的分支、暂存、提交、推送或 Pull Request 流程。根目录仓库的 Git 命令不得把 `docs/` 当作普通目录处理，也不得用根目录的 `git status` 判断文档仓库状态。
 - 文档仓库操作必须使用 `git -C docs ...`（或先进入 `docs/`），在其独立 `main` 分支上直接提交并推送到 `origin/main`；除非当前任务明确要求其他流程，不为文档改动创建 `feat-*` 分支或 Pull Request。
-- 同一任务同时修改代码与文档时，必须分别检查、暂存、提交和推送两个仓库，禁止跨仓库混合提交。
+- `test-config/` 是独立私有 Git 仓库 `haifa-agent-test-config`，不参与根目录仓库的分支、暂存、提交、推送或 Pull Request 流程。测试配置仓库操作必须使用 `git -C test-config ...`，并遵守其 `AGENTS.md`；默认在独立 `main` 分支上直接提交并推送到 `origin/main`。
+- 同一任务同时修改代码、文档或测试配置时，必须按仓库分别检查、暂存、提交和推送，禁止跨仓库混合提交。
 
 ## 事实来源与冲突处理
 
@@ -33,6 +34,8 @@
 如果专题设计与架构基线冲突，不要静默选择一方或顺手重构；明确指出冲突，并通过 ADR 或用户决策解决。若文档与代码不一致，先区分“未来设计”与“实现漂移”，再决定修改对象。
 
 `docs/` 在根目录仓库中被忽略，是因为它由独立的 `haifa-agent-internal-docs` 仓库管理；这不表示文档不受版本控制。读取文档时可直接使用其内容，交付文档改动时必须通过 `git -C docs status`、`git -C docs diff` 和文档仓库自己的提交历史核对。
+
+`test-config/` 在根目录仓库中被忽略，是因为它由独立的私有 `haifa-agent-test-config` 仓库管理；这不表示测试配置不受版本控制。读取配置和 Fixture 时可直接使用其内容，交付测试配置改动时必须通过 `git -C test-config status`、`git -C test-config diff` 和测试配置仓库自己的提交历史核对。
 
 ## 项目快照
 

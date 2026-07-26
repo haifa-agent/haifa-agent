@@ -32,7 +32,7 @@ Integration 与 E2E 之间的层级：
 - `haifa-agent-live-tests`：真实外部 Provider 的窄范围连通性与兼容性验证；
 - `haifa-agent-e2e-tests`：完整 CLI/AgentRun 路径，包含 Simulated 与显式 opt-in Live E2E。
 
-首批 Critical Path v1 使用稳定 `CP-01`～`CP-10`：
+Critical Path v1 使用稳定 `CP-01`～`CP-11`：
 
 | Case | 路径 | 当前实现 |
 | --- | --- | --- |
@@ -46,6 +46,7 @@ Integration 与 E2E 之间的层级：
 | `CP-08` | Web Search 后 Fetch | `CriticalPathLiveE2E#searchesAndFetchesPublicWebContent` |
 | `CP-09` | MCP 协议协商、发现与调用 | 复用 `UtilityMcpCompatibilityLiveIT` |
 | `CP-10` | SQLite 权威状态与 JSONL 投影 | `CriticalPathLiveE2E#persistsRunToSqliteAndJsonl` |
+| `CP-11` | Interaction、Event Journal 与 HITL 纵向闭环 | `InteractionEventHitlLiveE2E#completesInteractionEventAndHitlRoundTrip` |
 
 公共 Case Catalog 与 Maven selector 属于本仓库事实；私有 `test-config` 只通过 `caseId` 选择用例并提供
 Suite、Matrix、Environment、Secret 引用和预算。Runner 通过 `HAIFA_TEST_CONFIG_ROOT` 读取独立配置
@@ -67,12 +68,10 @@ Suite、Matrix、Environment、Secret 引用和预算。Runner 通过 `HAIFA_TES
 - Suite Runner 在执行前必须验证开关、Secret、运行根和预算；JUnit assumption skip 不能被报告为通过；
 - 测试运行产物写入 `HAIFA_TEST_RUN_ROOT`，不得写入主仓或 `test-config`。
 
-当前只初始化 Testkit 与 Fixture 边界。集中式 Live、E2E 和 Eval 模块应在真实用例开始迁移时再加入，
-避免空模块先于可执行行为出现。
-
 11 号能力 Task 02 的 Journal Contract 测试与 SQLite Adapter 相邻放置，并以同一测试方法验证
 `InMemoryRuntimeStore` 与 `SqliteRuntimeEventAppender` 的 eventId、sequence、range、head/earliest、
 固定 observed head 和 retention。Task 03 已建立独立 `haifa-agent-transport-tck`：主源码只声明
 框架中立 Driver/Fixture，具体 Adapter、Runtime Core 与 SQLite 仅进入测试作用域。
-首版不创建独立 Contract Tests 和 Evals 模块。契约测试继续位于相邻产品模块；长期行为评估在评分集、
-Grader 和基线形成后再加入。
+`CP-11` 在独立运行根中程序化驱动 CLI 的拒绝、Search 批准和 Fetch 批准，并用 SQLite、Trace 与
+Transcript 断言真实 Live E2E；它不复制 Transport TCK。首版不创建独立 Contract Tests 和 Evals
+模块。契约测试继续位于相邻产品模块；长期行为评估在评分集、Grader 和基线形成后再加入。

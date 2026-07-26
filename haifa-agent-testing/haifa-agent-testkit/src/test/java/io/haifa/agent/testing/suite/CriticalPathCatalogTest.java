@@ -8,9 +8,9 @@ import org.junit.jupiter.api.Test;
 
 class CriticalPathCatalogTest {
     @Test
-    void criticalPathV1ContainsExactlyTenStableCases() {
+    void criticalPathV1ContainsExactlyElevenStableCases() {
         assertEquals(
-                IntStream.rangeClosed(1, 10)
+                IntStream.rangeClosed(1, 11)
                         .mapToObj(value -> "CP-%02d".formatted(value))
                         .sorted()
                         .toList(),
