@@ -1,0 +1,20 @@
+{
+  "id": "fixture-response-1",
+  "model": "fixture-model",
+  "system_fingerprint": "fixture",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "FIXTURE_OK"
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 4,
+    "completion_tokens": 2,
+    "total_tokens": 6
+  }
+}

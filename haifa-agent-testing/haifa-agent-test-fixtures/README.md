@@ -14,3 +14,10 @@
 
 只被单个模块使用的 Fixture 应继续保存在该模块的 `src/test/resources`。大型、私有或受许可证限制的
 数据集应保存在独立私有仓库或对象存储中，并以版本和内容摘要引用。
+
+当前共享 Fixture：
+
+- `fixtures/http/openai-compatible/final-answer.json`：无秘密的 OpenAI-compatible Stub HTTP 响应，
+  供 Integration Test 验证真实 Adapter 的协议映射；
+- Coding E2E 的工程 Fixture 暂时继续位于 CLI 相邻测试资源，迁移前不复制；
+- `ascii-art` Skill 和 `log-analyzer` Workspace 属于私有 Live 输入，位于独立 `test-config`。
