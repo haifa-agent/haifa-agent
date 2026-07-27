@@ -6,6 +6,7 @@ import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
 import io.haifa.agent.store.sqlite.migration.RuntimeStoreMigrations;
 import io.haifa.agent.store.sqlite.migration.SqliteMigration;
 import io.haifa.agent.store.sqlite.migration.SqliteMigrationRunner;
+import io.haifa.agent.store.sqlite.mybatis.MapperXml;
 import io.haifa.agent.store.sqlite.mybatis.SqliteMyBatisSessionFactory;
 import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import java.time.Clock;
@@ -52,13 +53,23 @@ public final class SqliteStoreFoundation implements AutoCloseable {
      */
     public static SqliteStoreFoundation initialize(
             SqliteStoreConfiguration configuration, Clock clock, List<SqliteMigration> migrations) {
+        return initialize(configuration, clock, migrations, List.of());
+    }
+
+    public static SqliteStoreFoundation initialize(
+            SqliteStoreConfiguration configuration,
+            Clock clock,
+            List<SqliteMigration> migrations,
+            List<MapperXml> additionalMappers) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         Objects.requireNonNull(clock, "clock must not be null");
         Objects.requireNonNull(migrations, "migrations must not be null");
+        Objects.requireNonNull(additionalMappers, "additionalMappers must not be null");
         SqliteConnectionFactory connections = new SqliteConnectionFactory(configuration);
         connections.initialize();
         new SqliteMigrationRunner(connections, clock).migrate(migrations);
-        SqliteMyBatisSessionFactory myBatis = new SqliteMyBatisSessionFactory(configuration.maximumPayloadBytes());
+        SqliteMyBatisSessionFactory myBatis = SqliteMyBatisSessionFactory.withAdditionalMappers(
+                configuration.maximumPayloadBytes(), additionalMappers);
         SqliteRuntimeUnitOfWork unitOfWork = new SqliteRuntimeUnitOfWork(connections, myBatis);
         return new SqliteStoreFoundation(
                 connections,
