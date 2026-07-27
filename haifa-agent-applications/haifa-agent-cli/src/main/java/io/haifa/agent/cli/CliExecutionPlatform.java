@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /** Owns the CLI's trusted local execution assembly without exposing provider controls to the model. */
 final class CliExecutionPlatform {
@@ -77,8 +78,10 @@ final class CliExecutionPlatform {
             TimeProvider time,
             Clock clock,
             CodingAgentPolicyAssembly policy,
+            Path workspaceRoot,
             PrintStream output) {
         Objects.requireNonNull(configuration, "configuration must not be null");
+        var workspaceRedactor = new WorkspacePathRedactor(workspaceRoot);
         HostShell shell = shell(configuration);
         var host = new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
@@ -121,7 +124,7 @@ final class CliExecutionPlatform {
                 manifests,
                 new ManifestDiffService(),
                 observedChanges);
-        ExecutionOutputObserver observer = new CliOutputObserver(output);
+        ExecutionOutputObserver observer = new CliOutputObserver(output, workspaceRedactor);
         var operations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -133,7 +136,8 @@ final class CliExecutionPlatform {
                 configuration.maxOutputBytes(),
                 configuration.maxOutputLines(),
                 configuration.maxProcesses(),
-                observer);
+                observer,
+                workspaceRedactor::redact);
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary);
@@ -292,11 +296,12 @@ final class CliExecutionPlatform {
 
     private static final class CliOutputObserver implements ExecutionOutputObserver {
         private final PrintStream output;
+        private final WorkspacePathRedactor workspaceRedactor;
         private final StringBuilder pending = new StringBuilder();
-        private long lastFlushMillis = System.currentTimeMillis();
 
-        private CliOutputObserver(PrintStream output) {
+        private CliOutputObserver(PrintStream output, WorkspacePathRedactor workspaceRedactor) {
             this.output = Objects.requireNonNull(output, "output must not be null");
+            this.workspaceRedactor = Objects.requireNonNull(workspaceRedactor, "workspaceRedactor must not be null");
         }
 
         @Override
@@ -310,15 +315,55 @@ final class CliExecutionPlatform {
                 }
             });
             pending.append(safe);
-            long nowMillis = System.currentTimeMillis();
-            if (chunk.endOfStream() || nowMillis - lastFlushMillis >= 100L) flush(nowMillis);
+            if (chunk.endOfStream()) {
+                flush(pending.length());
+            } else {
+                int newline = Math.max(pending.lastIndexOf("\n"), pending.lastIndexOf("\r"));
+                if (newline >= 0) flush(newline + 1);
+            }
         }
 
-        private void flush(long nowMillis) {
-            if (!pending.isEmpty()) output.print(pending);
+        private void flush(int length) {
+            if (length > 0) {
+                String value = pending.substring(0, length);
+                pending.delete(0, length);
+                output.print(workspaceRedactor.redact(value));
+            }
             output.flush();
-            pending.setLength(0);
-            lastFlushMillis = nowMillis;
+        }
+    }
+
+    static final class WorkspacePathRedactor {
+        private static final String REPLACEMENT = "<workspace>";
+        private final List<Pattern> paths;
+
+        WorkspacePathRedactor(Path workspaceRoot) {
+            Path normalized = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null")
+                    .toAbsolutePath()
+                    .normalize();
+            String nativePath = normalized.toString();
+            var candidates = new java.util.LinkedHashSet<String>();
+            candidates.add(nativePath);
+            candidates.add(nativePath.replace('\\', '/'));
+            if (nativePath.matches("^[A-Za-z]:\\\\.*")) {
+                candidates.add("/"
+                        + Character.toLowerCase(nativePath.charAt(0))
+                        + nativePath.substring(2).replace('\\', '/'));
+                candidates.add("\\\\?\\" + nativePath);
+            }
+            paths = candidates.stream()
+                    .filter(value -> !value.isBlank())
+                    .sorted(java.util.Comparator.comparingInt(String::length).reversed())
+                    .map(value -> Pattern.compile(Pattern.quote(value), Pattern.CASE_INSENSITIVE))
+                    .toList();
+        }
+
+        String redact(String value) {
+            String result = Objects.requireNonNull(value, "value must not be null");
+            for (Pattern path : paths) {
+                result = path.matcher(result).replaceAll(REPLACEMENT);
+            }
+            return result;
         }
     }
 }

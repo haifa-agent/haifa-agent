@@ -11,6 +11,7 @@ import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
 import io.haifa.agent.sandbox.localnative.LocalNativeSandboxProvider;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Assumptions;
@@ -29,6 +30,7 @@ class CliExecutionPlatformTest {
         assertThat(profile.providerId()).isEqualTo("local-native");
         assertThat(profile.networkPolicy()).isEqualTo(NetworkPolicy.DENY);
         assertThat(profile.requiredCapabilities().networkIsolation()).isTrue();
+        assertThat(configuration.inheritEnvironment()).contains("PATHEXT", "SystemDrive", "ProgramData");
     }
 
     @Test
@@ -84,6 +86,16 @@ class CliExecutionPlatformTest {
         assertThat(host.preflight(hostProfile).managedProcessSupported()).isTrue();
         assertThat(localProfile.providerId()).isEqualTo("local-native");
         assertThat(hostProfile.contentDigest()).isNotEqualTo(localProfile.contentDigest());
+    }
+
+    @Test
+    void workspacePathRedactorCoversNativeForwardSlashAndGitShellForms() {
+        var redactor = new CliExecutionPlatform.WorkspacePathRedactor(Path.of("D:\\runs\\case\\workspace"));
+
+        assertThat(
+                        redactor.redact(
+                                "D:\\runs\\case\\workspace\\a.java D:/runs/case/workspace/b.java /d/runs/case/workspace/c.java"))
+                .isEqualTo("<workspace>\\a.java <workspace>/b.java <workspace>/c.java");
     }
 
     private static LocalNativeSandboxProvider localProvider(CliConfiguration.Execution configuration) {

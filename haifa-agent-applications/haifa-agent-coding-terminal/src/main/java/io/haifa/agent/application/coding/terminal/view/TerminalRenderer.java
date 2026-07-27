@@ -34,9 +34,11 @@ public final class TerminalRenderer {
         state.loadedResources().forEach(value -> line(lines, value, MUTED, width));
         lines.add(AttributedString.EMPTY);
 
+        int transcriptStart = lines.size();
         for (TranscriptItem item : state.transcript()) {
             renderTranscript(lines, item, width);
         }
+        int transcriptEnd = lines.size();
 
         if (!state.pending().isEmpty()) {
             line(lines, "Pending messages", ACCENT, width);
@@ -84,6 +86,21 @@ public final class TerminalRenderer {
                         + " · " + footer.sandbox(),
                 MUTED,
                 width);
+        if (state.rows() >= 16 && lines.size() > state.rows()) {
+            int removable = transcriptEnd - transcriptStart;
+            int removal = Math.min(removable, lines.size() - state.rows() + 1);
+            if (removal > 0) {
+                lines.subList(transcriptStart, transcriptStart + removal).clear();
+                lines.add(transcriptStart, new AttributedString("… earlier transcript lines hidden"));
+                cursorRow = cursorRow >= transcriptStart + removal
+                        ? cursorRow - removal + 1
+                        : Math.min(cursorRow, transcriptStart);
+            }
+            while (lines.size() > state.rows() && lines.size() > 1) {
+                lines.remove(1);
+                if (cursorRow > 1) cursorRow--;
+            }
+        }
         return new TerminalView(lines, cursorRow, cursorColumn);
     }
 

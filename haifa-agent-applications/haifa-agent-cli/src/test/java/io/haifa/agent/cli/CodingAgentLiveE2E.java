@@ -52,6 +52,8 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CodingAgentLiveE2E {
     private static final String LIVE_SWITCH = "HAIFA_CLI_LIVE_E2E_TEST";
+    private static final String EXECUTION_PROVIDER = "HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER";
+    private static final String EXECUTION_NETWORK = "HAIFA_CLI_LIVE_E2E_EXECUTION_NETWORK";
     private static final String ROOT_SENTINEL = ".haifa-cli-live-e2e-root";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Map<String, CaseSpec> CASES = loadCases();
@@ -219,11 +221,41 @@ class CodingAgentLiveE2E {
                 liveModel,
                 defaults.enabledTools(),
                 List.of(),
-                defaults.execution(),
+                liveExecution(System.getenv()),
                 approval,
                 Duration.ofSeconds(specification.timeoutSeconds()),
                 defaults.maxIterations(),
                 specification.maxToolCalls());
+    }
+
+    static CliConfiguration.Execution liveExecution(Map<String, String> environment) {
+        CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
+        String provider = optionalEnvironment(environment, EXECUTION_PROVIDER);
+        String network = optionalEnvironment(environment, EXECUTION_NETWORK);
+        if (provider == null && network == null) {
+            return defaults;
+        }
+        if (!"host-guarded".equals(provider) || !"allow".equals(network)) {
+            throw new IllegalStateException(EXECUTION_PROVIDER + "=host-guarded and " + EXECUTION_NETWORK
+                    + "=allow must be set together for an explicitly trusted live E2E workspace");
+        }
+        return new CliConfiguration.Execution(
+                provider,
+                network,
+                defaults.shell(),
+                defaults.shellPath(),
+                defaults.defaultTimeout(),
+                defaults.maximumTimeout(),
+                defaults.maxOutputBytes(),
+                defaults.maxOutputLines(),
+                defaults.maxProcesses(),
+                defaults.inheritEnvironment(),
+                defaults.extraPathPolicies());
+    }
+
+    private static String optionalEnvironment(Map<String, String> environment, String name) {
+        String value = environment.get(name);
+        return value == null || value.isBlank() ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private static void verifyOracle(String caseId, Path workspace, Path classes, List<RuntimeTraceEvent> traces)

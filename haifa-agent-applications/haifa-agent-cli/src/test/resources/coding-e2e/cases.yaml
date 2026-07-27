@@ -1,23 +1,23 @@
 cases:
   - caseId: HF-06-E2E-CLI-001
-    caseVersion: "1.0"
+    caseVersion: "1.1"
     title: Single-file boundary defect repair
     fixture: single-file-bugfix
     approval: AUTO
-    timeoutSeconds: 240
-    maxToolCalls: 24
+    timeoutSeconds: 360
+    maxToolCalls: 40
     task: >-
       Work only with files in this workspace and do not use the network. Fix the Clamp boundary defect so values
       below or above the interval clamp to the exact inclusive boundary. Preserve the public API and run
       `sh verify.sh` before finishing.
 
   - caseId: HF-06-E2E-CLI-002
-    caseVersion: "1.0"
+    caseVersion: "1.1"
     title: Multi-file discount feature
     fixture: multi-file-feature
     approval: AUTO
-    timeoutSeconds: 240
-    maxToolCalls: 24
+    timeoutSeconds: 360
+    maxToolCalls: 40
     task: >-
       Work only with files in this workspace and do not use the network. Complete the discount feature by adding
       `sample.DiscountPolicy` with `int discountFor(int subtotal)` and `sample.ThresholdDiscountPolicy` with a
@@ -25,24 +25,24 @@ cases:
       threshold and must never make an order total negative. Keep OrderTotal's public API and run `sh verify.sh`.
 
   - caseId: HF-06-E2E-CLI-003
-    caseVersion: "1.0"
+    caseVersion: "1.1"
     title: Regression test plus username validation repair
     fixture: regression-test
     approval: AUTO
-    timeoutSeconds: 240
-    maxToolCalls: 24
+    timeoutSeconds: 360
+    maxToolCalls: 40
     task: >-
       Work only with files in this workspace and do not use the network. UsernameValidator must reject usernames
       containing whitespace. Add a regression assertion using the exact sample `two words`, fix the implementation,
       preserve existing behavior, and run `sh verify.sh` before finishing.
 
   - caseId: HF-06-E2E-CLI-004
-    caseVersion: "1.0"
+    caseVersion: "1.1"
     title: Maven source directory configuration repair
     fixture: maven-config
     approval: AUTO
-    timeoutSeconds: 240
-    maxToolCalls: 20
+    timeoutSeconds: 360
+    maxToolCalls: 40
     protectedPaths:
       - src/main/java/sample/App.java
     task: >-
@@ -51,12 +51,12 @@ cases:
       `sh verify.sh` before finishing.
 
   - caseId: HF-06-E2E-CLI-005
-    caseVersion: "1.0"
+    caseVersion: "1.1"
     title: Behavior-preserving money formatting refactor
     fixture: behavior-refactor
     approval: AUTO
-    timeoutSeconds: 240
-    maxToolCalls: 24
+    timeoutSeconds: 360
+    maxToolCalls: 40
     task: >-
       Work only with files in this workspace and do not use the network. Refactor the duplicated formatting in
       ReceiptFormatter into a new package-private `sample.MoneyFormatter` with static
@@ -64,24 +64,24 @@ cases:
       and output unchanged, delegate both methods to the shared formatter, and run `sh verify.sh`.
 
   - caseId: HF-06-E2E-CLI-006
-    caseVersion: "1.0"
+    caseVersion: "1.1"
     title: File lifecycle type migration
     fixture: file-lifecycle
     approval: AUTO
-    timeoutSeconds: 240
-    maxToolCalls: 24
+    timeoutSeconds: 360
+    maxToolCalls: 40
     task: >-
       Work only with files in this workspace and do not use the network. Replace the legacy type
       `sample.LegacySlugger` with `sample.Slugger`, preserving the public static `slug(String)` behavior. Update
       ArticleService to use Slugger and remove LegacySlugger.java. Run `sh verify.sh` before finishing.
 
   - caseId: HF-06-E2E-CLI-007
-    caseVersion: "1.0"
+    caseVersion: "1.1"
     title: Preserve unrelated dirty workspace content
     fixture: dirty-workspace
     approval: AUTO
-    timeoutSeconds: 240
-    maxToolCalls: 20
+    timeoutSeconds: 360
+    maxToolCalls: 40
     protectedPaths:
       - personal-notes.txt
     task: >-
@@ -90,12 +90,12 @@ cases:
       do not edit, replace, move, or delete it. Run `sh verify.sh` before finishing.
 
   - caseId: HF-06-E2E-CLI-008
-    caseVersion: "1.0"
+    caseVersion: "1.1"
     title: Diagnose a failing verification and recover
     fixture: execution-recovery
     approval: AUTO
-    timeoutSeconds: 240
-    maxToolCalls: 24
+    timeoutSeconds: 360
+    maxToolCalls: 40
     task: >-
       Work only with files in this workspace and do not use the network. Before editing any file, first run
       `sh verify.sh` and inspect its failure. Then fix Range.contains so both interval endpoints are inclusive and

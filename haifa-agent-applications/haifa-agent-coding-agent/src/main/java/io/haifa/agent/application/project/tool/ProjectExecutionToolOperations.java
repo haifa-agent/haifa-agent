@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.UnaryOperator;
 
 /** Adapts the generic project Tool invocation to the single trusted ExecutionBroker path. */
 public final class ProjectExecutionToolOperations {
@@ -48,6 +49,7 @@ public final class ProjectExecutionToolOperations {
     private final int maximumModelOutputLines;
     private final int maximumProcesses;
     private final ExecutionOutputObserver outputObserver;
+    private final UnaryOperator<String> outputSanitizer;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -61,6 +63,34 @@ public final class ProjectExecutionToolOperations {
             int maximumModelOutputLines,
             int maximumProcesses,
             ExecutionOutputObserver outputObserver) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                UnaryOperator.identity());
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -87,6 +117,7 @@ public final class ProjectExecutionToolOperations {
         this.maximumModelOutputLines = maximumModelOutputLines;
         this.maximumProcesses = maximumProcesses;
         this.outputObserver = Objects.requireNonNull(outputObserver, "outputObserver must not be null");
+        this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -193,16 +224,18 @@ public final class ProjectExecutionToolOperations {
                     }
                 });
         try {
-            return toToolResult(broker.execute(request, merged), merged);
+            return toToolResult(broker.execute(request, merged), merged, outputSanitizer);
         } finally {
             complete.set(true);
             cancellation.interrupt();
         }
     }
 
-    private static ToolResult toToolResult(ExecutionResult result, MergedTailObserver merged) {
+    private static ToolResult toToolResult(
+            ExecutionResult result, MergedTailObserver merged, UnaryOperator<String> outputSanitizer) {
         String output = merged.text();
         if (output.isBlank()) output = MergedTailObserver.sanitize(fallbackOutput(result));
+        output = Objects.requireNonNull(outputSanitizer.apply(output), "outputSanitizer must not return null");
         boolean truncated = merged.truncated()
                 || result.stdout().truncated()
                 || result.stderr().truncated();

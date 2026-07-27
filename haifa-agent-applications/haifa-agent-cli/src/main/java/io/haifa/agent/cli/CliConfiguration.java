@@ -40,7 +40,18 @@ record CliConfiguration(
                     DEFAULT_TOOLS.stream(), java.util.stream.Stream.of("web.search", "web.fetch"))
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
     private static final Set<String> DEFAULT_ENVIRONMENT = Set.of(
-            "PATH", "HOME", "USERPROFILE", "TMP", "TEMP", "SystemRoot", "JAVA_HOME", "MAVEN_OPTS", "GRADLE_USER_HOME");
+            "PATH",
+            "PATHEXT",
+            "HOME",
+            "USERPROFILE",
+            "TMP",
+            "TEMP",
+            "SystemRoot",
+            "SystemDrive",
+            "ProgramData",
+            "JAVA_HOME",
+            "MAVEN_OPTS",
+            "GRADLE_USER_HOME");
 
     CliConfiguration {
         model = Objects.requireNonNull(model, "model must not be null");

@@ -273,6 +273,16 @@ HAIFA_FT_ROOT=<new-empty-absolute-directory>
 DEEPSEEK_API_KEY=<secret-manager-injected-value>
 ```
 
+Windows 没有 Local Native Adapter。只有对仓库外、已人工检查并明确可信的合成 Fixture，才可同时设置：
+
+```text
+HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER=host-guarded
+HAIFA_CLI_LIVE_E2E_EXECUTION_NETWORK=allow
+```
+
+两个变量必须成对出现；否则 Live E2E 保持默认 `local-native + deny` 并 fail closed。Host Guarded 不能提供
+容器级文件、网络或系统资源隔离。
+
 百炼批次将最后一项替换为：
 
 ```text

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
 import org.junit.jupiter.api.Test;
 
@@ -28,7 +29,7 @@ class CodingAgentE2EFixtureTest {
             String fixture = item.path("fixture").asText();
             assertThat(caseId).matches("HF-06-E2E-CLI-00[1-9]");
             assertThat(ids.add(caseId)).isTrue();
-            assertThat(item.path("caseVersion").asText()).isEqualTo("1.0");
+            assertThat(item.path("caseVersion").asText()).isEqualTo(caseId.equals("HF-06-E2E-CLI-009") ? "1.0" : "1.1");
             assertThat(item.path("task").asText())
                     .contains("do not use the network")
                     .doesNotContain("http://", "https://");
@@ -41,5 +42,25 @@ class CodingAgentE2EFixtureTest {
                 assertThat(files.filter(Files::isRegularFile).count()).isPositive();
             }
         }
+    }
+
+    @Test
+    void liveExecutionRequiresAnExplicitTrustedWindowsHostPair() {
+        assertThat(CodingAgentLiveE2E.liveExecution(Map.of()))
+                .extracting(CliConfiguration.Execution::provider, CliConfiguration.Execution::network)
+                .containsExactly("local-native", "deny");
+
+        assertThat(CodingAgentLiveE2E.liveExecution(Map.of(
+                        "HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER",
+                        "host-guarded",
+                        "HAIFA_CLI_LIVE_E2E_EXECUTION_NETWORK",
+                        "allow")))
+                .extracting(CliConfiguration.Execution::provider, CliConfiguration.Execution::network)
+                .containsExactly("host-guarded", "allow");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> CodingAgentLiveE2E.liveExecution(
+                        Map.of("HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER", "host-guarded")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("must be set together");
     }
 }

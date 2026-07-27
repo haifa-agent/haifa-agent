@@ -27,7 +27,7 @@ public final class TerminalCommandRouter {
             case "/settings" -> TerminalCommand.SETTINGS;
             case "/trust" -> TerminalCommand.TRUST;
             case "/session" -> TerminalCommand.SESSION;
-            case "/command", "/commands" -> TerminalCommand.COMMANDS;
+            case "/command", "/commands", "/help" -> TerminalCommand.COMMANDS;
             case "/quit" -> TerminalCommand.QUIT;
             default -> DEFERRED.contains(command) ? TerminalCommand.NOT_IMPLEMENTED : TerminalCommand.UNKNOWN;
         };

@@ -332,6 +332,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             time,
                             clock,
                             policy,
+                            workspaceRoot,
                             output)
                     : null;
             var provider = new ProjectToolExecutor(
@@ -412,7 +413,10 @@ final class LocalCodingAgent implements AutoCloseable {
                             Set.of(),
                             "You are a careful local coding agent. Inspect relevant files before editing. "
                                     + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
-                                    + "Pass only workspace-relative paths to file tools; never pass an absolute path."
+                                    + "Pass only workspace-relative paths to file tools; never pass an absolute path. "
+                                    + "Execution commands already start in the workspace, so do not change directory to an "
+                                    + "absolute path. After the requested verification passes, stop using tools unless its "
+                                    + "output identifies an unresolved failure, then return a concise completion summary."
                                     + resources.snapshot().instructionBlock(),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(
@@ -433,7 +437,7 @@ final class LocalCodingAgent implements AutoCloseable {
                                     4,
                                     1,
                                     configuration.timeout().toMillis(),
-                                    60_000),
+                                    configuration.timeout().toMillis()),
                             modelSnapshot))
                     .build();
             persistence.attachProjection(runtime);

@@ -20,6 +20,7 @@ public final class JLineCompleter implements Completer {
             "/compact",
             "/export",
             "/session",
+            "/help",
             "/commands",
             "/quit");
     private static final int MAX_CANDIDATES = 12;
