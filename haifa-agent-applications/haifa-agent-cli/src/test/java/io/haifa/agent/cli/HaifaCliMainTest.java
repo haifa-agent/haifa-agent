@@ -38,7 +38,7 @@ class HaifaCliMainTest {
                 .contains("--trace <mode>")
                 .contains("summary, detail, or jsonl")
                 .contains("--trace-file <path>")
-                .contains("requires --trace");
+                .contains("required for Terminal trace");
     }
 
     @Test

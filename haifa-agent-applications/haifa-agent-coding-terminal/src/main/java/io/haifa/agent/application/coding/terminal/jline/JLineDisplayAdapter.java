@@ -13,7 +13,8 @@ public final class JLineDisplayAdapter {
 
     public JLineDisplayAdapter(Terminal terminal) {
         this.terminal = Objects.requireNonNull(terminal, "terminal must not be null");
-        this.display = new Display(terminal, false);
+        this.display = new Display(terminal, true);
+        this.display.clear();
     }
 
     public void render(TerminalView view) {

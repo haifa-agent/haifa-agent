@@ -105,7 +105,8 @@ java -jar $jar --config D:\haifa-agent-config\haifa-skill-live.yaml `
 - `--trace detail`：输出每个 Runtime Trace envelope 和全部安全属性；
 - `--trace jsonl`：每个安全事件输出为一行独立 JSON，适合脚本、日志采集和 E2E 证据；
 - `--trace-file <path>`：将所选格式写入文件，必须与 `--trace` 一起使用；父目录必须已存在，目标不能是目录或符号链接，已有普通文件会被覆盖；
-- 未指定 `--trace-file` 时 Trace 写入 stderr，模型的流式回答继续写入 stdout。
+- one-shot 模式未指定 `--trace-file` 时 Trace 写入 stderr，模型的流式回答继续写入 stdout；
+- Terminal 模式禁止 Trace 直接写入全屏 UI；需要诊断时必须同时指定 `--trace-file`，Trace 只进入该文件。
 
 三个模式都只消费 Runtime 的 `safeAttributes`，并在 CLI 边界再次移除敏感键、ANSI/控制字符，限制字符串、集合和嵌套深度。不会输出 Prompt、Tool 原始参数/完整结果、Credential、reasoning 原文或供应商原始响应。`summary` 根据冻结 Tool Provider 区分普通 Tool、`mcp.<serverId>` MCP Tool 和 `haifa-runtime-skill` Skill Tool；它不会建立第二套调用链。
 

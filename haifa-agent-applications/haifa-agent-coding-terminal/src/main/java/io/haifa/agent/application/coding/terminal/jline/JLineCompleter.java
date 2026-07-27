@@ -10,7 +10,8 @@ import org.jline.reader.ParsedLine;
 
 /** Bounded completion over supported commands and product-provided logical paths only. */
 public final class JLineCompleter implements Completer {
-    public static final List<String> COMMANDS = List.of("/new", "/resume", "/settings", "/trust", "/session", "/quit");
+    public static final List<String> COMMANDS = List.of("/new", "/resume", "/session", "/commands", "/quit");
+    private static final int MAX_CANDIDATES = 12;
 
     private final Supplier<List<String>> logicalPaths;
 
@@ -20,22 +21,26 @@ public final class JLineCompleter implements Completer {
 
     @Override
     public void complete(LineReader reader, ParsedLine line, List<Candidate> candidates) {
-        String word = line.word();
+        suggestions(line.word()).stream().map(Candidate::new).forEach(candidates::add);
+    }
+
+    public List<String> suggestions(String word) {
+        Objects.requireNonNull(word, "word must not be null");
         if (word.startsWith("/")) {
-            COMMANDS.stream()
+            return COMMANDS.stream()
                     .filter(value -> value.startsWith(word))
-                    .map(Candidate::new)
-                    .forEach(candidates::add);
-            return;
+                    .limit(MAX_CANDIDATES)
+                    .toList();
         }
         if (word.startsWith("@")) {
-            logicalPaths.get().stream()
-                    .limit(200)
+            return logicalPaths.get().stream()
                     .map(JLineCompleter::safeLogicalPath)
                     .filter(value -> value.startsWith(word.substring(1)))
-                    .map(value -> new Candidate("@" + value))
-                    .forEach(candidates::add);
+                    .map(value -> "@" + value)
+                    .limit(MAX_CANDIDATES)
+                    .toList();
         }
+        return List.of();
     }
 
     private static String safeLogicalPath(String value) {

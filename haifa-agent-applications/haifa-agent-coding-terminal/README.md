@@ -47,15 +47,28 @@ Widgets Below
 Footer
 ```
 
-终端采用 JLine 3.30.0 的 `Terminal`、`LineReader`、`Display` 与 JNI Terminal Provider。Runtime
-回调只写入有界 Action Queue；Reducer、Renderer、`LineReader` 和 `Display` 均由单一 UI 线程访问。
-默认保留 scrollback，不进入 alternate screen；关闭时恢复 Attributes 和 Signal Handler。
+终端采用 JLine 3.30.0 的 `Terminal`、`BindingReader`、`LineReader` Buffer/History/Parser/Completer、
+`Display` 与 JNI Terminal Provider。Runtime 回调只写入有界 Action Queue；Reducer、Renderer、输入
+与 `Display` 均由单一 UI 线程访问。输入按 50ms 有界轮询，空闲输入期间仍可归约 Runtime 事件和刷新
+界面，不再由阻塞式 `LineReader.readLine()` 与产品 `Display` 竞争光标状态。
+
+启动 UI 时进入 alternate screen 并清空独立屏幕缓冲区，因此启动命令和初始化日志不占用 TUI 行；
+正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
+keypad 和光标。
 
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn，Active Enter 发送 Steer；
 - Active Alt+Enter 写入持久 Follow-up Queue，Alt+Up 选择并恢复待发消息；
-- Escape/Ctrl+C 请求取消活动 Run；
+- 第二轮输入遇到 Run 刚结束/刚激活的状态竞态时，Terminal 先 reconcile 再按最新状态重试一次；
+  其他产品错误只显示稳定错误码并保留草稿，不退出进程；
+- Escape 是活动 Run 的全局取消键：裸 Escape 不得被 JLine 当作 EOF；即使 Selector 打开或
+  本地 Run 状态尚未刷新，也先关闭 Selector、reconcile 后向产品取消接口发送命令并显示 Cancelling。
+  空闲时 Escape 只关闭 Selector；Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
 - `/resume` 选择并打开真实 Session；
+- 输入 `/` 或 `@` 后按 Tab 打开可见候选选择器；方向键选择、Enter 回填；空闲时 Escape 关闭并
+  保留草稿，活动 Run 时 Escape 优先取消任务；
+- `/command` 与 `/commands` 打开同一命令选择器；`@file` 候选来自受限 Workspace 文件目录，
+  不列出敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 JLine input owner 中 approve/reject；
 - `/settings`、`/trust`、`/model`、`/login`、`/tree`、`/compact` 在没有真实 API 时返回
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
@@ -96,13 +109,16 @@ key，并在所有重启间保持不变。
 进入 Phase 3 前人工验证 Phase 2，不等到最后统一验证：
 
 1. 启动后确认原型规定的 Header/Transcript/Editor/Footer 单列顺序；
-2. 不提交模型 Turn，输入 `/quit`，确认 echo、cursor 与 scrollback 恢复；
+2. 不提交模型 Turn，验证普通输入、退格、方向键和 `/quit`，确认退出后主屏、echo 与 cursor 恢复；
 3. 经用户明确授权后再执行一个真实联网 coding Turn：读取文件、修改代码、运行相邻测试；
 4. 活动 Run 分别验证 Enter Steer、Alt+Enter Follow-up、Escape/Ctrl+C Cancel；
 5. `/resume` 打开真实 Session，Selector 关闭后 editor buffer/cursor 恢复；
 6. 重启后确认 Session、Queue、Cursor 不重复分派或渲染；
 7. 默认 `approval=ask` 下验证实际 approve/reject；
 8. 检查大输出有界，且不显示 Credential、完整 Tool 参数、Provider 原文或 reasoning。
+9. 输入 `/` 和 `@` 后分别按 Tab，确认候选可见、可选择并正确回填；输入 `/command` 确认命令面板可见。
+10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
+    `--trace-file` 后确认诊断仅进入文件。
 
 真实模型和 Web Provider 可能产生费用；未经单独授权保持 **NOT RUN**。自动化验证只使用 Stub/Fake：
 

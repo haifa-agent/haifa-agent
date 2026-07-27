@@ -10,8 +10,9 @@ import org.jline.terminal.Attributes;
 import org.jline.terminal.Size;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.jline.utils.InfoCmp;
 
-/** Owns terminal modes and guarantees restoration without entering an alternate screen. */
+/** Owns full-screen terminal modes and guarantees restoration of the user's primary screen. */
 public final class JLineTerminalLifecycle implements AutoCloseable {
     public static final String TUI_UNAVAILABLE = "TUI_UNAVAILABLE";
 
@@ -20,6 +21,7 @@ public final class JLineTerminalLifecycle implements AutoCloseable {
     private final Map<Terminal.Signal, Terminal.SignalHandler> originalSignalHandlers =
             new EnumMap<>(Terminal.Signal.class);
     private final AtomicBoolean closed = new AtomicBoolean();
+    private boolean fullScreen;
 
     private JLineTerminalLifecycle(Terminal terminal) {
         this.terminal = Objects.requireNonNull(terminal, "terminal must not be null");
@@ -61,6 +63,20 @@ public final class JLineTerminalLifecycle implements AutoCloseable {
         terminal.enterRawMode();
     }
 
+    public void enterFullScreen() {
+        if (fullScreen) {
+            return;
+        }
+        if (!terminal.puts(InfoCmp.Capability.enter_ca_mode)) {
+            throw new IllegalStateException(TUI_UNAVAILABLE);
+        }
+        fullScreen = true;
+        terminal.puts(InfoCmp.Capability.keypad_xmit);
+        terminal.puts(InfoCmp.Capability.cursor_normal);
+        terminal.puts(InfoCmp.Capability.clear_screen);
+        terminal.flush();
+    }
+
     /**
      * Installs callbacks that must only enqueue UI actions. The previous handlers are restored on
      * close.
@@ -84,6 +100,13 @@ public final class JLineTerminalLifecycle implements AutoCloseable {
             return;
         }
         originalSignalHandlers.forEach(terminal::handle);
+        terminal.puts(InfoCmp.Capability.exit_attribute_mode);
+        terminal.puts(InfoCmp.Capability.cursor_normal);
+        terminal.puts(InfoCmp.Capability.keypad_local);
+        if (fullScreen) {
+            terminal.puts(InfoCmp.Capability.exit_ca_mode);
+            fullScreen = false;
+        }
         terminal.setAttributes(originalAttributes);
         terminal.flush();
         try {

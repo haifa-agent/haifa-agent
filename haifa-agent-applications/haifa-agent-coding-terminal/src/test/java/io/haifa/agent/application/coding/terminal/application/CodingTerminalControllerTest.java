@@ -3,18 +3,22 @@ package io.haifa.agent.application.coding.terminal.application;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
+import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.jline.TerminalInput;
 import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionConsequenceView;
 import io.haifa.agent.runtime.api.InteractionInputContract;
@@ -115,6 +119,119 @@ class CodingTerminalControllerTest {
         assertThat(controller.state().recoverableError()).contains("CAPABILITY_NOT_IMPLEMENTED");
     }
 
+    @Test
+    void tabOpensVisibleCommandCandidatesAndInsertsTheSelection() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = controller(client);
+
+        controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, "/", 1));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().options())
+                .containsExactlyElementsOf(io.haifa.agent.application.coding.terminal.jline.JLineCompleter.COMMANDS);
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("/resume");
+        assertThat(controller.state().editorCursor()).isEqualTo("/resume".length());
+    }
+
+    @Test
+    void tabCompletesAWorkspaceFileInPlaceAndPreservesTheRestOfTheMessage() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.logicalPaths = List.of("README.md", "src/main/App.java", "src/test/AppTest.java");
+        var controller = controller(client);
+        String message = "inspect @src/ma after";
+        int cursor = message.indexOf(" after");
+
+        controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, message, cursor));
+
+        assertThat(controller.state().selector().orElseThrow().options()).containsExactly("@src/main/App.java");
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().editorBuffer()).isEqualTo("inspect @src/main/App.java after");
+        assertThat(controller.state().editorCursor()).isEqualTo("inspect @src/main/App.java".length());
+    }
+
+    @Test
+    void commandAliasOpensTheSameVisibleCommandPalette() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = controller(client);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/command"));
+
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().kind()).isEqualTo("completion");
+        assertThat(controller.state().selector().orElseThrow().title()).isEqualTo("Commands");
+    }
+
+    @Test
+    void secondTurnReconcilesAndRetriesWhenTheRunSettlesDuringSubmission() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.submitFailure = new ProjectProductException("CODING_SESSION_ACTIVE", "Run became active");
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "second turn"));
+
+        assertThat(client.submitAttempts).isEqualTo(2);
+        assertThat(client.submittedMessages).containsExactly("second turn");
+        assertThat(controller.state().editorBuffer()).isEmpty();
+        assertThat(controller.state().transcript()).anyMatch(item -> item.body().equals("second turn"));
+    }
+
+    @Test
+    void productFailureStaysInTheTerminalAndPreservesTheDraft() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.submitFailure = new ProjectProductException("SESSION_NOT_FOUND", "Session unavailable");
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "keep this draft"));
+
+        assertThat(controller.state().recoverableError()).contains("SESSION_NOT_FOUND");
+        assertThat(controller.state().editorBuffer()).isEqualTo("keep this draft");
+        assertThat(controller.state().editorCursor()).isEqualTo("keep this draft".length());
+    }
+
+    @Test
+    void escapeCancelsAnActiveRunEvenWhenASelectorIsOpen() {
+        FakeClient client = new FakeClient(activeView());
+        TerminalUiReducer reducer = new TerminalUiReducer();
+        TerminalUiState activeState = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.SessionLoaded(activeView(), List.of("Loaded resources: project")));
+        activeState = reducer.reduce(activeState, new TerminalUiAction.EditorChanged("draft", 5));
+        activeState = reducer.reduce(
+                activeState,
+                new TerminalUiAction.SelectorOpened(
+                        new io.haifa.agent.application.coding.terminal.state.TerminalSelector(
+                                "completion", "Commands", List.of("/resume"), 0)));
+        var controller =
+                new CodingTerminalController(PROJECT_ID, client, new TerminalEventPump(32), reducer, activeState);
+
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, "draft"));
+
+        assertThat(client.cancelledSessions).containsExactly(SESSION_ID);
+        assertThat(controller.state().status()).isEqualTo("Cancelling");
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("draft");
+    }
+
+    @Test
+    void escapeReconcilesAStaleIdleViewBeforeCancellingTheActiveRun() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.reconciledView = activeView();
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+
+        assertThat(client.cancelledSessions).containsExactly(SESSION_ID);
+        assertThat(controller.state().status()).isEqualTo("Cancelling");
+    }
+
     private static CodingTerminalController controller(CodingSessionClient client) {
         return new CodingTerminalController(
                 PROJECT_ID,
@@ -135,6 +252,32 @@ class CodingTerminalControllerTest {
                 "cli-coding@1.0.0");
     }
 
+    private static CodingSessionView activeView() {
+        AgentRunId runId = new AgentRunId("run-1");
+        return new CodingSessionView(
+                new CodingSessionSummary(
+                        SESSION_ID,
+                        PROJECT_ID,
+                        "session",
+                        Optional.of(runId),
+                        Optional.of(AgentRunStatus.RUNNING),
+                        0,
+                        Instant.EPOCH,
+                        0),
+                Optional.of(new AgentRunSnapshot(
+                        runId,
+                        AgentRunStatus.RUNNING,
+                        1,
+                        Instant.EPOCH,
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty())),
+                Optional.empty(),
+                Optional.empty(),
+                "sha256:configuration",
+                "cli-coding@1.0.0");
+    }
+
     private static TerminalInput input(TerminalInput.Kind kind, String text) {
         return new TerminalInput(kind, text);
     }
@@ -144,9 +287,14 @@ class CodingTerminalControllerTest {
         private CodingSessionView reconciledView;
         private List<CodingSessionSummary> summaries = List.of();
         private List<CodingQueuedMessage> restorable = List.of();
+        private List<String> logicalPaths = List.of();
+        private ProjectProductException submitFailure;
+        private int submitAttempts;
+        private final List<String> submittedMessages = new ArrayList<>();
         private final List<AgentSessionId> opened = new ArrayList<>();
         private final List<String> restored = new ArrayList<>();
         private final List<InteractionAction> respondedActions = new ArrayList<>();
+        private final List<AgentSessionId> cancelledSessions = new ArrayList<>();
 
         private FakeClient(CodingSessionView view) {
             this.view = view;
@@ -176,7 +324,15 @@ class CodingTerminalControllerTest {
         }
 
         @Override
-        public void submit(AgentSessionId sessionId, String message, String idempotencyKey) {}
+        public void submit(AgentSessionId sessionId, String message, String idempotencyKey) {
+            submitAttempts++;
+            if (submitFailure != null) {
+                ProjectProductException failure = submitFailure;
+                submitFailure = null;
+                throw failure;
+            }
+            submittedMessages.add(message);
+        }
 
         @Override
         public void steer(AgentSessionId sessionId, AgentRunId activeRunId, String message, String idempotencyKey) {}
@@ -205,11 +361,13 @@ class CodingTerminalControllerTest {
         }
 
         @Override
-        public void cancel(AgentSessionId sessionId, String idempotencyKey) {}
+        public void cancel(AgentSessionId sessionId, String idempotencyKey) {
+            cancelledSessions.add(sessionId);
+        }
 
         @Override
         public RunEventPage events(AgentRunId runId, RunEventCursor after, int limit) {
-            throw new AssertionError("no active Run expected");
+            return new RunEventPage(List.of(), after, after, false);
         }
 
         @Override
@@ -219,7 +377,24 @@ class CodingTerminalControllerTest {
 
         @Override
         public RunEventSubscription subscribe(AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
-            throw new AssertionError("no active Run expected");
+            return new RunEventSubscription() {
+                private boolean closed;
+
+                @Override
+                public boolean closed() {
+                    return closed;
+                }
+
+                @Override
+                public void close() {
+                    closed = true;
+                }
+            };
+        }
+
+        @Override
+        public List<String> logicalPaths() {
+            return logicalPaths;
         }
     }
 }
