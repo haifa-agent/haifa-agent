@@ -117,6 +117,7 @@ class ProjectApplicationTest {
                 .contains("cli-local-native@1");
         assertThat(execution.definition().sideEffects())
                 .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION);
+        assertThat(execution.definition().provenance()).isEqualTo("haifa-coding-agent");
         @SuppressWarnings("unchecked")
         var fileProperties = (java.util.Map<String, Object>)
                 fileRead.definition().inputSchema().document().get("properties");

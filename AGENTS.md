@@ -141,11 +141,13 @@ Linux/macOS 使用 `./mvnw`；Windows PowerShell 使用 `.\mvnw.cmd`。
 # 与 GitHub Actions 一致的最终验证
 ./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
 
-# 发布配置验证
-./mvnw -Prelease verify
+# 发布配置验证；必须通过 -pl 指定受影响模块，并用 -am 补齐其依赖
+./mvnw -pl :haifa-agent-runtime-core -am -Prelease verify
 ```
 
 `ci-fast` 默认跳过集成测试。仅在任务明确需要时使用 `-Pci-integration` 或 `-DskipITs=false`。
+
+运行 `-Prelease verify` 时必须使用 `-pl` 指定本次任务的受影响模块；禁止不带 `-pl` 直接执行全仓 Release 验证，以免产生不必要的长时间构建。
 
 真实 DeepSeek 冒烟测试还要求显式设置 `HAIFA_DEEPSEEK_LIVE_TEST=true` 和 `DEEPSEEK_API_KEY`，会访问外部服务并产生真实成本；普通开发和 CI 验证不得运行。默认只使用本地 Stub HTTP Server 测试适配器。
 

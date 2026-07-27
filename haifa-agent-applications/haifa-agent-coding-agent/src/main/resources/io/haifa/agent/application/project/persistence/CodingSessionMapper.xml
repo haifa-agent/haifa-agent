@@ -166,6 +166,13 @@
         SELECT * FROM coding_follow_up WHERE dispatch_key = #{dispatchKey}
     </select>
 
+    <select id="listRestorableFollowUps" resultMap="followUpRow">
+        SELECT * FROM coding_follow_up
+        WHERE session_id = #{sessionId} AND status = 'PENDING'
+        ORDER BY sequence_no
+        LIMIT #{limit}
+    </select>
+
     <select id="findFollowUpByIdempotency" resultMap="followUpRow">
         SELECT * FROM coding_follow_up
         WHERE session_id = #{sessionId} AND idempotency_key_digest = #{idempotencyKeyDigest}
@@ -225,4 +232,36 @@
         SELECT COUNT(*) FROM coding_follow_up
         WHERE session_id = #{sessionId} AND status IN ('PENDING', 'CLAIMED')
     </select>
+
+    <resultMap id="eventCursorRow" type="io.haifa.agent.application.project.persistence.CodingSessionEventCursorRow">
+        <constructor>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="run_id" javaType="java.lang.String"/>
+            <arg column="feed_version" javaType="java.lang.String"/>
+            <arg column="exclusive_sequence" javaType="_long"/>
+            <arg column="updated_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findEventCursor" resultMap="eventCursorRow">
+        SELECT * FROM coding_session_event_cursor WHERE session_id = #{sessionId}
+    </select>
+
+    <insert id="upsertEventCursor">
+        INSERT INTO coding_session_event_cursor(
+            session_id, run_id, feed_version, exclusive_sequence, updated_at_ms
+        ) VALUES (
+            #{row.sessionId}, #{row.runId}, #{row.feedVersion},
+            #{row.exclusiveSequence}, #{row.updatedAt}
+        )
+        ON CONFLICT(session_id) DO UPDATE SET
+            run_id = excluded.run_id,
+            feed_version = excluded.feed_version,
+            exclusive_sequence = excluded.exclusive_sequence,
+            updated_at_ms = excluded.updated_at_ms
+        WHERE coding_session_event_cursor.run_id != excluded.run_id
+           OR coding_session_event_cursor.feed_version != excluded.feed_version
+           OR coding_session_event_cursor.exclusive_sequence &lt; excluded.exclusive_sequence
+    </insert>
 </mapper>

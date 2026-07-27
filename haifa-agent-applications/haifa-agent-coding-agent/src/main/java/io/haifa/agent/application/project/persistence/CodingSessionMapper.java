@@ -53,6 +53,8 @@ public interface CodingSessionMapper {
 
     CodingFollowUpRow findFollowUpByDispatchKey(@Param("dispatchKey") String dispatchKey);
 
+    List<CodingFollowUpRow> listRestorableFollowUps(@Param("sessionId") String sessionId, @Param("limit") int limit);
+
     CodingFollowUpRow findFollowUpByIdempotency(
             @Param("sessionId") String sessionId, @Param("idempotencyKeyDigest") String idempotencyKeyDigest);
 
@@ -79,4 +81,8 @@ public interface CodingSessionMapper {
             @Param("updatedAt") Instant updatedAt);
 
     int queuedCount(@Param("sessionId") String sessionId);
+
+    CodingSessionEventCursorRow findEventCursor(@Param("sessionId") String sessionId);
+
+    int upsertEventCursor(@Param("row") CodingSessionEventCursorRow row);
 }

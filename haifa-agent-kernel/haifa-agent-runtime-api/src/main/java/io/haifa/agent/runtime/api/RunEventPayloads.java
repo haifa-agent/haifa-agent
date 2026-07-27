@@ -54,4 +54,67 @@ public final class RunEventPayloads {
             status = InteractionOption.requireText(status, "status", 64);
         }
     }
+
+    public record ToolLifecycle(
+            String toolCallId,
+            String displayName,
+            String status,
+            String reasonCode,
+            String targetSummary,
+            String resultRef)
+            implements AgentRunEvent.Payload {
+        public ToolLifecycle {
+            toolCallId = text(toolCallId, "toolCallId", 256);
+            displayName = text(displayName, "displayName", 128);
+            status = text(status, "status", 64);
+            reasonCode = text(reasonCode, "reasonCode", 128);
+            targetSummary = optionalText(targetSummary, "targetSummary", 512);
+            resultRef = optionalText(resultRef, "resultRef", 512);
+        }
+    }
+
+    public record ExecutionLifecycle(
+            String executionId,
+            String toolCallId,
+            String status,
+            String commandSummary,
+            String logicalWorkdir,
+            String streamKind,
+            String chunkOrRef,
+            Integer exitCode,
+            boolean truncated,
+            String fileChangeSetRef)
+            implements AgentRunEvent.Payload {
+        public ExecutionLifecycle {
+            executionId = text(executionId, "executionId", 256);
+            toolCallId = text(toolCallId, "toolCallId", 256);
+            status = text(status, "status", 64);
+            commandSummary = text(commandSummary, "commandSummary", 256);
+            logicalWorkdir = optionalText(logicalWorkdir, "logicalWorkdir", 512);
+            streamKind = text(streamKind, "streamKind", 32);
+            chunkOrRef = optionalText(chunkOrRef, "chunkOrRef", 4096);
+            fileChangeSetRef = optionalText(fileChangeSetRef, "fileChangeSetRef", 512);
+        }
+    }
+
+    public record ResourceAvailable(String reference, String kind, String title, String status, String action)
+            implements AgentRunEvent.Payload {
+        public ResourceAvailable {
+            reference = text(reference, "reference", 512);
+            kind = text(kind, "kind", 64);
+            title = text(title, "title", 256);
+            status = text(status, "status", 64);
+            action = text(action, "action", 128);
+        }
+    }
+
+    private static String text(String value, String field, int maximumLength) {
+        return InteractionOption.requireText(value, field, maximumLength);
+    }
+
+    private static String optionalText(String value, String field, int maximumLength) {
+        String checked = java.util.Objects.requireNonNull(value, field + " must not be null");
+        if (checked.length() > maximumLength) throw new IllegalArgumentException(field + " is too long");
+        return checked;
+    }
 }

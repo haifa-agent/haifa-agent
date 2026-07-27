@@ -13,6 +13,7 @@
     <packaging>pom</packaging>
     <modules>
         <module>haifa-agent-coding-agent</module>
+        <module>haifa-agent-coding-terminal</module>
         <module>haifa-agent-cli</module>
     </modules>
 </project>

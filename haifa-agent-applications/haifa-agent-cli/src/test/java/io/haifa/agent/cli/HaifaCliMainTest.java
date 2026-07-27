@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -33,10 +34,55 @@ class HaifaCliMainTest {
     @Test
     void usageDocumentsSafeTraceOptions() {
         assertThat(HaifaCliMain.usage())
+                .contains("--terminal")
                 .contains("--trace <mode>")
                 .contains("summary, detail, or jsonl")
                 .contains("--trace-file <path>")
                 .contains("requires --trace");
+    }
+
+    @Test
+    void explicitAndDefaultTerminalUseTheSameLaunchBoundary() {
+        AtomicInteger launches = new AtomicInteger();
+        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launches.incrementAndGet());
+
+        assertThat(main.run(new String[] {"--terminal"}, output(), output())).isZero();
+        assertThat(main.run(new String[0], output(), output())).isZero();
+        assertThat(launches).hasValue(2);
+    }
+
+    @Test
+    void helpDoesNotInitializeTheTerminalApplication() {
+        AtomicInteger launches = new AtomicInteger();
+        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launches.incrementAndGet());
+        ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
+
+        int exit = main.run(
+                new String[] {"--help"}, new PrintStream(standardOutput, true, StandardCharsets.UTF_8), output());
+
+        assertThat(exit).isZero();
+        assertThat(launches).hasValue(0);
+        assertThat(standardOutput.toString(StandardCharsets.UTF_8)).contains("Usage: haifa-cli");
+    }
+
+    @Test
+    void terminalAndMessageConflictFailsBeforeLaunch() {
+        AtomicInteger launches = new AtomicInteger();
+        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launches.incrementAndGet());
+        ByteArrayOutputStream error = new ByteArrayOutputStream();
+
+        int exit = main.run(
+                new String[] {"--terminal", "-m", "task"},
+                output(),
+                new PrintStream(error, true, StandardCharsets.UTF_8));
+
+        assertThat(exit).isEqualTo(1);
+        assertThat(launches).hasValue(0);
+        assertThat(error.toString(StandardCharsets.UTF_8)).contains("--terminal cannot be used with -m/--message");
+    }
+
+    private static PrintStream output() {
+        return new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8);
     }
 
     private static AgentRunOutputEvent event(long sequence, AgentRunOutputEventType type, String text) {

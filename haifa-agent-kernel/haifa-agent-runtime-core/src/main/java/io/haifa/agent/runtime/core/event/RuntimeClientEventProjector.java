@@ -66,6 +66,18 @@ public final class RuntimeClientEventProjector {
                                         requiredText(event.data(), "inputId"),
                                         "APPLIED",
                                         text(event.data(), "applicationPoint", "BEFORE_ITERATION")));
+                    case "tool.requested" -> tool("tool.call.requested", event, "REQUESTED", "NONE");
+                    case "tool.started" -> tool("tool.call.started", event, "STARTED", "NONE");
+                    case "tool.succeeded", "tool.completed" -> tool("tool.call.succeeded", event, "SUCCEEDED", "NONE");
+                    case "tool.failed", "tool.business-failed" ->
+                        tool("tool.call.failed", event, "FAILED", "TOOL_FAILED");
+                    case "tool.cancelled" -> tool("tool.call.cancelled", event, "CANCELLED", "TOOL_CANCELLED");
+                    case "execution.completed" -> execution("execution.completed", event);
+                    case "execution.failed" -> execution("execution.failed", event);
+                    case "execution.cancelled" -> execution("execution.cancelled", event);
+                    case "workspace.change-set.available" -> resource("workspace.change-set.available", event);
+                    case "artifact.available" -> resource("artifact.available", event);
+                    case "checkpoint.available" -> resource("checkpoint.available", event);
                     default -> outputOrLifecycle(event);
                 };
         if (projection == null) return Optional.empty();
@@ -88,6 +100,21 @@ public final class RuntimeClientEventProjector {
     private static boolean isKnownClientFact(RuntimeEvent event) {
         return event.type().startsWith(OUTPUT_PREFIX)
                 || event.type().startsWith("runtime.command-")
+                || java.util.Set.of(
+                                "tool.requested",
+                                "tool.started",
+                                "tool.succeeded",
+                                "tool.completed",
+                                "tool.failed",
+                                "tool.business-failed",
+                                "tool.cancelled",
+                                "execution.completed",
+                                "execution.failed",
+                                "execution.cancelled",
+                                "workspace.change-set.available",
+                                "artifact.available",
+                                "checkpoint.available")
+                        .contains(event.type())
                 || event.type().equals("run.created")
                 || event.type().equals("approval.requested")
                 || event.type().equals("approval.responded")
@@ -162,6 +189,45 @@ public final class RuntimeClientEventProjector {
                         requiredText(event.data(), "requestId"), inferredKind(event), state, actionOrReason));
     }
 
+    private static Projection tool(String eventType, RuntimeEvent event, String status, String reasonCode) {
+        return new Projection(
+                eventType,
+                new RunEventPayloads.ToolLifecycle(
+                        requiredText(event.data(), "toolCallId"),
+                        text(event.data(), "displayName", text(event.data(), "toolName", "tool")),
+                        text(event.data(), "status", status),
+                        text(event.data(), "reasonCode", reasonCode),
+                        text(event.data(), "targetSummary", ""),
+                        text(event.data(), "resultRef", "")));
+    }
+
+    private static Projection execution(String eventType, RuntimeEvent event) {
+        return new Projection(
+                eventType,
+                new RunEventPayloads.ExecutionLifecycle(
+                        requiredText(event.data(), "executionId"),
+                        requiredText(event.data(), "toolCallId"),
+                        requiredText(event.data(), "status"),
+                        text(event.data(), "commandSummary", "shell command"),
+                        text(event.data(), "logicalWorkdir", "."),
+                        text(event.data(), "streamKind", "MERGED"),
+                        text(event.data(), "chunkOrRef", ""),
+                        integer(event.data(), "exitCode"),
+                        Boolean.TRUE.equals(event.data().get("truncated")),
+                        text(event.data(), "fileChangeSetRef", "")));
+    }
+
+    private static Projection resource(String eventType, RuntimeEvent event) {
+        return new Projection(
+                eventType,
+                new RunEventPayloads.ResourceAvailable(
+                        requiredText(event.data(), "reference"),
+                        requiredText(event.data(), "kind"),
+                        requiredText(event.data(), "title"),
+                        requiredText(event.data(), "status"),
+                        text(event.data(), "action", "inspect")));
+    }
+
     private static String inferredKind(RuntimeEvent event) {
         if (event.type().startsWith("approval.")) return "approval";
         return text(event.data(), "kind", "clarification");
@@ -183,6 +249,11 @@ public final class RuntimeClientEventProjector {
     private static long number(Map<String, Object> data, String key, long fallback) {
         Object value = data.get(key);
         return value instanceof Number number ? number.longValue() : fallback;
+    }
+
+    private static Integer integer(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        return value instanceof Number number ? number.intValue() : null;
     }
 
     private record Projection(String eventType, AgentRunEvent.Payload payload) {}

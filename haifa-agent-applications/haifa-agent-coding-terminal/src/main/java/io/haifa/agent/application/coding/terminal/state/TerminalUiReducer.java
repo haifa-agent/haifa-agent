@@ -1,0 +1,445 @@
+package io.haifa.agent.application.coding.terminal.state;
+
+import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.RunEventPayloads;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+
+/** Deterministic, side-effect-free projection of product and committed Runtime facts. */
+public final class TerminalUiReducer {
+    public TerminalUiState reduce(TerminalUiState state, TerminalUiAction action) {
+        if (action instanceof TerminalUiAction.SessionLoaded loaded) {
+            var view = loaded.view();
+            var active = view.activeRun().map(value -> value.runId());
+            boolean sameSession = state.session()
+                    .map(current ->
+                            current.summary().sessionId().equals(view.summary().sessionId()))
+                    .orElse(false);
+            boolean sameRun = sameSession && state.currentRunId().equals(active);
+            List<TranscriptItem> transcript = sameSession ? state.transcript() : List.of();
+            java.util.Set<String> seen = sameRun ? state.seenEventIds() : java.util.Set.of();
+            Optional<io.haifa.agent.runtime.api.RunEventCursor> cursor = sameRun
+                    ? state.appliedCursor()
+                    : active.map(io.haifa.agent.runtime.api.RunEventCursor::beforeFirst);
+            var footer = new TerminalFooter(
+                    view.summary().projectId().value(),
+                    "git: via safe read model",
+                    view.summary().displayName(),
+                    "queue: " + view.summary().queuedCount(),
+                    "provider: frozen",
+                    "model: frozen",
+                    view.summary().activeRunStatus().map(Enum::name).orElse("IDLE"),
+                    "sandbox: frozen profile");
+            return copy(
+                    state,
+                    List.copyOf(loaded.resources()),
+                    transcript,
+                    state.pending(),
+                    active.isPresent() ? "Working" : "Idle",
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    footer,
+                    state.columns(),
+                    state.rows(),
+                    Optional.of(view),
+                    active,
+                    cursor,
+                    seen,
+                    Optional.empty(),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.RunEventReceived received) {
+            return event(state, received.event());
+        }
+        if (action instanceof TerminalUiAction.UserMessageCommitted committed) {
+            var items = new ArrayList<>(state.transcript());
+            items.add(new TranscriptItem(
+                    committed.id(), TranscriptItem.Kind.USER, "You", committed.text(), "SENT", true));
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    items,
+                    state.pending(),
+                    state.status(),
+                    "",
+                    0,
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.EditorChanged editor) {
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    state.status(),
+                    editor.buffer(),
+                    editor.cursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.PendingChanged pending) {
+            return copyWithPending(state, pending.messages());
+        }
+        if (action instanceof TerminalUiAction.StatusChanged status) {
+            return copyWithStatus(state, status.status());
+        }
+        if (action instanceof TerminalUiAction.SelectorOpened selector) {
+            return copyWithSelector(state, Optional.of(selector.selector()));
+        }
+        if (action instanceof TerminalUiAction.SelectorMoved moved) {
+            return copyWithSelector(state, state.selector().map(value -> value.move(moved.delta())));
+        }
+        if (action instanceof TerminalUiAction.SelectorClosed) {
+            return copyWithSelector(state, Optional.empty());
+        }
+        if (action instanceof TerminalUiAction.ToggleExpanded toggle) {
+            List<TranscriptItem> items = state.transcript().stream()
+                    .map(value -> value.id().equals(toggle.itemId()) ? value.toggle() : value)
+                    .toList();
+            return copyWithTranscript(state, items);
+        }
+        if (action instanceof TerminalUiAction.TerminalResized resized) {
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    state.status(),
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    Math.max(1, resized.columns()),
+                    Math.max(1, resized.rows()),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.RecoverableFailure failure) {
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    "Recovery required",
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    Optional.of(failure.code()),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.ExitRequested) {
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    state.status(),
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    true);
+        }
+        throw new IllegalArgumentException("Unsupported Terminal UI action");
+    }
+
+    private TerminalUiState event(TerminalUiState state, AgentRunEvent event) {
+        if (state.seenEventIds().contains(event.eventId())) return state;
+        if (state.currentRunId().isPresent()
+                && !state.currentRunId().orElseThrow().equals(event.runId())) {
+            return copyWithFailure(state, "EVENT_RUN_MISMATCH");
+        }
+        if (state.appliedCursor()
+                        .map(value -> value.exclusiveSequence().orElse(0L))
+                        .orElse(0L)
+                >= event.sequence()) {
+            return copyWithFailure(state, "EVENT_OUT_OF_ORDER");
+        }
+        List<TranscriptItem> transcript = project(state.transcript(), event);
+        var seen = new HashSet<>(state.seenEventIds());
+        seen.add(event.eventId());
+        return copy(
+                state,
+                state.loadedResources(),
+                transcript,
+                state.pending(),
+                status(event, state.status()),
+                state.editorBuffer(),
+                state.editorCursor(),
+                state.selector(),
+                state.footer(),
+                state.columns(),
+                state.rows(),
+                state.session(),
+                Optional.of(event.runId()),
+                Optional.of(event.cursor()),
+                seen,
+                Optional.empty(),
+                state.exitRequested());
+    }
+
+    private static List<TranscriptItem> project(List<TranscriptItem> current, AgentRunEvent event) {
+        var items = new ArrayList<>(current);
+        if (event.payload() instanceof RunEventPayloads.AssistantTextDelta payload) {
+            int index = index(items, "assistant-" + payload.generationId());
+            if (index < 0) {
+                items.add(new TranscriptItem(
+                        "assistant-" + payload.generationId(),
+                        TranscriptItem.Kind.ASSISTANT,
+                        "Assistant",
+                        payload.textDelta(),
+                        "STREAMING",
+                        true));
+            } else {
+                items.set(index, items.get(index).append(payload.textDelta()));
+            }
+        } else if (event.payload() instanceof RunEventPayloads.ToolLifecycle payload) {
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "tool-" + payload.toolCallId(),
+                            TranscriptItem.Kind.TOOL,
+                            payload.displayName(),
+                            payload.targetSummary() + reference(payload.resultRef()),
+                            payload.status(),
+                            false));
+        } else if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle payload) {
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "execution-" + payload.executionId(),
+                            TranscriptItem.Kind.EXECUTION,
+                            payload.commandSummary(),
+                            payload.chunkOrRef() + reference(payload.fileChangeSetRef()),
+                            payload.status(),
+                            false));
+        } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload) {
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "resource-" + payload.reference(),
+                            TranscriptItem.Kind.RESOURCE,
+                            payload.title(),
+                            payload.kind() + " · " + payload.reference(),
+                            payload.status(),
+                            false));
+        } else if (event.payload() instanceof RunEventPayloads.InteractionLifecycle payload) {
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "interaction-" + payload.requestId(),
+                            TranscriptItem.Kind.APPROVAL,
+                            "Approval · " + payload.kind(),
+                            payload.actionOrReason(),
+                            payload.state(),
+                            true));
+        }
+        return List.copyOf(items);
+    }
+
+    private static String status(AgentRunEvent event, String fallback) {
+        if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle) return lifecycle.status();
+        if (event.eventType().endsWith(".failed")) return "Attention";
+        if (event.eventType().endsWith(".started") || event.eventType().endsWith(".requested")) return "Working";
+        return fallback;
+    }
+
+    private static void upsert(List<TranscriptItem> values, TranscriptItem item) {
+        int index = index(values, item.id());
+        if (index < 0) values.add(item);
+        else values.set(index, item);
+    }
+
+    private static int index(List<TranscriptItem> values, String id) {
+        for (int index = 0; index < values.size(); index++) {
+            if (values.get(index).id().equals(id)) return index;
+        }
+        return -1;
+    }
+
+    private static String reference(String value) {
+        return value.isBlank() ? "" : "\nref: " + value;
+    }
+
+    private static TerminalUiState copyWithTranscript(TerminalUiState state, List<TranscriptItem> transcript) {
+        return copy(
+                state,
+                state.loadedResources(),
+                transcript,
+                state.pending(),
+                state.status(),
+                state.editorBuffer(),
+                state.editorCursor(),
+                state.selector(),
+                state.footer(),
+                state.columns(),
+                state.rows(),
+                state.session(),
+                state.currentRunId(),
+                state.appliedCursor(),
+                state.seenEventIds(),
+                state.recoverableError(),
+                state.exitRequested());
+    }
+
+    private static TerminalUiState copyWithPending(TerminalUiState state, List<PendingMessage> pending) {
+        return copy(
+                state,
+                state.loadedResources(),
+                state.transcript(),
+                pending,
+                state.status(),
+                state.editorBuffer(),
+                state.editorCursor(),
+                state.selector(),
+                state.footer(),
+                state.columns(),
+                state.rows(),
+                state.session(),
+                state.currentRunId(),
+                state.appliedCursor(),
+                state.seenEventIds(),
+                state.recoverableError(),
+                state.exitRequested());
+    }
+
+    private static TerminalUiState copyWithStatus(TerminalUiState state, String status) {
+        return copy(
+                state,
+                state.loadedResources(),
+                state.transcript(),
+                state.pending(),
+                status,
+                state.editorBuffer(),
+                state.editorCursor(),
+                state.selector(),
+                state.footer(),
+                state.columns(),
+                state.rows(),
+                state.session(),
+                state.currentRunId(),
+                state.appliedCursor(),
+                state.seenEventIds(),
+                state.recoverableError(),
+                state.exitRequested());
+    }
+
+    private static TerminalUiState copyWithSelector(TerminalUiState state, Optional<TerminalSelector> selector) {
+        return copy(
+                state,
+                state.loadedResources(),
+                state.transcript(),
+                state.pending(),
+                state.status(),
+                state.editorBuffer(),
+                state.editorCursor(),
+                selector,
+                state.footer(),
+                state.columns(),
+                state.rows(),
+                state.session(),
+                state.currentRunId(),
+                state.appliedCursor(),
+                state.seenEventIds(),
+                state.recoverableError(),
+                state.exitRequested());
+    }
+
+    private static TerminalUiState copyWithFailure(TerminalUiState state, String code) {
+        return copy(
+                state,
+                state.loadedResources(),
+                state.transcript(),
+                state.pending(),
+                "Recovery required",
+                state.editorBuffer(),
+                state.editorCursor(),
+                state.selector(),
+                state.footer(),
+                state.columns(),
+                state.rows(),
+                state.session(),
+                state.currentRunId(),
+                state.appliedCursor(),
+                state.seenEventIds(),
+                Optional.of(code),
+                state.exitRequested());
+    }
+
+    private static TerminalUiState copy(
+            TerminalUiState state,
+            List<String> resources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String buffer,
+            int cursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<io.haifa.agent.core.run.AgentRunId> runId,
+            Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
+            java.util.Set<String> seen,
+            Optional<String> error,
+            boolean exit) {
+        return new TerminalUiState(
+                state.header(),
+                resources,
+                transcript,
+                pending,
+                status,
+                buffer,
+                cursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                runId,
+                eventCursor,
+                seen,
+                error,
+                exit);
+    }
+}

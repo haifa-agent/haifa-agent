@@ -140,6 +140,75 @@ class RuntimeEventFeedTest {
     }
 
     @Test
+    void projectsToolExecutionAndResourceFactsFromTheAllowlist() {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
+
+        var tool = projector
+                .project(new RuntimeEvent(
+                        "tool",
+                        runId,
+                        1,
+                        "tool.succeeded",
+                        "1",
+                        Map.of(
+                                "toolCallId", "call-1",
+                                "toolName", "execution.run",
+                                "targetSummary", "workspace command",
+                                "resultRef", "tool-result:1"),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+        var execution = projector
+                .project(new RuntimeEvent(
+                        "execution",
+                        runId,
+                        2,
+                        "execution.completed",
+                        "1",
+                        Map.of(
+                                "executionId", "execution-1",
+                                "toolCallId", "call-1",
+                                "status", "SUCCEEDED",
+                                "commandSummary", "shell command",
+                                "logicalWorkdir", ".",
+                                "streamKind", "MERGED",
+                                "chunkOrRef", "output:1",
+                                "exitCode", 0,
+                                "truncated", false,
+                                "fileChangeSetRef", "changes:1"),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+        var resource = projector
+                .project(new RuntimeEvent(
+                        "resource",
+                        runId,
+                        3,
+                        "checkpoint.available",
+                        "1",
+                        Map.of(
+                                "reference", "checkpoint:1",
+                                "kind", "checkpoint",
+                                "title", "Checkpoint 1",
+                                "status", "AVAILABLE"),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+
+        assertThat(tool.eventType()).isEqualTo("tool.call.succeeded");
+        assertThat(tool.payload()).isInstanceOf(RunEventPayloads.ToolLifecycle.class);
+        assertThat(execution.eventType()).isEqualTo("execution.completed");
+        assertThat(execution.payload()).isInstanceOf(RunEventPayloads.ExecutionLifecycle.class);
+        assertThat(resource.eventType()).isEqualTo("checkpoint.available");
+        assertThat(resource.payload()).isInstanceOf(RunEventPayloads.ResourceAvailable.class);
+    }
+
+    @Test
     void subscriptionReplaysThenTailsAndCloseIsIdempotentWithoutDependingOnWakeupPayloads()
             throws InterruptedException {
         InMemoryRuntimeStore store = storeWithRun("run");

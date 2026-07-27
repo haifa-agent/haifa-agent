@@ -11,16 +11,74 @@ Capability Confirmation；Critical/Never 冲突、无目标网络、Credential �
 Broker/Workspace/Sandbox 硬边界仍 fail closed。`execution.run` 的 Tool Decision 沿调用链传给
 Broker 复核，不产生第二个控制台审批；`deny` 仍在 Catalog freeze 前移除该 Tool。
 
-`haifa-agent-cli` 是用于验证 Haifa Agent 现有 Runtime、OpenAI-compatible 模型、受控本地文件工具、通用本地 Shell Tool、基础 Skill、Streamable HTTP MCP Tool 和可选 Web Tool 的最小 Coding Agent 命令行入口。
+`haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
+Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 JLine
+Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-terminal` 只负责 UI，不是第二个
+可执行胖 JAR。
 
 ## 构建与运行
 
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-cli -am package
-java -jar .\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar -m "分析当前项目并修复一个小问题"
+$jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
+
+# 帮助：不会初始化模型、Runtime、SQLite 或 JLine
+java -jar $jar --help
+
+# 无 -m 时默认进入 Terminal；显式 --terminal 完全等价
+java -jar $jar --terminal --workspace D:\haifa-agent-config\workspaces\terminal-manual `
+  --config D:\haifa-agent-config\haifa-coding-terminal.yaml
+
+# 兼容 one-shot
+java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
+  --config D:\haifa-agent-config\haifa-coding-terminal.yaml `
+  -m "分析当前项目并修复一个小问题"
 ```
 
 构建后也可以将 `bin` 目录加入 `PATH`，使用 `haifa-cli.ps1` 启动。
+
+`--terminal` 与 `-m/--message` 不能同时使用。非交互、`dumb` 或不支持的终端会快速返回稳定的
+`TUI_UNAVAILABLE`。同一规范化且非符号链接的 Workspace 会生成带版本 namespace 的稳定
+Project/Workspace 身份；绝对路径不进入 Prompt、Client Event、JSONL 或普通错误输出。
+
+## 真实联网编程配置
+
+Terminal 不是离线演示壳：普通消息进入真实 `CodingSessionService` 与 AgentLoop，文件修改、Git、
+`execution.run`、MCP、`web.search`/`web.fetch` 都走现有 Tool Pipeline、Policy、Approval 和
+ExecutionBroker。下面是 Windows 上“明确可信测试 Workspace”的联网配置要点：
+
+```yaml
+model:
+  providerId: deepseek
+  modelId: deepseek-chat
+  endpoint: https://api.deepseek.com
+  credentialRef: env://DEEPSEEK_API_KEY
+tools:
+  enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.diff, file.patch, git.inspect, git.status, git.diff, execution.run, web.search, web.fetch]
+web:
+  search:
+    enabled: true
+    provider: aliyun
+    credentialRef: env://ALIYUN_IQS_API_KEY
+  fetch:
+    enabled: true
+    provider: aliyun
+    credentialRef: env://ALIYUN_IQS_API_KEY
+approval:
+  mode: ask
+execution:
+  provider: host-guarded
+  network: allow
+  shell: powershell
+persistence:
+  mode: SQLITE
+  databasePath: D:\haifa-agent-config\data\coding-terminal.db
+  protectorRef: env://HAIFA_CONTINUATION_KEY
+```
+
+`host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；
+只应对自己检查并信任的测试 Workspace 使用。模型与 Web Provider 调用可能计费。密钥只通过
+`env://...` 注入，不写入配置；`HAIFA_CONTINUATION_KEY` 必须是跨重启稳定的 Base64 32 字节 AES key。
 
 ## 安全 Trace
 
@@ -191,9 +249,10 @@ reasoning 内容。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；默认不继承 API Key、`*_TOKEN`、`*_SECRET`、云凭据或代理凭据。命令输出实时脱敏展示，最终模型结果默认限制为最后 2000 行且最多 50KB；较大分通道输出通过 Output Ref 访问。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
-本期不包含 Terminal UI、PTY/交互式命令或后台守护进程。SQLite 模式可恢复 Runtime 事实和
-Project Product Session 映射；CLI 当前每次 `start` 仍创建新 User Session，尚未提供选择历史 Session
-的交互命令。Host Provider 不是容器或虚拟机，不能阻止当前 OS 用户本来可访问的 Workspace 外文件、网络或系统资源。
+当前已包含 JLine Terminal、真实 `/resume`、Steer、持久 Follow-up、Cancel、Approval selector 和
+SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护进程、Session Tree/Fork/Clone、模型登录/
+切换或 Workflow Graph。Host Provider 不是容器或虚拟机，不能阻止当前 OS 用户本来可访问的
+Workspace 外文件、网络或系统资源。
 
 ## 真实模型 Coding E2E
 

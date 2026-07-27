@@ -223,7 +223,7 @@ public final class ProjectToolCatalog {
                 resources,
                 List.of(),
                 approval,
-                "haifa-project-application",
+                "haifa-coding-agent",
                 false,
                 Set.of("project", name.substring(0, name.indexOf('.'))));
     }

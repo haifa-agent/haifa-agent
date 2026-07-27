@@ -142,6 +142,7 @@ public final class ToolPipeline {
                 request.arguments(),
                 time.now());
         state.appendToolCall(call);
+        appendToolEvent(run, call, "tool.requested", "REQUESTED", "NONE", "");
         return call;
     }
 
@@ -182,6 +183,7 @@ public final class ToolPipeline {
         if (!capabilityAuthorizer.isAllowed(run, binding)) {
             call.cancel(time.now());
             state.appendToolCall(call);
+            appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "CAPABILITY_DENIED", "");
             throw new SecurityException(
                     "tool capability is not allowed: " + definition.name().value());
         }
@@ -200,6 +202,7 @@ public final class ToolPipeline {
             if (approved) call.cancel(time.now());
             else call.deny(time.now());
             state.appendToolCall(call);
+            appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "POLICY_DENIED", "");
             throw new SecurityException(
                     "tool policy denied: " + definition.name().value());
         }
@@ -229,6 +232,7 @@ public final class ToolPipeline {
         journal.recordIntent(run.id(), request.idempotencyKey());
         call.start(time.now());
         state.appendToolCall(call);
+        appendToolEvent(run, call, "tool.started", "STARTED", "NONE", "");
         PolicyDecision dispatchDecision = effectiveDecision;
         trace.record(new RuntimeTraceEvent(
                 ids.nextValue(),
@@ -270,6 +274,7 @@ public final class ToolPipeline {
             journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
             return new ToolPipelineOutcome.Completed(persistResult(run, call, request, rawResult));
         } catch (CancellationObservedException cancelled) {
+            appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "RUN_CANCELLED", "");
             throw cancelled;
         } catch (RuntimeException exception) {
             if (exception instanceof io.haifa.agent.tool.api.ToolInvocationException invocationFailure) {
@@ -287,8 +292,10 @@ public final class ToolPipeline {
                     journal.state(run.id(), request.idempotencyKey()).orElse(ToolJournalState.INTENT_RECORDED);
             if (journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.DISPATCHED) {
                 journal.recordUncertain(run.id(), request.idempotencyKey());
+                appendToolEvent(run, call, "tool.failed", "FAILED", "OUTCOME_UNKNOWN", "");
             } else {
                 journal.recordFailed(run.id(), request.idempotencyKey());
+                appendToolEvent(run, call, "tool.failed", "FAILED", "INVOCATION_FAILED", "");
             }
             throw exception;
         }
@@ -529,15 +536,14 @@ public final class ToolPipeline {
         }
         state.appendToolCall(call);
         journal.recordCompleted(run.id(), request.idempotencyKey(), result);
-        events.append(
-                run.id(),
-                result.successful() ? "tool.completed" : "tool.business-failed",
-                java.util.Map.of(
-                        "toolCallId", call.id().value(),
-                        "toolName", definition.name().value(),
-                        "providerId", binding.coordinate().providerId().value(),
-                        "definitionHash", binding.coordinate().definitionHash().value()),
-                time.now());
+        appendToolEvent(
+                run,
+                call,
+                result.successful() ? "tool.succeeded" : "tool.failed",
+                result.successful() ? "SUCCEEDED" : "FAILED",
+                result.successful() ? "NONE" : "TOOL_BUSINESS_FAILURE",
+                result.assets().isEmpty() ? "" : result.assets().getFirst().assetId());
+        appendExecutionAndResourceEvents(run, call, result);
         trace.record(new RuntimeTraceEvent(
                 ids.nextValue(),
                 run.id(),
@@ -555,6 +561,97 @@ public final class ToolPipeline {
                         "externalized", largeResultPolicy.requiresExternalization(rawResult)),
                 time.now()));
         return result;
+    }
+
+    private void appendToolEvent(
+            AgentRun run, ToolCall call, String type, String status, String reasonCode, String resultRef) {
+        events.append(
+                run.id(),
+                type,
+                java.util.Map.of(
+                        "toolCallId",
+                        call.id().value(),
+                        "displayName",
+                        call.toolName(),
+                        "status",
+                        status,
+                        "reasonCode",
+                        reasonCode,
+                        "targetSummary",
+                        call.toolName(),
+                        "resultRef",
+                        resultRef),
+                time.now());
+    }
+
+    private void appendExecutionAndResourceEvents(AgentRun run, ToolCall call, ToolResult result) {
+        if ("execution.run".equals(call.toolName())) {
+            Map<String, Object> data = result.structuredData();
+            Object executionId = data.get("executionId");
+            Object status = data.get("status");
+            if (executionId instanceof String id && status instanceof String lifecycle) {
+                var event = new java.util.LinkedHashMap<String, Object>();
+                event.put("executionId", id);
+                event.put("toolCallId", call.id().value());
+                event.put("status", lifecycle);
+                event.put("commandSummary", "shell command");
+                event.put("logicalWorkdir", safeText(call.arguments().values().get("workdir"), "."));
+                event.put("streamKind", "MERGED");
+                event.put(
+                        "chunkOrRef",
+                        boundedText(data.get("outputRef") != null ? data.get("outputRef") : data.get("output"), 4096));
+                event.put("truncated", Boolean.TRUE.equals(data.get("truncated")));
+                if (data.get("exitCode") instanceof Number exitCode) event.put("exitCode", exitCode.intValue());
+                if (data.get("fileChangeSetId") instanceof String changeSet) {
+                    event.put("fileChangeSetRef", changeSet);
+                }
+                events.append(
+                        run.id(),
+                        switch (lifecycle) {
+                            case "CANCELLED" -> "execution.cancelled";
+                            case "SUCCEEDED" -> "execution.completed";
+                            default -> "execution.failed";
+                        },
+                        Map.copyOf(event),
+                        time.now());
+                if (data.get("fileChangeSetId") instanceof String changeSet) {
+                    appendResource(run, changeSet, "workspace-change-set", "Workspace changes", "AVAILABLE");
+                }
+            }
+        }
+        result.artifacts()
+                .forEach(reference ->
+                        appendResource(run, reference.artifactId(), "artifact", "Published artifact", "AVAILABLE"));
+    }
+
+    private void appendResource(AgentRun run, String reference, String kind, String title, String status) {
+        events.append(
+                run.id(),
+                kind.equals("artifact") ? "artifact.available" : "workspace.change-set.available",
+                Map.of(
+                        "reference", reference,
+                        "kind", kind,
+                        "title", title,
+                        "status", status,
+                        "action", "inspect"),
+                time.now());
+    }
+
+    private static String safeText(Object value, String fallback) {
+        return value instanceof String text && !text.isBlank() ? boundedText(text, 512) : fallback;
+    }
+
+    private static String boundedText(Object value, int maximum) {
+        if (!(value instanceof String text)) return "";
+        StringBuilder safe = new StringBuilder(Math.min(text.length(), maximum));
+        text.codePoints()
+                .filter(codePoint -> codePoint == '\n'
+                        || codePoint == '\r'
+                        || codePoint == '\t'
+                        || !Character.isISOControl(codePoint))
+                .limit(maximum)
+                .forEach(safe::appendCodePoint);
+        return safe.toString();
     }
 
     private io.haifa.agent.core.reference.AssetRef putResultAssetWithOnePersistenceRetry(

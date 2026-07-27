@@ -12,6 +12,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.store.sqlite.SqliteRuntimeUnitOfWork;
 import java.time.Instant;
@@ -240,6 +241,14 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
     }
 
     @Override
+    public List<CodingFollowUp> listRestorableFollowUps(AgentSessionId sessionId, int limit) {
+        if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be between 1 and 100");
+        return unitOfWork.execute(() -> mapper().listRestorableFollowUps(sessionId.value(), limit).stream()
+                .map(this::followUp)
+                .toList());
+    }
+
+    @Override
     public Optional<CodingDispatchClaim> claimNextForDispatch(
             AgentSessionId sessionId, long expectedActivityRevision, Instant updatedAt) {
         return unitOfWork.execute(() -> {
@@ -309,6 +318,32 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
         return unitOfWork.execute(() -> mapper().queuedCount(sessionId.value()));
     }
 
+    @Override
+    public Optional<RunEventCursor> findEventCursor(AgentSessionId sessionId) {
+        return unitOfWork.execute(() -> Optional.ofNullable(mapper().findEventCursor(sessionId.value()))
+                .map(SqliteCodingSessionStore::eventCursor));
+    }
+
+    @Override
+    public RunEventCursor saveEventCursor(AgentSessionId sessionId, RunEventCursor cursor, Instant updatedAt) {
+        if (cursor.exclusiveSequence().isEmpty()) {
+            throw new IllegalArgumentException("acknowledged event cursor must contain a sequence");
+        }
+        return unitOfWork.execute(() -> {
+            CodingSessionMapper mapper = mapper();
+            requireActivity(mapper, sessionId);
+            mapper.upsertEventCursor(new CodingSessionEventCursorRow(
+                    sessionId.value(),
+                    cursor.runId().value(),
+                    cursor.feedVersion(),
+                    cursor.exclusiveSequence().orElseThrow(),
+                    updatedAt));
+            return Optional.ofNullable(mapper.findEventCursor(sessionId.value()))
+                    .map(SqliteCodingSessionStore::eventCursor)
+                    .orElseThrow(() -> conflict("event cursor was not persisted"));
+        });
+    }
+
     private CodingSessionMapper mapper() {
         return unitOfWork.mapper(CodingSessionMapper.class);
     }
@@ -375,6 +410,11 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
                 row.createdAt(),
                 row.updatedAt(),
                 row.revision());
+    }
+
+    private static RunEventCursor eventCursor(CodingSessionEventCursorRow row) {
+        return new RunEventCursor(
+                new AgentRunId(row.runId()), row.feedVersion(), OptionalLong.of(row.exclusiveSequence()));
     }
 
     private static CodingSessionActivityRow activityRow(CodingSessionActivity value) {

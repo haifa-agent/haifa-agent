@@ -19,7 +19,11 @@ final class ProjectApplicationMigrations {
             new ApplicationMigration(
                     1_001,
                     "coding_session_product_loop",
-                    "/io/haifa/agent/application/project/persistence/V1001__coding_session_product_loop.sql"));
+                    "/io/haifa/agent/application/project/persistence/V1001__coding_session_product_loop.sql"),
+            new ApplicationMigration(
+                    1_002,
+                    "coding_session_event_cursor",
+                    "/io/haifa/agent/application/project/persistence/V1002__coding_session_event_cursor.sql"));
 
     private ProjectApplicationMigrations() {}
 

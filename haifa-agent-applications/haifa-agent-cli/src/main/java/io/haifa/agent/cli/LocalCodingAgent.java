@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
+import io.haifa.agent.application.project.product.ProjectProductService;
+import io.haifa.agent.application.project.product.TrustedProductCaller;
+import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
+import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
@@ -36,6 +40,12 @@ import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
 import io.haifa.agent.project.changeset.FileChangeSetService;
 import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
+import io.haifa.agent.project.configuration.InMemoryProjectConfigurationStore;
+import io.haifa.agent.project.configuration.ProjectConfiguration;
+import io.haifa.agent.project.configuration.ProjectConfigurationService;
+import io.haifa.agent.project.configuration.ProjectConfigurationVersion;
+import io.haifa.agent.project.domain.Project;
+import io.haifa.agent.project.domain.ProjectConfigurationRef;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.mutation.InMemoryWorkspaceWriteLeaseManager;
 import io.haifa.agent.project.path.ProjectPath;
@@ -44,6 +54,7 @@ import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.provider.local.LocalWorkspaceMutationService;
 import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.quarantine.InMemoryQuarantineStore;
+import io.haifa.agent.project.store.InMemoryProjectStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -77,7 +88,6 @@ import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.io.PrintStream;
 import java.net.http.HttpClient;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -107,6 +117,8 @@ final class LocalCodingAgent implements AutoCloseable {
     private final TenantRef tenant;
     private final PrincipalRef principal;
     private final Clock clock;
+    private final ProjectId projectId;
+    private final CodingSessionService codingSessions;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Set<AgentRunId> startedRuns = ConcurrentHashMap.newKeySet();
 
@@ -120,7 +132,9 @@ final class LocalCodingAgent implements AutoCloseable {
             ProjectPersistenceAssembly persistence,
             TenantRef tenant,
             PrincipalRef principal,
-            Clock clock) {
+            Clock clock,
+            ProjectId projectId,
+            CodingSessionService codingSessions) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
@@ -131,6 +145,8 @@ final class LocalCodingAgent implements AutoCloseable {
         this.tenant = tenant;
         this.principal = principal;
         this.clock = clock;
+        this.projectId = projectId;
+        this.codingSessions = codingSessions;
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
@@ -182,12 +198,8 @@ final class LocalCodingAgent implements AutoCloseable {
             AgentChatModel model,
             Consumer<RuntimeTraceEvent> traceObserver,
             ModelContinuationProtector continuationProtector) {
-        try {
-            workspaceRoot = workspaceRoot.toRealPath();
-        } catch (java.io.IOException exception) {
-            throw new IllegalArgumentException("workspace must exist and be accessible");
-        }
-        if (!Files.isDirectory(workspaceRoot)) throw new IllegalArgumentException("workspace must be a directory");
+        LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
+        workspaceRoot = workspaceIdentity.providerRoot();
 
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = new SystemTimeProvider();
@@ -211,17 +223,21 @@ final class LocalCodingAgent implements AutoCloseable {
                     tenant, principal, Optional.empty(), false, skillDirectories);
             CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
             CliWebPlatform webPlatform = CliWebPlatform.create(configuration.web(), principal);
+            var projects = new InMemoryProjectStore();
             var workspaces = new InMemoryWorkspaceStore();
             var bindings = new InMemoryWorkspaceBindingStore();
             var locations = new LocalWorkspaceLocationStore();
-            WorkspaceId workspaceId = new WorkspaceId(identifiers.nextValue());
-            WorkspaceBindingId bindingId = new WorkspaceBindingId(identifiers.nextValue());
-            WorkspaceLocationRef locationRef = new WorkspaceLocationRef("local:" + identifiers.nextValue());
+            WorkspaceId workspaceId = workspaceIdentity.workspaceId();
+            WorkspaceBindingId bindingId = workspaceIdentity.bindingId();
+            WorkspaceLocationRef locationRef = workspaceIdentity.locationRef();
             locations.register(locationRef, workspaceRoot);
             Set<String> configuredTools = effectiveBuiltInTools(configuration);
             var policy = CodingAgentPolicyAssembly.create(
                     policyMode(configuration.approval()), clock, identifiers::nextValue, persistence.policy());
             boolean executionEnabled = configuredTools.contains("execution.run");
+            Set<String> effectiveCapabilities = executionEnabled
+                    ? Set.of("file.read", "file.write", "execution.run")
+                    : Set.of("file.read", "file.write");
             WorkspaceCapabilitySet workspaceCapabilities = executionEnabled
                     ? new WorkspaceCapabilitySet(java.util.stream.Stream.concat(
                                     WorkspaceCapabilitySet.readWriteFiles().values().stream(),
@@ -237,12 +253,39 @@ final class LocalCodingAgent implements AutoCloseable {
                             principal,
                             workspaceCapabilities,
                             workspacePermissions,
-                            LocalWorkspaceLocationStore.fingerprintFor(workspaceRoot),
+                            workspaceIdentity.rootFingerprint(),
                             time.now())
                     .activate(time.now()));
+            var configurationStore = new InMemoryProjectConfigurationStore();
+            var configurationService = new ProjectConfigurationService(configurationStore);
+            var configurationId = workspaceIdentity.configurationId();
+            var configurationVersion = new ProjectConfigurationVersion("1.0.0");
+            var projectConfiguration = ProjectConfiguration.create(
+                    configurationId,
+                    configurationVersion,
+                    workspaceId,
+                    "cli-coding",
+                    "1.0.0",
+                    effectiveCapabilities,
+                    Set.of("project-index"),
+                    Set.copyOf(configuredTools),
+                    "coding-agent-policy-v1");
+            configurationService.publish(projectConfiguration);
+            ProjectId projectId = workspaceIdentity.projectId();
+            Project project = Project.create(
+                            projectId,
+                            tenant,
+                            principal,
+                            workspaceIdentity.safeDisplayName(),
+                            "Local Coding Agent workspace",
+                            new ProjectConfigurationRef(configurationId.value(), configurationVersion.value()),
+                            time.now(),
+                            Map.of("identityNamespace", "local-workspace-v1"))
+                    .assignDefaultWorkspace(workspaceId, time.now());
+            projects.create(project);
             workspaces.create(Workspace.provision(
                             workspaceId,
-                            new ProjectId("cli-" + identifiers.nextValue()),
+                            projectId,
                             WorkspacePurpose.PRIMARY,
                             new WorkspaceRoot(ProjectPath.root(), bindingId, "local-guarded"),
                             WorkspaceRevision.initial("cli-initial"),
@@ -280,9 +323,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             policy,
                             output)
                     : null;
-            Set<String> effectiveCapabilities = executionEnabled
-                    ? Set.of("file.read", "file.write", "execution.run")
-                    : Set.of("file.read", "file.write");
             var provider = new ProjectToolExecutor(
                     (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
                             workspaceId, effectiveCapabilities),
@@ -385,7 +425,26 @@ final class LocalCodingAgent implements AutoCloseable {
                             modelSnapshot))
                     .build();
             persistence.attachProjection(runtime);
-            return new LocalCodingAgent(
+            TrustedProductCallerProvider callers = () -> new TrustedProductCaller(tenant, principal);
+            var projectProducts = new ProjectProductService(
+                    projects,
+                    workspaces,
+                    configurationService,
+                    persistence.productSessions(),
+                    persistence.projectSessionProvisioner(clock),
+                    callers,
+                    runtime,
+                    identifiers,
+                    DEFINITION_ID);
+            var codingSessions = new CodingSessionService(
+                    projectProducts,
+                    persistence.productSessions(),
+                    persistence.codingSessions(),
+                    callers,
+                    runtime,
+                    identifiers,
+                    clock);
+            var agent = new LocalCodingAgent(
                     identifiers,
                     time,
                     runtime,
@@ -395,7 +454,11 @@ final class LocalCodingAgent implements AutoCloseable {
                     persistence,
                     tenant,
                     principal,
-                    clock);
+                    clock,
+                    projectId,
+                    codingSessions);
+            runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
+            return agent;
         } catch (RuntimeException | Error exception) {
             try {
                 persistence.close();
@@ -426,6 +489,14 @@ final class LocalCodingAgent implements AutoCloseable {
 
     AgentRuntime runtime() {
         return runtime;
+    }
+
+    ProjectId projectId() {
+        return projectId;
+    }
+
+    CodingSessionService codingSessions() {
+        return codingSessions;
     }
 
     void cancel(io.haifa.agent.core.run.AgentRunId runId) {
