@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.haifa.agent.application.project.persistence.CodingSessionMapper">
+
+    <resultMap id="activityRow" type="io.haifa.agent.application.project.persistence.CodingSessionActivityRow">
+        <constructor>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="schema_version" javaType="java.lang.String"/>
+            <arg column="project_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="principal_id" javaType="java.lang.String"/>
+            <arg column="principal_type" javaType="java.lang.String"/>
+            <arg column="display_name" javaType="java.lang.String"/>
+            <arg column="active_run_id" javaType="java.lang.String"/>
+            <arg column="active_run_version" javaType="java.lang.Long"/>
+            <arg column="active_dispatch_key" javaType="java.lang.String"/>
+            <arg column="created_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="last_activity_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revision" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="commandRow" type="io.haifa.agent.application.project.persistence.CodingSessionCommandRow">
+        <constructor>
+            <arg column="caller_scope_digest" javaType="java.lang.String"/>
+            <arg column="operation" javaType="java.lang.String"/>
+            <arg column="idempotency_key_digest" javaType="java.lang.String"/>
+            <arg column="schema_version" javaType="java.lang.String"/>
+            <arg column="request_digest" javaType="java.lang.String"/>
+            <arg column="dispatch_key" javaType="java.lang.String"/>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="project_id" javaType="java.lang.String"/>
+            <arg column="content_nonce" javaType="[B"/>
+            <arg column="content_ciphertext" javaType="[B"/>
+            <arg column="content_digest" javaType="java.lang.String"/>
+            <arg column="run_id" javaType="java.lang.String"/>
+            <arg column="created_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="followUpRow" type="io.haifa.agent.application.project.persistence.CodingFollowUpRow">
+        <constructor>
+            <arg column="follow_up_id" javaType="java.lang.String"/>
+            <arg column="schema_version" javaType="java.lang.String"/>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="bound_run_id" javaType="java.lang.String"/>
+            <arg column="content_nonce" javaType="[B"/>
+            <arg column="content_ciphertext" javaType="[B"/>
+            <arg column="content_digest" javaType="java.lang.String"/>
+            <arg column="idempotency_key_digest" javaType="java.lang.String"/>
+            <arg column="request_digest" javaType="java.lang.String"/>
+            <arg column="dispatch_key" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="sequence_no" javaType="_long"/>
+            <arg column="dispatched_run_id" javaType="java.lang.String"/>
+            <arg column="created_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="updated_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="claimed_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="restored_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revision" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findCommand" resultMap="commandRow">
+        SELECT * FROM coding_session_command
+        WHERE caller_scope_digest = #{callerScopeDigest}
+          AND operation = #{operation}
+          AND idempotency_key_digest = #{idempotencyKeyDigest}
+    </select>
+
+    <select id="findCommandByDispatchKey" resultMap="commandRow">
+        SELECT * FROM coding_session_command WHERE dispatch_key = #{dispatchKey}
+    </select>
+
+    <insert id="insertCommand">
+        INSERT INTO coding_session_command(
+            caller_scope_digest, operation, idempotency_key_digest, schema_version,
+            request_digest, dispatch_key, session_id, project_id, content_nonce,
+            content_ciphertext, content_digest, run_id, created_at_ms
+        ) VALUES (
+            #{row.callerScopeDigest}, #{row.operation}, #{row.idempotencyKeyDigest},
+            #{row.schemaVersion}, #{row.requestDigest}, #{row.dispatchKey}, #{row.sessionId},
+            #{row.projectId}, #{row.contentNonce}, #{row.contentCiphertext}, #{row.contentDigest},
+            #{row.runId}, #{row.createdAt}
+        )
+    </insert>
+
+    <update id="completeCommand">
+        UPDATE coding_session_command SET run_id = #{runId}
+        WHERE dispatch_key = #{dispatchKey} AND run_id IS NULL
+    </update>
+
+    <select id="findActivity" resultMap="activityRow">
+        SELECT * FROM coding_session_activity WHERE session_id = #{sessionId}
+    </select>
+
+    <insert id="insertActivity">
+        INSERT INTO coding_session_activity(
+            session_id, schema_version, project_id, tenant_id, principal_id, principal_type,
+            display_name, active_run_id, active_run_version, active_dispatch_key,
+            created_at_ms, last_activity_at_ms, revision
+        ) VALUES (
+            #{row.sessionId}, #{row.schemaVersion}, #{row.projectId}, #{row.tenantId},
+            #{row.principalId}, #{row.principalType}, #{row.displayName}, #{row.activeRunId},
+            #{row.activeRunVersion}, #{row.activeDispatchKey}, #{row.createdAt},
+            #{row.lastActivityAt}, #{row.revision}
+        )
+    </insert>
+
+    <select id="listActivities" resultMap="activityRow">
+        SELECT * FROM coding_session_activity
+        WHERE tenant_id = #{tenantId}
+          AND principal_id = #{principalId}
+          AND principal_type = #{principalType}
+          AND project_id = #{projectId}
+        <if test="textLike != null">
+          AND lower(display_name) LIKE #{textLike} ESCAPE '\'
+        </if>
+        <if test="afterAt != null">
+          AND (last_activity_at_ms &lt; #{afterAt}
+               OR (last_activity_at_ms = #{afterAt} AND session_id &lt; #{afterSessionId}))
+        </if>
+        ORDER BY last_activity_at_ms DESC, session_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="reserveActive">
+        UPDATE coding_session_activity
+        SET active_dispatch_key = #{dispatchKey}, last_activity_at_ms = #{updatedAt},
+            revision = revision + 1
+        WHERE session_id = #{sessionId} AND revision = #{expectedRevision}
+          AND active_run_id IS NULL AND active_dispatch_key IS NULL
+    </update>
+
+    <update id="activateRun">
+        UPDATE coding_session_activity
+        SET active_run_id = #{runId}, active_run_version = #{runVersion},
+            active_dispatch_key = NULL, last_activity_at_ms = #{updatedAt},
+            revision = revision + 1
+        WHERE session_id = #{sessionId} AND active_dispatch_key = #{dispatchKey}
+          AND active_run_id IS NULL
+    </update>
+
+    <update id="clearActive">
+        UPDATE coding_session_activity
+        SET active_run_id = NULL, active_run_version = NULL, active_dispatch_key = NULL,
+            last_activity_at_ms = #{updatedAt}, revision = revision + 1
+        WHERE session_id = #{sessionId} AND active_run_id = #{runId}
+          AND revision = #{expectedRevision}
+    </update>
+
+    <select id="findFollowUp" resultMap="followUpRow">
+        SELECT * FROM coding_follow_up WHERE follow_up_id = #{followUpId}
+    </select>
+
+    <select id="findFollowUpByDispatchKey" resultMap="followUpRow">
+        SELECT * FROM coding_follow_up WHERE dispatch_key = #{dispatchKey}
+    </select>
+
+    <select id="findFollowUpByIdempotency" resultMap="followUpRow">
+        SELECT * FROM coding_follow_up
+        WHERE session_id = #{sessionId} AND idempotency_key_digest = #{idempotencyKeyDigest}
+    </select>
+
+    <select id="findDispatchableFollowUp" resultMap="followUpRow">
+        SELECT * FROM coding_follow_up
+        WHERE session_id = #{sessionId} AND status IN ('PENDING', 'CLAIMED')
+        ORDER BY sequence_no LIMIT 1
+    </select>
+
+    <select id="nextFollowUpSequence" resultType="_long">
+        SELECT COALESCE(MAX(sequence_no), 0) + 1
+        FROM coding_follow_up WHERE session_id = #{sessionId}
+    </select>
+
+    <insert id="insertFollowUp">
+        INSERT INTO coding_follow_up(
+            follow_up_id, schema_version, session_id, bound_run_id, content_nonce,
+            content_ciphertext, content_digest, idempotency_key_digest, request_digest,
+            dispatch_key, status, sequence_no, dispatched_run_id, created_at_ms,
+            updated_at_ms, claimed_at_ms, restored_at_ms, revision
+        ) VALUES (
+            #{row.followUpId}, #{row.schemaVersion}, #{row.sessionId}, #{row.boundRunId},
+            #{row.contentNonce}, #{row.contentCiphertext}, #{row.contentDigest},
+            #{row.idempotencyKeyDigest}, #{row.requestDigest}, #{row.dispatchKey}, #{row.status},
+            #{row.sequence}, #{row.dispatchedRunId}, #{row.createdAt}, #{row.updatedAt},
+            #{row.claimedAt}, #{row.restoredAt}, #{row.revision}
+        )
+    </insert>
+
+    <update id="claimFollowUp">
+        UPDATE coding_follow_up
+        SET status = 'CLAIMED', claimed_at_ms = #{updatedAt}, updated_at_ms = #{updatedAt},
+            revision = revision + 1
+        WHERE follow_up_id = #{followUpId} AND status = 'PENDING'
+          AND revision = #{expectedRevision}
+    </update>
+
+    <update id="markFollowUpDispatched">
+        UPDATE coding_follow_up
+        SET status = 'DISPATCHED', dispatched_run_id = #{runId},
+            updated_at_ms = #{updatedAt}, revision = revision + 1
+        WHERE follow_up_id = #{followUpId} AND status = 'CLAIMED'
+          AND revision = #{expectedRevision}
+    </update>
+
+    <update id="restoreFollowUp">
+        UPDATE coding_follow_up
+        SET status = 'RESTORED', restored_at_ms = #{updatedAt}, updated_at_ms = #{updatedAt},
+            revision = revision + 1
+        WHERE follow_up_id = #{followUpId} AND status = 'PENDING'
+          AND revision = #{expectedRevision}
+    </update>
+
+    <select id="queuedCount" resultType="_int">
+        SELECT COUNT(*) FROM coding_follow_up
+        WHERE session_id = #{sessionId} AND status IN ('PENDING', 'CLAIMED')
+    </select>
+</mapper>

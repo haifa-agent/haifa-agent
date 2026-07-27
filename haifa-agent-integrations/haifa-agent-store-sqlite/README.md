@@ -45,7 +45,9 @@ worker ID 驱动。
 ## 初始化与所有权
 
 调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成纯 Runtime 初始化；拥有额外
-Schema 的 Application 使用三参数重载，在一次校验中传入包含 Runtime V1～V4 原文的完整 Migration 集合：
+Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V4 原文的完整 Migration 集合，
+并可传入由 Application 自己拥有的静态 `MapperXml`。附加 Mapper 与内建 Mapper 使用相同的
+namespace/statement 唯一性、`${}` 禁止和启动期解析校验：
 
 1. 打开受控 JDBC Connection，设置并验证 WAL；
 2. 在每个 Connection 上设置并验证 `foreign_keys=ON` 与 `busy_timeout`；

@@ -90,7 +90,7 @@
                                 <bannedDependencies>
                                     <excludes>
                                         <exclude>io.haifa:haifa-agent-runtime-core</exclude>
-                                        <exclude>io.haifa:haifa-agent-project-application</exclude>
+                                        <exclude>io.haifa:haifa-agent-coding-agent</exclude>
                                         <exclude>io.modelcontextprotocol.sdk:mcp-json-jackson3</exclude>
                                         <exclude>org.springframework:*</exclude>
                                         <exclude>org.springframework.boot:*</exclude>

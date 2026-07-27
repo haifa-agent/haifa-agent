@@ -11,6 +11,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
@@ -41,12 +42,14 @@ public final class SqliteMyBatisSessionFactory {
     private final SqlSessionFactory sessions;
 
     public SqliteMyBatisSessionFactory(int maximumPayloadBytes) {
-        this(
-                maximumPayloadBytes,
-                List.of(
-                        loadMapper(MIGRATION_MAPPER_RESOURCE),
-                        loadMapper(RUNTIME_STORE_MAPPER_RESOURCE),
-                        loadMapper(POLICY_STORE_MAPPER_RESOURCE)));
+        this(maximumPayloadBytes, defaultMappers());
+    }
+
+    public static SqliteMyBatisSessionFactory withAdditionalMappers(
+            int maximumPayloadBytes, List<MapperXml> additionalMappers) {
+        var mappers = new ArrayList<>(defaultMappers());
+        mappers.addAll(List.copyOf(Objects.requireNonNull(additionalMappers, "additionalMappers must not be null")));
+        return new SqliteMyBatisSessionFactory(maximumPayloadBytes, mappers);
     }
 
     public SqliteMyBatisSessionFactory(int maximumPayloadBytes, List<MapperXml> mapperResources) {
@@ -123,6 +126,13 @@ public final class SqliteMyBatisSessionFactory {
         } catch (IOException exception) {
             throw mapperFailure("Unable to read bundled MyBatis mapper", exception);
         }
+    }
+
+    private static List<MapperXml> defaultMappers() {
+        return List.of(
+                loadMapper(MIGRATION_MAPPER_RESOURCE),
+                loadMapper(RUNTIME_STORE_MAPPER_RESOURCE),
+                loadMapper(POLICY_STORE_MAPPER_RESOURCE));
     }
 
     private static SqliteStoreException mapperFailure(String message, Throwable cause) {

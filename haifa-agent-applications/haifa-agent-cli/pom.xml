@@ -25,7 +25,7 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-credential-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-credential-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-mcp</artifactId></dependency>
-        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-project-application</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-coding-agent</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sandbox-host</artifactId></dependency>

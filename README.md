@@ -19,7 +19,7 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - 纯 Java Policy API/Core，支持请求绑定决策、`DENY > ASK > ALLOW`、受限 Approval Grant、
   Project Trust、产品验证 SPI 和内存 Store；Runtime Tool、Project CLI 与 ExecutionBroker 已共享
   同一公共 Decision 语义和内存 Approval evidence；
-- Project Application 和 Coding Agent CLI，可显式选择 `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
+- Coding Agent 产品模块和 CLI，可显式选择 `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
 
 尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy/Approval/Grant/Trust 的 SQLite 持久化与重启恢复、分布式 Store/Lease、生产 KMS/Vault、容器或 microVM Sandbox。
 
@@ -66,7 +66,7 @@ haifa-agent-integrations/
   haifa-agent-store-jsonl/
   haifa-agent-transport-http/
 haifa-agent-applications/
-  haifa-agent-project-application/
+  haifa-agent-coding-agent/
   haifa-agent-cli/
 haifa-agent-testing/
   haifa-agent-testkit/
