@@ -19,7 +19,8 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - 纯 Java Policy API/Core，支持请求绑定决策、`DENY > ASK > ALLOW`、受限 Approval Grant、
   Project Trust、产品验证 SPI 和内存 Store；Runtime Tool、Project CLI 与 ExecutionBroker 已共享
   同一公共 Decision 语义和内存 Approval evidence；
-- Coding Agent 产品模块和 CLI，可显式选择 `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
+- Coding Agent 产品模块、严格映射评审原型的 JLine Terminal 与唯一可执行 CLI；CLI 支持交互
+  Terminal、兼容的 one-shot 模式，并可显式选择 `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
 
 尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy/Approval/Grant/Trust 的 SQLite 持久化与重启恢复、分布式 Store/Lease、生产 KMS/Vault、容器或 microVM Sandbox。
 
@@ -67,6 +68,7 @@ haifa-agent-integrations/
   haifa-agent-transport-http/
 haifa-agent-applications/
   haifa-agent-coding-agent/
+  haifa-agent-coding-terminal/
   haifa-agent-cli/
 haifa-agent-testing/
   haifa-agent-testkit/
@@ -119,7 +121,7 @@ flowchart LR
   OAI[model-openai-compatible] --> MAPI
   SQLITE[store-sqlite] --> RCORE
   JSONL[store-jsonl] --> RCORE
-  PAPP[project-application + built-in Web Tool] --> RCORE
+  PAPP[coding-agent + built-in Web Tool] --> RCORE
   PAPP --> SQLITE
   PAPP --> JSONL
   PAPP --> PROJECT
@@ -127,7 +129,10 @@ flowchart LR
   PAPP --> CCORE
   PAPP --> SKCORE
   PAPP --> SKBASE
-  CLI[cli] --> PAPP
+  TERM[coding-terminal] --> PAPP
+  TERM --> RAPI
+  CLI[cli] --> TERM
+  CLI --> PAPP
   CLI --> MCP
   CLI --> SHOST
   CLI --> SLOCAL
@@ -160,7 +165,7 @@ flowchart LR
 - Definition/Profile 允许的 Skill 在 Run 创建时冻结为精确内容摘要；模型先看到元数据摘要，只有通过统一 Tool Pipeline 激活后才注入 `SKILL` 层内容；
 - Skill 是不可信的方法与资源包，不扩大冻结 Tool 集，不直接执行脚本、读取凭据或访问网络；
 - CLI 可从可信配置装配绝对路径的本地用户 Skill 目录，但目录内容仍须经过解析门禁和显式 alias allowlist；
-- CLI 的通用一次性命令默认冻结为 `local-native + network deny`；Provider 或平台 Adapter
+- CLI 的 Terminal 与 one-shot 命令复用同一生产装配；默认冻结为 `local-native + network deny`。Provider 或平台 Adapter
   不可用时 fail closed，不会回退 Host。Windows 当前需要用户对可信 Workspace 显式选择
   `host-guarded + network allow`。
 - Local Native 只声明已预检的 Workspace 文件策略、网络关闭和进程树收敛；它仍共享宿主
@@ -175,6 +180,10 @@ Windows PowerShell：
 .\mvnw.cmd test
 .\mvnw.cmd -pl :haifa-agent-runtime-core -am test
 .\mvnw.cmd --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+
+# 唯一可执行制品；无 -m 时默认启动 JLine Terminal
+.\mvnw.cmd -pl :haifa-agent-cli -am package
+java -jar .\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar --help
 ```
 
 普通开发与 CI 不运行真实模型、外部 MCP 或 Web Provider 服务。DeepSeek 与 Web Live Test 都必须使用各自的显式开关和独立凭据，访问外部服务并可能产生费用。

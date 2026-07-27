@@ -281,6 +281,37 @@ public final class CodingSessionService {
                 restored.revision());
     }
 
+    public List<CodingQueuedMessage> listRestorableMessages(AgentSessionId sessionId, int limit) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(sessionId, caller);
+        requireActivity(sessionId, caller);
+        if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be between 1 and 100");
+        return codingSessions.listRestorableFollowUps(sessionId, limit).stream()
+                .map(value -> new CodingQueuedMessage(
+                        value.followUpId(),
+                        value.sessionId(),
+                        displayName(value.message()),
+                        value.sequence(),
+                        value.revision()))
+                .toList();
+    }
+
+    public RunEventCursor acknowledgeEventCursor(AgentSessionId sessionId, RunEventCursor cursor) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(sessionId, caller);
+        CodingSessionActivity activity = requireActivity(sessionId, caller);
+        if (activity.activeRunId().isPresent()
+                && activity.activeRunId().filter(cursor.runId()::equals).isEmpty()) {
+            throw conflict("EVENT_CURSOR_RUN_MISMATCH", "Event cursor is unavailable");
+        }
+        if (runtime.view(cursor.runId())
+                .filter(view -> view.sessionId().equals(sessionId))
+                .isEmpty()) {
+            throw conflict("EVENT_CURSOR_RUN_MISMATCH", "Event cursor is unavailable");
+        }
+        return codingSessions.saveEventCursor(sessionId, cursor, clock.instant());
+    }
+
     public RuntimeCommandResult abortActiveRun(AgentSessionId sessionId, String idempotencyKey) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
@@ -372,7 +403,9 @@ public final class CodingSessionService {
         Optional<AgentRunSnapshot> active = activity.activeRunId().flatMap(runtime::find);
         Optional<io.haifa.agent.runtime.api.InteractionView> interaction =
                 active.flatMap(value -> pendingInteraction(value.runId()));
-        Optional<RunEventCursor> cursor = active.flatMap(value -> headCursor(value.runId()));
+        Optional<RunEventCursor> cursor = active.flatMap(
+                value -> codingSessions.findEventCursor(activity.sessionId()).filter(stored -> stored.runId()
+                        .equals(value.runId())));
         return new CodingSessionView(
                 summary, active, interaction, cursor, product.configurationDigest(), product.productProfileRef());
     }
@@ -393,15 +426,6 @@ public final class CodingSessionService {
     private Optional<io.haifa.agent.runtime.api.InteractionView> pendingInteraction(AgentRunId runId) {
         try {
             return runtime.pendingInteraction(runId);
-        } catch (UnsupportedOperationException ignored) {
-            return Optional.empty();
-        }
-    }
-
-    private Optional<RunEventCursor> headCursor(AgentRunId runId) {
-        try {
-            return Optional.of(
-                    runtime.events(runId, RunEventCursor.beforeFirst(runId), 1).headCursor());
         } catch (UnsupportedOperationException ignored) {
             return Optional.empty();
         }

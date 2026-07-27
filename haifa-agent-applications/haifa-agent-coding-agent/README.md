@@ -28,7 +28,8 @@ Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Po
 
 SQLite 模式要求数据库文件绝对路径和 `env://` 形式的稳定 continuation protector 引用；JSONL 模式还要求
 已存在、可写、非符号链接的受控绝对目录。Application 在一次 checksum 校验中组合 Runtime Migration 与自己
-拥有的 `V1000 project_product_session`、`V1001 coding_session_*` Migration，不修改 Runtime Schema。每次进程启动生成新的 worker ID，
+拥有的 `V1000 project_product_session`、`V1001 coding_session_*` 与
+`V1002 coding_session_event_cursor` Migration，不修改 Runtime Schema。每次进程启动生成新的 worker ID，
 并把完整 `RuntimePersistencePorts`、worker ID 和仅针对安全 `SQLITE_BUSY/LOCKED` 获取失败的有界重试策略
 注入 `RuntimeCoreBuilder`。
 
@@ -44,7 +45,7 @@ Application 自有的 Product/Coding 表通过 MyBatis Mapper XML 接入
 ## Coding Session 产品闭环
 
 `CodingSessionService` 是 Coding Agent 的产品 façade，提供 Session 创建、稳定分页列表、打开、
-新 Turn、活动 Run steer、持久 Follow-up、恢复编辑和取消活动 Run。`CodingSessionId` 与
+新 Turn、活动 Run steer、持久 Follow-up、恢复编辑、已消费事件 Cursor 确认和取消活动 Run。`CodingSessionId` 与
 `AgentSessionId` 一对一；Run 生命周期仍以 Runtime Snapshot 为权威，产品表只保存活动 Run/dispatch
 引用、观察版本、稳定显示名、队列计数所需事实和 revision。
 
@@ -54,7 +55,9 @@ reconciliation 使用同一 key 收敛到同一 Run。SQLite 中尚未投递的�
 protector 加密并校验 digest，不进入 JSONL 或普通日志。`MEMORY` 与 `SQLITE` 通过同一
 `CodingSessionStore` 端口提供相同行为。
 
-Phase 1 不包含 JLine、Terminal UI、富 Tool 事件、Session Tree、PTY 或模型登录/目录。
+JLine Terminal UI 与富 Tool/Execution/Resource 客户端事件已进入独立
+`haifa-agent-coding-terminal` 模块，避免产品 façade 依赖终端实现。Session Tree、PTY、模型登录/目录
+仍未实现。
 
 `ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`git.inspect/status/diff` 与 `execution.run` 共 14 个能力注册到唯一 Tool Catalog。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
 `execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，

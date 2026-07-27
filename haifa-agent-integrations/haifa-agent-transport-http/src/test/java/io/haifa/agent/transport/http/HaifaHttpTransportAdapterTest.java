@@ -82,7 +82,7 @@ class HaifaHttpTransportAdapterTest {
         assertThat(started.status()).isEqualTo(202);
         assertThat(started.bodyUtf8()).contains("\"runId\":\"run-http-1\"").contains("\"baselineCursor\":\"opaque-");
         assertThat(queried.status()).isEqualTo(200);
-        assertThat(events.status()).isEqualTo(200);
+        assertThat(events.status()).withFailMessage(events.bodyUtf8()).isEqualTo(200);
         assertThat(events.bodyUtf8()).contains("\"eventType\":\"run.accepted\"").contains("\"cursor\":\"opaque-");
         assertThat(authorized).containsExactly(RunOperation.START, RunOperation.QUERY, RunOperation.READ_EVENTS);
         assertThat(scopedCalls.get()).isGreaterThanOrEqualTo(5);

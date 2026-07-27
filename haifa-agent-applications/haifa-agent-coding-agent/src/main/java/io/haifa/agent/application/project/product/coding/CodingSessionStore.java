@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.RunEventCursor;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -38,6 +39,8 @@ public interface CodingSessionStore {
 
     Optional<CodingFollowUp> findFollowUpByDispatchKey(String dispatchKey);
 
+    List<CodingFollowUp> listRestorableFollowUps(AgentSessionId sessionId, int limit);
+
     Optional<CodingDispatchClaim> claimNextForDispatch(
             AgentSessionId sessionId, long expectedActivityRevision, Instant updatedAt);
 
@@ -46,4 +49,8 @@ public interface CodingSessionStore {
     CodingFollowUp restore(String followUpId, long expectedRevision, Instant updatedAt);
 
     int queuedCount(AgentSessionId sessionId);
+
+    Optional<RunEventCursor> findEventCursor(AgentSessionId sessionId);
+
+    RunEventCursor saveEventCursor(AgentSessionId sessionId, RunEventCursor cursor, Instant updatedAt);
 }

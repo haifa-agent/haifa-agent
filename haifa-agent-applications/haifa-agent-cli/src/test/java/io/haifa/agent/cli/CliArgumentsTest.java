@@ -33,7 +33,16 @@ class CliArgumentsTest {
         assertThat(values.timeout()).contains(Duration.ofMinutes(2));
         assertThat(values.trace()).contains(CliTraceMode.JSONL);
         assertThat(values.traceFile()).contains(Path.of("logs", "trace.jsonl"));
+        assertThat(values.terminal()).isFalse();
         assertThat(values.verbose()).isTrue();
+    }
+
+    @Test
+    void selectsTerminalExplicitlyOrByMissingMessageAndRejectsModeConflict() {
+        assertThat(CliArguments.parse(new String[] {"--terminal"}).terminal()).isTrue();
+        assertThat(CliArguments.parse(new String[0]).message()).isEmpty();
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"--terminal", "-m", "task"}))
+                .hasMessageContaining("--terminal cannot be used with -m/--message");
     }
 
     @Test

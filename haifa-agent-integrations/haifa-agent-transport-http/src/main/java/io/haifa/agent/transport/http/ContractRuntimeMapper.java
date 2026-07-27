@@ -237,6 +237,32 @@ public final class ContractRuntimeMapper {
         if (payload instanceof RunEventPayloads.CommandResult value) {
             return new RunEventPayload.CommandResult(value.commandId(), value.commandType(), value.status());
         }
+        if (payload instanceof RunEventPayloads.ToolLifecycle value) {
+            return new RunEventPayload.ToolLifecycle(
+                    value.toolCallId(),
+                    value.displayName(),
+                    value.status(),
+                    value.reasonCode(),
+                    value.targetSummary(),
+                    value.resultRef());
+        }
+        if (payload instanceof RunEventPayloads.ExecutionLifecycle value) {
+            return new RunEventPayload.ExecutionLifecycle(
+                    value.executionId(),
+                    value.toolCallId(),
+                    value.status(),
+                    value.commandSummary(),
+                    value.logicalWorkdir(),
+                    value.streamKind(),
+                    value.chunkOrRef(),
+                    value.exitCode(),
+                    value.truncated(),
+                    value.fileChangeSetRef());
+        }
+        if (payload instanceof RunEventPayloads.ResourceAvailable value) {
+            return new RunEventPayload.ResourceAvailable(
+                    value.reference(), value.kind(), value.title(), value.status(), value.action());
+        }
         throw new IllegalArgumentException("unsupported public event payload");
     }
 

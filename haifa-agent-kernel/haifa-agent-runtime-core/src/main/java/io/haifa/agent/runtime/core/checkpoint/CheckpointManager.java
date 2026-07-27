@@ -8,6 +8,7 @@ import io.haifa.agent.core.checkpoint.CheckpointType;
 import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.runtime.core.storage.CheckpointRepository;
+import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.List;
 import java.util.Objects;
@@ -23,6 +24,7 @@ public final class CheckpointManager {
     private final MemoryCheckpointValidator memoryValidator;
     private final CapabilityCheckpointRegistry capabilityCheckpoints;
     private final TimeProvider time;
+    private final RuntimeEventAppender events;
 
     public CheckpointManager(
             CheckpointRepository repository,
@@ -41,7 +43,8 @@ public final class CheckpointManager {
                 summaries,
                 memoryValidator,
                 CapabilityCheckpointRegistry.empty(),
-                new SystemTimeProvider());
+                new SystemTimeProvider(),
+                null);
     }
 
     public CheckpointManager(
@@ -62,7 +65,8 @@ public final class CheckpointManager {
                 summaries,
                 memoryValidator,
                 capabilityCheckpoints,
-                new SystemTimeProvider());
+                new SystemTimeProvider(),
+                null);
     }
 
     public CheckpointManager(
@@ -75,6 +79,30 @@ public final class CheckpointManager {
             MemoryCheckpointValidator memoryValidator,
             CapabilityCheckpointRegistry capabilityCheckpoints,
             TimeProvider time) {
+        this(
+                repository,
+                policy,
+                snapshotBuilder,
+                selections,
+                state,
+                summaries,
+                memoryValidator,
+                capabilityCheckpoints,
+                time,
+                null);
+    }
+
+    public CheckpointManager(
+            CheckpointRepository repository,
+            CheckpointPolicy policy,
+            CheckpointSnapshotBuilder snapshotBuilder,
+            ResumeCheckpointSelector selections,
+            RuntimeStateRepository state,
+            ConversationSummaryRepository summaries,
+            MemoryCheckpointValidator memoryValidator,
+            CapabilityCheckpointRegistry capabilityCheckpoints,
+            TimeProvider time,
+            RuntimeEventAppender events) {
         this.repository = Objects.requireNonNull(repository);
         this.policy = Objects.requireNonNull(policy);
         this.snapshotBuilder = Objects.requireNonNull(snapshotBuilder);
@@ -84,6 +112,7 @@ public final class CheckpointManager {
         this.memoryValidator = Objects.requireNonNull(memoryValidator);
         this.capabilityCheckpoints = Objects.requireNonNull(capabilityCheckpoints);
         this.time = Objects.requireNonNull(time);
+        this.events = events;
     }
 
     public Optional<Checkpoint> capture(
@@ -97,6 +126,18 @@ public final class CheckpointManager {
         var snapshot = snapshotBuilder.build(
                 run, completedIteration, fingerprints, forcedContextRebuildAttempts, type, sequence);
         repository.append(snapshot.checkpoint(), snapshot.state());
+        if (events != null) {
+            events.append(
+                    run.id(),
+                    "checkpoint.available",
+                    java.util.Map.of(
+                            "reference", snapshot.checkpoint().id().value(),
+                            "kind", "checkpoint",
+                            "title", "Checkpoint " + sequence,
+                            "status", "AVAILABLE",
+                            "action", "resume"),
+                    time.now());
+        }
         return Optional.of(snapshot.checkpoint());
     }
 

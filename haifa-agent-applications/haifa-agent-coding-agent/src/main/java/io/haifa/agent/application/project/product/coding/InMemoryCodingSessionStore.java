@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.RunEventCursor;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -17,6 +18,7 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
     private final Map<String, CodingCommandBinding> commands = new LinkedHashMap<>();
     private final Map<AgentSessionId, CodingSessionActivity> activities = new LinkedHashMap<>();
     private final Map<String, CodingFollowUp> followUps = new LinkedHashMap<>();
+    private final Map<AgentSessionId, RunEventCursor> eventCursors = new LinkedHashMap<>();
 
     @Override
     public synchronized CodingCommandBinding reserveCommand(CodingCommandBinding candidate) {
@@ -214,6 +216,16 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
     }
 
     @Override
+    public synchronized List<CodingFollowUp> listRestorableFollowUps(AgentSessionId sessionId, int limit) {
+        if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be between 1 and 100");
+        return followUps.values().stream()
+                .filter(value -> value.sessionId().equals(sessionId) && value.status() == CodingFollowUpStatus.PENDING)
+                .sorted(Comparator.comparingLong(CodingFollowUp::sequence))
+                .limit(limit)
+                .toList();
+    }
+
+    @Override
     public synchronized Optional<CodingDispatchClaim> claimNextForDispatch(
             AgentSessionId sessionId, long expectedActivityRevision, Instant updatedAt) {
         CodingSessionActivity activity = requireActivity(sessionId);
@@ -313,6 +325,30 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
                         && (value.status() == CodingFollowUpStatus.PENDING
                                 || value.status() == CodingFollowUpStatus.CLAIMED))
                 .count());
+    }
+
+    @Override
+    public synchronized Optional<RunEventCursor> findEventCursor(AgentSessionId sessionId) {
+        return Optional.ofNullable(eventCursors.get(sessionId));
+    }
+
+    @Override
+    public synchronized RunEventCursor saveEventCursor(
+            AgentSessionId sessionId, RunEventCursor cursor, Instant updatedAt) {
+        requireActivity(sessionId);
+        if (cursor.exclusiveSequence().isEmpty()) {
+            throw new IllegalArgumentException("acknowledged event cursor must contain a sequence");
+        }
+        RunEventCursor current = eventCursors.get(sessionId);
+        if (current != null
+                && current.runId().equals(cursor.runId())
+                && current.feedVersion().equals(cursor.feedVersion())
+                && current.exclusiveSequence().orElseThrow()
+                        >= cursor.exclusiveSequence().orElseThrow()) {
+            return current;
+        }
+        eventCursors.put(sessionId, cursor);
+        return cursor;
     }
 
     private CodingSessionActivity requireActivity(AgentSessionId sessionId) {

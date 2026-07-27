@@ -40,6 +40,7 @@
         <mcp.sdk.version>2.0.0</mcp.sdk.version>
         <mybatis.version>3.5.19</mybatis.version>
         <sqlite.jdbc.version>3.53.1.0</sqlite.jdbc.version>
+        <jline.version>3.30.0</jline.version>
 
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.3</maven.surefire.plugin.version>
@@ -127,6 +128,31 @@
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-coding-agent</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-coding-terminal</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jline</groupId>
+                <artifactId>jline-terminal</artifactId>
+                <version>${jline.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jline</groupId>
+                <artifactId>jline-reader</artifactId>
+                <version>${jline.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jline</groupId>
+                <artifactId>jline-style</artifactId>
+                <version>${jline.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jline</groupId>
+                <artifactId>jline-terminal-jni</artifactId>
+                <version>${jline.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>

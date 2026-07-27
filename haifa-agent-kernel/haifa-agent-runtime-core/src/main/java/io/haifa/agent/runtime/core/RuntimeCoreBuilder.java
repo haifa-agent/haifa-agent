@@ -543,7 +543,8 @@ public final class RuntimeCoreBuilder {
                 summaries,
                 new MemoryCheckpointValidator(configuredMemoryRetriever, configuredMemoryAudit, time),
                 capabilityCheckpointRegistry,
-                time);
+                time,
+                events);
         DecisionExecutor decisionExecutor = new DecisionExecutor(
                 pipeline,
                 completion,

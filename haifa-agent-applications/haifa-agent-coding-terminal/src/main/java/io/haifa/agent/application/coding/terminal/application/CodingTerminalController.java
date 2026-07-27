@@ -1,0 +1,368 @@
+package io.haifa.agent.application.coding.terminal.application;
+
+import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
+import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.coding.terminal.jline.TerminalInput;
+import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
+import io.haifa.agent.application.coding.terminal.state.PendingMessage;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
+import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
+import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
+import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.InteractionAction;
+import io.haifa.agent.runtime.api.InteractionView;
+import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.RunEventSubscription;
+import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
+
+/** Single-threaded application controller. Runtime callbacks only enqueue actions. */
+public final class CodingTerminalController implements AutoCloseable {
+    private static final int PAGE_SIZE = 200;
+
+    private final ProjectId projectId;
+    private final CodingSessionClient client;
+    private final TerminalEventPump pump;
+    private final TerminalUiReducer reducer;
+    private final TerminalCommandRouter commands = new TerminalCommandRouter();
+    private TerminalUiState state;
+    private RunEventSubscription subscription;
+    private boolean awaitingNewSessionMessage;
+    private List<CodingSessionSummary> resumeOptions = List.of();
+    private List<CodingQueuedMessage> restoreOptions = List.of();
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState) {
+        this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
+        this.client = Objects.requireNonNull(client, "client must not be null");
+        this.pump = Objects.requireNonNull(pump, "pump must not be null");
+        this.reducer = Objects.requireNonNull(reducer, "reducer must not be null");
+        this.state = Objects.requireNonNull(initialState, "initialState must not be null");
+    }
+
+    public TerminalUiState state() {
+        return state;
+    }
+
+    public void open(AgentSessionId sessionId) {
+        load(client.open(sessionId));
+        replayAndTail();
+    }
+
+    public void drainEvents() {
+        boolean reconcile = false;
+        for (TerminalUiAction action : pump.drain(PAGE_SIZE)) {
+            apply(action);
+            if (action instanceof TerminalUiAction.RunEventReceived received
+                    && shouldReconcile(received.event().payload())) {
+                reconcile = true;
+            }
+        }
+        if (reconcile && state.session().isPresent()) {
+            refresh();
+        }
+    }
+
+    public void accept(TerminalInput input) {
+        drainEvents();
+        if (state.selector().isPresent()) {
+            acceptSelector(input);
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.EOF) {
+            if (state.currentRunId().isPresent()) {
+                apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                        "active-exit", "Active Run", List.of("Keep Run recoverable and quit", "Return to editor"), 1)));
+            } else {
+                apply(new TerminalUiAction.ExitRequested());
+            }
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.INTERRUPT) {
+            if (!input.text().isBlank()) {
+                apply(new TerminalUiAction.EditorChanged("", 0));
+            } else if (state.currentRunId().isPresent()) {
+                cancel();
+            } else {
+                apply(new TerminalUiAction.ExitRequested());
+            }
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
+            if (state.selector().isPresent()) {
+                apply(new TerminalUiAction.SelectorClosed());
+            } else if (state.currentRunId().isPresent()) {
+                cancel();
+            }
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.RESTORE) {
+            openRestoreSelector();
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS || input.kind() == TerminalInput.Kind.SELECT_NEXT) {
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.TOGGLE_EXPANSION) {
+            state.transcript().stream()
+                    .filter(value -> value.kind()
+                                    == io.haifa.agent.application.coding.terminal.state.TranscriptItem.Kind.TOOL
+                            || value.kind()
+                                    == io.haifa.agent.application.coding.terminal.state.TranscriptItem.Kind.EXECUTION)
+                    .reduce((first, second) -> second)
+                    .ifPresent(value -> apply(new TerminalUiAction.ToggleExpanded(value.id())));
+            return;
+        }
+        submitText(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP);
+    }
+
+    private void submitText(String text, boolean followUp) {
+        if (text.isBlank()) {
+            return;
+        }
+        TerminalCommand command = commands.route(text);
+        if (command != TerminalCommand.MESSAGE) {
+            command(command);
+            return;
+        }
+        String key = UUID.randomUUID().toString();
+        if (awaitingNewSessionMessage || state.session().isEmpty()) {
+            awaitingNewSessionMessage = false;
+            load(client.create(projectId, text, key));
+            apply(new TerminalUiAction.UserMessageCommitted(key, text));
+            replayAndTail();
+            return;
+        }
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        if (state.currentRunId().isPresent()) {
+            if (followUp) {
+                client.enqueueFollowUp(sessionId, state.currentRunId().orElseThrow(), text, key);
+            } else {
+                client.steer(sessionId, state.currentRunId().orElseThrow(), text, key);
+            }
+        } else {
+            client.submit(sessionId, text, key);
+        }
+        apply(new TerminalUiAction.UserMessageCommitted(key, text));
+        refresh();
+    }
+
+    private void command(TerminalCommand command) {
+        switch (command) {
+            case NEW -> {
+                closeSubscription();
+                awaitingNewSessionMessage = true;
+                apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
+            }
+            case RESUME -> {
+                resumeOptions = client.list(projectId, 50);
+                var options = resumeOptions.stream()
+                        .map(summary -> summary.sessionId().value() + " · " + summary.displayName())
+                        .toList();
+                if (options.isEmpty()) {
+                    apply(new TerminalUiAction.RecoverableFailure("SESSION_LIST_EMPTY"));
+                } else {
+                    apply(new TerminalUiAction.SelectorOpened(
+                            new TerminalSelector("resume", "Resume session", options, 0)));
+                }
+            }
+            case SETTINGS, TRUST ->
+                apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
+            case SESSION -> {
+                List<String> options = state.session()
+                        .map(value -> List.of(
+                                "session " + value.summary().sessionId().value(),
+                                "profile " + value.productProfileRef()))
+                        .orElseGet(() -> List.of("No active session"));
+                apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("session", "Session", options, 0)));
+            }
+            case QUIT -> apply(new TerminalUiAction.ExitRequested());
+            case NOT_IMPLEMENTED ->
+                apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
+            case UNKNOWN -> apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.COMMAND_UNKNOWN));
+            case MESSAGE -> throw new IllegalStateException("message must be routed separately");
+        }
+    }
+
+    private void cancel() {
+        client.cancel(
+                state.session().orElseThrow().summary().sessionId(),
+                UUID.randomUUID().toString());
+        apply(new TerminalUiAction.StatusChanged("Cancelling"));
+    }
+
+    private void refresh() {
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        load(client.reconcile(sessionId));
+        replayAndTail();
+    }
+
+    private void load(CodingSessionView view) {
+        apply(new TerminalUiAction.SessionLoaded(view, List.of("Loaded resources: project")));
+        List<PendingMessage> pending = client.restorableMessages(view.summary().sessionId(), 100).stream()
+                .map(value -> new PendingMessage(
+                        value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
+                .toList();
+        apply(new TerminalUiAction.PendingChanged(pending));
+        view.pendingInteraction().ifPresent(this::openInteractionSelector);
+    }
+
+    private void openRestoreSelector() {
+        if (state.session().isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("SESSION_REQUIRED"));
+            return;
+        }
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        restoreOptions = client.restorableMessages(sessionId, 100);
+        if (restoreOptions.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("RESTORABLE_QUEUE_EMPTY"));
+            return;
+        }
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "restore",
+                "Restore queued follow-up",
+                restoreOptions.stream()
+                        .map(value -> value.sequence() + " · " + value.summary())
+                        .toList(),
+                restoreOptions.size() - 1)));
+    }
+
+    private void openInteractionSelector(InteractionView interaction) {
+        if (state.selector().isPresent()
+                && state.selector().orElseThrow().kind().startsWith("interaction:")) {
+            return;
+        }
+        List<String> options = interaction.allowedActions().stream()
+                .map(InteractionAction::value)
+                .toList();
+        if (options.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("INTERACTION_ACTIONS_EMPTY"));
+            return;
+        }
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "interaction:" + interaction.requestId().value(), interaction.safePrompt(), options, 0)));
+    }
+
+    private void acceptSelector(TerminalInput input) {
+        if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE || input.kind() == TerminalInput.Kind.INTERRUPT) {
+            apply(new TerminalUiAction.SelectorClosed());
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS) {
+            apply(new TerminalUiAction.SelectorMoved(-1));
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.SELECT_NEXT) {
+            apply(new TerminalUiAction.SelectorMoved(1));
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.EOF) {
+            apply(new TerminalUiAction.SelectorClosed());
+            return;
+        }
+        if (input.kind() != TerminalInput.Kind.SUBMIT) {
+            return;
+        }
+        TerminalSelector selector = state.selector().orElseThrow();
+        int selected = selector.selected();
+        switch (selector.kind()) {
+            case "resume" -> {
+                AgentSessionId sessionId = resumeOptions.get(selected).sessionId();
+                apply(new TerminalUiAction.SelectorClosed());
+                open(sessionId);
+            }
+            case "restore" -> {
+                CodingQueuedMessage queued = restoreOptions.get(selected);
+                var restored = client.restore(queued.sessionId(), queued.followUpId(), queued.revision());
+                apply(new TerminalUiAction.SelectorClosed());
+                apply(new TerminalUiAction.EditorChanged(
+                        restored.message(), restored.message().length()));
+                refresh();
+            }
+            case "session" -> apply(new TerminalUiAction.SelectorClosed());
+            case "active-exit" -> {
+                apply(new TerminalUiAction.SelectorClosed());
+                if (selected == 0) apply(new TerminalUiAction.ExitRequested());
+            }
+            default -> {
+                if (!selector.kind().startsWith("interaction:")) {
+                    apply(new TerminalUiAction.RecoverableFailure("SELECTOR_KIND_UNSUPPORTED"));
+                    return;
+                }
+                InteractionView interaction = state.session()
+                        .flatMap(CodingSessionView::pendingInteraction)
+                        .orElseThrow();
+                InteractionAction action = interaction.allowedActions().get(selected);
+                client.respond(interaction, action, UUID.randomUUID().toString());
+                apply(new TerminalUiAction.SelectorClosed());
+                refresh();
+            }
+        }
+    }
+
+    private static boolean shouldReconcile(AgentRunEvent.Payload payload) {
+        if (payload instanceof RunEventPayloads.InteractionLifecycle) return true;
+        if (!(payload instanceof RunEventPayloads.RunLifecycle lifecycle)) return false;
+        return switch (lifecycle.status()) {
+            case "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT" -> true;
+            default -> false;
+        };
+    }
+
+    private void replayAndTail() {
+        closeSubscription();
+        if (state.currentRunId().isEmpty()) {
+            return;
+        }
+        var runId = state.currentRunId().orElseThrow();
+        RunEventCursor cursor = state.appliedCursor().orElseGet(() -> RunEventCursor.beforeFirst(runId));
+        boolean more;
+        do {
+            var page = client.events(runId, cursor, PAGE_SIZE);
+            for (var event : page.items()) {
+                apply(new TerminalUiAction.RunEventReceived(event));
+            }
+            cursor = page.nextCursor();
+            more = page.hasMore();
+        } while (more);
+        RunEventCursor subscribeAfter = state.appliedCursor().orElse(cursor);
+        subscription = client.subscribe(
+                runId, subscribeAfter, event -> pump.offer(new TerminalUiAction.RunEventReceived(event)));
+    }
+
+    private void apply(TerminalUiAction action) {
+        state = reducer.reduce(state, action);
+        if (action instanceof TerminalUiAction.RunEventReceived received
+                && state.appliedCursor()
+                        .filter(received.event().cursor()::equals)
+                        .isPresent()
+                && state.session().isPresent()) {
+            client.acknowledgeCursor(
+                    state.session().orElseThrow().summary().sessionId(),
+                    received.event().cursor());
+        }
+    }
+
+    private void closeSubscription() {
+        if (subscription != null) {
+            subscription.close();
+            subscription = null;
+        }
+    }
+
+    @Override
+    public void close() {
+        closeSubscription();
+    }
+}

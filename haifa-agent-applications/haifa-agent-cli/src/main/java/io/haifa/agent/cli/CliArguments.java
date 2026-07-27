@@ -16,6 +16,7 @@ record CliArguments(
         Optional<Duration> timeout,
         Optional<CliTraceMode> trace,
         Optional<Path> traceFile,
+        boolean terminal,
         boolean verbose,
         boolean help) {
     static CliArguments parse(String[] arguments) {
@@ -28,6 +29,7 @@ record CliArguments(
         Duration timeout = null;
         CliTraceMode trace = null;
         Path traceFile = null;
+        boolean terminal = false;
         boolean verbose = false;
         boolean help = false;
         List<String> values = new ArrayList<>(List.of(arguments));
@@ -35,6 +37,7 @@ record CliArguments(
             String value = values.get(index);
             switch (value) {
                 case "-h", "--help" -> help = true;
+                case "--terminal" -> terminal = true;
                 case "--verbose" -> verbose = true;
                 case "-m", "--message" -> message = requireValue(values, ++index, value);
                 case "--workspace" -> workspace = Path.of(requireValue(values, ++index, value));
@@ -50,6 +53,9 @@ record CliArguments(
         if (traceFile != null && trace == null) {
             throw new IllegalArgumentException("--trace-file requires --trace");
         }
+        if (!help && terminal && message != null) {
+            throw new IllegalArgumentException("--terminal cannot be used with -m/--message");
+        }
         return new CliArguments(
                 optionalText(message),
                 Optional.ofNullable(workspace),
@@ -59,6 +65,7 @@ record CliArguments(
                 Optional.ofNullable(timeout),
                 Optional.ofNullable(trace),
                 Optional.ofNullable(traceFile),
+                terminal,
                 verbose,
                 help);
     }
