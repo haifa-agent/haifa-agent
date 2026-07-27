@@ -37,6 +37,13 @@ class CodingAgentPolicyAssemblyTest {
         assertThat(decide(ApprovalMode.DENY, Set.of(PolicySideEffect.PROCESS_EXECUTION), false)
                         .effect())
                 .isEqualTo(PolicyEffect.DENY);
+        assertThat(decide(
+                                ApprovalMode.ASK,
+                                "execution",
+                                Set.of(PolicySideEffect.PROCESS_EXECUTION),
+                                false)
+                        .effect())
+                .isEqualTo(PolicyEffect.ASK);
 
         var credential = decide(ApprovalMode.AUTO, Set.of(PolicySideEffect.CREDENTIAL_USE), true);
         assertThat(credential.effect()).isEqualTo(PolicyEffect.ASK);
@@ -46,6 +53,11 @@ class CodingAgentPolicyAssemblyTest {
 
     private static io.haifa.agent.policy.api.PolicyDecision decide(
             ApprovalMode mode, Set<PolicySideEffect> sideEffects, boolean credentialUse) {
+        return decide(mode, "tool", sideEffects, credentialUse);
+    }
+
+    private static io.haifa.agent.policy.api.PolicyDecision decide(
+            ApprovalMode mode, String resourceType, Set<PolicySideEffect> sideEffects, boolean credentialUse) {
         AtomicInteger sequence = new AtomicInteger();
         var assembly = CodingAgentPolicyAssembly.create(mode, CLOCK, () -> "decision-" + sequence.incrementAndGet());
         return assembly.decisions()
@@ -57,7 +69,8 @@ class CodingAgentPolicyAssemblyTest {
                                         "haifa-coding-agent"),
                                 PolicyContext.run("run", mode),
                                 new PolicyAction("test.tool", "invoke"),
-                                new PolicyResource("tool", "test.tool", Optional.of("0".repeat(64)), "Test tool"),
+                                new PolicyResource(
+                                        resourceType, "test.tool", Optional.of("0".repeat(64)), "Test tool"),
                                 new PolicyRisk(PolicyRiskLevel.LOW, sideEffects, credentialUse, Optional.empty())),
                         assembly.snapshot());
     }

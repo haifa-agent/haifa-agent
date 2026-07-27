@@ -25,6 +25,11 @@ wake-up 再 drain 持久 Journal，通知丢失由有界轮询补偿，Listener 
 兼容子视图，但已经使用范围查询；不再调用整 Run 的 `eventsFor`。Task 03 的 HTTP/SSE 参考
 Adapter 位于 Integration 层，只通过 Runtime API 访问本模块。
 
+`SessionMessageSource.compact(sessionId)` 是产品手动压缩复用的唯一入口：它继续使用
+`ConversationSummaryRepository`、确定性 Compressor、Policy/version 和 CAS，按当前唯一线性
+Session 历史保留最近原子消息组并生成 Summary，不删除原始 Message，也不建立 Terminal Summary
+Store。Tree/活动路径延期期间不得把该入口解释为分支感知压缩。
+
 Resume、Steer 和 Runtime Command 的 expected Run version 由 Runtime 校验；Resume/Command 的
 校验位于 UoW 执行路径，实际状态写入仍服从 Store 的 optimistic locking。Transport 的 `If-Match`
 不会成为第二份版本事实。

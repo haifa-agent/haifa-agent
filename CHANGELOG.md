@@ -2,6 +2,10 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Coding Agent Phase 3 新增 Session 搜索、CAS 重命名、Core 权威归档与逻辑删除、手动线性历史
+  Compaction、根 `AGENTS.md` 安全发现和仅影响后续 Run 的 `/reload`、经既有
+  Policy/Approval/ExecutionBroker/Sandbox 的 `!`/`!!`，以及脱敏且不覆盖目标的版本化 JSONL
+  Session 导出；Tree、Fork、Clone、PTY 与后台 Job 继续延期。
 - 新增 `local-native` Sandbox Provider：macOS 使用 Seatbelt、Linux 使用 bubblewrap，兑现一次性命令的
   Workspace 文件策略、`NetworkPolicy.DENY` 和进程树收敛；Windows 明确不支持且禁止自动回退 Host。
 - CLI 的 `execution.run` 默认冻结为 `local-native + deny`，支持用户对可信 Workspace 显式选择

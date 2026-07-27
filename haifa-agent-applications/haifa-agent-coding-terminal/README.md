@@ -65,12 +65,21 @@ keypad 和光标。
   本地 Run 状态尚未刷新，也先关闭 Selector、reconcile 后向产品取消接口发送命令并显示 Cancelling。
   空闲时 Escape 只关闭 Selector；Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
 - `/resume` 选择并打开真实 Session；
+- `/resume <query>` 搜索 Session，`/rename [name]`（兼容 `/name`）使用 revision 重命名，
+  `/archive` 与 `/delete`
+  在同一内联 Selector 中确认；删除只隐藏产品 Session，不删除 Runtime/Artifact 事实；
+- `/compact` 复用 Runtime 的 ConversationSummary/Compression，保留原始消息；自定义压缩指令
+  当前返回 `COMPACTION_INSTRUCTION_NOT_SUPPORTED`；
+- `/reload` 重新发现 Workspace 根 `AGENTS.md`，只影响后续新 Run；当前 Run 不热替换；
+- `!command` 与 `!!command` 都通过产品 Shell 服务进入同一 Policy/Approval/ExecutionBroker/
+  Sandbox 链；前者的安全结果进入后续模型 Context，后者只保留内部 Session 事实和审计；
+- `/export <workspace-relative-path>` 新建版本化、脱敏 JSONL，不覆盖文件、不跟随符号链接；
 - 输入 `/` 或 `@` 后按 Tab 打开可见候选选择器；方向键选择、Enter 回填；空闲时 Escape 关闭并
   保留草稿，活动 Run 时 Escape 优先取消任务；
 - `/command` 与 `/commands` 打开同一命令选择器；`@file` 候选来自受限 Workspace 文件目录，
   不列出敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 JLine input owner 中 approve/reject；
-- `/settings`、`/trust`、`/model`、`/login`、`/tree`、`/compact` 在没有真实 API 时返回
+- `/settings`、`/trust`、`/model`、`/login`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
 - `/quit` 退出；活动 Run 下 EOF 显示明确的退出选择。
 

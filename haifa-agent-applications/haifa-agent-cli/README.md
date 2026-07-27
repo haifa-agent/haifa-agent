@@ -250,10 +250,11 @@ reasoning 内容。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；默认不继承 API Key、`*_TOKEN`、`*_SECRET`、云凭据或代理凭据。命令输出实时脱敏展示，最终模型结果默认限制为最后 2000 行且最多 50KB；较大分通道输出通过 Output Ref 访问。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
-当前已包含 JLine Terminal、真实 `/resume`、Steer、持久 Follow-up、Cancel、Approval selector 和
-SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护进程、Session Tree/Fork/Clone、模型登录/
-切换或 Workflow Graph。Host Provider 不是容器或虚拟机，不能阻止当前 OS 用户本来可访问的
-Workspace 外文件、网络或系统资源。
+当前已包含 JLine Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
+`/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久
+Follow-up、Cancel、Approval selector 和 SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护
+进程、Session Tree/Fork/Clone、模型登录/切换或 Workflow Graph。Host Provider 不是容器或虚拟机，
+不能阻止当前 OS 用户本来可访问的 Workspace 外文件、网络或系统资源。
 
 ## 真实模型 Coding E2E
 
@@ -271,6 +272,16 @@ HAIFA_FT_RUN_ID=<unique-batch-id>
 HAIFA_FT_ROOT=<new-empty-absolute-directory>
 DEEPSEEK_API_KEY=<secret-manager-injected-value>
 ```
+
+Windows 没有 Local Native Adapter。只有对仓库外、已人工检查并明确可信的合成 Fixture，才可同时设置：
+
+```text
+HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER=host-guarded
+HAIFA_CLI_LIVE_E2E_EXECUTION_NETWORK=allow
+```
+
+两个变量必须成对出现；否则 Live E2E 保持默认 `local-native + deny` 并 fail closed。Host Guarded 不能提供
+容器级文件、网络或系统资源隔离。
 
 百炼批次将最后一项替换为：
 

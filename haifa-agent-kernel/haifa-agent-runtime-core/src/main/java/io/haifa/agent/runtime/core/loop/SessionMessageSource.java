@@ -27,6 +27,7 @@ import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
@@ -78,8 +79,17 @@ public final class SessionMessageSource {
     }
 
     public Selection select(AgentRun run, int forcedRebuildAttempt) {
+        return select(run.sessionId(), forcedRebuildAttempt);
+    }
+
+    /** Explicit deterministic compaction for the single linear Session path. */
+    public Selection compact(AgentSessionId sessionId) {
+        return select(sessionId, 1);
+    }
+
+    private Selection select(AgentSessionId sessionId, int forcedRebuildAttempt) {
         List<AgentMessage> visible =
-                messages.messagesAfter(run.sessionId(), MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream()
+                messages.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream()
                         .filter(this::visibleToContext)
                         .toList();
         if (visible.isEmpty()) {
@@ -94,7 +104,7 @@ public final class SessionMessageSource {
         if (split > 0) {
             List<AgentMessage> older =
                     groups.subList(0, split).stream().flatMap(List::stream).toList();
-            summary = Optional.of(summaryFor(run, older));
+            summary = Optional.of(summaryFor(sessionId, older));
             items.add(summaryItem(summary.orElseThrow()));
         }
         List<List<AgentMessage>> recent = groups.subList(split, groups.size());
@@ -105,27 +115,27 @@ public final class SessionMessageSource {
         return new Selection(items, visible.getLast().cursor(), summary, policy.version(), compressor.version());
     }
 
-    private ConversationSummary summaryFor(AgentRun run, List<AgentMessage> source) {
+    private ConversationSummary summaryFor(AgentSessionId sessionId, List<AgentMessage> source) {
         List<io.haifa.agent.core.message.AgentMessageId> sourceIds =
                 source.stream().map(AgentMessage::id).toList();
         Optional<ConversationSummary> reusable = summaries
-                .latestValid(run.sessionId())
+                .latestValid(sessionId)
                 .filter(summary -> summary.sourceMessageIds().equals(sourceIds))
                 .filter(summary ->
                         summaries.coversValidSource(summary, source.getLast().cursor()));
         if (reusable.isPresent()) return reusable.orElseThrow();
 
-        long previous = summaries.latestVersion(run.sessionId());
+        long previous = summaries.latestVersion(sessionId);
         var result = compressor.compress(new CompressionRequest(
                 new SummaryId(ids.nextValue()),
                 new SummaryVersion(previous + 1),
-                run.sessionId(),
+                sessionId,
                 source,
                 policy.maxSummaryFacts(),
                 time.now(),
                 policy.version()));
         ConversationSummary summary = result.summary();
-        if (!summary.sessionId().equals(run.sessionId())
+        if (!summary.sessionId().equals(sessionId)
                 || !summary.sourceMessageIds().equals(sourceIds)
                 || !summary.coveredFrom().equals(source.getFirst().cursor())
                 || !summary.coveredThrough().equals(source.getLast().cursor())

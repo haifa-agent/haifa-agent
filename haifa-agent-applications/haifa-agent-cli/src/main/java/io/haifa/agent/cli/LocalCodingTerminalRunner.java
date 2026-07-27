@@ -40,7 +40,11 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
                     agent.runtime(),
                     agent.identifiers(),
                     agent.time(),
-                    new LocalWorkspacePathCatalog(workspace)::list);
+                    new LocalWorkspacePathCatalog(workspace)::list,
+                    agent::loadedResources,
+                    agent::reloadResources,
+                    agent.shell(),
+                    agent.exporter());
             new CodingTerminalApplication(agent.projectId(), client, Optional.empty(), () -> lifecycle).run();
         }
     }

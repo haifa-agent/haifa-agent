@@ -3,6 +3,9 @@ package io.haifa.agent.application.project.tool;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.AssetRef;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionCommand;
@@ -18,6 +21,7 @@ import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
+import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -27,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.UnaryOperator;
 
 /** Adapts the generic project Tool invocation to the single trusted ExecutionBroker path. */
 public final class ProjectExecutionToolOperations {
@@ -44,6 +49,7 @@ public final class ProjectExecutionToolOperations {
     private final int maximumModelOutputLines;
     private final int maximumProcesses;
     private final ExecutionOutputObserver outputObserver;
+    private final UnaryOperator<String> outputSanitizer;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -57,6 +63,34 @@ public final class ProjectExecutionToolOperations {
             int maximumModelOutputLines,
             int maximumProcesses,
             ExecutionOutputObserver outputObserver) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                UnaryOperator.identity());
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -83,6 +117,7 @@ public final class ProjectExecutionToolOperations {
         this.maximumModelOutputLines = maximumModelOutputLines;
         this.maximumProcesses = maximumProcesses;
         this.outputObserver = Objects.requireNonNull(outputObserver, "outputObserver must not be null");
+        this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -123,6 +158,54 @@ public final class ProjectExecutionToolOperations {
                 new ExecutionLimits(
                         timeout, FULL_OUTPUT_BYTES_PER_CHANNEL, FULL_OUTPUT_BYTES_PER_CHANNEL, maximumProcesses),
                 sandboxProfileRef);
+        return executeRequest(request, invocation.cancellation());
+    }
+
+    /**
+     * Product-owned user command path. It uses the same broker, policy decision, sandbox, output and
+     * audit boundaries as execution.run without manufacturing a model Tool Call.
+     */
+    public ToolResult executeUserInitiated(
+            AgentRunId auditRunId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            RunWorkspaceAccess access,
+            String command,
+            String workdir,
+            Duration timeout,
+            String idempotencyKey,
+            String policyDecisionRef) {
+        Objects.requireNonNull(auditRunId, "auditRunId must not be null");
+        Objects.requireNonNull(tenant, "tenant must not be null");
+        Objects.requireNonNull(principal, "principal must not be null");
+        Objects.requireNonNull(access, "access must not be null");
+        command = requiredText(Map.of("command", command), "command");
+        workdir = optionalText(Map.of("workdir", workdir), "workdir", ".");
+        timeout = positive(timeout, "timeout");
+        if (timeout.compareTo(maximumTimeout) > 0) {
+            throw new IllegalArgumentException("timeout exceeds maximumTimeout");
+        }
+        ExecutionRequest request = new ExecutionRequest(
+                new ExecutionId(identifiers.nextValue()),
+                Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null"),
+                new TrustedExecutionContext(
+                        tenant,
+                        auditRunId.value(),
+                        principal,
+                        access.capabilities(),
+                        Objects.requireNonNull(policyDecisionRef, "policyDecisionRef must not be null")),
+                access.workspaceId(),
+                new WorkspacePath(
+                        access.workspaceId(), workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(workdir)),
+                ExecutionCommand.shell(command),
+                environmentRef,
+                new ExecutionLimits(
+                        timeout, FULL_OUTPUT_BYTES_PER_CHANNEL, FULL_OUTPUT_BYTES_PER_CHANNEL, maximumProcesses),
+                sandboxProfileRef);
+        return executeRequest(request, () -> false);
+    }
+
+    private ToolResult executeRequest(ExecutionRequest request, ToolCancellation cancellationSignal) {
         MergedTailObserver merged =
                 new MergedTailObserver(outputObserver, maximumModelOutputBytes, maximumModelOutputLines);
         AtomicBoolean complete = new AtomicBoolean();
@@ -130,8 +213,8 @@ public final class ProjectExecutionToolOperations {
                 .name("haifa-execution-cancellation")
                 .start(() -> {
                     while (!complete.get()) {
-                        if (invocation.cancellation().isCancellationRequested()) {
-                            if (broker.cancel(executionId)) return;
+                        if (cancellationSignal.isCancellationRequested()) {
+                            if (broker.cancel(request.id())) return;
                         }
                         try {
                             Thread.sleep(25);
@@ -141,16 +224,18 @@ public final class ProjectExecutionToolOperations {
                     }
                 });
         try {
-            return toToolResult(broker.execute(request, merged), merged);
+            return toToolResult(broker.execute(request, merged), merged, outputSanitizer);
         } finally {
             complete.set(true);
             cancellation.interrupt();
         }
     }
 
-    private static ToolResult toToolResult(ExecutionResult result, MergedTailObserver merged) {
+    private static ToolResult toToolResult(
+            ExecutionResult result, MergedTailObserver merged, UnaryOperator<String> outputSanitizer) {
         String output = merged.text();
         if (output.isBlank()) output = MergedTailObserver.sanitize(fallbackOutput(result));
+        output = Objects.requireNonNull(outputSanitizer.apply(output), "outputSanitizer must not return null");
         boolean truncated = merged.truncated()
                 || result.stdout().truncated()
                 || result.stderr().truncated();

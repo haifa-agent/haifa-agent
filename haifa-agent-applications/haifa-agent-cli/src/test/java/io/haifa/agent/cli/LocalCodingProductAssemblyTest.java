@@ -15,6 +15,9 @@ import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -72,6 +75,133 @@ class LocalCodingProductAssemblyTest {
         assertThat(terminalOutput.toString(java.nio.charset.StandardCharsets.UTF_8))
                 .contains("Haifa Coding Agent")
                 .contains("inspect the fixture");
+    }
+
+    @Test
+    void phaseThreeCommandsRunThroughTheProductionTerminalAssembly() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("phase-three-workspace"));
+        Files.createDirectory(workspace.resolve("exports"));
+        Files.writeString(
+                workspace.resolve("AGENTS.md"),
+                "# Synthetic terminal fixture\n\nUse only deterministic local evidence.\n");
+        CliConfiguration configuration = memoryConfiguration();
+        AtomicInteger modelCalls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            modelCalls.incrementAndGet();
+            return response("phase-three-answer");
+        };
+        AtomicReference<LocalCodingAgent> assembled = new AtomicReference<>();
+        AtomicReference<Throwable> runnerFailure = new AtomicReference<>();
+        ByteArrayOutputStream terminalOutput = new ByteArrayOutputStream();
+        ByteArrayOutputStream applicationOutput = new ByteArrayOutputStream();
+        PipedInputStream input = new PipedInputStream();
+        PipedOutputStream writer = new PipedOutputStream(input);
+        var terminal = TerminalBuilder.builder()
+                .system(false)
+                .streams(input, terminalOutput)
+                .type("xterm-256color")
+                .size(new Size(120, 40))
+                .build();
+        var runner = new LocalCodingTerminalRunner(
+                (selectedWorkspace, selectedConfiguration, output, traceObserver) -> {
+                    LocalCodingAgent agent = LocalCodingAgent.create(
+                            selectedWorkspace, selectedConfiguration, output, model, traceObserver);
+                    assembled.set(agent);
+                    return agent;
+                },
+                () -> JLineTerminalLifecycle.forTerminal(terminal));
+        Thread runnerThread = Thread.ofPlatform()
+                .name("phase-three-terminal-smoke")
+                .start(() -> {
+                    try {
+                        runner.run(workspace, configuration, new PrintStream(applicationOutput), ignored -> {});
+                    } catch (Throwable throwable) {
+                        runnerFailure.set(throwable);
+                    }
+                });
+
+        try {
+            awaitTerminalText(terminalOutput, "Haifa Coding Agent");
+            typeLine(writer, "inspect the phase three fixture");
+            awaitAgent(assembled);
+            awaitNoActiveRun(assembled.get());
+            LocalCodingSessionClient authoritativeClient = client(assembled.get());
+            var firstSession = authoritativeClient
+                    .list(assembled.get().projectId(), 10)
+                    .getFirst()
+                    .sessionId();
+
+            typeLine(writer, "/rename phase-three-smoke");
+            awaitCondition(
+                    () -> authoritativeClient
+                            .open(firstSession)
+                            .summary()
+                            .displayName()
+                            .equals("phase-three-smoke"),
+                    "renamed session");
+
+            int beforeCompaction = terminalOutput.size();
+            typeLine(writer, "/compact");
+            awaitTerminalActivity(terminalOutput, beforeCompaction);
+
+            List<String> resourcesBeforeReload = assembled.get().loadedResources();
+            Files.writeString(
+                    workspace.resolve("AGENTS.md"),
+                    "# Synthetic terminal fixture\n\nReloaded instructions apply only to future Runs.\n");
+            typeLine(writer, "/reload");
+            awaitCondition(
+                    () -> !assembled.get().loadedResources().equals(resourcesBeforeReload), "project resource reload");
+
+            typeLine(writer, "/export exports/session.jsonl");
+            awaitFile(workspace.resolve("exports/session.jsonl"));
+
+            typeLine(writer, "/delete");
+            awaitTerminalText(terminalOutput, "Delete current session?");
+            chooseFirst(writer);
+            awaitCondition(
+                    () -> authoritativeClient
+                            .list(assembled.get().projectId(), 10)
+                            .isEmpty(),
+                    "deleted session");
+
+            typeLine(writer, "create a second session");
+            awaitModelCalls(modelCalls, 2);
+            awaitNoActiveRun(assembled.get());
+            var secondSession = authoritativeClient
+                    .list(assembled.get().projectId(), 10)
+                    .getFirst()
+                    .sessionId();
+
+            typeLine(writer, "/archive");
+            awaitTerminalText(terminalOutput, "Archive current session?");
+            chooseFirst(writer);
+            awaitCondition(
+                    () -> authoritativeClient.open(secondSession).summary().status()
+                            == io.haifa.agent.core.session.AgentSessionStatus.ARCHIVED,
+                    "archived session");
+
+            typeLine(writer, "/quit");
+            runnerThread.join(10_000);
+        } finally {
+            if (runnerThread.isAlive()) {
+                typeLine(writer, "/quit");
+                runnerThread.join(2_000);
+            }
+            writer.close();
+            recordTerminalArtifacts(terminalOutput, applicationOutput);
+        }
+
+        assertThat(runnerThread.isAlive()).isFalse();
+        assertThat(runnerFailure.get()).isNull();
+        assertThat(modelCalls).hasValue(2);
+        assertThat(Files.readString(workspace.resolve("exports/session.jsonl")))
+                .contains("\"schemaVersion\":\"haifa.coding-session-export/1\"")
+                .contains("phase-three-answer")
+                .containsOnlyOnce("\"preview\":\"inspect the phase three fixture\"");
+        assertThat(terminalOutput.toString(java.nio.charset.StandardCharsets.UTF_8))
+                .contains("\033[?1049h")
+                .contains("\033[?1049l")
+                .doesNotContain("COMMAND_UNKNOWN");
     }
 
     @Test
@@ -189,6 +319,79 @@ class LocalCodingProductAssemblyTest {
             Thread.sleep(20);
         }
         throw new AssertionError("terminal session did not reach an authoritative terminal state");
+    }
+
+    private static void awaitAgent(AtomicReference<LocalCodingAgent> assembled) throws InterruptedException {
+        awaitCondition(() -> assembled.get() != null, "production agent assembly");
+    }
+
+    private static void awaitTerminalText(ByteArrayOutputStream output, String expected) throws InterruptedException {
+        awaitCondition(
+                () -> output.toString(java.nio.charset.StandardCharsets.UTF_8).contains(expected),
+                "terminal text: " + expected);
+    }
+
+    private static void awaitFile(Path file) throws InterruptedException {
+        awaitCondition(() -> Files.isRegularFile(file), "terminal export");
+    }
+
+    private static void awaitTerminalActivity(ByteArrayOutputStream output, int startingSize)
+            throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(10);
+        int previousSize = output.size();
+        Instant lastChange = Instant.now();
+        while (Instant.now().isBefore(deadline)) {
+            int currentSize = output.size();
+            if (currentSize != previousSize) {
+                previousSize = currentSize;
+                lastChange = Instant.now();
+            }
+            if (currentSize > startingSize && Instant.now().isAfter(lastChange.plusMillis(250))) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("timed out waiting for terminal output activity");
+    }
+
+    private static void awaitModelCalls(AtomicInteger calls, int expected) throws InterruptedException {
+        awaitCondition(() -> calls.get() >= expected, "model call " + expected);
+    }
+
+    private static void awaitCondition(java.util.function.BooleanSupplier condition, String description)
+            throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(10);
+        while (!condition.getAsBoolean() && Instant.now().isBefore(deadline)) {
+            Thread.sleep(20);
+        }
+        if (!condition.getAsBoolean()) {
+            throw new AssertionError("timed out waiting for " + description);
+        }
+    }
+
+    private static void typeLine(PipedOutputStream writer, String value) throws IOException, InterruptedException {
+        for (byte character : (value + "\r").getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            writer.write(character);
+            writer.flush();
+            Thread.sleep(2);
+        }
+    }
+
+    private static void chooseFirst(PipedOutputStream writer) throws IOException {
+        writer.write("\033[A\r".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        writer.flush();
+    }
+
+    private static void recordTerminalArtifacts(
+            ByteArrayOutputStream terminalOutput, ByteArrayOutputStream applicationOutput) throws IOException {
+        String configured = System.getProperty("haifa.terminal.recording.dir");
+        if (configured == null || configured.isBlank()) {
+            return;
+        }
+        Path directory = Path.of(configured).toAbsolutePath().normalize();
+        Files.createDirectories(directory);
+        Files.write(directory.resolve("product-flow.ansi"), terminalOutput.toByteArray());
+        Files.write(directory.resolve("application.log"), applicationOutput.toByteArray());
     }
 
     private static void await(CountDownLatch latch) {

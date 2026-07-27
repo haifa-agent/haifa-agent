@@ -7,10 +7,35 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import java.util.List;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class TerminalRendererTest {
+    @Test
+    void keepsLongTranscriptInsideTheTerminalViewport() {
+        TerminalUiReducer reducer = new TerminalUiReducer();
+        TerminalUiState state = TerminalUiState.initial(120, 40);
+        for (int index = 0; index < 30; index++) {
+            state = reducer.reduce(
+                    state,
+                    new TerminalUiAction.UserMessageCommitted(
+                            "message-" + index, "Message body " + index));
+        }
+
+        var view = new TerminalRenderer().render(state);
+        String rendered = view.lines().stream()
+                .map(value -> value.toString())
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        assertThat(view.lines()).hasSizeLessThanOrEqualTo(40);
+        assertThat(view.cursorRow()).isBetween(0, view.lines().size() - 1);
+        assertThat(rendered)
+                .startsWith("Haifa Coding Agent")
+                .contains("… earlier transcript lines hidden", "Message body 29", "context:")
+                .doesNotContain("Message body 0");
+    }
+
     @ParameterizedTest
     @CsvSource({"80,24", "120,40", "180,50", "40,10"})
     void preservesPrototypeInformationOrderAtRequiredSizes(int columns, int rows) {

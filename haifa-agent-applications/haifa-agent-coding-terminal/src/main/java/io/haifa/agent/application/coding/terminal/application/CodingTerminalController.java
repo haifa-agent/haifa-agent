@@ -13,6 +13,8 @@ import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellPlan;
+import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
@@ -44,6 +46,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
     private CompletionContext completionContext;
+    private CodingShellPlan pendingShellPlan;
 
     public CodingTerminalController(
             ProjectId projectId,
@@ -99,6 +102,15 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.EditorChanged(input.text(), input.cursor()));
             }
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+        } catch (IllegalArgumentException
+                | IllegalStateException
+                | SecurityException
+                | UnsupportedOperationException exception) {
+            String code = exception.getMessage();
+            if (code == null || !code.matches("[A-Z][A-Z0-9_]{2,63}")) {
+                code = "OPERATION_REJECTED";
+            }
+            apply(new TerminalUiAction.RecoverableFailure(code));
         }
     }
 
@@ -120,6 +132,7 @@ public final class CodingTerminalController implements AutoCloseable {
                 return;
             }
             if (state.selector().isPresent()) {
+                discardPendingShell();
                 apply(new TerminalUiAction.SelectorClosed());
             }
             return;
@@ -169,10 +182,14 @@ public final class CodingTerminalController implements AutoCloseable {
         if (text.isBlank()) {
             return;
         }
+        if (text.startsWith("!")) {
+            shell(text);
+            return;
+        }
         TerminalCommand command = commands.route(text);
         if (command != TerminalCommand.MESSAGE) {
             apply(new TerminalUiAction.EditorChanged("", 0));
-            command(command);
+            command(command, text);
             return;
         }
         String key = UUID.randomUUID().toString();
@@ -200,6 +217,39 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
+    private void shell(String input) {
+        CodingSessionView current = requireCurrentSession();
+        boolean includeInContext = !input.startsWith("!!");
+        int prefix = includeInContext ? 1 : 2;
+        String command = input.substring(prefix).strip();
+        CodingShellPlan plan = client.planShell(current.summary().sessionId(), command, includeInContext);
+        apply(new TerminalUiAction.EditorChanged("", 0));
+        if (plan.state() == CodingShellPlan.State.DENIED) {
+            apply(new TerminalUiAction.RecoverableFailure(plan.reasonCode()));
+            return;
+        }
+        if (plan.state() == CodingShellPlan.State.APPROVAL_REQUIRED) {
+            pendingShellPlan = plan;
+            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                    "shell-approval",
+                    "Run governed shell command?",
+                    List.of("Approve once: " + plan.safeCommand(), "Deny"),
+                    1)));
+            return;
+        }
+        completeShell(plan, false);
+    }
+
+    private void completeShell(CodingShellPlan plan, boolean approved) {
+        CodingShellResult result = client.executeShell(plan.token(), approved);
+        String prefix = plan.includeInContext() ? "!" : "!!";
+        apply(new TerminalUiAction.ShellCompleted(prefix + plan.safeCommand(), result.safeSummary(), result.status()));
+        apply(new TerminalUiAction.StatusChanged(
+                result.includedInContext()
+                        ? "Shell result added to Session context"
+                        : "Shell result excluded from model context"));
+    }
+
     private void sendToCurrentSession(String text, boolean followUp, String key, boolean retrySessionRace) {
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
         try {
@@ -221,7 +271,8 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    private void command(TerminalCommand command) {
+    private void command(TerminalCommand command, String rawInput) {
+        String argument = commandArgument(rawInput);
         switch (command) {
             case NEW -> {
                 closeSubscription();
@@ -229,9 +280,10 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
             }
             case RESUME -> {
-                resumeOptions = client.list(projectId, 50);
+                resumeOptions = client.search(projectId, argument, 50);
                 var options = resumeOptions.stream()
-                        .map(summary -> summary.sessionId().value() + " · " + summary.displayName())
+                        .map(summary -> summary.sessionId().value() + " · " + summary.displayName() + " · "
+                                + summary.status().name())
                         .toList();
                 if (options.isEmpty()) {
                     apply(new TerminalUiAction.RecoverableFailure("SESSION_LIST_EMPTY"));
@@ -239,6 +291,42 @@ public final class CodingTerminalController implements AutoCloseable {
                     apply(new TerminalUiAction.SelectorOpened(
                             new TerminalSelector("resume", "Resume session", options, 0)));
                 }
+            }
+            case RENAME -> {
+                CodingSessionView current = refresh();
+                CodingSessionSummary renamed = client.rename(
+                        current.summary().sessionId(),
+                        argument,
+                        current.summary().revision());
+                load(client.open(renamed.sessionId()));
+                apply(new TerminalUiAction.StatusChanged("Session renamed"));
+            }
+            case ARCHIVE -> {
+                requireCurrentSession();
+                apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                        "archive-session", "Archive current session?", List.of("Archive session", "Cancel"), 1)));
+            }
+            case DELETE -> {
+                requireCurrentSession();
+                apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                        "delete-session", "Delete current session?", List.of("Delete session", "Cancel"), 1)));
+            }
+            case RELOAD -> {
+                List<String> resources = client.reloadResources();
+                apply(new TerminalUiAction.ResourcesChanged(resources));
+                apply(new TerminalUiAction.StatusChanged("Resources reloaded for future new Runs"));
+            }
+            case COMPACT -> {
+                CodingSessionView current = refresh();
+                var result = client.compact(current.summary().sessionId(), argument);
+                apply(new TerminalUiAction.ContextChanged(result.safeIndicator()));
+                apply(new TerminalUiAction.StatusChanged("Session context compacted"));
+            }
+            case EXPORT -> {
+                CodingSessionView current = refresh();
+                var exported = client.export(current.summary().sessionId(), argument);
+                apply(new TerminalUiAction.ExportCompleted(exported.logicalPath(), exported.messageCount()));
+                apply(new TerminalUiAction.StatusChanged("Session exported"));
             }
             case SETTINGS, TRUST ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
@@ -277,14 +365,16 @@ public final class CodingTerminalController implements AutoCloseable {
         return true;
     }
 
-    private void refresh() {
+    private CodingSessionView refresh() {
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
-        load(client.reconcile(sessionId));
+        CodingSessionView reconciled = client.reconcile(sessionId);
+        load(reconciled);
         replayAndTail();
+        return reconciled;
     }
 
     private void load(CodingSessionView view) {
-        apply(new TerminalUiAction.SessionLoaded(view, List.of("Loaded resources: project")));
+        apply(new TerminalUiAction.SessionLoaded(view, client.loadedResources()));
         List<PendingMessage> pending = client.restorableMessages(view.summary().sessionId(), 100).stream()
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
@@ -357,6 +447,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private void acceptSelector(TerminalInput input) {
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE || input.kind() == TerminalInput.Kind.INTERRUPT) {
             apply(new TerminalUiAction.SelectorClosed());
+            discardPendingShell();
             completionContext = null;
             return;
         }
@@ -404,6 +495,39 @@ public final class CodingTerminalController implements AutoCloseable {
                 refresh();
             }
             case "session" -> apply(new TerminalUiAction.SelectorClosed());
+            case "archive-session" -> {
+                apply(new TerminalUiAction.SelectorClosed());
+                if (selected == 0) {
+                    CodingSessionView current = refresh();
+                    closeSubscription();
+                    client.archive(
+                            current.summary().sessionId(), current.summary().revision());
+                    load(client.open(current.summary().sessionId()));
+                    apply(new TerminalUiAction.StatusChanged("Session archived"));
+                }
+            }
+            case "delete-session" -> {
+                apply(new TerminalUiAction.SelectorClosed());
+                if (selected == 0) {
+                    CodingSessionView current = refresh();
+                    closeSubscription();
+                    client.delete(
+                            current.summary().sessionId(), current.summary().revision());
+                    awaitingNewSessionMessage = true;
+                    apply(new TerminalUiAction.SessionCleared("Session deleted; enter the first message"));
+                }
+            }
+            case "shell-approval" -> {
+                CodingShellPlan plan = Objects.requireNonNull(pendingShellPlan, "pending shell plan is required");
+                apply(new TerminalUiAction.SelectorClosed());
+                pendingShellPlan = null;
+                if (selected == 0) {
+                    completeShell(plan, true);
+                } else {
+                    client.discardShell(plan.token());
+                    apply(new TerminalUiAction.StatusChanged("Shell command denied"));
+                }
+            }
             case "active-exit" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) apply(new TerminalUiAction.ExitRequested());
@@ -422,6 +546,23 @@ public final class CodingTerminalController implements AutoCloseable {
                 refresh();
             }
         }
+    }
+
+    private void discardPendingShell() {
+        if (pendingShellPlan == null) return;
+        client.discardShell(pendingShellPlan.token());
+        pendingShellPlan = null;
+    }
+
+    private CodingSessionView requireCurrentSession() {
+        return state.session()
+                .orElseThrow(() -> new ProjectProductException("SESSION_REQUIRED", "A Coding Session is required"));
+    }
+
+    private static String commandArgument(String input) {
+        String value = input.strip();
+        int separator = value.indexOf(' ');
+        return separator < 0 ? "" : value.substring(separator + 1).strip();
     }
 
     private static boolean shouldReconcile(AgentRunEvent.Payload payload) {

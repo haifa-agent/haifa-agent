@@ -4,6 +4,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import java.time.Instant;
 import java.util.Objects;
@@ -16,6 +17,7 @@ public record CodingSessionActivity(
         TenantRef tenant,
         PrincipalRef principal,
         String displayName,
+        AgentSessionStatus status,
         Optional<AgentRunId> activeRunId,
         OptionalLong activeRunVersion,
         Optional<String> activeDispatchKey,
@@ -28,6 +30,7 @@ public record CodingSessionActivity(
         tenant = Objects.requireNonNull(tenant, "tenant must not be null");
         principal = Objects.requireNonNull(principal, "principal must not be null");
         displayName = CodingProductValues.requireText(displayName, "displayName", 120);
+        status = Objects.requireNonNull(status, "status must not be null");
         activeRunId = Objects.requireNonNull(activeRunId, "activeRunId must not be null");
         activeRunVersion = Objects.requireNonNull(activeRunVersion, "activeRunVersion must not be null");
         activeDispatchKey = Objects.requireNonNull(activeDispatchKey, "activeDispatchKey must not be null")

@@ -30,6 +30,18 @@ public interface CodingSessionMapper {
             @Param("afterSessionId") String afterSessionId,
             @Param("limit") int limit);
 
+    int rename(
+            @Param("sessionId") String sessionId,
+            @Param("expectedRevision") long expectedRevision,
+            @Param("displayName") String displayName,
+            @Param("updatedAt") Instant updatedAt);
+
+    int updateStatus(
+            @Param("sessionId") String sessionId,
+            @Param("expectedRevision") long expectedRevision,
+            @Param("status") String status,
+            @Param("updatedAt") Instant updatedAt);
+
     int reserveActive(
             @Param("sessionId") String sessionId,
             @Param("expectedRevision") long expectedRevision,

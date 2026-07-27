@@ -147,6 +147,68 @@ class ProjectExecutionToolOperationsTest {
         assertThat(invoked).isFalse();
     }
 
+    @Test
+    void userInitiatedCommandUsesTheSameBrokerAndPolicyReference() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                observer.onOutput(chunk("terminal output"));
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        var result = operations(broker, 1024, 2000)
+                .executeUserInitiated(
+                        new AgentRunId("terminal-audit-1"),
+                        new TenantRef("tenant-1"),
+                        new PrincipalRef("operator", "user"),
+                        access(),
+                        "git status --short",
+                        ".",
+                        Duration.ofSeconds(5),
+                        "terminal-key",
+                        "policy-terminal-1");
+
+        assertThat(captured.get().context().policyDecisionRef()).isEqualTo("policy-terminal-1");
+        assertThat(captured.get().context().runRef()).isEqualTo("terminal-audit-1");
+        assertThat(captured.get().workingDirectory().projectPath().isRoot()).isTrue();
+        assertThat(result.summary()).contains("Command succeeded", "terminal output");
+    }
+
+    @Test
+    void sanitizesExecutionOutputBeforeReturningItToTheModel() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                observer.onOutput(chunk("failure at D:\\private\\workspace\\src\\Main.java\n"));
+                return result(request.id(), ExecutionStatus.FAILED, 1);
+            }
+        };
+        var operations = new ProjectExecutionToolOperations(
+                broker,
+                () -> "execution-1",
+                () -> NOW,
+                new ExecutionEnvironmentRef(List.of("environment-1")),
+                new SandboxProfileRef("shell", "1"),
+                Duration.ofMinutes(2),
+                Duration.ofMinutes(30),
+                1024,
+                2000,
+                8,
+                ExecutionOutputObserver.noop(),
+                value -> value.replace("D:\\private\\workspace", "<workspace>"));
+
+        var result = operations.execute(
+                invocation(Map.of("command", "representative failing command"), () -> false), access());
+
+        assertThat(result.summary()).contains("<workspace>\\src\\Main.java").doesNotContain("D:\\private\\workspace");
+        assertThat(result.structuredData().get("output").toString())
+                .contains("<workspace>\\src\\Main.java")
+                .doesNotContain("D:\\private\\workspace");
+    }
+
     private static ProjectExecutionToolOperations operations(
             ExecutionBroker broker, int maximumOutputBytes, int maximumOutputLines) {
         return new ProjectExecutionToolOperations(

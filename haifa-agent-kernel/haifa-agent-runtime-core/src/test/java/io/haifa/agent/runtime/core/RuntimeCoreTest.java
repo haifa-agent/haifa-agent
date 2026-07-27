@@ -79,6 +79,24 @@ import org.junit.jupiter.api.Test;
 
 class RuntimeCoreTest {
     @Test
+    void currentRunObjectiveAppearsOnceThroughAuthoritativeSessionHistory() {
+        AtomicReference<AgentChatRequest> captured = new AtomicReference<>();
+        Fixture fixture = fixture(request -> {
+            captured.set(request);
+            return response(finalDecision("done"));
+        });
+
+        fixture.runtime.start(request("objective-once"));
+        fixture.scheduler.runAll();
+
+        assertThat(captured.get().messages().stream()
+                        .filter(message -> message.role() == ModelMessageRole.USER)
+                        .filter(message -> message.content().equals("test objective"))
+                        .toList())
+                .singleElement();
+    }
+
+    @Test
     void appliesAcceptedSteerOnlyAtTheNextIterationSafePoint() {
         AtomicReference<AgentChatRequest> captured = new AtomicReference<>();
         Fixture fixture = fixture(request -> {

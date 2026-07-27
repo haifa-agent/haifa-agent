@@ -148,6 +148,60 @@ class SessionCompressionCheckpointTest {
     }
 
     @Test
+    void manualCompactionKeepsOriginalMessagesAndSummarizesWholeToolTurn() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId session = new AgentSessionId("manual-compaction-session");
+        store.appendSessionMessage(draft("m-user", session, "run-1", MessageRole.USER, "first"));
+        var callId = new ToolCallId("manual-tool-call");
+        var correlation = new ProviderToolCallCorrelationId("manual-provider-call");
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("m-tool-call"),
+                session,
+                Optional.of(new AgentRunId("run-1")),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(callId, correlation, "echo", "1.0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("m-tool-result"),
+                session,
+                Optional.of(new AgentRunId("run-1")),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolResultPart(callId, correlation, "bounded result")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(draft("m-latest", session, "run-2", MessageRole.USER, "latest"));
+
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(3, 10, 1),
+                () -> "manual-summary",
+                () -> NOW);
+        var selection = source.compact(session);
+
+        assertThat(selection.summary().orElseThrow().sourceMessageIds())
+                .containsExactly(
+                        new AgentMessageId("m-user"),
+                        new AgentMessageId("m-tool-call"),
+                        new AgentMessageId("m-tool-result"));
+        assertThat(store.messagesAfter(session, MessageCursor.BEFORE_FIRST, 10))
+                .extracting(AgentMessage::id)
+                .containsExactly(
+                        new AgentMessageId("m-user"),
+                        new AgentMessageId("m-tool-call"),
+                        new AgentMessageId("m-tool-result"),
+                        new AgentMessageId("m-latest"));
+    }
+
+    @Test
     void finalAnswerIsCommittedAsSessionFactWithRunOutput() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
