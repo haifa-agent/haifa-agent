@@ -38,6 +38,10 @@ Session 重新核对，漂移时 fail closed。JSONL projector 只在 Runtime �
 再冲刷投影，最后关闭 SQLite 连接。
 
 `ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`git.inspect/status/diff` 与 `execution.run` 共 14 个能力注册到唯一 Tool Catalog。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
+`execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
+Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
+Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
+新 Profile；模型可见 Schema 仍只有 command、逻辑 workdir、有界 timeout 和安全描述。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
 `task-planning`、`result-verification` 两个 Classpath SDK 基础 Skill，并允许上层 Application 显式加入

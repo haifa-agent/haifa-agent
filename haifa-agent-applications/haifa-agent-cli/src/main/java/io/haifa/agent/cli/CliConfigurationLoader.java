@@ -206,6 +206,8 @@ final class CliConfigurationLoader {
         String shellPathValue = nullableText(source, "shellPath");
         java.nio.file.Path shellPath = shellPathValue == null ? null : java.nio.file.Path.of(shellPathValue);
         return new CliConfiguration.Execution(
+                text(source, "provider", defaults.provider()),
+                text(source, "network", defaults.network()),
                 shell,
                 shellPath,
                 Duration.ofMillis(number(
@@ -217,7 +219,29 @@ final class CliConfigurationLoader {
                 Math.toIntExact(number(source, "maxOutputBytes", defaults.maxOutputBytes())),
                 Math.toIntExact(number(source, "maxOutputLines", defaults.maxOutputLines())),
                 Math.toIntExact(number(source, "maxProcesses", defaults.maxProcesses())),
-                stringSet(source.get("inheritEnvironment"), defaults.inheritEnvironment()));
+                stringSet(source.get("inheritEnvironment"), defaults.inheritEnvironment()),
+                extraPathPolicies(source.get("extraPathPolicies"), defaults.extraPathPolicies()));
+    }
+
+    private static List<CliConfiguration.ExtraPathPolicy> extraPathPolicies(
+            Object configured, List<CliConfiguration.ExtraPathPolicy> defaults) {
+        if (configured == null) return defaults;
+        if (!(configured instanceof List<?> values)) {
+            throw new IllegalArgumentException("configuration execution.extraPathPolicies must be a list");
+        }
+        List<CliConfiguration.ExtraPathPolicy> result = new ArrayList<>();
+        for (Object value : values) {
+            if (!(value instanceof Map<?, ?> raw)) {
+                throw new IllegalArgumentException("configuration execution.extraPathPolicies must contain objects");
+            }
+            Map<String, Object> entry = new LinkedHashMap<>();
+            raw.forEach((key, item) -> entry.put(String.valueOf(key), item));
+            result.add(new CliConfiguration.ExtraPathPolicy(
+                    requiredText(entry, "id", "execution extra path policy id"),
+                    java.nio.file.Path.of(requiredText(entry, "path", "execution extra path policy path")),
+                    bool(entry, "readOnly", true)));
+        }
+        return List.copyOf(result);
     }
 
     private static List<CliConfiguration.McpServer> mcpServers(Map<String, Object> mcp) {

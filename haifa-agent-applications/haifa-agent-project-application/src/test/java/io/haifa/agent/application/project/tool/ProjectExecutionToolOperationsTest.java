@@ -166,7 +166,7 @@ class ProjectExecutionToolOperationsTest {
     private static ToolInvocationRequest invocation(
             Map<String, Object> arguments, io.haifa.agent.tool.api.ToolCancellation cancellation) {
         var binding = new ProjectToolCatalog()
-                .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider())
+                .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider(), executionProfile())
                 .snapshot()
                 .bindings()
                 .getFirst();
@@ -187,6 +187,19 @@ class ProjectExecutionToolOperationsTest {
 
     private static RunWorkspaceAccess access() {
         return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution.run"));
+    }
+
+    private static io.haifa.agent.sandbox.api.SandboxProfile executionProfile() {
+        return new io.haifa.agent.sandbox.api.SandboxProfile(
+                new SandboxProfileRef("shell", "1"),
+                "host-guarded",
+                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("test")),
+                Set.of(),
+                Set.of(),
+                true,
+                io.haifa.agent.sandbox.api.NetworkPolicy.ALLOW,
+                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
+                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false));
     }
 
     private static ProcessOutputChunk chunk(String value) {

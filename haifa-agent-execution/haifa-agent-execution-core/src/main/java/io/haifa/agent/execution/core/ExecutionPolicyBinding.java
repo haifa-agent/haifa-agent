@@ -12,7 +12,10 @@ public final class ExecutionPolicyBinding {
         String command = request.command().mode() == ExecutionCommandMode.SHELL
                 ? request.command().shellCommand()
                 : String.join("\u0000", request.command().argv());
-        return PolicyDigest.sha256Fields(
+        String invocationDigest = PolicyDigest.sha256Fields(
                 List.of(command, request.workingDirectory().projectPath().toString()));
+        String executionProfile = request.sandboxProfileRef().value() + "@"
+                + request.sandboxProfileRef().version();
+        return PolicyDigest.sha256Fields(List.of(invocationDigest, executionProfile));
     }
 }

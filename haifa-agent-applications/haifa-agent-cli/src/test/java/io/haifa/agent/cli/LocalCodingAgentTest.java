@@ -42,13 +42,30 @@ class LocalCodingAgentTest {
     Path configuredSkillRoot;
 
     @Test
+    void windowsDefaultLocalNativeFailsClosedBeforeModelInvocation() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(isWindows());
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            throw new AssertionError("unsupported provider must fail before model invocation");
+        };
+
+        assertThatThrownBy(() -> LocalCodingAgent.create(
+                        workspace,
+                        CliConfiguration.defaults(),
+                        new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                        model))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("SANDBOX_ADAPTER_UNAVAILABLE")
+                .hasMessageContaining("host-guarded");
+    }
+
+    @Test
     void denyRemovesExecutionBeforeToolCatalogDisclosure() {
         CliConfiguration defaults = CliConfiguration.defaults();
         var denied = new CliConfiguration(
                 defaults.model(),
                 defaults.enabledTools(),
                 defaults.mcpServers(),
-                defaults.execution(),
+                hostExecution(defaults.execution()),
                 ApprovalMode.DENY,
                 defaults.timeout(),
                 defaults.maxIterations(),
@@ -69,7 +86,7 @@ class LocalCodingAgentTest {
                 defaults.mcpServers(),
                 defaults.web(),
                 defaults.skills(),
-                defaults.execution(),
+                hostExecution(defaults.execution()),
                 defaults.approval(),
                 defaults.timeout(),
                 defaults.maxIterations(),
@@ -142,7 +159,7 @@ class LocalCodingAgentTest {
                 defaults.mcpServers(),
                 defaults.web(),
                 defaults.skills(),
-                defaults.execution(),
+                hostExecution(defaults.execution()),
                 ApprovalMode.ASK,
                 Duration.ofSeconds(15),
                 defaults.maxIterations(),
@@ -168,6 +185,7 @@ class LocalCodingAgentTest {
                         Map.of());
             }
             assertThat(request.messages())
+                    .withFailMessage("second model request messages: %s", request.messages())
                     .anyMatch(message -> message.role() == ModelMessageRole.TOOL
                             && message.providerCorrelationId()
                                     .orElseThrow()
@@ -252,7 +270,7 @@ class LocalCodingAgentTest {
                 defaults.mcpServers(),
                 defaults.web(),
                 defaults.skills(),
-                defaults.execution(),
+                hostExecution(defaults.execution()),
                 defaults.approval(),
                 defaults.timeout(),
                 defaults.maxIterations(),
@@ -307,7 +325,7 @@ class LocalCodingAgentTest {
                                     .orElseThrow()
                                     .value()
                                     .equals("shell-call-1")
-                            && message.toolResultData().get("status").equals("SUCCEEDED")
+                            && "SUCCEEDED".equals(message.toolResultData().get("status"))
                             && message.toolResultData().containsKey("fileChangeSetId"));
             return new AgentChatResponse(
                     "cli-shell-2",
@@ -324,7 +342,7 @@ class LocalCodingAgentTest {
                 defaults.model(),
                 defaults.enabledTools(),
                 defaults.mcpServers(),
-                defaults.execution(),
+                hostExecution(defaults.execution()),
                 ApprovalMode.AUTO,
                 Duration.ofSeconds(15),
                 defaults.maxIterations(),
@@ -404,7 +422,7 @@ class LocalCodingAgentTest {
 
         try (var agent = LocalCodingAgent.create(
                 workspace,
-                CliConfiguration.defaults(),
+                trustedHostConfiguration(CliConfiguration.defaults()),
                 new PrintStream(new ByteArrayOutputStream()),
                 model,
                 observedTraces::add)) {
@@ -447,7 +465,7 @@ class LocalCodingAgentTest {
                 defaults.mcpServers(),
                 defaults.web(),
                 skills,
-                defaults.execution(),
+                hostExecution(defaults.execution()),
                 defaults.approval(),
                 defaults.timeout(),
                 defaults.maxIterations(),
@@ -514,7 +532,7 @@ class LocalCodingAgentTest {
                 defaults.mcpServers(),
                 defaults.web(),
                 new CliConfiguration.Skills(Set.of(), List.of()),
-                defaults.execution(),
+                hostExecution(defaults.execution()),
                 defaults.approval(),
                 defaults.timeout(),
                 defaults.maxIterations(),
@@ -566,7 +584,7 @@ class LocalCodingAgentTest {
                         Set.of("local-test"),
                         List.of(new CliConfiguration.LocalSkillDirectory(
                                 "personal", nestedSkillRoot, 100, SkillParserMode.STRICT, SkillOrigin.CREATED))),
-                defaults.execution(),
+                hostExecution(defaults.execution()),
                 defaults.approval(),
                 defaults.timeout(),
                 defaults.maxIterations(),
@@ -616,7 +634,7 @@ class LocalCodingAgentTest {
 
         try (var agent = LocalCodingAgent.create(
                 workspace,
-                CliConfiguration.defaults(),
+                trustedHostConfiguration(CliConfiguration.defaults()),
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                 model)) {
             var accepted = agent.start("List the workspace root.");
@@ -670,7 +688,7 @@ class LocalCodingAgentTest {
 
         try (var agent = LocalCodingAgent.create(
                 workspace,
-                CliConfiguration.defaults(),
+                trustedHostConfiguration(CliConfiguration.defaults()),
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                 model)) {
             var accepted = agent.start("Inspect a missing file and recover.");
@@ -685,6 +703,36 @@ class LocalCodingAgentTest {
             assertThat(snapshot.output()).contains("recovered");
         }
         assertThat(calls).hasValue(2);
+    }
+
+    private static CliConfiguration trustedHostConfiguration(CliConfiguration configuration) {
+        return new CliConfiguration(
+                configuration.model(),
+                configuration.enabledTools(),
+                configuration.mcpServers(),
+                configuration.web(),
+                configuration.skills(),
+                hostExecution(configuration.execution()),
+                configuration.approval(),
+                configuration.timeout(),
+                configuration.maxIterations(),
+                configuration.maxToolCalls(),
+                configuration.persistence());
+    }
+
+    private static CliConfiguration.Execution hostExecution(CliConfiguration.Execution execution) {
+        return new CliConfiguration.Execution(
+                "host-guarded",
+                "allow",
+                execution.shell(),
+                execution.shellPath(),
+                execution.defaultTimeout(),
+                execution.maximumTimeout(),
+                execution.maxOutputBytes(),
+                execution.maxOutputLines(),
+                execution.maxProcesses(),
+                execution.inheritEnvironment(),
+                List.of());
     }
 
     private static boolean isWindows() {

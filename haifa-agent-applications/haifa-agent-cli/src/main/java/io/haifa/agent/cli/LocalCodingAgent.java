@@ -302,7 +302,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             provider,
                             mcpPlatform.contributions(),
                             webPlatform.contributions(),
-                            skillTools);
+                            skillTools,
+                            executionPlatform == null ? null : executionPlatform.profile());
             var interactions = persistence.ports().interactions();
             ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
@@ -335,7 +336,10 @@ final class LocalCodingAgent implements AutoCloseable {
                         return description + "\nCommand: " + safeApprovalText(command) + "\nWorkdir: "
                                 + safeApprovalText(workdir) + "\nTimeout: " + timeout + " ms\nShell: "
                                 + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
-                                + "\nRisk: runs on the host with the current OS user's access; this is not strong isolation.";
+                                + "\nSecurity: "
+                                + (executionPlatform == null
+                                        ? "execution unavailable"
+                                        : executionPlatform.securitySummary());
                     })
                     .policyStores(policy.decisionsStore(), policy.evidence())
                     .approvalVerification(policy.approvalVerification())

@@ -116,6 +116,8 @@ class CliConfigurationLoaderTest {
         assertThat(result.approval()).isEqualTo(ApprovalMode.DENY);
         assertThat(result.timeout()).isEqualTo(java.time.Duration.ofMillis(120000));
         assertThat(result.execution().defaultTimeout()).isEqualTo(java.time.Duration.ofMillis(45000));
+        assertThat(result.execution().provider()).isEqualTo("local-native");
+        assertThat(result.execution().network()).isEqualTo("deny");
         assertThat(result.execution().maximumTimeout()).isEqualTo(java.time.Duration.ofMillis(600000));
         assertThat(result.execution().maxOutputBytes()).isEqualTo(32768);
         assertThat(result.execution().maxOutputLines()).isEqualTo(900);
@@ -222,6 +224,8 @@ class CliConfigurationLoaderTest {
         CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
 
         assertThatThrownBy(() -> new CliConfiguration.Execution(
+                        defaults.provider(),
+                        defaults.network(),
                         defaults.shell(),
                         defaults.shellPath(),
                         defaults.defaultTimeout(),
@@ -229,10 +233,13 @@ class CliConfigurationLoaderTest {
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),
                         defaults.maxProcesses(),
-                        java.util.Set.of("DEEPSEEK_API_KEY")))
+                        java.util.Set.of("DEEPSEEK_API_KEY"),
+                        java.util.List.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("secret-like");
         assertThatThrownBy(() -> new CliConfiguration.Execution(
+                        defaults.provider(),
+                        defaults.network(),
                         "cmd",
                         null,
                         defaults.defaultTimeout(),
@@ -240,9 +247,54 @@ class CliConfigurationLoaderTest {
                         defaults.maxOutputBytes(),
                         defaults.maxOutputLines(),
                         defaults.maxProcesses(),
-                        java.util.Set.of()))
+                        java.util.Set.of(),
+                        java.util.List.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("unsupported");
+    }
+
+    @Test
+    void validatesProviderNetworkAndTrustedExtraPathConfiguration() throws Exception {
+        Path cache = Files.createTempDirectory("haifa-cli-cache").toAbsolutePath();
+        Path configuration = Files.createTempFile("haifa-cli-execution", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                execution:
+                  provider: local-native
+                  network: allow
+                  extraPathPolicies:
+                    - id: build-cache
+                      path: "%s"
+                      readOnly: false
+                """
+                        .formatted(cache.toString().replace("\\", "\\\\")));
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "execution", "--config", configuration.toString()}),
+                        cache);
+
+        assertThat(result.execution().provider()).isEqualTo("local-native");
+        assertThat(result.execution().network()).isEqualTo("allow");
+        assertThat(result.execution().extraPathPolicies())
+                .containsExactly(new CliConfiguration.ExtraPathPolicy("build-cache", cache, false));
+
+        CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
+        assertThatThrownBy(() -> new CliConfiguration.Execution(
+                        "host-guarded",
+                        "deny",
+                        defaults.shell(),
+                        defaults.shellPath(),
+                        defaults.defaultTimeout(),
+                        defaults.maximumTimeout(),
+                        defaults.maxOutputBytes(),
+                        defaults.maxOutputLines(),
+                        defaults.maxProcesses(),
+                        defaults.inheritEnvironment(),
+                        java.util.List.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unavailable");
     }
 
     @Test

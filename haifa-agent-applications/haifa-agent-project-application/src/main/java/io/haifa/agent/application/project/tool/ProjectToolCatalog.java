@@ -3,6 +3,8 @@ package io.haifa.agent.application.project.tool;
 import io.haifa.agent.application.project.tool.web.WebToolCatalogContribution;
 import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
+import io.haifa.agent.sandbox.api.NetworkPolicy;
+import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -42,17 +44,32 @@ public final class ProjectToolCatalog {
             Set<String> effectiveCapabilities,
             boolean modelSupportsTools,
             ToolProvider provider) {
-        Objects.requireNonNull(configuredTools, "configuredTools");
-        Objects.requireNonNull(effectiveCapabilities, "effectiveCapabilities");
-        Objects.requireNonNull(provider, "provider");
-        ToolCatalogBuilder builder = new ToolCatalogBuilder();
-        if (!modelSupportsTools) return builder.freeze();
-        REQUIRED_CAPABILITY.keySet().stream()
-                .sorted()
-                .filter(configuredTools::contains)
-                .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
-                .forEach(name -> builder.register(modelAlias(name), definition(name), "project-workspace", provider));
-        return builder.freeze();
+        return freeze(
+                configuredTools,
+                effectiveCapabilities,
+                modelSupportsTools,
+                provider,
+                List.of(),
+                List.of(),
+                List.of(),
+                null);
+    }
+
+    public DefaultToolCatalog freeze(
+            Set<String> configuredTools,
+            Set<String> effectiveCapabilities,
+            boolean modelSupportsTools,
+            ToolProvider provider,
+            SandboxProfile executionProfile) {
+        return freeze(
+                configuredTools,
+                effectiveCapabilities,
+                modelSupportsTools,
+                provider,
+                List.of(),
+                List.of(),
+                List.of(),
+                Objects.requireNonNull(executionProfile, "executionProfile"));
     }
 
     /** Coding profile assembly path for locally reviewed MCP imports and built-in project tools. */
@@ -62,7 +79,15 @@ public final class ProjectToolCatalog {
             boolean modelSupportsTools,
             ToolProvider provider,
             List<McpToolCatalogContribution> mcpTools) {
-        return freeze(configuredTools, effectiveCapabilities, modelSupportsTools, provider, mcpTools, List.of());
+        return freeze(
+                configuredTools,
+                effectiveCapabilities,
+                modelSupportsTools,
+                provider,
+                mcpTools,
+                List.of(),
+                List.of(),
+                null);
     }
 
     /** Coding profile assembly path for reviewed MCP imports, Web capabilities, and built-in project tools. */
@@ -74,7 +99,14 @@ public final class ProjectToolCatalog {
             List<McpToolCatalogContribution> mcpTools,
             List<WebToolCatalogContribution> webTools) {
         return freeze(
-                configuredTools, effectiveCapabilities, modelSupportsTools, provider, mcpTools, webTools, List.of());
+                configuredTools,
+                effectiveCapabilities,
+                modelSupportsTools,
+                provider,
+                mcpTools,
+                webTools,
+                List.of(),
+                null);
     }
 
     /** Full project product assembly path; Skill tools are supplied only by Skill-enabled profiles. */
@@ -86,6 +118,26 @@ public final class ProjectToolCatalog {
             List<McpToolCatalogContribution> mcpTools,
             List<WebToolCatalogContribution> webTools,
             List<SkillToolCatalogContribution> skillTools) {
+        return freeze(
+                configuredTools,
+                effectiveCapabilities,
+                modelSupportsTools,
+                provider,
+                mcpTools,
+                webTools,
+                skillTools,
+                null);
+    }
+
+    public DefaultToolCatalog freeze(
+            Set<String> configuredTools,
+            Set<String> effectiveCapabilities,
+            boolean modelSupportsTools,
+            ToolProvider provider,
+            List<McpToolCatalogContribution> mcpTools,
+            List<WebToolCatalogContribution> webTools,
+            List<SkillToolCatalogContribution> skillTools,
+            SandboxProfile executionProfile) {
         Objects.requireNonNull(mcpTools, "mcpTools");
         Objects.requireNonNull(webTools, "webTools");
         Objects.requireNonNull(skillTools, "skillTools");
@@ -98,7 +150,8 @@ public final class ProjectToolCatalog {
                 .sorted()
                 .filter(configuredTools::contains)
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
-                .forEach(name -> builder.register(modelAlias(name), definition(name), "project-workspace", provider));
+                .forEach(name -> builder.register(
+                        modelAlias(name), definition(name, executionProfile), "project-workspace", provider));
         mcpTools.stream()
                 .sorted(java.util.Comparator.comparing(McpToolCatalogContribution::alias))
                 .forEach(contribution -> builder.register(
@@ -131,24 +184,33 @@ public final class ProjectToolCatalog {
         return new ToolAlias(name.replace('.', '_'));
     }
 
-    private static ToolDefinition definition(String name) {
+    private static ToolDefinition definition(String name, SandboxProfile executionProfile) {
         boolean execution = name.equals("execution.run");
+        if (execution && executionProfile == null) {
+            throw new IllegalArgumentException("execution.run requires a frozen sandbox profile");
+        }
         boolean write = WRITES.contains(name);
         ToolRisk risk = execution ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
         ToolIdempotency idempotency = execution || write ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
         Set<ToolSideEffect> effects = execution
-                ? Set.of(ToolSideEffect.PROCESS_EXECUTION)
+                ? executionProfile.networkPolicy() == NetworkPolicy.ALLOW
+                        ? Set.of(ToolSideEffect.PROCESS_EXECUTION, ToolSideEffect.NETWORK_ACCESS)
+                        : Set.of(ToolSideEffect.PROCESS_EXECUTION)
                 : write ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ);
         ToolApprovalRequirement approval =
                 execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
         ToolResourceRequirements resources = new ToolResourceRequirements(
-                Set.of(REQUIRED_CAPABILITY.get(name)), Set.of(), execution ? Set.of("project-safe") : Set.of());
+                Set.of(REQUIRED_CAPABILITY.get(name)),
+                execution && executionProfile.networkPolicy() == NetworkPolicy.ALLOW
+                        ? Set.of("unrestricted-network")
+                        : Set.of(),
+                execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         return new ToolDefinition(
                 new ToolName(name),
                 new SemanticVersion("1.0.0"),
                 ProjectToolExecutor.PROVIDER_ID,
                 title(name),
-                description(name),
+                description(name, executionProfile),
                 new ToolSchema("haifa." + name + ".input", "1.0.0", inputSchema(name)),
                 new ToolSchema("haifa." + name + ".output", "1.0.0", outputSchema(name)),
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
@@ -186,11 +248,18 @@ public final class ProjectToolCatalog {
         };
     }
 
-    private static String description(String name) {
+    private static String description(String name, SandboxProfile executionProfile) {
         if (name.equals("execution.run")) {
-            return "Run complete command text through the configured host shell inside the frozen project workspace.";
+            return "Run complete command text through the frozen "
+                    + executionProfile.providerId()
+                    + " execution profile inside the project workspace.";
         }
         return title(name) + " within the frozen project workspace and capability boundary.";
+    }
+
+    static String executionProfileIdentity(SandboxProfile profile) {
+        Objects.requireNonNull(profile, "profile must not be null");
+        return profile.ref().value() + "@" + profile.ref().version();
     }
 
     private static Map<String, Object> inputSchema(String name) {

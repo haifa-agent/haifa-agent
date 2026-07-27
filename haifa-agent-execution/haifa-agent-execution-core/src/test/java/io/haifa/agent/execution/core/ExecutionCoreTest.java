@@ -46,7 +46,9 @@ import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
+import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.sandbox.api.SandboxExecution;
+import io.haifa.agent.sandbox.api.SandboxFilesystemPolicy;
 import io.haifa.agent.sandbox.api.SandboxManagedProcess;
 import io.haifa.agent.sandbox.api.SandboxProcessResult;
 import io.haifa.agent.sandbox.api.SandboxProcessStatus;
@@ -54,6 +56,7 @@ import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxSession;
 import io.haifa.agent.sandbox.api.SandboxSessionId;
+import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -107,7 +110,7 @@ class ExecutionCoreTest {
                 .extracting(change -> change.path().value())
                 .contains("created.txt");
         assertThat(broker.execute(request).replayed()).isTrue();
-        assertThat(policyCalls).hasValue(1);
+        assertThat(policyCalls).hasValue(2);
 
         assertThatThrownBy(() -> broker.execute(
                         fixture.request("execution-2", "key-1", Set.of("execution.run"), List.of("different"))))
@@ -235,6 +238,46 @@ class ExecutionCoreTest {
         assertThat(result.stdout().summary()).doesNotContain("secret-token");
     }
 
+    @Test
+    void rejectsMissingProviderGuaranteesBeforeOpeningTheSandbox() {
+        Fixture fixture = fixture();
+        AtomicInteger opens = new AtomicInteger();
+        SandboxProvider provider = new SandboxProvider() {
+            @Override
+            public String providerId() {
+                return "insufficient";
+            }
+
+            @Override
+            public SandboxCapabilities capabilities() {
+                return new SandboxCapabilities(true, false, false, false, false);
+            }
+
+            @Override
+            public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
+                opens.incrementAndGet();
+                throw new AssertionError("open must not be called");
+            }
+        };
+        SandboxProfile profile = new SandboxProfile(
+                new SandboxProfileRef("test", "1"),
+                provider.providerId(),
+                provider.configurationDigest(),
+                Set.of("fake"),
+                Set.of("SECRET"),
+                false,
+                NetworkPolicy.ALLOW,
+                new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
+                new SandboxCapabilities(true, true, false, false, false));
+        DefaultExecutionBroker broker = fixture.broker(provider, request -> {}, profile);
+
+        assertThatThrownBy(() -> broker.execute(fixture.request(
+                        "capability-missing", "capability-key", Set.of("execution.run"), List.of("fake"))))
+                .isInstanceOfSatisfying(SandboxException.class, exception -> assertThat(exception.code())
+                        .isEqualTo("CAPABILITY_UNAVAILABLE"));
+        assertThat(opens).hasValue(0);
+    }
+
     private Fixture fixture() {
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
         WorkspaceBindingId bindingId = new WorkspaceBindingId("binding-1");
@@ -336,6 +379,11 @@ class ExecutionCoreTest {
             }
 
             @Override
+            public boolean supportsManagedProcess() {
+                return true;
+            }
+
+            @Override
             public SandboxSession open(SandboxProfile profile, WorkspaceMount mount) {
                 return new SandboxSession() {
                     private final java.util.concurrent.CompletableFuture<io.haifa.agent.execution.api.ProcessExit>
@@ -426,7 +474,19 @@ class ExecutionCoreTest {
             InMemoryExecutionOutputStore outputs) {
         DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy) {
             SandboxProfile profile = new SandboxProfile(
-                    new SandboxProfileRef("test", "1"), Set.of("fake"), Set.of("SECRET"), false, NetworkPolicy.ALLOW);
+                    new SandboxProfileRef("test", "1"),
+                    provider.providerId(),
+                    provider.configurationDigest(),
+                    Set.of("fake"),
+                    Set.of("SECRET"),
+                    false,
+                    NetworkPolicy.ALLOW,
+                    io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
+                    new SandboxCapabilities(true, false, false, false, false));
+            return broker(provider, policy, profile);
+        }
+
+        DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy, SandboxProfile profile) {
             return new DefaultExecutionBroker(
                     new InMemoryExecutionStore(),
                     outputs,

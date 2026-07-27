@@ -2,6 +2,11 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 新增 `local-native` Sandbox Provider：macOS 使用 Seatbelt、Linux 使用 bubblewrap，兑现一次性命令的
+  Workspace 文件策略、`NetworkPolicy.DENY` 和进程树收敛；Windows 明确不支持且禁止自动回退 Host。
+- CLI 的 `execution.run` 默认冻结为 `local-native + deny`，支持用户对可信 Workspace 显式选择
+  `host-guarded + allow`；Tool Definition、Policy 资源摘要、Execution Request、Provider 和审计使用
+  同一精确 Profile/配置身份，配置变化后旧 Approval 不可复用。
 - 新增 SQLite Runtime 全量持久化与跨进程恢复装配，覆盖 Session、Run、Attempt、Checkpoint、Interaction、Tool Journal、Event/Outbox、配置与扩展状态；Project Application/CLI 支持 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL`。
 - 新增安全 JSONL Transcript 投影，使用提交后 Outbox、fsync 后确认、eventId 去重、截断/中间损坏诊断、跨进程锁和原子轮转；JSONL 不参与恢复。
 - 持久化文件统一执行 POSIX `0700/0600` 或 Windows 当前用户独占 ACL，并补齐事务故障注入、busy 有界重试、磁盘秘密负样本和真实 SQLite 重启测试。
