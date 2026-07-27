@@ -85,6 +85,16 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
         }
     }
 
+    static CliTraceOutput openForTerminal(Optional<CliTraceMode> mode, Optional<Path> traceFile) {
+        if (mode.isEmpty() && traceFile.isPresent()) {
+            throw new IllegalArgumentException("--trace-file requires --trace");
+        }
+        if (traceFile.isEmpty()) {
+            return new CliTraceOutput(Optional.empty(), null, null);
+        }
+        return open(mode, traceFile, null);
+    }
+
     @Override
     public synchronized void accept(RuntimeTraceEvent event) {
         if (mode.isEmpty() || failure != null) return;

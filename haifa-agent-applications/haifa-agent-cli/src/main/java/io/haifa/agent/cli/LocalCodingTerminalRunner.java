@@ -35,7 +35,12 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
                         Objects.requireNonNull(lifecycleFactory.get(), "terminal lifecycle must not be null");
                 LocalCodingAgent agent = agentFactory.create(workspace, configuration, output, traceObserver)) {
             var client = new LocalCodingSessionClient(
-                    agent.projectId(), agent.codingSessions(), agent.runtime(), agent.identifiers(), agent.time());
+                    agent.projectId(),
+                    agent.codingSessions(),
+                    agent.runtime(),
+                    agent.identifiers(),
+                    agent.time(),
+                    new LocalWorkspacePathCatalog(workspace)::list);
             new CodingTerminalApplication(agent.projectId(), client, Optional.empty(), () -> lifecycle).run();
         }
     }

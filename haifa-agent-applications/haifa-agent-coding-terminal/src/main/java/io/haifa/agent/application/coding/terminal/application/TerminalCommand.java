@@ -7,6 +7,7 @@ public enum TerminalCommand {
     SETTINGS,
     TRUST,
     SESSION,
+    COMMANDS,
     QUIT,
     NOT_IMPLEMENTED,
     UNKNOWN

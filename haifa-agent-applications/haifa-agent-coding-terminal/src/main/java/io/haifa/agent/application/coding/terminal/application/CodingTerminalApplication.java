@@ -5,6 +5,7 @@ import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.jline.JLineDisplayAdapter;
 import io.haifa.agent.application.coding.terminal.jline.JLineEditor;
 import io.haifa.agent.application.coding.terminal.jline.JLineTerminalLifecycle;
+import io.haifa.agent.application.coding.terminal.jline.TerminalInput;
 import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
@@ -13,6 +14,7 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /** Runnable JLine product shell. Assembly supplies the already-authorized product client. */
@@ -52,11 +54,13 @@ public final class CodingTerminalApplication {
                     pump,
                     new TerminalUiReducer(),
                     TerminalUiState.initial(size.getColumns(), size.getRows()));
+            var interruptRequested = new AtomicBoolean();
             lifecycle.installSignalHandlers(
                     resized ->
                             pump.offer(new TerminalUiAction.TerminalResized(resized.getColumns(), resized.getRows())),
-                    () -> pump.offer(new TerminalUiAction.RecoverableFailure("INTERRUPT_REQUESTED")));
+                    () -> interruptRequested.set(true));
             lifecycle.enterRawMode();
+            lifecycle.enterFullScreen();
             var display = new JLineDisplayAdapter(terminal);
             var renderer = new TerminalRenderer();
             var editor = new JLineEditor(terminal, client::logicalPaths);
@@ -65,8 +69,16 @@ public final class CodingTerminalApplication {
                 while (!controller.state().exitRequested()) {
                     controller.drainEvents();
                     display.render(renderer.render(controller.state()));
+                    if (interruptRequested.compareAndSet(true, false)) {
+                        controller.accept(new TerminalInput(
+                                TerminalInput.Kind.INTERRUPT,
+                                controller.state().editorBuffer(),
+                                controller.state().editorCursor()));
+                        continue;
+                    }
                     controller.accept(editor.read(
                             controller.state().editorBuffer(),
+                            controller.state().editorCursor(),
                             controller.state().selector().isPresent()));
                 }
             } finally {

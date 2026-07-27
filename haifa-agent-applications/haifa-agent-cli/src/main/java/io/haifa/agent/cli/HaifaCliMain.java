@@ -42,8 +42,11 @@ public final class HaifaCliMain {
             Path workspace = parsed.workspace().orElseGet(() -> Path.of("."));
             if (!workspace.isAbsolute()) workspace = workspace.toAbsolutePath().normalize();
             CliConfiguration configuration = new CliConfigurationLoader().load(parsed, workspace);
-            try (CliTraceOutput trace = CliTraceOutput.open(parsed.trace(), parsed.traceFile(), error)) {
-                if (parsed.terminal() || parsed.message().isEmpty()) {
+            boolean terminal = parsed.terminal() || parsed.message().isEmpty();
+            try (CliTraceOutput trace = terminal
+                    ? CliTraceOutput.openForTerminal(parsed.trace(), parsed.traceFile())
+                    : CliTraceOutput.open(parsed.trace(), parsed.traceFile(), error)) {
+                if (terminal) {
                     terminalRunner.run(workspace, configuration, output, trace);
                     return 0;
                 }
@@ -217,7 +220,7 @@ public final class HaifaCliMain {
                       --approval <mode>      ask, auto, or deny (default: ask)
                       --timeout <duration>   ISO-8601 duration, e.g. PT5M
                       --trace <mode>         summary, detail, or jsonl
-                      --trace-file <path>    Write trace to a file (requires --trace)
+                      --trace-file <path>    Write trace to a file (required for Terminal trace)
                       --verbose              Print lifecycle details
                   -h, --help                 Show this help
                 """;

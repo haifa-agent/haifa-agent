@@ -1,90 +1,83 @@
 package io.haifa.agent.application.coding.terminal.jline;
 
-import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import org.jline.keymap.KeyMap;
-import org.jline.reader.LineReader;
-import org.jline.reader.Reference;
-import org.jline.reader.Widget;
+import org.jline.terminal.Terminal;
+import org.jline.utils.InfoCmp;
 
-/** Fixed Phase 2 key semantics from the reviewed terminal prototype. */
+/** Fixed keyboard semantics for the single full-screen Terminal input owner. */
 public final class JLineKeyBindings {
-    static final String FOLLOW_UP = "haifa-follow-up";
-    static final String CANCEL_OR_CLOSE = "haifa-cancel-or-close";
-    static final String RESTORE = "haifa-restore";
-    static final String TOGGLE = "haifa-toggle";
-    static final String SELECT_PREVIOUS = "haifa-selector-previous";
-    static final String SELECT_NEXT = "haifa-selector-next";
+    private static final long ESCAPE_AMBIGUOUS_TIMEOUT_MILLIS = 100L;
 
     private JLineKeyBindings() {}
 
-    public static void install(
-            LineReader reader, AtomicReference<TerminalInput.Kind> acceptedKind, AtomicBoolean selectorActive) {
-        Objects.requireNonNull(reader, "reader must not be null");
-        Objects.requireNonNull(acceptedKind, "acceptedKind must not be null");
-        Objects.requireNonNull(selectorActive, "selectorActive must not be null");
-        bindAccept(reader, acceptedKind, FOLLOW_UP, TerminalInput.Kind.FOLLOW_UP, "\033\r");
-        bindAccept(reader, acceptedKind, CANCEL_OR_CLOSE, TerminalInput.Kind.CANCEL_OR_CLOSE, "\033");
-        bindAccept(reader, acceptedKind, RESTORE, TerminalInput.Kind.RESTORE, "\033[1;3A");
-        bindAccept(reader, acceptedKind, TOGGLE, TerminalInput.Kind.TOGGLE_EXPANSION, "\017");
-        bindSelectorNavigation(
-                reader,
-                acceptedKind,
-                selectorActive,
-                SELECT_PREVIOUS,
-                TerminalInput.Kind.SELECT_PREVIOUS,
-                LineReader.UP_LINE_OR_HISTORY,
-                "\033[A");
-        bindSelectorNavigation(
-                reader,
-                acceptedKind,
-                selectorActive,
-                SELECT_NEXT,
-                TerminalInput.Kind.SELECT_NEXT,
-                LineReader.DOWN_LINE_OR_HISTORY,
-                "\033[B");
+    static KeyMap<Binding> create(Terminal terminal) {
+        KeyMap<Binding> keys = new KeyMap<>();
+        keys.setUnicode(Binding.SELF_INSERT);
+        keys.setNomatch(Binding.SELF_INSERT);
+        keys.setAmbiguousTimeout(ESCAPE_AMBIGUOUS_TIMEOUT_MILLIS);
 
-        Widget insertNewline = () -> {
-            reader.getBuffer().write('\n');
-            return true;
-        };
-        reader.getWidgets().put("haifa-newline", insertNewline);
-        reader.getKeyMaps().get(LineReader.MAIN).bind(new Reference("haifa-newline"), "\033[13;2u");
+        keys.bind(Binding.SUBMIT, "\r", "\n");
+        keys.bind(Binding.FOLLOW_UP, KeyMap.alt('\r'));
+        keys.bind(Binding.CANCEL_OR_CLOSE, KeyMap.esc());
+        keys.bind(Binding.RESTORE, "\033[1;3A");
+        keys.bind(Binding.TOGGLE, KeyMap.ctrl('O'));
+        keys.bind(Binding.INTERRUPT, KeyMap.ctrl('C'));
+        keys.bind(Binding.EOF, KeyMap.ctrl('D'));
+        keys.bind(Binding.NEWLINE, "\033[13;2u", "\033[27;2;13~");
+
+        keys.bind(Binding.BACKSPACE, KeyMap.del(), KeyMap.ctrl('H'));
+        keys.bind(Binding.DELETE, "\033[3~");
+        keys.bind(Binding.LEFT, "\033[D");
+        keys.bind(Binding.RIGHT, "\033[C");
+        keys.bind(Binding.UP, "\033[A");
+        keys.bind(Binding.DOWN, "\033[B");
+        keys.bind(Binding.HOME, "\033[H", "\033[1~");
+        keys.bind(Binding.END, "\033[F", "\033[4~");
+        keys.bind(Binding.KILL_TO_START, KeyMap.ctrl('U'));
+        keys.bind(Binding.KILL_TO_END, KeyMap.ctrl('K'));
+        keys.bind(Binding.KILL_PREVIOUS_WORD, KeyMap.ctrl('W'));
+        keys.bind(Binding.COMPLETE, "\t");
+
+        bindCapability(keys, terminal, Binding.LEFT, InfoCmp.Capability.key_left);
+        bindCapability(keys, terminal, Binding.RIGHT, InfoCmp.Capability.key_right);
+        bindCapability(keys, terminal, Binding.UP, InfoCmp.Capability.key_up);
+        bindCapability(keys, terminal, Binding.DOWN, InfoCmp.Capability.key_down);
+        bindCapability(keys, terminal, Binding.HOME, InfoCmp.Capability.key_home);
+        bindCapability(keys, terminal, Binding.END, InfoCmp.Capability.key_end);
+        bindCapability(keys, terminal, Binding.DELETE, InfoCmp.Capability.key_dc);
+        return keys;
     }
 
-    private static void bindSelectorNavigation(
-            LineReader reader,
-            AtomicReference<TerminalInput.Kind> acceptedKind,
-            AtomicBoolean selectorActive,
-            String widgetName,
-            TerminalInput.Kind kind,
-            String fallbackWidget,
-            String sequence) {
-        reader.getWidgets().put(widgetName, () -> {
-            if (!selectorActive.get()) {
-                reader.callWidget(fallbackWidget);
-                return true;
-            }
-            acceptedKind.set(kind);
-            reader.callWidget(LineReader.ACCEPT_LINE);
-            return true;
-        });
-        reader.getKeyMaps().get(LineReader.MAIN).bind(new Reference(widgetName), sequence);
+    private static void bindCapability(
+            KeyMap<Binding> keys, Terminal terminal, Binding binding, InfoCmp.Capability capability) {
+        String sequence = KeyMap.key(terminal, capability);
+        if (sequence != null && !sequence.isEmpty()) {
+            keys.bind(binding, sequence);
+        }
     }
 
-    private static void bindAccept(
-            LineReader reader,
-            AtomicReference<TerminalInput.Kind> acceptedKind,
-            String widgetName,
-            TerminalInput.Kind kind,
-            String sequence) {
-        reader.getWidgets().put(widgetName, () -> {
-            acceptedKind.set(kind);
-            reader.callWidget(LineReader.ACCEPT_LINE);
-            return true;
-        });
-        KeyMap<org.jline.reader.Binding> main = reader.getKeyMaps().get(LineReader.MAIN);
-        main.bind(new Reference(widgetName), sequence);
+    enum Binding {
+        SELF_INSERT,
+        SUBMIT,
+        FOLLOW_UP,
+        CANCEL_OR_CLOSE,
+        RESTORE,
+        TOGGLE,
+        INTERRUPT,
+        EOF,
+        NEWLINE,
+        BACKSPACE,
+        DELETE,
+        LEFT,
+        RIGHT,
+        UP,
+        DOWN,
+        HOME,
+        END,
+        KILL_TO_START,
+        KILL_TO_END,
+        KILL_PREVIOUS_WORD,
+        COMPLETE,
+        IGNORE
     }
 }

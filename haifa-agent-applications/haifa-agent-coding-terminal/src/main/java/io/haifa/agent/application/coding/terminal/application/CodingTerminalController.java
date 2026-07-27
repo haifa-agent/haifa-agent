@@ -2,12 +2,14 @@ package io.haifa.agent.application.coding.terminal.application;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.coding.terminal.jline.JLineCompleter;
 import io.haifa.agent.application.coding.terminal.jline.TerminalInput;
 import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
@@ -21,22 +23,27 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /** Single-threaded application controller. Runtime callbacks only enqueue actions. */
 public final class CodingTerminalController implements AutoCloseable {
     private static final int PAGE_SIZE = 200;
+    private static final Set<String> RETRYABLE_SESSION_RACES =
+            Set.of("ACTIVE_RUN_SETTLED", "ACTIVE_RUN_MISMATCH", "CODING_SESSION_ACTIVE");
 
     private final ProjectId projectId;
     private final CodingSessionClient client;
     private final TerminalEventPump pump;
     private final TerminalUiReducer reducer;
     private final TerminalCommandRouter commands = new TerminalCommandRouter();
+    private final JLineCompleter completions;
     private TerminalUiState state;
     private RunEventSubscription subscription;
     private boolean awaitingNewSessionMessage;
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
+    private CompletionContext completionContext;
 
     public CodingTerminalController(
             ProjectId projectId,
@@ -49,6 +56,7 @@ public final class CodingTerminalController implements AutoCloseable {
         this.pump = Objects.requireNonNull(pump, "pump must not be null");
         this.reducer = Objects.requireNonNull(reducer, "reducer must not be null");
         this.state = Objects.requireNonNull(initialState, "initialState must not be null");
+        this.completions = new JLineCompleter(client::logicalPaths);
     }
 
     public TerminalUiState state() {
@@ -61,6 +69,14 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public void drainEvents() {
+        try {
+            drainEventsGuarded();
+        } catch (ProjectProductException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+        }
+    }
+
+    private void drainEventsGuarded() {
         boolean reconcile = false;
         for (TerminalUiAction action : pump.drain(PAGE_SIZE)) {
             apply(action);
@@ -75,7 +91,39 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     public void accept(TerminalInput input) {
+        try {
+            acceptGuarded(input);
+        } catch (ProjectProductException exception) {
+            if ((input.kind() == TerminalInput.Kind.SUBMIT || input.kind() == TerminalInput.Kind.FOLLOW_UP)
+                    && !input.text().isBlank()) {
+                apply(new TerminalUiAction.EditorChanged(input.text(), input.cursor()));
+            }
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+        }
+    }
+
+    private void acceptGuarded(TerminalInput input) {
         drainEvents();
+        if (input.kind() == TerminalInput.Kind.TICK) {
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.EDITOR_CHANGED) {
+            apply(new TerminalUiAction.EditorChanged(input.text(), input.cursor()));
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.COMPLETION_REQUESTED) {
+            openCompletionSelector(input.text(), input.cursor());
+            return;
+        }
+        if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
+            if (cancelCurrentRunIfPresent()) {
+                return;
+            }
+            if (state.selector().isPresent()) {
+                apply(new TerminalUiAction.SelectorClosed());
+            }
+            return;
+        }
         if (state.selector().isPresent()) {
             acceptSelector(input);
             return;
@@ -92,18 +140,8 @@ public final class CodingTerminalController implements AutoCloseable {
         if (input.kind() == TerminalInput.Kind.INTERRUPT) {
             if (!input.text().isBlank()) {
                 apply(new TerminalUiAction.EditorChanged("", 0));
-            } else if (state.currentRunId().isPresent()) {
-                cancel();
-            } else {
+            } else if (!cancelCurrentRunIfPresent()) {
                 apply(new TerminalUiAction.ExitRequested());
-            }
-            return;
-        }
-        if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
-            if (state.selector().isPresent()) {
-                apply(new TerminalUiAction.SelectorClosed());
-            } else if (state.currentRunId().isPresent()) {
-                cancel();
             }
             return;
         }
@@ -133,29 +171,54 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         TerminalCommand command = commands.route(text);
         if (command != TerminalCommand.MESSAGE) {
+            apply(new TerminalUiAction.EditorChanged("", 0));
             command(command);
             return;
         }
         String key = UUID.randomUUID().toString();
         if (awaitingNewSessionMessage || state.session().isEmpty()) {
             awaitingNewSessionMessage = false;
-            load(client.create(projectId, text, key));
-            apply(new TerminalUiAction.UserMessageCommitted(key, text));
-            replayAndTail();
+            CodingSessionView created = client.create(projectId, text, key);
+            apply(new TerminalUiAction.EditorChanged("", 0));
+            try {
+                load(created);
+                apply(new TerminalUiAction.UserMessageCommitted(key, text));
+                replayAndTail();
+            } catch (ProjectProductException exception) {
+                apply(new TerminalUiAction.UserMessageCommitted(key, text));
+                apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+            }
             return;
         }
-        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
-        if (state.currentRunId().isPresent()) {
-            if (followUp) {
-                client.enqueueFollowUp(sessionId, state.currentRunId().orElseThrow(), text, key);
-            } else {
-                client.steer(sessionId, state.currentRunId().orElseThrow(), text, key);
-            }
-        } else {
-            client.submit(sessionId, text, key);
-        }
+        sendToCurrentSession(text, followUp, key, true);
+        apply(new TerminalUiAction.EditorChanged("", 0));
         apply(new TerminalUiAction.UserMessageCommitted(key, text));
-        refresh();
+        try {
+            refresh();
+        } catch (ProjectProductException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+        }
+    }
+
+    private void sendToCurrentSession(String text, boolean followUp, String key, boolean retrySessionRace) {
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        try {
+            if (state.currentRunId().isPresent()) {
+                if (followUp) {
+                    client.enqueueFollowUp(sessionId, state.currentRunId().orElseThrow(), text, key);
+                } else {
+                    client.steer(sessionId, state.currentRunId().orElseThrow(), text, key);
+                }
+            } else {
+                client.submit(sessionId, text, key);
+            }
+        } catch (ProjectProductException exception) {
+            if (!retrySessionRace || !RETRYABLE_SESSION_RACES.contains(exception.code())) {
+                throw exception;
+            }
+            refresh();
+            sendToCurrentSession(text, followUp, key, false);
+        }
     }
 
     private void command(TerminalCommand command) {
@@ -187,6 +250,7 @@ public final class CodingTerminalController implements AutoCloseable {
                         .orElseGet(() -> List.of("No active session"));
                 apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("session", "Session", options, 0)));
             }
+            case COMMANDS -> openCommandSelector();
             case QUIT -> apply(new TerminalUiAction.ExitRequested());
             case NOT_IMPLEMENTED ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
@@ -195,11 +259,22 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    private void cancel() {
+    private boolean cancelCurrentRunIfPresent() {
+        if (state.currentRunId().isEmpty() && state.session().isPresent()) {
+            refresh();
+        }
+        if (state.currentRunId().isEmpty()) {
+            return false;
+        }
+        if (state.selector().isPresent()) {
+            apply(new TerminalUiAction.SelectorClosed());
+            completionContext = null;
+        }
+        apply(new TerminalUiAction.StatusChanged("Cancelling"));
         client.cancel(
                 state.session().orElseThrow().summary().sessionId(),
                 UUID.randomUUID().toString());
-        apply(new TerminalUiAction.StatusChanged("Cancelling"));
+        return true;
     }
 
     private void refresh() {
@@ -254,9 +329,35 @@ public final class CodingTerminalController implements AutoCloseable {
                 "interaction:" + interaction.requestId().value(), interaction.safePrompt(), options, 0)));
     }
 
+    private void openCommandSelector() {
+        completionContext = new CompletionContext("", 0, 0);
+        apply(new TerminalUiAction.SelectorOpened(
+                new TerminalSelector("completion", "Commands", JLineCompleter.COMMANDS, 0)));
+    }
+
+    private void openCompletionSelector(String buffer, int cursor) {
+        int start = cursor;
+        while (start > 0 && !Character.isWhitespace(buffer.charAt(start - 1))) {
+            start--;
+        }
+        int end = cursor;
+        while (end < buffer.length() && !Character.isWhitespace(buffer.charAt(end))) {
+            end++;
+        }
+        String word = buffer.substring(start, cursor);
+        List<String> options = completions.suggestions(word);
+        if (options.isEmpty()) {
+            return;
+        }
+        completionContext = new CompletionContext(buffer, start, end);
+        String title = word.startsWith("@") ? "Workspace files" : "Commands";
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("completion", title, options, 0)));
+    }
+
     private void acceptSelector(TerminalInput input) {
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE || input.kind() == TerminalInput.Kind.INTERRUPT) {
             apply(new TerminalUiAction.SelectorClosed());
+            completionContext = null;
             return;
         }
         if (input.kind() == TerminalInput.Kind.SELECT_PREVIOUS) {
@@ -269,6 +370,7 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         if (input.kind() == TerminalInput.Kind.EOF) {
             apply(new TerminalUiAction.SelectorClosed());
+            completionContext = null;
             return;
         }
         if (input.kind() != TerminalInput.Kind.SUBMIT) {
@@ -277,6 +379,17 @@ public final class CodingTerminalController implements AutoCloseable {
         TerminalSelector selector = state.selector().orElseThrow();
         int selected = selector.selected();
         switch (selector.kind()) {
+            case "completion" -> {
+                CompletionContext context = Objects.requireNonNull(completionContext, "completion context is required");
+                String replacement = selector.options().get(selected);
+                String completed = context.buffer().substring(0, context.start())
+                        + replacement
+                        + context.buffer().substring(context.end());
+                int cursor = context.start() + replacement.length();
+                apply(new TerminalUiAction.SelectorClosed());
+                apply(new TerminalUiAction.EditorChanged(completed, cursor));
+                completionContext = null;
+            }
             case "resume" -> {
                 AgentSessionId sessionId = resumeOptions.get(selected).sessionId();
                 apply(new TerminalUiAction.SelectorClosed());
@@ -364,5 +477,14 @@ public final class CodingTerminalController implements AutoCloseable {
     @Override
     public void close() {
         closeSubscription();
+    }
+
+    private record CompletionContext(String buffer, int start, int end) {
+        private CompletionContext {
+            Objects.requireNonNull(buffer, "buffer must not be null");
+            if (start < 0 || end < start || end > buffer.length()) {
+                throw new IllegalArgumentException("completion range is invalid");
+            }
+        }
     }
 }

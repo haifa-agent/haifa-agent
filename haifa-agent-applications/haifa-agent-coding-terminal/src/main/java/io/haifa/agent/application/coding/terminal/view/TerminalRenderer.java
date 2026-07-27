@@ -28,7 +28,7 @@ public final class TerminalRenderer {
 
         line(lines, state.header() + "  v0.1", ACCENT, width);
         line(lines, "esc interrupt  ·  ctrl+c clear  ·  ctrl+o expand tools", MUTED, width);
-        line(lines, "/ commands  ·  alt+enter follow-up  ·  alt+up restore", MUTED, width);
+        line(lines, "tab lists /commands and @files  ·  alt+enter follow-up  ·  alt+up restore", MUTED, width);
         lines.add(AttributedString.EMPTY);
 
         state.loadedResources().forEach(value -> line(lines, value, MUTED, width));
@@ -65,12 +65,12 @@ public final class TerminalRenderer {
         } else {
             line(lines, "┌─ Message " + "─".repeat(Math.max(1, width - 12)), ACCENT, width);
             List<String> editorLines = state.editorBuffer().isEmpty()
-                    ? List.of("Type a message, /command, or @file")
+                    ? List.of("Type a message; use Tab for /commands or @files")
                     : state.editorBuffer().lines().toList();
             for (String editorLine : editorLines) {
                 line(lines, "│ " + editorLine, AttributedStyle.DEFAULT, width);
             }
-            line(lines, "└─ Enter sends · Shift+Enter newline · Alt+Enter follows up", MUTED, width);
+            line(lines, "└─ Enter sends · Tab completes · Shift+Enter newline · Alt+Enter follows up", MUTED, width);
             cursorRow = Math.max(0, lines.size() - 2);
             cursorColumn = Math.min(width - 1, 2 + currentLineCursor(state.editorBuffer(), state.editorCursor()));
         }

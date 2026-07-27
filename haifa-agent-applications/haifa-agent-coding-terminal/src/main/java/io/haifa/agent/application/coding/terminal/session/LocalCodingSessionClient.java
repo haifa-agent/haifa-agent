@@ -24,6 +24,7 @@ import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /** Local adapter; terminal code still sees only the product facade and stable Runtime API. */
 public final class LocalCodingSessionClient implements CodingSessionClient {
@@ -32,6 +33,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     private final AgentRuntime runtime;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
+    private final Supplier<List<String>> logicalPaths;
 
     public LocalCodingSessionClient(
             ProjectId projectId,
@@ -39,11 +41,22 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
             AgentRuntime runtime,
             IdentifierGenerator identifiers,
             TimeProvider time) {
+        this(projectId, sessions, runtime, identifiers, time, List::of);
+    }
+
+    public LocalCodingSessionClient(
+            ProjectId projectId,
+            CodingSessionService sessions,
+            AgentRuntime runtime,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            Supplier<List<String>> logicalPaths) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.sessions = Objects.requireNonNull(sessions, "sessions must not be null");
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
+        this.logicalPaths = Objects.requireNonNull(logicalPaths, "logicalPaths must not be null");
     }
 
     @Override
@@ -146,6 +159,11 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public RunEventSubscription subscribe(AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
         requireRunScoped(runId);
         return runtime.subscribe(runId, after, listener);
+    }
+
+    @Override
+    public List<String> logicalPaths() {
+        return List.copyOf(logicalPaths.get());
     }
 
     private void requireRunScoped(AgentRunId runId) {

@@ -134,6 +134,26 @@ class CliTraceOutputTest {
     }
 
     @Test
+    void terminalTraceWithoutAFileDoesNotWriteAcrossTheFullScreenUi() {
+        try (var trace = CliTraceOutput.openForTerminal(Optional.of(CliTraceMode.DETAIL), Optional.empty())) {
+            trace.accept(event("context.built", Optional.empty(), Map.of("estimatedInputTokens", 42)));
+        }
+    }
+
+    @Test
+    void terminalTraceStillWritesWhenAnExplicitFileIsConfigured() throws Exception {
+        Path target = temp.resolve("terminal.trace");
+
+        try (var trace = CliTraceOutput.openForTerminal(Optional.of(CliTraceMode.DETAIL), Optional.of(target))) {
+            trace.accept(event("context.built", Optional.empty(), Map.of("estimatedInputTokens", 42)));
+        }
+
+        assertThat(Files.readString(target, StandardCharsets.UTF_8))
+                .contains("operation=context.built")
+                .contains("estimatedInputTokens=42");
+    }
+
+    @Test
     void rejectsMissingParentAndDirectoryTargets() {
         assertThatThrownBy(() -> CliTraceOutput.open(
                         Optional.of(CliTraceMode.JSONL),
