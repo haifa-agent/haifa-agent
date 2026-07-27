@@ -11,3 +11,7 @@ PTY、Credential 注入或 Remote。
 Provider 只消费冻结的 `SandboxProfile` 和可信 `LocalNativeSandboxConfiguration`。模型不能选择
 Adapter、宿主路径、Shell、Mount、环境变量或 Sandbox 参数。额外路径通过有界策略 Ref 解析；敏感路径
 或配置冲突 fail closed。
+
+macOS Seatbelt 策略只对根目录本身开放 dyld 启动所需的目录读取，并精确开放 `/dev/null`；这些规则不
+允许读取 Workspace、受信额外路径和系统只读路径之外的文件，也不改变冻结的网络策略。策略中的受信
+路径会解析为物理路径，避免 `/var` 等系统别名导致 OS 规则与实际工作目录不一致。
