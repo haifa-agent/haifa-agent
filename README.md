@@ -14,15 +14,20 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - Project/Workspace 的受控文件访问、变更集、补丁、索引、快照与显式 Artifact 导出；
 - ExecutionBroker、Sandbox SPI、受控 Host Provider、macOS Seatbelt/Linux bubblewrap Local Native
   Provider，以及只读 Git 适配；
-- SQLite V1/V2 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、事务恢复与故障收敛；
+- SQLite V1～V4 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、持久
+  Interaction/Run Input/Event Journal、事务恢复与故障收敛；
 - 可选的安全 JSONL Transcript 投影，支持 at-least-once 去重、截断诊断、跨进程锁与原子轮转；
 - 纯 Java Policy API/Core，支持请求绑定决策、`DENY > ASK > ALLOW`、受限 Approval Grant、
-  Project Trust、产品验证 SPI 和内存 Store；Runtime Tool、Project CLI 与 ExecutionBroker 已共享
-  同一公共 Decision 语义和内存 Approval evidence；
+  Project Trust、产品验证 SPI 和内存 Store；SQLite V3 已提供 Snapshot、Decision、Evidence、
+  Grant 与 Trust 的权威持久化，Runtime Tool、Coding Agent 与 ExecutionBroker 共享同一 Decision；
+- 公共 Contract、持久 Interaction/Steer/Run Event Feed、框架中立 HTTP/JSON + SSE 参考 Adapter，
+  以及 Reactor 末端的 Transport TCK；
 - Coding Agent 产品模块、严格映射评审原型的 JLine Terminal 与唯一可执行 CLI；CLI 支持交互
   Terminal、兼容的 one-shot 模式，并可显式选择 `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
 
-尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、Server/Worker/Admin、Skill Hub/创作与企业管理面、Knowledge、Graph、Policy/Approval/Grant/Trust 的 SQLite 持久化与重启恢复、分布式 Store/Lease、生产 KMS/Vault、容器或 microVM Sandbox。
+尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、生产 Server/Worker/Admin、Skill
+Hub/创作与企业管理面、Knowledge、Graph、完整的 Project Trust/Approval 产品体验、分布式
+Store/Lease、生产 KMS/Vault、Windows Local Native Adapter、容器或 microVM Sandbox。
 
 ## 当前 Reactor
 
@@ -88,6 +93,7 @@ flowchart LR
   RCORE[runtime-core] --> RAPI
   RCORE --> MAPI[model-api]
   RCORE --> TAPI[tool-api]
+  RCORE --> PAPI[policy-api]
   RCORE --> CAPI[credential-api]
   RCORE --> CTX[context]
   RCORE --> MEMAPI[memory-api]
@@ -101,7 +107,7 @@ flowchart LR
   MCORE[model-core] --> MAPI
   MEMAPI --> CORE
   MEMCORE --> MEMAPI
-  PAPI[policy-api] --> CORE
+  PAPI --> CORE
   PCORE[policy-core] --> PAPI
   SKCORE[skill-core] --> SKAPI
   SKBASE[skill-base] --> SKAPI
@@ -114,19 +120,28 @@ flowchart LR
   ECORE --> SAPI
   SHOST[sandbox-host] --> SAPI
   SLOCAL[sandbox-local-native] --> SAPI
+  SLOCAL --> PROJECT
   GIT[git] --> EAPI
+  GIT --> SAPI
+  GIT --> PROJECT
   MCP[mcp] --> TAPI
   MCP --> CAPI
   MCP --> EAPI
   OAI[model-openai-compatible] --> MAPI
   SQLITE[store-sqlite] --> RCORE
+  SQLITE --> PAPI
   JSONL[store-jsonl] --> RCORE
+  CONTRACT[contract] --> COMMON
+  HTTP[transport-http] --> CONTRACT
+  HTTP --> RAPI
   PAPP[coding-agent + built-in Web Tool] --> RCORE
   PAPP --> SQLITE
   PAPP --> JSONL
   PAPP --> PROJECT
   PAPP --> TCORE
   PAPP --> CCORE
+  PAPP --> PAPI
+  PAPP --> PCORE
   PAPP --> SKCORE
   PAPP --> SKBASE
   TERM[coding-terminal] --> PAPP
@@ -138,6 +153,10 @@ flowchart LR
   CLI --> SLOCAL
   TESTKIT[testkit]
   FIXTURES[test-fixtures]
+  TTCK[transport-tck] --> TESTKIT
+  TTCK --> CONTRACT
+  TTCK --> RAPI
+  TTCK --> HTTP
   ITEST[integration-tests] --> TESTKIT
   ITEST --> FIXTURES
   ITEST --> OAI
@@ -157,7 +176,9 @@ flowchart LR
 - `AgentRun` 生命周期只由 Core 的命名领域行为决定，Runtime 不维护第二份状态转换表；
 - Runtime 只依赖 API/SPI，不依赖具体模型、MCP 或 Sandbox Provider；
 - Policy API/Core 只提供产品无关的决策、Approval 语义、Grant/Trust 和验证 SPI；Runtime
-  Interaction 接入、SQLite Adapter 与企业产品审批流程尚未在本阶段实现；
+  Interaction 与 SQLite V3 Adapter 已接入，首次目录信任、审批路由、待办和企业业务流程仍由产品层实现；
+- `haifa-agent-contract` 与 `haifa-agent-transport-http` 只提供外部 DTO 和框架中立 HTTP/SSE
+  映射，不拥有 Socket、TLS、IAM、生产 Server 或产品审批流程；
 - SQLite 是恢复的唯一事实源；JSONL 只是可删除、可重建的安全投影，不能反向恢复 Runtime；
 - 持久文件在 POSIX 使用目录 `0700`/文件 `0600`，在 Windows 使用当前用户独占 ACL；权限无法验证时 fail closed；
 - 凭据明文只在短生命周期 `CredentialLease` 中使用，不进入 Prompt、Tool 参数、Checkpoint、Trace 或 Workspace；
@@ -173,6 +194,18 @@ flowchart LR
 - Host Sandbox 是用户显式选择的受控兼容执行，不等同于网络、CPU、内存或文件系统强隔离。
 
 ## 构建与验证
+
+Linux/macOS：
+
+```bash
+./mvnw test
+./mvnw -pl :haifa-agent-runtime-core -am test
+./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+
+# 唯一可执行制品；无 -m 时默认启动 JLine Terminal
+./mvnw -pl :haifa-agent-cli -am package
+java -jar ./haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar --help
+```
 
 Windows PowerShell：
 
