@@ -41,15 +41,19 @@ class LocalNativeAdapterPlanTest {
 
         assertThat(denied)
                 .contains("(deny default)")
-                .contains(escape(workspace.toString()))
-                .contains(escape(controls.toString()))
-                .contains(escape(sensitive.toString()))
+                .contains("(allow file-read-data (literal \"/\"))")
+                .contains("(allow file-read* file-write* file-ioctl (literal \"/dev/null\"))")
+                .contains(escape(MacSeatbeltAdapter.physicalPath(workspace).toString()))
+                .contains(escape(MacSeatbeltAdapter.physicalPath(controls).toString()))
+                .contains(escape(MacSeatbeltAdapter.physicalPath(sensitive).toString()))
                 .doesNotContain("(allow network*)")
                 .doesNotContain("model-provided-command");
         assertThat(allowed)
                 .contains("(allow network*)")
                 .contains("(allow file-read*")
-                .doesNotContain("(allow file-write* (subpath \"" + escape(workspace.toString()) + "\"))");
+                .doesNotContain("(allow file-write* (subpath \""
+                        + escape(MacSeatbeltAdapter.physicalPath(workspace).toString())
+                        + "\"))");
     }
 
     @Test

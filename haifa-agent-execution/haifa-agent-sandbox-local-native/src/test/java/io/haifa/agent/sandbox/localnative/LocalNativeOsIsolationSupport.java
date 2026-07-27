@@ -32,6 +32,7 @@ import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
 import java.net.ServerSocket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -76,6 +77,7 @@ final class LocalNativeOsIsolationSupport {
                     """
                     printf inside > inside.txt
                     test "$(cat inside.txt)" = inside
+                    printf boundary-probe >/dev/null || exit 40
                     if cat escape-link >/dev/null 2>&1; then exit 41; fi
                     if (exec 3<>/dev/tcp/127.0.0.1/%d) 2>/dev/null; then exit 42; fi
                     """
@@ -86,7 +88,13 @@ final class LocalNativeOsIsolationSupport {
                     Map.of(),
                     new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4)));
             assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
-            assertThat(result.exitCode()).isZero();
+            assertThat(result.exitCode())
+                    .as(
+                            "sandbox stdout=%s, stderr=%s",
+                            new String(result.stdout(), StandardCharsets.UTF_8),
+                            new String(result.stderr(), StandardCharsets.UTF_8))
+                    .isZero();
+            assertThat(new String(result.stderr(), StandardCharsets.UTF_8)).isEmpty();
         }
         assertThat(Files.readString(workspaceRoot.resolve("inside.txt"))).isEqualTo("inside");
 

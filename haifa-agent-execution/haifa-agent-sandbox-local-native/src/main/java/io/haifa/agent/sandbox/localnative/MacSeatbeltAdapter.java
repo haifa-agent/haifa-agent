@@ -9,6 +9,7 @@ import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -74,30 +75,55 @@ final class MacSeatbeltAdapter implements LocalNativeAdapter {
         policy.append("(allow sysctl-read)\n");
         policy.append("(allow mach-lookup)\n");
         policy.append("(allow file-read-metadata)\n");
+        policy.append("(allow file-read-data (literal \"/\"))\n");
+        policy.append("(allow file-read* file-write* file-ioctl (literal \"/dev/null\"))\n");
         for (String systemPath : List.of("/System", "/usr", "/bin", "/sbin", "/Library", "/private/etc")) {
             policy.append("(allow file-read* (subpath \"")
                     .append(escape(Path.of(systemPath).toString()))
                     .append("\"))\n");
         }
-        allowPath(policy, workspaceRoot, true);
+        Path physicalWorkspaceRoot = physicalPath(workspaceRoot);
+        allowPath(policy, physicalWorkspaceRoot, true);
         if (profile.filesystemPolicy().workspaceAccess() == SandboxWorkspaceAccess.READ_WRITE) {
-            allowPath(policy, workspaceRoot, false);
+            allowPath(policy, physicalWorkspaceRoot, false);
         }
-        allowPath(policy, controlDirectory, true);
-        allowPath(policy, controlDirectory, false);
+        Path physicalControlDirectory = physicalPath(controlDirectory);
+        allowPath(policy, physicalControlDirectory, true);
+        allowPath(policy, physicalControlDirectory, false);
         for (LocalNativePathGrant grant : additionalPaths) {
-            allowPath(policy, grant.path(), true);
-            if (!grant.readOnly()) allowPath(policy, grant.path(), false);
+            Path physicalGrant = physicalPath(grant.path());
+            allowPath(policy, physicalGrant, true);
+            if (!grant.readOnly()) allowPath(policy, physicalGrant, false);
         }
         if (profile.networkPolicy() == NetworkPolicy.ALLOW) {
             policy.append("(allow network*)\n");
         }
         for (Path sensitive : configuration.sensitivePaths()) {
+            Path physicalSensitive = physicalPath(sensitive);
             policy.append("(deny file-read* file-write* (subpath \"")
-                    .append(escape(sensitive.toString()))
+                    .append(escape(physicalSensitive.toString()))
                     .append("\"))\n");
         }
         return policy.toString();
+    }
+
+    static Path physicalPath(Path path) {
+        Path absolute = path.toAbsolutePath().normalize();
+        Path existing = absolute;
+        while (existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
+            existing = existing.getParent();
+        }
+        if (existing == null) {
+            throw new LocalNativeSandboxException(
+                    "SANDBOX_PROVISION_FAILED", "sandbox path could not be canonicalized");
+        }
+        try {
+            Path physicalExisting = existing.toRealPath();
+            return physicalExisting.resolve(existing.relativize(absolute)).normalize();
+        } catch (IOException exception) {
+            throw new LocalNativeSandboxException(
+                    "SANDBOX_PROVISION_FAILED", "sandbox path could not be canonicalized");
+        }
     }
 
     private static void allowPath(StringBuilder policy, Path path, boolean read) {
