@@ -4,14 +4,22 @@ import io.haifa.agent.application.project.product.InMemoryProjectProductSessionS
 import io.haifa.agent.application.project.product.ProjectProductSession;
 import io.haifa.agent.application.project.product.ProjectProductSessionStore;
 import io.haifa.agent.application.project.product.ProjectSessionProvisioner;
+import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
+import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
+import io.haifa.agent.application.project.product.coding.CodingSessionCompactor;
+import io.haifa.agent.application.project.product.coding.CodingSessionLifecycle;
 import io.haifa.agent.application.project.product.coding.CodingSessionStore;
 import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
 import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.compression.CompressionPolicy;
+import io.haifa.agent.context.compression.DeterministicContextCompressor;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.core.session.SessionScope;
 import io.haifa.agent.policy.api.PolicyPersistencePorts;
 import io.haifa.agent.policy.core.InMemoryPolicyAuthorizationEvidenceStore;
@@ -19,6 +27,7 @@ import io.haifa.agent.policy.core.InMemoryPolicyStore;
 import io.haifa.agent.runtime.api.AgentRuntime;
 import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
+import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
@@ -169,6 +178,46 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         return codingSessions;
     }
 
+    public CodingSessionLifecycle codingSessionLifecycle() {
+        return new CodingSessionLifecycle() {
+            @Override
+            public CodingSessionActivity archive(
+                    AgentSessionId sessionId, long expectedActivityRevision, java.time.Instant at) {
+                return changeCodingSessionStatus(sessionId, expectedActivityRevision, AgentSessionStatus.ARCHIVED, at);
+            }
+
+            @Override
+            public CodingSessionActivity delete(
+                    AgentSessionId sessionId, long expectedActivityRevision, java.time.Instant at) {
+                return changeCodingSessionStatus(sessionId, expectedActivityRevision, AgentSessionStatus.DELETED, at);
+            }
+        };
+    }
+
+    public CodingSessionCompactor codingSessionCompactor(IdentifierGenerator identifiers, TimeProvider time) {
+        Objects.requireNonNull(identifiers, "identifiers must not be null");
+        Objects.requireNonNull(time, "time must not be null");
+        var source = new SessionMessageSource(
+                ports.state(),
+                ports.conversationSummaries(),
+                new DeterministicContextCompressor(),
+                CompressionPolicy.defaults(),
+                identifiers,
+                time);
+        return sessionId -> ports.unitOfWork().execute(() -> {
+            var selection = source.compact(sessionId);
+            return selection
+                    .summary()
+                    .map(summary -> new CodingCompactionResult(
+                            Optional.of(summary.id().value()),
+                            summary.version().value(),
+                            summary.sourceMessageIds().size(),
+                            summary.estimatedTokens(),
+                            selection.through()))
+                    .orElseGet(() -> new CodingCompactionResult(Optional.empty(), 0, 0, 0, selection.through()));
+        });
+    }
+
     public String workerId() {
         return workerId;
     }
@@ -257,6 +306,37 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                                 Map.of()));
             }
             return null;
+        });
+    }
+
+    private CodingSessionActivity changeCodingSessionStatus(
+            AgentSessionId sessionId, long expectedActivityRevision, AgentSessionStatus target, java.time.Instant at) {
+        Objects.requireNonNull(sessionId, "sessionId must not be null");
+        Objects.requireNonNull(at, "at must not be null");
+        return ports.unitOfWork().execute(() -> {
+            CodingSessionActivity activity = codingSessions
+                    .findActivity(sessionId)
+                    .orElseThrow(() -> new IllegalStateException("coding session activity is unavailable"));
+            if (activity.revision() != expectedActivityRevision) {
+                throw new IllegalStateException("coding session revision is stale");
+            }
+            if (activity.activeRunId().isPresent()
+                    || activity.activeDispatchKey().isPresent()) {
+                throw new IllegalStateException("active coding session cannot change lifecycle status");
+            }
+            AgentSession core = ports.sessions()
+                    .find(sessionId)
+                    .orElseThrow(() -> new IllegalStateException("Core Session is unavailable"));
+            long expectedCoreVersion = core.version();
+            if (target == AgentSessionStatus.ARCHIVED) {
+                core.archive(at);
+            } else if (target == AgentSessionStatus.DELETED) {
+                core.delete(at);
+            } else {
+                throw new IllegalArgumentException("unsupported coding session lifecycle target");
+            }
+            ports.sessions().save(core, expectedCoreVersion);
+            return codingSessions.updateStatus(sessionId, expectedActivityRevision, core.status(), at);
         });
     }
 

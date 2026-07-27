@@ -4,6 +4,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import java.time.Instant;
@@ -86,17 +87,62 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
         return activities.values().stream()
                 .filter(value -> value.tenant().equals(tenant)
                         && value.principal().equals(principal)
-                        && value.projectId().equals(projectId))
+                        && value.projectId().equals(projectId)
+                        && value.status() != AgentSessionStatus.DELETED)
                 .filter(value -> query.text()
-                        .map(text -> value.displayName()
-                                .toLowerCase(java.util.Locale.ROOT)
-                                .contains(text.toLowerCase(java.util.Locale.ROOT)))
+                        .map(text -> {
+                            String needle = text.toLowerCase(java.util.Locale.ROOT);
+                            return value.displayName()
+                                            .toLowerCase(java.util.Locale.ROOT)
+                                            .contains(needle)
+                                    || value.sessionId()
+                                            .value()
+                                            .toLowerCase(java.util.Locale.ROOT)
+                                            .contains(needle);
+                        })
                         .orElse(true))
                 .filter(value ->
                         query.after().map(cursor -> after(value, cursor)).orElse(true))
                 .sorted(ordering)
                 .limit((long) query.limit() + 1)
                 .toList();
+    }
+
+    @Override
+    public synchronized CodingSessionActivity rename(
+            AgentSessionId sessionId, long expectedRevision, String displayName, Instant updatedAt) {
+        CodingSessionActivity current = requireActivity(sessionId);
+        requireRevision(current, expectedRevision);
+        if (current.status() == AgentSessionStatus.DELETED) {
+            throw conflict("deleted coding session cannot be renamed");
+        }
+        CodingSessionActivity updated = copyActivity(
+                current,
+                displayName,
+                current.status(),
+                current.activeRunId(),
+                current.activeRunVersion(),
+                current.activeDispatchKey(),
+                updatedAt);
+        activities.put(sessionId, updated);
+        return updated;
+    }
+
+    @Override
+    public synchronized CodingSessionActivity updateStatus(
+            AgentSessionId sessionId, long expectedRevision, AgentSessionStatus status, Instant updatedAt) {
+        CodingSessionActivity current = requireActivity(sessionId);
+        requireRevision(current, expectedRevision);
+        CodingSessionActivity updated = copyActivity(
+                current,
+                current.displayName(),
+                status,
+                current.activeRunId(),
+                current.activeRunVersion(),
+                current.activeDispatchKey(),
+                updatedAt);
+        activities.put(sessionId, updated);
+        return updated;
     }
 
     @Override
@@ -114,6 +160,7 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
                 current.tenant(),
                 current.principal(),
                 current.displayName(),
+                current.status(),
                 Optional.empty(),
                 OptionalLong.empty(),
                 Optional.of(dispatchKey),
@@ -138,6 +185,7 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
                 current.tenant(),
                 current.principal(),
                 current.displayName(),
+                current.status(),
                 Optional.of(runId),
                 OptionalLong.of(runVersion),
                 Optional.empty(),
@@ -163,6 +211,7 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
                 current.tenant(),
                 current.principal(),
                 current.displayName(),
+                current.status(),
                 Optional.empty(),
                 OptionalLong.empty(),
                 Optional.empty(),
@@ -262,6 +311,7 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
                 activity.tenant(),
                 activity.principal(),
                 activity.displayName(),
+                activity.status(),
                 Optional.empty(),
                 OptionalLong.empty(),
                 Optional.of(claimed.dispatchKey()),
@@ -361,6 +411,33 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
         CodingFollowUp value = followUps.get(followUpId);
         if (value == null) throw conflict("follow-up is unavailable");
         return value;
+    }
+
+    private static CodingSessionActivity copyActivity(
+            CodingSessionActivity value,
+            String displayName,
+            AgentSessionStatus status,
+            Optional<AgentRunId> activeRunId,
+            OptionalLong activeRunVersion,
+            Optional<String> activeDispatchKey,
+            Instant updatedAt) {
+        return new CodingSessionActivity(
+                value.sessionId(),
+                value.projectId(),
+                value.tenant(),
+                value.principal(),
+                displayName,
+                status,
+                activeRunId,
+                activeRunVersion,
+                activeDispatchKey,
+                value.createdAt(),
+                updatedAt,
+                value.revision() + 1);
+    }
+
+    private static void requireRevision(CodingSessionActivity value, long expectedRevision) {
+        if (value.revision() != expectedRevision) throw conflict("coding session revision is stale");
     }
 
     private static boolean after(CodingSessionActivity value, CodingSessionCursor cursor) {

@@ -1,12 +1,18 @@
 package io.haifa.agent.application.coding.terminal.session;
 
 import io.haifa.agent.application.project.product.ProjectProductException;
+import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
+import io.haifa.agent.application.project.product.coding.CodingSessionExportResult;
+import io.haifa.agent.application.project.product.coding.CodingSessionExportService;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellPlan;
+import io.haifa.agent.application.project.product.coding.CodingShellResult;
+import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.run.AgentRunId;
@@ -34,6 +40,10 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final Supplier<List<String>> logicalPaths;
+    private final Supplier<List<String>> loadedResources;
+    private final Supplier<List<String>> resourceReloader;
+    private final java.util.Optional<CodingShellService> shell;
+    private final java.util.Optional<CodingSessionExportService> exporter;
 
     public LocalCodingSessionClient(
             ProjectId projectId,
@@ -41,7 +51,17 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
             AgentRuntime runtime,
             IdentifierGenerator identifiers,
             TimeProvider time) {
-        this(projectId, sessions, runtime, identifiers, time, List::of);
+        this(
+                projectId,
+                sessions,
+                runtime,
+                identifiers,
+                time,
+                List::of,
+                List::of,
+                List::of,
+                java.util.Optional.empty(),
+                null);
     }
 
     public LocalCodingSessionClient(
@@ -51,12 +71,40 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
             IdentifierGenerator identifiers,
             TimeProvider time,
             Supplier<List<String>> logicalPaths) {
+        this(
+                projectId,
+                sessions,
+                runtime,
+                identifiers,
+                time,
+                logicalPaths,
+                List::of,
+                List::of,
+                java.util.Optional.empty(),
+                null);
+    }
+
+    public LocalCodingSessionClient(
+            ProjectId projectId,
+            CodingSessionService sessions,
+            AgentRuntime runtime,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            Supplier<List<String>> logicalPaths,
+            Supplier<List<String>> loadedResources,
+            Supplier<List<String>> resourceReloader,
+            java.util.Optional<CodingShellService> shell,
+            CodingSessionExportService exporter) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.sessions = Objects.requireNonNull(sessions, "sessions must not be null");
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.logicalPaths = Objects.requireNonNull(logicalPaths, "logicalPaths must not be null");
+        this.loadedResources = Objects.requireNonNull(loadedResources, "loadedResources must not be null");
+        this.resourceReloader = Objects.requireNonNull(resourceReloader, "resourceReloader must not be null");
+        this.shell = Objects.requireNonNull(shell, "shell must not be null");
+        this.exporter = java.util.Optional.ofNullable(exporter);
     }
 
     @Override
@@ -69,6 +117,18 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public List<CodingSessionSummary> list(ProjectId projectId, int limit) {
         requireProject(projectId);
         return sessions.listSessions(projectId, CodingSessionQuery.firstPage(limit))
+                .items();
+    }
+
+    @Override
+    public List<CodingSessionSummary> search(ProjectId projectId, String text, int limit) {
+        requireProject(projectId);
+        return sessions.listSessions(
+                        projectId,
+                        new CodingSessionQuery(
+                                java.util.Optional.ofNullable(text).filter(value -> !value.isBlank()),
+                                java.util.Optional.empty(),
+                                limit))
                 .items();
     }
 
@@ -144,6 +204,56 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {
+        requireScoped(sessionId);
+        return sessions.renameSession(sessionId, displayName, expectedRevision);
+    }
+
+    @Override
+    public CodingSessionSummary archive(AgentSessionId sessionId, long expectedRevision) {
+        requireScoped(sessionId);
+        return sessions.archiveSession(sessionId, expectedRevision);
+    }
+
+    @Override
+    public void delete(AgentSessionId sessionId, long expectedRevision) {
+        requireScoped(sessionId);
+        sessions.deleteSession(sessionId, expectedRevision);
+    }
+
+    @Override
+    public CodingCompactionResult compact(AgentSessionId sessionId, String safeInstruction) {
+        requireScoped(sessionId);
+        return sessions.compactSession(sessionId, safeInstruction);
+    }
+
+    @Override
+    public CodingShellPlan planShell(AgentSessionId sessionId, String command, boolean includeInContext) {
+        requireScoped(sessionId);
+        return shell.orElseThrow(() -> new UnsupportedOperationException("Shell execution is unavailable"))
+                .plan(sessionId, command, includeInContext);
+    }
+
+    @Override
+    public CodingShellResult executeShell(String token, boolean approved) {
+        return shell.orElseThrow(() -> new UnsupportedOperationException("Shell execution is unavailable"))
+                .execute(token, approved);
+    }
+
+    @Override
+    public void discardShell(String token) {
+        shell.orElseThrow(() -> new UnsupportedOperationException("Shell execution is unavailable"))
+                .discard(token);
+    }
+
+    @Override
+    public CodingSessionExportResult export(AgentSessionId sessionId, String logicalDestination) {
+        requireScoped(sessionId);
+        return exporter.orElseThrow(() -> new UnsupportedOperationException("Session export is unavailable"))
+                .export(sessionId, logicalDestination);
+    }
+
+    @Override
     public RunEventPage events(AgentRunId runId, RunEventCursor after, int limit) {
         requireRunScoped(runId);
         return runtime.events(runId, after, limit);
@@ -164,6 +274,16 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     @Override
     public List<String> logicalPaths() {
         return List.copyOf(logicalPaths.get());
+    }
+
+    @Override
+    public List<String> loadedResources() {
+        return List.copyOf(loadedResources.get());
+    }
+
+    @Override
+    public List<String> reloadResources() {
+        return List.copyOf(resourceReloader.get());
     }
 
     private void requireRunScoped(AgentRunId runId) {

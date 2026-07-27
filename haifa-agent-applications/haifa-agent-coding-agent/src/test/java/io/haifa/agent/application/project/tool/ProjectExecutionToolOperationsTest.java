@@ -147,6 +147,36 @@ class ProjectExecutionToolOperationsTest {
         assertThat(invoked).isFalse();
     }
 
+    @Test
+    void userInitiatedCommandUsesTheSameBrokerAndPolicyReference() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                observer.onOutput(chunk("terminal output"));
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        var result = operations(broker, 1024, 2000)
+                .executeUserInitiated(
+                        new AgentRunId("terminal-audit-1"),
+                        new TenantRef("tenant-1"),
+                        new PrincipalRef("operator", "user"),
+                        access(),
+                        "git status --short",
+                        ".",
+                        Duration.ofSeconds(5),
+                        "terminal-key",
+                        "policy-terminal-1");
+
+        assertThat(captured.get().context().policyDecisionRef()).isEqualTo("policy-terminal-1");
+        assertThat(captured.get().context().runRef()).isEqualTo("terminal-audit-1");
+        assertThat(captured.get().workingDirectory().projectPath().isRoot()).isTrue();
+        assertThat(result.summary()).contains("Command succeeded", "terminal output");
+    }
+
     private static ProjectExecutionToolOperations operations(
             ExecutionBroker broker, int maximumOutputBytes, int maximumOutputLines) {
         return new ProjectExecutionToolOperations(

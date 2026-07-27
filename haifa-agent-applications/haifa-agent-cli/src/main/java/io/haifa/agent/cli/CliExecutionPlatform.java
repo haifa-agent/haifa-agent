@@ -16,6 +16,7 @@ import io.haifa.agent.execution.core.manifest.ManifestDiffService;
 import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
+import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.changeset.FileChangeSetService;
 import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.changeset.ObservedFileChangeService;
@@ -152,6 +153,15 @@ final class CliExecutionPlatform {
 
     String securitySummary() {
         return securitySummary;
+    }
+
+    String profileDigest() {
+        return profile.ref().value() + "@" + profile.ref().version();
+    }
+
+    static String policyResourceDigest(String command, String workdir, String profileDigest) {
+        String invocationDigest = PolicyDigest.sha256Fields(List.of(command, workdir));
+        return PolicyDigest.sha256Fields(List.of(invocationDigest, profileDigest));
     }
 
     private static HostShell shell(CliConfiguration.Execution configuration) {

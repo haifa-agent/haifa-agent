@@ -218,6 +218,7 @@ class ProjectPersistenceAssemblyTest {
                             TENANT,
                             PRINCIPAL,
                             "first turn",
+                            io.haifa.agent.core.session.AgentSessionStatus.ACTIVE,
                             Optional.of(activeRunId),
                             OptionalLong.of(3),
                             Optional.empty(),
@@ -299,6 +300,44 @@ class ProjectPersistenceAssemblyTest {
 
             RuntimeCommandResult aborted = coding.abortActiveRun(sessionId, "abort-key");
             assertThat(aborted.status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
+        }
+    }
+
+    @Test
+    void codingSessionLifecycleUsesCoreAuthorityAndLogicalDelete() {
+        ProductFixture fixture = productFixture();
+        CapturingRuntime runtime = new CapturingRuntime();
+        TestIds ids = new TestIds("lifecycle");
+        try (ProjectPersistenceAssembly assembly =
+                ProjectPersistenceAssembly.open(ProjectPersistenceConfiguration.memory(), CLOCK, ids, null)) {
+            CodingSessionService coding = fixture.codingService(assembly, runtime, ids);
+            var created = coding.createSession(fixture.projectId, "initial title", List.of(), "create-lifecycle");
+            AgentSessionId sessionId = created.summary().sessionId();
+            AgentRunId runId = created.activeRun().orElseThrow().runId();
+            runtime.settle(runId);
+            var idle = coding.reconcileSession(sessionId);
+
+            var renamed = coding.renameSession(
+                    sessionId, "renamed session", idle.summary().revision());
+            assertThat(renamed.displayName()).isEqualTo("renamed session");
+            assertThat(coding.listSessions(
+                                    fixture.projectId,
+                                    new CodingSessionQuery(Optional.of(sessionId.value()), Optional.empty(), 10))
+                            .items())
+                    .extracting(value -> value.sessionId())
+                    .containsExactly(sessionId);
+            var archived = coding.archiveSession(sessionId, renamed.revision());
+            assertThat(archived.status()).isEqualTo(io.haifa.agent.core.session.AgentSessionStatus.ARCHIVED);
+            assertThat(assembly.ports().sessions().find(sessionId).orElseThrow().status())
+                    .isEqualTo(io.haifa.agent.core.session.AgentSessionStatus.ARCHIVED);
+
+            coding.deleteSession(sessionId, archived.revision());
+            assertThat(assembly.ports().sessions().find(sessionId).orElseThrow().status())
+                    .isEqualTo(io.haifa.agent.core.session.AgentSessionStatus.DELETED);
+            assertThat(coding.listSessions(fixture.projectId, CodingSessionQuery.firstPage(10))
+                            .items())
+                    .isEmpty();
+            assertThat(runtime.find(runId)).isPresent();
         }
     }
 
@@ -517,6 +556,13 @@ class ProjectPersistenceAssemblyTest {
                     service(persistence, ids, runtime),
                     persistence.productSessions(),
                     persistence.codingSessions(),
+                    persistence.codingSessionLifecycle(),
+                    persistence.codingSessionCompactor(ids, new io.haifa.agent.common.time.TimeProvider() {
+                        @Override
+                        public java.time.Instant now() {
+                            return NOW;
+                        }
+                    }),
                     callers,
                     runtime,
                     ids,

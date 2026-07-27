@@ -356,6 +356,9 @@ class ProjectApplicationTest {
         assertThat(runtime.requests).hasSize(3).allSatisfy(request -> {
             assertThat(request.project()).contains(project.reference());
             assertThat(request.productProfileId()).isEqualTo("coding@1");
+            assertThat(request.inputs())
+                    .as("text objective must not be duplicated as an input")
+                    .isEmpty();
         });
         assertThat(runtime.requests.get(2).sessionId()).isEqualTo(first.sessionId());
     }

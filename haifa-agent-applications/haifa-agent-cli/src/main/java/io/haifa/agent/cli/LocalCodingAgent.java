@@ -7,7 +7,9 @@ import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
+import io.haifa.agent.application.project.product.coding.CodingSessionExportService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
+import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
@@ -17,7 +19,6 @@ import io.haifa.agent.common.time.SystemTimeProvider;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
-import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
@@ -119,6 +120,9 @@ final class LocalCodingAgent implements AutoCloseable {
     private final Clock clock;
     private final ProjectId projectId;
     private final CodingSessionService codingSessions;
+    private final TrustedProjectResourceCatalog resources;
+    private final Optional<CodingShellService> shell;
+    private final CodingSessionExportService exporter;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Set<AgentRunId> startedRuns = ConcurrentHashMap.newKeySet();
 
@@ -134,7 +138,10 @@ final class LocalCodingAgent implements AutoCloseable {
             PrincipalRef principal,
             Clock clock,
             ProjectId projectId,
-            CodingSessionService codingSessions) {
+            CodingSessionService codingSessions,
+            TrustedProjectResourceCatalog resources,
+            Optional<CodingShellService> shell,
+            CodingSessionExportService exporter) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
@@ -147,6 +154,9 @@ final class LocalCodingAgent implements AutoCloseable {
         this.clock = clock;
         this.projectId = projectId;
         this.codingSessions = codingSessions;
+        this.resources = resources;
+        this.shell = shell;
+        this.exporter = exporter;
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
@@ -200,6 +210,7 @@ final class LocalCodingAgent implements AutoCloseable {
             ModelContinuationProtector continuationProtector) {
         LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
         workspaceRoot = workspaceIdentity.providerRoot();
+        TrustedProjectResourceCatalog resources = new TrustedProjectResourceCatalog(workspaceRoot);
 
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = new SystemTimeProvider();
@@ -401,7 +412,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             Set.of(),
                             "You are a careful local coding agent. Inspect relevant files before editing. "
                                     + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
-                                    + "Pass only workspace-relative paths to file tools; never pass an absolute path.",
+                                    + "Pass only workspace-relative paths to file tools; never pass an absolute path."
+                                    + resources.snapshot().instructionBlock(),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(
                             profileId,
@@ -440,10 +452,27 @@ final class LocalCodingAgent implements AutoCloseable {
                     projectProducts,
                     persistence.productSessions(),
                     persistence.codingSessions(),
+                    persistence.codingSessionLifecycle(),
+                    persistence.codingSessionCompactor(identifiers, time),
                     callers,
                     runtime,
                     identifiers,
                     clock);
+            CodingShellService shell = executionPlatform == null
+                    ? null
+                    : new CliCodingShellService(
+                            codingSessions,
+                            executionPlatform.operations(),
+                            policy,
+                            persistence.ports(),
+                            identifiers,
+                            time,
+                            tenant,
+                            principal,
+                            projectId,
+                            workspaceId,
+                            configuration.execution().defaultTimeout(),
+                            executionPlatform.profileDigest());
             var agent = new LocalCodingAgent(
                     identifiers,
                     time,
@@ -456,7 +485,14 @@ final class LocalCodingAgent implements AutoCloseable {
                     principal,
                     clock,
                     projectId,
-                    codingSessions);
+                    codingSessions,
+                    resources,
+                    Optional.ofNullable(shell),
+                    new CliCodingSessionExportService(
+                            workspaceRoot,
+                            codingSessions,
+                            persistence.ports().state(),
+                            webPlatform.credentialBroker().redactor()));
             runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
             return agent;
         } catch (RuntimeException | Error exception) {
@@ -481,7 +517,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 sessionId,
                 Optional.empty(),
                 message,
-                List.of(new TextPart(message, "text/plain")),
+                List.of(),
                 RuntimeOverrides.NONE));
         startedRuns.add(accepted.runId());
         return accepted;
@@ -497,6 +533,22 @@ final class LocalCodingAgent implements AutoCloseable {
 
     CodingSessionService codingSessions() {
         return codingSessions;
+    }
+
+    List<String> loadedResources() {
+        return resources.snapshot().diagnostics();
+    }
+
+    List<String> reloadResources() {
+        return resources.reload().diagnostics();
+    }
+
+    Optional<CodingShellService> shell() {
+        return shell;
+    }
+
+    CodingSessionExportService exporter() {
+        return exporter;
     }
 
     void cancel(io.haifa.agent.core.run.AgentRunId runId) {

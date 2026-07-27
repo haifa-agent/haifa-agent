@@ -13,6 +13,8 @@ import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.CodingShellPlan;
+import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -182,6 +184,21 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void revisionMutationReconcilesTheAuthoritativeSessionBeforeRename() {
+        FakeClient client = new FakeClient(view(Optional.empty(), 0, "session"));
+        client.reconciledView = view(Optional.empty(), 7, "session");
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "/rename reconciled-name"));
+
+        assertThat(client.renamedExpectedRevision).isEqualTo(7);
+        assertThat(client.renamedDisplayName).isEqualTo("reconciled-name");
+        assertThat(controller.state().session().orElseThrow().summary().displayName())
+                .isEqualTo("reconciled-name");
+    }
+
+    @Test
     void productFailureStaysInTheTerminalAndPreservesTheDraft() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         client.submitFailure = new ProjectProductException("SESSION_NOT_FOUND", "Session unavailable");
@@ -232,6 +249,53 @@ class CodingTerminalControllerTest {
         assertThat(controller.state().status()).isEqualTo("Cancelling");
     }
 
+    @Test
+    void governedShellApprovalCompletesThroughTheClientAndProjectsSafeResult() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.shellState = CodingShellPlan.State.APPROVAL_REQUIRED;
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "!git status --short"));
+        assertThat(controller.state().selector()).isPresent();
+        controller.accept(input(TerminalInput.Kind.SELECT_PREVIOUS, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(client.shellApproved).isTrue();
+        assertThat(client.shellIncludedInContext).isTrue();
+        assertThat(controller.state().transcript())
+                .anyMatch(item ->
+                        item.kind() == io.haifa.agent.application.coding.terminal.state.TranscriptItem.Kind.EXECUTION
+                                && item.body().contains("safe shell output"));
+    }
+
+    @Test
+    void doubleBangExecutesButDoesNotAppendToModelContext() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.shellState = CodingShellPlan.State.READY;
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "!!git status --short"));
+
+        assertThat(client.shellIncludedInContext).isFalse();
+        assertThat(controller.state().status()).contains("excluded from model context");
+    }
+
+    @Test
+    void closingShellApprovalSelectorDiscardsThePendingRequest() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.shellState = CodingShellPlan.State.APPROVAL_REQUIRED;
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "!git status --short"));
+        controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, ""));
+
+        assertThat(client.shellDiscarded).isTrue();
+        assertThat(controller.state().selector()).isEmpty();
+    }
+
     private static CodingTerminalController controller(CodingSessionClient client) {
         return new CodingTerminalController(
                 PROJECT_ID,
@@ -242,9 +306,21 @@ class CodingTerminalControllerTest {
     }
 
     private static CodingSessionView view(Optional<InteractionView> interaction) {
+        return view(interaction, 0, "session");
+    }
+
+    private static CodingSessionView view(Optional<InteractionView> interaction, long revision, String displayName) {
         return new CodingSessionView(
                 new CodingSessionSummary(
-                        SESSION_ID, PROJECT_ID, "session", Optional.empty(), Optional.empty(), 0, Instant.EPOCH, 0),
+                        SESSION_ID,
+                        PROJECT_ID,
+                        displayName,
+                        io.haifa.agent.core.session.AgentSessionStatus.ACTIVE,
+                        Optional.empty(),
+                        Optional.empty(),
+                        0,
+                        Instant.EPOCH,
+                        revision),
                 Optional.empty(),
                 interaction,
                 Optional.empty(),
@@ -259,6 +335,7 @@ class CodingTerminalControllerTest {
                         SESSION_ID,
                         PROJECT_ID,
                         "session",
+                        io.haifa.agent.core.session.AgentSessionStatus.ACTIVE,
                         Optional.of(runId),
                         Optional.of(AgentRunStatus.RUNNING),
                         0,
@@ -295,6 +372,12 @@ class CodingTerminalControllerTest {
         private final List<String> restored = new ArrayList<>();
         private final List<InteractionAction> respondedActions = new ArrayList<>();
         private final List<AgentSessionId> cancelledSessions = new ArrayList<>();
+        private CodingShellPlan.State shellState = CodingShellPlan.State.READY;
+        private boolean shellApproved;
+        private boolean shellIncludedInContext;
+        private boolean shellDiscarded;
+        private long renamedExpectedRevision = -1;
+        private String renamedDisplayName;
 
         private FakeClient(CodingSessionView view) {
             this.view = view;
@@ -363,6 +446,39 @@ class CodingTerminalControllerTest {
         @Override
         public void cancel(AgentSessionId sessionId, String idempotencyKey) {
             cancelledSessions.add(sessionId);
+        }
+
+        @Override
+        public CodingSessionSummary rename(AgentSessionId sessionId, String displayName, long expectedRevision) {
+            renamedExpectedRevision = expectedRevision;
+            renamedDisplayName = displayName;
+            CodingSessionView renamed = view(Optional.empty(), expectedRevision + 1, displayName);
+            view = renamed;
+            reconciledView = renamed;
+            return renamed.summary();
+        }
+
+        @Override
+        public CodingShellPlan planShell(AgentSessionId sessionId, String command, boolean includeInContext) {
+            shellIncludedInContext = includeInContext;
+            return new CodingShellPlan("shell-token", sessionId, command, includeInContext, shellState, "TEST_POLICY");
+        }
+
+        @Override
+        public CodingShellResult executeShell(String token, boolean approved) {
+            shellApproved = approved;
+            return new CodingShellResult(
+                    "SUCCEEDED",
+                    Optional.of(0),
+                    "safe shell output",
+                    Optional.of("output-ref"),
+                    false,
+                    shellIncludedInContext);
+        }
+
+        @Override
+        public void discardShell(String token) {
+            shellDiscarded = true;
         }
 
         @Override

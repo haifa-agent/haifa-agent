@@ -52,6 +52,108 @@ public final class TerminalUiReducer {
                     Optional.empty(),
                     state.exitRequested());
         }
+        if (action instanceof TerminalUiAction.SessionCleared cleared) {
+            return copy(
+                    state,
+                    List.of("Loaded resources: none"),
+                    List.of(),
+                    List.of(),
+                    cleared.status(),
+                    "",
+                    0,
+                    Optional.empty(),
+                    TerminalFooter.empty(),
+                    state.columns(),
+                    state.rows(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    Optional.empty(),
+                    java.util.Set.of(),
+                    Optional.empty(),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.ResourcesChanged resources) {
+            return copy(
+                    state,
+                    List.copyOf(resources.resources()),
+                    state.transcript(),
+                    state.pending(),
+                    state.status(),
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.ContextChanged context) {
+            TerminalFooter footer = state.footer();
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    state.transcript(),
+                    state.pending(),
+                    state.status(),
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    new TerminalFooter(
+                            footer.project(),
+                            footer.gitBranch(),
+                            footer.session(),
+                            context.indicator(),
+                            footer.provider(),
+                            footer.model(),
+                            footer.runStatus(),
+                            footer.sandbox()),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.exitRequested());
+        }
+        if (action instanceof TerminalUiAction.ShellCompleted shell) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            items.add(new TranscriptItem(
+                    "shell-" + items.size(),
+                    TranscriptItem.Kind.EXECUTION,
+                    shell.command(),
+                    shell.summary(),
+                    shell.status(),
+                    false));
+            return copyWithTranscript(state, List.copyOf(items));
+        }
+        if (action instanceof TerminalUiAction.ExportCompleted exported) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            items.add(new TranscriptItem(
+                    "export-" + items.size(),
+                    TranscriptItem.Kind.RESOURCE,
+                    "Session export",
+                    exported.logicalPath() + " · " + exported.messageCount() + " messages",
+                    "EXPORTED",
+                    false));
+            return copyWithTranscript(state, List.copyOf(items));
+        }
+        if (action instanceof TerminalUiAction.ShellCompleted shell) {
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            items.add(new TranscriptItem(
+                    "shell-" + items.size(),
+                    TranscriptItem.Kind.EXECUTION,
+                    shell.command(),
+                    shell.summary(),
+                    shell.status(),
+                    false));
+            return copyWithTranscript(state, List.copyOf(items));
+        }
         if (action instanceof TerminalUiAction.RunEventReceived received) {
             return event(state, received.event());
         }

@@ -4,6 +4,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import java.time.Instant;
@@ -23,6 +24,12 @@ public interface CodingSessionStore {
 
     List<CodingSessionActivity> listActivities(
             TenantRef tenant, PrincipalRef principal, ProjectId projectId, CodingSessionQuery query);
+
+    CodingSessionActivity rename(
+            AgentSessionId sessionId, long expectedRevision, String displayName, Instant updatedAt);
+
+    CodingSessionActivity updateStatus(
+            AgentSessionId sessionId, long expectedRevision, AgentSessionStatus status, Instant updatedAt);
 
     CodingSessionActivity reserveActive(
             AgentSessionId sessionId, long expectedRevision, String dispatchKey, Instant updatedAt);

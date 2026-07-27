@@ -3,6 +3,7 @@ package io.haifa.agent.application.project.product.coding;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import java.time.Instant;
 import java.util.Objects;
@@ -12,6 +13,7 @@ public record CodingSessionSummary(
         AgentSessionId sessionId,
         ProjectId projectId,
         String displayName,
+        AgentSessionStatus status,
         Optional<AgentRunId> activeRunId,
         Optional<AgentRunStatus> activeRunStatus,
         int queuedCount,
@@ -21,6 +23,7 @@ public record CodingSessionSummary(
         sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
         projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         displayName = CodingProductValues.requireText(displayName, "displayName", 120);
+        status = Objects.requireNonNull(status, "status must not be null");
         activeRunId = Objects.requireNonNull(activeRunId, "activeRunId must not be null");
         activeRunStatus = Objects.requireNonNull(activeRunStatus, "activeRunStatus must not be null");
         if (activeRunId.isPresent() != activeRunStatus.isPresent()) {

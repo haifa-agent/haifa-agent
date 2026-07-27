@@ -7,22 +7,29 @@ import java.util.Set;
 public final class TerminalCommandRouter {
     public static final String CAPABILITY_NOT_IMPLEMENTED = "CAPABILITY_NOT_IMPLEMENTED";
     public static final String COMMAND_UNKNOWN = "COMMAND_UNKNOWN";
-    private static final Set<String> DEFERRED = Set.of("/model", "/login", "/tree", "/compact");
+    private static final Set<String> DEFERRED = Set.of("/model", "/login", "/tree", "/fork", "/clone");
 
     public TerminalCommand route(String input) {
         String value = input.strip().toLowerCase(Locale.ROOT);
         if (!value.startsWith("/")) {
             return TerminalCommand.MESSAGE;
         }
-        return switch (value) {
+        String command = value.split("\\s+", 2)[0];
+        return switch (command) {
             case "/new" -> TerminalCommand.NEW;
             case "/resume" -> TerminalCommand.RESUME;
+            case "/name", "/rename" -> TerminalCommand.RENAME;
+            case "/archive" -> TerminalCommand.ARCHIVE;
+            case "/delete" -> TerminalCommand.DELETE;
+            case "/reload" -> TerminalCommand.RELOAD;
+            case "/compact" -> TerminalCommand.COMPACT;
+            case "/export" -> TerminalCommand.EXPORT;
             case "/settings" -> TerminalCommand.SETTINGS;
             case "/trust" -> TerminalCommand.TRUST;
             case "/session" -> TerminalCommand.SESSION;
             case "/command", "/commands" -> TerminalCommand.COMMANDS;
             case "/quit" -> TerminalCommand.QUIT;
-            default -> DEFERRED.contains(value) ? TerminalCommand.NOT_IMPLEMENTED : TerminalCommand.UNKNOWN;
+            default -> DEFERRED.contains(command) ? TerminalCommand.NOT_IMPLEMENTED : TerminalCommand.UNKNOWN;
         };
     }
 }

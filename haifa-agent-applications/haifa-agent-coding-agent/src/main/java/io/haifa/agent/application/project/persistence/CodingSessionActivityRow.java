@@ -10,6 +10,7 @@ public record CodingSessionActivityRow(
         String principalId,
         String principalType,
         String displayName,
+        String sessionStatus,
         String activeRunId,
         Long activeRunVersion,
         String activeDispatchKey,

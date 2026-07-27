@@ -23,7 +23,11 @@ final class ProjectApplicationMigrations {
             new ApplicationMigration(
                     1_002,
                     "coding_session_event_cursor",
-                    "/io/haifa/agent/application/project/persistence/V1002__coding_session_event_cursor.sql"));
+                    "/io/haifa/agent/application/project/persistence/V1002__coding_session_event_cursor.sql"),
+            new ApplicationMigration(
+                    1_003,
+                    "coding_session_management",
+                    "/io/haifa/agent/application/project/persistence/V1003__coding_session_management.sql"));
 
     private ProjectApplicationMigrations() {}
 

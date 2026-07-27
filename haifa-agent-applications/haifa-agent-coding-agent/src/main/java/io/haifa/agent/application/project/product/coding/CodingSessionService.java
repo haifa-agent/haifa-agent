@@ -11,6 +11,7 @@ import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
@@ -47,6 +48,8 @@ public final class CodingSessionService {
     private final ProjectProductService projectProducts;
     private final ProjectProductSessionStore productSessions;
     private final CodingSessionStore codingSessions;
+    private final CodingSessionLifecycle sessionLifecycle;
+    private final CodingSessionCompactor sessionCompactor;
     private final TrustedProductCallerProvider callers;
     private final AgentRuntime runtime;
     private final IdentifierGenerator identifiers;
@@ -56,6 +59,8 @@ public final class CodingSessionService {
             ProjectProductService projectProducts,
             ProjectProductSessionStore productSessions,
             CodingSessionStore codingSessions,
+            CodingSessionLifecycle sessionLifecycle,
+            CodingSessionCompactor sessionCompactor,
             TrustedProductCallerProvider callers,
             AgentRuntime runtime,
             IdentifierGenerator identifiers,
@@ -63,6 +68,8 @@ public final class CodingSessionService {
         this.projectProducts = Objects.requireNonNull(projectProducts, "projectProducts must not be null");
         this.productSessions = Objects.requireNonNull(productSessions, "productSessions must not be null");
         this.codingSessions = Objects.requireNonNull(codingSessions, "codingSessions must not be null");
+        this.sessionLifecycle = Objects.requireNonNull(sessionLifecycle, "sessionLifecycle must not be null");
+        this.sessionCompactor = Objects.requireNonNull(sessionCompactor, "sessionCompactor must not be null");
         this.callers = Objects.requireNonNull(callers, "callers must not be null");
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
@@ -108,6 +115,7 @@ public final class CodingSessionService {
                         product.tenant(),
                         product.principal(),
                         displayName(binding.message()),
+                        AgentSessionStatus.ACTIVE,
                         Optional.of(started.run().runId()),
                         OptionalLong.of(started.run().version()),
                         Optional.empty(),
@@ -156,11 +164,53 @@ public final class CodingSessionService {
         return view(reconcile(activity, caller), product);
     }
 
+    public CodingSessionSummary renameSession(AgentSessionId sessionId, String displayName, long expectedRevision) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(sessionId, caller);
+        CodingSessionActivity current = requireActivity(sessionId, caller);
+        if (current.revision() != expectedRevision) {
+            throw conflict("SESSION_REVISION_STALE", "Coding Session revision is stale");
+        }
+        return summary(
+                codingSessions.rename(sessionId, expectedRevision, renameDisplayName(displayName), clock.instant()));
+    }
+
+    public CodingSessionSummary archiveSession(AgentSessionId sessionId, long expectedRevision) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(sessionId, caller);
+        CodingSessionActivity current = requireActivity(sessionId, caller);
+        requireLifecycleChange(current, expectedRevision);
+        return summary(sessionLifecycle.archive(sessionId, expectedRevision, clock.instant()));
+    }
+
+    public void deleteSession(AgentSessionId sessionId, long expectedRevision) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(sessionId, caller);
+        CodingSessionActivity current = requireActivity(sessionId, caller);
+        requireLifecycleChange(current, expectedRevision);
+        sessionLifecycle.delete(sessionId, expectedRevision, clock.instant());
+    }
+
+    public CodingCompactionResult compactSession(AgentSessionId sessionId, String safeInstruction) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(sessionId, caller);
+        CodingSessionActivity current = reconcile(requireActivity(sessionId, caller), caller);
+        requireActiveSession(current);
+        if (current.activeRunId().isPresent() || current.activeDispatchKey().isPresent()) {
+            throw conflict("CODING_SESSION_ACTIVE", "Active Coding Session cannot be compacted");
+        }
+        if (safeInstruction != null && !safeInstruction.isBlank()) {
+            throw new UnsupportedOperationException("COMPACTION_INSTRUCTION_NOT_SUPPORTED");
+        }
+        return sessionCompactor.compact(sessionId);
+    }
+
     public CodingSessionCommandReceipt submitTurn(
             AgentSessionId sessionId, String message, List<AssetRef> attachments, String idempotencyKey) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+        requireActiveSession(activity);
         String safeMessage = message(message);
         List<AssetRef> safeAttachments = attachments(attachments);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
@@ -203,6 +253,7 @@ public final class CodingSessionService {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+        requireActiveSession(activity);
         AgentRunSnapshot active = requireActive(activity, activeRunId);
         String safeMessage = message(message);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
@@ -240,6 +291,7 @@ public final class CodingSessionService {
         TrustedProductCaller caller = callers.current();
         requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+        requireActiveSession(activity);
         requireActive(activity, activeRunId);
         String safeMessage = message(message);
         List<AssetRef> safeAttachments = attachments(attachments);
@@ -268,6 +320,7 @@ public final class CodingSessionService {
             AgentSessionId sessionId, String followUpId, long expectedRevision) {
         TrustedProductCaller caller = callers.current();
         requireProductSession(sessionId, caller);
+        requireActiveSession(requireActivity(sessionId, caller));
         CodingFollowUp existing = codingSessions
                 .findFollowUp(followUpId)
                 .filter(value -> value.sessionId().equals(sessionId))
@@ -362,6 +415,7 @@ public final class CodingSessionService {
         if (current.activeDispatchKey().isPresent()) {
             return recoverReservedDispatch(current);
         }
+        if (current.status() != AgentSessionStatus.ACTIVE) return current;
         Optional<CodingDispatchClaim> claimed =
                 codingSessions.claimNextForDispatch(current.sessionId(), current.revision(), clock.instant());
         if (claimed.isEmpty()) return current;
@@ -416,6 +470,7 @@ public final class CodingSessionService {
                 activity.sessionId(),
                 activity.projectId(),
                 activity.displayName(),
+                activity.status(),
                 active.map(AgentRunSnapshot::runId),
                 active.map(AgentRunSnapshot::status),
                 codingSessions.queuedCount(activity.sessionId()),
@@ -446,12 +501,30 @@ public final class CodingSessionService {
                 .findActivity(sessionId)
                 .orElseThrow(() -> conflict("SESSION_NOT_FOUND", "Session is unavailable"));
         requireOwned(activity, caller);
+        if (activity.status() == AgentSessionStatus.DELETED) {
+            throw conflict("SESSION_NOT_FOUND", "Session is unavailable");
+        }
         return activity;
     }
 
     private static void requireOwned(CodingSessionActivity activity, TrustedProductCaller caller) {
         if (!activity.tenant().equals(caller.tenant()) || !activity.principal().equals(caller.principal())) {
             throw conflict("SESSION_NOT_FOUND", "Session is unavailable");
+        }
+    }
+
+    private static void requireActiveSession(CodingSessionActivity activity) {
+        if (activity.status() != AgentSessionStatus.ACTIVE) {
+            throw conflict("SESSION_NOT_ACTIVE", "Coding Session is not active");
+        }
+    }
+
+    private static void requireLifecycleChange(CodingSessionActivity activity, long expectedRevision) {
+        if (activity.revision() != expectedRevision) {
+            throw conflict("SESSION_REVISION_STALE", "Coding Session revision is stale");
+        }
+        if (activity.activeRunId().isPresent() || activity.activeDispatchKey().isPresent()) {
+            throw conflict("CODING_SESSION_ACTIVE", "Active Coding Session cannot change lifecycle status");
         }
     }
 
@@ -485,6 +558,11 @@ public final class CodingSessionService {
                 .forEach(safe::appendCodePoint);
         String result = safe.toString().trim();
         return result.isEmpty() ? "Coding Session" : result;
+    }
+
+    private static String renameDisplayName(String value) {
+        if (value == null || value.isBlank()) return "Coding Session";
+        return CodingProductValues.requireText(value.trim(), "displayName", 120);
     }
 
     private static String message(String value) {

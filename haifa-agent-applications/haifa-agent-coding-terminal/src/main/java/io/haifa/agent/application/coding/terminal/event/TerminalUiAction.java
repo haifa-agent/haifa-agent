@@ -9,6 +9,16 @@ import java.util.List;
 public sealed interface TerminalUiAction {
     record SessionLoaded(CodingSessionView view, List<String> resources) implements TerminalUiAction {}
 
+    record SessionCleared(String status) implements TerminalUiAction {}
+
+    record ResourcesChanged(List<String> resources) implements TerminalUiAction {}
+
+    record ContextChanged(String indicator) implements TerminalUiAction {}
+
+    record ShellCompleted(String command, String summary, String status) implements TerminalUiAction {}
+
+    record ExportCompleted(String logicalPath, int messageCount) implements TerminalUiAction {}
+
     record RunEventReceived(AgentRunEvent event) implements TerminalUiAction {}
 
     record UserMessageCommitted(String id, String text) implements TerminalUiAction {}

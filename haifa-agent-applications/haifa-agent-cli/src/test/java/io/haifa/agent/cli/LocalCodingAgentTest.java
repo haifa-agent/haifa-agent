@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
@@ -30,6 +31,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -602,8 +604,10 @@ class LocalCodingAgentTest {
     void fileListAcceptsTheDisclosedDotWorkspaceRoot() throws Exception {
         Files.writeString(workspace.resolve("visible.txt"), "fixture", StandardCharsets.UTF_8);
         AtomicInteger calls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> firstRequest = new AtomicReference<>();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             if (calls.incrementAndGet() == 1) {
+                firstRequest.set(request);
                 return new AgentChatResponse(
                         "cli-list-1",
                         "stub-model",
@@ -648,6 +652,11 @@ class LocalCodingAgentTest {
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
         }
         assertThat(calls).hasValue(2);
+        assertThat(firstRequest.get().messages().stream()
+                        .filter(message -> message.role() == ModelMessageRole.USER)
+                        .toList())
+                .singleElement()
+                .satisfies(message -> assertThat(message.content()).isEqualTo("List the workspace root."));
     }
 
     @Test

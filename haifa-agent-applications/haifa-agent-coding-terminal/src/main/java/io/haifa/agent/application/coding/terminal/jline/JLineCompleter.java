@@ -10,7 +10,18 @@ import org.jline.reader.ParsedLine;
 
 /** Bounded completion over supported commands and product-provided logical paths only. */
 public final class JLineCompleter implements Completer {
-    public static final List<String> COMMANDS = List.of("/new", "/resume", "/session", "/commands", "/quit");
+    public static final List<String> COMMANDS = List.of(
+            "/new",
+            "/resume",
+            "/rename",
+            "/archive",
+            "/delete",
+            "/reload",
+            "/compact",
+            "/export",
+            "/session",
+            "/commands",
+            "/quit");
     private static final int MAX_CANDIDATES = 12;
 
     private final Supplier<List<String>> logicalPaths;

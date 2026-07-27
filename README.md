@@ -23,11 +23,14 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - 公共 Contract、持久 Interaction/Steer/Run Event Feed、框架中立 HTTP/JSON + SSE 参考 Adapter，
   以及 Reactor 末端的 Transport TCK；
 - Coding Agent 产品模块、严格映射评审原型的 JLine Terminal 与唯一可执行 CLI；CLI 支持交互
-  Terminal、兼容的 one-shot 模式，并可显式选择 `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
+  Terminal、兼容的 one-shot 模式、Session 搜索/重命名/归档/逻辑删除、线性历史压缩、根
+  `AGENTS.md` 冻结/reload、受治理的 `!`/`!!` 一次性命令和安全 JSONL 导出，并可显式选择
+  `MEMORY`、`SQLITE` 或 `SQLITE_WITH_JSONL`。
 
 尚未实现的能力不应被视为当前行为，包括 Enterprise SDK、生产 Server/Worker/Admin、Skill
 Hub/创作与企业管理面、Knowledge、Graph、完整的 Project Trust/Approval 产品体验、分布式
-Store/Lease、生产 KMS/Vault、Windows Local Native Adapter、容器或 microVM Sandbox。
+Store/Lease、生产 KMS/Vault、Windows Local Native Adapter、容器或 microVM Sandbox，以及
+Session Tree/Fork/Clone、PTY 和后台 Job。
 
 ## 当前 Reactor
 

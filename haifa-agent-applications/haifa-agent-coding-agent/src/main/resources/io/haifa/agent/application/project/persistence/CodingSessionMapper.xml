@@ -13,6 +13,7 @@
             <arg column="principal_id" javaType="java.lang.String"/>
             <arg column="principal_type" javaType="java.lang.String"/>
             <arg column="display_name" javaType="java.lang.String"/>
+            <arg column="session_status" javaType="java.lang.String"/>
             <arg column="active_run_id" javaType="java.lang.String"/>
             <arg column="active_run_version" javaType="java.lang.Long"/>
             <arg column="active_dispatch_key" javaType="java.lang.String"/>
@@ -106,11 +107,11 @@
     <insert id="insertActivity">
         INSERT INTO coding_session_activity(
             session_id, schema_version, project_id, tenant_id, principal_id, principal_type,
-            display_name, active_run_id, active_run_version, active_dispatch_key,
+            display_name, session_status, active_run_id, active_run_version, active_dispatch_key,
             created_at_ms, last_activity_at_ms, revision
         ) VALUES (
             #{row.sessionId}, #{row.schemaVersion}, #{row.projectId}, #{row.tenantId},
-            #{row.principalId}, #{row.principalType}, #{row.displayName}, #{row.activeRunId},
+            #{row.principalId}, #{row.principalType}, #{row.displayName}, #{row.sessionStatus}, #{row.activeRunId},
             #{row.activeRunVersion}, #{row.activeDispatchKey}, #{row.createdAt},
             #{row.lastActivityAt}, #{row.revision}
         )
@@ -122,8 +123,10 @@
           AND principal_id = #{principalId}
           AND principal_type = #{principalType}
           AND project_id = #{projectId}
+          AND session_status != 'DELETED'
         <if test="textLike != null">
-          AND lower(display_name) LIKE #{textLike} ESCAPE '\'
+          AND (lower(display_name) LIKE #{textLike} ESCAPE '\'
+               OR lower(session_id) LIKE #{textLike} ESCAPE '\')
         </if>
         <if test="afterAt != null">
           AND (last_activity_at_ms &lt; #{afterAt}
@@ -133,11 +136,27 @@
         LIMIT #{limit}
     </select>
 
+    <update id="rename">
+        UPDATE coding_session_activity
+        SET display_name = #{displayName}, last_activity_at_ms = #{updatedAt},
+            revision = revision + 1
+        WHERE session_id = #{sessionId} AND revision = #{expectedRevision}
+          AND session_status != 'DELETED'
+    </update>
+
+    <update id="updateStatus">
+        UPDATE coding_session_activity
+        SET session_status = #{status}, last_activity_at_ms = #{updatedAt},
+            revision = revision + 1
+        WHERE session_id = #{sessionId} AND revision = #{expectedRevision}
+    </update>
+
     <update id="reserveActive">
         UPDATE coding_session_activity
         SET active_dispatch_key = #{dispatchKey}, last_activity_at_ms = #{updatedAt},
             revision = revision + 1
         WHERE session_id = #{sessionId} AND revision = #{expectedRevision}
+          AND session_status = 'ACTIVE'
           AND active_run_id IS NULL AND active_dispatch_key IS NULL
     </update>
 

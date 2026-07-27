@@ -4,7 +4,6 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
-import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -157,7 +156,6 @@ public final class ProjectProductService {
             String idempotencyKey) {
         String objective = requireText(message, "message");
         List<ContentPart> inputs = new ArrayList<>();
-        inputs.add(new TextPart(objective, "text/plain"));
         Objects.requireNonNull(attachments, "attachments must not be null")
                 .forEach(asset -> inputs.add(new AssetRefPart(asset)));
         return new AgentRunRequest(

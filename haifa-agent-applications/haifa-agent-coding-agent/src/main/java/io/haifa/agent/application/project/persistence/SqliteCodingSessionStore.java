@@ -11,6 +11,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.session.AgentSessionStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
@@ -133,6 +134,30 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
                 .stream()
                 .map(this::activity)
                 .toList());
+    }
+
+    @Override
+    public CodingSessionActivity rename(
+            AgentSessionId sessionId, long expectedRevision, String displayName, Instant updatedAt) {
+        return unitOfWork.execute(() -> {
+            CodingSessionMapper mapper = mapper();
+            requireOne(
+                    mapper.rename(sessionId.value(), expectedRevision, displayName, updatedAt),
+                    "coding session rename");
+            return requireActivity(mapper, sessionId);
+        });
+    }
+
+    @Override
+    public CodingSessionActivity updateStatus(
+            AgentSessionId sessionId, long expectedRevision, AgentSessionStatus status, Instant updatedAt) {
+        return unitOfWork.execute(() -> {
+            CodingSessionMapper mapper = mapper();
+            requireOne(
+                    mapper.updateStatus(sessionId.value(), expectedRevision, status.name(), updatedAt),
+                    "coding session status update");
+            return requireActivity(mapper, sessionId);
+        });
     }
 
     @Override
@@ -380,6 +405,7 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
                 new TenantRef(row.tenantId()),
                 new PrincipalRef(row.principalId(), row.principalType()),
                 row.displayName(),
+                AgentSessionStatus.valueOf(row.sessionStatus()),
                 Optional.ofNullable(row.activeRunId()).map(AgentRunId::new),
                 row.activeRunVersion() == null ? OptionalLong.empty() : OptionalLong.of(row.activeRunVersion()),
                 Optional.ofNullable(row.activeDispatchKey()),
@@ -426,6 +452,7 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
                 value.principal().principalId(),
                 value.principal().principalType(),
                 value.displayName(),
+                value.status().name(),
                 value.activeRunId().map(AgentRunId::value).orElse(null),
                 value.activeRunVersion().isPresent() ? value.activeRunVersion().orElseThrow() : null,
                 value.activeDispatchKey().orElse(null),
