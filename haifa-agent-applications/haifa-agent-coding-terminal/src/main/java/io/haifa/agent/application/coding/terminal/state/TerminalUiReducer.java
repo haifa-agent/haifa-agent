@@ -26,13 +26,13 @@ public final class TerminalUiReducer {
                     : active.map(io.haifa.agent.runtime.api.RunEventCursor::beforeFirst);
             var footer = new TerminalFooter(
                     view.summary().projectId().value(),
-                    "git: via safe read model",
+                    "",
                     view.summary().displayName(),
                     "queue: " + view.summary().queuedCount(),
-                    "provider: frozen",
-                    "model: frozen",
+                    "",
+                    "",
                     view.summary().activeRunStatus().map(Enum::name).orElse("IDLE"),
-                    "sandbox: frozen profile");
+                    "");
             return copy(
                     state,
                     List.copyOf(loaded.resources()),

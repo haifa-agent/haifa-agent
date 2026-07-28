@@ -55,12 +55,12 @@ final class Tui4jCodingTerminalModel implements Model {
         editor.setPrompt("┃ ");
         editor.setPlaceholder("Type a message, /command, @file, !command, or !!command");
         editor.focus();
-        syncComponents();
         fullRepaintRequested = false;
     }
 
     @Override
     public Command init() {
+        syncComponents();
         return nextTick();
     }
 

@@ -10,14 +10,6 @@ public record TerminalFooter(
         String runStatus,
         String sandbox) {
     public static TerminalFooter empty() {
-        return new TerminalFooter(
-                "project",
-                "git: unavailable",
-                "new session",
-                "context: —",
-                "provider: —",
-                "model: —",
-                "IDLE",
-                "sandbox: —");
+        return new TerminalFooter("", "", "", "context: —", "", "", "IDLE", "");
     }
 }

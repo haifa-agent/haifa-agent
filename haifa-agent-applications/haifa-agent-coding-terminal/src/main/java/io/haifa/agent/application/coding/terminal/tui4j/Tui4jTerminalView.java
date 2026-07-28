@@ -10,12 +10,41 @@ import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /** Composes the reviewed Prototype's single-column regions using tui4j components. */
 final class Tui4jTerminalView {
     private static final int MIN_COLUMNS = 60;
     private static final int MIN_ROWS = 16;
+    private static final Set<String> SUCCESS_STATUSES = Set.of(
+            "ACCEPTED",
+            "APPLIED",
+            "APPROVED",
+            "COMPLETED",
+            "EXPORTED",
+            "PASSED",
+            "RESOURCES RELOADED FOR FUTURE NEW RUNS",
+            "SESSION ARCHIVED",
+            "SESSION CONTEXT COMPACTED",
+            "SESSION EXPORTED",
+            "SESSION RENAMED",
+            "SUCCEEDED",
+            "SUCCESS");
+    private static final Set<String> PENDING_STATUSES = Set.of(
+            "CANCELLING", "PENDING", "QUEUED", "REQUESTED", "RUNNING", "STARTED", "STREAMING", "WAITING", "WORKING");
+    private static final Set<String> ERROR_STATUSES = Set.of(
+            "ATTENTION",
+            "CANCELLED",
+            "DENIED",
+            "ERROR",
+            "FAILED",
+            "RECOVERY REQUIRED",
+            "REJECTED",
+            "SHELL COMMAND DENIED",
+            "TIMEOUT");
+
+    private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
 
     String render(
             TerminalUiState state,
@@ -49,22 +78,23 @@ final class Tui4jTerminalView {
 
     String transcriptContent(TerminalUiState state) {
         if (state.transcript().isEmpty()) {
-            return "Conversation\n  Start a task or use /commands.";
+            return theme.muted("Start a task or use /commands.");
         }
         return state.transcript().stream().map(this::transcriptItem).collect(Collectors.joining("\n"));
     }
 
     private List<String> header(TerminalUiState state, boolean compact) {
         List<String> lines = new ArrayList<>();
-        lines.add(state.header().toUpperCase(Locale.ROOT) + "  v0.1");
+        lines.add(theme.accent(state.header()) + theme.muted("  v0.1"));
         if (compact) {
-            lines.add("Startup help  tab complete · enter send · esc interrupt");
+            lines.add(theme.muted("tab complete · " + submitHint(state) + " · esc interrupt"));
         } else {
-            lines.add("Startup help  esc interrupt · ctrl+c clear · ctrl+o expand tools");
-            lines.add("               tab /commands or @files · alt+enter follow-up · alt+up restore");
+            lines.add(theme.muted("esc interrupt · ctrl+c clear · ctrl+o tools · tab complete · " + submitHint(state)));
+            if (state.currentRunId().isPresent()) {
+                lines.add(theme.muted("alt/option+enter follow-up · alt/option+up restore queued message"));
+            }
         }
-        lines.add("Loaded resources  " + String.join(" · ", state.loadedResources()));
-        lines.add("Diagnostics  tui4j terminal · Resize limitation recorded");
+        resources(state).ifPresent(lines::add);
         return lines;
     }
 
@@ -72,39 +102,54 @@ final class Tui4jTerminalView {
             TerminalUiState state, Textarea editor, boolean newOutputPending, boolean compact) {
         List<String> lines = new ArrayList<>();
         if (!state.pending().isEmpty()) {
-            lines.add("Pending messages");
+            lines.add(theme.queued("Pending · " + state.pending().size()));
             int pendingLimit = compact ? 1 : state.recoverableError().isPresent() ? 2 : 3;
-            state.pending().stream().limit(pendingLimit).map(this::pending).forEach(lines::add);
-        } else {
-            lines.add("Pending messages  none");
+            state.pending().stream()
+                    .limit(pendingLimit)
+                    .map(this::pending)
+                    .map(theme::queued)
+                    .forEach(lines::add);
         }
-        lines.add("Status  " + state.status() + (newOutputPending ? " · new output below" : ""));
-        state.recoverableError().ifPresent(value -> lines.add("Error  " + value));
-        lines.add("Widgets above  none");
+        status(state, newOutputPending).ifPresent(lines::add);
+        state.recoverableError().ifPresent(value -> lines.add(theme.error("Recovery required · " + value)));
         state.selector()
                 .ifPresentOrElse(
                         selector -> lines.addAll(selector(selector, compact ? 1 : 4)), () -> lines.add(editor.view()));
-        lines.add("Widgets below  none");
+        lines.add(theme.focus(editorHint(state)));
         var footer = state.footer();
-        lines.add("Footer  Enter sends · Shift+Enter newline · Esc interrupts");
-        if (compact) {
-            lines.add(footer.project() + " · " + footer.session() + " · " + footer.runStatus());
-        } else {
-            lines.add(footer.project() + " (" + footer.gitBranch() + ") · " + footer.session());
-            lines.add(footer.metrics() + " · " + footer.provider() + " · " + footer.model() + " · " + footer.runStatus()
-                    + " · " + footer.sandbox());
+        List<String> context = new ArrayList<>();
+        addMeaningful(context, footer.runStatus());
+        addMeaningful(context, footer.project());
+        addMeaningful(context, footer.session());
+        if (!compact) {
+            addMeaningful(context, footer.metrics());
+            addGitIfReal(context, footer.gitBranch());
         }
+        lines.add(theme.muted(String.join(" · ", context)));
         return lines;
     }
 
     private String transcriptItem(TranscriptItem item) {
-        String title = item.kind() == TranscriptItem.Kind.USER
-                ? "You"
-                : item.title() + " [" + item.status().toLowerCase(Locale.ROOT) + "]";
+        String status = item.status().toLowerCase(Locale.ROOT);
+        String title =
+                switch (item.kind()) {
+                    case USER -> "You";
+                    case ASSISTANT -> item.title();
+                    case TOOL -> "Tool · " + item.title() + " [" + status + "]";
+                    case EXECUTION -> "Execution · " + item.title() + " [" + status + "]";
+                    case APPROVAL -> item.title() + " [" + status + "]";
+                    case RESOURCE -> "Resource · " + item.title() + " [" + status + "]";
+                    case ERROR -> "Error · " + item.title() + " [" + status + "]";
+                };
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
-        return title + "\n" + body.lines().map(value -> "  " + sanitize(value)).collect(Collectors.joining("\n"))
-                + "\n";
+        String content =
+                title + "\n" + body.lines().map(value -> "  " + sanitize(value)).collect(Collectors.joining("\n"));
+        if (!item.expanded()
+                && (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION)) {
+            content = content + "\n  ctrl+o expand";
+        }
+        return style(item, content) + "\n";
     }
 
     private String pending(PendingMessage message) {
@@ -113,7 +158,7 @@ final class Tui4jTerminalView {
 
     private List<String> selector(TerminalSelector selector, int maximumVisibleOptions) {
         List<String> lines = new ArrayList<>();
-        lines.add("┌─ " + sanitize(selector.title()));
+        lines.add(theme.focus("┌─ " + sanitize(selector.title())));
         if (selector.options().isEmpty()) {
             lines.add("│ No available items");
         }
@@ -124,15 +169,92 @@ final class Tui4jTerminalView {
                         selector.options().size() - maximumVisibleOptions));
         int end = Math.min(selector.options().size(), start + maximumVisibleOptions);
         for (int index = start; index < end; index++) {
-            lines.add("│ " + (index == selector.selected() ? "> " : "  ")
-                    + sanitize(selector.options().get(index)));
+            String option = "│ " + (index == selector.selected() ? "> " : "  ")
+                    + sanitize(selector.options().get(index));
+            lines.add(index == selector.selected() ? theme.focus(option) : option);
         }
         if (selector.options().size() > maximumVisibleOptions) {
-            lines.add(
-                    "│ " + (start + 1) + "-" + end + " of " + selector.options().size());
+            lines.add(theme.muted(
+                    "│ " + (start + 1) + "-" + end + " of " + selector.options().size()));
         }
-        lines.add("└─ enter select · escape close (editor preserved)");
+        lines.add(theme.muted("└─ enter select · escape close (editor preserved)"));
         return lines;
+    }
+
+    private java.util.Optional<String> resources(TerminalUiState state) {
+        List<String> values = state.loadedResources().stream()
+                .map(this::sanitize)
+                .filter(this::isMeaningfulResource)
+                .toList();
+        if (values.isEmpty()) return java.util.Optional.empty();
+        return java.util.Optional.of(theme.muted("resources · " + String.join(" · ", values)));
+    }
+
+    private java.util.Optional<String> status(TerminalUiState state, boolean newOutputPending) {
+        List<String> parts = new ArrayList<>();
+        String value = state.status().strip();
+        if (!value.equalsIgnoreCase("idle")
+                && !(state.recoverableError().isPresent() && value.equalsIgnoreCase("Recovery required"))) {
+            parts.add(value);
+        }
+        if (newOutputPending) parts.add("new output below");
+        if (parts.isEmpty()) return java.util.Optional.empty();
+        String content = String.join(" · ", parts);
+        if (parts.size() == 1 && newOutputPending) {
+            return java.util.Optional.of(theme.queued(content));
+        }
+        return java.util.Optional.of(statusStyle(value, content));
+    }
+
+    private String style(TranscriptItem item, String content) {
+        if (item.kind() == TranscriptItem.Kind.USER) return theme.user(content);
+        if (item.kind() == TranscriptItem.Kind.ERROR) return theme.error(content);
+        if (item.kind() == TranscriptItem.Kind.ASSISTANT) return content;
+        if (item.kind() == TranscriptItem.Kind.RESOURCE) return content;
+        return statusStyle(item.status(), content);
+    }
+
+    private String statusStyle(String status, String content) {
+        String normalized = status.strip().toUpperCase(Locale.ROOT);
+        if (SUCCESS_STATUSES.contains(normalized)) return theme.success(content);
+        if (PENDING_STATUSES.contains(normalized)) return theme.pending(content);
+        if (ERROR_STATUSES.contains(normalized)) return theme.error(content);
+        return content;
+    }
+
+    private String submitHint(TerminalUiState state) {
+        return state.currentRunId().isPresent() ? "enter steer" : "enter send";
+    }
+
+    private String editorHint(TerminalUiState state) {
+        if (state.selector().isPresent()) return "enter select · escape close";
+        if (state.currentRunId().isPresent()) {
+            return "enter steer · alt/option+enter follow-up · shift+enter/ctrl+j newline · esc interrupt";
+        }
+        return "enter send · shift+enter/ctrl+j newline · tab complete";
+    }
+
+    private boolean isMeaningfulResource(String value) {
+        String normalized = value.strip().toLowerCase(Locale.ROOT);
+        return !normalized.isEmpty()
+                && !normalized.equals("none")
+                && !normalized.equals("loaded resources: none")
+                && !normalized.equals("resources: none");
+    }
+
+    private void addGitIfReal(List<String> target, String value) {
+        String normalized = value.strip().toLowerCase(Locale.ROOT);
+        if (normalized.equals("git: unavailable") || normalized.equals("git: via safe read model")) return;
+        addMeaningful(target, value);
+    }
+
+    private void addMeaningful(List<String> target, String value) {
+        String normalized = meaningful(value);
+        if (!normalized.isEmpty() && !normalized.endsWith(": —")) target.add(normalized);
+    }
+
+    private String meaningful(String value) {
+        return value == null ? "" : value.strip();
     }
 
     private int visualRows(List<String> regions) {

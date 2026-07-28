@@ -1,7 +1,8 @@
 # Haifa Coding Terminal
 
-Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互严格以
-`docs/prd/pi-coding-agent-terminal-low-fi-prototype` 评审原型为准，不自行发明 Sidebar、
+Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
+`docs/prd/pi-coding-agent-terminal-low-fi-prototype` 评审原型及
+`docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准，不自行发明 Sidebar、
 Dashboard、Scenario toolbar 或另一套产品 UI。
 
 ## 模块定位
@@ -52,19 +53,38 @@ Windows ConPTY Gate B。
 
 ## 原型映射与交互
 
-固定信息顺序：
+Phase A 将原型映射收敛为固定单列顺序：
 
 ```text
 Header
-Loaded Resources / Diagnostics
+Resources summary（仅有真实资源时）
 Transcript
-Pending Messages
-Status
-Widgets Above
+Pending Messages（仅非空）
+Active Status / Recoverable Error（仅需要感知时）
 Editor or Selector
-Widgets Below
 Footer
 ```
+
+不再常驻渲染 Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。Footer 只显示
+已有真实来源的 Project、Git（存在安全 Read Model 时）、Session、Context/Queue 和 Run 状态；
+`git: via safe read model`、`provider/model: frozen`、`sandbox: frozen profile` 等实现占位字段不进入
+产品界面。
+
+Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、User、Success、Pending、
+Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoColor 环境仍依靠稳定标题、状态文字、
+边界和顺序区分：
+
+- User 使用低对比消息块，便于定位用户意图；
+- Assistant 正文直接进入对话流，不使用厚卡片；
+- Tool/Execution 根据 `requested/started/succeeded/failed/cancelled` 使用状态色，并在折叠时显示
+  `ctrl+o expand`；
+- Approval 使用 Pending 语义，Error 使用 Error 语义，Resource 保持中性；
+- Editor/Selector 的当前操作提示使用 Focus 语义。
+
+Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示
+`enter steer · alt+enter follow-up · esc interrupt`。macOS 的 Option 对应 Terminal Alt；
+`Shift+Enter` 和 `Ctrl+J` 都用于换行。Windows Terminal、WezTerm、Alacritty 等终端的修饰 Enter
+映射与跨平台能力诊断属于后续 Phase B/C，不在 Phase A 中直接修改用户终端配置。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
 50ms tick 在 Program 事件循环中排空

@@ -2,6 +2,10 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Coding Terminal Phase A 按 Pi 参考体验重构单列信息层级：移除常驻 Diagnostics、空 Pending、
+  Widgets 和假冻结 Footer，新增明暗自适应的 User/Tool/Execution/Approval/Error 状态 Theme、
+  Send/Steer 动态提示、跨平台 Alt/Option 与 Ctrl+J 帮助，并保持 NoColor、60×16 和既有
+  CodingSessionClient/Reducer 边界。
 - Coding Agent Phase 3 新增 Session 搜索、CAS 重命名、Core 权威归档与逻辑删除、手动线性历史
   Compaction、根 `AGENTS.md` 安全发现和仅影响后续 Run 的 `/reload`、经既有
   Policy/Approval/ExecutionBroker/Sandbox 的 `!`/`!!`，以及脱敏且不覆盖目标的版本化 JSONL

@@ -7,8 +7,10 @@ import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.Key;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
+import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
 import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
+import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
@@ -30,9 +32,15 @@ import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.util.List;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class Tui4jCodingTerminalModelTest {
+    @BeforeAll
+    static void configureHeadlessTerminalInfo() {
+        TerminalInfo.provide(() -> new TerminalInfo(false, new NoColor()));
+    }
+
     @Test
     void mapsEditorNewlineResizeAndInterruptKeysIntoAuthoritativeState() {
         var fixture = fixture();
