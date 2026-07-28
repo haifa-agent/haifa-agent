@@ -97,6 +97,29 @@ class RuntimeEventFeedTest {
     }
 
     @Test
+    void filtersMetadataOnlyAssistantTextDeltaAndContinuesToTheFeedHead() {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        store.append(
+                runId,
+                "model.output.delta",
+                Map.of("eventType", "ASSISTANT_TEXT_DELTA", "generationId", "generation", "textDelta", ""),
+                NOW);
+        RuntimeEvent status =
+                store.append(runId, "run.status", Map.of("status", "COMPLETED", "version", 2L), NOW);
+        RuntimeEventFeed feed = new RuntimeEventFeed(store, new RuntimeClientEventProjector(store));
+
+        var page = feed.page(runId, RunEventCursor.beforeFirst(runId), 10);
+
+        assertThat(page.items()).singleElement().satisfies(event -> {
+            assertThat(event.sequence()).isEqualTo(status.sequence());
+            assertThat(event.eventType()).isEqualTo("run.status.changed");
+        });
+        assertThat(page.nextCursor()).isEqualTo(page.headCursor());
+        assertThat(page.hasMore()).isFalse();
+    }
+
+    @Test
     void reportsWrongAheadExpiredAndUnsupportedCursorsDeterministically() {
         InMemoryRuntimeStore store = storeWithRun("run");
         AgentRunId runId = new AgentRunId("run");

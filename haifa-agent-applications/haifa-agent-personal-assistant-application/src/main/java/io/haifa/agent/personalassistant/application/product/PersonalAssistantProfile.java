@@ -30,7 +30,8 @@ public final class PersonalAssistantProfile {
 
     private PersonalAssistantProfile() {}
 
-    public static ProductProfile create(ContributionCoordinates coordinates, Set<String> localSkillAliases) {
+    public static ProductProfile create(
+            ContributionCoordinates coordinates, Set<String> localSkillAliases, Set<String> mcpToolAliases) {
         Map<ProductCapabilityId, ProductCapabilityRequirement> requirements = new LinkedHashMap<>();
         required(requirements, ProductCapabilities.MODEL, coordinates.model());
         required(requirements, ProductCapabilities.PERSISTENCE, coordinates.persistence());
@@ -53,6 +54,10 @@ public final class PersonalAssistantProfile {
         Set<String> skills = java.util.stream.Stream.concat(
                         java.util.stream.Stream.of(BUNDLED_SKILL_ALIAS), localSkillAliases.stream())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        Set<String> allowedTools = java.util.stream.Stream.concat(
+                        java.util.stream.Stream.of(PRODUCT_TOOL_ALIAS, SKILL_LOAD_ALIAS, SKILL_RESOURCE_ALIAS),
+                        mcpToolAliases.stream())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         ProductPolicies policies = new ProductPolicies(
                 new ProductMemoryPolicy(true, 16_384, 100),
                 ProductArtifactPolicy.disabled(),
@@ -71,7 +76,7 @@ public final class PersonalAssistantProfile {
                 new AgentRunLimits(32, 0, 1, 300_000, 120_000),
                 policies,
                 requirements,
-                Set.of(PRODUCT_TOOL_ALIAS, SKILL_LOAD_ALIAS, SKILL_RESOURCE_ALIAS, MCP_TOOL_ALIAS),
+                allowedTools,
                 skills,
                 Set.of());
     }

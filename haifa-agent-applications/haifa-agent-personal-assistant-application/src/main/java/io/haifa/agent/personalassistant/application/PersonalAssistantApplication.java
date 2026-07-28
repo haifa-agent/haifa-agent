@@ -47,11 +47,13 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final HaifaAgent agent;
     private final PersonalMcpPlatform mcp;
     private final Clock clock;
+    private final Set<String> mcpToolAliases;
 
     public PersonalAssistantApplication(HaifaAgent agent, PersonalMcpPlatform mcp, Clock clock) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
+        this.mcpToolAliases = mcp.aliases();
     }
 
     public ConversationView start(String idempotencyKey, String displayName, String message) {
@@ -180,7 +182,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     public List<ActivityView> activities(String runId, int limit) {
         AgentRunId id = new AgentRunId(runId);
         return agent.runs().events(id, RunEventCursor.beforeFirst(id), limit).items().stream()
-                .map(PersonalAssistantApplication::activity)
+                .map(this::activity)
                 .flatMap(Optional::stream)
                 .toList();
     }
@@ -325,14 +327,14 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 value.expiresAt());
     }
 
-    private static Optional<ActivityView> activity(AgentRunEvent event) {
+    private Optional<ActivityView> activity(AgentRunEvent event) {
         if (!(event.payload() instanceof RunEventPayloads.ToolLifecycle tool)) return Optional.empty();
         ActivityKind kind =
                 Set.of(PersonalAssistantProfile.SKILL_LOAD_ALIAS, PersonalAssistantProfile.SKILL_RESOURCE_ALIAS)
                                         .contains(tool.displayName())
                                 || tool.displayName().startsWith("skill.")
                         ? ActivityKind.SKILL
-                        : PersonalAssistantProfile.MCP_TOOL_ALIAS.equals(tool.displayName())
+                        : mcpToolAliases.contains(tool.displayName())
                                         || tool.displayName().startsWith("mcp.")
                                 ? ActivityKind.MCP
                                 : ActivityKind.TOOL;
@@ -360,7 +362,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         return Set.of("SUCCEEDED", "FAILED", "CANCELLED").contains(status);
     }
 
-    private static StreamEvent streamEvent(AgentRunEvent event) {
+    private StreamEvent streamEvent(AgentRunEvent event) {
         Object payload = event.payload();
         if (payload instanceof RunEventPayloads.AssistantTextDelta delta) {
             return new StreamEvent(

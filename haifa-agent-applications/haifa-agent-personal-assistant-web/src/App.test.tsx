@@ -1,49 +1,231 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type {
+  Activity,
+  Bootstrap,
+  Conversation,
+  Interaction,
+  Memory,
+  MemoryCandidate,
+  Run,
+  Turn,
+} from "./api/generated";
+import type { PersonalAssistantClient } from "./api/client";
 import App from "./App";
 
+const conversation: Conversation = {
+  id: "conversation-1",
+  displayName: "每日计划",
+  status: "ACTIVE",
+  activeRunId: null,
+  createdAt: "2026-07-28T01:00:00Z",
+  lastActivityAt: "2026-07-28T02:00:00Z",
+  revision: 3,
+};
+const turns: Turn[] = [
+  {
+    id: "turn-1",
+    role: "USER",
+    runId: "run-1",
+    sequence: 1,
+    text: "请整理今天的待办",
+    createdAt: "2026-07-28T01:00:00Z",
+  },
+  {
+    id: "turn-2",
+    role: "ASSISTANT",
+    runId: "run-1",
+    sequence: 2,
+    text: "已经按优先级整理完成。",
+    createdAt: "2026-07-28T01:00:01Z",
+  },
+];
+const run: Run = {
+  id: "run-1",
+  conversationId: conversation.id,
+  status: "COMPLETED",
+  version: 8,
+  updatedAt: "2026-07-28T01:00:01Z",
+  output: "已经按优先级整理完成。",
+  resultSummary: "Completed",
+  errorCode: null,
+  usage: {
+    inputTokens: 39934,
+    outputTokens: 1409,
+    totalTokens: 41343,
+    cachedInputTokens: 27776,
+    modelCalls: 2,
+    toolCalls: 1,
+  },
+};
+const activity: Activity = {
+  activityId: "activity-1",
+  runId: run.id,
+  kind: "TOOL",
+  displayName: "checklist.verify",
+  safeTargetSummary: "Current checklist",
+  status: "SUCCEEDED",
+  startedAt: "2026-07-28T01:00:00Z",
+  completedAt: "2026-07-28T01:00:01Z",
+  safeResultSummary: "Completed",
+  interactionRef: null,
+  version: 5,
+};
+const candidate: MemoryCandidate = {
+  id: "candidate-1",
+  kind: "PREFERENCE",
+  subjectKey: "travel",
+  content: "国内出行优先选择高铁。",
+  status: "PENDING",
+  updatedAt: "2026-07-28T01:00:00Z",
+  revision: 1,
+};
+const memory: Memory = {
+  id: "memory-1",
+  version: 1,
+  kind: "PREFERENCE",
+  subjectKey: "writing",
+  content: "回答保持简洁。",
+  status: "ACTIVE",
+  createdAt: "2026-07-28T01:00:00Z",
+  updatedAt: "2026-07-28T01:00:00Z",
+};
+const bootstrap: Bootstrap = {
+  product: "Haifa Personal Assistant",
+  apiVersion: "v1",
+  connection: "connected",
+  caller: "public-user",
+  capabilities: ["conversation", "tool", "skill", "mcp", "memory", "usage", "sse"],
+  assemblyDigest: "safe-digest",
+};
+
+function client(): PersonalAssistantClient {
+  return {
+    bootstrap: vi.fn(async () => bootstrap),
+    conversations: vi.fn(async () => [conversation]),
+    createConversation: vi.fn(async () => conversation),
+    conversation: vi.fn(async () => conversation),
+    updateConversation: vi.fn(async () => conversation),
+    turns: vi.fn(async () => turns),
+    submitMessage: vi.fn(async () => conversation),
+    run: vi.fn(async () => run),
+    cancelRun: vi.fn(async () => ({ ...run, status: "CANCELLED" })),
+    activities: vi.fn(async () => [activity]),
+    interaction: vi.fn(async () => null),
+    respondToInteraction: vi.fn(async () => ({
+      responseId: "response-1",
+      interactionId: "interaction-1",
+      runId: run.id,
+      status: "ACCEPTED",
+      interactionState: "RESOLVED",
+      revision: 2,
+      runVersion: 9,
+    })),
+    memoryCandidates: vi.fn(async () => [candidate]),
+    memories: vi.fn(async () => [memory]),
+    approveMemory: vi.fn(async () => memory),
+    rejectMemory: vi.fn(async () => ({ ...candidate, status: "REJECTED" })),
+    invalidateMemory: vi.fn(async () => ({ ...memory, status: "INVALIDATED" })),
+    streamRun: vi.fn(async () => undefined),
+  };
+}
+
 describe("Personal Assistant application", () => {
-  it("renders the product shell without Deep Research surfaces", async () => {
-    render(<App />);
-
-    expect(await screen.findByText("Haifa Personal")).toBeTruthy();
-    expect(screen.getAllByText("整理示例数据").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Deep Research")).toBeNull();
-    expect(screen.queryByText("Sources")).toBeNull();
-    expect(screen.queryByText("View JSON")).toBeNull();
-    const usage = screen.getByLabelText(/会话 Token 消耗/);
-    expect(usage.textContent).toContain("输入：4,832");
-    expect(usage.textContent).toContain("输出：286");
-    expect(usage.textContent).toContain("总计：5,118");
-    expect(usage.textContent).toContain("提供方实报");
+  it("renders authoritative run usage and safe activity", async () => {
+    render(<App client={client()} />);
+    expect(await screen.findByText("每日计划")).toBeTruthy();
+    expect(await screen.findByText("checklist.verify")).toBeTruthy();
+    const usage = screen.getByLabelText("本次运行 Token 消耗");
+    expect(usage.textContent).toContain("39,934");
+    expect(usage.textContent).toContain("1,409");
+    expect(usage.textContent).toContain("41,343");
+    expect(screen.queryByText("Follow-up")).toBeNull();
+    expect(screen.queryByText("Steer")).toBeNull();
   });
 
-  it("opens memory candidates and requires an explicit confirmation", async () => {
-    render(<App />);
-    await screen.findByText("Haifa Personal");
+  it("renders Markdown and LaTeX in conversation turns", async () => {
+    const api = client();
+    vi.mocked(api.turns).mockResolvedValue([
+      turns[0],
+      {
+        ...turns[1],
+        text: "## Summary\n\nEnergy is $E = mc^2$.",
+      },
+    ]);
+    const { container } = render(<App client={api} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /记忆与偏好/ }));
-    expect(screen.getByRole("dialog", { name: "记忆与偏好" })).toBeTruthy();
-    expect(screen.getByText("通常从杭州出发，国内出行偏好高铁。")).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 2, name: "Summary" })).toBeTruthy();
+    expect(container.querySelector(".message-content .katex")).toBeTruthy();
+  });
 
-    fireEvent.click(screen.getAllByRole("button", { name: /确认记住/ })[0]);
-    await waitFor(() => {
-      expect(screen.queryByText("通常从杭州出发，国内出行偏好高铁。")).toBeNull();
+  it("opens memory management without writing on page load", async () => {
+    const api = client();
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    expect(api.approveMemory).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /记忆/ }));
+    expect(await screen.findByRole("dialog", { name: "记忆管理" })).toBeTruthy();
+    expect(screen.getByText("国内出行优先选择高铁。")).toBeTruthy();
+    expect(api.approveMemory).not.toHaveBeenCalled();
+  });
+
+  it("disables the composer while a run is active", async () => {
+    const active = {
+      ...conversation,
+      activeRunId: "run-active",
+    };
+    const activeRun = { ...run, id: "run-active", status: "RUNNING" };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(activeRun);
+    render(<App client={api} />);
+
+    const composer = await screen.findByPlaceholderText("当前任务运行中");
+    await waitFor(() => expect(composer.hasAttribute("disabled")).toBe(true));
+    expect(screen.getByText(/当前任务运行中，完成或停止后可继续输入/)).toBeTruthy();
+  });
+
+  it("reconciles the committed assistant turn after a terminal stream event", async () => {
+    const activeConversation = { ...conversation, activeRunId: "run-live", revision: 4 };
+    const settledConversation = { ...conversation, activeRunId: null, revision: 5 };
+    const runningRun = { ...run, id: "run-live", status: "RUNNING", version: 1 };
+    const completedRun = { ...runningRun, status: "COMPLETED", version: 2 };
+    const userTurn = { ...turns[0], runId: "run-live" };
+    const assistantTurn = {
+      ...turns[1],
+      runId: "run-live",
+      text: "Final committed assistant answer",
+    };
+    const api = client();
+    vi.mocked(api.conversations)
+      .mockResolvedValueOnce([activeConversation])
+      .mockResolvedValue([settledConversation]);
+    vi.mocked(api.conversation)
+      .mockResolvedValueOnce(activeConversation)
+      .mockResolvedValue(settledConversation);
+    vi.mocked(api.turns)
+      .mockResolvedValueOnce([userTurn])
+      .mockResolvedValue([userTurn, assistantTurn]);
+    vi.mocked(api.run)
+      .mockResolvedValueOnce(runningRun)
+      .mockResolvedValue(completedRun);
+    vi.mocked(api.streamRun).mockImplementation(async (_runId, handlers) => {
+      handlers.onOpen?.();
+      handlers.onEvent({
+        eventId: "event-final",
+        type: "run.status",
+        runId: "run-live",
+        occurredAt: "2026-07-28T01:00:01Z",
+        value: "COMPLETED",
+        sequence: 10,
+      });
     });
-  });
 
-  it("completes a one-time approval and exposes the generated artifact", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    render(<App />);
-    await screen.findByText("Haifa Personal");
+    render(<App client={api} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "仅批准这一次" }));
-    await vi.advanceTimersByTimeAsync(1_000);
-
-    expect(await screen.findByText("数据整理摘要.csv")).toBeTruthy();
-    expect(screen.getByLabelText(/会话 Token 消耗/).textContent).toContain(
-      "总计：7,410",
-    );
-    vi.useRealTimers();
+    expect(await screen.findByText("Final committed assistant answer")).toBeTruthy();
+    expect(api.conversation).toHaveBeenCalledTimes(2);
   });
 });

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -37,9 +38,14 @@ class PersonalAssistantWebFluxTest {
     @Autowired
     ObjectMapper mapper;
 
+    @LocalServerPort
+    int serverPort;
+
     @BeforeEach
     void useExplicitLoopbackHost() {
-        web = web.mutate().defaultHeader("Host", "127.0.0.1").build();
+        web = WebTestClient.bindToServer()
+                .baseUrl("http://127.0.0.1:" + serverPort)
+                .build();
     }
 
     @DynamicPropertySource
@@ -151,6 +157,29 @@ class PersonalAssistantWebFluxTest {
                 .isEqualTo("3.1.0")
                 .jsonPath("$.paths['/api/v1/runs/{runId}/stream'].get.responses['200'].content['text/event-stream']")
                 .exists();
+    }
+
+    @Test
+    void doesNotServeFrontendRoutes() {
+        web.get().uri("/").exchange().expectStatus().isNotFound();
+        web.get().uri("/conversation/local-history").exchange().expectStatus().isNotFound();
+        web.get().uri("/api/v1/not-a-route").exchange().expectStatus().isNotFound();
+    }
+
+    @Test
+    void allowsTheStandaloneLoopbackWebOrigin() {
+        web.options()
+                .uri("/api/v1/conversations")
+                .header("Origin", "http://127.0.0.1:20000")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "Content-Type,X-Haifa-CSRF,Idempotency-Key")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .valueEquals("Access-Control-Allow-Origin", "http://127.0.0.1:20000")
+                .expectHeader()
+                .doesNotExist("Access-Control-Allow-Credentials");
     }
 
     private JsonNode post(String uri, String json) throws Exception {

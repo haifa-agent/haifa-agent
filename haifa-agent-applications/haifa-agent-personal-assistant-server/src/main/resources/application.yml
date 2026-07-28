@@ -38,6 +38,12 @@ haifa:
       provider-model-id: ${HAIFA_PERSONAL_MODEL_ID:deepseek-chat}
       credential-reference: ${HAIFA_PERSONAL_MODEL_CREDENTIAL:env://DEEPSEEK_API_KEY}
     mcp:
+      mode: ${HAIFA_PERSONAL_MCP_MODE:embedded-echo}
       address: 127.0.0.1
       port: ${HAIFA_PERSONAL_MCP_PORT:20002}
+      endpoint: ${HAIFA_PERSONAL_MCP_ENDPOINT:http://127.0.0.1:20002/mcp}
+      allowed-tools: ${HAIFA_PERSONAL_MCP_ALLOWED_TOOLS:echo}
+      alias-namespace: ${HAIFA_PERSONAL_MCP_ALIAS_NAMESPACE:personal_mcp}
+      server-id: ${HAIFA_PERSONAL_MCP_SERVER_ID:personal-local}
+      display-name: ${HAIFA_PERSONAL_MCP_DISPLAY_NAME:Personal local utility}
     local-skill-root: ${HAIFA_PERSONAL_SKILL_ROOT:}

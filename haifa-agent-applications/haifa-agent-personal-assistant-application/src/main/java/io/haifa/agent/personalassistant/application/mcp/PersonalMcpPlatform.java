@@ -31,11 +31,14 @@ import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
-/** Explicit loopback MCP discovery and provider lifecycle for the required deterministic echo Tool. */
+/** Explicit loopback MCP discovery and provider lifecycle for a reviewed Tool allowlist. */
 public final class PersonalMcpPlatform implements AutoCloseable {
     public static final String REMOTE_TOOL = "echo";
     public static final String LOCAL_ALIAS = "personal_mcp_echo";
@@ -47,25 +50,27 @@ public final class PersonalMcpPlatform implements AutoCloseable {
         this.contributions = List.copyOf(contributions);
     }
 
-    public static PersonalMcpPlatform connect(URI endpoint, TenantRef tenant, PrincipalRef principal, Clock clock) {
-        requireLoopback(endpoint);
+    public static PersonalMcpPlatform connect(
+            PersonalMcpConfiguration configuration, TenantRef tenant, PrincipalRef principal, Clock clock) {
+        requireLoopback(configuration.endpoint());
+        Set<String> allowedTools = configuration.allowedTools();
         var policy = new McpToolImportPolicy(
-                Set.of(REMOTE_TOOL),
+                allowedTools,
                 Set.of(),
-                "personal_mcp",
-                Map.of(REMOTE_TOOL, ToolRisk.LOW),
-                Map.of(REMOTE_TOOL, ToolIdempotency.PURE),
-                Map.of(REMOTE_TOOL, Set.<ToolSideEffect>of()),
-                Map.of(REMOTE_TOOL, ToolApprovalRequirement.NEVER));
+                configuration.aliasNamespace(),
+                values(allowedTools, ToolRisk.LOW),
+                values(allowedTools, ToolIdempotency.IDEMPOTENT),
+                values(allowedTools, Set.<ToolSideEffect>of()),
+                values(allowedTools, ToolApprovalRequirement.NEVER));
         var server = McpServerDefinition.create(
-                new McpServerId("personal-local"),
-                "Personal local utility",
+                new McpServerId(configuration.serverId()),
+                configuration.displayName(),
                 true,
                 McpProtocolProfile.FIXED_2025_11_25,
                 new StreamableHttpDefinition(
-                        endpoint,
+                        configuration.endpoint(),
                         true,
-                        Set.of(StreamableHttpDefinition.origin(endpoint)),
+                        Set.of(StreamableHttpDefinition.origin(configuration.endpoint())),
                         Duration.ofSeconds(5),
                         Duration.ofSeconds(10),
                         Duration.ofSeconds(30),
@@ -90,21 +95,30 @@ public final class PersonalMcpPlatform implements AutoCloseable {
                     noCredentials(redactor),
                     clock,
                     4,
-                    16,
+                    64,
                     256 * 1024,
                     Duration.ofSeconds(15));
             List<McpToolImportCandidate> candidates =
                     discovery.discover(server.serverId(), new McpDiscoveryContext(tenant, principal, List.of()));
-            McpToolImportCandidate echo = candidates.stream()
-                    .filter(candidate -> REMOTE_TOOL.equals(candidate.remoteName()))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("required MCP echo Tool was not discovered"));
-            if (!echo.enabled()) {
-                throw new IllegalStateException("required MCP echo Tool failed local review");
+            Map<String, McpToolImportCandidate> reviewed = candidates.stream()
+                    .filter(candidate -> allowedTools.contains(candidate.remoteName()))
+                    .collect(Collectors.toMap(McpToolImportCandidate::remoteName, Function.identity()));
+            for (String tool : allowedTools) {
+                McpToolImportCandidate candidate = reviewed.get(tool);
+                if (candidate == null) {
+                    throw new IllegalStateException("required MCP Tool was not discovered: " + tool);
+                }
+                if (!candidate.enabled()) {
+                    throw new IllegalStateException("required MCP Tool failed local review: " + tool);
+                }
             }
             var provider =
                     new McpToolProvider(server.serverId(), bindings, connections, new McpContentMapper(redactor));
-            return new PersonalMcpPlatform(connections, List.of(McpToolCatalogContribution.from(echo, provider)));
+            List<McpToolCatalogContribution> contributions = reviewed.values().stream()
+                    .sorted(Comparator.comparing(McpToolImportCandidate::remoteName))
+                    .map(candidate -> McpToolCatalogContribution.from(candidate, provider))
+                    .toList();
+            return new PersonalMcpPlatform(connections, contributions);
         } catch (RuntimeException exception) {
             connections.close();
             throw exception;
@@ -113,6 +127,12 @@ public final class PersonalMcpPlatform implements AutoCloseable {
 
     public List<McpToolCatalogContribution> contributions() {
         return contributions;
+    }
+
+    public Set<String> aliases() {
+        return contributions.stream()
+                .map(contribution -> contribution.alias().value())
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     @Override
@@ -128,6 +148,10 @@ public final class PersonalMcpPlatform implements AutoCloseable {
                         .contains(host.toLowerCase(java.util.Locale.ROOT))) {
             throw new IllegalArgumentException("Personal MCP endpoint must be loopback HTTP");
         }
+    }
+
+    private static <T> Map<String, T> values(Set<String> keys, T value) {
+        return keys.stream().collect(Collectors.toUnmodifiableMap(Function.identity(), ignored -> value));
     }
 
     private static CredentialBroker noCredentials(DefaultSecretRedactor redactor) {

@@ -3,6 +3,8 @@ package io.haifa.agent.personalassistant.server.configuration.security;
 import java.net.URI;
 import java.util.Locale;
 import java.util.Set;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -12,6 +14,7 @@ import reactor.core.publisher.Mono;
 
 /** MVP local-server boundary: loopback Host/Origin, bounded writes, and explicit CSRF header. */
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public final class LoopbackRequestFilter implements WebFilter {
     private static final long MAX_BODY_BYTES = 64 * 1024;
     private static final Set<String> MUTATIONS = Set.of("POST", "PUT", "PATCH", "DELETE");

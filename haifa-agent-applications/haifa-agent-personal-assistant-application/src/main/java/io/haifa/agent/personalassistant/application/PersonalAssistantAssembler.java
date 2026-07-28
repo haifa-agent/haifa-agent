@@ -2,6 +2,7 @@ package io.haifa.agent.personalassistant.application;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.personalassistant.application.mcp.PersonalMcpConfiguration;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
@@ -13,7 +14,6 @@ import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
-import java.net.URI;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
@@ -32,7 +32,7 @@ public final class PersonalAssistantAssembler {
                 dependencies.localSkillRoot(),
                 dependencies.protectedPaths());
         PersonalMcpPlatform mcp = PersonalMcpPlatform.connect(
-                dependencies.mcpEndpoint(), dependencies.tenant(), dependencies.principal(), dependencies.clock());
+                dependencies.mcp(), dependencies.tenant(), dependencies.principal(), dependencies.clock());
         try {
             var tools =
                     PersonalToolPlatform.create(dependencies.persistence(), skills, mcp, dependencies.clock()::instant);
@@ -45,7 +45,7 @@ public final class PersonalAssistantAssembler {
                     tools.tool().coordinate(),
                     tools.skill().coordinate(),
                     tools.mcp().coordinate());
-            var profile = PersonalAssistantProfile.create(coordinates, skills.aliases());
+            var profile = PersonalAssistantProfile.create(coordinates, skills.aliases(), mcp.aliases());
             var agent = HaifaAgents.builder(profile)
                     .callerProvider(dependencies.callers())
                     .timeProvider(dependencies.clock()::instant)
@@ -74,7 +74,7 @@ public final class PersonalAssistantAssembler {
             SdkConversationContribution conversation,
             MemoryPlatformContribution memory,
             PolicyPlatformContribution policy,
-            URI mcpEndpoint,
+            PersonalMcpConfiguration mcp,
             Optional<Path> localSkillRoot,
             List<Path> protectedPaths,
             Clock clock) {
@@ -87,7 +87,7 @@ public final class PersonalAssistantAssembler {
             Objects.requireNonNull(conversation);
             Objects.requireNonNull(memory);
             Objects.requireNonNull(policy);
-            Objects.requireNonNull(mcpEndpoint);
+            Objects.requireNonNull(mcp);
             localSkillRoot = Objects.requireNonNull(localSkillRoot);
             protectedPaths = List.copyOf(protectedPaths);
             Objects.requireNonNull(clock);

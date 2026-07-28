@@ -5,7 +5,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
-import io.haifa.agent.personalassistant.server.configuration.mcp.LocalPersonalMcpServer;
+import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
 import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelFactory;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
@@ -39,9 +39,8 @@ public class PersonalAssistantConfiguration {
     }
 
     @Bean(destroyMethod = "close")
-    LocalPersonalMcpServer localPersonalMcpServer(PersonalAssistantProperties properties, ObjectMapper mapper) {
-        return new LocalPersonalMcpServer(
-                properties.mcp().address(), properties.mcp().port(), mapper);
+    PersonalMcpRuntime personalMcpRuntime(PersonalAssistantProperties properties, ObjectMapper mapper) {
+        return new PersonalMcpRuntime(properties.mcp(), mapper);
     }
 
     @Bean(destroyMethod = "close")
@@ -49,7 +48,7 @@ public class PersonalAssistantConfiguration {
             PersonalAssistantProperties properties,
             ObjectMapper mapper,
             Clock personalClock,
-            LocalPersonalMcpServer mcpServer) {
+            PersonalMcpRuntime mcpRuntime) {
         Path dataDirectory = prepare(properties.dataDirectory());
         byte[] key = decodeKey(properties.continuationKeyBase64());
         var protector = new AesGcmModelContinuationProtector(new SecretKeySpec(key, "AES"), new SecureRandom());
@@ -79,7 +78,7 @@ public class PersonalAssistantConfiguration {
                     sqlite.conversation(),
                     sqlite.memory(),
                     sqlite.policy(),
-                    mcpServer.endpoint(),
+                    mcpRuntime.configuration(),
                     localSkillRoot,
                     List.of(
                             dataDirectory,

@@ -3,35 +3,60 @@
   "info": {
     "title": "Haifa Personal Assistant API",
     "version": "1.0.0",
-    "description": "Loopback-only Phase 21 Personal Assistant HTTP and WebFlux SSE contract."
+    "description": "Loopback-only Personal Assistant HTTP and WebFlux SSE contract."
   },
   "servers": [{"url": "http://127.0.0.1:20001"}],
   "paths": {
     "/api/v1/bootstrap": {
-      "get": {"operationId": "bootstrap", "responses": {"200": {"description": "Product bootstrap"}}}
+      "get": {
+        "operationId": "bootstrap",
+        "responses": {"200": {"description": "Product bootstrap", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Bootstrap"}}}}}
+      }
     },
     "/api/v1/conversations": {
-      "get": {"operationId": "listConversations", "responses": {"200": {"description": "Conversations"}}},
+      "get": {
+        "operationId": "listConversations",
+        "parameters": [
+          {"name": "q", "in": "query", "schema": {"type": "string"}},
+          {"name": "status", "in": "query", "schema": {"type": "array", "items": {"type": "string"}}},
+          {"$ref": "#/components/parameters/Limit"}
+        ],
+        "responses": {"200": {"description": "Conversations", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Conversation"}}}}}}
+      },
       "post": {
         "operationId": "createConversation",
         "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
-        "responses": {"201": {"description": "Created"}, "400": {"$ref": "#/components/responses/Error"}}
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateConversation"}}}},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Conversation"}}}},
+          "400": {"$ref": "#/components/responses/Error"}
+        }
       }
     },
     "/api/v1/conversations/{conversationId}": {
       "parameters": [{"$ref": "#/components/parameters/ConversationId"}],
-      "get": {"operationId": "getConversation", "responses": {"200": {"description": "Conversation"}, "404": {"$ref": "#/components/responses/Error"}}},
+      "get": {
+        "operationId": "getConversation",
+        "responses": {
+          "200": {"description": "Conversation", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Conversation"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      },
       "patch": {
         "operationId": "updateConversation",
         "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
-        "responses": {"200": {"description": "Updated"}, "409": {"$ref": "#/components/responses/Error"}}
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/UpdateConversation"}}}},
+        "responses": {
+          "200": {"description": "Updated", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Conversation"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
       }
     },
     "/api/v1/conversations/{conversationId}/turns": {
       "get": {
         "operationId": "listTurns",
-        "parameters": [{"$ref": "#/components/parameters/ConversationId"}],
-        "responses": {"200": {"description": "Turns"}}
+        "parameters": [{"$ref": "#/components/parameters/ConversationId"}, {"$ref": "#/components/parameters/Limit"}],
+        "responses": {"200": {"description": "Turns", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Turn"}}}}}}
       }
     },
     "/api/v1/conversations/{conversationId}/messages": {
@@ -42,35 +67,45 @@
           {"$ref": "#/components/parameters/IfMatch"},
           {"$ref": "#/components/parameters/IdempotencyKey"}
         ],
-        "responses": {"202": {"description": "Run accepted"}, "409": {"$ref": "#/components/responses/Error"}}
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SubmitMessage"}}}},
+        "responses": {
+          "202": {"description": "Run accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Conversation"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
       }
     },
     "/api/v1/runs/{runId}": {
       "get": {
         "operationId": "getRun",
         "parameters": [{"$ref": "#/components/parameters/RunId"}],
-        "responses": {"200": {"description": "Run and authoritative usage"}, "404": {"$ref": "#/components/responses/Error"}}
+        "responses": {
+          "200": {"description": "Run and authoritative usage", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Run"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
       }
     },
     "/api/v1/runs/{runId}/cancel": {
       "post": {
         "operationId": "cancelRun",
         "parameters": [{"$ref": "#/components/parameters/RunId"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
-        "responses": {"200": {"description": "Cancelled"}}
+        "responses": {"200": {"description": "Cancelled", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Run"}}}}}
       }
     },
     "/api/v1/runs/{runId}/activities": {
       "get": {
         "operationId": "listSafeActivities",
-        "parameters": [{"$ref": "#/components/parameters/RunId"}],
-        "responses": {"200": {"description": "Bounded Tool, Skill, and MCP activity projection"}}
+        "parameters": [{"$ref": "#/components/parameters/RunId"}, {"$ref": "#/components/parameters/Limit"}],
+        "responses": {"200": {"description": "Bounded Tool, Skill, and MCP activity projection", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Activity"}}}}}}
       }
     },
     "/api/v1/runs/{runId}/interaction": {
       "get": {
         "operationId": "getPendingInteraction",
         "parameters": [{"$ref": "#/components/parameters/RunId"}],
-        "responses": {"200": {"description": "Pending interaction"}, "204": {"description": "No pending interaction"}}
+        "responses": {
+          "200": {"description": "Pending interaction", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Interaction"}}}},
+          "204": {"description": "No pending interaction"}
+        }
       }
     },
     "/api/v1/runs/{runId}/interactions/{interactionId}/response": {
@@ -82,23 +117,26 @@
           {"$ref": "#/components/parameters/IfMatch"},
           {"$ref": "#/components/parameters/IdempotencyKey"}
         ],
-        "responses": {"200": {"description": "Response receipt"}, "409": {"$ref": "#/components/responses/Error"}}
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InteractionResponse"}}}},
+        "responses": {
+          "200": {"description": "Response receipt", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InteractionReceipt"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
       }
     },
     "/api/v1/runs/{runId}/stream": {
       "get": {
         "operationId": "streamRun",
         "parameters": [{"$ref": "#/components/parameters/RunId"}],
-        "responses": {
-          "200": {
-            "description": "WebFlux Server-Sent Events",
-            "content": {"text/event-stream": {"schema": {"type": "string"}}}
-          }
-        }
+        "responses": {"200": {"description": "WebFlux Server-Sent Events", "content": {"text/event-stream": {"schema": {"$ref": "#/components/schemas/StreamEvent"}}}}}
       }
     },
     "/api/v1/memory/candidates": {
-      "get": {"operationId": "listMemoryCandidates", "responses": {"200": {"description": "Pending candidates"}}}
+      "get": {
+        "operationId": "listMemoryCandidates",
+        "parameters": [{"$ref": "#/components/parameters/Limit"}],
+        "responses": {"200": {"description": "Pending candidates", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/MemoryCandidate"}}}}}}
+      }
     },
     "/api/v1/memory/candidates/{candidateId}/approve": {
       "post": {
@@ -108,7 +146,7 @@
           {"$ref": "#/components/parameters/IfMatch"},
           {"$ref": "#/components/parameters/IdempotencyKey"}
         ],
-        "responses": {"200": {"description": "Approved memory"}}
+        "responses": {"200": {"description": "Approved memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}}}
       }
     },
     "/api/v1/memory/candidates/{candidateId}/reject": {
@@ -119,11 +157,16 @@
           {"$ref": "#/components/parameters/IfMatch"},
           {"$ref": "#/components/parameters/IdempotencyKey"}
         ],
-        "responses": {"200": {"description": "Rejected candidate"}}
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RejectMemory"}}}},
+        "responses": {"200": {"description": "Rejected candidate", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MemoryCandidate"}}}}}
       }
     },
     "/api/v1/memory": {
-      "get": {"operationId": "listMemories", "responses": {"200": {"description": "Memories"}}}
+      "get": {
+        "operationId": "listMemories",
+        "parameters": [{"$ref": "#/components/parameters/Limit"}],
+        "responses": {"200": {"description": "Memories", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Memory"}}}}}}
+      }
     },
     "/api/v1/memory/{memoryId}/versions/{version}/invalidate": {
       "post": {
@@ -133,7 +176,8 @@
           {"name": "version", "in": "path", "required": true, "schema": {"type": "integer", "minimum": 1}},
           {"$ref": "#/components/parameters/IdempotencyKey"}
         ],
-        "responses": {"200": {"description": "Invalidated memory"}}
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InvalidateMemory"}}}},
+        "responses": {"200": {"description": "Invalidated memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}}}
       }
     }
   },
@@ -141,24 +185,206 @@
     "parameters": {
       "ConversationId": {"name": "conversationId", "in": "path", "required": true, "schema": {"type": "string"}},
       "RunId": {"name": "runId", "in": "path", "required": true, "schema": {"type": "string"}},
+      "Limit": {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 500}},
       "IdempotencyKey": {"name": "Idempotency-Key", "in": "header", "required": true, "schema": {"type": "string", "maxLength": 128}},
       "IfMatch": {"name": "If-Match", "in": "header", "required": true, "schema": {"type": "string"}}
     },
     "responses": {
       "Error": {
         "description": "Stable safe error",
-        "content": {
-          "application/json": {
-            "schema": {
-              "type": "object",
-              "required": ["code", "message", "correlationId"],
-              "properties": {
-                "code": {"type": "string"},
-                "message": {"type": "string"},
-                "correlationId": {"type": "string"}
-              }
-            }
-          }
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ApiError"}}}
+      }
+    },
+    "schemas": {
+      "Bootstrap": {
+        "type": "object",
+        "required": ["product", "apiVersion", "connection", "caller", "capabilities", "assemblyDigest"],
+        "properties": {
+          "product": {"type": "string"},
+          "apiVersion": {"type": "string"},
+          "connection": {"type": "string"},
+          "caller": {"type": "string"},
+          "capabilities": {"type": "array", "items": {"type": "string"}},
+          "assemblyDigest": {"type": "string"}
+        }
+      },
+      "CreateConversation": {
+        "type": "object",
+        "required": ["displayName", "message"],
+        "properties": {"displayName": {"type": "string"}, "message": {"type": "string"}}
+      },
+      "SubmitMessage": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {"message": {"type": "string"}}
+      },
+      "UpdateConversation": {
+        "type": "object",
+        "properties": {"displayName": {"type": "string"}, "status": {"type": "string"}}
+      },
+      "Conversation": {
+        "type": "object",
+        "required": ["id", "displayName", "status", "createdAt", "lastActivityAt", "revision"],
+        "properties": {
+          "id": {"type": "string"},
+          "displayName": {"type": "string"},
+          "status": {"type": "string"},
+          "activeRunId": {"type": ["string", "null"]},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "lastActivityAt": {"type": "string", "format": "date-time"},
+          "revision": {"type": "integer", "format": "int64"}
+        }
+      },
+      "Turn": {
+        "type": "object",
+        "required": ["id", "role", "sequence", "text", "createdAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "role": {"type": "string"},
+          "runId": {"type": ["string", "null"]},
+          "sequence": {"type": "integer", "format": "int64"},
+          "text": {"type": "string"},
+          "createdAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "required": ["inputTokens", "outputTokens", "totalTokens", "cachedInputTokens", "modelCalls", "toolCalls"],
+        "properties": {
+          "inputTokens": {"type": "integer", "format": "int64"},
+          "outputTokens": {"type": "integer", "format": "int64"},
+          "totalTokens": {"type": "integer", "format": "int64"},
+          "cachedInputTokens": {"type": "integer", "format": "int64"},
+          "modelCalls": {"type": "integer", "format": "int64"},
+          "toolCalls": {"type": "integer", "format": "int64"}
+        }
+      },
+      "Run": {
+        "type": "object",
+        "required": ["id", "conversationId", "status", "version", "updatedAt", "usage"],
+        "properties": {
+          "id": {"type": "string"},
+          "conversationId": {"type": "string"},
+          "status": {"type": "string"},
+          "version": {"type": "integer", "format": "int64"},
+          "updatedAt": {"type": "string", "format": "date-time"},
+          "output": {"type": ["string", "null"]},
+          "resultSummary": {"type": ["string", "null"]},
+          "errorCode": {"type": ["string", "null"]},
+          "usage": {"$ref": "#/components/schemas/Usage"}
+        }
+      },
+      "Activity": {
+        "type": "object",
+        "required": ["activityId", "runId", "kind", "displayName", "safeTargetSummary", "status", "startedAt", "safeResultSummary", "version"],
+        "properties": {
+          "activityId": {"type": "string"},
+          "runId": {"type": "string"},
+          "kind": {"type": "string", "enum": ["TOOL", "SKILL", "MCP"]},
+          "displayName": {"type": "string"},
+          "safeTargetSummary": {"type": "string"},
+          "status": {"type": "string"},
+          "startedAt": {"type": "string", "format": "date-time"},
+          "completedAt": {"type": ["string", "null"], "format": "date-time"},
+          "safeResultSummary": {"type": "string"},
+          "interactionRef": {"type": ["string", "null"]},
+          "version": {"type": "integer", "format": "int64"}
+        }
+      },
+      "Interaction": {
+        "type": "object",
+        "required": ["id", "runId", "conversationId", "revision", "kind", "state", "title", "safePrompt", "allowedActions", "inputType", "maximumCharacters", "createdAt", "expiresAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "runId": {"type": "string"},
+          "conversationId": {"type": "string"},
+          "revision": {"type": "integer", "format": "int64"},
+          "kind": {"type": "string"},
+          "state": {"type": "string"},
+          "title": {"type": "string"},
+          "safePrompt": {"type": "string"},
+          "allowedActions": {"type": "array", "items": {"type": "string"}},
+          "inputType": {"type": "string"},
+          "maximumCharacters": {"type": "integer"},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "expiresAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "InteractionResponse": {
+        "type": "object",
+        "required": ["action", "text"],
+        "properties": {"action": {"type": "string"}, "text": {"type": "string"}}
+      },
+      "InteractionReceipt": {
+        "type": "object",
+        "required": ["responseId", "interactionId", "runId", "status", "interactionState", "revision", "runVersion"],
+        "properties": {
+          "responseId": {"type": "string"},
+          "interactionId": {"type": "string"},
+          "runId": {"type": "string"},
+          "status": {"type": "string"},
+          "interactionState": {"type": "string"},
+          "revision": {"type": "integer", "format": "int64"},
+          "runVersion": {"type": "integer", "format": "int64"}
+        }
+      },
+      "MemoryCandidate": {
+        "type": "object",
+        "required": ["id", "kind", "subjectKey", "content", "status", "updatedAt", "revision"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"type": "string"},
+          "subjectKey": {"type": "string"},
+          "content": {"type": "string"},
+          "status": {"type": "string"},
+          "updatedAt": {"type": "string", "format": "date-time"},
+          "revision": {"type": "integer", "format": "int64"}
+        }
+      },
+      "Memory": {
+        "type": "object",
+        "required": ["id", "version", "kind", "subjectKey", "content", "status", "createdAt", "updatedAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "version": {"type": "integer", "format": "int64"},
+          "kind": {"type": "string"},
+          "subjectKey": {"type": "string"},
+          "content": {"type": "string"},
+          "status": {"type": "string"},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "updatedAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "RejectMemory": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {"reason": {"type": "string"}}
+      },
+      "InvalidateMemory": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {"reason": {"type": "string"}}
+      },
+      "StreamEvent": {
+        "type": "object",
+        "required": ["eventId", "type", "runId", "occurredAt", "value", "sequence"],
+        "properties": {
+          "eventId": {"type": "string"},
+          "type": {"type": "string"},
+          "runId": {"type": "string"},
+          "occurredAt": {"type": "string", "format": "date-time"},
+          "value": {"type": "string"},
+          "activity": {"oneOf": [{"$ref": "#/components/schemas/Activity"}, {"type": "null"}]},
+          "sequence": {"type": "integer", "format": "int64"}
+        }
+      },
+      "ApiError": {
+        "type": "object",
+        "required": ["code", "message", "correlationId"],
+        "properties": {
+          "code": {"type": "string"},
+          "message": {"type": "string"},
+          "correlationId": {"type": "string"}
         }
       }
     }

@@ -6,14 +6,26 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "serve": "serve -s dist -l tcp://127.0.0.1:20000",
     "test": "vitest run",
     "typecheck": "tsc -b --pretty false",
-    "contract:check": "node scripts/validate-contract.mjs"
+    "lint": "node scripts/lint.mjs",
+    "contract:generate": "node scripts/generate-contract.mjs",
+    "contract:check": "node scripts/generate-contract.mjs --check",
+    "bundle:check": "node scripts/check-bundle.mjs",
+    "deploy:check": "node scripts/check-deployment.mjs"
+  },
+  "engines": {
+    "node": "22.x",
+    "npm": "10.x"
   },
   "dependencies": {
+    "katex": "0.16.21",
     "lucide-react": "1.27.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "serve": "14.2.6"
   },
   "devDependencies": {
     "@testing-library/react": "16.3.2",

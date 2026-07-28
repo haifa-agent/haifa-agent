@@ -1,73 +1,95 @@
 import { describe, expect, it } from "vitest";
-import { bootstrapFixture } from "../data/fixtures";
-import { appReducer, createUiState } from "./appReducer";
+import type { Activity, Run, StreamEvent } from "../api/generated";
+import { appReducer, initialState } from "./appReducer";
+
+const usage = {
+  inputTokens: 1,
+  outputTokens: 2,
+  totalTokens: 3,
+  cachedInputTokens: 0,
+  modelCalls: 1,
+  toolCalls: 1,
+};
 
 describe("appReducer", () => {
-  it("keeps a follow-up queued while a run is active", () => {
-    const state = createUiState(bootstrapFixture);
-    const next = appReducer(state, {
-      type: "submitMessage",
-      text: "完成后再给我一个三行摘要",
-      now: "10:40",
-    });
-
-    const detail = next.details["session-data-cleanup"];
-    expect(detail.run?.id).toBe("run-data-01");
-    expect(detail.messages.at(-1)?.state).toBe("queued");
-    expect(next.toast).toContain("排队");
-  });
-
-  it("applies steer input without starting a second run", () => {
-    const state = {
-      ...createUiState(bootstrapFixture),
-      deliveryMode: "steer" as const,
+  it("rejects a stale run snapshot", () => {
+    const current: Run = {
+      id: "run-1",
+      conversationId: "conversation-1",
+      status: "COMPLETED",
+      version: 4,
+      updatedAt: "2026-07-28T00:00:00Z",
+      usage,
     };
-    const next = appReducer(state, {
-      type: "submitMessage",
-      text: "只处理前 100 行",
-      now: "10:40",
-    });
-
-    const detail = next.details["session-data-cleanup"];
-    expect(detail.run?.id).toBe("run-data-01");
-    expect(detail.messages.at(-1)?.state).toBe("applied");
-    expect(detail.run?.activity.at(-1)?.title).toContain("补充");
+    const stale = { ...current, status: "RUNNING", version: 3 };
+    const state = { ...initialState, run: current };
+    expect(appReducer(state, { type: "runLoaded", run: stale }).run).toEqual(current);
   });
 
-  it("requires an explicit action to promote a memory candidate", () => {
-    const state = createUiState(bootstrapFixture);
-    const candidate = state.memoryCandidates[0];
-    const next = appReducer(state, {
-      type: "approveMemoryCandidate",
-      id: candidate.id,
-    });
-
-    expect(next.memoryCandidates.some((item) => item.id === candidate.id)).toBe(false);
-    expect(next.memories[0].content).toBe(candidate.content);
-    expect(next.memories[0].active).toBe(true);
+  it("deduplicates activity and stream sequence", () => {
+    const activity: Activity = {
+      activityId: "activity-1",
+      runId: "run-1",
+      kind: "MCP",
+      displayName: "mcp.echo",
+      safeTargetSummary: "Local stub",
+      status: "SUCCEEDED",
+      startedAt: "2026-07-28T00:00:00Z",
+      safeResultSummary: "Completed",
+      version: 2,
+    };
+    const event: StreamEvent = {
+      eventId: "event-1",
+      type: "activity.committed",
+      runId: "run-1",
+      occurredAt: "2026-07-28T00:00:00Z",
+      value: "SUCCEEDED",
+      activity,
+      sequence: 5,
+    };
+    const once = appReducer(initialState, { type: "streamEvent", event });
+    const twice = appReducer(once, { type: "streamEvent", event });
+    expect(twice.activities).toHaveLength(1);
+    expect(twice.streamSequence).toBe(5);
   });
 
-  it("completes an approved run and publishes a logical artifact", () => {
-    const state = createUiState(bootstrapFixture);
-    const approved = appReducer(state, {
-      type: "approveInteraction",
-      approved: true,
-    });
-    const completed = appReducer(approved, { type: "completeApprovedRun" });
-    const detail = completed.details["session-data-cleanup"];
-
-    expect(detail.summary.status).toBe("completed");
-    expect(detail.artifacts[0].id).toBe("artifact-data-summary");
-    expect(detail.artifacts[0].name).not.toMatch(/[\\/]/);
-    expect(detail.run?.steps.every((step) => step.state === "completed")).toBe(true);
-    expect(detail.tokenUsage).toEqual({
-      inputTokens: 6_782,
-      outputTokens: 628,
-      totalTokens: 7_410,
-      cacheReadInputTokens: 5_376,
-      modelCalls: 3,
-      providerReportedModelCalls: 3,
-      updatedAt: "刚刚",
-    });
+  it("clears current-run projections when a new run is selected", () => {
+    const oldRun: Run = {
+      id: "run-old",
+      conversationId: "conversation-1",
+      status: "COMPLETED",
+      version: 4,
+      updatedAt: "2026-07-28T00:00:00Z",
+      usage,
+    };
+    const nextRun: Run = {
+      ...oldRun,
+      id: "run-next",
+      status: "RUNNING",
+      version: 1,
+    };
+    const state = {
+      ...initialState,
+      run: oldRun,
+      activities: [
+        {
+          activityId: "old",
+          runId: oldRun.id,
+          kind: "TOOL" as const,
+          displayName: "old.tool",
+          safeTargetSummary: "Old target",
+          status: "SUCCEEDED",
+          startedAt: "2026-07-28T00:00:00Z",
+          safeResultSummary: "Completed",
+          version: 3,
+        },
+      ],
+      streamSequence: 9,
+      streamDraft: "old",
+    };
+    const result = appReducer(state, { type: "runLoaded", run: nextRun });
+    expect(result.activities).toEqual([]);
+    expect(result.streamSequence).toBe(0);
+    expect(result.streamDraft).toBe("");
   });
 });
