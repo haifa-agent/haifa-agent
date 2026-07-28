@@ -299,6 +299,7 @@ public final class TerminalUiReducer {
         List<TranscriptItem> transcript = project(state.transcript(), event);
         var seen = new HashSet<>(state.seenEventIds());
         seen.add(event.eventId());
+        TerminalFooter footer = footer(state.footer(), event);
         return copy(
                 state,
                 state.loadedResources(),
@@ -308,7 +309,7 @@ public final class TerminalUiReducer {
                 state.editorBuffer(),
                 state.editorCursor(),
                 state.selector(),
-                state.footer(),
+                footer,
                 state.columns(),
                 state.rows(),
                 state.session(),
@@ -383,6 +384,19 @@ public final class TerminalUiReducer {
         if (event.eventType().endsWith(".failed")) return "Attention";
         if (event.eventType().endsWith(".started") || event.eventType().endsWith(".requested")) return "Working";
         return fallback;
+    }
+
+    private static TerminalFooter footer(TerminalFooter current, AgentRunEvent event) {
+        if (!(event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle)) return current;
+        return new TerminalFooter(
+                current.project(),
+                current.gitBranch(),
+                current.session(),
+                current.metrics(),
+                current.provider(),
+                current.model(),
+                lifecycle.status(),
+                current.sandbox());
     }
 
     private static void upsert(List<TranscriptItem> values, TranscriptItem item) {

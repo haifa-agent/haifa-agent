@@ -147,6 +147,11 @@
                 <version>${jline.version}</version>
             </dependency>
             <dependency>
+                <groupId>com.williamcallahan</groupId>
+                <artifactId>tui4j</artifactId>
+                <version>${tui4j.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-model-api</artifactId>
                 <version>${project.version}</version>

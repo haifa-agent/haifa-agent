@@ -41,6 +41,7 @@
         <mybatis.version>3.5.19</mybatis.version>
         <sqlite.jdbc.version>3.53.1.0</sqlite.jdbc.version>
         <jline.version>3.30.0</jline.version>
+        <tui4j.version>0.3.3</tui4j.version>
 
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.3</maven.surefire.plugin.version>
@@ -153,6 +154,11 @@
                 <groupId>org.jline</groupId>
                 <artifactId>jline-terminal-jni</artifactId>
                 <version>${jline.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.williamcallahan</groupId>
+                <artifactId>tui4j</artifactId>
+                <version>${tui4j.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>

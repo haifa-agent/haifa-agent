@@ -12,7 +12,7 @@ Broker/Workspace/Sandbox 硬边界仍 fail closed。`execution.run` 的 Tool Dec
 Broker 复核，不产生第二个控制台审批；`deny` 仍在 Catalog freeze 前移除该 Tool。
 
 `haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
-Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 JLine
+Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 tui4j
 Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-terminal` 只负责 UI，不是第二个
 可执行胖 JAR。
 
@@ -22,7 +22,7 @@ Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-term
 .\mvnw.cmd -pl :haifa-agent-cli -am package
 $jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
 
-# 帮助：不会初始化模型、Runtime、SQLite 或 JLine
+# 帮助：不会初始化模型、Runtime、SQLite 或 tui4j Terminal
 java -jar $jar --help
 
 # 无 -m 时默认进入 Terminal；显式 --terminal 完全等价
@@ -79,6 +79,10 @@ persistence:
 `host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；
 只应对自己检查并信任的测试 Workspace 使用。模型与 Web Provider 调用可能计费。密钥只通过
 `env://...` 注入，不写入配置；`HAIFA_CONTINUATION_KEY` 必须是跨重启稳定的 Base64 32 字节 AES key。
+
+ConPTY 离线验收可在 CLI 子进程中显式设置 `HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true`，此开关
+只允许 `http://localhost`、`http://127.0.0.1` 或 IPv6 loopback Endpoint，不能放宽外部 HTTP
+Provider。普通运行不应设置该变量。
 
 ## 安全 Trace
 
@@ -250,7 +254,7 @@ reasoning 内容。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；默认不继承 API Key、`*_TOKEN`、`*_SECRET`、云凭据或代理凭据。命令输出实时脱敏展示，最终模型结果默认限制为最后 2000 行且最多 50KB；较大分通道输出通过 Output Ref 访问。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
-当前已包含 JLine Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
+当前已包含 tui4j Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
 `/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久
 Follow-up、Cancel、Approval selector 和 SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护
 进程、Session Tree/Fork/Clone、模型登录/切换或 Workflow Graph。Host Provider 不是容器或虚拟机，

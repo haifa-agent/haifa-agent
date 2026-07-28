@@ -60,6 +60,17 @@ class TerminalUiReducerTest {
         assertThat(closed.selector()).isEmpty();
     }
 
+    @Test
+    void committedRunLifecycleKeepsFooterStatusConsistentWithTheTranscriptStatus() {
+        TerminalUiState completed = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(
+                        event(1, "event-1", new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
+
+        assertThat(completed.status()).isEqualTo("COMPLETED");
+        assertThat(completed.footer().runStatus()).isEqualTo("COMPLETED");
+    }
+
     private static AgentRunEvent event(long sequence, String id, AgentRunEvent.Payload payload) {
         AgentRunId runId = new AgentRunId("run-1");
         return new AgentRunEvent(

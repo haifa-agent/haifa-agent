@@ -2,6 +2,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -77,6 +78,13 @@ function sleep(milliseconds) {
 }
 
 async function writeCharacters(terminal, text) {
+  if (text.startsWith("\u001b") && text.length > 1) {
+    // A real terminal delivers a special key's CSI sequence as one key event.
+    // Splitting ESC [ A makes tui4j correctly interpret ESC as "close selector".
+    terminal.write(text);
+    await sleep(80);
+    return;
+  }
   for (const character of text) {
     terminal.write(character);
     await sleep(character === "\r" ? 100 : 10);
@@ -180,15 +188,15 @@ function createFixture(workspace) {
   runGit(workspace, ["commit", "-m", "fixture: initialize conpty acceptance workspace"]);
 }
 
-function writeConfiguration(file, databasePath, approvalMode) {
+function writeConfiguration(file, databasePath, approvalMode, provider) {
   fs.writeFileSync(
     file,
     [
       "model:",
       "  providerId: deepseek",
       "  modelId: deepseek-chat",
-      "  endpoint: https://api.deepseek.com",
-      "  credentialRef: env://DEEPSEEK_API_KEY",
+      `  endpoint: ${provider.endpoint}`,
+      `  credentialRef: env://${provider.credentialEnvironment}`,
       "",
       "tools:",
       "  enabled:",
@@ -238,6 +246,76 @@ function writeConfiguration(file, databasePath, approvalMode) {
     ].join("\n"),
     "utf8",
   );
+}
+
+async function startStubProvider() {
+  const requests = [];
+  const server = http.createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      let body = {};
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        // The response below remains deterministic; malformed input is recorded without echoing it.
+      }
+      const messages = Array.isArray(body.messages) ? body.messages : [];
+      const latestUser = messages
+        .toReversed()
+        .find((message) => message?.role === "user" && typeof message?.content === "string");
+      const longOutput = latestUser?.content?.includes("GATE_B_LONG_OUTPUT") === true;
+      const content = longOutput
+        ? Array.from(
+            { length: 40 },
+            (_, index) => `STUB-LONG-LINE-${String(index + 1).padStart(2, "0")} ${"x".repeat(72)}`,
+          ).join("\n")
+        : "READY";
+      requests.push({
+        method: request.method,
+        path: request.url,
+        stream: body.stream === true,
+        messageCount: messages.length,
+        longOutput,
+      });
+      const events = [
+        {
+          id: `gate-b-stub-${requests.length}`,
+          model: "deepseek-chat",
+          choices: [{ index: 0, delta: { content }, finish_reason: "stop" }],
+        },
+        {
+          id: `gate-b-stub-${requests.length}`,
+          model: "deepseek-chat",
+          choices: [],
+          usage: { prompt_tokens: 8, completion_tokens: longOutput ? 320 : 1 },
+        },
+      ];
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Connection: "close",
+      });
+      for (const event of events) response.write(`data: ${JSON.stringify(event)}\n\n`);
+      response.end("data: [DONE]\n\n");
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address == null || typeof address === "string") {
+    server.close();
+    throw new Error("Loopback Stub Provider did not expose a TCP port");
+  }
+  return {
+    endpoint: `http://127.0.0.1:${address.port}`,
+    credentialEnvironment: "HAIFA_CONPTY_STUB_KEY",
+    credential: "local-conpty-stub-key",
+    requests,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
 }
 
 class VirtualScreen {
@@ -381,6 +459,10 @@ const mode = argumentsByName.get("--mode") ?? "full";
 if (!["full", "approval", "viewport"].includes(mode)) {
   throw new Error("--mode must be full, approval, or viewport");
 }
+const providerMode = argumentsByName.get("--provider") ?? "deepseek";
+if (!["deepseek", "stub"].includes(providerMode)) {
+  throw new Error("--provider must be deepseek or stub");
+}
 const approvalMode = mode === "approval" ? "ask" : "auto";
 const jar = path.resolve(
   argumentsByName.get("--jar") ??
@@ -393,8 +475,16 @@ const jar = path.resolve(
     ),
 );
 const pty = loadPty(argumentsByName.get("--node-pty"));
-const deepSeekKey = process.env.DEEPSEEK_API_KEY?.trim();
-if (!deepSeekKey) throw new Error("DEEPSEEK_API_KEY is required");
+const provider = providerMode === "stub"
+  ? await startStubProvider()
+  : {
+      endpoint: "https://api.deepseek.com",
+      credentialEnvironment: "DEEPSEEK_API_KEY",
+      credential: process.env.DEEPSEEK_API_KEY?.trim(),
+      requests: [],
+      close: async () => {},
+    };
+if (!provider.credential) throw new Error(`${provider.credentialEnvironment} is required`);
 if (isInside(repositoryRoot, runRoot)) throw new Error("--run-root must be outside the source repository");
 if (fs.existsSync(runRoot)) throw new Error("--run-root must not already exist");
 if (!fs.existsSync(jar) || !fs.statSync(jar).isFile()) throw new Error(`CLI jar is unavailable: ${jar}`);
@@ -417,7 +507,7 @@ fs.mkdirSync(workspace, { recursive: true });
 fs.mkdirSync(dataDirectory, { recursive: true });
 fs.mkdirSync(artifacts, { recursive: true });
 createFixture(workspace);
-writeConfiguration(configuration, database, approvalMode);
+writeConfiguration(configuration, database, approvalMode, provider);
 
 const startedAt = Date.now();
 const outputEvents = [];
@@ -427,6 +517,10 @@ const screen = new VirtualScreen(120, 40);
 let terminalOutput = "";
 let exited = null;
 let failure = null;
+
+function hasTerminalText(marker) {
+  return terminalOutput.toLocaleLowerCase("en-US").includes(marker.toLocaleLowerCase("en-US"));
+}
 
 const continuationKey =
   process.env.HAIFA_CONTINUATION_KEY?.trim() ?? crypto.randomBytes(32).toString("base64");
@@ -458,7 +552,8 @@ const child = pty.module.spawn(
     cwd: workspace,
     env: {
       ...process.env,
-      DEEPSEEK_API_KEY: deepSeekKey,
+      [provider.credentialEnvironment]: provider.credential,
+      ...(providerMode === "stub" ? { HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL: "true" } : {}),
       HAIFA_CONTINUATION_KEY: continuationKey,
       TERM: "xterm-256color",
     },
@@ -504,6 +599,8 @@ async function sendAndWait(text, label, marker, timeoutMillis) {
   const start = terminalOutput.length;
   await send(text, label);
   await waitFor(() => terminalOutput.slice(start).includes(marker), timeoutMillis, `${label}: ${marker}`);
+  // A marker can arrive before the remainder of the same tui4j diff frame.
+  await sleep(300);
   captureScreen(`${label}:observed`);
 }
 
@@ -514,13 +611,15 @@ async function sendAndWaitForTraceStop(text, label, timeoutMillis) {
     if (!fs.existsSync(traceFile)) return false;
     return fs.readFileSync(traceFile, "utf8").slice(traceStart).includes("finishReason=STOP");
   }, timeoutMillis, `${label}: trace finishReason=STOP`);
-  await sleep(1_500);
+  // The Runtime writes the model STOP trace before the final checkpoint/UI-idle update.
+  // Keep a human-scale pause so the next selector is not opened during that final repaint.
+  await sleep(5_000);
   captureScreen(`${label}:observed`);
 }
 
 const observations = {};
 try {
-  await waitFor(() => terminalOutput.includes("Haifa Coding Agent"), 20_000, "Terminal UI startup");
+  await waitFor(() => hasTerminalText("Haifa Coding Agent"), 20_000, "Terminal UI startup");
   captureScreen("startup");
 
   let start = terminalOutput.length;
@@ -531,16 +630,10 @@ try {
   await sendAndWait("/commands\r", "commands", "Commands", 5_000);
   await send("\u001b", "commands-close");
 
-  await sendAndWait(
+  await sendAndWaitForTraceStop(
     "只回复 READY，不调用任何工具。\r",
     "seed-session",
-    "READY",
     120_000,
-  );
-  await waitFor(
-    () => terminalOutput.includes("IDLE · sandbox: frozen profile"),
-    20_000,
-    "seed-session: IDLE",
   );
   observations.seedRunCompleted = true;
 
@@ -549,7 +642,7 @@ try {
       await sendAndWait(
         `!Write-Output VIEWPORT-LINE-${index}\r`,
         `viewport-shell-${index}`,
-        "Shell result added to Session context",
+        `VIEWPORT-LINE-${index} [succeeded]`,
         20_000,
       );
     }
@@ -646,13 +739,40 @@ try {
     "Session exported",
     20_000,
   );
-  await sendAndWaitForTraceStop(
-    "修复 src/main/java/sample/Clamp.java：小于 minimum 时返回 minimum，大于 maximum 时返回 maximum，" +
-      "保持公开 API。必须运行 powershell -NoProfile -ExecutionPolicy Bypass -File verify.ps1，验证通过后停止工具调用并总结。\r",
-    "live-coding",
-    600_000,
-  );
-  observations.liveCodingCompleted = true;
+  if (providerMode === "stub") {
+    await sendAndWaitForTraceStop(
+      "GATE_B_LONG_OUTPUT：输出 40 行有编号的安全测试文本。\r",
+      "long-model-output",
+      60_000,
+    );
+    await waitFor(
+      () => terminalOutput.includes("STUB-LONG-LINE-40"),
+      10_000,
+      "long-model-output: final line",
+    );
+    await sleep(300);
+    captureScreen("long-model-output:final");
+    observations.longModelOutputCompleted = true;
+  } else {
+    await sendAndWaitForTraceStop(
+      "修复 src/main/java/sample/Clamp.java：小于 minimum 时返回 minimum，大于 maximum 时返回 maximum，" +
+        "保持公开 API。必须运行 powershell -NoProfile -ExecutionPolicy Bypass -File verify.ps1，验证通过后停止工具调用并总结。\r",
+      "live-coding",
+      600_000,
+    );
+    observations.liveCodingCompleted = true;
+  }
+  await sleep(1_000);
+  captureScreen("full-final-stable");
+  const finalFrame = screen.text();
+  observations.finalFrameHeaderVisible = finalFrame.includes("HAIFA CODING AGENT");
+  observations.finalFrameFooterVisible = finalFrame.includes("Footer  Enter sends");
+  const finalFooterLines = finalFrame
+    .split("\n")
+    .filter((line) => line.includes("sandbox: frozen profile"));
+  observations.finalFrameLifecycleConsistent =
+    finalFooterLines.some((line) => line.includes("COMPLETED")) &&
+    finalFooterLines.every((line) => !line.includes("RUNNING"));
   }
   await send("/quit\r", "quit");
   await Promise.race([
@@ -710,10 +830,10 @@ const secretScanFiles = [ansiFile, textFile, traceFile, exportFile, gitDiffFile]
   fs.existsSync(file),
 );
 const keyLeakFiles = secretScanFiles.filter((file) =>
-  fs.readFileSync(file, "utf8").includes(deepSeekKey),
+  fs.readFileSync(file, "utf8").includes(provider.credential),
 );
 const commonAssertions = {
-  started: terminalOutput.includes("Haifa Coding Agent"),
+  started: hasTerminalText("Haifa Coding Agent"),
   alternateScreenEntered: terminalOutput.includes("\u001b[?1049h"),
   alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
   helpOpened: observations.helpOpened === true,
@@ -744,9 +864,19 @@ const assertions = mode === "viewport" ? {
   includedShellCompleted: terminalOutput.includes("Shell result added to Session context"),
   excludedShellCompleted: terminalOutput.includes("Shell result excluded from model context"),
   sessionExported: terminalOutput.includes("Session exported") && fs.existsSync(exportFile),
-  liveCodingCompleted: observations.liveCodingCompleted === true,
   sqliteCreated: fs.existsSync(database) && fs.statSync(database).size > 0,
-  clampChanged: gitDiff.includes("return minimum;") && gitDiff.includes("return maximum;"),
+  finalFrameHeaderVisible: observations.finalFrameHeaderVisible === true,
+  finalFrameFooterVisible: observations.finalFrameFooterVisible === true,
+  finalFrameLifecycleConsistent: observations.finalFrameLifecycleConsistent === true,
+  ...(providerMode === "stub"
+    ? {
+        longModelOutputCompleted: observations.longModelOutputCompleted === true,
+        longModelOutputVisible: terminalOutput.includes("STUB-LONG-LINE-40"),
+      }
+    : {
+        liveCodingCompleted: observations.liveCodingCompleted === true,
+        clampChanged: gitDiff.includes("return minimum;") && gitDiff.includes("return maximum;"),
+      }),
   noUnexpectedSourceChanges: gitStatus
     .split(/\r?\n/)
     .filter(Boolean)
@@ -763,6 +893,7 @@ const manifest = {
   schema: "haifa.terminal-ui-conpty-acceptance/1",
   attempt,
   mode,
+  providerMode,
   startedAt: new Date(startedAt).toISOString(),
   completedAt: new Date().toISOString(),
   repositoryRoot,
@@ -780,7 +911,11 @@ const manifest = {
   failure: failure?.message ?? null,
   secretScan: {
     files: secretScanFiles,
-    deepSeekKeyMatchFiles: keyLeakFiles.length,
+    providerCredentialMatchFiles: keyLeakFiles.length,
+  },
+  stubProvider: {
+    requestCount: provider.requests.length,
+    requests: provider.requests,
   },
   artifacts: {
     ansi: ansiFile,
@@ -796,5 +931,6 @@ const manifest = {
   },
 };
 writeJson(manifestFile, manifest);
+await provider.close();
 process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
 process.exit(manifest.passed ? 0 : 1);
