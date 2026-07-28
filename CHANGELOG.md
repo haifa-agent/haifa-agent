@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 修复 Coding Terminal 在 Run 已进入 `COMPLETED`、`FAILED`、`CANCELLED` 或 `TIMEOUT` 后仍保留旧
+  active Run 的问题；同一 Run 随后到达的 Checkpoint/Resource 事件不会重新激活它，下一次 Enter
+  会创建新 Turn，而不是向已结束的 Run 发送 Steer。
 - macOS Coding Terminal 人工测试启动器在 `/quit` 后禁用 Git/通用交互分页器，并对离线 Git 验收
   显式使用 `--no-pager`，避免主屏恢复后被空白的 `less (END)` 页面覆盖。
 - Coding Terminal Phase B 新增稳定 ID 的 Tool/Execution lifecycle 原位更新、结构化 Approval 卡片与

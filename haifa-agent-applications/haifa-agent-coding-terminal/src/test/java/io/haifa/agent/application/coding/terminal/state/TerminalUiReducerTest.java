@@ -75,9 +75,30 @@ class TerminalUiReducerTest {
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(
                         event(1, "event-1", new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
+        TerminalUiState postCompletionResource = reducer.reduce(
+                completed,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ResourceAvailable(
+                                "checkpoint-1", "checkpoint", "Checkpoint", "AVAILABLE", "resume"))));
 
         assertThat(completed.status()).isEqualTo("COMPLETED");
         assertThat(completed.footer().runStatus()).isEqualTo("COMPLETED");
+        assertThat(completed.currentRunId()).isEmpty();
+        assertThat(postCompletionResource.currentRunId()).isEmpty();
+    }
+
+    @Test
+    void everyTerminalRunLifecycleClearsTheCurrentRun() {
+        for (String status : List.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT")) {
+            TerminalUiState settled = reducer.reduce(
+                    TerminalUiState.initial(120, 40),
+                    new TerminalUiAction.RunEventReceived(
+                            event(1, "event-" + status, new RunEventPayloads.RunLifecycle(status, 1, "NONE"))));
+
+            assertThat(settled.currentRunId()).as(status).isEmpty();
+        }
     }
 
     @Test

@@ -1,15 +1,19 @@
 package io.haifa.agent.application.coding.terminal.state;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /** Deterministic, side-effect-free projection of product and committed Runtime facts. */
 public final class TerminalUiReducer {
+    private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
+
     public TerminalUiState reduce(TerminalUiState state, TerminalUiAction action) {
         if (action instanceof TerminalUiAction.SessionLoaded loaded) {
             var view = loaded.view();
@@ -321,7 +325,12 @@ public final class TerminalUiReducer {
             return copyWithFailure(state, "EVENT_OUT_OF_ORDER");
         }
         List<TranscriptItem> transcript = project(state.transcript(), event);
-        List<PendingMessage> pending = projectPending(state.pending(), event);
+        boolean runSettled = isTerminalRunLifecycle(event.payload());
+        List<PendingMessage> pending = runSettled
+                ? state.pending().stream()
+                        .filter(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)
+                        .toList()
+                : projectPending(state.pending(), event);
         var seen = new HashSet<>(state.seenEventIds());
         seen.add(event.eventId());
         TerminalFooter footer = footer(state.footer(), event);
@@ -338,7 +347,7 @@ public final class TerminalUiReducer {
                 state.columns(),
                 state.rows(),
                 state.session(),
-                Optional.of(event.runId()),
+                currentRunAfter(state, event, runSettled),
                 Optional.of(event.cursor()),
                 seen,
                 Optional.empty(),
@@ -441,6 +450,22 @@ public final class TerminalUiReducer {
             case "FAILED", "CANCELLED" -> "Attention";
             default -> fallback;
         };
+    }
+
+    private static Optional<AgentRunId> currentRunAfter(
+            TerminalUiState state, AgentRunEvent event, boolean runSettled) {
+        if (runSettled) return Optional.empty();
+        if (state.currentRunId().isPresent()) return state.currentRunId();
+        boolean followsSettledRun = state.appliedCursor()
+                        .filter(cursor -> cursor.runId().equals(event.runId()))
+                        .isPresent()
+                && TERMINAL_RUN_STATUSES.contains(state.footer().runStatus());
+        return followsSettledRun ? Optional.empty() : Optional.of(event.runId());
+    }
+
+    private static boolean isTerminalRunLifecycle(AgentRunEvent.Payload payload) {
+        return payload instanceof RunEventPayloads.RunLifecycle lifecycle
+                && TERMINAL_RUN_STATUSES.contains(lifecycle.status());
     }
 
     private static List<PendingMessage> projectPending(List<PendingMessage> current, AgentRunEvent event) {

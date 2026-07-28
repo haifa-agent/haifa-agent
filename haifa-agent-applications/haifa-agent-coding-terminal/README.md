@@ -112,6 +112,8 @@ keypad 和光标。
 
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn，Active Enter 发送 Steer；
+- Run 进入 `COMPLETED`、`FAILED`、`CANCELLED` 或 `TIMEOUT` 后立即回到 Idle；同一已结束 Run 随后
+  到达的 Checkpoint/Resource 事件不得把它重新标记为 Active，下一次 Enter 必须提交新 Turn；
 - Active Alt+Enter 写入持久 Follow-up Queue，Alt+Up 选择并恢复待发消息；
 - 第二轮输入遇到 Run 刚结束/刚激活的状态竞态时，Terminal 先 reconcile 再按最新状态重试一次；
   其他产品错误只显示稳定错误码并保留草稿，不退出进程；

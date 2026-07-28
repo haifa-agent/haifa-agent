@@ -207,6 +207,26 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void terminalRunEventRoutesTheNextEnterToANewTurnInsteadOfStaleSteer() {
+        TerminalUiReducer reducer = new TerminalUiReducer();
+        TerminalUiState active = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.SessionLoaded(activeView(), List.of("Loaded resources: project")));
+        TerminalUiState settled = reducer.reduce(
+                active,
+                new TerminalUiAction.RunEventReceived(
+                        event(1, new RunEventPayloads.RunLifecycle("COMPLETED", 2, "NONE"))));
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = new CodingTerminalController(PROJECT_ID, client, new TerminalEventPump(32), reducer, settled);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "next turn"));
+
+        assertThat(client.submittedMessages).containsExactly("next turn");
+        assertThat(client.steeredMessages).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
     void revisionMutationReconcilesTheAuthoritativeSessionBeforeRename() {
         FakeClient client = new FakeClient(view(Optional.empty(), 0, "session"));
         client.reconciledView = view(Optional.empty(), 7, "session");
@@ -462,6 +482,7 @@ class CodingTerminalControllerTest {
         private ProjectProductException submitFailure;
         private int submitAttempts;
         private final List<String> submittedMessages = new ArrayList<>();
+        private final List<String> steeredMessages = new ArrayList<>();
         private final List<AgentSessionId> opened = new ArrayList<>();
         private final List<String> restored = new ArrayList<>();
         private final List<InteractionAction> respondedActions = new ArrayList<>();
@@ -520,7 +541,9 @@ class CodingTerminalControllerTest {
         }
 
         @Override
-        public void steer(AgentSessionId sessionId, AgentRunId activeRunId, String message, String idempotencyKey) {}
+        public void steer(AgentSessionId sessionId, AgentRunId activeRunId, String message, String idempotencyKey) {
+            steeredMessages.add(message);
+        }
 
         @Override
         public void enqueueFollowUp(
