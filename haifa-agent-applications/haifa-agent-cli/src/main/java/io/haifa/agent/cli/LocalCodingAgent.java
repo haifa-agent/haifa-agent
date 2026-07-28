@@ -171,8 +171,8 @@ final class LocalCodingAgent implements AutoCloseable {
             CliConfiguration configuration,
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver) {
-        boolean allowInsecureLoopback = allowInsecureLoopback(
-                configuration, System.getenv("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
+        boolean allowInsecureLoopback =
+                allowInsecureLoopback(configuration, System.getenv("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
         var model = new OpenAiCompatibleChatModel(
                 "openai-compatible",
                 "1.0.0",
@@ -197,8 +197,7 @@ final class LocalCodingAgent implements AutoCloseable {
         }
         String host = endpoint.getHost();
         boolean loopback = host != null
-                && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
-                        .contains(host.toLowerCase(Locale.ROOT));
+                && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(host.toLowerCase(Locale.ROOT));
         if (!"http".equalsIgnoreCase(endpoint.getScheme()) || !loopback) {
             throw new IllegalArgumentException(
                     "HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL permits only an HTTP loopback model endpoint");
@@ -634,6 +633,12 @@ final class LocalCodingAgent implements AutoCloseable {
 
     private static void validateSkillWorkspaceIsolation(
             Path workspaceRoot, List<CliConfiguration.LocalSkillDirectory> localDirectories) {
+        Path realWorkspaceRoot;
+        try {
+            realWorkspaceRoot = workspaceRoot.toRealPath();
+        } catch (java.io.IOException exception) {
+            throw new IllegalArgumentException("CLI workspace is unavailable", exception);
+        }
         for (CliConfiguration.LocalSkillDirectory directory : localDirectories) {
             Path skillRoot;
             try {
@@ -641,7 +646,7 @@ final class LocalCodingAgent implements AutoCloseable {
             } catch (java.io.IOException exception) {
                 throw new IllegalArgumentException("local Skill source is unavailable: " + directory.id(), exception);
             }
-            if (workspaceRoot.startsWith(skillRoot) || skillRoot.startsWith(workspaceRoot)) {
+            if (realWorkspaceRoot.startsWith(skillRoot) || skillRoot.startsWith(realWorkspaceRoot)) {
                 throw new IllegalArgumentException(
                         "local Skill source root must not overlap the CLI workspace: " + directory.id());
             }

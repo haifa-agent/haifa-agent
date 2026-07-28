@@ -338,24 +338,29 @@ final class CliExecutionPlatform {
         private final List<Pattern> paths;
 
         WorkspacePathRedactor(Path workspaceRoot) {
-            Path normalized = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null")
-                    .toAbsolutePath()
-                    .normalize();
+            Path requiredWorkspaceRoot = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null");
+            Path normalized = requiredWorkspaceRoot.toAbsolutePath().normalize();
             String nativePath = normalized.toString();
             var candidates = new java.util.LinkedHashSet<String>();
-            candidates.add(nativePath);
-            candidates.add(nativePath.replace('\\', '/'));
-            if (nativePath.matches("^[A-Za-z]:\\\\.*")) {
-                candidates.add("/"
-                        + Character.toLowerCase(nativePath.charAt(0))
-                        + nativePath.substring(2).replace('\\', '/'));
-                candidates.add("\\\\?\\" + nativePath);
-            }
+            addPathForms(candidates, nativePath);
+            addPathForms(candidates, requiredWorkspaceRoot.toString());
             paths = candidates.stream()
                     .filter(value -> !value.isBlank())
                     .sorted(java.util.Comparator.comparingInt(String::length).reversed())
                     .map(value -> Pattern.compile(Pattern.quote(value), Pattern.CASE_INSENSITIVE))
                     .toList();
+        }
+
+        private static void addPathForms(java.util.Set<String> candidates, String path) {
+            candidates.add(path);
+            candidates.add(path.replace('\\', '/'));
+            if (path.matches("^[A-Za-z]:[\\\\/].*")) {
+                String windowsPath = path.replace('/', '\\');
+                candidates.add("/"
+                        + Character.toLowerCase(windowsPath.charAt(0))
+                        + windowsPath.substring(2).replace('\\', '/'));
+                candidates.add("\\\\?\\" + windowsPath);
+            }
         }
 
         String redact(String value) {
