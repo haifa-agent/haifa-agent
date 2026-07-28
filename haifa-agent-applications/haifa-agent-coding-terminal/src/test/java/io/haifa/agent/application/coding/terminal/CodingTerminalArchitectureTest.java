@@ -17,6 +17,7 @@ class CodingTerminalArchitectureTest {
                         "io.haifa.agent.runtime.core..",
                         "io.haifa.agent.store.sqlite..",
                         "io.haifa.agent.sandbox..",
+                        "org.jline..",
                         "java.sql..")
                 .check(classes);
     }

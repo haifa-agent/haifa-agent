@@ -37,11 +37,7 @@ class CodingAgentPolicyAssemblyTest {
         assertThat(decide(ApprovalMode.DENY, Set.of(PolicySideEffect.PROCESS_EXECUTION), false)
                         .effect())
                 .isEqualTo(PolicyEffect.DENY);
-        assertThat(decide(
-                                ApprovalMode.ASK,
-                                "execution",
-                                Set.of(PolicySideEffect.PROCESS_EXECUTION),
-                                false)
+        assertThat(decide(ApprovalMode.ASK, "execution", Set.of(PolicySideEffect.PROCESS_EXECUTION), false)
                         .effect())
                 .isEqualTo(PolicyEffect.ASK);
 
@@ -69,8 +65,7 @@ class CodingAgentPolicyAssemblyTest {
                                         "haifa-coding-agent"),
                                 PolicyContext.run("run", mode),
                                 new PolicyAction("test.tool", "invoke"),
-                                new PolicyResource(
-                                        resourceType, "test.tool", Optional.of("0".repeat(64)), "Test tool"),
+                                new PolicyResource(resourceType, "test.tool", Optional.of("0".repeat(64)), "Test tool"),
                                 new PolicyRisk(PolicyRiskLevel.LOW, sideEffects, credentialUse, Optional.empty())),
                         assembly.snapshot());
     }

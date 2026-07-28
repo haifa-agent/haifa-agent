@@ -4,7 +4,7 @@
 
 - `haifa-agent-coding-agent`：Project/Workspace Coding Agent 产品服务，拥有 Session、Queue、Policy 与
   MyBatis/SQLite 产品持久化，不拥有终端；
-- `haifa-agent-coding-terminal`：严格映射评审版低保真原型的 JLine 单列交互层，只通过
+- `haifa-agent-coding-terminal`：严格映射评审版低保真原型的 tui4j 单列交互层，只通过
   `CodingSessionClient` 消费产品事实，不装配 Runtime、SQLite、Sandbox 或可执行发行包；
 - `haifa-agent-cli`：最高层生产装配与唯一 shaded 可执行制品，复用同一个 Runtime、Project、
   Workspace、Policy、Tool、Execution、Persistence 和 `CodingSessionService`，同时提供 Terminal

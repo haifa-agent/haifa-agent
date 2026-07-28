@@ -29,7 +29,13 @@ class CodingAgentE2EFixtureTest {
             String fixture = item.path("fixture").asText();
             assertThat(caseId).matches("HF-06-E2E-CLI-00[1-9]");
             assertThat(ids.add(caseId)).isTrue();
-            assertThat(item.path("caseVersion").asText()).isEqualTo(caseId.equals("HF-06-E2E-CLI-009") ? "1.0" : "1.1");
+            String expectedVersion =
+                    switch (caseId) {
+                        case "HF-06-E2E-CLI-008" -> "1.3";
+                        case "HF-06-E2E-CLI-009" -> "1.0";
+                        default -> "1.1";
+                    };
+            assertThat(item.path("caseVersion").asText()).isEqualTo(expectedVersion);
             assertThat(item.path("task").asText())
                     .contains("do not use the network")
                     .doesNotContain("http://", "https://");

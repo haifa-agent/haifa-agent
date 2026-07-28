@@ -57,7 +57,7 @@ reconciliation 使用同一 key 收敛到同一 Run。SQLite 中尚未投递的�
 protector 加密并校验 digest，不进入 JSONL 或普通日志。`MEMORY` 与 `SQLITE` 通过同一
 `CodingSessionStore` 端口提供相同行为。
 
-JLine Terminal UI 与富 Tool/Execution/Resource 客户端事件已进入独立
+tui4j Terminal UI 与富 Tool/Execution/Resource 客户端事件已进入独立
 `haifa-agent-coding-terminal` 模块，避免产品 façade 依赖终端实现。`CodingShellService` 与
 `CodingSessionExportService` 只定义产品边界；CLI 生产装配分别复用既有
 Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree/Fork/Clone、PTY、

@@ -1,9 +1,8 @@
 package io.haifa.agent.application.coding.terminal.application;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
+import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
-import io.haifa.agent.application.coding.terminal.jline.JLineCompleter;
-import io.haifa.agent.application.coding.terminal.jline.TerminalInput;
 import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
@@ -39,7 +38,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private final TerminalEventPump pump;
     private final TerminalUiReducer reducer;
     private final TerminalCommandRouter commands = new TerminalCommandRouter();
-    private final JLineCompleter completions;
+    private final TerminalCompletionProvider completions;
     private TerminalUiState state;
     private RunEventSubscription subscription;
     private boolean awaitingNewSessionMessage;
@@ -59,7 +58,7 @@ public final class CodingTerminalController implements AutoCloseable {
         this.pump = Objects.requireNonNull(pump, "pump must not be null");
         this.reducer = Objects.requireNonNull(reducer, "reducer must not be null");
         this.state = Objects.requireNonNull(initialState, "initialState must not be null");
-        this.completions = new JLineCompleter(client::logicalPaths);
+        this.completions = new TerminalCompletionProvider(client::logicalPaths);
     }
 
     public TerminalUiState state() {
@@ -422,7 +421,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private void openCommandSelector() {
         completionContext = new CompletionContext("", 0, 0);
         apply(new TerminalUiAction.SelectorOpened(
-                new TerminalSelector("completion", "Commands", JLineCompleter.COMMANDS, 0)));
+                new TerminalSelector("completion", "Commands", TerminalCompletionProvider.COMMANDS, 0)));
     }
 
     private void openCompletionSelector(String buffer, int cursor) {

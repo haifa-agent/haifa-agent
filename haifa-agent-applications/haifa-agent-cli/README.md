@@ -54,7 +54,7 @@ model:
   endpoint: https://api.deepseek.com
   credentialRef: env://DEEPSEEK_API_KEY
 tools:
-  enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.diff, file.patch, git.inspect, git.status, git.diff, execution.run, web.search, web.fetch]
+  enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, execution.run, web.search, web.fetch]
 web:
   search:
     enabled: true
@@ -187,7 +187,7 @@ persistence:
   transcriptRoot: D:\haifa-agent-data\transcripts
   protectorRef: env://HAIFA_CONTINUATION_KEY
   busyTimeoutMillis: 5000
-  maximumPayloadBytes: 4194304
+  maximumPayloadBytes: 1048576
 ```
 
 数据库与 transcript 路径必须是绝对路径，父目录/Transcript 目录必须预先受控创建。`SQLITE` 不会创建

@@ -1,4 +1,4 @@
-package io.haifa.agent.application.coding.terminal.jline;
+package io.haifa.agent.application.coding.terminal.event;
 
 import java.util.Objects;
 

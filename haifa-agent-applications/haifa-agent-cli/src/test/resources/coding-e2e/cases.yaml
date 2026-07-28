@@ -90,16 +90,19 @@ cases:
       do not edit, replace, move, or delete it. Run `sh verify.sh` before finishing.
 
   - caseId: HF-06-E2E-CLI-008
-    caseVersion: "1.1"
+    caseVersion: "1.3"
     title: Diagnose a failing verification and recover
     fixture: execution-recovery
     approval: AUTO
     timeoutSeconds: 360
     maxToolCalls: 40
     task: >-
-      Work only with files in this workspace and do not use the network. Before editing any file, first run
-      `sh verify.sh` and inspect its failure. Then fix Range.contains so both interval endpoints are inclusive and
-      negative values outside the interval remain rejected. Run `sh verify.sh` again and finish only after it passes.
+      Work only with files in this workspace and do not use the network. Follow these steps in order: (1) before
+      editing any file, invoke execution.run exactly once with command `sh verify.sh` and workdir `.` and inspect its
+      expected failure; (2) fix Range.contains so both interval endpoints are inclusive and negative values outside
+      the interval remain rejected; (3) after the final file modification, invoke execution.run exactly once more
+      with command `sh verify.sh` and workdir `.`. There must be exactly two execution.run invocations in the whole
+      task. When the second invocation succeeds, call no more tools and immediately return the final response.
 
   - caseId: HF-06-E2E-CLI-009
     caseVersion: "1.0"
