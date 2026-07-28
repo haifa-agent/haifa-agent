@@ -197,11 +197,6 @@ class CodingAgentLiveE2E {
         if (completed.status() != AgentRunStatus.COMPLETED) {
             throw new AssertionError("live coding run did not complete: " + safeFailureSummary(completed, traces));
         }
-        if (specification.approval().equals("ASK_REJECT")) {
-            verifyRejectedApproval(workspace, traces, rejectedApprovals);
-        } else {
-            verifyOracle(specification.caseId(), workspace, caseRoot.resolve("oracle-classes"), traces);
-        }
         Map<String, String> after = fileDigests(workspace);
         List<String> changedPaths = changedPaths(before, after);
         writeEvidence(
@@ -211,7 +206,22 @@ class CodingAgentLiveE2E {
                 fixtureDigest,
                 Duration.between(startedAt, now()),
                 rejectedApprovals,
-                changedPaths);
+                changedPaths,
+                "PENDING");
+        if (specification.approval().equals("ASK_REJECT")) {
+            verifyRejectedApproval(workspace, traces, rejectedApprovals);
+        } else {
+            verifyOracle(specification.caseId(), workspace, caseRoot.resolve("oracle-classes"), traces);
+        }
+        writeEvidence(
+                specification,
+                completed,
+                traces,
+                fixtureDigest,
+                Duration.between(startedAt, now()),
+                rejectedApprovals,
+                changedPaths,
+                "PASSED");
     }
 
     private static CliConfiguration configuration(CaseSpec specification) {
@@ -527,7 +537,8 @@ class CodingAgentLiveE2E {
             String fixtureDigest,
             Duration duration,
             int rejectedApprovals,
-            List<String> changedPaths)
+            List<String> changedPaths,
+            String oracle)
             throws Exception {
         List<Map<String, Object>> modelCalls = traces.stream()
                 .filter(event -> event.operation().equals("model.invoke"))
@@ -566,7 +577,7 @@ class CodingAgentLiveE2E {
         evidence.put("failedToolCalls", failedTools);
         evidence.put("rejectedApprovals", rejectedApprovals);
         evidence.put("changedPaths", changedPaths);
-        evidence.put("oracle", "PASSED");
+        evidence.put("oracle", oracle);
         Path base = Path.of(System.getProperty("basedir", "."));
         Path reports = Files.createDirectories(base.resolve("target/coding-agent-live-e2e-evidence"));
         JSON.writerWithDefaultPrettyPrinter()
