@@ -84,7 +84,20 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示
 `enter steer · alt+enter follow-up · esc interrupt`。macOS 的 Option 对应 Terminal Alt；
 `Shift+Enter` 和 `Ctrl+J` 都用于换行。Windows Terminal、WezTerm、Alacritty 等终端的修饰 Enter
-映射与跨平台能力诊断属于后续 Phase B/C，不在 Phase A 中直接修改用户终端配置。
+映射与跨平台能力诊断属于 Phase C 的平台门禁；Terminal 只给出可执行 fallback，不修改用户终端配置。
+
+Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
+
+- Tool 与 Execution 按稳定 ID 原位更新，不为同一调用重复创建卡片；显示明确 lifecycle、Target、
+  Workdir、Stream、Exit、Result Ref 和 FileChangeSet Ref，缺失的 Duration 不伪造；
+- Approval 从 `InteractionView` 显示 Action、Target、Risk、Scope、Network、Reason 与允许动作；
+  `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
+  原有 editor buffer/cursor 均保持不变；
+- `RunInputLifecycle.ACCEPTED` 将 Steer 放入 Pending，`APPLIED` 后移除；持久 Follow-up 与 Steer
+  合并展示且按稳定 ID 去重，Alt+Up 仍从产品队列恢复原文；
+- 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
+  五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
+- viewport 不在底部时不抢滚动位置，只显示 `new output below`；回到底部后恢复自动跟随。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
 50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成
@@ -154,7 +167,7 @@ Windows 上需要真实运行编译、包管理器或联网工具时，仅对明
 隔离。持久模式使用稳定的 `env://HAIFA_CONTINUATION_KEY`，其值必须是 Base64 编码的 32 字节 AES
 key，并在所有重启间保持不变。
 
-## Phase 2 人工验收
+## Phase B 人工验收
 
 进入 Phase 3 前人工验证 Phase 2，不等到最后统一验证：
 
@@ -169,6 +182,14 @@ key，并在所有重启间保持不变。
 9. 输入 `/` 和 `@` 后分别按 Tab，确认候选可见、可选择并正确回填；输入 `/command` 确认命令面板可见。
 10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
     `--trace-file` 后确认诊断仅进入文件。
+11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool/Execution
+    只更新一张卡片，Ctrl+O 可折叠/展开最近项。
+12. 用 Stub/Fake Approval 检查结构化字段、approve/reject 回执与 editor 草稿恢复；审批期间输入只由
+    Selector 消费。
+13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，
+    Alt+Up 恢复且重启后不重复。
+14. PageUp 离开底部后产生新输出，确认 viewport 不跳动且出现 `new output below`；PageDown 回到底部
+    后提示消失。
 
 真实模型和 Web Provider 可能产生费用；未经单独授权保持 **NOT RUN**。自动化验证只使用 Stub/Fake：
 

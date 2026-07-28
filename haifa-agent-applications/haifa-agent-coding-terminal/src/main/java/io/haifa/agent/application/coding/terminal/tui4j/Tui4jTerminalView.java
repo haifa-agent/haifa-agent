@@ -4,6 +4,7 @@ import com.williamcallahan.tui4j.ansi.Truncate;
 import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
+import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
@@ -111,7 +112,11 @@ final class Tui4jTerminalView {
                     .forEach(lines::add);
         }
         status(state, newOutputPending).ifPresent(lines::add);
-        state.recoverableError().ifPresent(value -> lines.add(theme.error("Recovery required · " + value)));
+        state.recoverableError().ifPresent(value -> {
+            TerminalRecovery recovery = TerminalRecovery.fromCode(value);
+            lines.add(theme.error(recovery.category().label() + " · " + recovery.code()));
+            if (!compact) lines.add(theme.error("  " + recovery.action()));
+        });
         state.selector()
                 .ifPresentOrElse(
                         selector -> lines.addAll(selector(selector, compact ? 1 : 4)), () -> lines.add(editor.view()));

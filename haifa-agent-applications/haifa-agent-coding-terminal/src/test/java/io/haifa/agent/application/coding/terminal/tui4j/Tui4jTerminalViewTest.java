@@ -228,11 +228,12 @@ class Tui4jTerminalViewTest {
                         "Pending · 2",
                         "[steer] Check the diff",
                         "[follow_up] Run tests",
-                        "Recovery required · ACTIVE_RUN_MISMATCH",
+                        "Retryable · ACTIVE_RUN_MISMATCH",
+                        "The session changed while submitting; retry the message.",
                         "Type a message",
                         "enter steer",
                         "RUNNING · project-1 · retry task · queue: 2")
-                .containsOnlyOnce("Recovery required")
+                .containsOnlyOnce("Retryable")
                 .doesNotContain("provider: frozen", "model: frozen", "sandbox: frozen profile");
     }
 

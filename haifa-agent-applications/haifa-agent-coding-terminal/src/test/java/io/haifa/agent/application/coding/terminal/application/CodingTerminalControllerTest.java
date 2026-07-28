@@ -28,7 +28,9 @@ import io.haifa.agent.runtime.api.InteractionInputContract;
 import io.haifa.agent.runtime.api.InteractionKind;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionRequesterView;
+import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
+import io.haifa.agent.runtime.api.InteractionResponseReceiptStatus;
 import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.api.InteractionTargetView;
 import io.haifa.agent.runtime.api.InteractionView;
@@ -100,14 +102,32 @@ class CodingTerminalControllerTest {
         FakeClient client = new FakeClient(view(Optional.of(interaction)));
         client.reconciledView = view(Optional.empty());
         var controller = controller(client);
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "preserved draft", 9));
         controller.open(SESSION_ID);
 
         assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().editorBuffer()).isEqualTo("preserved draft");
+        assertThat(controller.state().editorCursor()).isEqualTo(9);
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.body())
+                    .contains(
+                            "Action: Approval",
+                            "Target: workspace file",
+                            "Risk: On approval: Run tool",
+                            "Network: Not declared by runtime",
+                            "Reason: Allow file change?",
+                            "Allowed: reject / approve");
+            assertThat(item.approvalDetails()).isPresent();
+        });
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
         assertThat(client.respondedActions).containsExactly(InteractionAction.APPROVE);
         assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("preserved draft");
+        assertThat(controller.state().editorCursor()).isEqualTo(9);
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.status())
+                .isEqualTo("RESPONDED"));
     }
 
     @Test
@@ -522,7 +542,14 @@ class CodingTerminalControllerTest {
         public InteractionResponseReceipt respond(
                 InteractionView interaction, InteractionAction action, String idempotencyKey) {
             respondedActions.add(action);
-            return null;
+            return new InteractionResponseReceipt(
+                    new InteractionResponseId("response-1"),
+                    interaction.requestId(),
+                    interaction.runId(),
+                    InteractionResponseReceiptStatus.NEWLY_ACCEPTED,
+                    InteractionState.RESPONDED,
+                    interaction.revision() + 1,
+                    1);
         }
 
         @Override

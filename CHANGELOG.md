@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Coding Terminal Phase B 新增稳定 ID 的 Tool/Execution lifecycle 原位更新、结构化 Approval 卡片与
+  回执、Steer accepted/applied 和持久 Follow-up 反馈、viewport 新输出提示，以及带下一步操作的五类
+  恢复诊断；UI 不再解析 Interaction 自由文本或按事件名后缀猜测状态，并在审批/错误时保留编辑草稿。
 - Coding Terminal Phase A 按 Pi 参考体验重构单列信息层级：移除常驻 Diagnostics、空 Pending、
   Widgets 和假冻结 Footer，新增明暗自适应的 User/Tool/Execution/Approval/Error 状态 Theme、
   Send/Steer 动态提示、跨平台 Alt/Option 与 Ctrl+J 帮助，并保持 NoColor、60×16 和既有

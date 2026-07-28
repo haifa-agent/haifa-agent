@@ -410,6 +410,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openInteractionSelector(InteractionView interaction) {
+        apply(new TerminalUiAction.InteractionPresented(interaction));
         if (state.selector().isPresent()
                 && state.selector().orElseThrow().kind().startsWith("interaction:")) {
             return;
@@ -422,7 +423,7 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                "interaction:" + interaction.requestId().value(), interaction.safePrompt(), options, 0)));
+                "interaction:" + interaction.requestId().value(), "Approval · " + interaction.title(), options, 0)));
     }
 
     private void openCommandSelector() {
@@ -547,7 +548,11 @@ public final class CodingTerminalController implements AutoCloseable {
                         .flatMap(CodingSessionView::pendingInteraction)
                         .orElseThrow();
                 InteractionAction action = interaction.allowedActions().get(selected);
-                client.respond(interaction, action, UUID.randomUUID().toString());
+                var receipt =
+                        client.respond(interaction, action, UUID.randomUUID().toString());
+                if (receipt != null) {
+                    apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                }
                 apply(new TerminalUiAction.SelectorClosed());
                 refresh();
             }
