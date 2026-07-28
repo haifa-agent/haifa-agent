@@ -1,9 +1,9 @@
 package io.haifa.agent.sdk.api;
 
 import io.haifa.agent.artifact.ArtifactService;
-import io.haifa.agent.memory.api.MemoryService;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.sdk.conversation.ConversationService;
+import io.haifa.agent.sdk.memory.AgentMemories;
 import io.haifa.agent.sdk.product.ProductAssembly;
 import io.haifa.agent.sdk.product.ProductAssemblyDiagnostic;
 import io.haifa.agent.sdk.product.ProductContribution;
@@ -17,7 +17,7 @@ public final class HaifaAgent implements AutoCloseable {
     private final ProductAssembly assembly;
     private final AgentRuns runs;
     private final ConversationService conversations;
-    private final Optional<MemoryService> memory;
+    private final Optional<AgentMemories> memories;
     private final Optional<ArtifactService> artifacts;
     private final LocalExecutionScheduler scheduler;
     private final List<ProductContribution> lifecycle;
@@ -27,7 +27,7 @@ public final class HaifaAgent implements AutoCloseable {
             ProductAssembly assembly,
             AgentRuns runs,
             ConversationService conversations,
-            Optional<MemoryService> memory,
+            Optional<AgentMemories> memories,
             Optional<ArtifactService> artifacts,
             LocalExecutionScheduler scheduler,
             List<ProductContribution> lifecycle,
@@ -35,7 +35,7 @@ public final class HaifaAgent implements AutoCloseable {
         this.assembly = Objects.requireNonNull(assembly, "assembly must not be null");
         this.runs = Objects.requireNonNull(runs, "runs must not be null");
         this.conversations = Objects.requireNonNull(conversations, "conversations must not be null");
-        this.memory = Objects.requireNonNull(memory, "memory must not be null");
+        this.memories = Objects.requireNonNull(memories, "memories must not be null");
         this.artifacts = Objects.requireNonNull(artifacts, "artifacts must not be null");
         this.scheduler = Objects.requireNonNull(scheduler, "scheduler must not be null");
         this.lifecycle = List.copyOf(Objects.requireNonNull(lifecycle, "lifecycle must not be null"));
@@ -60,9 +60,15 @@ public final class HaifaAgent implements AutoCloseable {
         return conversations;
     }
 
-    public Optional<MemoryService> memory() {
+    public Optional<AgentMemories> memories() {
         requireOpen();
-        return memory;
+        return memories;
+    }
+
+    /** @deprecated use {@link #memories()} */
+    @Deprecated(forRemoval = false)
+    public Optional<AgentMemories> memory() {
+        return memories();
     }
 
     public Optional<ArtifactService> artifacts() {

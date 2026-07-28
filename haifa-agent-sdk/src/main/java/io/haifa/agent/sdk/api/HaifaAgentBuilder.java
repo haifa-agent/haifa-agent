@@ -25,6 +25,7 @@ import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
 import io.haifa.agent.sdk.internal.ProductAssemblyResolver;
 import io.haifa.agent.sdk.internal.SafeConversationService;
+import io.haifa.agent.sdk.memory.AgentMemories;
 import io.haifa.agent.sdk.product.ProductAssemblyException;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
@@ -180,11 +181,22 @@ public final class HaifaAgentBuilder {
             var conversationService = new DefaultConversationService(
                     profile, runtime, persistence, conversation.conversationStore(), callers, ids, time);
             AtomicBoolean lifecycleClosed = new AtomicBoolean();
+            var safeConversations = new SafeConversationService(conversationService, lifecycleClosed);
+            var agentRuns = new AgentRuns(runtime);
+            var agentMemories = memory == null
+                    ? java.util.Optional.<AgentMemories>empty()
+                    : java.util.Optional.of(new AgentMemories(
+                            memory.service(),
+                            profile.policies().memory(),
+                            callers,
+                            safeConversations,
+                            agentRuns,
+                            lifecycleClosed));
             return new HaifaAgent(
                     resolution.assembly(),
-                    new AgentRuns(runtime),
-                    new SafeConversationService(conversationService, lifecycleClosed),
-                    memory == null ? java.util.Optional.empty() : java.util.Optional.of(memory.service()),
+                    agentRuns,
+                    safeConversations,
+                    agentMemories,
                     artifact == null ? java.util.Optional.empty() : java.util.Optional.of(artifact.service()),
                     scheduler,
                     initialized,

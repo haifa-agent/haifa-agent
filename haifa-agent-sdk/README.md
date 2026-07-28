@@ -77,7 +77,9 @@ try (HaifaAgent agent = HaifaAgents.builder()
   出现在 Profile allowlist 与统一 Tool Catalog 中，不存在第二条 MCP 执行通道。
 - `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
+- `HaifaAgent.memories()` 暴露受 Product Profile、可信 `SdkCaller` 与权限约束的产品级
+  propose/revise/approve/reject/invalidate/list API；调用命令不能注入 Tenant、Principal 或 Reviewer。
 - `HaifaAgent.memory()` 与 `HaifaAgent.artifacts()` 只在 Profile 选中了对应 typed Contribution
-  时返回应用服务；Phase 1 不提供这两项能力的生产 SQLite/Payload Provider。
+  时返回应用服务；Memory 的生产 SQLite Provider 已由 Phase 2 提供，Artifact 生产 Provider 仍延期。
 
 当前开发范围由 `docs/20-agent-sdk-product-session-memory-artifact-foundation.md` 定义。

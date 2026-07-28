@@ -7,6 +7,12 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
+import io.haifa.agent.memory.api.MemoryEvidenceRef;
+import io.haifa.agent.memory.api.MemoryKind;
+import io.haifa.agent.memory.api.MemorySourceRef;
+import io.haifa.agent.memory.api.MemorySourceType;
+import io.haifa.agent.memory.api.MemoryStatus;
+import io.haifa.agent.memory.api.TextMemoryContent;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialRef;
@@ -19,6 +25,7 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
+import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
@@ -26,6 +33,10 @@ import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
+import io.haifa.agent.sdk.memory.MemoryListQuery;
+import io.haifa.agent.sdk.memory.MemoryScopeSpec;
+import io.haifa.agent.sdk.memory.ProposeMemoryCommand;
+import io.haifa.agent.sdk.memory.ReviewMemoryCandidateCommand;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
 import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
@@ -40,6 +51,7 @@ import java.security.SecureRandom;
 import java.sql.ResultSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -55,6 +67,76 @@ class SqliteSdkPersonalFixtureTest {
             new ProductContributionCoordinate("persistence.sqlite", "1.0");
     private static final ProductContributionCoordinate CONVERSATION =
             new ProductContributionCoordinate("conversation.sqlite", "1.0");
+    private static final ProductContributionCoordinate MEMORY =
+            new ProductContributionCoordinate("memory.sqlite", "1.0");
+
+    @Test
+    void promotesConversationEvidenceToMemoryAndRecoversItThroughSdk(@TempDir Path directory) throws Exception {
+        ProductProfile profile = personalMemoryProfile();
+        var protector =
+                new AesGcmModelContinuationProtector(new SecretKeySpec(new byte[32], "AES"), new SecureRandom());
+        AtomicInteger ids = new AtomicInteger();
+        String sessionId;
+
+        SqliteSdkProductContributions first = sqliteProductContributions(directory, protector);
+        try (HaifaAgent agent = HaifaAgents.builder(profile)
+                .contribute(modelContribution())
+                .contribute(first.persistence())
+                .contribute(first.conversation())
+                .contribute(first.memory())
+                .callerProvider(SqliteSdkPersonalFixtureTest::memoryReviewer)
+                .identifierGenerator(() -> "memory-fixture-" + ids.incrementAndGet())
+                .timeProvider(() -> SqliteTestSupport.NOW)
+                .build()) {
+            var conversation =
+                    agent.conversations().start(new StartConversationCommand("memory-start", "Memory", "Use Java"));
+            agent.runs().await(conversation.activeRunId().orElseThrow());
+            var turn = agent.conversations().turns(conversation.sessionId()).getFirst();
+            String contentDigest = messageDigest(directory, turn.messageId());
+            MemorySourceRef source = new MemorySourceRef(MemorySourceType.MESSAGE, turn.messageId(), Optional.empty());
+            var candidate = agent.memories()
+                    .orElseThrow()
+                    .propose(new ProposeMemoryCommand(
+                            "memory-propose",
+                            MemoryScopeSpec.session(conversation.sessionId().value()),
+                            MemoryKind.PREFERENCE,
+                            "language",
+                            new TextMemoryContent("Java"),
+                            List.of(source),
+                            List.of(new MemoryEvidenceRef(source, contentDigest)),
+                            Optional.empty()));
+            assertThat(candidate.status()).isEqualTo(io.haifa.agent.memory.api.MemoryCandidateStatus.PENDING);
+            agent.memories()
+                    .orElseThrow()
+                    .approve(new ReviewMemoryCandidateCommand(candidate.id(), candidate.revision(), "memory-approve"));
+            sessionId = conversation.sessionId().value();
+        }
+
+        SqliteSdkProductContributions reopenedStore = sqliteProductContributions(directory, protector);
+        try (HaifaAgent reopened = HaifaAgents.builder(profile)
+                .contribute(modelContribution())
+                .contribute(reopenedStore.persistence())
+                .contribute(reopenedStore.conversation())
+                .contribute(reopenedStore.memory())
+                .callerProvider(SqliteSdkPersonalFixtureTest::memoryReviewer)
+                .identifierGenerator(() -> "memory-reopen-" + ids.incrementAndGet())
+                .timeProvider(() -> SqliteTestSupport.NOW)
+                .build()) {
+            var page = reopened.memories()
+                    .orElseThrow()
+                    .memories(new MemoryListQuery(
+                            MemoryScopeSpec.session(sessionId),
+                            Set.of(MemoryStatus.ACTIVE),
+                            Set.of(MemoryKind.PREFERENCE),
+                            Optional.empty(),
+                            Optional.empty(),
+                            10));
+            assertThat(page.items()).singleElement().satisfies(memory -> {
+                assertThat(memory.status()).isEqualTo(MemoryStatus.ACTIVE);
+                assertThat(memory.content().orElseThrow().boundedText()).isEqualTo("Java");
+            });
+        }
+    }
 
     @Test
     void assemblesPersonalProfileAndRecoversConversationWithoutCodingProductState(@TempDir Path directory)
@@ -229,6 +311,31 @@ class SqliteSdkPersonalFixtureTest {
                 Set.of());
     }
 
+    private static ProductProfile personalMemoryProfile() {
+        Map<ProductCapabilityId, ProductCapabilityRequirement> requirements =
+                new java.util.HashMap<>(personalProfile().capabilityRequirements());
+        requirements.put(
+                ProductCapabilities.MEMORY,
+                ProductCapabilityRequirement.required(
+                        ProductCapabilities.MEMORY, Set.of(MEMORY), ProductProviderSuitability.PRODUCTION));
+        ProductProfile base = personalProfile();
+        return ProductProfile.create(
+                base.productId(),
+                base.productVersion(),
+                base.definitionId(),
+                base.definitionVersion(),
+                base.runProfileId(),
+                base.runProfileVersion(),
+                base.instructions(),
+                base.budget(),
+                base.limits(),
+                base.policies(),
+                requirements,
+                base.allowedTools(),
+                base.allowedSkills(),
+                base.allowedExtensions());
+    }
+
     private static HaifaAgent agent(
             ProductProfile profile, SqliteSdkContributions store, AtomicInteger ids, String instance) {
         return HaifaAgents.builder(profile)
@@ -314,6 +421,50 @@ class SqliteSdkPersonalFixtureTest {
                         ProductCapabilities.CONVERSATION,
                         SdkConfigurationDigest.sha256("sqlite-conversation-v1"),
                         ProductProviderSuitability.PRODUCTION));
+    }
+
+    private static SqliteSdkProductContributions sqliteProductContributions(
+            Path directory, AesGcmModelContinuationProtector protector) {
+        return SqliteSdkProductContributions.initialize(
+                SqliteTestSupport.configuration(directory),
+                SqliteTestSupport.CLOCK,
+                protector,
+                metadata(
+                        PERSISTENCE,
+                        ProductCapabilities.PERSISTENCE,
+                        SdkConfigurationDigest.sha256("sqlite-runtime-v6"),
+                        ProductProviderSuitability.PRODUCTION),
+                metadata(
+                        CONVERSATION,
+                        ProductCapabilities.CONVERSATION,
+                        SdkConfigurationDigest.sha256("sqlite-conversation-v1"),
+                        ProductProviderSuitability.PRODUCTION),
+                metadata(
+                        MEMORY,
+                        ProductCapabilities.MEMORY,
+                        SdkConfigurationDigest.sha256("sqlite-memory-v1"),
+                        ProductProviderSuitability.PRODUCTION));
+    }
+
+    private static SdkCaller memoryReviewer() {
+        SdkCaller base = SdkCaller.defaultPublicUser();
+        return new SdkCaller(base.tenant(), base.principal(), Set.of("memory:read", "memory:propose", "memory:review"));
+    }
+
+    private static String messageDigest(Path directory, String messageId) throws Exception {
+        try (SqliteConnectionFactory connections =
+                new SqliteConnectionFactory(SqliteTestSupport.configuration(directory))) {
+            connections.initialize();
+            try (var connection = connections.openConnection();
+                    var statement = connection.prepareStatement(
+                            "SELECT content_hash FROM session_message WHERE message_id=?")) {
+                statement.setString(1, messageId);
+                try (ResultSet result = statement.executeQuery()) {
+                    assertThat(result.next()).isTrue();
+                    return result.getString(1);
+                }
+            }
+        }
     }
 
     private static SdkContributionMetadata metadata(

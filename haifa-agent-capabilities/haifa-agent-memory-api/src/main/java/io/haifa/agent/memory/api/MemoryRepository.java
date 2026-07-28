@@ -8,6 +8,8 @@ public interface MemoryRepository {
 
     Optional<Memory> find(MemoryId id, MemoryVersion version);
 
+    Optional<Memory> findAuthorized(MemoryId id, MemoryVersion version, MemoryActor actor);
+
     Optional<Memory> latest(MemoryId id);
 
     Optional<Memory> findActiveEquivalent(MemoryScope scope, MemoryKind kind, String normalizedDigest);
@@ -15,6 +17,10 @@ public interface MemoryRepository {
     Optional<Memory> findActiveBySubject(MemoryScope scope, MemoryKind kind, String subjectKey);
 
     List<Memory> allMemories();
+
+    List<Memory> searchAuthorizedActive(MemoryQuery query, int fetchLimit);
+
+    MemoryPage query(MemoryRecordQuery query);
 
     MemoryConflict saveConflict(MemoryConflict conflict);
 

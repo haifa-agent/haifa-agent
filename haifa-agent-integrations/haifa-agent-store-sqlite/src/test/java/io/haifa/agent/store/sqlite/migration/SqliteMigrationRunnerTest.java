@@ -29,14 +29,14 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(5);
+                    .isEqualTo(6);
             assertThat(queryLong(connection, "SELECT applied_at FROM schema_migration WHERE version = 1"))
                     .isEqualTo(SqliteTestSupport.NOW.toEpochMilli());
         }
     }
 
     @Test
-    void upgradesAnExistingV3DatabaseToV5WithoutReapplyingHistory() throws Exception {
+    void upgradesAnExistingV3DatabaseToV6WithoutReapplyingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -46,7 +46,7 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(5);
+                    .isEqualTo(6);
             assertThat(queryLong(
                             connection,
                             "SELECT COUNT(*) FROM sqlite_master "
@@ -63,6 +63,12 @@ class SqliteMigrationRunnerTest {
                                     + "WHERE type='table' AND name IN "
                                     + "('sdk_conversation', 'sdk_conversation_command')"))
                     .isEqualTo(2);
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM sqlite_master "
+                                    + "WHERE type='table' AND name IN "
+                                    + "('memory_candidate', 'memory_record', 'memory_audit_event')"))
+                    .isEqualTo(3);
         }
     }
 

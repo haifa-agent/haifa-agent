@@ -39,7 +39,7 @@ final class EnvironmentConfigurationPreflight {
             throw new IllegalArgumentException("persistence.maximumPayloadBytes must be between 1 and "
                     + MAX_PROTECTED_PAYLOAD_BYTES
                     + ": "
-                    + configRoot.relativize(path));
+                    + configRoot.relativize(path).toString().replace('\\', '/'));
         }
     }
 
