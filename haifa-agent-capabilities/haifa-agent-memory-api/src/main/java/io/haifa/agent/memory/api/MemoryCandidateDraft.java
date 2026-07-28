@@ -2,6 +2,7 @@ package io.haifa.agent.memory.api;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 public record MemoryCandidateDraft(
         String requestKey,
@@ -12,7 +13,8 @@ public record MemoryCandidateDraft(
         List<MemorySourceRef> sources,
         List<MemoryEvidenceRef> evidence,
         MemoryRetentionPolicy retention,
-        boolean automaticApprovalRequested) {
+        boolean automaticApprovalRequested,
+        Optional<MemoryRef> replacesMemoryRef) {
     public MemoryCandidateDraft {
         requestKey = MemoryValues.text(requestKey, "requestKey", 256);
         scope = Objects.requireNonNull(scope);
@@ -23,5 +25,29 @@ public record MemoryCandidateDraft(
         evidence = List.copyOf(Objects.requireNonNull(evidence));
         if (sources.isEmpty() || evidence.isEmpty()) throw new IllegalArgumentException("candidate requires evidence");
         retention = Objects.requireNonNull(retention);
+        replacesMemoryRef = Objects.requireNonNull(replacesMemoryRef, "replacesMemoryRef must not be null");
+    }
+
+    public MemoryCandidateDraft(
+            String requestKey,
+            MemoryScope scope,
+            MemoryKind kind,
+            String subjectKey,
+            MemoryContent content,
+            List<MemorySourceRef> sources,
+            List<MemoryEvidenceRef> evidence,
+            MemoryRetentionPolicy retention,
+            boolean automaticApprovalRequested) {
+        this(
+                requestKey,
+                scope,
+                kind,
+                subjectKey,
+                content,
+                sources,
+                evidence,
+                retention,
+                automaticApprovalRequested,
+                Optional.empty());
     }
 }

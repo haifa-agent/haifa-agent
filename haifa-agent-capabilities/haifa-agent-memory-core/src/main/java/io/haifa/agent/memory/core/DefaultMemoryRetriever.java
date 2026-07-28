@@ -37,9 +37,8 @@ public final class DefaultMemoryRetriever implements MemoryRetriever {
     @Override
     public MemoryRetrieval retrieve(MemoryQuery query) {
         Set<String> terms = terms(query.queryText());
-        var ranked = repository.allMemories().stream()
-                .filter(memory -> memory.status() == MemoryStatus.ACTIVE)
-                .filter(memory -> !memory.expiredAt(query.now()))
+        int fetchLimit = Math.min(10_000, Math.max(query.maxResults(), query.maxResults() * 32));
+        var ranked = repository.searchAuthorizedActive(query, fetchLimit).stream()
                 .filter(memory -> policy.canRead(query, memory))
                 .filter(memory -> query.kinds().isEmpty() || query.kinds().contains(memory.kind()))
                 .map(memory -> result(memory, terms))
@@ -65,9 +64,9 @@ public final class DefaultMemoryRetriever implements MemoryRetriever {
     public Optional<Memory> findAuthorized(
             MemoryId id, MemoryVersion version, TenantRef tenant, PrincipalRef owner, Instant now) {
         return repository
-                .find(id, version)
+                .findAuthorized(
+                        id, version, new io.haifa.agent.memory.api.MemoryActor(tenant, owner, Set.of("memory:read")))
                 .filter(memory -> memory.status() == MemoryStatus.ACTIVE)
-                .filter(memory -> !memory.expiredAt(now))
                 .filter(memory -> memory.scope().tenant().equals(tenant)
                         && memory.scope().owner().equals(owner));
     }

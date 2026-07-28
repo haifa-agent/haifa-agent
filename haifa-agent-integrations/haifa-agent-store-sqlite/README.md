@@ -41,8 +41,17 @@ Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_re
 
 `SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
 
-本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V5 Migration、
+本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V6 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
+
+V6 只新增 `memory_candidate`、`memory_record` 和 `memory_audit_event`。Candidate/Memory 正文以
+显式 schema version、payload type、SHA-256 和明文 JSON BLOB 保存；数据库、WAL/SHM 与备份因此
+都可能包含 Memory 明文，必须沿用本模块的主机权限和备份保护。Audit 只保存操作、引用、可信
+Actor、摘要和安全属性，不保存 Memory 正文，且不提供公共查询 API。
+
+`SqliteSdkProductContributions` 共享同一 Foundation 装配 Persistence、Conversation 与生产 Memory。
+权威证据校验同时核对来源 ID、持久化内容摘要、Tenant、Principal 和 Scope。Conflict 管理、
+Expiry/Purge/Tombstone/Audit 查询均 fail closed，未在 V6 建表。
 Project Application/CLI 已可显式选择本模块；Runtime 的进程重启恢复由注入的 Port 与每次启动唯一
 worker ID 驱动。
 
