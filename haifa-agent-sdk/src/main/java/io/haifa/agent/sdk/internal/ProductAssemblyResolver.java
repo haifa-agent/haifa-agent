@@ -1,5 +1,6 @@
 package io.haifa.agent.sdk.internal;
 
+import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.product.ProductAssembly;
 import io.haifa.agent.sdk.product.ProductAssemblyDiagnostic;
 import io.haifa.agent.sdk.product.ProductAssemblyException;
@@ -9,12 +10,8 @@ import io.haifa.agent.sdk.product.ProductContribution;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ResolvedProductContribution;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -97,23 +94,17 @@ public final class ProductAssemblyResolver {
 
     private static String assemblyDigest(
             ProductProfile profile, Map<ProductCapabilityId, ResolvedProductContribution> contributions) {
-        StringBuilder canonical = new StringBuilder(profile.configurationDigest());
-        new TreeMap<>(contributions).forEach((id, contribution) -> canonical
-                .append('|')
-                .append(id.value())
-                .append(':')
-                .append(contribution.coordinate().externalForm())
-                .append(':')
-                .append(contribution.configurationDigest())
-                .append(':')
-                .append(contribution.suitability()));
-        try {
-            byte[] value = MessageDigest.getInstance("SHA-256")
-                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
-            return "sha256:" + HexFormat.of().formatHex(value);
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is required", exception);
-        }
+        List<String> fields = new ArrayList<>();
+        fields.add("assembly-v1");
+        fields.add(profile.configurationDigest());
+        new TreeMap<>(contributions).forEach((id, contribution) -> {
+            fields.add(id.value());
+            fields.add(contribution.coordinate().providerId());
+            fields.add(contribution.coordinate().version());
+            fields.add(contribution.configurationDigest());
+            fields.add(contribution.suitability().name());
+        });
+        return SdkConfigurationDigest.sha256(fields.toArray(String[]::new));
     }
 
     public record Resolution(ProductAssembly assembly, Map<ProductCapabilityId, ProductContribution> selected) {

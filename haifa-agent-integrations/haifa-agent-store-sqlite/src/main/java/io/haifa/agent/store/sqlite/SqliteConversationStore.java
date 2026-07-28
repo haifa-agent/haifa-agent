@@ -30,6 +30,7 @@ public final class SqliteConversationStore implements ConversationStore {
         Objects.requireNonNull(command, "command must not be null");
         return execute(() -> {
             SdkConversationMapper mapper = unitOfWork.mapper(SdkConversationMapper.class);
+            int inserted = mapper.insertCommand(toRow(command));
             SdkConversationCommandRow existing = mapper.findCommandByIdempotency(
                     command.callerScopeDigest(), command.operation(), command.idempotencyKeyDigest());
             if (existing != null) {
@@ -38,13 +39,10 @@ public final class SqliteConversationStore implements ConversationStore {
                 }
                 return fromRow(existing);
             }
-            if (mapper.findCommandByDispatchKey(command.dispatchKey()) != null) {
+            if (inserted == 0 && mapper.findCommandByDispatchKey(command.dispatchKey()) != null) {
                 throw conflict("CONVERSATION_DISPATCH_CONFLICT");
             }
-            if (mapper.insertCommand(toRow(command)) != 1) {
-                throw conflict("CONVERSATION_COMMAND_WRITE_FAILED");
-            }
-            return command;
+            throw conflict("CONVERSATION_COMMAND_WRITE_FAILED");
         });
     }
 

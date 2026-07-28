@@ -8,6 +8,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.sdk.SdkTestFixtures;
 import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
+import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.ConversationStatus;
 import io.haifa.agent.sdk.conversation.RenameConversationCommand;
@@ -94,5 +95,26 @@ class HaifaAgentFacadeTest {
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("CONVERSATION_UNAVAILABLE");
         }
+    }
+
+    @Test
+    void cachedConversationServiceFailsWithStableSafeErrorAfterClose() {
+        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal", Map.of()))
+                .contributeAll(SdkTestFixtures.baseContributions())
+                .build();
+        var conversations = agent.conversations();
+
+        agent.close();
+
+        assertThatThrownBy(() -> conversations.list(ConversationQuery.active(10)))
+                .isInstanceOf(ConversationException.class)
+                .satisfies(failure -> {
+                    ConversationException error = (ConversationException) failure;
+                    assertThat(error.code()).isEqualTo("AGENT_CLOSED");
+                    assertThat(error.operation()).isEqualTo("conversation.list");
+                    assertThat(error.correlation()).matches("[0-9a-f]{16}");
+                    assertThat(error.getMessage()).isEqualTo("AGENT_CLOSED");
+                    assertThat(error.getCause()).isNull();
+                });
     }
 }

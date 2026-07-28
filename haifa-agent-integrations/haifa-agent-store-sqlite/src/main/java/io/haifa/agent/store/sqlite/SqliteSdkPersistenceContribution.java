@@ -8,6 +8,7 @@ import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 public final class SqliteSdkPersistenceContribution extends AbstractSdkContribution
         implements SdkPersistenceContribution {
@@ -28,6 +29,18 @@ public final class SqliteSdkPersistenceContribution extends AbstractSdkContribut
     @Override
     public RuntimePersistencePorts runtimePersistence() {
         return ports;
+    }
+
+    @Override
+    public <T> T inTransaction(Supplier<T> work) {
+        try {
+            return ports.unitOfWork().execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof IllegalStateException conflict) {
+                throw conflict;
+            }
+            throw exception;
+        }
     }
 
     @Override

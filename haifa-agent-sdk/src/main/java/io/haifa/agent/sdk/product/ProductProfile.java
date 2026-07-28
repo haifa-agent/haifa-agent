@@ -4,6 +4,9 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
+import io.haifa.agent.sdk.api.SdkConfigurationDigest;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -21,6 +24,7 @@ public record ProductProfile(
         String instructions,
         AgentRunBudget budget,
         AgentRunLimits limits,
+        ProductPolicies policies,
         Map<ProductCapabilityId, ProductCapabilityRequirement> capabilityRequirements,
         Set<String> allowedTools,
         Set<String> allowedSkills,
@@ -43,6 +47,7 @@ public record ProductProfile(
         instructions = ProductValues.text(instructions, "instructions", 32_000);
         budget = Objects.requireNonNull(budget, "budget must not be null");
         limits = Objects.requireNonNull(limits, "limits must not be null");
+        policies = Objects.requireNonNull(policies, "policies must not be null");
         capabilityRequirements =
                 Map.copyOf(Objects.requireNonNull(capabilityRequirements, "capabilityRequirements must not be null"));
         capabilityRequirements.forEach((id, requirement) -> {
@@ -65,6 +70,7 @@ public record ProductProfile(
                 instructions,
                 budget,
                 limits,
+                policies,
                 capabilityRequirements,
                 allowedTools,
                 allowedSkills,
@@ -88,10 +94,43 @@ public record ProductProfile(
             Set<String> allowedTools,
             Set<String> allowedSkills,
             Set<String> allowedExtensions) {
+        return create(
+                productId,
+                productVersion,
+                definitionId,
+                definitionVersion,
+                runProfileId,
+                runProfileVersion,
+                instructions,
+                budget,
+                limits,
+                ProductPolicies.safeDefaults(),
+                requirements,
+                allowedTools,
+                allowedSkills,
+                allowedExtensions);
+    }
+
+    public static ProductProfile create(
+            ProductId productId,
+            ProductVersion productVersion,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String runProfileId,
+            String runProfileVersion,
+            String instructions,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            ProductPolicies policies,
+            Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
+            Set<String> allowedTools,
+            Set<String> allowedSkills,
+            Set<String> allowedExtensions) {
         Map<ProductCapabilityId, ProductCapabilityRequirement> safeRequirements = Map.copyOf(requirements);
         Set<String> safeTools = normalized(allowedTools, "allowedTools");
         Set<String> safeSkills = normalized(allowedSkills, "allowedSkills");
         Set<String> safeExtensions = normalized(allowedExtensions, "allowedExtensions");
+        ProductPolicies safePolicies = Objects.requireNonNull(policies, "policies must not be null");
         return new ProductProfile(
                 CURRENT_SCHEMA_VERSION,
                 productId,
@@ -103,6 +142,7 @@ public record ProductProfile(
                 ProductValues.text(instructions, "instructions", 32_000),
                 budget,
                 limits,
+                safePolicies,
                 safeRequirements,
                 safeTools,
                 safeSkills,
@@ -118,6 +158,7 @@ public record ProductProfile(
                         instructions,
                         budget,
                         limits,
+                        safePolicies,
                         safeRequirements,
                         safeTools,
                         safeSkills,
@@ -139,71 +180,74 @@ public record ProductProfile(
             String instructions,
             AgentRunBudget budget,
             AgentRunLimits limits,
+            ProductPolicies policies,
             Map<ProductCapabilityId, ProductCapabilityRequirement> requirements,
             Set<String> allowedTools,
             Set<String> allowedSkills,
             Set<String> allowedExtensions) {
-        StringBuilder canonical = new StringBuilder();
-        canonical
-                .append(schemaVersion)
-                .append('|')
-                .append(productId.value())
-                .append('|')
-                .append(productVersion.value())
-                .append('|')
-                .append(definitionId.value())
-                .append('|')
-                .append(definitionVersion)
-                .append('|')
-                .append(ProductValues.text(runProfileId, "runProfileId", 128))
-                .append('|')
-                .append(ProductValues.text(runProfileVersion, "runProfileVersion", 64))
-                .append('|')
-                .append(ProductValues.text(instructions, "instructions", 32_000))
-                .append('|')
-                .append(budget.maxInputTokens())
-                .append(':')
-                .append(budget.maxOutputTokens())
-                .append(':')
-                .append(budget.maxCachedInputTokens())
-                .append(':')
-                .append(budget.maxToolCalls())
-                .append(':')
-                .append(budget.maxModelCalls())
-                .append(':')
-                .append(budget.maxChildRuns())
-                .append(':')
-                .append(budget.maxCostCurrency())
-                .append(':')
-                .append(budget.maxCostMinorUnits())
-                .append('|')
-                .append(limits.maxIterations())
-                .append(':')
-                .append(limits.maxDepth())
-                .append(':')
-                .append(limits.maxParallelChildren())
-                .append(':')
-                .append(limits.maxWallTimeMillis())
-                .append(':')
-                .append(limits.maxIdleTimeMillis());
-        new TreeMap<>(requirements).forEach((id, requirement) -> canonical
-                .append('|')
-                .append(id.value())
-                .append(':')
-                .append(requirement.mode())
-                .append(':')
-                .append(requirement.minimumSuitability())
-                .append(':')
-                .append(requirement.allowedContributions().stream()
-                        .sorted()
-                        .map(ProductContributionCoordinate::externalForm)
-                        .toList()));
-        canonical.append("|tools=").append(allowedTools.stream().sorted().toList());
-        canonical.append("|skills=").append(allowedSkills.stream().sorted().toList());
-        canonical
-                .append("|extensions=")
-                .append(allowedExtensions.stream().sorted().toList());
-        return ProductValues.digest(canonical.toString());
+        List<String> fields = new ArrayList<>();
+        add(fields, "schema", schemaVersion);
+        add(fields, "productId", productId.value());
+        add(fields, "productVersion", productVersion.value());
+        add(fields, "definitionId", definitionId.value());
+        add(fields, "definitionMajor", definitionVersion.major());
+        add(fields, "definitionMinor", definitionVersion.minor());
+        add(fields, "definitionPatch", definitionVersion.patch());
+        add(fields, "runProfileId", ProductValues.text(runProfileId, "runProfileId", 128));
+        add(fields, "runProfileVersion", ProductValues.text(runProfileVersion, "runProfileVersion", 64));
+        add(fields, "instructions", ProductValues.text(instructions, "instructions", 32_000));
+        add(fields, "budget.maxInputTokens", budget.maxInputTokens());
+        add(fields, "budget.maxOutputTokens", budget.maxOutputTokens());
+        add(fields, "budget.maxCachedInputTokens", budget.maxCachedInputTokens());
+        add(fields, "budget.maxToolCalls", budget.maxToolCalls());
+        add(fields, "budget.maxModelCalls", budget.maxModelCalls());
+        add(fields, "budget.maxChildRuns", budget.maxChildRuns());
+        add(fields, "budget.maxCostCurrency", budget.maxCostCurrency());
+        add(fields, "budget.maxCostMinorUnits", budget.maxCostMinorUnits());
+        add(fields, "limits.maxIterations", limits.maxIterations());
+        add(fields, "limits.maxDepth", limits.maxDepth());
+        add(fields, "limits.maxParallelChildren", limits.maxParallelChildren());
+        add(fields, "limits.maxWallTimeMillis", limits.maxWallTimeMillis());
+        add(fields, "limits.maxIdleTimeMillis", limits.maxIdleTimeMillis());
+        add(fields, "memory.manualReviewRequired", policies.memory().manualReviewRequired());
+        add(fields, "memory.maxCandidateContentChars", policies.memory().maxCandidateContentChars());
+        add(fields, "memory.maxQueryLimit", policies.memory().maxQueryLimit());
+        add(fields, "artifact.maxArtifactBytes", policies.artifact().maxArtifactBytes());
+        add(fields, "artifact.maxArtifactsPerRun", policies.artifact().maxArtifactsPerRun());
+        add(fields, "artifact.maxArtifactBytesPerRun", policies.artifact().maxArtifactBytesPerRun());
+        add(fields, "artifact.rangeSupported", policies.artifact().rangeSupported());
+        add(fields, "artifact.localSoftLimitBytes", policies.artifact().localSoftLimitBytes());
+        add(fields, "artifact.localHardLimitBytes", policies.artifact().localHardLimitBytes());
+        add(fields, "artifact.requiredCompletionGate", policies.artifact().requiredCompletionGate());
+        addSorted(fields, "artifact.allowedMediaType", policies.artifact().allowedMediaTypes());
+        add(fields, "execution.enabled", policies.execution().enabled());
+        add(fields, "execution.hostAccessAllowed", policies.execution().hostAccessAllowed());
+        add(fields, "execution.externalNetworkAllowed", policies.execution().externalNetworkAllowed());
+        add(fields, "execution.maxParallelExecutions", policies.execution().maxParallelExecutions());
+        add(fields, "execution.maxExecutionMillis", policies.execution().maxExecutionMillis());
+        new TreeMap<>(requirements).forEach((id, requirement) -> {
+            add(fields, "capability.id", id.value());
+            add(fields, "capability.mode", requirement.mode().name());
+            add(fields, "capability.minimumSuitability", requirement.minimumSuitability());
+            requirement.allowedContributions().stream().sorted().forEach(coordinate -> {
+                add(fields, "capability.providerId", coordinate.providerId());
+                add(fields, "capability.version", coordinate.version());
+            });
+        });
+        addSorted(fields, "allowedTool", allowedTools);
+        addSorted(fields, "allowedSkill", allowedSkills);
+        addSorted(fields, "allowedExtension", allowedExtensions);
+        return SdkConfigurationDigest.sha256(fields.toArray(String[]::new));
+    }
+
+    private static void add(List<String> fields, String name, Object value) {
+        fields.add(name);
+        fields.add(String.valueOf(value));
+    }
+
+    private static void addSorted(List<String> fields, String name, Set<String> values) {
+        add(fields, name + ".count", values.size());
+        values.stream().sorted().forEach(value -> add(fields, name, value));
     }
 
     private static Set<String> normalized(Set<String> values, String field) {

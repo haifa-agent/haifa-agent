@@ -1,14 +1,9 @@
 package io.haifa.agent.sdk.product;
 
-public final class ProductAssemblyException extends IllegalStateException {
-    private final String code;
+import io.haifa.agent.sdk.api.HaifaAgentException;
 
+public final class ProductAssemblyException extends HaifaAgentException {
     public ProductAssemblyException(String code, String safeMessage) {
-        super(ProductValues.text(safeMessage, "safeMessage", 512));
-        this.code = ProductValues.text(code, "code", 128);
-    }
-
-    public String code() {
-        return code;
+        super(code, "product.assemble", "assembly", safeMessage);
     }
 }

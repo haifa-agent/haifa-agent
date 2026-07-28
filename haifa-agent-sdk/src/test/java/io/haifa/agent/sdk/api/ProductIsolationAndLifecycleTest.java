@@ -3,7 +3,12 @@ package io.haifa.agent.sdk.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.artifact.ArtifactService;
+import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
+import io.haifa.agent.artifact.InMemoryArtifactStore;
 import io.haifa.agent.sdk.SdkTestFixtures;
+import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
+import io.haifa.agent.sdk.contribution.ExecutionPlatformContribution;
 import io.haifa.agent.sdk.product.ProductAssemblyException;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
@@ -124,6 +129,66 @@ class ProductIsolationAndLifecycleTest {
         assertThat(beforeClose).hasValue(1);
         assertThat(failedInitialize).hasValue(1);
         assertThat(failedClose).hasValue(0);
+    }
+
+    @Test
+    void typedArtifactAndExecutionContributionsRequireExplicitProductPolicies() {
+        ProductContributionCoordinate artifactCoordinate = new ProductContributionCoordinate("artifact.memory", "1.0");
+        var artifactProfile = SdkTestFixtures.profile(
+                "artifact-disabled",
+                Map.of(
+                        ProductCapabilities.ARTIFACT,
+                        ProductCapabilityRequirement.required(
+                                ProductCapabilities.ARTIFACT,
+                                Set.of(artifactCoordinate),
+                                ProductProviderSuitability.DEVELOPMENT)));
+        var artifactService = new ArtifactService(
+                new InMemoryArtifactStore(),
+                new InMemoryArtifactPayloadStore(),
+                () -> "artifact-test-id",
+                () -> Instant.parse("2026-07-28T00:00:00Z"));
+        var artifact = new ArtifactPlatformContribution(
+                SdkTestFixtures.metadata(
+                        artifactCoordinate,
+                        ProductCapabilities.ARTIFACT,
+                        SdkConfigurationDigest.sha256("artifact-memory-v1"),
+                        ProductProviderSuitability.DEVELOPMENT),
+                artifactService);
+        var artifactContributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
+        artifactContributions.add(artifact);
+
+        assertThatThrownBy(() -> HaifaAgents.builder(artifactProfile)
+                        .contributeAll(artifactContributions)
+                        .build())
+                .isInstanceOf(ProductAssemblyException.class)
+                .extracting("code")
+                .isEqualTo("ARTIFACT_POLICY_DISABLED");
+
+        ProductContributionCoordinate executionCoordinate = new ProductContributionCoordinate("execution.host", "1.0");
+        var executionProfile = SdkTestFixtures.profile(
+                "execution-disabled",
+                Map.of(
+                        ProductCapabilities.EXECUTION,
+                        ProductCapabilityRequirement.required(
+                                ProductCapabilities.EXECUTION,
+                                Set.of(executionCoordinate),
+                                ProductProviderSuitability.DEVELOPMENT)));
+        var execution = new ExecutionPlatformContribution(
+                SdkTestFixtures.metadata(
+                        executionCoordinate,
+                        ProductCapabilities.EXECUTION,
+                        SdkConfigurationDigest.sha256("execution-host-v1"),
+                        ProductProviderSuitability.DEVELOPMENT),
+                "host-guard");
+        var executionContributions = new java.util.ArrayList<>(SdkTestFixtures.baseContributions());
+        executionContributions.add(execution);
+
+        assertThatThrownBy(() -> HaifaAgents.builder(executionProfile)
+                        .contributeAll(executionContributions)
+                        .build())
+                .isInstanceOf(ProductAssemblyException.class)
+                .extracting("code")
+                .isEqualTo("EXECUTION_POLICY_DISABLED");
     }
 
     private static ProductContribution contribution(

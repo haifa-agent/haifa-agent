@@ -1,5 +1,7 @@
 package io.haifa.agent.sdk.product;
 
+import java.util.Objects;
+
 public record ProductContributionCoordinate(String providerId, String version)
         implements Comparable<ProductContributionCoordinate> {
     public ProductContributionCoordinate {
@@ -13,6 +15,8 @@ public record ProductContributionCoordinate(String providerId, String version)
 
     @Override
     public int compareTo(ProductContributionCoordinate other) {
-        return externalForm().compareTo(other.externalForm());
+        Objects.requireNonNull(other, "other must not be null");
+        int providerComparison = providerId.compareTo(other.providerId);
+        return providerComparison == 0 ? version.compareTo(other.version) : providerComparison;
     }
 }

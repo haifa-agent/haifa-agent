@@ -11,11 +11,20 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
+import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
+import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
+import io.haifa.agent.sdk.contribution.ContextSourceContribution;
+import io.haifa.agent.sdk.contribution.CredentialPlatformContribution;
+import io.haifa.agent.sdk.contribution.ExecutionPlatformContribution;
+import io.haifa.agent.sdk.contribution.McpToolCatalogContribution;
+import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
 import io.haifa.agent.sdk.internal.ProductAssemblyResolver;
+import io.haifa.agent.sdk.internal.SafeConversationService;
 import io.haifa.agent.sdk.product.ProductAssemblyException;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
@@ -29,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Fluent bootstrap builder. Product behavior is selected by Profile, not by hard-coded product branches. */
 public final class HaifaAgentBuilder {
@@ -80,6 +90,29 @@ public final class HaifaAgentBuilder {
         persistence = require(resolution.selected(), ProductCapabilities.PERSISTENCE, SdkPersistenceContribution.class);
         conversation =
                 require(resolution.selected(), ProductCapabilities.CONVERSATION, SdkConversationContribution.class);
+        ContextSourceContribution context =
+                optional(resolution.selected(), ProductCapabilities.CONTEXT, ContextSourceContribution.class);
+        MemoryPlatformContribution memory =
+                optional(resolution.selected(), ProductCapabilities.MEMORY, MemoryPlatformContribution.class);
+        ArtifactPlatformContribution artifact =
+                optional(resolution.selected(), ProductCapabilities.ARTIFACT, ArtifactPlatformContribution.class);
+        PolicyPlatformContribution policy =
+                optional(resolution.selected(), ProductCapabilities.POLICY, PolicyPlatformContribution.class);
+        ApprovalPlatformContribution approval =
+                optional(resolution.selected(), ProductCapabilities.APPROVAL, ApprovalPlatformContribution.class);
+        CredentialPlatformContribution credential =
+                optional(resolution.selected(), ProductCapabilities.CREDENTIAL, CredentialPlatformContribution.class);
+        optional(resolution.selected(), ProductCapabilities.MCP, McpToolCatalogContribution.class);
+        ExecutionPlatformContribution execution =
+                optional(resolution.selected(), ProductCapabilities.EXECUTION, ExecutionPlatformContribution.class);
+        if (artifact != null && profile.policies().artifact().maxArtifactsPerRun() == 0) {
+            throw new ProductAssemblyException(
+                    "ARTIFACT_POLICY_DISABLED", "Artifact contribution is forbidden by the Product Profile policy");
+        }
+        if (execution != null && !profile.policies().execution().enabled()) {
+            throw new ProductAssemblyException(
+                    "EXECUTION_POLICY_DISABLED", "Execution contribution is forbidden by the Product Profile policy");
+        }
         validateDeclaredAliases(resolution.selected());
 
         List<ProductContribution> initialized = initializeSelected(resolution);
@@ -127,12 +160,35 @@ public final class HaifaAgentBuilder {
             if (skill instanceof SkillPlatformContribution platform) {
                 runtimeBuilder.skillPlatform(platform.catalog(), platform.contentLoader());
             }
+            if (context != null) {
+                context.sources().forEach(runtimeBuilder::registerContextSource);
+            }
+            if (memory != null) {
+                runtimeBuilder.memory(memory.service(), memory.retriever(), memory.audit());
+            }
+            if (policy != null) {
+                runtimeBuilder.policyStores(policy.decisions(), policy.authorizationEvidence());
+            }
+            if (approval != null) {
+                runtimeBuilder.approvalVerification(approval.verification());
+            }
+            if (credential != null) {
+                runtimeBuilder.credentialBroker(credential.broker());
+            }
 
             var runtime = runtimeBuilder.build();
             var conversationService = new DefaultConversationService(
                     profile, runtime, persistence, conversation.conversationStore(), callers, ids, time);
+            AtomicBoolean lifecycleClosed = new AtomicBoolean();
             return new HaifaAgent(
-                    resolution.assembly(), new AgentRuns(runtime), conversationService, scheduler, initialized);
+                    resolution.assembly(),
+                    new AgentRuns(runtime),
+                    new SafeConversationService(conversationService, lifecycleClosed),
+                    memory == null ? java.util.Optional.empty() : java.util.Optional.of(memory.service()),
+                    artifact == null ? java.util.Optional.empty() : java.util.Optional.of(artifact.service()),
+                    scheduler,
+                    initialized,
+                    lifecycleClosed);
         } catch (RuntimeException | Error exception) {
             scheduler.close();
             closeAfterFailedBuild(initialized, exception);
@@ -212,6 +268,15 @@ public final class HaifaAgentBuilder {
             throw new ProductAssemblyException(
                     "SKILL_ALIAS_UNAVAILABLE", "Product Profile allows a Skill alias not supplied by its contribution");
         }
+        ProductContribution mcp = selected.get(ProductCapabilities.MCP);
+        if (mcp instanceof McpToolCatalogContribution platform) {
+            if (!profile.allowedTools().containsAll(platform.toolAliases())
+                    || !availableTools.containsAll(platform.toolAliases())) {
+                throw new ProductAssemblyException(
+                        "MCP_TOOL_BINDING_INVALID",
+                        "Every MCP Tool alias must be explicitly allowed and supplied by the unified Tool catalog");
+            }
+        }
     }
 
     private static <T> T require(
@@ -219,6 +284,20 @@ public final class HaifaAgentBuilder {
             ProductCapabilityId capability,
             Class<T> expectedType) {
         ProductContribution value = selected.get(capability);
+        if (!expectedType.isInstance(value)) {
+            throw new ProductAssemblyException(
+                    "CAPABILITY_IMPLEMENTATION_INVALID",
+                    "Capability " + capability.value() + " requires " + expectedType.getSimpleName());
+        }
+        return expectedType.cast(value);
+    }
+
+    private static <T> T optional(
+            Map<ProductCapabilityId, ProductContribution> selected,
+            ProductCapabilityId capability,
+            Class<T> expectedType) {
+        ProductContribution value = selected.get(capability);
+        if (value == null) return null;
         if (!expectedType.isInstance(value)) {
             throw new ProductAssemblyException(
                     "CAPABILITY_IMPLEMENTATION_INVALID",

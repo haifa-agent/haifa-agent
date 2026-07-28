@@ -22,6 +22,7 @@ import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
+import io.haifa.agent.sdk.conversation.ConversationException;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
@@ -40,6 +41,8 @@ import java.sql.ResultSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
@@ -118,6 +121,87 @@ class SqliteSdkPersonalFixtureTest {
         assertNoCodingProductTables(directory);
     }
 
+    @Test
+    void coordinatesConcurrentStartAndSubmitAcrossTwoSdkInstances(@TempDir Path directory) throws Exception {
+        ProductProfile profile = personalProfile();
+        var protector =
+                new AesGcmModelContinuationProtector(new SecretKeySpec(new byte[32], "AES"), new SecureRandom());
+        AtomicInteger ids = new AtomicInteger();
+        SqliteSdkContributions firstStore = sqliteContributions(directory, protector);
+        SqliteSdkContributions secondStore = sqliteContributions(directory, protector);
+
+        try (HaifaAgent first = agent(profile, firstStore, ids, "first");
+                HaifaAgent second = agent(profile, secondStore, ids, "second");
+                var executor = Executors.newFixedThreadPool(3)) {
+            CountDownLatch startGate = new CountDownLatch(1);
+            var firstStart = executor.submit(() -> {
+                startGate.await();
+                return first.conversations().start(new StartConversationCommand("shared-start", "Shared", "hello"));
+            });
+            var secondStart = executor.submit(() -> {
+                startGate.await();
+                return second.conversations().start(new StartConversationCommand("shared-start", "Shared", "hello"));
+            });
+            startGate.countDown();
+
+            var startedByFirst = firstStart.get();
+            var startedBySecond = secondStart.get();
+            assertThat(startedBySecond.sessionId()).isEqualTo(startedByFirst.sessionId());
+            assertThat(startedBySecond.activeRunId()).isEqualTo(startedByFirst.activeRunId());
+            waitUntilTerminal(first, startedByFirst.activeRunId().orElseThrow());
+            var idle = first.conversations().find(startedByFirst.sessionId()).orElseThrow();
+            assertThat(idle.activeRunId()).isEmpty();
+
+            CountDownLatch submitGate = new CountDownLatch(1);
+            var firstSubmit = executor.submit(() -> submit(
+                    first,
+                    new SubmitConversationTurnCommand(idle.sessionId(), idle.revision(), "first-submit", "from first"),
+                    submitGate));
+            var secondSubmit = executor.submit(() -> submit(
+                    second,
+                    new SubmitConversationTurnCommand(
+                            idle.sessionId(), idle.revision(), "second-submit", "from second"),
+                    submitGate));
+            var racingReconciler = executor.submit(() -> {
+                submitGate.await();
+                return second.conversations().find(idle.sessionId());
+            });
+            submitGate.countDown();
+            List<Object> submitResults = List.of(firstSubmit.get(), secondSubmit.get());
+            assertThat(racingReconciler.get()).isPresent();
+
+            assertThat(submitResults.stream()
+                            .filter(io.haifa.agent.sdk.conversation.ConversationRecord.class::isInstance))
+                    .hasSize(1);
+            assertThat(submitResults.stream().filter(ConversationException.class::isInstance))
+                    .singleElement()
+                    .satisfies(failure -> {
+                        ConversationException error = (ConversationException) failure;
+                        assertThat(error.code()).isEqualTo("CONVERSATION_ACTIVE");
+                        assertThat(error.operation()).isEqualTo("conversation.submit");
+                        assertThat(error.correlation()).matches("[0-9a-f]{16}");
+                        assertThat(error.getMessage())
+                                .doesNotContain("from first", "from second", directory.toString());
+                        assertThat(error.getCause()).isNull();
+                    });
+            var accepted = submitResults.stream()
+                    .filter(io.haifa.agent.sdk.conversation.ConversationRecord.class::isInstance)
+                    .map(io.haifa.agent.sdk.conversation.ConversationRecord.class::cast)
+                    .findFirst()
+                    .orElseThrow();
+            waitUntilTerminal(first, accepted.activeRunId().orElseThrow());
+            assertThat(first.conversations()
+                            .find(idle.sessionId())
+                            .orElseThrow()
+                            .activeRunId())
+                    .isEmpty();
+            assertThat(first.conversations().list(ConversationQuery.active(10)).items())
+                    .singleElement()
+                    .extracting("sessionId")
+                    .isEqualTo(idle.sessionId());
+        }
+    }
+
     private static ProductProfile personalProfile() {
         Map<ProductCapabilityId, ProductCapabilityRequirement> requirements = Map.of(
                 ProductCapabilities.MODEL,
@@ -143,6 +227,36 @@ class SqliteSdkPersonalFixtureTest {
                 Set.of(),
                 Set.of(),
                 Set.of());
+    }
+
+    private static HaifaAgent agent(
+            ProductProfile profile, SqliteSdkContributions store, AtomicInteger ids, String instance) {
+        return HaifaAgents.builder(profile)
+                .contribute(modelContribution())
+                .contribute(store.persistence())
+                .contribute(store.conversation())
+                .identifierGenerator(() -> "personal-" + instance + "-" + ids.incrementAndGet())
+                .timeProvider(() -> SqliteTestSupport.NOW)
+                .build();
+    }
+
+    private static Object submit(HaifaAgent agent, SubmitConversationTurnCommand command, CountDownLatch startGate)
+            throws Exception {
+        startGate.await();
+        try {
+            return agent.conversations().submit(command);
+        } catch (IllegalStateException expected) {
+            return expected;
+        }
+    }
+
+    private static void waitUntilTerminal(HaifaAgent agent, io.haifa.agent.core.run.AgentRunId runId) throws Exception {
+        for (int attempt = 0; attempt < 200; attempt++) {
+            var snapshot = agent.runs().find(runId).orElseThrow();
+            if (snapshot.status().isTerminal()) return;
+            Thread.sleep(10);
+        }
+        throw new AssertionError("Run did not become terminal");
     }
 
     private static ModelContribution modelContribution() {

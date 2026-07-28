@@ -140,6 +140,46 @@ class SqliteConversationStoreTest {
             assertThatThrownBy(() -> store.rename(first, 0, "stale", NOW))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("CONVERSATION_REVISION_STALE");
+
+            AgentSessionId competing = new AgentSessionId("conversation-revision-race");
+            provision(foundation, competing);
+            store.create(conversation(competing));
+            try (var executor = Executors.newFixedThreadPool(2)) {
+                var start = new java.util.concurrent.CountDownLatch(1);
+                Callable<Boolean> rename = () -> {
+                    start.await();
+                    try {
+                        store.rename(competing, 0, "renamed", NOW.plusSeconds(2));
+                        return true;
+                    } catch (IllegalStateException expected) {
+                        return false;
+                    }
+                };
+                Callable<Boolean> archive = () -> {
+                    start.await();
+                    try {
+                        store.changeStatus(
+                                competing,
+                                0,
+                                ConversationStatus.ACTIVE,
+                                ConversationStatus.ARCHIVED,
+                                NOW.plusSeconds(2));
+                        return true;
+                    } catch (IllegalStateException expected) {
+                        return false;
+                    }
+                };
+                var attempts = List.of(executor.submit(rename), executor.submit(archive));
+                start.countDown();
+                assertThat(attempts.stream().map(future -> {
+                            try {
+                                return future.get();
+                            } catch (Exception exception) {
+                                throw new AssertionError(exception);
+                            }
+                        }))
+                        .containsExactlyInAnyOrder(true, false);
+            }
         }
     }
 

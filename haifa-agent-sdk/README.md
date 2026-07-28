@@ -67,4 +67,17 @@ try (HaifaAgent agent = HaifaAgents.builder()
 - SDK 不依赖任何产品 Application。Coding、Personal、Document 等上层产品用各自
   `ProductProfile` 选择不同模块实现，但都复用同一 Runtime 状态机和 SDK 装配器。
 
+## 政策、扩展与错误
+
+- `ProductPolicies` 将 Memory 人工审查与查询边界、Artifact 配额/Media Type/本地容量门禁及
+  Execution 主机/网络/并发/超时政策冻结进 Profile canonical digest；本阶段不允许关闭
+  Memory Candidate 人工审查。
+- Model、Tool、Skill、MCP Tool binding、Context、Memory、Artifact、Policy、Approval、
+  Credential 和 Execution/Sandbox 均通过显式 typed Contribution 注册。MCP alias 还必须同时
+  出现在 Profile allowlist 与统一 Tool Catalog 中，不存在第二条 MCP 执行通道。
+- `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
+  `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
+- `HaifaAgent.memory()` 与 `HaifaAgent.artifacts()` 只在 Profile 选中了对应 typed Contribution
+  时返回应用服务；Phase 1 不提供这两项能力的生产 SQLite/Payload Provider。
+
 当前开发范围由 `docs/20-agent-sdk-product-session-memory-artifact-foundation.md` 定义。
