@@ -28,6 +28,22 @@ public record TerminalRecovery(Category category, String code, String action) {
                     Category.TERMINAL_CAPABILITY,
                     "MODIFIED_ENTER_UNAVAILABLE",
                     "Use Ctrl+J for a newline and Alt/Option+Enter for follow-up."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP",
+                    "Map Shift+Enter to ESC[13;2u and Alt+Enter to ESC[13;3u in Windows Terminal."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "WEZTERM_OPTION_ENTER_REMAP",
+                    "Map Option+Enter to ESC[13;3u if the terminal reserves the shortcut."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "ALACRITTY_OPTION_ENTER_REMAP",
+                    "Map Option+Enter to ESC[13;3u if it arrives as plain Enter."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "APPLE_TERMINAL_MODIFIED_ENTER_LIMITED",
+                    "Use Ctrl+J for newline; modified Enter may not work over SSH."),
             entry(Category.TERMINAL_CAPABILITY, "TERMINAL_TOO_SMALL", "Resize the terminal to at least 60x16."),
             entry(Category.INTERRUPTED, "RUN_INTERRUPTED", "Edit the preserved draft, then submit again."),
             entry(

@@ -51,3 +51,28 @@ Spike，不连接 Provider、SQLite、Workspace 或执行服务。生产 CLI 已
 先运行 `test-compile`，再把 Coding Terminal 的 `target/test-classes`、`target/classes` 和
 `dependency:build-classpath` 结果组合为绝对 classpath，传给 `--classpath`。证据目录必须位于源码
 仓库之外。
+
+## Terminal UI Phase C 跨平台质量门禁
+
+`terminal-ui-phase-c-quality.mjs` 在当前操作系统运行 Phase C 的确定性测试集合，覆盖 Resize 状态保持、
+ANSI16/ANSI256/TrueColor/NoColor、CJK/emoji/组合字符与 cell width、修饰 Enter、非 TTY fail-closed
+以及 Program 生命周期。脚本有硬超时，失败返回非零，证据目录必须是源码仓库外一个尚不存在的绝对
+路径：
+
+```bash
+node scripts/terminal-ui-phase-c-quality.mjs \
+  --run-root /tmp/haifa-terminal-phase-c-001 \
+  --timeout-seconds 600
+```
+
+Windows PowerShell 示例：
+
+```powershell
+node .\scripts\terminal-ui-phase-c-quality.mjs `
+  --run-root D:\haifa-agent-test-runs\terminal-phase-c-001 `
+  --timeout-seconds 600
+```
+
+输出的 `manifest.json` 将自动化结果和真实 PTY/ConPTY 结果分开。脚本不会把当前机器的单元测试冒充
+其他操作系统的实机验证；macOS、Linux、Windows 与 WSL 实机项在没有对应证据时保持 `NOT_RUN`。
+Windows 动态 Resize 沿用历史三次上限，保持 `SKIPPED_AFTER_3_ATTEMPTS`，不会自动发起第四次尝试。

@@ -51,4 +51,19 @@ class Tui4jTerminalThemeTest {
         assertThat(theme.queued("queued")).isEqualTo(" queued ");
         assertThat(theme.focus("focus")).isEqualTo("focus");
     }
+
+    @Test
+    void preservesTextAndClosesStylesForAnsi16Ansi256AndTrueColorProfiles() {
+        for (ColorProfile profile :
+                new ColorProfile[] {ColorProfile.ANSI, ColorProfile.ANSI256, ColorProfile.TrueColor}) {
+            renderer.setColorProfile(profile);
+            renderer.setHasDarkBackground(true);
+
+            String rendered = theme.error("错误 🚀");
+
+            assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(rendered))
+                    .isEqualTo(" 错误 🚀 ");
+            assertThat(rendered).contains("\u001B[").endsWith("\u001B[0m");
+        }
+    }
 }

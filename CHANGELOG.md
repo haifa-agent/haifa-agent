@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Coding Terminal Phase C 新增 grapheme/cell-width 安全编辑、完整 Resize 状态保持、ANSI16/256/
+  TrueColor/NoColor 回归、修饰 Enter 兼容诊断，以及在产品 Runtime 装配前执行的非 TTY fail-closed
+  门禁。
 - 修复 Coding Terminal 在 Run 已进入 `COMPLETED`、`FAILED`、`CANCELLED` 或 `TIMEOUT` 后仍保留旧
   active Run 的问题；同一 Run 随后到达的 Checkpoint/Resource 事件不会重新激活它，下一次 Enter
   会创建新 Turn，而不是向已结束的 Run 发送 Steer。

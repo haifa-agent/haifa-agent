@@ -299,6 +299,40 @@ class Tui4jTerminalViewTest {
                 .doesNotContain("\u001B");
     }
 
+    @Test
+    void clipsCjkAndEmojiByTerminalCellsAndStripsInjectedControls() {
+        TerminalUiState initial = TerminalUiState.initial(60, 16);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(item(
+                        "tool",
+                        TranscriptItem.Kind.TOOL,
+                        "workspace\u001B.read",
+                        "中".repeat(40) + "\tSAFE\u001B[31m",
+                        "SUCCEEDED",
+                        true)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String rendered = view.render(state, transcript(state), editor(60), true, false);
+
+        assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 59);
+        assertThat(rendered).doesNotContain("\u001B", "\t").contains("workspace.read", "SAFE");
+    }
+
     private TranscriptItem item(
             String id, TranscriptItem.Kind kind, String title, String body, String status, boolean expanded) {
         return new TranscriptItem(id, kind, title, body, status, expanded);

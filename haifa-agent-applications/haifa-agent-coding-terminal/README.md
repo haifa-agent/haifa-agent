@@ -83,8 +83,10 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 
 Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示
 `enter steer · alt+enter follow-up · esc interrupt`。macOS 的 Option 对应 Terminal Alt；
-`Shift+Enter` 和 `Ctrl+J` 都用于换行。Windows Terminal、WezTerm、Alacritty 等终端的修饰 Enter
-映射与跨平台能力诊断属于 Phase C 的平台门禁；Terminal 只给出可执行 fallback，不修改用户终端配置。
+`Shift+Enter` 和 `Ctrl+J` 都用于换行。Phase C 会从终端能力白名单中识别 Windows Terminal、
+WezTerm、Alacritty、Apple Terminal 和常见受限终端：存在修饰 Enter 冲突时显示可执行 remap 或
+`Ctrl+J` fallback，但不读取秘密、不写入用户终端配置。非交互输入或 `TERM=dumb` 在装配产品 Runtime
+前以稳定 `TUI_UNAVAILABLE` 失败。
 
 Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 
@@ -109,6 +111,11 @@ tick 重试，不会终止渲染轮询或截断后续回复。
 启动 UI 时进入 alternate screen 并清空独立屏幕缓冲区，因此启动命令和初始化日志不占用 TUI 行；
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
 keypad 和光标。
+
+Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
+序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width
+对齐。Transcript 和固定区域同样按 cell width 截断，并在渲染前移除 ESC、控制字符和 Tab 注入。
+颜色语义覆盖 TrueColor、ANSI256、ANSI16 和 NoColor；无色模式仍保留相同文字、状态和顺序。
 
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn，Active Enter 发送 Steer；

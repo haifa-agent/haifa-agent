@@ -114,8 +114,10 @@ final class Tui4jTerminalView {
         status(state, newOutputPending).ifPresent(lines::add);
         state.recoverableError().ifPresent(value -> {
             TerminalRecovery recovery = TerminalRecovery.fromCode(value);
-            lines.add(theme.error(recovery.category().label() + " · " + recovery.code()));
-            if (!compact) lines.add(theme.error("  " + recovery.action()));
+            java.util.function.Function<String, String> recoveryStyle =
+                    recovery.category() == TerminalRecovery.Category.TERMINAL_CAPABILITY ? theme::queued : theme::error;
+            lines.add(recoveryStyle.apply(recovery.category().label() + " · " + recovery.code()));
+            if (!compact) lines.add(recoveryStyle.apply("  " + recovery.action()));
         });
         state.selector()
                 .ifPresentOrElse(
@@ -136,7 +138,7 @@ final class Tui4jTerminalView {
 
     private String transcriptItem(TranscriptItem item) {
         String status = item.status().toLowerCase(Locale.ROOT);
-        String title =
+        String title = sanitize(
                 switch (item.kind()) {
                     case USER -> "You";
                     case ASSISTANT -> item.title();
@@ -145,7 +147,7 @@ final class Tui4jTerminalView {
                     case APPROVAL -> item.title() + " [" + status + "]";
                     case RESOURCE -> "Resource · " + item.title() + " [" + status + "]";
                     case ERROR -> "Error · " + item.title() + " [" + status + "]";
-                };
+                });
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
         String content =
@@ -197,7 +199,7 @@ final class Tui4jTerminalView {
 
     private java.util.Optional<String> status(TerminalUiState state, boolean newOutputPending) {
         List<String> parts = new ArrayList<>();
-        String value = state.status().strip();
+        String value = sanitize(state.status().strip());
         if (!value.equalsIgnoreCase("idle")
                 && !(state.recoverableError().isPresent() && value.equalsIgnoreCase("Recovery required"))) {
             parts.add(value);
@@ -259,7 +261,7 @@ final class Tui4jTerminalView {
     }
 
     private String meaningful(String value) {
-        return value == null ? "" : value.strip();
+        return value == null ? "" : sanitize(value.strip());
     }
 
     private int visualRows(List<String> regions) {
@@ -275,9 +277,13 @@ final class Tui4jTerminalView {
 
     private String sanitize(String value) {
         StringBuilder safe = new StringBuilder(value.length());
-        value.codePoints()
-                .filter(codePoint -> codePoint == '\t' || !Character.isISOControl(codePoint))
-                .forEach(safe::appendCodePoint);
+        value.codePoints().forEach(codePoint -> {
+            if (codePoint == '\t') {
+                safe.append("    ");
+            } else if (!Character.isISOControl(codePoint)) {
+                safe.appendCodePoint(codePoint);
+            }
+        });
         return safe.toString();
     }
 }
