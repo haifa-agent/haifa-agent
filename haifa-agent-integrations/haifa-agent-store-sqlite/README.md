@@ -1,5 +1,20 @@
 # Haifa Agent SQLite Runtime Store
 
+## V5 SDK Conversation
+
+Runtime Migration V5 新增产品中立的 `sdk_conversation` 与 `sdk_conversation_command`：
+
+- `sdk_conversation` 只保存列表、归档和恢复需要的 metadata 及权威 Session/Run 引用，不复制
+  Runtime Message 或 Run 正文；
+- Tenant/Principal、status、last activity、revision、active dispatch/run 具有固定列、索引和
+  CHECK/外键约束；不使用 `ON DELETE CASCADE`，本期也不提供 Session 删除；
+- `sdk_conversation_command` 保存 caller scope、operation、idempotency key、canonical request
+  digest、dispatch key、结果 Run/revision，用于同 key 去重和跨崩溃窗口恢复；
+- `SqliteConversationStore` 实现 SDK Store Port，所有修改使用 revision 条件更新；列表和搜索使用
+  稳定 activity/session Cursor，搜索会转义 SQL `LIKE` 通配符；
+- `SqliteSdkContributions` 基于同一个 `SqliteStoreFoundation` 显式提供 Runtime Persistence 与
+  Conversation 两个 SDK Contribution，SDK 不反向依赖本模块。
+
 ## V4 Interaction / Run Input / Runtime Journal
 
 Runtime Migration V4 在不修改 V1～V3 的前提下完成 11 号能力 Task 02：
@@ -26,7 +41,7 @@ Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_re
 
 `SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
 
-本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V4 Migration、
+本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V5 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
 Project Application/CLI 已可显式选择本模块；Runtime 的进程重启恢复由注入的 Port 与每次启动唯一
 worker ID 驱动。
@@ -45,7 +60,7 @@ worker ID 驱动。
 ## 初始化与所有权
 
 调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成纯 Runtime 初始化；拥有额外
-Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V4 原文的完整 Migration 集合，
+Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V5 原文的完整 Migration 集合，
 并可传入由 Application 自己拥有的静态 `MapperXml`。附加 Mapper 与内建 Mapper 使用相同的
 namespace/statement 唯一性、`${}` 禁止和启动期解析校验：
 

@@ -128,6 +128,12 @@ public final class AgentSession {
         changeStatus(AgentSessionStatus.ARCHIVED, at, false);
     }
 
+    /** Restores an archived conversation without changing its stable session identity. */
+    public void unarchive(Instant at) {
+        requireStatus(AgentSessionStatus.ARCHIVED);
+        changeStatus(AgentSessionStatus.ACTIVE, at, false);
+    }
+
     public void close(Instant at) {
         if (status != AgentSessionStatus.ACTIVE && status != AgentSessionStatus.ARCHIVED) {
             throw new IllegalStateException("only active or archived sessions can be closed");
