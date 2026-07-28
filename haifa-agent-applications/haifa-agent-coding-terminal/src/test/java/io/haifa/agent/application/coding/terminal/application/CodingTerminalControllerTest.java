@@ -3,8 +3,8 @@ package io.haifa.agent.application.coding.terminal.application;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
+import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
-import io.haifa.agent.application.coding.terminal.jline.TerminalInput;
 import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
@@ -130,7 +130,7 @@ class CodingTerminalControllerTest {
 
         assertThat(controller.state().selector()).isPresent();
         assertThat(controller.state().selector().orElseThrow().options())
-                .containsExactlyElementsOf(io.haifa.agent.application.coding.terminal.jline.JLineCompleter.COMMANDS);
+                .containsExactlyElementsOf(TerminalCompletionProvider.COMMANDS);
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 

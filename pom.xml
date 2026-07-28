@@ -40,7 +40,7 @@
         <mcp.sdk.version>2.0.0</mcp.sdk.version>
         <mybatis.version>3.5.19</mybatis.version>
         <sqlite.jdbc.version>3.53.1.0</sqlite.jdbc.version>
-        <jline.version>3.30.0</jline.version>
+        <tui4j.jline-backend.version>3.30.0</tui4j.jline-backend.version>
         <tui4j.version>0.3.3</tui4j.version>
 
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
@@ -137,23 +137,8 @@
             </dependency>
             <dependency>
                 <groupId>org.jline</groupId>
-                <artifactId>jline-terminal</artifactId>
-                <version>${jline.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.jline</groupId>
-                <artifactId>jline-reader</artifactId>
-                <version>${jline.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.jline</groupId>
-                <artifactId>jline-style</artifactId>
-                <version>${jline.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.jline</groupId>
                 <artifactId>jline-terminal-jni</artifactId>
-                <version>${jline.version}</version>
+                <version>${tui4j.jline-backend.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.williamcallahan</groupId>

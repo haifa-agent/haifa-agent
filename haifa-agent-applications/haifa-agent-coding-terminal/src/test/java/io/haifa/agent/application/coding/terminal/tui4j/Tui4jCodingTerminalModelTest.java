@@ -11,7 +11,7 @@ import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
-import io.haifa.agent.application.coding.terminal.jline.TerminalInput;
+import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;

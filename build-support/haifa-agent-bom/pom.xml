@@ -128,23 +128,8 @@
             </dependency>
             <dependency>
                 <groupId>org.jline</groupId>
-                <artifactId>jline-terminal</artifactId>
-                <version>${jline.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.jline</groupId>
-                <artifactId>jline-reader</artifactId>
-                <version>${jline.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.jline</groupId>
-                <artifactId>jline-style</artifactId>
-                <version>${jline.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.jline</groupId>
                 <artifactId>jline-terminal-jni</artifactId>
-                <version>${jline.version}</version>
+                <version>${tui4j.jline-backend.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.williamcallahan</groupId>

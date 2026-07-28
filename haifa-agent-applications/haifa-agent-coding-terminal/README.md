@@ -34,17 +34,19 @@ haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.j
 ## tui4j 迁移状态
 
 迁移采用三阶段和两次人工门禁。人工已批准在动态 Resize 延期的前提下进入 Stage B；当前生产
-`CodingTerminalApplication` 和 CLI Terminal 路由已切换到 tui4j `Program / Model / update / view`。
-不存在长期 `JLINE/TUI4J` 双实现开关。tui4j `0.3.3` 由本模块直接依赖，项目依赖管理继续把其传递
-的 JLine 收敛到 `3.30.0`。
+`CodingTerminalApplication` 和 CLI Terminal 路由只使用 tui4j `Program / Model / update / view`。
+旧 JLine 生命周期、编辑器、KeyMap、Completer、Display、Renderer、测试和直接依赖均已删除。
+项目代码不得导入 `org.jline`；架构测试和 Maven Enforcer 会阻止旧实现回流。
+
+tui4j `0.3.3` 由本模块直接依赖。该第三方库内部仍使用 `jline-terminal-jni` 作为跨平台终端后端，
+项目依赖管理仅把这一传递后端收敛到 `3.30.0`；这不是项目保留的 JLine UI 实现。
 
 Windows ConPTY Spike 已证明 `Program / Model / update / view`、viewport、textarea、
 `Program.send()`、alternate screen、Unicode 粘贴及正常/Escape/Ctrl+C/异常退出可以运行；但动态
 Resize 在三次调整后仍会丢失 Header/Diagnostics/Transcript 区域，已标记
-`SKIPPED_AFTER_3_ATTEMPTS` 并延期。旧 JLine 生命周期、编辑器、KeyMap、Completer、Display 和
-Renderer 只作为 Gate B 前的可回退实现保留；人工通过 Gate B 前不删除。
+`SKIPPED_AFTER_3_ATTEMPTS` 并延期。当前没有旧实现回退路径。
 
-非 TTY 自定义流会被 tui4j/JLine 后端报告为 `1x1`，导致多帧 Renderer 输出被截断。该自动化路径
+非 TTY 自定义流会被 tui4j 内部终端后端报告为 `1x1`，导致多帧 Renderer 输出被截断。该自动化路径
 连续三轮调整仍未通过，已按规则跳过；输入语义由 Model/Reducer 测试覆盖，真实显示与退出恢复留给
 Windows ConPTY Gate B。
 
@@ -64,8 +66,8 @@ Widgets Below
 Footer
 ```
 
-终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`；JLine 3.30.0 仅作为 tui4j 的终端
-后端及旧回退实现暂留。Runtime 回调只写入有界 Action Queue；50ms tick 在 Program 事件循环中排空
+终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
+50ms tick 在 Program 事件循环中排空
 队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成 View。空闲输入期间仍可归约 Runtime
 事件和刷新界面。
 

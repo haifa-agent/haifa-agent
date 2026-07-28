@@ -41,7 +41,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Terminal shell orchestration; no ProcessBuilder/JLine builtin path exists here. */
+/** Terminal shell orchestration; no ProcessBuilder or alternate builtin terminal path exists here. */
 final class CliCodingShellService implements CodingShellService {
     private final CodingSessionService sessions;
     private final ProjectExecutionToolOperations operations;
