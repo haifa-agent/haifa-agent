@@ -9,5 +9,9 @@
 - `haifa-agent-cli`：最高层生产装配与唯一 shaded 可执行制品，复用同一个 Runtime、Project、
   Workspace、Policy、Tool、Execution、Persistence 和 `CodingSessionService`，同时提供 Terminal
   默认入口与兼容的 `-m` one-shot 模式。
-- `haifa-agent-personal-assistant-web`：Personal Assistant 的独立 React 前端与 OpenAPI 设计契约；
-  当前只使用浏览器内 Mock，不包含后端实现，默认开发端口为 `20000`。
+- `haifa-agent-personal-assistant-application`：纯 Java Personal 产品用例、Product Profile，以及
+  Tool、Skill、MCP 统一 Pipeline 装配；不依赖 Spring 或 SQLite 实现；
+- `haifa-agent-personal-assistant-server`：Spring Boot WebFlux、SQLite、版本化 HTTP/SSE DTO、
+  OpenAPI 与 executable JAR；默认监听 `127.0.0.1:20000`；
+- `haifa-agent-personal-assistant-web`：独立 React 前端。前端历史 Mock/API 假设不是后端代码事实，
+  以 Server v1 DTO 和 OpenAPI 为准。

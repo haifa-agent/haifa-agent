@@ -127,6 +127,16 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-personal-assistant-application</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-personal-assistant-server</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.jline</groupId>
                 <artifactId>jline-terminal-jni</artifactId>
                 <version>${tui4j.jline-backend.version}</version>

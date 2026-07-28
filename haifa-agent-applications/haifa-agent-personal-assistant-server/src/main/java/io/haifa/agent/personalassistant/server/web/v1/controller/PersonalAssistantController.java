@@ -1,0 +1,235 @@
+package io.haifa.agent.personalassistant.server.web.v1.controller;
+
+import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
+import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
+import io.haifa.agent.sdk.conversation.ConversationStatus;
+import java.net.URI;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/v1")
+public final class PersonalAssistantController {
+    private final PersonalAssistantApplication application;
+    private final PersonalApiMapper mapper;
+    private final PersonalAssistantProperties properties;
+
+    public PersonalAssistantController(
+            PersonalAssistantApplication application,
+            PersonalApiMapper mapper,
+            PersonalAssistantProperties properties) {
+        this.application = application;
+        this.mapper = mapper;
+        this.properties = properties;
+    }
+
+    @GetMapping("/bootstrap")
+    PersonalApiDtos.Bootstrap bootstrap() {
+        return new PersonalApiDtos.Bootstrap(
+                "Haifa Personal Assistant",
+                "v1",
+                "connected",
+                properties.caller().principal(),
+                List.of("conversation", "usage", "tool", "skill", "mcp", "memory", "interaction", "sse"),
+                application.productDigest());
+    }
+
+    @GetMapping("/conversations")
+    List<PersonalApiDtos.Conversation> conversations(
+            @RequestParam Optional<String> q,
+            @RequestParam(defaultValue = "ACTIVE") Set<String> status,
+            @RequestParam(defaultValue = "50") int limit) {
+        return application.conversations(q, status, bounded(limit)).stream()
+                .map(mapper::conversation)
+                .toList();
+    }
+
+    @PostMapping("/conversations")
+    ResponseEntity<PersonalApiDtos.Conversation> create(
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody PersonalApiDtos.CreateConversation request) {
+        var value = mapper.conversation(application.start(
+                key(idempotencyKey), text(request.displayName(), "displayName"), text(request.message(), "message")));
+        return ResponseEntity.created(URI.create("/api/v1/conversations/" + value.id()))
+                .eTag(Long.toString(value.revision()))
+                .body(value);
+    }
+
+    @GetMapping("/conversations/{conversationId}")
+    ResponseEntity<PersonalApiDtos.Conversation> conversation(@PathVariable String conversationId) {
+        return application
+                .conversation(conversationId)
+                .map(mapper::conversation)
+                .map(value -> ResponseEntity.ok()
+                        .eTag(Long.toString(value.revision()))
+                        .body(value))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PatchMapping("/conversations/{conversationId}")
+    ResponseEntity<PersonalApiDtos.Conversation> update(
+            @PathVariable String conversationId,
+            @RequestHeader("If-Match") String ifMatch,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody PersonalApiDtos.UpdateConversation request) {
+        long revision = revision(ifMatch);
+        PersonalAssistantApplication.ConversationView value;
+        if (request.displayName() != null && !request.displayName().isBlank()) {
+            value = application.rename(conversationId, revision, key(idempotencyKey), request.displayName());
+        } else {
+            ConversationStatus status =
+                    ConversationStatus.valueOf(text(request.status(), "status").toUpperCase(Locale.ROOT));
+            value = application.status(conversationId, revision, key(idempotencyKey), status);
+        }
+        var body = mapper.conversation(value);
+        return ResponseEntity.ok().eTag(Long.toString(body.revision())).body(body);
+    }
+
+    @GetMapping("/conversations/{conversationId}/turns")
+    List<PersonalApiDtos.Turn> turns(
+            @PathVariable String conversationId, @RequestParam(defaultValue = "100") int limit) {
+        return application.turns(conversationId, bounded(limit)).stream()
+                .map(mapper::turn)
+                .toList();
+    }
+
+    @PostMapping("/conversations/{conversationId}/messages")
+    ResponseEntity<PersonalApiDtos.Conversation> submit(
+            @PathVariable String conversationId,
+            @RequestHeader("If-Match") String ifMatch,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody PersonalApiDtos.SubmitMessage request) {
+        var body = mapper.conversation(application.submit(
+                conversationId, revision(ifMatch), key(idempotencyKey), text(request.message(), "message")));
+        return ResponseEntity.accepted().eTag(Long.toString(body.revision())).body(body);
+    }
+
+    @GetMapping("/runs/{runId}")
+    ResponseEntity<PersonalApiDtos.Run> run(@PathVariable String runId) {
+        return application.run(runId).map(mapper::run).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound()
+                .build());
+    }
+
+    @PostMapping("/runs/{runId}/cancel")
+    PersonalApiDtos.Run cancel(@PathVariable String runId, @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        key(idempotencyKey);
+        return mapper.run(application.cancel(runId));
+    }
+
+    @GetMapping("/runs/{runId}/activities")
+    List<PersonalApiDtos.Activity> activities(
+            @PathVariable String runId, @RequestParam(defaultValue = "200") int limit) {
+        return application.activities(runId, bounded(limit)).stream()
+                .map(mapper::activity)
+                .toList();
+    }
+
+    @GetMapping("/runs/{runId}/interaction")
+    ResponseEntity<PersonalApiDtos.Interaction> interaction(@PathVariable String runId) {
+        return application
+                .pendingInteraction(runId)
+                .map(mapper::interaction)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    @PostMapping("/runs/{runId}/interactions/{interactionId}/response")
+    PersonalApiDtos.InteractionReceipt respond(
+            @PathVariable String runId,
+            @PathVariable String interactionId,
+            @RequestHeader("If-Match") String ifMatch,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody PersonalApiDtos.InteractionResponse request) {
+        return mapper.receipt(application.respond(
+                runId,
+                interactionId,
+                revision(ifMatch),
+                text(request.action(), "action"),
+                Optional.ofNullable(request.text()),
+                key(idempotencyKey)));
+    }
+
+    @GetMapping("/memory/candidates")
+    List<PersonalApiDtos.MemoryCandidate> candidates(@RequestParam(defaultValue = "50") int limit) {
+        return application.memoryCandidates(bounded(limit)).stream()
+                .map(mapper::candidate)
+                .toList();
+    }
+
+    @PostMapping("/memory/candidates/{candidateId}/approve")
+    PersonalApiDtos.Memory approve(
+            @PathVariable String candidateId,
+            @RequestHeader("If-Match") String ifMatch,
+            @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return mapper.memory(application.approveMemoryCandidate(candidateId, revision(ifMatch), key(idempotencyKey)));
+    }
+
+    @PostMapping("/memory/candidates/{candidateId}/reject")
+    PersonalApiDtos.MemoryCandidate reject(
+            @PathVariable String candidateId,
+            @RequestHeader("If-Match") String ifMatch,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody PersonalApiDtos.RejectMemory request) {
+        return mapper.candidate(application.rejectMemoryCandidate(
+                candidateId, revision(ifMatch), key(idempotencyKey), text(request.reason(), "reason")));
+    }
+
+    @GetMapping("/memory")
+    List<PersonalApiDtos.Memory> memories(@RequestParam(defaultValue = "100") int limit) {
+        return application.memories(bounded(limit)).stream().map(mapper::memory).toList();
+    }
+
+    @PostMapping("/memory/{memoryId}/versions/{version}/invalidate")
+    PersonalApiDtos.Memory invalidate(
+            @PathVariable String memoryId,
+            @PathVariable long version,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody PersonalApiDtos.InvalidateMemory request) {
+        return mapper.memory(
+                application.invalidateMemory(memoryId, version, key(idempotencyKey), text(request.reason(), "reason")));
+    }
+
+    private static int bounded(int value) {
+        if (value < 1 || value > 500) throw new IllegalArgumentException("limit must be between 1 and 500");
+        return value;
+    }
+
+    private static long revision(String value) {
+        String normalized = text(value, "If-Match").replace("W/", "").replace("\"", "");
+        try {
+            long revision = Long.parseLong(normalized);
+            if (revision < 0) throw new NumberFormatException();
+            return revision;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException("If-Match must contain the numeric revision", exception);
+        }
+    }
+
+    private static String key(String value) {
+        String normalized = text(value, "Idempotency-Key");
+        if (normalized.length() > 128) throw new IllegalArgumentException("Idempotency-Key is too long");
+        return normalized;
+    }
+
+    private static String text(String value, String field) {
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.isEmpty() || normalized.length() > 16_384) {
+            throw new IllegalArgumentException(field + " must contain 1 to 16384 characters");
+        }
+        return normalized;
+    }
+}
