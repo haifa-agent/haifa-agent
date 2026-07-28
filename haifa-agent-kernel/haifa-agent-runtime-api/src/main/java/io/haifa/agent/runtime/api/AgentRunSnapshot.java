@@ -5,6 +5,7 @@ import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.run.AgentRunUsage;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -17,7 +18,8 @@ public record AgentRunSnapshot(
         Instant updatedAt,
         Optional<AgentRunResult> result,
         Optional<AgentError> error,
-        Optional<String> output) {
+        Optional<String> output,
+        AgentRunUsage usage) {
 
     public AgentRunSnapshot {
         runId = Objects.requireNonNull(runId, "runId must not be null");
@@ -34,6 +36,24 @@ public record AgentRunSnapshot(
         output = Objects.requireNonNull(output, "output must not be null")
                 .map(String::trim)
                 .filter(value -> !value.isEmpty());
+        usage = Objects.requireNonNull(usage, "usage must not be null");
+    }
+
+    /**
+     * Compatibility constructor for adapters that do not yet carry usage.
+     *
+     * <p>Authoritative Runtime snapshots are created through {@link #from(AgentRun, Optional)} and
+     * always include the persisted Run usage.
+     */
+    public AgentRunSnapshot(
+            AgentRunId runId,
+            AgentRunStatus status,
+            long version,
+            Instant updatedAt,
+            Optional<AgentRunResult> result,
+            Optional<AgentError> error,
+            Optional<String> output) {
+        this(runId, status, version, updatedAt, result, error, output, AgentRunUsage.ZERO);
     }
 
     public static AgentRunSnapshot from(AgentRun run) {
@@ -43,6 +63,6 @@ public record AgentRunSnapshot(
     public static AgentRunSnapshot from(AgentRun run, Optional<String> output) {
         Objects.requireNonNull(run, "run must not be null");
         return new AgentRunSnapshot(
-                run.id(), run.status(), run.version(), run.updatedAt(), run.result(), run.error(), output);
+                run.id(), run.status(), run.version(), run.updatedAt(), run.result(), run.error(), output, run.usage());
     }
 }

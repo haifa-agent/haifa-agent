@@ -34,6 +34,9 @@ import io.haifa.agent.policy.api.ApprovalVerification;
 import io.haifa.agent.policy.api.ApprovalVerificationService;
 import io.haifa.agent.policy.api.PolicyAuthorizationEvidenceStore;
 import io.haifa.agent.policy.api.PolicyDecisionStore;
+import io.haifa.agent.policy.api.PolicySnapshot;
+import io.haifa.agent.policy.api.PolicySnapshotRef;
+import io.haifa.agent.policy.api.PolicySnapshotStore;
 import io.haifa.agent.runtime.api.checkpoint.CapabilityCheckpointParticipant;
 import io.haifa.agent.runtime.core.bootstrap.CallerContextProvider;
 import io.haifa.agent.runtime.core.bootstrap.ConfigurationSnapshotFactory;
@@ -170,6 +173,7 @@ public final class RuntimeCoreBuilder {
     private ToolPolicy toolPolicy = new DefaultToolPolicy();
     private PublicToolPolicy publicToolPolicy;
     private PolicyDecisionStore policyDecisions = new RuntimePolicyDecisionStore();
+    private PolicySnapshotStore policySnapshots;
     private PolicyAuthorizationEvidenceStore policyAuthorizationEvidence =
             new RuntimePolicyAuthorizationEvidenceStore();
     private ApprovalVerificationService approvalVerification = (request, responder) -> {
@@ -329,6 +333,14 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    public RuntimeCoreBuilder policyStores(
+            PolicySnapshotStore snapshots,
+            PolicyDecisionStore decisions,
+            PolicyAuthorizationEvidenceStore authorizationEvidence) {
+        policySnapshots = Objects.requireNonNull(snapshots, "snapshots");
+        return policyStores(decisions, authorizationEvidence);
+    }
+
     public RuntimeCoreBuilder approvalVerification(ApprovalVerificationService value) {
         approvalVerification = Objects.requireNonNull(value, "value");
         return this;
@@ -484,14 +496,41 @@ public final class RuntimeCoreBuilder {
         RunControlService controlService = new DefaultRunControlService(controls);
         CapabilityAuthorizer authorizer =
                 (run, binding) -> toolNames.contains(binding.alias().value());
-        PublicToolPolicy configuredToolPolicy = publicToolPolicy != null
-                ? publicToolPolicy
-                : new LegacyToolPolicyAdapter(
-                        toolPolicy,
-                        new DefaultToolPolicyRequestAdapter("runtime-compatibility", ApprovalMode.ASK),
-                        ids,
-                        time,
-                        policyDecisions);
+        PublicToolPolicy configuredToolPolicy;
+        if (publicToolPolicy != null) {
+            configuredToolPolicy = publicToolPolicy;
+        } else if (policySnapshots == null) {
+            configuredToolPolicy = new LegacyToolPolicyAdapter(
+                    toolPolicy,
+                    new DefaultToolPolicyRequestAdapter("runtime-compatibility", ApprovalMode.ASK),
+                    ids,
+                    time,
+                    policyDecisions);
+        } else {
+            PolicySnapshotRef legacySnapshotRef = new PolicySnapshotRef("legacy-tool-policy-v1");
+            PolicySnapshot newLegacySnapshot = new PolicySnapshot(
+                    legacySnapshotRef,
+                    List.of(),
+                    java.util.Optional.empty(),
+                    ApprovalMode.ASK,
+                    "runtime-compatibility",
+                    java.util.Optional.empty(),
+                    "legacy-tool-policy-v1",
+                    java.time.Instant.ofEpochMilli(time.now().toEpochMilli()));
+            PolicySnapshot legacySnapshot = policySnapshots
+                    .find(legacySnapshotRef)
+                    .orElseGet(() -> {
+                        policySnapshots.save(newLegacySnapshot);
+                        return newLegacySnapshot;
+                    });
+            configuredToolPolicy = new LegacyToolPolicyAdapter(
+                    toolPolicy,
+                    new DefaultToolPolicyRequestAdapter("runtime-compatibility", ApprovalMode.ASK),
+                    ids,
+                    time,
+                    policyDecisions,
+                    legacySnapshot.ref());
+        }
         ToolPipeline pipeline = new ToolPipeline(
                 toolInvoker,
                 toolSchemaValidator,

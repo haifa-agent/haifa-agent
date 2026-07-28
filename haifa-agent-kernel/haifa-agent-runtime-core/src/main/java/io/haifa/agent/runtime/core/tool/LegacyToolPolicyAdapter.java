@@ -26,6 +26,7 @@ public final class LegacyToolPolicyAdapter implements PublicToolPolicy {
     private final IdentifierGenerator ids;
     private final TimeProvider time;
     private final PolicyDecisionStore store;
+    private final PolicySnapshotRef snapshot;
 
     public LegacyToolPolicyAdapter(
             ToolPolicy legacy,
@@ -33,11 +34,22 @@ public final class LegacyToolPolicyAdapter implements PublicToolPolicy {
             IdentifierGenerator ids,
             TimeProvider time,
             PolicyDecisionStore store) {
+        this(legacy, requests, ids, time, store, LEGACY_SNAPSHOT);
+    }
+
+    public LegacyToolPolicyAdapter(
+            ToolPolicy legacy,
+            ToolPolicyRequestAdapter requests,
+            IdentifierGenerator ids,
+            TimeProvider time,
+            PolicyDecisionStore store,
+            PolicySnapshotRef snapshot) {
         this.legacy = Objects.requireNonNull(legacy, "legacy must not be null");
         this.requests = Objects.requireNonNull(requests, "requests must not be null");
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.store = Objects.requireNonNull(store, "store must not be null");
+        this.snapshot = Objects.requireNonNull(snapshot, "snapshot must not be null");
     }
 
     @Override
@@ -67,7 +79,7 @@ public final class LegacyToolPolicyAdapter implements PublicToolPolicy {
                 challenge,
                 "LEGACY_TOOL_POLICY_" + legacyDecision.name(),
                 "Decision mapped from the deprecated Tool policy",
-                LEGACY_SNAPSHOT,
+                snapshot,
                 Optional.empty(),
                 time.now());
         store.save(decision);

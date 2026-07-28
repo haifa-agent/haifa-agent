@@ -1,0 +1,123 @@
+package io.haifa.agent.personalassistant.server.configuration.sdk;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
+import io.haifa.agent.personalassistant.server.configuration.mcp.LocalPersonalMcpServer;
+import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelFactory;
+import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import io.haifa.agent.sdk.api.SdkCaller;
+import io.haifa.agent.sdk.api.SdkConfigurationDigest;
+import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
+import io.haifa.agent.sdk.product.ProductCapabilities;
+import io.haifa.agent.sdk.product.ProductContributionCoordinate;
+import io.haifa.agent.sdk.product.ProductProviderSuitability;
+import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
+import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.util.Base64;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import javax.crypto.spec.SecretKeySpec;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+/** Explicit Spring composition root. Spring discovers this root, not individual SDK contributions. */
+@Configuration(proxyBeanMethods = false)
+public class PersonalAssistantConfiguration {
+    @Bean
+    Clock personalClock() {
+        return Clock.systemUTC();
+    }
+
+    @Bean(destroyMethod = "close")
+    LocalPersonalMcpServer localPersonalMcpServer(PersonalAssistantProperties properties, ObjectMapper mapper) {
+        return new LocalPersonalMcpServer(
+                properties.mcp().address(), properties.mcp().port(), mapper);
+    }
+
+    @Bean(destroyMethod = "close")
+    PersonalAssistantApplication personalAssistantApplication(
+            PersonalAssistantProperties properties,
+            ObjectMapper mapper,
+            Clock personalClock,
+            LocalPersonalMcpServer mcpServer) {
+        Path dataDirectory = prepare(properties.dataDirectory());
+        byte[] key = decodeKey(properties.continuationKeyBase64());
+        var protector = new AesGcmModelContinuationProtector(new SecretKeySpec(key, "AES"), new SecureRandom());
+        var sqlite = SqliteSdkProductContributions.initialize(
+                new SqliteStoreConfiguration(
+                        dataDirectory.resolve("personal-assistant.sqlite").toAbsolutePath(), 1_250, 4 * 1024 * 1024),
+                personalClock,
+                protector,
+                metadata("haifa-personal-sqlite", ProductCapabilities.PERSISTENCE, "runtime-v1"),
+                metadata("haifa-personal-conversation", ProductCapabilities.CONVERSATION, "conversation-v1"),
+                metadata("haifa-personal-memory", ProductCapabilities.MEMORY, "memory-v1"),
+                metadata("haifa-personal-policy", ProductCapabilities.POLICY, "policy-v1"));
+        TenantRef tenant = new TenantRef(properties.caller().tenant());
+        PrincipalRef principal = new PrincipalRef(properties.caller().principal(), "user");
+        SdkCaller caller = new SdkCaller(tenant, principal, Set.of("memory:read", "memory:propose", "memory:review"));
+        Optional<Path> localSkillRoot = properties.localSkillRoot().isBlank()
+                ? Optional.empty()
+                : Optional.of(
+                        Path.of(properties.localSkillRoot()).toAbsolutePath().normalize());
+        try {
+            return PersonalAssistantAssembler.assemble(new PersonalAssistantAssembler.Dependencies(
+                    tenant,
+                    principal,
+                    () -> caller,
+                    PersonalModelFactory.create(properties.model(), mapper),
+                    sqlite.persistence(),
+                    sqlite.conversation(),
+                    sqlite.memory(),
+                    sqlite.policy(),
+                    mcpServer.endpoint(),
+                    localSkillRoot,
+                    List.of(
+                            dataDirectory,
+                            Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath()),
+                    personalClock));
+        } catch (RuntimeException | Error exception) {
+            sqlite.persistence().close();
+            throw exception;
+        }
+    }
+
+    private static SdkContributionMetadata metadata(
+            String id, io.haifa.agent.sdk.product.ProductCapabilityId capability, String configuration) {
+        return new SdkContributionMetadata(
+                new ProductContributionCoordinate(id, "1.0.0"),
+                capability,
+                SdkConfigurationDigest.sha256(id, configuration),
+                ProductProviderSuitability.PRODUCTION,
+                "Personal Assistant " + capability.value());
+    }
+
+    private static Path prepare(Path value) {
+        Path path = value.toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(path);
+            return path.toRealPath();
+        } catch (IOException exception) {
+            throw new IllegalStateException("Personal Assistant data directory is unavailable", exception);
+        }
+    }
+
+    private static byte[] decodeKey(String encoded) {
+        try {
+            byte[] key = Base64.getDecoder().decode(encoded);
+            if (key.length != 32) throw new IllegalArgumentException("continuation key must decode to 32 bytes");
+            return key;
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("continuation key must be base64-encoded AES-256 material", exception);
+        }
+    }
+}

@@ -1,0 +1,43 @@
+server:
+  address: 127.0.0.1
+  port: 20001
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: haifa-personal-assistant
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+haifa:
+  personal:
+    data-directory: ${HAIFA_PERSONAL_DATA_DIR:./data/personal-assistant}
+    continuation-key-base64: ${HAIFA_PERSONAL_CONTINUATION_KEY:}
+    caller:
+      tenant: ${HAIFA_PERSONAL_TENANT:local}
+      principal: ${HAIFA_PERSONAL_PRINCIPAL:public-user}
+      reviewer: ${HAIFA_PERSONAL_REVIEWER:public-user}
+    model:
+      mode: ${HAIFA_PERSONAL_MODEL_MODE:remote}
+      allow-deterministic: ${HAIFA_PERSONAL_ALLOW_DETERMINISTIC:false}
+      endpoint: ${HAIFA_PERSONAL_MODEL_ENDPOINT:https://api.deepseek.com}
+      provider-model-id: ${HAIFA_PERSONAL_MODEL_ID:deepseek-chat}
+      credential-reference: ${HAIFA_PERSONAL_MODEL_CREDENTIAL:env://DEEPSEEK_API_KEY}
+    mcp:
+      address: 127.0.0.1
+      port: ${HAIFA_PERSONAL_MCP_PORT:20002}
+    local-skill-root: ${HAIFA_PERSONAL_SKILL_ROOT:}
