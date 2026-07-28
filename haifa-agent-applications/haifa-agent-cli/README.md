@@ -54,7 +54,7 @@ model:
   endpoint: https://api.deepseek.com
   credentialRef: env://DEEPSEEK_API_KEY
 tools:
-  enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.diff, file.patch, git.inspect, git.status, git.diff, execution.run, web.search, web.fetch]
+  enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, execution.run, web.search, web.fetch]
 web:
   search:
     enabled: true

@@ -44,7 +44,7 @@ HTTP Endpoint 即使设置该开关也会拒绝。
 
 `terminal-ui-tui4j-spike.mjs` 是迁移 Stage A 的历史验证入口，只启动测试 classpath 中的 tui4j
 Spike，不连接 Provider、SQLite、Workspace 或执行服务。生产 CLI 已在 Stage B 切换到 tui4j；
-真实产品 Gate B 使用上面的 `terminal-ui-smoke.mjs`。Spike 仍可复现正常退出、Escape、Ctrl+C、
+真实产品 Gate B 使用上面的 `terminal-ui-conpty-acceptance.mjs`。Spike 仍可复现正常退出、Escape、Ctrl+C、
 异常退出、Unicode 粘贴和 80x24/120x40/180x50 Resize，并保存 ANSI、asciicast、输入时间线、
 屏幕快照和机器可读 manifest。
 
