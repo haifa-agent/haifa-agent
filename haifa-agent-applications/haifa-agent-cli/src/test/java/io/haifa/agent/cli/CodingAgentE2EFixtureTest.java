@@ -31,7 +31,7 @@ class CodingAgentE2EFixtureTest {
             assertThat(ids.add(caseId)).isTrue();
             String expectedVersion =
                     switch (caseId) {
-                        case "HF-06-E2E-CLI-008" -> "1.2";
+                        case "HF-06-E2E-CLI-008" -> "1.3";
                         case "HF-06-E2E-CLI-009" -> "1.0";
                         default -> "1.1";
                     };

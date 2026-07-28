@@ -194,9 +194,6 @@ class CodingAgentLiveE2E {
                 .as("protected workspace path %s", path)
                 .isEqualTo(protectedBefore.get(path)));
         assertRealModelEvidence(traces);
-        if (completed.status() != AgentRunStatus.COMPLETED) {
-            throw new AssertionError("live coding run did not complete: " + safeFailureSummary(completed, traces));
-        }
         Map<String, String> after = fileDigests(workspace);
         List<String> changedPaths = changedPaths(before, after);
         writeEvidence(
@@ -208,6 +205,9 @@ class CodingAgentLiveE2E {
                 rejectedApprovals,
                 changedPaths,
                 "PENDING");
+        if (completed.status() != AgentRunStatus.COMPLETED) {
+            throw new AssertionError("live coding run did not complete: " + safeFailureSummary(completed, traces));
+        }
         if (specification.approval().equals("ASK_REJECT")) {
             verifyRejectedApproval(workspace, traces, rejectedApprovals);
         } else {
