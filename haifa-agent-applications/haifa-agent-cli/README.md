@@ -42,6 +42,10 @@ Credential、Tool allowlist、审计或其他 fail-closed 门禁。可用
 `HAIFA_ALIYUN_IQS_KEY_FILE`、`HAIFA_CONTINUATION_KEY_FILE`、`HAIFA_TEST_RUNS_ROOT`、
 `HAIFA_UTILITY_MCP_URL` 和 `HAIFA_UTILITY_MCP_SERVICE_DIR` 覆盖本机路径与端点。
 
+启动器会先把 `JAVA_HOME` 解析为物理目录，再冻结为 Local Native 只读额外路径。SDKMAN 等版本管理器
+提供的 `current` 符号链接不会直接进入 Sandbox Profile；目标目录仍须存在、可执行并通过 Java 21
+检查。
+
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-cli -am package
 $jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"

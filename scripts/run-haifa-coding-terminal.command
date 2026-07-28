@@ -101,6 +101,7 @@ if [[ -z "$configured_java_home" ]] && [[ -x /usr/libexec/java_home ]]; then
   configured_java_home="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
 fi
 [[ -n "$configured_java_home" ]] || fail "找不到 Java 21；请设置 HAIFA_JAVA_HOME"
+configured_java_home="${configured_java_home:A}"
 [[ -x "${configured_java_home}/bin/java" ]] || fail "Java 不可执行: ${configured_java_home}/bin/java"
 
 export JAVA_HOME="$configured_java_home"

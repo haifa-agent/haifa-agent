@@ -290,12 +290,36 @@ public final class ToolPipeline {
             }
             ToolJournalState journalState =
                     journal.state(run.id(), request.idempotencyKey()).orElse(ToolJournalState.INTENT_RECORDED);
-            if (journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.DISPATCHED) {
+            boolean uncertain =
+                    journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.DISPATCHED;
+            String failureCode;
+            String safeMessage;
+            if (uncertain) {
                 journal.recordUncertain(run.id(), request.idempotencyKey());
+                failureCode = "TOOL_OUTCOME_UNKNOWN";
+                safeMessage = "Tool execution outcome is unknown; automatic replay is forbidden.";
                 appendToolEvent(run, call, "tool.failed", "FAILED", "OUTCOME_UNKNOWN", "");
             } else {
                 journal.recordFailed(run.id(), request.idempotencyKey());
+                failureCode = "TOOL_INVOCATION_FAILED";
+                safeMessage = "Tool execution failed before a result was available.";
                 appendToolEvent(run, call, "tool.failed", "FAILED", "INVOCATION_FAILED", "");
+            }
+            if (call.status() == ToolCallStatus.RUNNING) {
+                call.fail(
+                        new ToolExecutionError(new AgentError(
+                                new AgentErrorCode(failureCode),
+                                AgentErrorCategory.TOOL,
+                                AgentErrorSeverity.ERROR,
+                                uncertain ? Retryability.UNKNOWN : Retryability.NOT_RETRYABLE,
+                                safeMessage,
+                                null,
+                                Map.of(
+                                        "tool", definition.name().value(),
+                                        "exceptionType", exception.getClass().getSimpleName()),
+                                time.now())),
+                        time.now());
+                state.appendToolCall(call);
             }
             throw exception;
         }

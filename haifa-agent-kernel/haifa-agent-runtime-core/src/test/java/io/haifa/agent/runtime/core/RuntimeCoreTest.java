@@ -407,6 +407,54 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void failedDispatchedToolStillCompletesProtocolForTheNextRun() {
+        ToolRequest request =
+                toolRequest("uncertain", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> nextRunRequest = new AtomicReference<>();
+        AgentChatModel model = chatRequest -> {
+            if (modelCalls.incrementAndGet() == 1) {
+                return response(new ToolCallDecision(List.of(request)));
+            }
+            nextRunRequest.set(chatRequest);
+            return response(finalDecision("next run completed"));
+        };
+        Fixture fixture = fixture(
+                model,
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    invocation.observer().dispatched();
+                    throw new IllegalStateException("provider failed after dispatch");
+                }));
+
+        var failed = fixture.runtime.start(request("failed-tool-run"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(failed.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.store.toolCalls(failed.runId())).singleElement().satisfies(call -> {
+            assertThat(call.status().name()).isEqualTo("FAILED");
+            assertThat(call.error().orElseThrow().error().code().value()).isEqualTo("TOOL_OUTCOME_UNKNOWN");
+        });
+        assertThat(fixture.journal.state(
+                        failed.runId(),
+                        fixture.store.toolCalls(failed.runId()).getFirst().idempotencyKey()))
+                .contains(ToolJournalState.OUTCOME_UNKNOWN);
+
+        var next = fixture.runtime.start(request("next-run"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(next.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(nextRunRequest.get().messages())
+                .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
+                        && message.toolCalls().stream()
+                                .anyMatch(call ->
+                                        call.providerCorrelationId().value().equals("provider-uncertain")))
+                .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                        && message.providerCorrelationId().orElseThrow().value().equals("provider-uncertain")
+                        && message.content()
+                                .equals("Tool execution outcome is unknown; automatic replay is forbidden."));
+    }
+
+    @Test
     void rejectsDuplicateToolCalls() {
         ToolRequest duplicate =
                 toolRequest("same-key", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));

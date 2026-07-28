@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 修复 Coding Agent 的 `execution.run` 失败链：macOS 启动器会物理解析符号链接 `JAVA_HOME`；
+  Provider 异常会持久化终态 Tool Call、失败 Step 和关联 Tool Result，避免后续对话因孤立 Tool Call
+  被模型 Provider 以 HTTP 400 拒绝，同时继续禁止 `OUTCOME_UNKNOWN` 自动重放。
 - Coding Terminal Phase C 新增 grapheme/cell-width 安全编辑、完整 Resize 状态保持、ANSI16/256/
   TrueColor/NoColor 回归、修饰 Enter 兼容诊断，以及在产品 Runtime 装配前执行的非 TTY fail-closed
   门禁。
