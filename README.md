@@ -14,8 +14,11 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - Project/Workspace 的受控文件访问、变更集、补丁、索引、快照与显式 Artifact 导出；
 - ExecutionBroker、Sandbox SPI、受控 Host Provider、macOS Seatbelt/Linux bubblewrap Local Native
   Provider，以及只读 Git 适配；
-- SQLite V1～V4 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、持久
+- SQLite V1～V5 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、持久
   Interaction/Run Input/Event Journal、事务恢复与故障收敛；
+- 纯 Java `haifa-agent-sdk` 高层 Facade、可信 Product Profile、确定性 Capability Contribution
+  装配，以及产品中立 Conversation Session；SQLite V5 提供 Conversation metadata、命令幂等绑定、
+  revision、单活动 Run 与重启恢复；
 - 可选的安全 JSONL Transcript 投影，支持 at-least-once 去重、截断诊断、跨进程锁与原子轮转；
 - 纯 Java Policy API/Core，支持请求绑定决策、`DENY > ASK > ALLOW`、受限 Approval Grant、
   Project Trust、产品验证 SPI 和内存 Store；SQLite V3 已提供 Snapshot、Decision、Evidence、
@@ -39,6 +42,7 @@ build-support/
   haifa-agent-bom/
   haifa-agent-spring-bom/
 haifa-agent-contract/
+haifa-agent-sdk/
 haifa-agent-kernel/
   haifa-agent-common/
   haifa-agent-core/
@@ -137,6 +141,11 @@ flowchart LR
   CONTRACT[contract] --> COMMON
   HTTP[transport-http] --> CONTRACT
   HTTP --> RAPI
+  SDK[agent-sdk] --> RCORE
+  SDK --> MAPI
+  SDK --> TAPI
+  SDK --> SKAPI
+  SQLITE --> SDK
   PAPP[coding-agent + built-in Web Tool] --> RCORE
   PAPP --> SQLITE
   PAPP --> JSONL

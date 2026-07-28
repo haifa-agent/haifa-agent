@@ -29,14 +29,14 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(4);
+                    .isEqualTo(5);
             assertThat(queryLong(connection, "SELECT applied_at FROM schema_migration WHERE version = 1"))
                     .isEqualTo(SqliteTestSupport.NOW.toEpochMilli());
         }
     }
 
     @Test
-    void upgradesAnExistingV3DatabaseToV4WithoutReapplyingHistory() throws Exception {
+    void upgradesAnExistingV3DatabaseToV5WithoutReapplyingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -46,7 +46,7 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(4);
+                    .isEqualTo(5);
             assertThat(queryLong(
                             connection,
                             "SELECT COUNT(*) FROM sqlite_master "
@@ -57,6 +57,12 @@ class SqliteMigrationRunnerTest {
                             "SELECT COUNT(*) FROM pragma_table_info('runtime_event') "
                                     + "WHERE name IN ('event_schema_version', 'correlation_id', 'causation_id')"))
                     .isEqualTo(3);
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM sqlite_master "
+                                    + "WHERE type='table' AND name IN "
+                                    + "('sdk_conversation', 'sdk_conversation_command')"))
+                    .isEqualTo(2);
         }
     }
 

@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.haifa.agent.store.sqlite.mybatis.SdkConversationMapper">
+
+    <resultMap id="conversationRow" type="io.haifa.agent.store.sqlite.mybatis.SdkConversationRow">
+        <constructor>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="tenant_id" javaType="java.lang.String"/>
+            <arg column="principal_id" javaType="java.lang.String"/>
+            <arg column="principal_type" javaType="java.lang.String"/>
+            <arg column="display_name" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="active_run_id" javaType="java.lang.String"/>
+            <arg column="active_run_version" javaType="java.lang.Long"/>
+            <arg column="active_dispatch_key" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="last_activity_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+            <arg column="revision" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="commandRow" type="io.haifa.agent.store.sqlite.mybatis.SdkConversationCommandRow">
+        <constructor>
+            <arg column="dispatch_key" javaType="java.lang.String"/>
+            <arg column="caller_scope_digest" javaType="java.lang.String"/>
+            <arg column="operation" javaType="java.lang.String"/>
+            <arg column="idempotency_key_digest" javaType="java.lang.String"/>
+            <arg column="request_digest" javaType="java.lang.String"/>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="run_id" javaType="java.lang.String"/>
+            <arg column="completed" javaType="_boolean"/>
+            <arg column="result_revision" javaType="java.lang.Long"/>
+            <arg column="created_at" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <insert id="insertCommand">
+        INSERT OR IGNORE INTO sdk_conversation_command (
+            dispatch_key, caller_scope_digest, operation, idempotency_key_digest,
+            request_digest, session_id, run_id, completed, result_revision, created_at
+        ) VALUES (
+            #{row.dispatchKey}, #{row.callerScopeDigest}, #{row.operation},
+            #{row.idempotencyKeyDigest}, #{row.requestDigest}, #{row.sessionId},
+            #{row.runId}, #{row.completed}, #{row.resultRevision}, #{row.createdAt}
+        )
+    </insert>
+
+    <select id="findCommandByDispatchKey" resultMap="commandRow">
+        SELECT dispatch_key, caller_scope_digest, operation, idempotency_key_digest,
+               request_digest, session_id, run_id, completed, result_revision, created_at
+        FROM sdk_conversation_command WHERE dispatch_key = #{dispatchKey}
+    </select>
+
+    <select id="findCommandByIdempotency" resultMap="commandRow">
+        SELECT dispatch_key, caller_scope_digest, operation, idempotency_key_digest,
+               request_digest, session_id, run_id, completed, result_revision, created_at
+        FROM sdk_conversation_command
+        WHERE caller_scope_digest = #{callerScopeDigest}
+          AND operation = #{operation}
+          AND idempotency_key_digest = #{idempotencyKeyDigest}
+    </select>
+
+    <update id="completeCommand">
+        UPDATE sdk_conversation_command
+        SET run_id = #{runId}, completed = 1, result_revision = #{resultRevision}
+        WHERE dispatch_key = #{dispatchKey}
+          AND (completed = 0 OR (run_id IS #{runId} AND result_revision = #{resultRevision}))
+    </update>
+
+    <insert id="insertConversation">
+        INSERT INTO sdk_conversation (
+            session_id, tenant_id, principal_id, principal_type, display_name, status,
+            active_run_id, active_run_version, active_dispatch_key,
+            created_at, last_activity_at, revision
+        ) VALUES (
+            #{row.sessionId}, #{row.tenantId}, #{row.principalId}, #{row.principalType},
+            #{row.displayName}, #{row.status}, #{row.activeRunId}, #{row.activeRunVersion},
+            #{row.activeDispatchKey}, #{row.createdAt}, #{row.lastActivityAt}, #{row.revision}
+        )
+    </insert>
+
+    <select id="findConversation" resultMap="conversationRow">
+        SELECT session_id, tenant_id, principal_id, principal_type, display_name, status,
+               active_run_id, active_run_version, active_dispatch_key,
+               created_at, last_activity_at, revision
+        FROM sdk_conversation WHERE session_id = #{sessionId}
+    </select>
+
+    <select id="listConversations" resultMap="conversationRow">
+        SELECT session_id, tenant_id, principal_id, principal_type, display_name, status,
+               active_run_id, active_run_version, active_dispatch_key,
+               created_at, last_activity_at, revision
+        FROM sdk_conversation
+        WHERE tenant_id = #{tenantId}
+          AND principal_id = #{principalId}
+          AND principal_type = #{principalType}
+          AND status IN
+          <foreach collection="statuses" item="status" open="(" separator="," close=")">
+              #{status}
+          </foreach>
+        <if test="text != null">
+          AND lower(display_name) LIKE '%' || lower(#{text}) || '%' ESCAPE '\'
+        </if>
+        <if test="afterAt != null">
+          AND (last_activity_at &lt; #{afterAt}
+               OR (last_activity_at = #{afterAt} AND session_id &lt; #{afterSessionId}))
+        </if>
+        ORDER BY last_activity_at DESC, session_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <update id="reserveActive">
+        UPDATE sdk_conversation
+        SET active_dispatch_key = #{dispatchKey},
+            last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+          AND revision = #{expectedRevision}
+          AND status = 'ACTIVE'
+          AND active_run_id IS NULL
+          AND active_dispatch_key IS NULL
+    </update>
+
+    <update id="activateRun">
+        UPDATE sdk_conversation
+        SET active_run_id = #{runId},
+            active_run_version = #{runVersion},
+            active_dispatch_key = NULL,
+            last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+          AND active_dispatch_key = #{dispatchKey}
+          AND active_run_id IS NULL
+    </update>
+
+    <update id="clearActive">
+        UPDATE sdk_conversation
+        SET active_run_id = NULL,
+            active_run_version = NULL,
+            last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+          AND active_run_id = #{runId}
+          AND revision = #{expectedRevision}
+    </update>
+
+    <update id="rename">
+        UPDATE sdk_conversation
+        SET display_name = #{displayName},
+            last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+          AND revision = #{expectedRevision}
+    </update>
+
+    <update id="changeStatus">
+        UPDATE sdk_conversation
+        SET status = #{target},
+            last_activity_at = #{at},
+            revision = revision + 1
+        WHERE session_id = #{sessionId}
+          AND revision = #{expectedRevision}
+          AND status = #{expected}
+          AND active_run_id IS NULL
+          AND active_dispatch_key IS NULL
+    </update>
+</mapper>

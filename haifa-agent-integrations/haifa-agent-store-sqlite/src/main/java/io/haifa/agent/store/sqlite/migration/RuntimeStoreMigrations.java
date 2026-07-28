@@ -13,6 +13,7 @@ public final class RuntimeStoreMigrations {
     private static final String V3_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V3__policy_approval_security.sql";
     private static final String V4_RESOURCE =
             "/io/haifa/agent/store/sqlite/migration/V4__interaction_event_journal.sql";
+    private static final String V5_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V5__sdk_conversation.sql";
 
     private RuntimeStoreMigrations() {}
 
@@ -22,7 +23,8 @@ public final class RuntimeStoreMigrations {
                     read(1, "runtime_store", V1_RESOURCE),
                     read(2, "lossless_runtime_fields", V2_RESOURCE),
                     read(3, "policy_approval_security", V3_RESOURCE),
-                    read(4, "interaction_event_journal", V4_RESOURCE));
+                    read(4, "interaction_event_journal", V4_RESOURCE),
+                    read(5, "sdk_conversation", V5_RESOURCE));
         } catch (IOException exception) {
             throw new SqliteStoreException(
                     SqliteStoreFailure.MIGRATION_FAILED, "Unable to read bundled SQLite migration", exception);
