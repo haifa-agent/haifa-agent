@@ -18,6 +18,27 @@ Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-term
 
 ## 构建与运行
 
+### macOS 全工具人工测试入口
+
+仓库根目录的 `scripts/run-haifa-coding-terminal.command` 是可版本控制的 macOS 人工测试启动器。
+它默认启用 CLI 当前全部可执行的内置文件/命令工具、两个基础 Skill 工具、命令网络和
+`approval=auto`。本地 Utility MCP 健康检查失败时，脚本会从
+`HAIFA_UTILITY_MCP_SERVICE_DIR` 指定的源码目录后台启动服务；服务可达后导入 Coding Agent
+已审核的 Utility 工具。检测到 `ALIYUN_IQS_API_KEY` 或 `HAIFA_ALIYUN_IQS_KEY_FILE` 后还会启用
+`web.search` 与 `web.fetch`。
+
+```bash
+./scripts/run-haifa-coding-terminal.command --check
+./scripts/run-haifa-coding-terminal.command --build
+./scripts/run-haifa-coding-terminal.command --approval=ask
+```
+
+`AUTO` 只减少普通 Workspace 写入、命令和网络读取的逐次确认，不绕过 Workspace、Sandbox、
+Credential、Tool allowlist、审计或其他 fail-closed 门禁。可用
+`HAIFA_AGENT_REPO_DIR`、`HAIFA_JAVA_HOME`、`HAIFA_DEEPSEEK_KEY_FILE`、
+`HAIFA_ALIYUN_IQS_KEY_FILE`、`HAIFA_CONTINUATION_KEY_FILE`、`HAIFA_TEST_RUNS_ROOT`、
+`HAIFA_UTILITY_MCP_URL` 和 `HAIFA_UTILITY_MCP_SERVICE_DIR` 覆盖本机路径与端点。
+
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-cli -am package
 $jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
