@@ -2,6 +2,8 @@
 
 ## 0.1.0-SNAPSHOT
 
+- macOS Coding Terminal 人工测试启动器在 `/quit` 后禁用 Git/通用交互分页器，并对离线 Git 验收
+  显式使用 `--no-pager`，避免主屏恢复后被空白的 `less (END)` 页面覆盖。
 - Coding Terminal Phase B 新增稳定 ID 的 Tool/Execution lifecycle 原位更新、结构化 Approval 卡片与
   回执、Steer accepted/applied 和持久 Follow-up 反馈、viewport 新输出提示，以及带下一步操作的五类
   恢复诊断；UI 不再解析 Interaction 自由文本或按事件名后缀猜测状态，并在审批/错误时保留编辑草稿。

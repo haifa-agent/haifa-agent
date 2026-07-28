@@ -33,6 +33,9 @@ Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-term
 ./scripts/run-haifa-coding-terminal.command --approval=ask
 ```
 
+启动器会禁用退出后离线验收命令的交互分页器；`/quit` 恢复 TUI 进入前的主屏后，验收摘要直接续写，
+不会进入空白的 `less (END)` 页面。用户级 Git pager 配置不会改变这一行为。
+
 `AUTO` 只减少普通 Workspace 写入、命令和网络读取的逐次确认，不绕过 Workspace、Sandbox、
 Credential、Tool allowlist、审计或其他 fail-closed 门禁。可用
 `HAIFA_AGENT_REPO_DIR`、`HAIFA_JAVA_HOME`、`HAIFA_DEEPSEEK_KEY_FILE`、

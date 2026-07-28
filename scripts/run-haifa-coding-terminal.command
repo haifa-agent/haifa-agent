@@ -3,6 +3,12 @@
 set -euo pipefail
 umask 077
 
+# The launcher owns a real TTY. Never let post-exit diagnostics replace the restored
+# main screen with an interactive pager (for example an empty less screen ending in "(END)").
+export GIT_PAGER=cat
+export PAGER=cat
+export LESS=-FRX
+
 readonly SCRIPT_PATH="${0:A}"
 readonly SCRIPT_DIR="${SCRIPT_PATH:h}"
 readonly REPO_DIR="${HAIFA_AGENT_REPO_DIR:-${SCRIPT_DIR:h}}"
@@ -371,10 +377,10 @@ cleanup_secrets
 
 print -r -- ""
 print -r -- "Terminal 已退出（状态码: $terminal_rc），开始离线验收..."
-git -C "$workspace_dir" status --short
+git --no-pager -C "$workspace_dir" status --short
 
 verification_rc=0
-if ! git -C "$workspace_dir" diff --check; then
+if ! git --no-pager -C "$workspace_dir" diff --check; then
   print -u2 -r -- "Git diff 检查失败"
   verification_rc=1
 fi
