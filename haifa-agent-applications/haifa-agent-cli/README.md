@@ -187,7 +187,7 @@ persistence:
   transcriptRoot: D:\haifa-agent-data\transcripts
   protectorRef: env://HAIFA_CONTINUATION_KEY
   busyTimeoutMillis: 5000
-  maximumPayloadBytes: 4194304
+  maximumPayloadBytes: 1048576
 ```
 
 数据库与 transcript 路径必须是绝对路径，父目录/Transcript 目录必须预先受控创建。`SQLITE` 不会创建

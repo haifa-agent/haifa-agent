@@ -40,6 +40,7 @@ public final class SuiteRunnerMain {
         Path configRoot = requireDirectory(options.configRoot(), "test config root");
         Path runRoot = options.runRoot().toAbsolutePath().normalize();
         validateRunRoot(projectRoot, configRoot, runRoot);
+        new EnvironmentConfigurationPreflight().validate(configRoot);
         SuiteManifest manifest = new SuiteManifestLoader().load(configRoot, options.suiteId());
 
         System.out.printf(

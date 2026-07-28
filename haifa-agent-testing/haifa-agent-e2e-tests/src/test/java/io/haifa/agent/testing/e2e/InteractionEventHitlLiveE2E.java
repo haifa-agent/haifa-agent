@@ -95,14 +95,16 @@ class InteractionEventHitlLiveE2E {
                 caseRoot,
                 workspace,
                 configuration,
-                "必须调用 web_search 搜索今天的 Java Agent Runtime 公开资料，只允许 query 和 maxResults=3；" + "不能仅凭已有知识回答。",
+                "只允许调用一次 web_search 搜索今天的 Java Agent Runtime 公开资料，参数只允许 query 和"
+                        + " maxResults=3；如果该调用被拒绝，禁止重试或调用其他工具，只回答"
+                        + " SEARCH_REJECTED_OK。",
                 List.of(new ApprovalPromptDriver.Decision("web_search", "n")),
                 persistenceEnvironment);
         assertSuccessful(rejected);
         assertThat(rejected.trace()).doesNotContain("\"operation\":\"tool.execute\"");
         String rejectedRun = onlyNewRun(database, beforeReject);
         assertRun(database, rejectedRun, 1, 0);
-        assertThat(toolCalls(database, rejectedRun)).containsExactly(new ToolCallRecord("web.search", "DENIED"));
+        assertThat(toolCalls(database, rejectedRun)).containsExactly(new ToolCallRecord("web_search", "DENIED"));
         assertInteractionRecords(database, rejectedRun, List.of("REJECT"));
         assertJournal(database, rejectedRun, 1);
 
@@ -130,7 +132,7 @@ class InteractionEventHitlLiveE2E {
         assertRun(database, approvedRun, 3, 2);
         assertThat(toolCalls(database, approvedRun))
                 .containsExactly(
-                        new ToolCallRecord("web.search", "COMPLETED"), new ToolCallRecord("web.fetch", "COMPLETED"));
+                        new ToolCallRecord("web_search", "COMPLETED"), new ToolCallRecord("web_fetch", "COMPLETED"));
         assertInteractionRecords(database, approvedRun, List.of("APPROVE", "APPROVE"));
         assertJournal(database, approvedRun, 2);
         assertThat(pendingOutbox(database)).isZero();
