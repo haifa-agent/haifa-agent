@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Bounded hand-off from Runtime callbacks to the single terminal UI thread.
@@ -12,6 +13,7 @@ import java.util.concurrent.ArrayBlockingQueue;
  */
 public final class TerminalEventPump {
     private final ArrayBlockingQueue<TerminalUiAction> queue;
+    private final AtomicBoolean overflowed = new AtomicBoolean();
 
     public TerminalEventPump(int capacity) {
         if (capacity < 1) {
@@ -21,7 +23,9 @@ public final class TerminalEventPump {
     }
 
     public boolean offer(TerminalUiAction action) {
-        return queue.offer(Objects.requireNonNull(action, "action must not be null"));
+        boolean accepted = queue.offer(Objects.requireNonNull(action, "action must not be null"));
+        if (!accepted) overflowed.set(true);
+        return accepted;
     }
 
     public List<TerminalUiAction> drain(int limit) {
@@ -35,5 +39,9 @@ public final class TerminalEventPump {
 
     public int pendingCount() {
         return queue.size();
+    }
+
+    public boolean consumeOverflow() {
+        return overflowed.getAndSet(false);
     }
 }

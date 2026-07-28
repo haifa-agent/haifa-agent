@@ -2,6 +2,8 @@ package io.haifa.agent.runtime.api;
 
 /** Typed, bounded client-event payloads. Internal maps and store rows never cross this boundary. */
 public final class RunEventPayloads {
+    private static final int MAXIMUM_TEXT_DELTA_LENGTH = 65_536;
+
     private RunEventPayloads() {}
 
     public record RunLifecycle(String status, long version, String reasonCode) implements AgentRunEvent.Payload {
@@ -24,7 +26,7 @@ public final class RunEventPayloads {
     public record AssistantTextDelta(String generationId, String textDelta) implements AgentRunEvent.Payload {
         public AssistantTextDelta {
             generationId = InteractionOption.requireText(generationId, "generationId", 256);
-            textDelta = InteractionOption.requireText(textDelta, "textDelta", 65_536);
+            textDelta = requireTextDelta(textDelta);
         }
     }
 
@@ -110,6 +112,15 @@ public final class RunEventPayloads {
 
     private static String text(String value, String field, int maximumLength) {
         return InteractionOption.requireText(value, field, maximumLength);
+    }
+
+    private static String requireTextDelta(String value) {
+        String delta = java.util.Objects.requireNonNull(value, "textDelta must not be null");
+        if (delta.isEmpty() || delta.length() > MAXIMUM_TEXT_DELTA_LENGTH) {
+            throw new IllegalArgumentException(
+                    "textDelta must contain 1.." + MAXIMUM_TEXT_DELTA_LENGTH + " characters");
+        }
+        return delta;
     }
 
     private static String optionalText(String value, String field, int maximumLength) {

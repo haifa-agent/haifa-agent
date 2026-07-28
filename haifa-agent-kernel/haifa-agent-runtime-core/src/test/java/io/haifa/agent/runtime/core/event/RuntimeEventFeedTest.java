@@ -27,6 +27,7 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 class RuntimeEventFeedTest {
@@ -64,6 +65,35 @@ class RuntimeEventFeedTest {
         });
         assertThat(second.nextCursor()).isEqualTo(second.headCursor());
         assertThat(second.hasMore()).isFalse();
+    }
+
+    @Test
+    void projectsWhitespaceOnlyAssistantDeltasWithoutPoisoningThePage() {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        store.append(
+                runId,
+                "model.output.assistant_text_delta",
+                Map.of("eventType", "ASSISTANT_TEXT_DELTA", "generationId", "generation", "textDelta", "Clamp.java"),
+                NOW);
+        store.append(
+                runId,
+                "model.output.assistant_text_delta",
+                Map.of("eventType", "ASSISTANT_TEXT_DELTA", "generationId", "generation", "textDelta", " "),
+                NOW);
+        store.append(
+                runId,
+                "model.output.assistant_text_delta",
+                Map.of("eventType", "ASSISTANT_TEXT_DELTA", "generationId", "generation", "textDelta", "boundary"),
+                NOW);
+        RuntimeEventFeed feed = new RuntimeEventFeed(store, new RuntimeClientEventProjector(store));
+
+        var page = feed.page(runId, RunEventCursor.beforeFirst(runId), 10);
+
+        assertThat(page.items())
+                .extracting(event -> ((RunEventPayloads.AssistantTextDelta) event.payload()).textDelta())
+                .containsExactly("Clamp.java", " ", "boundary");
+        assertThat(page.hasMore()).isFalse();
     }
 
     @Test
@@ -235,6 +265,34 @@ class RuntimeEventFeedTest {
         assertThat(subscription.closed()).isTrue();
         journal.append(runId, "run.status", Map.of("status", "PAUSED", "version", 2L), NOW);
         assertThat(eventTypes).containsExactly("run.accepted", "run.status.changed");
+    }
+
+    @Test
+    void subscriptionRetriesFromItsDurableCursorAfterATransientListenerFailure() throws InterruptedException {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        RuntimeEventWakeupRegistry wakeups = new RuntimeEventWakeupRegistry();
+        NotifyingRuntimeEventAppender journal = new NotifyingRuntimeEventAppender(store, store, wakeups);
+        RuntimeEventFeed feed = new RuntimeEventFeed(journal, new RuntimeClientEventProjector(store));
+        RuntimeEventSubscriptions subscriptions = new RuntimeEventSubscriptions(feed, wakeups);
+        journal.append(runId, "run.created", Map.of("version", 0L), NOW);
+        AtomicBoolean failOnce = new AtomicBoolean(true);
+        CountDownLatch delivered = new CountDownLatch(1);
+        java.util.concurrent.CopyOnWriteArrayList<String> eventTypes =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        var subscription = subscriptions.subscribe(runId, RunEventCursor.beforeFirst(runId), event -> {
+            if (failOnce.compareAndSet(true, false)) {
+                throw new IllegalStateException("transient listener failure");
+            }
+            eventTypes.add(event.eventType());
+            delivered.countDown();
+        });
+
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(eventTypes).containsExactly("run.accepted");
+        assertThat(subscription.closed()).isFalse();
+        subscription.close();
     }
 
     private static InMemoryRuntimeStore storeWithRun(String runValue) {

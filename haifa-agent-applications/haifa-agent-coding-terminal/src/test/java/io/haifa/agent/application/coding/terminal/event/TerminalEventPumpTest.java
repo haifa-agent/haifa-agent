@@ -13,6 +13,8 @@ class TerminalEventPumpTest {
 
         assertThat(pump.offer(first)).isTrue();
         assertThat(pump.offer(second)).isFalse();
+        assertThat(pump.consumeOverflow()).isTrue();
+        assertThat(pump.consumeOverflow()).isFalse();
         assertThat(pump.drain(10)).containsExactly(first);
         assertThat(pump.pendingCount()).isZero();
     }

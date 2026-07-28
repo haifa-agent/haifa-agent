@@ -19,6 +19,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
@@ -33,11 +34,13 @@ import io.haifa.agent.runtime.api.InteractionTargetView;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
+import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
 class CodingTerminalControllerTest {
@@ -250,6 +253,61 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void closedEventSubscriptionReconcilesAndClearsTheStaleWorkingState() {
+        FakeClient client = new FakeClient(activeView());
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        client.lastSubscription.close();
+
+        controller.drainEvents();
+
+        assertThat(client.reconcileCalls).isEqualTo(1);
+        assertThat(client.subscriptionCount).isEqualTo(1);
+        assertThat(controller.state().currentRunId()).isEmpty();
+        assertThat(controller.state().status()).isEqualTo("Idle");
+    }
+
+    @Test
+    void eventQueueOverflowReconcilesFromTheAuthoritativeSessionView() {
+        FakeClient client = new FakeClient(activeView());
+        client.reconciledView = view(Optional.empty());
+        TerminalEventPump pump = new TerminalEventPump(1);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40));
+        controller.open(SESSION_ID);
+        assertThat(pump.offer(new TerminalUiAction.StatusChanged("first"))).isTrue();
+        assertThat(pump.offer(new TerminalUiAction.StatusChanged("dropped"))).isFalse();
+
+        controller.drainEvents();
+
+        assertThat(client.reconcileCalls).isEqualTo(1);
+        assertThat(controller.state().currentRunId()).isEmpty();
+        assertThat(controller.state().status()).isEqualTo("Idle");
+    }
+
+    @Test
+    void transientCursorPersistenceFailureDoesNotStopOutputAndRetriesOnTheNextTick() {
+        FakeClient client = new FakeClient(activeView());
+        client.acknowledgementFailuresRemaining = 1;
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        client.emit(event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "keeps rendering")));
+        client.emit(event(2, new RunEventPayloads.AssistantTextDelta("generation-1", " after contention")));
+
+        controller.drainEvents();
+
+        assertThat(controller.state().transcript())
+                .anyMatch(item -> item.body().contains("keeps rendering after contention"));
+        assertThat(client.acknowledgementCalls).isEqualTo(1);
+
+        controller.drainEvents();
+
+        assertThat(client.acknowledgementCalls).isEqualTo(2);
+        assertThat(client.acknowledgedCursor.exclusiveSequence()).isEqualTo(OptionalLong.of(2));
+    }
+
+    @Test
     void governedShellApprovalCompletesThroughTheClientAndProjectsSafeResult() {
         FakeClient client = new FakeClient(view(Optional.empty()));
         client.shellState = CodingShellPlan.State.APPROVAL_REQUIRED;
@@ -359,6 +417,22 @@ class CodingTerminalControllerTest {
         return new TerminalInput(kind, text);
     }
 
+    private static AgentRunEvent event(long sequence, AgentRunEvent.Payload payload) {
+        AgentRunId runId = new AgentRunId("run-1");
+        return new AgentRunEvent(
+                "event-" + sequence,
+                "assistant.text.delta",
+                "1",
+                runId,
+                SESSION_ID,
+                sequence,
+                new RunEventCursor(runId, "1", OptionalLong.of(sequence)),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty(),
+                payload);
+    }
+
     private static final class FakeClient implements CodingSessionClient {
         private CodingSessionView view;
         private CodingSessionView reconciledView;
@@ -378,6 +452,13 @@ class CodingTerminalControllerTest {
         private boolean shellDiscarded;
         private long renamedExpectedRevision = -1;
         private String renamedDisplayName;
+        private int reconcileCalls;
+        private int subscriptionCount;
+        private RunEventSubscription lastSubscription;
+        private AgentRunEventListener lastListener;
+        private int acknowledgementFailuresRemaining;
+        private int acknowledgementCalls;
+        private RunEventCursor acknowledgedCursor;
 
         private FakeClient(CodingSessionView view) {
             this.view = view;
@@ -402,6 +483,7 @@ class CodingTerminalControllerTest {
 
         @Override
         public CodingSessionView reconcile(AgentSessionId sessionId) {
+            reconcileCalls++;
             view = reconciledView;
             return reconciledView;
         }
@@ -488,12 +570,20 @@ class CodingTerminalControllerTest {
 
         @Override
         public RunEventCursor acknowledgeCursor(AgentSessionId sessionId, RunEventCursor cursor) {
+            acknowledgementCalls++;
+            if (acknowledgementFailuresRemaining > 0) {
+                acknowledgementFailuresRemaining--;
+                throw new IllegalStateException("transient cursor persistence failure");
+            }
+            acknowledgedCursor = cursor;
             return cursor;
         }
 
         @Override
         public RunEventSubscription subscribe(AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
-            return new RunEventSubscription() {
+            subscriptionCount++;
+            lastListener = listener;
+            lastSubscription = new RunEventSubscription() {
                 private boolean closed;
 
                 @Override
@@ -506,6 +596,11 @@ class CodingTerminalControllerTest {
                     closed = true;
                 }
             };
+            return lastSubscription;
+        }
+
+        private void emit(AgentRunEvent event) {
+            lastListener.onEvent(event);
         }
 
         @Override

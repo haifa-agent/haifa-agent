@@ -327,6 +327,50 @@ class SqliteRuntimeRecoveryTest {
     }
 
     @Test
+    void persistsAndResumesMultipleApprovalRequiredToolsInModelOrder() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = toolRuntime(
+                    foundation,
+                    model(twoToolResponse(), finalResponse("both tools completed")),
+                    "process-a",
+                    new TestIds("sequential-approval"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL);
+            AgentRunId runId =
+                    instance.runtime().start(request("sequential-approval")).runId();
+            instance.scheduler().runAll();
+            InteractionRequest first =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+
+            instance.runtime().respond(approvalResponse(runId, first.id(), "first-approval"));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status())
+                    .as(
+                            "attempts=%s steps=%s calls=%s",
+                            instance.ports().attempts().attemptsFor(runId),
+                            instance.ports().state().steps(runId),
+                            instance.ports().state().toolCalls(runId))
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(providerCalls).hasValue(1);
+            InteractionRequest second =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+            assertThat(second.id()).isNotEqualTo(first.id());
+
+            instance.runtime().respond(approvalResponse(runId, second.id(), "second-approval"));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(providerCalls).hasValue(2);
+            assertThat(instance.ports().state().toolCalls(runId))
+                    .hasSize(2)
+                    .allMatch(call -> call.status().name().equals("COMPLETED"));
+            assertThat(instance.ports().attempts().attemptsFor(runId)).hasSize(3);
+        }
+    }
+
+    @Test
     void reopensOutcomeUnknownToolAndFailsClosedWithoutCallingProvider() {
         AtomicInteger providerCalls = new AtomicInteger();
         AgentRunId runId;
@@ -779,6 +823,26 @@ class SqliteRuntimeRecoveryTest {
                 "test-model",
                 "",
                 List.of(new ModelToolCall(new ProviderToolCallCorrelationId("provider-tool-call"), "write", Map.of())),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of());
+    }
+
+    private static AgentChatResponse twoToolResponse() {
+        return new AgentChatResponse(
+                "response-two-tools",
+                "test-model",
+                "",
+                List.of(
+                        new ModelToolCall(
+                                new ProviderToolCallCorrelationId("provider-first-tool-call"),
+                                "write",
+                                Map.of("value", 1)),
+                        new ModelToolCall(
+                                new ProviderToolCallCorrelationId("provider-second-tool-call"),
+                                "write",
+                                Map.of("value", 2))),
                 ModelFinishReason.TOOL_CALLS,
                 ModelUsage.unpriced(1, 1),
                 "",

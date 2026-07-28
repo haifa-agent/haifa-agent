@@ -87,9 +87,11 @@ Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显
 映射与跨平台能力诊断属于后续 Phase B/C，不在 Phase A 中直接修改用户终端配置。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
-50ms tick 在 Program 事件循环中排空
-队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成 View。空闲输入期间仍可归约 Runtime
-事件和刷新界面。
+50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成
+View。空闲输入期间仍可归约 Runtime 事件和刷新界面。队列溢出或订阅意外关闭时，Controller 会从
+权威 Session View 重新对账并按持久 Cursor 重建订阅，避免界面永久停留在 `Working/RUNNING`。
+事件 Cursor 在每个 UI tick 合并为一次最新进度写入；瞬时持久化失败只保留待确认 Cursor 并在后续
+tick 重试，不会终止渲染轮询或截断后续回复。
 
 启动 UI 时进入 alternate screen 并清空独立屏幕缓冲区，因此启动命令和初始化日志不占用 TUI 行；
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、

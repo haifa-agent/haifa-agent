@@ -595,6 +595,83 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void multipleApprovalRequiredToolsResumeSequentiallyWithoutRepeatingTheModelCall() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        List<Integer> executed = new ArrayList<>();
+        ToolRequest first =
+                toolRequest("first-write", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("v", 1)));
+        ToolRequest second =
+                toolRequest("second-write", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("v", 2)));
+        AgentChatModel model = ignored -> response(
+                modelCalls.incrementAndGet() == 1
+                        ? new ToolCallDecision(List.of(first, second))
+                        : finalDecision("both writes completed"));
+        Fixture fixture = fixture(
+                model,
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        request -> {
+                            executed.add((Integer) request.arguments().values().get("v"));
+                            return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
+                        }));
+
+        var accepted = fixture.runtime.start(request("sequential-approvals"));
+        fixture.scheduler.runAll();
+        var firstApproval = fixture.interactions.pending(accepted.runId()).orElseThrow();
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("first-response"),
+                firstApproval.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "first-approval-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .as(
+                        "attempts=%s steps=%s calls=%s",
+                        fixture.store.attemptsFor(accepted.runId()).stream()
+                                .map(attempt -> attempt.error())
+                                .toList(),
+                        fixture.store.steps(accepted.runId()),
+                        fixture.store.toolCalls(accepted.runId()))
+                .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        assertThat(executed).containsExactly(1);
+        var secondApproval = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        assertThat(secondApproval.id()).isNotEqualTo(firstApproval.id());
+
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("second-response"),
+                secondApproval.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "second-approval-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .as(
+                        "attempts=%s steps=%s calls=%s",
+                        fixture.store.attemptsFor(accepted.runId()).stream()
+                                .map(attempt -> attempt.error())
+                                .toList(),
+                        fixture.store.steps(accepted.runId()),
+                        fixture.store.toolCalls(accepted.runId()))
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(executed).containsExactly(1, 2);
+        assertThat(modelCalls).hasValue(2);
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(3);
+    }
+
+    @Test
     void rejectedToolApprovalDoesNotCancelRunAndDuplicateResponseIsIdempotent() {
         AtomicInteger toolCalls = new AtomicInteger();
         AtomicReference<AgentChatRequest> resumedModelRequest = new AtomicReference<>();
