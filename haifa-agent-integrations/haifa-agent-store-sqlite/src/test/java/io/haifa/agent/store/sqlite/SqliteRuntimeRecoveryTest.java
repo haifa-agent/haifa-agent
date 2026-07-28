@@ -27,8 +27,10 @@ import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.credential.api.SecretRedactor;
 import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.policy.api.ApprovalMode;
@@ -323,6 +325,120 @@ class SqliteRuntimeRecoveryTest {
             assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(processB.ports().state().toolCalls(runId).getFirst().result())
                     .hasValueSatisfying(result -> assertThat(result.summary()).isEqualTo("persisted"));
+        }
+    }
+
+    @Test
+    void persistsAndResumesMultipleApprovalRequiredToolsInModelOrder() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = toolRuntime(
+                    foundation,
+                    model(twoToolResponse(), finalResponse("both tools completed")),
+                    "process-a",
+                    new TestIds("sequential-approval"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL);
+            AgentRunId runId =
+                    instance.runtime().start(request("sequential-approval")).runId();
+            instance.scheduler().runAll();
+            InteractionRequest first =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+
+            instance.runtime().respond(approvalResponse(runId, first.id(), "first-approval"));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status())
+                    .as(
+                            "attempts=%s steps=%s calls=%s",
+                            instance.ports().attempts().attemptsFor(runId),
+                            instance.ports().state().steps(runId),
+                            instance.ports().state().toolCalls(runId))
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(providerCalls).hasValue(1);
+            InteractionRequest second =
+                    instance.ports().interactions().pending(runId).orElseThrow();
+            assertThat(second.id()).isNotEqualTo(first.id());
+
+            instance.runtime().respond(approvalResponse(runId, second.id(), "second-approval"));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(providerCalls).hasValue(2);
+            assertThat(instance.ports().state().toolCalls(runId))
+                    .hasSize(2)
+                    .allMatch(call -> call.status().name().equals("COMPLETED"));
+            assertThat(instance.ports().attempts().attemptsFor(runId)).hasSize(3);
+        }
+    }
+
+    @Test
+    void continuesConversationAfterRejectedToolFromPreviousRun() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> nextRunRequest = new AtomicReference<>();
+        AgentChatModel model = request -> {
+            return switch (modelCalls.incrementAndGet()) {
+                case 1 -> toolResponse();
+                case 2 -> finalResponse("continued after rejection");
+                case 3 -> {
+                    nextRunRequest.set(request);
+                    yield finalResponse("next run completed");
+                }
+                default -> throw new AssertionError("unexpected model call");
+            };
+        };
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = toolRuntime(
+                    foundation,
+                    model,
+                    "process-a",
+                    new TestIds("cross-run-rejection"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL);
+            AgentRunId rejectedRunId =
+                    instance.runtime().start(request("rejected-tool-run")).runId();
+            instance.scheduler().runAll();
+            InteractionRequest interaction =
+                    instance.ports().interactions().pending(rejectedRunId).orElseThrow();
+
+            instance.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("rejected-response"),
+                            interaction.id(),
+                            rejectedRunId,
+                            InteractionResponseType.REJECT,
+                            List.of(),
+                            "rejected-response-key",
+                            NOW));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(rejectedRunId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.ports().state().toolCalls(rejectedRunId))
+                    .singleElement()
+                    .satisfies(call -> assertThat(call.status().name()).isEqualTo("DENIED"));
+
+            AgentRunId nextRunId = instance.runtime()
+                    .start(request("next-run-after-rejection"))
+                    .runId();
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(nextRunId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(modelCalls).hasValue(3);
+            assertThat(providerCalls).hasValue(0);
+            assertThat(nextRunRequest.get().messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
+                            && message.toolCalls().stream()
+                                    .anyMatch(call ->
+                                            call.providerCorrelationId().value().equals("provider-tool-call")))
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("provider-tool-call")
+                            && message.content().contains("rejected by the operator"));
         }
     }
 
@@ -779,6 +895,26 @@ class SqliteRuntimeRecoveryTest {
                 "test-model",
                 "",
                 List.of(new ModelToolCall(new ProviderToolCallCorrelationId("provider-tool-call"), "write", Map.of())),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of());
+    }
+
+    private static AgentChatResponse twoToolResponse() {
+        return new AgentChatResponse(
+                "response-two-tools",
+                "test-model",
+                "",
+                List.of(
+                        new ModelToolCall(
+                                new ProviderToolCallCorrelationId("provider-first-tool-call"),
+                                "write",
+                                Map.of("value", 1)),
+                        new ModelToolCall(
+                                new ProviderToolCallCorrelationId("provider-second-tool-call"),
+                                "write",
+                                Map.of("value", 2))),
                 ModelFinishReason.TOOL_CALLS,
                 ModelUsage.unpriced(1, 1),
                 "",

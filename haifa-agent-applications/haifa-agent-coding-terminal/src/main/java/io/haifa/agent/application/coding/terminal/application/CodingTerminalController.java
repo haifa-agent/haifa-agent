@@ -46,6 +46,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private List<CodingQueuedMessage> restoreOptions = List.of();
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
+    private RunEventCursor pendingAcknowledgement;
 
     public CodingTerminalController(
             ProjectId projectId,
@@ -79,7 +80,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void drainEventsGuarded() {
-        boolean reconcile = false;
+        boolean reconcile = pump.consumeOverflow();
         for (TerminalUiAction action : pump.drain(PAGE_SIZE)) {
             apply(action);
             if (action instanceof TerminalUiAction.RunEventReceived received
@@ -87,9 +88,15 @@ public final class CodingTerminalController implements AutoCloseable {
                 reconcile = true;
             }
         }
+        if (subscription != null
+                && subscription.closed()
+                && state.currentRunId().isPresent()) {
+            reconcile = true;
+        }
         if (reconcile && state.session().isPresent()) {
             refresh();
         }
+        acknowledgePendingCursor();
     }
 
     public void accept(TerminalInput input) {
@@ -403,6 +410,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openInteractionSelector(InteractionView interaction) {
+        apply(new TerminalUiAction.InteractionPresented(interaction));
         if (state.selector().isPresent()
                 && state.selector().orElseThrow().kind().startsWith("interaction:")) {
             return;
@@ -415,7 +423,7 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                "interaction:" + interaction.requestId().value(), interaction.safePrompt(), options, 0)));
+                "interaction:" + interaction.requestId().value(), "Approval · " + interaction.title(), options, 0)));
     }
 
     private void openCommandSelector() {
@@ -540,7 +548,11 @@ public final class CodingTerminalController implements AutoCloseable {
                         .flatMap(CodingSessionView::pendingInteraction)
                         .orElseThrow();
                 InteractionAction action = interaction.allowedActions().get(selected);
-                client.respond(interaction, action, UUID.randomUUID().toString());
+                var receipt =
+                        client.respond(interaction, action, UUID.randomUUID().toString());
+                if (receipt != null) {
+                    apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                }
                 apply(new TerminalUiAction.SelectorClosed());
                 refresh();
             }
@@ -601,9 +613,24 @@ public final class CodingTerminalController implements AutoCloseable {
                         .filter(received.event().cursor()::equals)
                         .isPresent()
                 && state.session().isPresent()) {
-            client.acknowledgeCursor(
-                    state.session().orElseThrow().summary().sessionId(),
-                    received.event().cursor());
+            pendingAcknowledgement = received.event().cursor();
+        }
+    }
+
+    private void acknowledgePendingCursor() {
+        if (pendingAcknowledgement == null || state.session().isEmpty()) return;
+        RunEventCursor requested = pendingAcknowledgement;
+        try {
+            RunEventCursor acknowledged = client.acknowledgeCursor(
+                    state.session().orElseThrow().summary().sessionId(), requested);
+            if (acknowledged.runId().equals(requested.runId())
+                    && acknowledged.exclusiveSequence().orElse(0L)
+                            >= requested.exclusiveSequence().orElse(0L)) {
+                pendingAcknowledgement = null;
+            }
+        } catch (RuntimeException ignored) {
+            // Cursor persistence is a replay checkpoint. Keep the newest cursor and retry on
+            // the next UI tick instead of stopping rendering or losing the polling command.
         }
     }
 

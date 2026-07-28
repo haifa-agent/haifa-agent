@@ -31,6 +31,8 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
             CliConfiguration configuration,
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver) {
+        Tui4jTerminalIo terminalIo = Objects.requireNonNull(terminalIoFactory.get(), "terminal IO must not be null");
+        terminalIo.requireInteractive();
         try (LocalCodingAgent agent = agentFactory.create(workspace, configuration, output, traceObserver)) {
             var client = new LocalCodingSessionClient(
                     agent.projectId(),
@@ -43,12 +45,7 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
                     agent::reloadResources,
                     agent.shell(),
                     agent.exporter());
-            new CodingTerminalApplication(
-                            agent.projectId(),
-                            client,
-                            Optional.empty(),
-                            Objects.requireNonNull(terminalIoFactory.get(), "terminal IO must not be null"))
-                    .run();
+            new CodingTerminalApplication(agent.projectId(), client, Optional.empty(), terminalIo).run();
         }
     }
 

@@ -7,9 +7,12 @@ import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
 import com.williamcallahan.tui4j.term.TerminalInfo;
+import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalFooter;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
+import io.haifa.agent.core.run.AgentRunId;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.IntStream;
@@ -33,17 +36,15 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered)
                 .containsSubsequence(
-                        "HAIFA CODING AGENT",
-                        "Startup help",
-                        "Loaded resources",
+                        "Haifa Coding Agent", "Start a task or use /commands.", "Type a message", "enter send", "IDLE")
+                .doesNotContain(
                         "Diagnostics",
-                        "Conversation",
-                        "Pending messages",
-                        "Status",
+                        "Pending messages  none",
                         "Widgets above",
-                        "Type a message",
                         "Widgets below",
-                        "Footer");
+                        "provider: frozen",
+                        "model: frozen",
+                        "sandbox: frozen profile");
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(24);
     }
 
@@ -78,17 +79,13 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered)
                 .containsSubsequence(
-                        "Startup help",
-                        "Loaded resources",
-                        "Diagnostics",
-                        "Conversation",
-                        "Pending messages",
-                        "Status",
-                        "Widgets above",
+                        "Haifa Coding Agent",
+                        "Start a task or use /commands.",
                         "Commands",
                         "/reload",
-                        "Widgets below",
-                        "Footer");
+                        "enter select",
+                        "IDLE")
+                .doesNotContain("Diagnostics", "Pending messages  none", "Widgets above", "Widgets below");
         assertThat(rendered).contains("5-5 of 6", "editor preserved");
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(16);
     }
@@ -141,7 +138,9 @@ class Tui4jTerminalViewTest {
 
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(40);
         assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 119);
-        assertThat(rendered).contains("COMPLETED");
+        assertThat(rendered)
+                .contains("COMPLETED")
+                .doesNotContain("git: via safe read model", "provider: frozen", "model: frozen", "sandbox: frozen");
     }
 
     @Test
@@ -156,7 +155,187 @@ class Tui4jTerminalViewTest {
         String rendered = view.render(state, transcript, editor(120), true, false);
 
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(40);
-        assertThat(rendered).contains("STUB-LONG-LINE-40", "Footer  Enter sends");
+        assertThat(rendered).contains("STUB-LONG-LINE-40", "enter send", "IDLE");
+    }
+
+    @Test
+    void changesTheEditorHintWhenARunIsActive() {
+        TerminalUiState initial = TerminalUiState.initial(80, 24);
+        TerminalUiState active = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                "Working",
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                Optional.of(new AgentRunId("run-1")),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String rendered = view.render(active, transcript(active), editor(80), true, false);
+
+        assertThat(rendered)
+                .contains(
+                        "enter steer", "alt/option+enter follow-up", "alt/option+up restore queued message", "Working")
+                .doesNotContain("enter send");
+    }
+
+    @Test
+    void onlyShowsResourcesPendingAndRecoveryRegionsWhenTheyContainRealInformation() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                List.of("AGENTS.md", "14 tools", "2 skills"),
+                initial.transcript(),
+                List.of(
+                        new PendingMessage("steer-1", PendingMessage.Kind.STEER, "Check the diff", 1),
+                        new PendingMessage("follow-up-1", PendingMessage.Kind.FOLLOW_UP, "Run tests", 2)),
+                "Recovery required",
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                new TerminalFooter(
+                        "project-1",
+                        "git: unavailable",
+                        "retry task",
+                        "queue: 2",
+                        "provider: frozen",
+                        "model: frozen",
+                        "RUNNING",
+                        "sandbox: frozen profile"),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                Optional.of(new AgentRunId("run-1")),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                Optional.of("ACTIVE_RUN_MISMATCH"),
+                initial.exitRequested());
+
+        String rendered = view.render(state, transcript(state), editor(100), true, false);
+
+        assertThat(rendered)
+                .containsSubsequence(
+                        "resources · AGENTS.md · 14 tools · 2 skills",
+                        "Pending · 2",
+                        "[steer] Check the diff",
+                        "[follow_up] Run tests",
+                        "Retryable · ACTIVE_RUN_MISMATCH",
+                        "The session changed while submitting; retry the message.",
+                        "Type a message",
+                        "enter steer",
+                        "RUNNING · project-1 · retry task · queue: 2")
+                .containsOnlyOnce("Retryable")
+                .doesNotContain("provider: frozen", "model: frozen", "sandbox: frozen profile");
+    }
+
+    @Test
+    void givesTranscriptKindsAndStatusesDistinctNoColorTextSemantics() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                List.of("AGENTS.md", "14 tools", "2 skills"),
+                List.of(
+                        item("user", TranscriptItem.Kind.USER, "You", "Fix the retry loop", "SENT", true),
+                        item(
+                                "assistant",
+                                TranscriptItem.Kind.ASSISTANT,
+                                "Assistant",
+                                "I will inspect it.",
+                                "STREAMING",
+                                true),
+                        item(
+                                "tool",
+                                TranscriptItem.Kind.TOOL,
+                                "workspace.read",
+                                "RetryPolicy.java",
+                                "SUCCEEDED",
+                                false),
+                        item("execution", TranscriptItem.Kind.EXECUTION, "mvn test", "14 tests", "STARTED", false),
+                        item(
+                                "approval",
+                                TranscriptItem.Kind.APPROVAL,
+                                "Approval · SHELL",
+                                "Run tests",
+                                "PENDING",
+                                true),
+                        item("resource", TranscriptItem.Kind.RESOURCE, "Test report", "artifact:1", "EXPORTED", false),
+                        item("error", TranscriptItem.Kind.ERROR, "Tool failed", "Retry available", "FAILED", true)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content)
+                .containsSubsequence(
+                        "You",
+                        "Assistant",
+                        "Tool · workspace.read [succeeded]",
+                        "Execution · mvn test [started]",
+                        "Approval · SHELL [pending]",
+                        "Resource · Test report [exported]",
+                        "Error · Tool failed [failed]")
+                .contains("ctrl+o expand")
+                .doesNotContain("\u001B");
+    }
+
+    @Test
+    void clipsCjkAndEmojiByTerminalCellsAndStripsInjectedControls() {
+        TerminalUiState initial = TerminalUiState.initial(60, 16);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(item(
+                        "tool",
+                        TranscriptItem.Kind.TOOL,
+                        "workspace\u001B.read",
+                        "中".repeat(40) + "\tSAFE\u001B[31m",
+                        "SUCCEEDED",
+                        true)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String rendered = view.render(state, transcript(state), editor(60), true, false);
+
+        assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 59);
+        assertThat(rendered).doesNotContain("\u001B", "\t").contains("workspace.read", "SAFE");
+    }
+
+    private TranscriptItem item(
+            String id, TranscriptItem.Kind kind, String title, String body, String status, boolean expanded) {
+        return new TranscriptItem(id, kind, title, body, status, expanded);
     }
 
     private Viewport transcript(TerminalUiState state) {

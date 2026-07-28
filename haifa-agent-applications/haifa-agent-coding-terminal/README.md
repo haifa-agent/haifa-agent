@@ -1,7 +1,8 @@
 # Haifa Coding Terminal
 
-Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互严格以
-`docs/prd/pi-coding-agent-terminal-low-fi-prototype` 评审原型为准，不自行发明 Sidebar、
+Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
+`docs/prd/pi-coding-agent-terminal-low-fi-prototype` 评审原型及
+`docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准，不自行发明 Sidebar、
 Dashboard、Scenario toolbar 或另一套产品 UI。
 
 ## 模块定位
@@ -52,31 +53,74 @@ Windows ConPTY Gate B。
 
 ## 原型映射与交互
 
-固定信息顺序：
+Phase A 将原型映射收敛为固定单列顺序：
 
 ```text
 Header
-Loaded Resources / Diagnostics
+Resources summary（仅有真实资源时）
 Transcript
-Pending Messages
-Status
-Widgets Above
+Pending Messages（仅非空）
+Active Status / Recoverable Error（仅需要感知时）
 Editor or Selector
-Widgets Below
 Footer
 ```
 
+不再常驻渲染 Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。Footer 只显示
+已有真实来源的 Project、Git（存在安全 Read Model 时）、Session、Context/Queue 和 Run 状态；
+`git: via safe read model`、`provider/model: frozen`、`sandbox: frozen profile` 等实现占位字段不进入
+产品界面。
+
+Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、User、Success、Pending、
+Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoColor 环境仍依靠稳定标题、状态文字、
+边界和顺序区分：
+
+- User 使用低对比消息块，便于定位用户意图；
+- Assistant 正文直接进入对话流，不使用厚卡片；
+- Tool/Execution 根据 `requested/started/succeeded/failed/cancelled` 使用状态色，并在折叠时显示
+  `ctrl+o expand`；
+- Approval 使用 Pending 语义，Error 使用 Error 语义，Resource 保持中性；
+- Editor/Selector 的当前操作提示使用 Focus 语义。
+
+Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示
+`enter steer · alt+enter follow-up · esc interrupt`。macOS 的 Option 对应 Terminal Alt；
+`Shift+Enter` 和 `Ctrl+J` 都用于换行。Phase C 会从终端能力白名单中识别 Windows Terminal、
+WezTerm、Alacritty、Apple Terminal 和常见受限终端：存在修饰 Enter 冲突时显示可执行 remap 或
+`Ctrl+J` fallback，但不读取秘密、不写入用户终端配置。非交互输入或 `TERM=dumb` 在装配产品 Runtime
+前以稳定 `TUI_UNAVAILABLE` 失败。
+
+Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
+
+- Tool 与 Execution 按稳定 ID 原位更新，不为同一调用重复创建卡片；显示明确 lifecycle、Target、
+  Workdir、Stream、Exit、Result Ref 和 FileChangeSet Ref，缺失的 Duration 不伪造；
+- Approval 从 `InteractionView` 显示 Action、Target、Risk、Scope、Network、Reason 与允许动作；
+  `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
+  原有 editor buffer/cursor 均保持不变；
+- `RunInputLifecycle.ACCEPTED` 将 Steer 放入 Pending，`APPLIED` 后移除；持久 Follow-up 与 Steer
+  合并展示且按稳定 ID 去重，Alt+Up 仍从产品队列恢复原文；
+- 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
+  五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
+- viewport 不在底部时不抢滚动位置，只显示 `new output below`；回到底部后恢复自动跟随。
+
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
-50ms tick 在 Program 事件循环中排空
-队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成 View。空闲输入期间仍可归约 Runtime
-事件和刷新界面。
+50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成
+View。空闲输入期间仍可归约 Runtime 事件和刷新界面。队列溢出或订阅意外关闭时，Controller 会从
+权威 Session View 重新对账并按持久 Cursor 重建订阅，避免界面永久停留在 `Working/RUNNING`。
+事件 Cursor 在每个 UI tick 合并为一次最新进度写入；瞬时持久化失败只保留待确认 Cursor 并在后续
+tick 重试，不会终止渲染轮询或截断后续回复。
 
 启动 UI 时进入 alternate screen 并清空独立屏幕缓冲区，因此启动命令和初始化日志不占用 TUI 行；
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
 keypad 和光标。
 
+Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
+序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width
+对齐。Transcript 和固定区域同样按 cell width 截断，并在渲染前移除 ESC、控制字符和 Tab 注入。
+颜色语义覆盖 TrueColor、ANSI256、ANSI16 和 NoColor；无色模式仍保留相同文字、状态和顺序。
+
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn，Active Enter 发送 Steer；
+- Run 进入 `COMPLETED`、`FAILED`、`CANCELLED` 或 `TIMEOUT` 后立即回到 Idle；同一已结束 Run 随后
+  到达的 Checkpoint/Resource 事件不得把它重新标记为 Active，下一次 Enter 必须提交新 Turn；
 - Active Alt+Enter 写入持久 Follow-up Queue，Alt+Up 选择并恢复待发消息；
 - 第二轮输入遇到 Run 刚结束/刚激活的状态竞态时，Terminal 先 reconcile 再按最新状态重试一次；
   其他产品错误只显示稳定错误码并保留草稿，不退出进程；
@@ -132,7 +176,7 @@ Windows 上需要真实运行编译、包管理器或联网工具时，仅对明
 隔离。持久模式使用稳定的 `env://HAIFA_CONTINUATION_KEY`，其值必须是 Base64 编码的 32 字节 AES
 key，并在所有重启间保持不变。
 
-## Phase 2 人工验收
+## Phase B 人工验收
 
 进入 Phase 3 前人工验证 Phase 2，不等到最后统一验证：
 
@@ -147,6 +191,14 @@ key，并在所有重启间保持不变。
 9. 输入 `/` 和 `@` 后分别按 Tab，确认候选可见、可选择并正确回填；输入 `/command` 确认命令面板可见。
 10. Terminal 模式使用 `--trace detail` 但不提供 `--trace-file`，确认 Trace 不写入 TUI；提供
     `--trace-file` 后确认诊断仅进入文件。
+11. 用 Stub/Fake Tool 走通 requested → started → succeeded/failed/cancelled，确认同一 Tool/Execution
+    只更新一张卡片，Ctrl+O 可折叠/展开最近项。
+12. 用 Stub/Fake Approval 检查结构化字段、approve/reject 回执与 editor 草稿恢复；审批期间输入只由
+    Selector 消费。
+13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，
+    Alt+Up 恢复且重启后不重复。
+14. PageUp 离开底部后产生新输出，确认 viewport 不跳动且出现 `new output below`；PageDown 回到底部
+    后提示消失。
 
 真实模型和 Web Provider 可能产生费用；未经单独授权保持 **NOT RUN**。自动化验证只使用 Stub/Fake：
 

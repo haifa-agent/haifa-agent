@@ -52,13 +52,16 @@ public final class RuntimeEventSubscriptions {
         private void run() {
             try {
                 while (!closed.get()) {
-                    drain();
+                    try {
+                        drain();
+                    } catch (RuntimeException ignored) {
+                        // The cursor advances only after a complete page. Retrying therefore
+                        // replays the unacknowledged page without losing committed events.
+                    }
                     signals.poll(1, TimeUnit.SECONDS);
                 }
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
-            } catch (RuntimeException ignored) {
-                close();
             }
         }
 

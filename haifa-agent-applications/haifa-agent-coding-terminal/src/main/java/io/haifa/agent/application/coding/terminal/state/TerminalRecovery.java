@@ -1,0 +1,98 @@
+package io.haifa.agent.application.coding.terminal.state;
+
+import java.util.Map;
+import java.util.Objects;
+
+/** Actionable presentation for stable product/terminal failure codes. */
+public record TerminalRecovery(Category category, String code, String action) {
+    private static final Map<String, TerminalRecovery> KNOWN = Map.ofEntries(
+            entry(Category.RETRYABLE, "EVENT_OUT_OF_ORDER", "Reconcile the session, then retry the last action."),
+            entry(Category.RETRYABLE, "EVENT_RUN_MISMATCH", "Reconcile the session, then retry the last action."),
+            entry(Category.RETRYABLE, "ACTIVE_RUN_SETTLED", "The session changed while submitting; retry the message."),
+            entry(
+                    Category.RETRYABLE,
+                    "ACTIVE_RUN_MISMATCH",
+                    "The session changed while submitting; retry the message."),
+            entry(Category.USER_ACTION_REQUIRED, "SESSION_REQUIRED", "Create or resume a session, then retry."),
+            entry(Category.USER_ACTION_REQUIRED, "SESSION_NOT_FOUND", "Use /resume to choose an available session."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "RESTORABLE_QUEUE_EMPTY",
+                    "There are no queued follow-ups to restore."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "CAPABILITY_NOT_IMPLEMENTED",
+                    "Use a supported command or capability."),
+            entry(Category.USER_ACTION_REQUIRED, "COMMAND_UNKNOWN", "Use /commands to choose a supported command."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "MODIFIED_ENTER_UNAVAILABLE",
+                    "Use Ctrl+J for a newline and Alt/Option+Enter for follow-up."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP",
+                    "Map Shift+Enter to ESC[13;2u and Alt+Enter to ESC[13;3u in Windows Terminal."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "WEZTERM_OPTION_ENTER_REMAP",
+                    "Map Option+Enter to ESC[13;3u if the terminal reserves the shortcut."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "ALACRITTY_OPTION_ENTER_REMAP",
+                    "Map Option+Enter to ESC[13;3u if it arrives as plain Enter."),
+            entry(
+                    Category.TERMINAL_CAPABILITY,
+                    "APPLE_TERMINAL_MODIFIED_ENTER_LIMITED",
+                    "Use Ctrl+J for newline; modified Enter may not work over SSH."),
+            entry(Category.TERMINAL_CAPABILITY, "TERMINAL_TOO_SMALL", "Resize the terminal to at least 60x16."),
+            entry(Category.INTERRUPTED, "RUN_INTERRUPTED", "Edit the preserved draft, then submit again."),
+            entry(
+                    Category.TERMINAL_FAILURE,
+                    "TERMINAL_FAILURE",
+                    "Restart the terminal; the session remains recoverable."));
+
+    public TerminalRecovery {
+        category = Objects.requireNonNull(category, "category must not be null");
+        code = require(code, "code");
+        action = require(action, "action");
+    }
+
+    public static TerminalRecovery fromCode(String code) {
+        String checked = require(code, "code");
+        return KNOWN.getOrDefault(
+                checked,
+                new TerminalRecovery(
+                        Category.USER_ACTION_REQUIRED,
+                        checked,
+                        "Review the request and retry; the editor draft is preserved."));
+    }
+
+    private static Map.Entry<String, TerminalRecovery> entry(Category category, String code, String action) {
+        return Map.entry(code, new TerminalRecovery(category, code, action));
+    }
+
+    private static String require(String value, String field) {
+        String normalized =
+                Objects.requireNonNull(value, field + " must not be null").strip();
+        if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
+        return normalized;
+    }
+
+    public enum Category {
+        RETRYABLE("Retryable"),
+        USER_ACTION_REQUIRED("User action required"),
+        INTERRUPTED("Interrupted"),
+        TERMINAL_CAPABILITY("Terminal capability"),
+        TERMINAL_FAILURE("Terminal failure");
+
+        private final String label;
+
+        Category(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+    }
+}

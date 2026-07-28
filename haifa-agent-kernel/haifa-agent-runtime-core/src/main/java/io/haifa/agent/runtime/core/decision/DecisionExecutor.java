@@ -335,15 +335,20 @@ public final class DecisionExecutor {
     }
 
     public Optional<AgentLoopDirective> resumePendingTools(AgentRun run, AgentLoopContext loopContext) {
-        List<ToolCall> pending = state.toolCalls(run.id()).stream()
+        List<PendingTool> pending = state.toolCalls(run.id()).stream()
                 .filter(call -> call.status() == ToolCallStatus.REQUESTED || call.status() == ToolCallStatus.APPROVED)
+                .map(call -> new PendingTool(
+                        call,
+                        state.steps(run.id()).stream()
+                                .filter(candidate -> candidate.id().equals(call.stepId()))
+                                .findFirst()
+                                .orElseThrow(() -> new IllegalStateException("tool step is unavailable"))))
+                .sorted(java.util.Comparator.comparingInt(value -> value.step().sequence()))
                 .toList();
         if (pending.isEmpty()) return Optional.empty();
-        for (ToolCall call : pending) {
-            AgentStep step = state.steps(run.id()).stream()
-                    .filter(candidate -> candidate.id().equals(call.stepId()))
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("tool step is unavailable"));
+        for (PendingTool pendingTool : pending) {
+            ToolCall call = pendingTool.call();
+            AgentStep step = pendingTool.step();
             if (call.status() == ToolCallStatus.APPROVED && step.status() == AgentStepStatus.WAITING) step.resume();
             else if (call.status() == ToolCallStatus.REQUESTED) step.start(time.now());
             state.appendStep(step);
@@ -370,6 +375,8 @@ public final class DecisionExecutor {
         }
         return Optional.of(AgentLoopDirective.CONTINUE);
     }
+
+    private record PendingTool(ToolCall call, AgentStep step) {}
 
     public void resolveToolApproval(
             AgentRun run,

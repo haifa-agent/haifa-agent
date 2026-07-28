@@ -20,6 +20,12 @@ public final class Tui4jCodingTerminal {
     }
 
     public void run() {
+        terminalIo.requireInteractive();
+        terminalIo
+                .compatibilityNotice()
+                .ifPresent(code -> pump.offer(
+                        new io.haifa.agent.application.coding.terminal.event.TerminalUiAction.RecoverableFailure(
+                                code)));
         var model = new Tui4jCodingTerminalModel(controller, pump);
         terminalIo.program(model).run();
     }

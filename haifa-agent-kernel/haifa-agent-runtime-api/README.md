@@ -5,7 +5,8 @@
 `outputEvents` and `addOutputListener` expose a replayable, transport-neutral projection of model output. Public
 events contain only assistant text deltas and committed/failed/superseded lifecycle state. They never contain
 reasoning, unvalidated tool arguments, prompts, credentials, or provider responses. Callers resume from a
-`RunOutputCursor` whose sequence is monotonic within the Run.
+`RunOutputCursor` whose sequence is monotonic within the Run. Assistant text delta 内容按 Provider chunk 原样
+保留；纯空格、换行或制表符 chunk 是合法输出，不会被通用 display-text 规范化。
 
 定义 Runtime 的稳定入口、查询、恢复、命令、Interaction Response、Handle 和监听契约，不包含默认 AgentLoop 实现。
 

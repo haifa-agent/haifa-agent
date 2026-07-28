@@ -26,6 +26,7 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -49,13 +50,12 @@ public final class ModelMessageAssembler {
         context.prompts()
                 .forEach(prompt -> messages.add(ModelMessage.text(
                         ModelMessageRole.SYSTEM, "[" + prompt.layer() + "/" + prompt.role() + "] " + prompt.text())));
-        Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> toolCalls = state.toolCalls(runId).stream()
-                .collect(Collectors.toUnmodifiableMap(ToolCall::id, Function.identity()));
+        Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         for (ContextItem item : context.items()) {
             if (item.content() instanceof MessageContextContent message) {
-                messages.addAll(mapMessage(message.message(), toolCalls, model));
+                messages.addAll(mapMessage(runId, message.message(), toolCallsByRun, model));
             } else if (item.content() instanceof MessageGroupContextContent group) {
-                group.messages().forEach(message -> messages.addAll(mapMessage(message, toolCalls, model)));
+                group.messages().forEach(message -> messages.addAll(mapMessage(runId, message, toolCallsByRun, model)));
             } else if (item.content() instanceof TextContextContent text) {
                 messages.add(ModelMessage.text(mapRole(text.role()), text.text()));
             } else if (item.content() instanceof AssetDerivedTextContent asset) {
@@ -90,9 +90,13 @@ public final class ModelMessageAssembler {
     }
 
     private List<ModelMessage> mapMessage(
+            AgentRunId currentRunId,
             AgentMessage message,
-            Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> authoritativeCalls,
+            Map<AgentRunId, Map<io.haifa.agent.core.tool.ToolCallId, ToolCall>> toolCallsByRun,
             ResolvedModelSnapshot model) {
+        AgentRunId messageRunId = message.runId().orElse(currentRunId);
+        Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> authoritativeCalls =
+                toolCallsByRun.computeIfAbsent(messageRunId, this::toolCallsById);
         List<ToolCallPart> calls = message.contents().stream()
                 .filter(ToolCallPart.class::isInstance)
                 .map(ToolCallPart.class::cast)
@@ -152,6 +156,10 @@ public final class ModelMessageAssembler {
             throw new IllegalStateException("tool message has no typed provider correlation");
         }
         return List.of(ModelMessage.text(mapRole(message.role()), text));
+    }
+
+    private Map<io.haifa.agent.core.tool.ToolCallId, ToolCall> toolCallsById(AgentRunId runId) {
+        return state.toolCalls(runId).stream().collect(Collectors.toUnmodifiableMap(ToolCall::id, Function.identity()));
     }
 
     private String renderText(List<ContentPart> contents) {

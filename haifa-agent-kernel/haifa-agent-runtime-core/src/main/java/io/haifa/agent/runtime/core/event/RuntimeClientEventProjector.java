@@ -166,7 +166,8 @@ public final class RuntimeClientEventProjector {
             case ASSISTANT_TEXT_DELTA ->
                 new Projection(
                         "assistant.text.delta",
-                        new RunEventPayloads.AssistantTextDelta(generationId, requiredText(event.data(), "textDelta")));
+                        new RunEventPayloads.AssistantTextDelta(
+                                generationId, requiredTextDelta(event.data(), "textDelta")));
             case ASSISTANT_TEXT_COMMITTED ->
                 new Projection(
                         "assistant.text.committed",
@@ -236,6 +237,14 @@ public final class RuntimeClientEventProjector {
     private static String requiredText(Map<String, Object> data, String key) {
         Object value = data.get(key);
         if (!(value instanceof String text) || text.isBlank()) {
+            throw new IllegalStateException("known client event is missing a required safe field: " + key);
+        }
+        return text;
+    }
+
+    private static String requiredTextDelta(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        if (!(value instanceof String text) || text.isEmpty()) {
             throw new IllegalStateException("known client event is missing a required safe field: " + key);
         }
         return text;

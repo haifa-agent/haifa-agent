@@ -19,6 +19,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
@@ -27,17 +28,21 @@ import io.haifa.agent.runtime.api.InteractionInputContract;
 import io.haifa.agent.runtime.api.InteractionKind;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionRequesterView;
+import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
+import io.haifa.agent.runtime.api.InteractionResponseReceiptStatus;
 import io.haifa.agent.runtime.api.InteractionState;
 import io.haifa.agent.runtime.api.InteractionTargetView;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
+import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
 class CodingTerminalControllerTest {
@@ -97,14 +102,32 @@ class CodingTerminalControllerTest {
         FakeClient client = new FakeClient(view(Optional.of(interaction)));
         client.reconciledView = view(Optional.empty());
         var controller = controller(client);
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "preserved draft", 9));
         controller.open(SESSION_ID);
 
         assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().editorBuffer()).isEqualTo("preserved draft");
+        assertThat(controller.state().editorCursor()).isEqualTo(9);
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.body())
+                    .contains(
+                            "Action: Approval",
+                            "Target: workspace file",
+                            "Risk: On approval: Run tool",
+                            "Network: Not declared by runtime",
+                            "Reason: Allow file change?",
+                            "Allowed: reject / approve");
+            assertThat(item.approvalDetails()).isPresent();
+        });
         controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
         assertThat(client.respondedActions).containsExactly(InteractionAction.APPROVE);
         assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("preserved draft");
+        assertThat(controller.state().editorCursor()).isEqualTo(9);
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.status())
+                .isEqualTo("RESPONDED"));
     }
 
     @Test
@@ -184,6 +207,26 @@ class CodingTerminalControllerTest {
     }
 
     @Test
+    void terminalRunEventRoutesTheNextEnterToANewTurnInsteadOfStaleSteer() {
+        TerminalUiReducer reducer = new TerminalUiReducer();
+        TerminalUiState active = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.SessionLoaded(activeView(), List.of("Loaded resources: project")));
+        TerminalUiState settled = reducer.reduce(
+                active,
+                new TerminalUiAction.RunEventReceived(
+                        event(1, new RunEventPayloads.RunLifecycle("COMPLETED", 2, "NONE"))));
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        var controller = new CodingTerminalController(PROJECT_ID, client, new TerminalEventPump(32), reducer, settled);
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, "next turn"));
+
+        assertThat(client.submittedMessages).containsExactly("next turn");
+        assertThat(client.steeredMessages).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
     void revisionMutationReconcilesTheAuthoritativeSessionBeforeRename() {
         FakeClient client = new FakeClient(view(Optional.empty(), 0, "session"));
         client.reconciledView = view(Optional.empty(), 7, "session");
@@ -247,6 +290,61 @@ class CodingTerminalControllerTest {
 
         assertThat(client.cancelledSessions).containsExactly(SESSION_ID);
         assertThat(controller.state().status()).isEqualTo("Cancelling");
+    }
+
+    @Test
+    void closedEventSubscriptionReconcilesAndClearsTheStaleWorkingState() {
+        FakeClient client = new FakeClient(activeView());
+        client.reconciledView = view(Optional.empty());
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        client.lastSubscription.close();
+
+        controller.drainEvents();
+
+        assertThat(client.reconcileCalls).isEqualTo(1);
+        assertThat(client.subscriptionCount).isEqualTo(1);
+        assertThat(controller.state().currentRunId()).isEmpty();
+        assertThat(controller.state().status()).isEqualTo("Idle");
+    }
+
+    @Test
+    void eventQueueOverflowReconcilesFromTheAuthoritativeSessionView() {
+        FakeClient client = new FakeClient(activeView());
+        client.reconciledView = view(Optional.empty());
+        TerminalEventPump pump = new TerminalEventPump(1);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40));
+        controller.open(SESSION_ID);
+        assertThat(pump.offer(new TerminalUiAction.StatusChanged("first"))).isTrue();
+        assertThat(pump.offer(new TerminalUiAction.StatusChanged("dropped"))).isFalse();
+
+        controller.drainEvents();
+
+        assertThat(client.reconcileCalls).isEqualTo(1);
+        assertThat(controller.state().currentRunId()).isEmpty();
+        assertThat(controller.state().status()).isEqualTo("Idle");
+    }
+
+    @Test
+    void transientCursorPersistenceFailureDoesNotStopOutputAndRetriesOnTheNextTick() {
+        FakeClient client = new FakeClient(activeView());
+        client.acknowledgementFailuresRemaining = 1;
+        var controller = controller(client);
+        controller.open(SESSION_ID);
+        client.emit(event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "keeps rendering")));
+        client.emit(event(2, new RunEventPayloads.AssistantTextDelta("generation-1", " after contention")));
+
+        controller.drainEvents();
+
+        assertThat(controller.state().transcript())
+                .anyMatch(item -> item.body().contains("keeps rendering after contention"));
+        assertThat(client.acknowledgementCalls).isEqualTo(1);
+
+        controller.drainEvents();
+
+        assertThat(client.acknowledgementCalls).isEqualTo(2);
+        assertThat(client.acknowledgedCursor.exclusiveSequence()).isEqualTo(OptionalLong.of(2));
     }
 
     @Test
@@ -359,6 +457,22 @@ class CodingTerminalControllerTest {
         return new TerminalInput(kind, text);
     }
 
+    private static AgentRunEvent event(long sequence, AgentRunEvent.Payload payload) {
+        AgentRunId runId = new AgentRunId("run-1");
+        return new AgentRunEvent(
+                "event-" + sequence,
+                "assistant.text.delta",
+                "1",
+                runId,
+                SESSION_ID,
+                sequence,
+                new RunEventCursor(runId, "1", OptionalLong.of(sequence)),
+                Instant.EPOCH,
+                Optional.empty(),
+                Optional.empty(),
+                payload);
+    }
+
     private static final class FakeClient implements CodingSessionClient {
         private CodingSessionView view;
         private CodingSessionView reconciledView;
@@ -368,6 +482,7 @@ class CodingTerminalControllerTest {
         private ProjectProductException submitFailure;
         private int submitAttempts;
         private final List<String> submittedMessages = new ArrayList<>();
+        private final List<String> steeredMessages = new ArrayList<>();
         private final List<AgentSessionId> opened = new ArrayList<>();
         private final List<String> restored = new ArrayList<>();
         private final List<InteractionAction> respondedActions = new ArrayList<>();
@@ -378,6 +493,13 @@ class CodingTerminalControllerTest {
         private boolean shellDiscarded;
         private long renamedExpectedRevision = -1;
         private String renamedDisplayName;
+        private int reconcileCalls;
+        private int subscriptionCount;
+        private RunEventSubscription lastSubscription;
+        private AgentRunEventListener lastListener;
+        private int acknowledgementFailuresRemaining;
+        private int acknowledgementCalls;
+        private RunEventCursor acknowledgedCursor;
 
         private FakeClient(CodingSessionView view) {
             this.view = view;
@@ -402,6 +524,7 @@ class CodingTerminalControllerTest {
 
         @Override
         public CodingSessionView reconcile(AgentSessionId sessionId) {
+            reconcileCalls++;
             view = reconciledView;
             return reconciledView;
         }
@@ -418,7 +541,9 @@ class CodingTerminalControllerTest {
         }
 
         @Override
-        public void steer(AgentSessionId sessionId, AgentRunId activeRunId, String message, String idempotencyKey) {}
+        public void steer(AgentSessionId sessionId, AgentRunId activeRunId, String message, String idempotencyKey) {
+            steeredMessages.add(message);
+        }
 
         @Override
         public void enqueueFollowUp(
@@ -440,7 +565,14 @@ class CodingTerminalControllerTest {
         public InteractionResponseReceipt respond(
                 InteractionView interaction, InteractionAction action, String idempotencyKey) {
             respondedActions.add(action);
-            return null;
+            return new InteractionResponseReceipt(
+                    new InteractionResponseId("response-1"),
+                    interaction.requestId(),
+                    interaction.runId(),
+                    InteractionResponseReceiptStatus.NEWLY_ACCEPTED,
+                    InteractionState.RESPONDED,
+                    interaction.revision() + 1,
+                    1);
         }
 
         @Override
@@ -488,12 +620,20 @@ class CodingTerminalControllerTest {
 
         @Override
         public RunEventCursor acknowledgeCursor(AgentSessionId sessionId, RunEventCursor cursor) {
+            acknowledgementCalls++;
+            if (acknowledgementFailuresRemaining > 0) {
+                acknowledgementFailuresRemaining--;
+                throw new IllegalStateException("transient cursor persistence failure");
+            }
+            acknowledgedCursor = cursor;
             return cursor;
         }
 
         @Override
         public RunEventSubscription subscribe(AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
-            return new RunEventSubscription() {
+            subscriptionCount++;
+            lastListener = listener;
+            lastSubscription = new RunEventSubscription() {
                 private boolean closed;
 
                 @Override
@@ -506,6 +646,11 @@ class CodingTerminalControllerTest {
                     closed = true;
                 }
             };
+            return lastSubscription;
+        }
+
+        private void emit(AgentRunEvent event) {
+            lastListener.onEvent(event);
         }
 
         @Override

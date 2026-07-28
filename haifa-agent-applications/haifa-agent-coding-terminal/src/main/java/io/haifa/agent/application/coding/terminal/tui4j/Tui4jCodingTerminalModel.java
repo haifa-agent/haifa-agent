@@ -55,12 +55,12 @@ final class Tui4jCodingTerminalModel implements Model {
         editor.setPrompt("┃ ");
         editor.setPlaceholder("Type a message, /command, @file, !command, or !!command");
         editor.focus();
-        syncComponents();
         fullRepaintRequested = false;
     }
 
     @Override
     public Command init() {
+        syncComponents();
         return nextTick();
     }
 
@@ -76,12 +76,14 @@ final class Tui4jCodingTerminalModel implements Model {
             controller.drainEvents();
             syncComponents();
         } else if (message instanceof EnterKeyModifierMessage modified
-                && modified.modifier() == EnterKeyModifier.Shift) {
+                && (modified.modifier() == EnterKeyModifier.Shift
+                        || modified.modifier() == EnterKeyModifier.Ctrl
+                        || modified.modifier() == EnterKeyModifier.CtrlShift)) {
             edit(new PasteMessage("\n"));
         } else if (message instanceof KeyPressMessage key) {
             command = key(key);
-        } else if (message instanceof PasteMessage) {
-            edit(message);
+        } else if (message instanceof PasteMessage paste) {
+            edit(new PasteMessage(sanitizeEditorInput(paste.content())));
         } else {
             editor.update(message);
         }
@@ -140,11 +142,19 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.KeyUp) {
-            navigateHistory(-1);
+            if (state.editorBuffer().contains("\n")) {
+                moveCursor(TerminalTextCursor.vertical(state.editorBuffer(), state.editorCursor(), -1));
+            } else {
+                navigateHistory(-1);
+            }
             return Command.none();
         }
         if (key.type() == KeyType.KeyDown) {
-            navigateHistory(1);
+            if (state.editorBuffer().contains("\n")) {
+                moveCursor(TerminalTextCursor.vertical(state.editorBuffer(), state.editorCursor(), 1));
+            } else {
+                navigateHistory(1);
+            }
             return Command.none();
         }
         if (key.type() == KeyType.KeyPgUp) {
@@ -157,6 +167,31 @@ final class Tui4jCodingTerminalModel implements Model {
             if (transcript.atBottom()) {
                 newOutputPending = false;
             }
+            return Command.none();
+        }
+        if (key.type() == KeyType.KeyLeft) {
+            moveCursor(TerminalTextCursor.previous(state.editorBuffer(), state.editorCursor()));
+            return Command.none();
+        }
+        if (key.type() == KeyType.KeyRight) {
+            moveCursor(TerminalTextCursor.next(state.editorBuffer(), state.editorCursor()));
+            return Command.none();
+        }
+        if (key.type() == KeyType.KeyHome) {
+            moveCursor(TerminalTextCursor.lineStart(state.editorBuffer(), state.editorCursor()));
+            return Command.none();
+        }
+        if (key.type() == KeyType.KeyEnd) {
+            moveCursor(TerminalTextCursor.lineEnd(state.editorBuffer(), state.editorCursor()));
+            return Command.none();
+        }
+        if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
+            int cursor = TerminalTextCursor.previous(state.editorBuffer(), state.editorCursor());
+            replaceEditor(TerminalTextCursor.backspace(state.editorBuffer(), state.editorCursor()), cursor);
+            return Command.none();
+        }
+        if (key.type() == KeyType.KeyDelete) {
+            replaceEditor(TerminalTextCursor.delete(state.editorBuffer(), state.editorCursor()), state.editorCursor());
             return Command.none();
         }
         return edit(key);
@@ -231,7 +266,21 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private void replaceEditor(String value) {
-        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, value, value.length()));
+        replaceEditor(value, value.length());
+    }
+
+    private void replaceEditor(String value, int cursor) {
+        controller.accept(
+                new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, value, TerminalTextCursor.clamp(value, cursor)));
+        syncComponents();
+    }
+
+    private void moveCursor(int cursor) {
+        TerminalUiState state = controller.state();
+        controller.accept(new TerminalInput(
+                TerminalInput.Kind.EDITOR_CHANGED,
+                state.editorBuffer(),
+                TerminalTextCursor.clamp(state.editorBuffer(), cursor)));
         syncComponents();
     }
 
@@ -273,10 +322,11 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private void synchronizeEditor(String value, int cursor) {
+        int checkedCursor = TerminalTextCursor.clamp(value, cursor);
         boolean wasFocused = editor.focused();
         editor.focus();
         editor.setValue(value);
-        int leftMoves = value.codePointCount(cursor, value.length());
+        int leftMoves = value.codePointCount(checkedCursor, value.length());
         var left = new KeyPressMessage(new Key(KeyType.KeyLeft));
         for (int index = 0; index < leftMoves; index++) {
             editor.update(left);
@@ -284,69 +334,39 @@ final class Tui4jCodingTerminalModel implements Model {
         if (!wasFocused) {
             editor.blur();
         }
-        editorCursor = cursor;
+        editorCursor = checkedCursor;
     }
 
     private int cursorAfter(Message message, String before, int beforeCursor, String after) {
-        if (message instanceof PasteMessage paste) {
-            return clamp(beforeCursor + paste.content().length(), after.length());
+        if (message instanceof PasteMessage) {
+            return TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
         }
         if (!(message instanceof KeyPressMessage key)) {
-            return clamp(beforeCursor, after.length());
+            return TerminalTextCursor.clamp(after, beforeCursor);
         }
         return switch (key.type()) {
-            case KeyRunes -> clamp(beforeCursor + new String(key.runes()).length(), after.length());
-            case keyBS, keyDEL -> previousCodePoint(before, beforeCursor);
-            case KeyDelete -> clamp(beforeCursor, after.length());
-            case KeyLeft -> previousCodePoint(before, beforeCursor);
-            case KeyRight -> nextCodePoint(before, beforeCursor);
-            case KeyHome -> lineStart(before, beforeCursor);
-            case KeyEnd -> lineEnd(before, beforeCursor);
-            case KeyUp -> vertical(before, beforeCursor, -1);
-            case KeyDown -> vertical(before, beforeCursor, 1);
-            default -> clamp(beforeCursor + (after.length() - before.length()), after.length());
+            case KeyRunes -> TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
+            default -> TerminalTextCursor.clamp(after, beforeCursor + (after.length() - before.length()));
         };
-    }
-
-    private int vertical(String value, int cursor, int delta) {
-        int start = lineStart(value, cursor);
-        int column = cursor - start;
-        if (delta < 0) {
-            if (start == 0) return cursor;
-            int previousEnd = start - 1;
-            int previousStart = lineStart(value, previousEnd);
-            return Math.min(previousStart + column, previousEnd);
-        }
-        int end = lineEnd(value, cursor);
-        if (end == value.length()) return cursor;
-        int nextStart = end + 1;
-        return Math.min(nextStart + column, lineEnd(value, nextStart));
-    }
-
-    private int lineStart(String value, int cursor) {
-        int newline = value.lastIndexOf('\n', Math.max(0, cursor - 1));
-        return newline < 0 ? 0 : newline + 1;
-    }
-
-    private int lineEnd(String value, int cursor) {
-        int newline = value.indexOf('\n', cursor);
-        return newline < 0 ? value.length() : newline;
-    }
-
-    private int previousCodePoint(String value, int cursor) {
-        return cursor <= 0 ? 0 : value.offsetByCodePoints(cursor, -1);
-    }
-
-    private int nextCodePoint(String value, int cursor) {
-        return cursor >= value.length() ? value.length() : value.offsetByCodePoints(cursor, 1);
-    }
-
-    private int clamp(int value, int maximum) {
-        return Math.max(0, Math.min(value, maximum));
     }
 
     private Command nextTick() {
         return Command.tick(EVENT_POLL_INTERVAL, ignored -> new PollMessage());
+    }
+
+    private String sanitizeEditorInput(String value) {
+        String normalized = value.replace("\r\n", "\n").replace('\r', '\n');
+        StringBuilder safe = new StringBuilder(normalized.length());
+        normalized.codePoints().forEach(codePoint -> {
+            if (codePoint == '\n') {
+                safe.append('\n');
+            } else if (codePoint == '\t') {
+                safe.append("    ");
+            } else if (!Character.isISOControl(codePoint)) {
+                safe.appendCodePoint(codePoint);
+            }
+        });
+        return safe.toString();
     }
 
     private record PollMessage() implements Message {}

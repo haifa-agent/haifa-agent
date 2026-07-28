@@ -1,15 +1,19 @@
 package io.haifa.agent.application.coding.terminal.state;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /** Deterministic, side-effect-free projection of product and committed Runtime facts. */
 public final class TerminalUiReducer {
+    private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
+
     public TerminalUiState reduce(TerminalUiState state, TerminalUiAction action) {
         if (action instanceof TerminalUiAction.SessionLoaded loaded) {
             var view = loaded.view();
@@ -26,18 +30,18 @@ public final class TerminalUiReducer {
                     : active.map(io.haifa.agent.runtime.api.RunEventCursor::beforeFirst);
             var footer = new TerminalFooter(
                     view.summary().projectId().value(),
-                    "git: via safe read model",
+                    "",
                     view.summary().displayName(),
                     "queue: " + view.summary().queuedCount(),
-                    "provider: frozen",
-                    "model: frozen",
+                    "",
+                    "",
                     view.summary().activeRunStatus().map(Enum::name).orElse("IDLE"),
-                    "sandbox: frozen profile");
+                    "");
             return copy(
                     state,
                     List.copyOf(loaded.resources()),
                     transcript,
-                    state.pending(),
+                    sameRun ? state.pending() : List.of(),
                     active.isPresent() ? "Working" : "Idle",
                     state.editorBuffer(),
                     state.editorCursor(),
@@ -143,15 +147,32 @@ public final class TerminalUiReducer {
                     false));
             return copyWithTranscript(state, List.copyOf(items));
         }
-        if (action instanceof TerminalUiAction.ShellCompleted shell) {
+        if (action instanceof TerminalUiAction.InteractionPresented presented) {
+            var interaction = presented.interaction();
+            var details = ApprovalDetails.from(interaction);
             List<TranscriptItem> items = new ArrayList<>(state.transcript());
-            items.add(new TranscriptItem(
-                    "shell-" + items.size(),
-                    TranscriptItem.Kind.EXECUTION,
-                    shell.command(),
-                    shell.summary(),
-                    shell.status(),
-                    false));
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "interaction-" + interaction.requestId().value(),
+                            TranscriptItem.Kind.APPROVAL,
+                            "Approval · " + interaction.title(),
+                            details.render(),
+                            interaction.state().name(),
+                            true,
+                            Optional.of(details)));
+            return copyWithTranscript(state, List.copyOf(items));
+        }
+        if (action instanceof TerminalUiAction.InteractionReceiptReceived received) {
+            String id = "interaction-" + received.receipt().requestId().value();
+            List<TranscriptItem> items = new ArrayList<>(state.transcript());
+            int index = index(items, id);
+            if (index >= 0) {
+                TranscriptItem current = items.get(index);
+                items.set(
+                        index,
+                        current.withStatus(received.receipt().interactionState().name(), current.body()));
+            }
             return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.RunEventReceived received) {
@@ -201,7 +222,14 @@ public final class TerminalUiReducer {
                     state.exitRequested());
         }
         if (action instanceof TerminalUiAction.PendingChanged pending) {
-            return copyWithPending(state, pending.messages());
+            List<PendingMessage> merged = new ArrayList<>();
+            state.pending().stream()
+                    .filter(value -> value.kind() == PendingMessage.Kind.STEER)
+                    .forEach(merged::add);
+            pending.messages().stream()
+                    .filter(value -> pendingIndex(merged, value.id()) < 0)
+                    .forEach(merged::add);
+            return copyWithPending(state, List.copyOf(merged));
         }
         if (action instanceof TerminalUiAction.StatusChanged status) {
             return copyWithStatus(state, status.status());
@@ -297,6 +325,12 @@ public final class TerminalUiReducer {
             return copyWithFailure(state, "EVENT_OUT_OF_ORDER");
         }
         List<TranscriptItem> transcript = project(state.transcript(), event);
+        boolean runSettled = isTerminalRunLifecycle(event.payload());
+        List<PendingMessage> pending = runSettled
+                ? state.pending().stream()
+                        .filter(value -> value.kind() == PendingMessage.Kind.FOLLOW_UP)
+                        .toList()
+                : projectPending(state.pending(), event);
         var seen = new HashSet<>(state.seenEventIds());
         seen.add(event.eventId());
         TerminalFooter footer = footer(state.footer(), event);
@@ -304,7 +338,7 @@ public final class TerminalUiReducer {
                 state,
                 state.loadedResources(),
                 transcript,
-                state.pending(),
+                pending,
                 status(event, state.status()),
                 state.editorBuffer(),
                 state.editorCursor(),
@@ -313,7 +347,7 @@ public final class TerminalUiReducer {
                 state.columns(),
                 state.rows(),
                 state.session(),
-                Optional.of(event.runId()),
+                currentRunAfter(state, event, runSettled),
                 Optional.of(event.cursor()),
                 seen,
                 Optional.empty(),
@@ -342,7 +376,7 @@ public final class TerminalUiReducer {
                             "tool-" + payload.toolCallId(),
                             TranscriptItem.Kind.TOOL,
                             payload.displayName(),
-                            payload.targetSummary() + reference(payload.resultRef()),
+                            toolBody(payload),
                             payload.status(),
                             false));
         } else if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle payload) {
@@ -352,7 +386,7 @@ public final class TerminalUiReducer {
                             "execution-" + payload.executionId(),
                             TranscriptItem.Kind.EXECUTION,
                             payload.commandSummary(),
-                            payload.chunkOrRef() + reference(payload.fileChangeSetRef()),
+                            executionBody(payload),
                             payload.status(),
                             false));
         } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload) {
@@ -366,24 +400,98 @@ public final class TerminalUiReducer {
                             payload.status(),
                             false));
         } else if (event.payload() instanceof RunEventPayloads.InteractionLifecycle payload) {
+            String id = "interaction-" + payload.requestId();
+            int existing = index(items, id);
+            Optional<ApprovalDetails> details =
+                    existing < 0 ? Optional.empty() : items.get(existing).approvalDetails();
+            String body = details.map(ApprovalDetails::render).orElse("Structured approval details are loading.");
             upsert(
                     items,
                     new TranscriptItem(
-                            "interaction-" + payload.requestId(),
+                            id,
                             TranscriptItem.Kind.APPROVAL,
                             "Approval · " + payload.kind(),
-                            payload.actionOrReason(),
+                            body,
                             payload.state(),
-                            true));
+                            true,
+                            details));
         }
         return List.copyOf(items);
     }
 
     private static String status(AgentRunEvent event, String fallback) {
         if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle) return lifecycle.status();
-        if (event.eventType().endsWith(".failed")) return "Attention";
-        if (event.eventType().endsWith(".started") || event.eventType().endsWith(".requested")) return "Working";
+        if (event.payload() instanceof RunEventPayloads.ToolLifecycle lifecycle) {
+            return activityStatus(lifecycle.status(), fallback);
+        }
+        if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle lifecycle) {
+            return activityStatus(lifecycle.status(), fallback);
+        }
+        if (event.payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle) {
+            return switch (lifecycle.state()) {
+                case "PENDING", "REQUESTED" -> "Waiting for approval";
+                case "RESPONDED", "APPROVED", "REJECTED", "EXPIRED", "CANCELLED" -> "Working";
+                default -> fallback;
+            };
+        }
+        if (event.payload() instanceof RunEventPayloads.RunInputLifecycle lifecycle) {
+            return switch (lifecycle.state()) {
+                case "ACCEPTED" -> "Applying steer";
+                case "APPLIED" -> "Working";
+                default -> fallback;
+            };
+        }
         return fallback;
+    }
+
+    private static String activityStatus(String status, String fallback) {
+        return switch (status) {
+            case "QUEUED", "REQUESTED", "STARTED", "RUNNING", "WAITING" -> "Working";
+            case "FAILED", "CANCELLED" -> "Attention";
+            default -> fallback;
+        };
+    }
+
+    private static Optional<AgentRunId> currentRunAfter(
+            TerminalUiState state, AgentRunEvent event, boolean runSettled) {
+        if (runSettled) return Optional.empty();
+        if (state.currentRunId().isPresent()) return state.currentRunId();
+        boolean followsSettledRun = state.appliedCursor()
+                        .filter(cursor -> cursor.runId().equals(event.runId()))
+                        .isPresent()
+                && TERMINAL_RUN_STATUSES.contains(state.footer().runStatus());
+        return followsSettledRun ? Optional.empty() : Optional.of(event.runId());
+    }
+
+    private static boolean isTerminalRunLifecycle(AgentRunEvent.Payload payload) {
+        return payload instanceof RunEventPayloads.RunLifecycle lifecycle
+                && TERMINAL_RUN_STATUSES.contains(lifecycle.status());
+    }
+
+    private static List<PendingMessage> projectPending(List<PendingMessage> current, AgentRunEvent event) {
+        if (!(event.payload() instanceof RunEventPayloads.RunInputLifecycle lifecycle)) return current;
+        var pending = new ArrayList<>(current);
+        int existing = pendingIndex(pending, lifecycle.inputId());
+        if ("APPLIED".equals(lifecycle.state())) {
+            if (existing >= 0) pending.remove(existing);
+            return List.copyOf(pending);
+        }
+        if (!"ACCEPTED".equals(lifecycle.state())) return current;
+        String coordinate = lifecycle.applicationCoordinate().isBlank()
+                ? "Accepted; waiting for a safe application point"
+                : "Accepted; waiting for " + lifecycle.applicationCoordinate();
+        PendingMessage item =
+                new PendingMessage(lifecycle.inputId(), PendingMessage.Kind.STEER, coordinate, event.sequence());
+        if (existing < 0) pending.add(item);
+        else pending.set(existing, item);
+        return List.copyOf(pending);
+    }
+
+    private static int pendingIndex(List<PendingMessage> values, String id) {
+        for (int index = 0; index < values.size(); index++) {
+            if (values.get(index).id().equals(id)) return index;
+        }
+        return -1;
     }
 
     private static TerminalFooter footer(TerminalFooter current, AgentRunEvent event) {
@@ -412,8 +520,25 @@ public final class TerminalUiReducer {
         return -1;
     }
 
-    private static String reference(String value) {
-        return value.isBlank() ? "" : "\nref: " + value;
+    private static String toolBody(RunEventPayloads.ToolLifecycle payload) {
+        List<String> lines = new ArrayList<>();
+        lines.add("Target: " + payload.targetSummary());
+        if (!payload.reasonCode().isBlank() && !"NONE".equals(payload.reasonCode())) {
+            lines.add("Reason: " + payload.reasonCode());
+        }
+        if (!payload.resultRef().isBlank()) lines.add("Result: " + payload.resultRef());
+        return String.join("\n", lines);
+    }
+
+    private static String executionBody(RunEventPayloads.ExecutionLifecycle payload) {
+        List<String> lines = new ArrayList<>();
+        if (!payload.logicalWorkdir().isBlank()) lines.add("Workdir: " + payload.logicalWorkdir());
+        if (!payload.streamKind().isBlank()) lines.add("Stream: " + payload.streamKind());
+        if (!payload.chunkOrRef().isBlank()) lines.add(payload.chunkOrRef());
+        if (payload.exitCode() != null) lines.add("Exit: " + payload.exitCode());
+        if (payload.truncated()) lines.add("Output truncated");
+        if (!payload.fileChangeSetRef().isBlank()) lines.add("Changes: " + payload.fileChangeSetRef());
+        return lines.isEmpty() ? "No execution details available." : String.join("\n", lines);
     }
 
     private static TerminalUiState copyWithTranscript(TerminalUiState state, List<TranscriptItem> transcript) {

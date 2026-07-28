@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,6 +38,24 @@ import org.junit.jupiter.api.io.TempDir;
 class LocalCodingProductAssemblyTest {
     @TempDir
     Path root;
+
+    @Test
+    void nonInteractiveTerminalFailsBeforeTheProductRuntimeIsAssembled() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("non-interactive-workspace"));
+        AtomicInteger assemblyCalls = new AtomicInteger();
+        var runner = new LocalCodingTerminalRunner(
+                (selectedWorkspace, selectedConfiguration, output, traceObserver) -> {
+                    assemblyCalls.incrementAndGet();
+                    throw new AssertionError("product assembly must not run");
+                },
+                () -> new Tui4jTerminalIo(Optional.empty(), Optional.empty(), List.of("TERM=dumb"), false, false));
+
+        assertThatThrownBy(() -> runner.run(
+                        workspace, memoryConfiguration(), new PrintStream(new ByteArrayOutputStream()), ignored -> {}))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("TUI_UNAVAILABLE");
+        assertThat(assemblyCalls).hasValue(0);
+    }
 
     @Test
     void runnableTerminalEntryUsesTheProductionAssemblyWithAStubModelAndCleansUp() throws Exception {

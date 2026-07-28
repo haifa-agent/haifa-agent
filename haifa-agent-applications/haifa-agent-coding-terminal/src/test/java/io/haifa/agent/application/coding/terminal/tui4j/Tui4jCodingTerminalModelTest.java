@@ -7,12 +7,15 @@ import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.Key;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
+import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
 import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
+import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
+import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
@@ -30,9 +33,15 @@ import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.util.List;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class Tui4jCodingTerminalModelTest {
+    @BeforeAll
+    static void configureHeadlessTerminalInfo() {
+        TerminalInfo.provide(() -> new TerminalInfo(false, new NoColor()));
+    }
+
     @Test
     void mapsEditorNewlineResizeAndInterruptKeysIntoAuthoritativeState() {
         var fixture = fixture();
@@ -40,10 +49,12 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(new PasteMessage("draft"));
         fixture.model.update(new EnterKeyModifierMessage(EnterKeyModifier.Shift));
         fixture.model.update(new PasteMessage("next"));
+        fixture.model.update(new EnterKeyModifierMessage(EnterKeyModifier.Ctrl));
+        fixture.model.update(new PasteMessage("windows"));
         fixture.model.update(new WindowSizeMessage(120, 40));
 
-        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("draft\nnext");
-        assertThat(fixture.controller.state().editorCursor()).isEqualTo("draft\nnext".length());
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("draft\nnext\nwindows");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo("draft\nnext\nwindows".length());
         assertThat(fixture.controller.state().columns()).isEqualTo(120);
         assertThat(fixture.controller.state().rows()).isEqualTo(40);
 
@@ -97,6 +108,56 @@ class Tui4jCodingTerminalModelTest {
 
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("abXcdef");
         assertThat(fixture.controller.state().editorCursor()).isEqualTo(3);
+    }
+
+    @Test
+    void editsEmojiCombiningTextAndMultilinePasteOnlyAtGraphemeBoundaries() {
+        var fixture = fixture();
+        String family = "👨‍👩‍👧‍👦";
+
+        fixture.model.update(new PasteMessage("A" + family + "e\u0301\r\n中x\u001B"));
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "e\u0301\n中x");
+        int afterCombining = 1 + family.length() + "e\u0301".length();
+        fixture.controller.accept(new TerminalInput(
+                TerminalInput.Kind.EDITOR_CHANGED, fixture.controller.state().editorBuffer(), afterCombining));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.update(key(KeyType.keyBS));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A" + family + "\n中x");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo(1 + family.length());
+
+        fixture.model.update(key(KeyType.KeyLeft));
+        fixture.model.update(key(KeyType.KeyDelete));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("A\n中x");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo(1);
+    }
+
+    @Test
+    void preservesEditorCursorAndSelectorAcrossTheFullResizeSequence() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("/r"));
+        fixture.model.update(key(KeyType.keyHT));
+        int selected = fixture.controller.state().selector().orElseThrow().selected();
+
+        List.of(
+                        new WindowSizeMessage(120, 40),
+                        new WindowSizeMessage(80, 24),
+                        new WindowSizeMessage(60, 16),
+                        new WindowSizeMessage(40, 10),
+                        new WindowSizeMessage(120, 40),
+                        new WindowSizeMessage(80, 24),
+                        new WindowSizeMessage(60, 16),
+                        new WindowSizeMessage(120, 40))
+                .forEach(fixture.model::update);
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/r");
+        assertThat(fixture.controller.state().editorCursor()).isEqualTo(2);
+        assertThat(fixture.controller.state().selector())
+                .get()
+                .extracting(TerminalSelector::selected)
+                .isEqualTo(selected);
+        assertThat(fixture.model.view()).contains("Haifa Coding Agent", "Commands");
     }
 
     private Fixture fixture() {
