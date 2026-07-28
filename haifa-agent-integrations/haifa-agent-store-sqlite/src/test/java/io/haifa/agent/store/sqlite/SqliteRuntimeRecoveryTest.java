@@ -27,8 +27,10 @@ import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.api.CredentialRequirement;
 import io.haifa.agent.credential.api.SecretRedactor;
 import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.policy.api.ApprovalMode;
@@ -367,6 +369,76 @@ class SqliteRuntimeRecoveryTest {
                     .hasSize(2)
                     .allMatch(call -> call.status().name().equals("COMPLETED"));
             assertThat(instance.ports().attempts().attemptsFor(runId)).hasSize(3);
+        }
+    }
+
+    @Test
+    void continuesConversationAfterRejectedToolFromPreviousRun() {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> nextRunRequest = new AtomicReference<>();
+        AgentChatModel model = request -> {
+            return switch (modelCalls.incrementAndGet()) {
+                case 1 -> toolResponse();
+                case 2 -> finalResponse("continued after rejection");
+                case 3 -> {
+                    nextRunRequest.set(request);
+                    yield finalResponse("next run completed");
+                }
+                default -> throw new AssertionError("unexpected model call");
+            };
+        };
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = toolRuntime(
+                    foundation,
+                    model,
+                    "process-a",
+                    new TestIds("cross-run-rejection"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL);
+            AgentRunId rejectedRunId =
+                    instance.runtime().start(request("rejected-tool-run")).runId();
+            instance.scheduler().runAll();
+            InteractionRequest interaction =
+                    instance.ports().interactions().pending(rejectedRunId).orElseThrow();
+
+            instance.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId("rejected-response"),
+                            interaction.id(),
+                            rejectedRunId,
+                            InteractionResponseType.REJECT,
+                            List.of(),
+                            "rejected-response-key",
+                            NOW));
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(rejectedRunId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(instance.ports().state().toolCalls(rejectedRunId))
+                    .singleElement()
+                    .satisfies(call -> assertThat(call.status().name()).isEqualTo("DENIED"));
+
+            AgentRunId nextRunId = instance.runtime()
+                    .start(request("next-run-after-rejection"))
+                    .runId();
+            instance.scheduler().runAll();
+
+            assertThat(instance.runtime().find(nextRunId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(modelCalls).hasValue(3);
+            assertThat(providerCalls).hasValue(0);
+            assertThat(nextRunRequest.get().messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
+                            && message.toolCalls().stream()
+                                    .anyMatch(call ->
+                                            call.providerCorrelationId().value().equals("provider-tool-call")))
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("provider-tool-call")
+                            && message.content().contains("rejected by the operator"));
         }
     }
 

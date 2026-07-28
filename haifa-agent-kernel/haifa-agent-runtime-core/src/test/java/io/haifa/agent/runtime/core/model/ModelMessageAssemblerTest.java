@@ -24,6 +24,9 @@ import io.haifa.agent.context.prompt.PromptComponentId;
 import io.haifa.agent.context.prompt.PromptLayer;
 import io.haifa.agent.context.prompt.PromptRole;
 import io.haifa.agent.core.content.AssetRefPart;
+import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.content.ToolCallPart;
+import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
@@ -32,6 +35,12 @@ import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import java.time.Instant;
@@ -99,6 +108,91 @@ class ModelMessageAssemblerTest {
                 .isInstanceOf(ContextBuildException.class)
                 .extracting(error -> ((ContextBuildException) error).failure())
                 .isEqualTo(ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT);
+    }
+
+    @Test
+    void resolvesToolProtocolHistoryFromTheRunThatCreatedEachMessage() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRunId previousRunId = new AgentRunId("run-previous");
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-1");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                previousRunId,
+                new AgentStepId("step-1"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.input", "1.0.0", Map.of("command", "ls")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.waitForApproval();
+        call.deny(Instant.parse("2026-07-21T00:00:01Z"));
+        store.appendToolCall(call);
+
+        AgentMessage toolCall = message(
+                "assistant-tool-call",
+                sessionId,
+                previousRunId,
+                MessageRole.ASSISTANT,
+                1,
+                List.of(new ToolCallPart(toolCallId, correlationId, "execution_run", "1.0.0")));
+        AgentMessage toolResult = message(
+                "rejected-tool-result",
+                sessionId,
+                previousRunId,
+                MessageRole.TOOL,
+                2,
+                List.of(new ToolResultPart(toolCallId, correlationId, "Tool execution was rejected by the operator.")));
+        AgentMessage nextUserMessage = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 3, List.of(new TextPart("continue", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant-tool-call", ContextItemType.MESSAGE, new MessageContextContent(toolCall)),
+                        item("rejected-tool-result", ContextItemType.MESSAGE, new MessageContextContent(toolResult)),
+                        item("next-user", ContextItemType.MESSAGE, new MessageContextContent(nextUserMessage))),
+                List.of(),
+                budget(),
+                30);
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        assertThat(messages)
+                .extracting(message -> message.role())
+                .containsExactly(
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.ASSISTANT,
+                        ModelMessageRole.TOOL,
+                        ModelMessageRole.USER);
+        assertThat(messages.get(1).toolCalls().getFirst().providerCorrelationId())
+                .isEqualTo(correlationId);
+        assertThat(messages.get(2).providerCorrelationId()).contains(correlationId);
+        assertThat(messages.get(2).content()).isEqualTo("Tool execution was rejected by the operator.");
+    }
+
+    private static AgentMessage message(
+            String id,
+            AgentSessionId sessionId,
+            AgentRunId runId,
+            MessageRole role,
+            long sequence,
+            List<io.haifa.agent.core.content.ContentPart> contents) {
+        return new AgentMessage(
+                new AgentMessageId(id),
+                sessionId,
+                Optional.of(runId),
+                Optional.empty(),
+                role,
+                MessageStatus.COMPLETED,
+                role == MessageRole.USER ? MessageVisibility.USER_VISIBLE : MessageVisibility.AGENT_VISIBLE,
+                sequence,
+                contents,
+                Map.of(),
+                Instant.parse("2026-07-21T00:00:00Z").plusSeconds(sequence));
     }
 
     private static PromptComponent prompt() {
