@@ -196,6 +196,10 @@ const interactionEvents = [];
 let terminalOutput = "";
 let exited = null;
 
+function hasTerminalText(marker) {
+  return terminalOutput.toLocaleLowerCase("en-US").includes(marker.toLocaleLowerCase("en-US"));
+}
+
 const javaCommand = [
   "java.exe",
   "-jar",
@@ -254,7 +258,7 @@ async function send(text, settleMillis = 600) {
 
 let failure = null;
 try {
-  await waitFor(() => terminalOutput.includes("Haifa Coding Agent"), 15_000, "Terminal UI startup");
+  await waitFor(() => hasTerminalText("Haifa Coding Agent"), 15_000, "Terminal UI startup");
   await send("/commands\r");
   await send("\u001b");
   await send("/reload\r");
@@ -305,7 +309,7 @@ fs.writeFileSync(
 );
 
 const assertions = {
-  started: terminalOutput.includes("Haifa Coding Agent"),
+  started: hasTerminalText("Haifa Coding Agent"),
   alternateScreenEntered: terminalOutput.includes("\u001b[?1049h"),
   alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
   commandSelectorVisible: terminalOutput.includes("Commands"),

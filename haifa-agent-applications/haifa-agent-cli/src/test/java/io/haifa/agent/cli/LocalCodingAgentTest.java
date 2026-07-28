@@ -21,6 +21,7 @@ import io.haifa.agent.skill.api.SkillParserMode;
 import io.haifa.agent.store.jsonl.JsonlTranscriptReader;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,6 +43,21 @@ class LocalCodingAgentTest {
 
     @TempDir
     Path configuredSkillRoot;
+
+    @Test
+    void insecureModelOptInIsRestrictedToExplicitLoopbackHttp() {
+        CliConfiguration defaults = CliConfiguration.defaults();
+        CliConfiguration loopback = withModelEndpoint(defaults, URI.create("http://127.0.0.1:18080"));
+        CliConfiguration external = withModelEndpoint(defaults, URI.create("http://example.com"));
+
+        assertThat(LocalCodingAgent.allowInsecureLoopback(loopback, null)).isFalse();
+        assertThat(LocalCodingAgent.allowInsecureLoopback(loopback, "false")).isFalse();
+        assertThat(LocalCodingAgent.allowInsecureLoopback(loopback, " true ")).isTrue();
+        assertThat(LocalCodingAgent.allowInsecureLoopback(defaults, "true")).isFalse();
+        assertThatThrownBy(() -> LocalCodingAgent.allowInsecureLoopback(external, "true"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("only an HTTP loopback model endpoint");
+    }
 
     @Test
     void windowsDefaultLocalNativeFailsClosedBeforeModelInvocation() {
@@ -722,6 +738,28 @@ class LocalCodingAgentTest {
                 configuration.web(),
                 configuration.skills(),
                 hostExecution(configuration.execution()),
+                configuration.approval(),
+                configuration.timeout(),
+                configuration.maxIterations(),
+                configuration.maxToolCalls(),
+                configuration.persistence());
+    }
+
+    private static CliConfiguration withModelEndpoint(CliConfiguration configuration, URI endpoint) {
+        CliConfiguration.Model model = configuration.model();
+        return new CliConfiguration(
+                new CliConfiguration.Model(
+                        model.providerId(),
+                        model.modelId(),
+                        endpoint,
+                        model.credentialRef(),
+                        model.workspaceId(),
+                        model.region()),
+                configuration.enabledTools(),
+                configuration.mcpServers(),
+                configuration.web(),
+                configuration.skills(),
+                configuration.execution(),
                 configuration.approval(),
                 configuration.timeout(),
                 configuration.maxIterations(),

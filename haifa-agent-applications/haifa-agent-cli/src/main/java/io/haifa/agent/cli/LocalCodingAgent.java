@@ -88,6 +88,7 @@ import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.io.PrintStream;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.file.Path;
 import java.security.SecureRandom;
@@ -95,7 +96,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -168,6 +171,8 @@ final class LocalCodingAgent implements AutoCloseable {
             CliConfiguration configuration,
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver) {
+        boolean allowInsecureLoopback = allowInsecureLoopback(
+                configuration, System.getenv("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
         var model = new OpenAiCompatibleChatModel(
                 "openai-compatible",
                 "1.0.0",
@@ -176,9 +181,29 @@ final class LocalCodingAgent implements AutoCloseable {
                         .build(),
                 new ObjectMapper(),
                 new EnvironmentCredentialResolver(),
-                false,
+                allowInsecureLoopback,
                 4 * 1024 * 1024);
         return create(workspaceRoot, configuration, output, model, traceObserver);
+    }
+
+    static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
+        Objects.requireNonNull(configuration, "configuration must not be null");
+        if (optIn == null || !Boolean.parseBoolean(optIn.trim())) {
+            return false;
+        }
+        URI endpoint = configuration.model().endpoint();
+        if ("https".equalsIgnoreCase(endpoint.getScheme())) {
+            return false;
+        }
+        String host = endpoint.getHost();
+        boolean loopback = host != null
+                && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
+                        .contains(host.toLowerCase(Locale.ROOT));
+        if (!"http".equalsIgnoreCase(endpoint.getScheme()) || !loopback) {
+            throw new IllegalArgumentException(
+                    "HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL permits only an HTTP loopback model endpoint");
+        }
+        return true;
     }
 
     static LocalCodingAgent create(

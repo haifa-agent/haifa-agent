@@ -1,6 +1,6 @@
 # Haifa Coding Terminal
 
-Coding Agent 的 JLine 交互产品层。布局、信息层级和交互严格以
+Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互严格以
 `docs/prd/pi-coding-agent-terminal-low-fi-prototype` 评审原型为准，不自行发明 Sidebar、
 Dashboard、Scenario toolbar 或另一套产品 UI。
 
@@ -14,7 +14,7 @@ haifa-agent-cli
         |
         v
 haifa-agent-coding-terminal
-  JLine 生命周期、编辑器、KeyMap、Selector、Reducer、Renderer
+  tui4j Program/Model、Viewport、Textarea、Selector、Reducer、View
   只通过 CodingSessionClient 读取和提交产品事实
         |
         v
@@ -30,6 +30,23 @@ SQLite Mapper、Sandbox Provider、`ProcessBuilder` 或 CLI 包，也不产生�
 ```text
 haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar
 ```
+
+## tui4j 迁移状态
+
+迁移采用三阶段和两次人工门禁。人工已批准在动态 Resize 延期的前提下进入 Stage B；当前生产
+`CodingTerminalApplication` 和 CLI Terminal 路由已切换到 tui4j `Program / Model / update / view`。
+不存在长期 `JLINE/TUI4J` 双实现开关。tui4j `0.3.3` 由本模块直接依赖，项目依赖管理继续把其传递
+的 JLine 收敛到 `3.30.0`。
+
+Windows ConPTY Spike 已证明 `Program / Model / update / view`、viewport、textarea、
+`Program.send()`、alternate screen、Unicode 粘贴及正常/Escape/Ctrl+C/异常退出可以运行；但动态
+Resize 在三次调整后仍会丢失 Header/Diagnostics/Transcript 区域，已标记
+`SKIPPED_AFTER_3_ATTEMPTS` 并延期。旧 JLine 生命周期、编辑器、KeyMap、Completer、Display 和
+Renderer 只作为 Gate B 前的可回退实现保留；人工通过 Gate B 前不删除。
+
+非 TTY 自定义流会被 tui4j/JLine 后端报告为 `1x1`，导致多帧 Renderer 输出被截断。该自动化路径
+连续三轮调整仍未通过，已按规则跳过；输入语义由 Model/Reducer 测试覆盖，真实显示与退出恢复留给
+Windows ConPTY Gate B。
 
 ## 原型映射与交互
 
@@ -47,10 +64,10 @@ Widgets Below
 Footer
 ```
 
-终端采用 JLine 3.30.0 的 `Terminal`、`BindingReader`、`LineReader` Buffer/History/Parser/Completer、
-`Display` 与 JNI Terminal Provider。Runtime 回调只写入有界 Action Queue；Reducer、Renderer、输入
-与 `Display` 均由单一 UI 线程访问。输入按 50ms 有界轮询，空闲输入期间仍可归约 Runtime 事件和刷新
-界面，不再由阻塞式 `LineReader.readLine()` 与产品 `Display` 竞争光标状态。
+终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`；JLine 3.30.0 仅作为 tui4j 的终端
+后端及旧回退实现暂留。Runtime 回调只写入有界 Action Queue；50ms tick 在 Program 事件循环中排空
+队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成 View。空闲输入期间仍可归约 Runtime
+事件和刷新界面。
 
 启动 UI 时进入 alternate screen 并清空独立屏幕缓冲区，因此启动命令和初始化日志不占用 TUI 行；
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
@@ -61,7 +78,7 @@ keypad 和光标。
 - Active Alt+Enter 写入持久 Follow-up Queue，Alt+Up 选择并恢复待发消息；
 - 第二轮输入遇到 Run 刚结束/刚激活的状态竞态时，Terminal 先 reconcile 再按最新状态重试一次；
   其他产品错误只显示稳定错误码并保留草稿，不退出进程；
-- Escape 是活动 Run 的全局取消键：裸 Escape 不得被 JLine 当作 EOF；即使 Selector 打开或
+- Escape 是活动 Run 的全局取消键：裸 Escape 不得被当作 EOF；即使 Selector 打开或
   本地 Run 状态尚未刷新，也先关闭 Selector、reconcile 后向产品取消接口发送命令并显示 Cancelling。
   空闲时 Escape 只关闭 Selector；Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
 - `/resume` 选择并打开真实 Session；
@@ -78,7 +95,7 @@ keypad 和光标。
   保留草稿，活动 Run 时 Escape 优先取消任务；
 - `/command` 与 `/commands` 打开同一命令选择器；`@file` 候选来自受限 Workspace 文件目录，
   不列出敏感路径、版本库元数据和常见生成目录；
-- pending Approval 在同一 JLine input owner 中 approve/reject；
+- pending Approval 在同一 tui4j Program input owner 中 approve/reject；
 - `/settings`、`/trust`、`/model`、`/login`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
 - `/quit` 退出；活动 Run 下 EOF 显示明确的退出选择。

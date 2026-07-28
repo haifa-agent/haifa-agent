@@ -1,6 +1,6 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.application.coding.terminal.jline.JLineTerminalLifecycle;
+import io.haifa.agent.application.coding.terminal.tui4j.Tui4jCodingTerminal;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.InteractionResponse;
@@ -95,8 +95,8 @@ public final class HaifaCliMain {
             error.println("Use --help for usage.");
             return 1;
         } catch (IllegalStateException exception) {
-            if (JLineTerminalLifecycle.TUI_UNAVAILABLE.equals(exception.getMessage())) {
-                error.println(JLineTerminalLifecycle.TUI_UNAVAILABLE + ": an interactive terminal is required.");
+            if (Tui4jCodingTerminal.TUI_UNAVAILABLE.equals(exception.getMessage())) {
+                error.println(Tui4jCodingTerminal.TUI_UNAVAILABLE + ": an interactive terminal is required.");
                 return 1;
             }
             error.println("Unable to run haifa-cli: " + exception.getClass().getSimpleName());
@@ -212,7 +212,7 @@ public final class HaifaCliMain {
     static String usage() {
         return """
                 Usage: haifa-cli [--terminal | -m <task>] [options]
-                      --terminal             Start the interactive JLine Coding Terminal
+                      --terminal             Start the interactive tui4j Coding Terminal
                   -m, --message <task>       One-shot coding task
                       --workspace <path>     Workspace root (default: current directory)
                       --config <path>        Configuration file

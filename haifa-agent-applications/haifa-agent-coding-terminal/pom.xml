@@ -33,6 +33,7 @@
         <dependency><groupId>org.jline</groupId><artifactId>jline-reader</artifactId></dependency>
         <dependency><groupId>org.jline</groupId><artifactId>jline-style</artifactId></dependency>
         <dependency><groupId>org.jline</groupId><artifactId>jline-terminal-jni</artifactId><scope>runtime</scope></dependency>
+        <dependency><groupId>com.williamcallahan</groupId><artifactId>tui4j</artifactId></dependency>
 
         <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><scope>test</scope></dependency>

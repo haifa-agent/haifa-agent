@@ -18,15 +18,12 @@ class TerminalRendererTest {
         TerminalUiState state = TerminalUiState.initial(120, 40);
         for (int index = 0; index < 30; index++) {
             state = reducer.reduce(
-                    state,
-                    new TerminalUiAction.UserMessageCommitted(
-                            "message-" + index, "Message body " + index));
+                    state, new TerminalUiAction.UserMessageCommitted("message-" + index, "Message body " + index));
         }
 
         var view = new TerminalRenderer().render(state);
-        String rendered = view.lines().stream()
-                .map(value -> value.toString())
-                .collect(java.util.stream.Collectors.joining("\n"));
+        String rendered =
+                view.lines().stream().map(value -> value.toString()).collect(java.util.stream.Collectors.joining("\n"));
 
         assertThat(view.lines()).hasSizeLessThanOrEqualTo(40);
         assertThat(view.cursorRow()).isBetween(0, view.lines().size() - 1);
