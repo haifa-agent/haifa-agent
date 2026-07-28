@@ -54,7 +54,8 @@ class CriticalPathLiveE2E {
                 caseRoot,
                 workspace,
                 generatedConfig,
-                "必须调用 skill_load 加载 ascii-art，然后只输出一个包含 HAIFA AGENT 的简短纯文本 ASCII 图。",
+                "只调用一次 skill_load 加载 ascii-art。加载成功后不要调用 skill_resource_read 或任何其他工具，"
+                        + "立即只输出一个包含 HAIFA AGENT 的简短纯文本 ASCII 图。",
                 Map.of());
 
         assertSuccessful(result);
