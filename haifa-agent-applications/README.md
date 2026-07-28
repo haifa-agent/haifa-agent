@@ -9,3 +9,5 @@
 - `haifa-agent-cli`：最高层生产装配与唯一 shaded 可执行制品，复用同一个 Runtime、Project、
   Workspace、Policy、Tool、Execution、Persistence 和 `CodingSessionService`，同时提供 Terminal
   默认入口与兼容的 `-m` one-shot 模式。
+- `haifa-agent-personal-assistant-web`：Personal Assistant 的独立 React 前端与 OpenAPI 设计契约；
+  当前只使用浏览器内 Mock，不包含后端实现，默认开发端口为 `20000`。
