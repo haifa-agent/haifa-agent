@@ -185,30 +185,9 @@ public final class DecisionExecutor {
             AgentStep step = preparedTool.step();
             step.start(time.now());
             state.appendStep(step);
+            ToolPipelineOutcome outcome;
             try {
-                ToolPipelineOutcome outcome = tools.execute(run, call, request);
-                if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
-                    step.waitForExternalInput();
-                    state.appendStep(step);
-                    state.appendToolCall(call);
-                    createToolApproval(run, call, approval, loopContext);
-                    return AgentLoopDirective.WAIT;
-                }
-                var result = ((ToolPipelineOutcome.Completed) outcome).result();
-                step.complete(
-                        new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
-                state.appendStep(step);
-                appendToolResult(run, call, result.summary());
-                checkpoints.capture(
-                        run,
-                        loopContext.iteration(),
-                        loopContext.fingerprints(),
-                        loopContext.forcedContextRebuildAttempts(),
-                        CheckpointType.AUTOMATIC);
-                if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
-                    throw new CancellationObservedException();
-                }
-                if (controls.signal(run.id()) == RunControlSignal.PAUSE) break;
+                outcome = tools.execute(run, call, request);
             } catch (IllegalArgumentException | SecurityException repairable) {
                 repairRetry.check(loopContext.recordRepairAttempt());
                 cancelRejectedCall(call);
@@ -227,7 +206,46 @@ public final class DecisionExecutor {
                 state.appendStep(step);
                 appendToolResult(
                         run, call, "Tool request rejected; repair the arguments or choose another capability.");
+                continue;
+            } catch (RuntimeException failure) {
+                AgentError toolError = call.error()
+                        .map(io.haifa.agent.core.tool.ToolExecutionError::error)
+                        .orElseGet(() -> new AgentError(
+                                new AgentErrorCode("TOOL_INVOCATION_FAILED"),
+                                AgentErrorCategory.TOOL,
+                                AgentErrorSeverity.ERROR,
+                                Retryability.NOT_RETRYABLE,
+                                "Tool execution failed before a result was available.",
+                                null,
+                                Map.of("tool", call.toolName()),
+                                time.now()));
+                step.fail(new AgentStepError(toolError), time.now());
+                state.appendStep(step);
+                appendToolResult(run, call, toolError.message());
+                throw failure;
             }
+            if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
+                step.waitForExternalInput();
+                state.appendStep(step);
+                state.appendToolCall(call);
+                createToolApproval(run, call, approval, loopContext);
+                return AgentLoopDirective.WAIT;
+            }
+            var result = ((ToolPipelineOutcome.Completed) outcome).result();
+            step.complete(
+                    new AgentStepResult(result.summary(), result.structuredData(), result.artifacts()), time.now());
+            state.appendStep(step);
+            appendToolResult(run, call, result.summary());
+            checkpoints.capture(
+                    run,
+                    loopContext.iteration(),
+                    loopContext.fingerprints(),
+                    loopContext.forcedContextRebuildAttempts(),
+                    CheckpointType.AUTOMATIC);
+            if (controls.signal(run.id()) == RunControlSignal.CANCEL) {
+                throw new CancellationObservedException();
+            }
+            if (controls.signal(run.id()) == RunControlSignal.PAUSE) break;
         }
         return AgentLoopDirective.CONTINUE;
     }
