@@ -21,6 +21,21 @@ JAR 的构建或静态资源打包。
 生产代码没有 Mock Client、Fixture fallback、Follow-up/Steer、Preference 编辑、复杂进度投影或
 Deep Research 界面。
 
+## 本机 Run Diagnostics
+
+同一独立 Web 部署单元提供直接访问的 `/admin/` 子路径，用于按 Session 选择一次 Run，并以可折叠
+树查看冻结配置、Prompt/Message、Attempt、Step、Tool/MCP、Checkpoint、Interaction、Skill 和
+Runtime Event。失败 Run 会自动聚焦到持久事实中最后一个失败节点，右侧展示该节点的完整内容。
+
+Admin 是独立入口：普通 Personal Assistant 页面没有 Admin 链接、导航、按钮、capability 或 Client
+接口，两个页面按 URL 动态加载，普通页面不会加载 Admin 应用代码。Admin 只读调用
+`http://127.0.0.1:20001/v1/admin`，并明确展示完整 Prompt、Tool 参数、结果与错误，因此只能在受信
+本机环境中使用。需要覆盖地址时单独设置：
+
+```powershell
+$env:VITE_PERSONAL_ASSISTANT_ADMIN_API_BASE_URL='http://127.0.0.1:20001/v1/admin'
+```
+
 ## 契约
 
 事实链：
