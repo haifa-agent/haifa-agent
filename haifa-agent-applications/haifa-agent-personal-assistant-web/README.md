@@ -10,7 +10,8 @@ JAR 的构建或静态资源打包。
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
 - 对话正文的 Markdown、代码块、表格和 KaTeX/LaTeX 公式渲染；
-- Clarification/Approval 的显式结构化回复；
+- 助手完整 Markdown 回答和独立代码块的复制按钮，复制成功后显示图标反馈；
+- Clarification/Approval 的显式结构化回复；审批只在主对话区展示，长文本或代码默认预览并支持展开全文；
 - Tool、Skill、MCP 的安全 Activity 投影，不展示原始参数、结果、路径或协议 JSON；
 - Memory Candidate 确认/拒绝、Memory 查看/停用；
 - 最终 Run 的后端权威 Token Usage；
@@ -61,6 +62,9 @@ Run SSE 的 durable 与 transient 事件分别去重：`answer.delta` 实时追�
 Turns 中的权威 `session_message` 替换草稿。客户端重连发送复合 `Last-Event-ID`，服务重启时只重置
 transient cursor。收到 `run.status`、`interaction.status` 或 `activity.committed` 时仍会立即重取权威
 Snapshot，因此审批卡片、执行活动和终态不依赖手工刷新。
+
+When a Run is waiting for approval or interaction and its interaction snapshot cannot be loaded, the page displays
+an explicit blocking error instead of silently hiding the approval controls.
 
 ## 本地开发
 

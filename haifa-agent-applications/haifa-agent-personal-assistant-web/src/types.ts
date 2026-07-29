@@ -30,6 +30,7 @@ export interface UiState {
   run: Run | null;
   activities: Activity[];
   interaction: Interaction | null;
+  interactionError: string | null;
   memoryCandidates: MemoryCandidate[];
   memories: Memory[];
   streamDraft: string;
@@ -64,6 +65,7 @@ export type AppAction =
   | { type: "runLoaded"; run: Run | null }
   | { type: "activitiesLoaded"; activities: Activity[] }
   | { type: "interactionLoaded"; interaction: Interaction | null }
+  | { type: "interactionLoadFailed"; runId: string; message: string }
   | { type: "memoryLoaded"; candidates: MemoryCandidate[]; memories: Memory[] }
   | { type: "streamEvent"; event: StreamEvent }
   | { type: "setConnection"; connection: ConnectionState }

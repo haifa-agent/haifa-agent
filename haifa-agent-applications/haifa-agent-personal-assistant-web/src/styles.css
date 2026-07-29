@@ -170,12 +170,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   grid-template-areas:
     "heading"
     "error"
     "messages"
-    "interaction"
     "composer";
   padding: 18px 20px 14px;
   gap: 10px;
@@ -198,6 +197,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .message {
   width: fit-content;
   max-width: min(760px, 86%);
+  flex: 0 0 auto;
   padding: 13px 15px;
   line-height: 1.65;
   border: 1px solid #e1e5ed;
@@ -225,9 +225,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .message-content a { color: #365fd3; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .message-content :not(pre) > code { padding: 2px 5px; color: #9b3150; font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: .9em; border: 1px solid #e2e6ee; border-radius: 5px; background: #f6f7fa; }
 .code-block-wrapper { margin: 12px 0; overflow: hidden; border: 1px solid #30394b; border-radius: 10px; background: #18202f; }
-.code-block-language { padding: 6px 11px; color: #aab5ca; font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: 10px; text-transform: uppercase; border-bottom: 1px solid #30394b; background: #202a3b; }
+.code-block-header { display: flex; align-items: center; justify-content: space-between; min-height: 32px; padding: 4px 7px 4px 11px; border-bottom: 1px solid #30394b; background: #202a3b; }
+.code-block-language { min-width: 0; color: #aab5ca; font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: 10px; text-transform: uppercase; }
+.copy-code-button, .message-copy-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 4px 7px; color: #66728a; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; border: 1px solid transparent; border-radius: 6px; background: transparent; transition: color .15s ease, border-color .15s ease, background .15s ease; }
+.copy-code-button { color: #c4ccdb; }
+.copy-code-button:hover { color: #fff; border-color: #49566d; background: #2b374b; }
+.copy-code-button svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.copy-code-check-icon { display: none; }
+.copy-code-button[data-copied="true"] .copy-code-copy-icon { display: none; }
+.copy-code-button[data-copied="true"] .copy-code-check-icon { display: block; }
 .message-content pre { margin: 0; padding: 12px 14px; overflow-x: auto; color: #e5e9f2; font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: 12px; line-height: 1.6; white-space: pre; }
 .message-content pre code { font: inherit; }
+.message-actions { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
+.message-copy-button { padding-left: 2px; color: #7b8496; }
+.message-copy-button:hover { color: #365fd3; background: #edf2ff; }
+.message-copy-button svg { flex: 0 0 auto; }
 .markdown-table-wrapper { width: 100%; margin: 12px 0; overflow-x: auto; border: 1px solid #e1e5ed; border-radius: 10px; }
 .markdown-table { width: 100%; min-width: 420px; border-collapse: collapse; font-size: 12px; line-height: 1.55; }
 .markdown-table th, .markdown-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-right: 1px solid #e1e5ed; border-bottom: 1px solid #e1e5ed; }
@@ -303,7 +315,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .panel-section { padding-top: 2px; }
 .panel-section h3 { margin: 0 0 9px; font-size: 13px; }
 .activity-list { display: flex; flex-direction: column; gap: 8px; }
-.activity-card, .interaction-card, .memory-card { padding: 11px; border: 1px solid #e0e5ed; border-radius: 12px; background: white; }
+.activity-card, .memory-card { padding: 11px; border: 1px solid #e0e5ed; border-radius: 12px; background: white; }
 .activity-card strong { display: block; margin: 7px 0 3px; font-size: 12px; }
 .activity-card p, .interaction-card p, .memory-card p { margin: 4px 0; color: #647086; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .activity-kind { gap: 5px; color: #50617b; font-size: 10px; font-weight: 800; }
@@ -315,7 +327,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .usage-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .usage-grid span { display: flex; flex-direction: column; padding: 8px; color: #7a8496; font-size: 10px; border: 1px solid #e4e8ef; border-radius: 9px; background: white; }
 .usage-grid strong { margin-top: 2px; color: #253149; font-size: 14px; }
-.interaction-card { border-color: #eadcae; background: #fffcf3; }
+.interaction-card {
+  width: min(820px, 100%);
+  flex: 0 0 auto;
+  align-self: center;
+  overflow: hidden;
+  border: 1px solid #e3cf91;
+  border-radius: 16px;
+  background: #fffdf7;
+  box-shadow: 0 14px 34px rgb(79 65 26 / 10%);
+}
+.interaction-body { padding: 16px 18px 17px; }
 .approval-summary, .activity-summary {
   margin: 7px 0;
   padding: 9px;
@@ -330,7 +352,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 .execution-risk-badge {
   display: inline-flex;
-  margin-top: 8px;
+  align-items: center;
+  gap: 4px;
   padding: 4px 7px;
   color: #9b2c37;
   font-size: 10px;
@@ -339,12 +362,24 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   border-radius: 999px;
   background: #fff2f3;
 }
-.interaction-heading { gap: 8px; }
-.interaction-card h3 { font-size: 14px; }
-.interaction-card textarea { width: 100%; min-height: 70px; resize: vertical; padding: 8px; border: 1px solid #ddd7c5; border-radius: 8px; }
-.interaction-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
-.interaction-card > small { display: block; margin-top: 8px; color: #8d836a; }
-.inline-interaction { grid-area: interaction; display: none; }
+.interaction-heading { gap: 10px; padding: 14px 18px; border-bottom: 1px solid #eadcae; background: #fff9e8; }
+.interaction-heading > div { min-width: 0; flex: 1; }
+.interaction-card h3 { margin-top: 2px; overflow-wrap: anywhere; font-size: 16px; line-height: 1.35; }
+.interaction-icon { width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center; color: #805b00; border-radius: 10px; background: #ffefbd; }
+.interaction-state { flex: 0 0 auto; padding: 4px 8px; color: #805b00; font-size: 10px; font-weight: 800; border-radius: 999px; background: #ffefbd; }
+.interaction-context { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 13px; }
+.interaction-type { padding: 4px 7px; color: #59657a; font-size: 10px; font-weight: 800; text-transform: uppercase; border: 1px solid #dfe4ed; border-radius: 999px; background: white; }
+.approval-content-section, .approval-options { margin-top: 13px; }
+.approval-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.approval-section-heading h4 { margin: 0; color: #303b51; font-size: 12px; }
+.approval-section-heading span { display: block; margin-top: 2px; color: #8a93a4; font-size: 10px; line-height: 1.45; }
+.interaction-card .approval-summary { max-height: none; margin: 7px 0 0; padding: 12px; color: #dce5f4; font-size: 12px; line-height: 1.6; border-color: #30394b; background: #18202f; }
+.approval-expand-button { display: inline-flex; align-items: center; gap: 5px; margin-top: 7px; padding: 4px 1px; color: #516fd1; font-size: 11px; font-weight: 700; border: 0; background: transparent; cursor: pointer; }
+.interaction-input { display: block; margin-top: 14px; color: #4f5b70; font-size: 11px; font-weight: 700; }
+.interaction-card textarea { width: 100%; min-height: 76px; margin-top: 6px; resize: vertical; padding: 9px; font-weight: 400; border: 1px solid #ddd7c5; border-radius: 8px; background: white; }
+.interaction-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+.interaction-actions .button { min-width: 88px; }
+.interaction-body > small { display: block; margin-top: 10px; color: #8d836a; }
 
 .safe-error, .error-banner { gap: 8px; color: #a83244; font-size: 12px; }
 .safe-error { padding: 9px; border-radius: 9px; background: #fff1f3; }
@@ -722,7 +757,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   }
   .activity-panel.drawer-open { transform: translateX(0); }
   .mobile-only { display: inline-grid; }
-  .inline-interaction { display: block; }
   .admin-workspace { grid-template-columns: 220px 250px minmax(500px, 1fr); }
   .admin-sensitive-warning span { display: none; }
 }

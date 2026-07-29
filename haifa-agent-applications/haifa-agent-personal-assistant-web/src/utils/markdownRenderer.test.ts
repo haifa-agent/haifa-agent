@@ -27,6 +27,9 @@ describe("renderMarkdown", () => {
     expect(html).toContain("<code>m_value</code>");
     expect(html).toContain("**not bold** $not_math$");
     expect(html).not.toContain("<strong>not bold</strong>");
+    expect(html).toContain('class="copy-code-button"');
+    expect(html).toContain('aria-label="复制代码"');
+    expect(html).toContain('class="copy-code-copy-icon"');
   });
 
   it("escapes source HTML and rejects executable link protocols", () => {

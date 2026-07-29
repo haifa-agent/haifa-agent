@@ -155,10 +155,10 @@ export function renderMarkdown(text: string): string {
     /```([A-Za-z0-9_-]+)?[ \t]*\r?\n?([\s\S]*?)```/g,
     (_match, language: string | undefined, code: string) => {
       const label = language
-        ? `<div class="code-block-language">${escapeHtml(language)}</div>`
-        : "";
+        ? `<span class="code-block-language">${escapeHtml(language)}</span>`
+        : '<span class="code-block-language"></span>';
       return protect(
-        `<div class="code-block-wrapper">${label}<pre><code>${escapeHtml(code.trim())}</code></pre></div>`,
+        `<div class="code-block-wrapper"><div class="code-block-header">${label}<button type="button" class="copy-code-button" aria-label="复制代码" title="复制代码"><svg class="copy-code-copy-icon" viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg><svg class="copy-code-check-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m20 6-11 11-5-5"></path></svg><span class="copy-code-label">复制</span></button></div><pre><code>${escapeHtml(code.trim())}</code></pre></div>`,
         true,
       );
     },

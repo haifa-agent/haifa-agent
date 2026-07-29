@@ -249,6 +249,40 @@ describe("Personal Assistant application", () => {
     expect(container.querySelector(".message-content .katex")).toBeTruthy();
   });
 
+  it("copies a complete assistant answer and an individual code block", async () => {
+    const answer = [
+      "## PowerShell",
+      "",
+      "运行以下命令：",
+      "",
+      "```powershell",
+      "Get-Process | Select-Object -First 1",
+      "```",
+    ].join("\n");
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const api = client();
+    vi.mocked(api.turns).mockResolvedValue([
+      turns[0],
+      { ...turns[1], text: answer },
+    ]);
+    render(<App client={api} />);
+
+    await screen.findByRole("heading", { level: 2, name: "PowerShell" });
+    fireEvent.click(screen.getByRole("button", { name: "复制完整回答" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(answer));
+    expect(screen.getByRole("button", { name: "完整回答已复制" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "复制代码" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(
+      "Get-Process | Select-Object -First 1",
+    ));
+    expect(screen.getByRole("button", { name: "代码已复制" })).toBeTruthy();
+  });
+
   it("opens memory management without writing on page load", async () => {
     const api = client();
     render(<App client={api} />);
@@ -305,9 +339,84 @@ describe("Personal Assistant application", () => {
 
     const { container } = render(<App client={api} />);
 
-    expect((await screen.findAllByText("Approve execution")).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText(/Get-CimInstance Win32_Processor/)).not.toHaveLength(0);
+    expect(await screen.findByRole("heading", { name: "Approve execution" })).toBeTruthy();
+    expect(screen.getByText(/Get-CimInstance Win32_Processor/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "审批内容" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "审批选项" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "批准" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
     expect(container.querySelector(".execution-risk-badge")).toBeTruthy();
+    expect(container.querySelector(".messages > .interaction-card")).toBeTruthy();
+    expect(container.querySelector(".activity-panel .interaction-card")).toBeNull();
+  });
+
+  it("previews long approval content and expands it on demand", async () => {
+    const active = { ...conversation, activeRunId: "run-long-approval" };
+    const waiting = { ...run, id: "run-long-approval", status: "WAITING_APPROVAL" };
+    const longContent = [
+      "Mode: SCRIPT",
+      "Language: powershell",
+      "Purpose: inspect services",
+      "Risks: HIGH",
+      "Full content:",
+      ...Array.from({ length: 24 }, (_, index) => `Write-Output "line-${index + 1}"`),
+      "END-OF-APPROVAL-CONTENT",
+    ].join("\n");
+    const interaction: Interaction = {
+      id: "interaction-long-execution",
+      runId: waiting.id,
+      conversationId: conversation.id,
+      revision: 1,
+      kind: "approval",
+      state: "PENDING",
+      title: "Approve long script",
+      safePrompt: longContent,
+      allowedActions: ["approve", "reject"],
+      inputType: "NONE",
+      maximumCharacters: 0,
+      createdAt: "2026-07-28T01:00:00Z",
+      expiresAt: "2026-07-28T02:00:00Z",
+    };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(waiting);
+    vi.mocked(api.interaction).mockResolvedValue(interaction);
+
+    render(<App client={api} />);
+
+    const expand = await screen.findByRole("button", {
+      name: "展开查看全部内容",
+    });
+    expect(expand.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText(/END-OF-APPROVAL-CONTENT/)).toBeNull();
+
+    fireEvent.click(expand);
+
+    expect(await screen.findByText(/END-OF-APPROVAL-CONTENT/)).toBeTruthy();
+    const collapse = screen.getByRole("button", { name: "收起内容" });
+    expect(collapse.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(collapse);
+    await waitFor(() => expect(screen.queryByText(/END-OF-APPROVAL-CONTENT/)).toBeNull());
+  });
+
+  it("shows a visible error when a waiting approval cannot be loaded", async () => {
+    const active = { ...conversation, activeRunId: "run-approval-error" };
+    const waiting = { ...run, id: "run-approval-error", status: "WAITING_APPROVAL" };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(waiting);
+    vi.mocked(api.interaction).mockRejectedValue(
+      new PersonalAssistantApiError(400, "INVALID_REQUEST", "The request is invalid.", "correlation-1"),
+    );
+
+    render(<App client={api} />);
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "审批或交互详情加载失败，请重试；任务尚未继续执行。",
+    );
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
   it("refreshes the approval snapshot when SSE reports an interaction change", async () => {

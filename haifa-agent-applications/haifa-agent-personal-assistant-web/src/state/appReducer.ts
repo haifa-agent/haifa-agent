@@ -10,6 +10,7 @@ export const initialState: UiState = {
   run: null,
   activities: [],
   interaction: null,
+  interactionError: null,
   memoryCandidates: [],
   memories: [],
   streamDraft: "",
@@ -87,6 +88,7 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         run: null,
         activities: [],
         interaction: null,
+        interactionError: null,
         streamDraft: "",
         streamSequences: { durable: 0, transient: 0 },
         sidebarOpen: false,
@@ -125,6 +127,7 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         run: next,
         activities: changed ? [] : state.activities,
         interaction: changed ? null : state.interaction,
+        interactionError: changed ? null : state.interactionError,
         streamSequences: changed
           ? { durable: 0, transient: 0 }
           : state.streamSequences,
@@ -139,6 +142,7 @@ export function appReducer(state: UiState, action: AppAction): UiState {
     case "interactionLoaded":
       return {
         ...state,
+        interactionError: null,
         interaction:
           !state.interaction ||
           !action.interaction ||
@@ -147,6 +151,10 @@ export function appReducer(state: UiState, action: AppAction): UiState {
             ? action.interaction
             : state.interaction,
       };
+    case "interactionLoadFailed":
+      return state.run?.id === action.runId
+        ? { ...state, interactionError: action.message }
+        : state;
     case "memoryLoaded":
       return {
         ...state,
