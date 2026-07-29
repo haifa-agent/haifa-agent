@@ -23,9 +23,13 @@ Deep Research 界面。
 
 ## 本机 Run Diagnostics
 
-同一独立 Web 部署单元提供直接访问的 `/admin/` 子路径，用于按 Session 选择一次 Run，并以可折叠
-树查看冻结配置、Prompt/Message、Attempt、Step、Tool/MCP、Checkpoint、Interaction、Skill 和
-Runtime Event。失败 Run 会自动聚焦到持久事实中最后一个失败节点，右侧展示该节点的完整内容。
+同一独立 Web 部署单元提供两个 Admin 只读视图：
+
+- `/admin/` 按 Session 选择一次 Run，并以可折叠树查看冻结配置、Prompt/Message、Attempt、Step、
+  Tool/MCP、Checkpoint、Interaction、Skill 和 Runtime Event。失败 Run 会自动聚焦到持久事实中
+  最后一个失败节点，右侧展示该节点的完整内容。
+- `/admin/capabilities` 按 Tool、MCP Server、Skill 浏览产品组装时冻结的注册清单，可搜索并查看定义、
+  策略、Schema、资源、协议、导入关系和摘要；不展示凭据值或临时连接状态。
 
 Admin 是独立入口：普通 Personal Assistant 页面没有 Admin 链接、导航、按钮、capability 或 Client
 接口，两个页面按 URL 动态加载，普通页面不会加载 Admin 应用代码。Admin 只读调用

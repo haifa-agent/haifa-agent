@@ -2,7 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminApp from "./AdminApp";
 import type { PersonalAdminClient } from "./admin/client";
-import type { AdminRun, AdminSession, AdminTrace } from "./admin/types";
+import type {
+  AdminCapabilities,
+  AdminRun,
+  AdminSession,
+  AdminTrace,
+} from "./admin/types";
 
 const session: AdminSession = {
   id: "session-sensitive",
@@ -63,11 +68,62 @@ const trace: AdminTrace = {
   failureNodeId: "tool:tool-call-1",
 };
 
+const capabilities: AdminCapabilities = {
+  toolCatalogDigest: "tool-digest",
+  skillCatalogDigest: "skill-digest",
+  skillResolutionPolicy: "personal-default",
+  registrations: [
+    {
+      id: "tool:execution_run",
+      kind: "TOOL",
+      name: "execution_run",
+      displayName: "Run reviewed local execution",
+      description: "Runs a reviewed execution request.",
+      status: "FROZEN",
+      source: "personal-execution",
+      tags: ["execution"],
+      attributes: [
+        { label: "Risk", value: "HIGH", tone: "failed" },
+      ],
+      details: { behavior: { approvalRequirement: "REQUIRED" } },
+    },
+    {
+      id: "mcp:personal-local",
+      kind: "MCP",
+      name: "personal-local",
+      displayName: "Personal local MCP",
+      description: "Reviewed MCP server registration.",
+      status: "READY",
+      source: "http://127.0.0.1:20002/mcp",
+      tags: ["mcp"],
+      attributes: [
+        { label: "Protocol", value: "2025-11-25", tone: "succeeded" },
+      ],
+      details: { importedTools: [{ alias: "personal_mcp_echo" }] },
+    },
+    {
+      id: "skill:daily-planning",
+      kind: "SKILL",
+      name: "daily-planning",
+      displayName: "daily-planning",
+      description: "Create a daily plan.",
+      status: "FROZEN",
+      source: "classpath:daily-planning",
+      tags: ["personal_checklist"],
+      attributes: [
+        { label: "Resources", value: "1", tone: "neutral" },
+      ],
+      details: { package: { resources: [{ relativePath: "SKILL.md" }] } },
+    },
+  ],
+};
+
 function client(): PersonalAdminClient {
   return {
     sessions: vi.fn(async () => [session]),
     runs: vi.fn(async () => [run]),
     trace: vi.fn(async () => trace),
+    capabilities: vi.fn(async () => capabilities),
   };
 }
 
@@ -99,5 +155,26 @@ describe("Personal Assistant Admin application", () => {
     fireEvent.click(screen.getByRole("button", { name: "刷新" }));
 
     await waitFor(() => expect(api.sessions).toHaveBeenCalledTimes(2));
+  });
+
+  it("browses registered tools MCP servers and skills without loading run data", async () => {
+    window.history.replaceState(null, "", "/admin/capabilities");
+    const api = client();
+    render(<AdminApp client={api} />);
+
+    expect((await screen.findAllByText("execution_run")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Run reviewed local execution").length).toBeGreaterThan(0);
+    expect(screen.getByText(/approvalRequirement/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /MCP Servers/ }));
+    expect(screen.getAllByText("personal-local").length).toBeGreaterThan(0);
+    expect(screen.getByText(/personal_mcp_echo/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Skills/ }));
+    expect(screen.getAllByText("daily-planning").length).toBeGreaterThan(0);
+    expect(screen.getByText(/SKILL.md/)).toBeTruthy();
+    expect(api.capabilities).toHaveBeenCalled();
+    expect(api.sessions).not.toHaveBeenCalled();
+    expect(new URL(window.location.href).searchParams.get("kind")).toBe("skill");
   });
 });

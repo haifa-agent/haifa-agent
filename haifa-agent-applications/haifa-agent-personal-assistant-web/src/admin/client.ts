@@ -1,4 +1,9 @@
-import type { AdminRun, AdminSession, AdminTrace } from "./types";
+import type {
+  AdminCapabilities,
+  AdminRun,
+  AdminSession,
+  AdminTrace,
+} from "./types";
 
 const DEFAULT_ADMIN_API_ROOT = "http://127.0.0.1:20001/v1/admin";
 const ADMIN_API_ROOT = (
@@ -11,6 +16,7 @@ export interface PersonalAdminClient {
   sessions(signal?: AbortSignal): Promise<AdminSession[]>;
   runs(sessionId: string, signal?: AbortSignal): Promise<AdminRun[]>;
   trace(sessionId: string, runId: string, signal?: AbortSignal): Promise<AdminTrace>;
+  capabilities(signal?: AbortSignal): Promise<AdminCapabilities>;
 }
 
 function encoded(value: string): string {
@@ -52,5 +58,9 @@ export class HttpPersonalAdminClient implements PersonalAdminClient {
       `/sessions/${encoded(sessionId)}/runs/${encoded(runId)}/tree`,
       signal,
     );
+  }
+
+  capabilities(signal?: AbortSignal) {
+    return this.get<AdminCapabilities>("/capabilities", signal);
   }
 }

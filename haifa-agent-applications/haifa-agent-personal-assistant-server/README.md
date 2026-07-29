@@ -19,10 +19,15 @@ Server 另提供与普通产品 API 隔离的只读本机诊断面：
 
 ```text
 GET /v1/admin/
+GET /v1/admin/capabilities
 GET /v1/admin/sessions
 GET /v1/admin/sessions/{sessionId}/runs
 GET /v1/admin/sessions/{sessionId}/runs/{runId}/tree
 ```
+
+`capabilities` 返回产品组装时冻结的 Tool、已审核 MCP Server 和 Skill 注册快照，包括定义身份、版本与
+摘要、风险和审批策略、Schema、资源声明、MCP 协议与导入工具、Skill 元数据与资源索引；不会返回
+凭据值、MCP Session ID 或运行时 Lease。
 
 诊断树直接读取同一 SQLite 事实源，并在解码前校验各 payload 的实际字节哈希。它展示冻结 Agent
 指令/模型配置、完整 Prompt/Message、Attempt、Step、Tool 参数与结果、Checkpoint、Interaction、
