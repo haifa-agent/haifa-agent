@@ -1,12 +1,17 @@
 # Haifa Agent Runtime API
 
-## Replayable model output
+## Transient model output
 
-`outputEvents` and `addOutputListener` expose a replayable, transport-neutral projection of model output. Public
-events contain only assistant text deltas and committed/failed/superseded lifecycle state. They never contain
-reasoning, unvalidated tool arguments, prompts, credentials, or provider responses. Callers resume from a
-`RunOutputCursor` whose sequence is monotonic within the Run. Assistant text delta 内容按 Provider chunk 原样
-保留；纯空格、换行或制表符 chunk 是合法输出，不会被通用 display-text 规范化。
+`subscribeOutput(runId, cursor, listener)` 和 `outputEvents` 暴露 provider-neutral 的进程内模型输出通道。
+它只包含 Assistant text delta 和 started/committed/failed/superseded 生命周期，不包含 reasoning、未校验
+Tool 参数、Prompt、凭据或 Provider 原始响应。`RunOutputSubscription` 必须关闭；订阅按 Run 隔离，
+Listener 失败不会中断 AgentLoop。
+
+`RunOutputCursor` 只在当前进程、当前活动 Run 的有界内存缓冲内单调有效；它不是持久化 Cursor，不能在
+进程重启后恢复未完成 Delta。Run 终态提交后缓冲与 Listener 会被清理，调用方应从权威
+`session_message`/Turns 查询完整 Assistant Message。Assistant text delta 按 Provider chunk 原样保留；
+纯空格、换行或制表符 chunk 是合法输出，不会被 display-text 规范化。旧的全局、不可注销
+`addOutputListener` 已停止支持。
 
 定义 Runtime 的稳定入口、查询、恢复、命令、Interaction Response、Handle 和监听契约，不包含默认 AgentLoop 实现。
 
@@ -34,6 +39,6 @@ reasoning, unvalidated tool arguments, prompts, credentials, or provider respons
   `OpaqueRunEventCursorCodec` 编解码不透明值。Cursor 绑定 Run、feed version 和最后已交付 sequence，
   不能与 `RunOutputCursor`、Outbox offset 或数据库 rowid 混用。
 - `AgentRunEvent` 只携带 `RunEventPayloads` 的有界 typed payload。未知内部 Journal Event 不外发，
-  但 Feed Cursor 会继续推进；现有 `outputEvents` 仍是兼容的模型输出子视图。
+  但 Feed Cursor 会继续推进；`model.output.*` 不属于 durable Run Event Feed。
 - `AgentRunViewSnapshot` 组合可信 Session ID 与 Run Snapshot，供 Adapter 显式投影外部
   `RunView`；它不改变 Core Run 状态机。

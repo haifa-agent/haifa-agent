@@ -203,6 +203,8 @@ public final class DefaultAgentLoop implements AgentLoop {
             AgentStep[] modelStepRef = {modelStep};
             AgentDecision decision;
             ModelInvocationResult response;
+            java.util.concurrent.atomic.AtomicReference<ModelInvocationResult> invocationRef =
+                    new java.util.concurrent.atomic.AtomicReference<>();
             try {
                 response = retries.execute(
                         () -> {
@@ -293,6 +295,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                             }
                         },
                         modelRetryPolicy.policy());
+                invocationRef.set(response);
                 transitions.usage(
                         run,
                         new AgentRunUsageDelta(
@@ -342,6 +345,9 @@ public final class DefaultAgentLoop implements AgentLoop {
                         modelErrorAttributes(run, error),
                         time.now()));
                 failModelStep(modelStepRef[0], terminal);
+                if (invocationRef.get() != null) {
+                    models.failed(run, invocationRef.get(), progress.iteration());
+                }
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
                 throw terminal;
             }
@@ -356,6 +362,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             state.appendStep(modelStepRef[0]);
 
             if (applyControl(run, progress, SafePoint.AFTER_MODEL_CALL, progress.iteration() - 1)) {
+                models.failed(run, response, progress.iteration());
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
 
@@ -373,9 +380,11 @@ public final class DefaultAgentLoop implements AgentLoop {
             try {
                 directive = decisionExecutor.executeModel(run, response, progress);
             } catch (RuntimeException error) {
+                models.failed(run, response, progress.iteration());
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
                 throw error;
             }
+            models.committed(run, response, progress.iteration());
             middleware.apply(RuntimePhase.AFTER_DECISION_EXECUTION, middlewareContextRef[0]);
             if (decision instanceof FinalAnswerDecision && run.status() == AgentRunStatus.COMPLETED) {
                 middleware.apply(RuntimePhase.AFTER_COMPLETION, middlewareContextRef[0]);

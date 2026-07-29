@@ -22,6 +22,8 @@ import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
+import io.haifa.agent.runtime.api.RunOutputCursor;
+import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -41,6 +43,9 @@ public final class CodingTerminalController implements AutoCloseable {
     private final TerminalCompletionProvider completions;
     private TerminalUiState state;
     private RunEventSubscription subscription;
+    private RunOutputSubscription outputSubscription;
+    private io.haifa.agent.core.run.AgentRunId outputRunId;
+    private RunOutputCursor outputCursor = RunOutputCursor.BEFORE_FIRST;
     private boolean awaitingNewSessionMessage;
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
@@ -604,9 +609,22 @@ public final class CodingTerminalController implements AutoCloseable {
         RunEventCursor subscribeAfter = state.appliedCursor().orElse(cursor);
         subscription = client.subscribe(
                 runId, subscribeAfter, event -> pump.offer(new TerminalUiAction.RunEventReceived(event)));
+        if (!runId.equals(outputRunId)) {
+            outputRunId = runId;
+            outputCursor = RunOutputCursor.BEFORE_FIRST;
+        }
+        outputSubscription = client.subscribeOutput(
+                runId, outputCursor, event -> pump.offer(new TerminalUiAction.RunOutputReceived(event)));
     }
 
     private void apply(TerminalUiAction action) {
+        if (action instanceof TerminalUiAction.RunOutputReceived received) {
+            if (!received.event().runId().equals(outputRunId)
+                    || received.event().sequence() <= outputCursor.sequence()) {
+                return;
+            }
+            outputCursor = new RunOutputCursor(received.event().sequence());
+        }
         state = reducer.reduce(state, action);
         if (action instanceof TerminalUiAction.RunEventReceived received
                 && state.appliedCursor()
@@ -638,6 +656,10 @@ public final class CodingTerminalController implements AutoCloseable {
         if (subscription != null) {
             subscription.close();
             subscription = null;
+        }
+        if (outputSubscription != null) {
+            outputSubscription.close();
+            outputSubscription = null;
         }
     }
 

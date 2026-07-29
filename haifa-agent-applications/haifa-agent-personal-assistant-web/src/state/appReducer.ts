@@ -13,7 +13,7 @@ export const initialState: UiState = {
   memoryCandidates: [],
   memories: [],
   streamDraft: "",
-  streamSequence: 0,
+  streamSequences: { durable: 0, transient: 0 },
   connection: "connecting",
   search: "",
   composer: "",
@@ -88,7 +88,7 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         activities: [],
         interaction: null,
         streamDraft: "",
-        streamSequence: 0,
+        streamSequences: { durable: 0, transient: 0 },
         sidebarOpen: false,
         error: null,
       };
@@ -125,7 +125,9 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         run: next,
         activities: changed ? [] : state.activities,
         interaction: changed ? null : state.interaction,
-        streamSequence: changed ? 0 : state.streamSequence,
+        streamSequences: changed
+          ? { durable: 0, transient: 0 }
+          : state.streamSequences,
         streamDraft:
           !next || changed || ["FAILED", "CANCELLED", "TIMEOUT"].includes(next.status)
             ? ""
@@ -151,19 +153,36 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         memoryCandidates: action.candidates,
         memories: action.memories,
       };
-    case "streamEvent":
-      if (action.event.sequence <= state.streamSequence) return state;
+    case "streamEvent": {
+      const source = action.event.source;
+      if (
+        source !== "snapshot" &&
+        action.event.sequence <= state.streamSequences[source]
+      ) {
+        return state;
+      }
+      const resetDraft = [
+        "answer.started",
+        "answer.failed",
+        "answer.superseded",
+      ].includes(action.event.type);
       return {
         ...state,
-        streamSequence: action.event.sequence,
+        streamSequences:
+          source === "snapshot"
+            ? state.streamSequences
+            : { ...state.streamSequences, [source]: action.event.sequence },
         streamDraft:
           action.event.type === "answer.delta"
             ? state.streamDraft + action.event.value
-            : state.streamDraft,
+            : resetDraft
+              ? ""
+              : state.streamDraft,
         activities: action.event.activity
           ? mergeActivities(state.activities, [action.event.activity])
           : state.activities,
       };
+    }
     case "setConnection":
       return { ...state, connection: action.connection };
     case "setSearch":

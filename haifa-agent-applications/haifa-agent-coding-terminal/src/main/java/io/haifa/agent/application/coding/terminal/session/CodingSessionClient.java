@@ -12,12 +12,15 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
+import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventSubscription;
+import io.haifa.agent.runtime.api.RunOutputCursor;
+import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.util.List;
 
 /** Stable product/API boundary consumed by the terminal application. */
@@ -83,6 +86,19 @@ public interface CodingSessionClient {
     RunEventCursor acknowledgeCursor(AgentSessionId sessionId, RunEventCursor cursor);
 
     RunEventSubscription subscribe(AgentRunId runId, RunEventCursor after, AgentRunEventListener listener);
+
+    default RunOutputSubscription subscribeOutput(
+            AgentRunId runId, RunOutputCursor after, AgentRunOutputListener listener) {
+        return new RunOutputSubscription() {
+            @Override
+            public boolean closed() {
+                return true;
+            }
+
+            @Override
+            public void close() {}
+        };
+    }
 
     default List<String> logicalPaths() {
         return List.of();

@@ -9,7 +9,9 @@ Server 负责：
 - 显式装配 Product Profile、Model、SQLite、Policy、Memory、Tool、Skill 和 MCP；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；
 - Reactor Netty / Spring WebFlux HTTP；
-- `Flux<ServerSentEvent<?>>` Run 流，包含 heartbeat、bounded overflow、断连清理和安全事件；
+- `Flux<ServerSentEvent<?>>` Run 流合并 durable Run/Tool/Interaction Activity 与 transient Assistant
+  output；SSE ID 同时携带两套 source-local cursor 和进程 epoch，避免 sequence 冲突，并保留
+  heartbeat、bounded overflow、终态关闭和断连订阅清理；
 - 固定可信 Caller、Host/Origin/CSRF、请求体上限和安全响应头；
 - Actuator liveness/readiness。
 
@@ -86,3 +88,7 @@ Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相�
 
 真实 DeepSeek、外部 Utility MCP 和独立 Web 的可重复环境搭建方法见
 [`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。
+
+## Process logging
+
+The server uses Spring Boot's SLF4J/Logback logging stack. At `INFO`, it records safe operational milestones for Run acceptance and status changes, interaction/approval state, Tool and execution activity, and model call start/completion/failure with token counts and elapsed time. Normalized model failures additionally include their safe category, retryability, HTTP status, provider code, safe message, and stack trace. Logs intentionally exclude full prompts, assistant text, Tool arguments, command or script content, credentials, raw provider responses, result bodies, and messages from unclassified exceptions.

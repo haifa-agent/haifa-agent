@@ -33,7 +33,10 @@ export interface UiState {
   memoryCandidates: MemoryCandidate[];
   memories: Memory[];
   streamDraft: string;
-  streamSequence: number;
+  streamSequences: {
+    durable: number;
+    transient: number;
+  };
   connection: ConnectionState;
   search: string;
   composer: string;

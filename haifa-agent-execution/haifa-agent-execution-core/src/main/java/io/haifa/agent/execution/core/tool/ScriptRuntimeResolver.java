@@ -119,7 +119,11 @@ public final class ScriptRuntimeResolver {
                         .collect(java.util.stream.Collectors.joining(" "));
                 String encodedSource = java.util.Base64.getEncoder()
                         .encodeToString(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                source = "$__haifaScriptSource = [Text.Encoding]::UTF8.GetString("
+                source = "$__haifaUtf8 = [Text.UTF8Encoding]::new($false)\n"
+                        + "[Console]::InputEncoding = $__haifaUtf8\n"
+                        + "[Console]::OutputEncoding = $__haifaUtf8\n"
+                        + "$OutputEncoding = $__haifaUtf8\n"
+                        + "$__haifaScriptSource = [Text.Encoding]::UTF8.GetString("
                         + "[Convert]::FromBase64String('" + encodedSource + "'))\n"
                         + "& ([ScriptBlock]::Create($__haifaScriptSource))"
                         + (encodedArguments.isEmpty() ? "" : " " + encodedArguments);

@@ -36,10 +36,34 @@ public interface AgentRuntime {
 
     void addListener(AgentRunListener listener);
 
-    /** Returns safe public output events after the supplied exclusive sequence. */
+    /**
+     * Returns events from the bounded in-process output buffer after the supplied exclusive
+     * sequence.
+     *
+     * <p>This is not a durable replay API. The buffer exists only while the Run is active in this
+     * process.
+     */
     List<AgentRunOutputEvent> outputEvents(io.haifa.agent.core.run.AgentRunId runId, RunOutputCursor after, int limit);
 
-    void addOutputListener(AgentRunOutputListener listener);
+    /**
+     * Replays the available in-process buffer and then tails transient output for one Run.
+     *
+     * <p>The returned subscription must be closed by the caller.
+     */
+    default RunOutputSubscription subscribeOutput(
+            io.haifa.agent.core.run.AgentRunId runId, RunOutputCursor after, AgentRunOutputListener listener) {
+        throw new UnsupportedOperationException("transient Run output subscriptions are not supported");
+    }
+
+    /**
+     * The old global, non-removable listener is intentionally unsupported.
+     *
+     * @deprecated use {@link #subscribeOutput} with a Run-scoped, closeable subscription
+     */
+    @Deprecated(forRemoval = true)
+    default void addOutputListener(AgentRunOutputListener listener) {
+        throw new UnsupportedOperationException("use subscribeOutput with a Run-scoped subscription");
+    }
 
     default RunEventPage events(io.haifa.agent.core.run.AgentRunId runId, RunEventCursor after, int limit) {
         throw new UnsupportedOperationException("complete Run Event Feed is implemented by Task 02");

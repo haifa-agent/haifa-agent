@@ -528,7 +528,7 @@ if (Test-HttpEndpoint -Uri $backendHealthUri) {
         HAIFA_PERSONAL_MODEL_MODE = 'remote'
         HAIFA_PERSONAL_ALLOW_DETERMINISTIC = 'false'
         HAIFA_PERSONAL_MODEL_ENDPOINT = 'https://api.deepseek.com'
-        HAIFA_PERSONAL_MODEL_ID = 'deepseek-chat'
+        HAIFA_PERSONAL_MODEL_ID = 'deepseek-v4-flash'
         HAIFA_PERSONAL_MODEL_CREDENTIAL = 'env://DEEPSEEK_API_KEY'
         HAIFA_PERSONAL_MCP_MODE = 'external'
         HAIFA_PERSONAL_MCP_ENDPOINT = "http://127.0.0.1:$mcpPort/mcp"

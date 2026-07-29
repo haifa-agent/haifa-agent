@@ -12,6 +12,12 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
+logging:
+  level:
+    io.haifa.agent.personalassistant.server.observability: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{48} - %msg%n"
+
 management:
   endpoints:
     web:
@@ -35,7 +41,7 @@ haifa:
       mode: ${HAIFA_PERSONAL_MODEL_MODE:remote}
       allow-deterministic: ${HAIFA_PERSONAL_ALLOW_DETERMINISTIC:false}
       endpoint: ${HAIFA_PERSONAL_MODEL_ENDPOINT:https://api.deepseek.com}
-      provider-model-id: ${HAIFA_PERSONAL_MODEL_ID:deepseek-chat}
+      provider-model-id: ${HAIFA_PERSONAL_MODEL_ID:deepseek-v4-flash}
       credential-reference: ${HAIFA_PERSONAL_MODEL_CREDENTIAL:env://DEEPSEEK_API_KEY}
     mcp:
       mode: ${HAIFA_PERSONAL_MCP_MODE:embedded-echo}

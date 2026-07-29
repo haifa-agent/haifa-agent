@@ -130,11 +130,10 @@ class ExternalModelRuntimeTest {
                 .timeProvider(time)
                 .trace(traces::add)
                 .build();
-        runtime.addOutputListener(ignored -> {
-            throw new IllegalStateException("listener isolation");
-        });
-
         var accepted = runtime.start(request("external-run"));
+        List<io.haifa.agent.runtime.api.AgentRunOutputEvent> outputEvents = new CopyOnWriteArrayList<>();
+        var outputSubscription =
+                runtime.subscribeOutput(accepted.runId(), RunOutputCursor.BEFORE_FIRST, outputEvents::add);
         var frozen = store.configuration(
                         store.find(accepted.runId()).orElseThrow().configurationSnapshot())
                 .orElseThrow();
@@ -143,7 +142,7 @@ class ExternalModelRuntimeTest {
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(runtime.find(accepted.runId()).orElseThrow().output()).contains("done");
-        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100))
+        assertThat(outputEvents)
                 .extracting(event -> event.type())
                 .containsExactly(
                         AgentRunOutputEventType.RUN_OUTPUT_STARTED,
@@ -151,7 +150,7 @@ class ExternalModelRuntimeTest {
                         AgentRunOutputEventType.RUN_OUTPUT_STARTED,
                         AgentRunOutputEventType.ASSISTANT_TEXT_DELTA,
                         AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED);
-        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100))
+        assertThat(outputEvents)
                 .filteredOn(event -> event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA)
                 .singleElement()
                 .satisfies(event -> assertThat(event.textDelta()).isEqualTo("done"));
@@ -166,9 +165,10 @@ class ExternalModelRuntimeTest {
                 .isInstanceOf(ModelContinuationException.class)
                 .satisfies(error -> assertThat(((ModelContinuationException) error).failure())
                         .isEqualTo(ModelContinuationFailure.BINDING_MISMATCH));
-        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100)
-                        .toString())
-                .doesNotContain("private tool reasoning");
+        assertThat(outputEvents.toString()).doesNotContain("private tool reasoning");
+        assertThat(outputSubscription.closed()).isTrue();
+        assertThat(runtime.outputEvents(accepted.runId(), RunOutputCursor.BEFORE_FIRST, 100))
+                .isEmpty();
         assertThat(store.find(accepted.runId()).orElseThrow().usage().inputTokens())
                 .isEqualTo(25);
         assertThat(store.find(accepted.runId()).orElseThrow().usage().outputTokens())
@@ -229,6 +229,8 @@ class ExternalModelRuntimeTest {
                 .build();
 
         var accepted = runtime.start(request("unknown-tool-run"));
+        List<io.haifa.agent.runtime.api.AgentRunOutputEvent> outputEvents = new CopyOnWriteArrayList<>();
+        runtime.subscribeOutput(accepted.runId(), RunOutputCursor.BEFORE_FIRST, outputEvents::add);
         scheduler.runAll();
 
         assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
@@ -249,6 +251,11 @@ class ExternalModelRuntimeTest {
                 .satisfies(trace -> assertThat(trace.safeAttributes())
                         .containsEntry("errorCode", "RUNTIME_EXECUTION_FAILED")
                         .containsKeys("exceptionType", "rootExceptionType", "failureTypes"));
+        assertThat(outputEvents)
+                .extracting(event -> event.type())
+                .containsExactly(AgentRunOutputEventType.RUN_OUTPUT_STARTED, AgentRunOutputEventType.RUN_OUTPUT_FAILED);
+        assertThat(store.messages(accepted.runId()))
+                .noneMatch(message -> message.role() == io.haifa.agent.core.message.MessageRole.ASSISTANT);
     }
 
     @Test

@@ -23,6 +23,13 @@ public final class RunEventPayloads {
         }
     }
 
+    /**
+     * Legacy durable-feed payload retained only for decoding old adapters and stored events.
+     *
+     * @deprecated new Assistant deltas use {@link AgentRuntime#subscribeOutput}; Runtime does not
+     *     emit this payload into the durable Run Event Feed
+     */
+    @Deprecated(forRemoval = true)
     public record AssistantTextDelta(String generationId, String textDelta) implements AgentRunEvent.Payload {
         public AssistantTextDelta {
             generationId = InteractionOption.requireText(generationId, "generationId", 256);

@@ -41,6 +41,7 @@ import io.haifa.agent.runtime.api.RunInputReceipt;
 import io.haifa.agent.runtime.api.RunInputReceiptStatus;
 import io.haifa.agent.runtime.api.RunInputSubmission;
 import io.haifa.agent.runtime.api.RunOutputCursor;
+import io.haifa.agent.runtime.api.RunOutputSubscription;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
@@ -761,8 +762,22 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     }
 
     @Override
-    public void addOutputListener(AgentRunOutputListener listener) {
-        modelOutput.addListener(listener);
+    public RunOutputSubscription subscribeOutput(
+            AgentRunId runId, RunOutputCursor after, AgentRunOutputListener listener) {
+        AgentRun run = requireRun(runId);
+        requireCaller(run);
+        if (run.status().isTerminal()) {
+            return new RunOutputSubscription() {
+                @Override
+                public boolean closed() {
+                    return true;
+                }
+
+                @Override
+                public void close() {}
+            };
+        }
+        return modelOutput.subscribe(runId, after, listener);
     }
 
     @Override

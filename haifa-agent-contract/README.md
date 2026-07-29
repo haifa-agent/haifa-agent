@@ -1,5 +1,10 @@
 # Haifa Agent Contract
 
+Assistant text deltas are not part of the current durable Run Event Feed contract. The
+`AssistantTextDelta` wire payload remains only for backward-compatible decoding of older producers
+and stored events; new in-process clients use the Runtime API transient output subscription. A
+completed Assistant message is read from the authoritative Session message/Turn representation.
+
 该模块是对外协议层，不是内部领域模型层。当前提供 API 版本、分页协议、标准错误响应，以及
 Run、Steer、Runtime Command、Interaction 和 Run Event 的 transport-neutral 纯 Java DTO。
 

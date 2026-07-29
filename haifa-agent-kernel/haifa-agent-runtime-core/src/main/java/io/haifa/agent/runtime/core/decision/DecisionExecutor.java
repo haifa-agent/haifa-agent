@@ -58,6 +58,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import io.haifa.agent.runtime.core.tool.ToolInputValidationException;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPipelineOutcome;
 import java.util.List;
@@ -188,24 +189,18 @@ public final class DecisionExecutor {
             ToolPipelineOutcome outcome;
             try {
                 outcome = tools.execute(run, call, request);
+            } catch (ToolInputValidationException validation) {
+                rejectToolRequest(
+                        run, call, step, loopContext, validation, "Tool request rejected. " + validation.repairHint());
+                continue;
             } catch (IllegalArgumentException | SecurityException repairable) {
-                repairRetry.check(loopContext.recordRepairAttempt());
-                cancelRejectedCall(call);
-                state.appendToolCall(call);
-                step.fail(
-                        new AgentStepError(new AgentError(
-                                new AgentErrorCode("TOOL_REQUEST_REJECTED"),
-                                AgentErrorCategory.VALIDATION,
-                                AgentErrorSeverity.WARNING,
-                                Retryability.NOT_RETRYABLE,
-                                "Tool request validation failed",
-                                null,
-                                Map.of("reason", repairable.getClass().getSimpleName()),
-                                time.now())),
-                        time.now());
-                state.appendStep(step);
-                appendToolResult(
-                        run, call, "Tool request rejected; repair the arguments or choose another capability.");
+                rejectToolRequest(
+                        run,
+                        call,
+                        step,
+                        loopContext,
+                        repairable,
+                        "Tool request rejected; repair the arguments or choose another capability.");
                 continue;
             } catch (RuntimeException failure) {
                 AgentError toolError = call.error()
@@ -248,6 +243,36 @@ public final class DecisionExecutor {
             if (controls.signal(run.id()) == RunControlSignal.PAUSE) break;
         }
         return AgentLoopDirective.CONTINUE;
+    }
+
+    private void rejectToolRequest(
+            AgentRun run,
+            ToolCall call,
+            AgentStep step,
+            AgentLoopContext loopContext,
+            RuntimeException failure,
+            String modelSummary) {
+        repairRetry.check(loopContext.recordRepairAttempt());
+        cancelRejectedCall(call);
+        state.appendToolCall(call);
+        Map<String, Object> attributes = failure instanceof ToolInputValidationException validation
+                ? Map.of(
+                        "reason", validation.getClass().getSimpleName(),
+                        "repairHint", validation.repairHint())
+                : Map.of("reason", failure.getClass().getSimpleName());
+        step.fail(
+                new AgentStepError(new AgentError(
+                        new AgentErrorCode("TOOL_REQUEST_REJECTED"),
+                        AgentErrorCategory.VALIDATION,
+                        AgentErrorSeverity.WARNING,
+                        Retryability.NOT_RETRYABLE,
+                        "Tool request validation failed",
+                        null,
+                        attributes,
+                        time.now())),
+                time.now());
+        state.appendStep(step);
+        appendToolResult(run, call, modelSummary);
     }
 
     private void cancelRejectedCall(ToolCall call) {

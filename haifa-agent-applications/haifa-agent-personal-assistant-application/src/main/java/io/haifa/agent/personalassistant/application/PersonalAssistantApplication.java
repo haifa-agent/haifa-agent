@@ -13,12 +13,15 @@ import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.conversation.ChangeConversationStatusCommand;
 import io.haifa.agent.sdk.conversation.ConversationQuery;
@@ -40,6 +43,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /** Pure-Java product use cases over the Phase 20 SDK and public Runtime views. */
@@ -188,14 +192,45 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     public StreamSubscription subscribe(String runId, StreamListener listener) {
+        return subscribe(runId, initialStreamCursor(runId), listener);
+    }
+
+    /**
+     * Returns the initial source-local cursors for a new SSE connection.
+     *
+     * <p>Durable history starts at the current journal head; transient output starts before the
+     * bounded active-Run buffer so a slightly late UI can reconstruct the current draft.
+     */
+    public StreamCursor initialStreamCursor(String runId) {
         AgentRunId id = new AgentRunId(runId);
-        RunEventCursor cursor =
+        RunEventCursor durable =
                 agent.runs().events(id, RunEventCursor.beforeFirst(id), 1).headCursor();
-        var delegate = agent.runs().subscribe(id, cursor, event -> {
+        return new StreamCursor(durable.exclusiveSequence().orElse(0), 0);
+    }
+
+    /** Merges durable Run facts and transient model output without sharing a sequence namespace. */
+    public StreamSubscription subscribe(String runId, StreamCursor after, StreamListener listener) {
+        Objects.requireNonNull(after, "after must not be null");
+        Objects.requireNonNull(listener, "listener must not be null");
+        AgentRunId id = new AgentRunId(runId);
+        RunEventCursor durableCursor = after.durableSequence() == 0
+                ? RunEventCursor.beforeFirst(id)
+                : new RunEventCursor(id, "1", OptionalLong.of(after.durableSequence()));
+        var durable = agent.runs().subscribe(id, durableCursor, event -> {
             StreamEvent safe = streamEvent(event);
             if (safe != null) listener.onEvent(safe);
         });
-        return delegate::close;
+        try {
+            var output = agent.runs()
+                    .subscribeOutput(
+                            id,
+                            new RunOutputCursor(after.transientSequence()),
+                            event -> listener.onEvent(streamEvent(event)));
+            return new CompositeStreamSubscription(durable, output);
+        } catch (RuntimeException failure) {
+            durable.close();
+            throw failure;
+        }
     }
 
     public List<MemoryCandidateView> memoryCandidates(int limit) {
@@ -378,16 +413,6 @@ public final class PersonalAssistantApplication implements AutoCloseable {
 
     private StreamEvent streamEvent(AgentRunEvent event) {
         Object payload = event.payload();
-        if (payload instanceof RunEventPayloads.AssistantTextDelta delta) {
-            return new StreamEvent(
-                    event.eventId(),
-                    "answer.delta",
-                    event.runId().value(),
-                    event.occurredAt(),
-                    delta.textDelta(),
-                    Optional.empty(),
-                    event.sequence());
-        }
         if (payload instanceof RunEventPayloads.RunLifecycle run) {
             return new StreamEvent(
                     event.eventId(),
@@ -396,6 +421,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                     event.occurredAt(),
                     run.status(),
                     Optional.empty(),
+                    StreamSource.DURABLE,
                     event.sequence());
         }
         if (payload instanceof RunEventPayloads.InteractionLifecycle interaction) {
@@ -406,6 +432,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                     event.occurredAt(),
                     interaction.state(),
                     Optional.empty(),
+                    StreamSource.DURABLE,
                     event.sequence());
         }
         return activity(event)
@@ -416,8 +443,31 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                         event.occurredAt(),
                         value.status(),
                         Optional.of(value),
+                        StreamSource.DURABLE,
                         event.sequence()))
                 .orElse(null);
+    }
+
+    private static StreamEvent streamEvent(AgentRunOutputEvent event) {
+        String type =
+                switch (event.type()) {
+                    case RUN_OUTPUT_STARTED -> "answer.started";
+                    case ASSISTANT_TEXT_DELTA -> "answer.delta";
+                    case ASSISTANT_TEXT_COMMITTED -> "answer.committed";
+                    case RUN_OUTPUT_SUPERSEDED -> "answer.superseded";
+                    case RUN_OUTPUT_FAILED -> "answer.failed";
+                };
+        String value =
+                event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA ? event.textDelta() : event.generationId();
+        return new StreamEvent(
+                "transient-output:" + event.runId().value() + ":" + event.sequence(),
+                type,
+                event.runId().value(),
+                event.occurredAt(),
+                value,
+                Optional.empty(),
+                StreamSource.TRANSIENT,
+                event.sequence());
     }
 
     private static MemoryView memory(io.haifa.agent.memory.api.Memory value) {
@@ -532,7 +582,22 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Instant occurredAt,
             String value,
             Optional<ActivityView> activity,
+            StreamSource source,
             long sequence) {}
+
+    public enum StreamSource {
+        DURABLE,
+        TRANSIENT,
+        SNAPSHOT
+    }
+
+    public record StreamCursor(long durableSequence, long transientSequence) {
+        public StreamCursor {
+            if (durableSequence < 0 || transientSequence < 0) {
+                throw new IllegalArgumentException("stream source sequences must not be negative");
+            }
+        }
+    }
 
     @FunctionalInterface
     public interface StreamListener {
@@ -543,5 +608,32 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     public interface StreamSubscription extends AutoCloseable {
         @Override
         void close();
+    }
+
+    private static final class CompositeStreamSubscription implements StreamSubscription {
+        private final AutoCloseable durable;
+        private final AutoCloseable transientOutput;
+        private final java.util.concurrent.atomic.AtomicBoolean closed =
+                new java.util.concurrent.atomic.AtomicBoolean();
+
+        private CompositeStreamSubscription(AutoCloseable durable, AutoCloseable transientOutput) {
+            this.durable = durable;
+            this.transientOutput = transientOutput;
+        }
+
+        @Override
+        public void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            closeQuietly(transientOutput);
+            closeQuietly(durable);
+        }
+
+        private static void closeQuietly(AutoCloseable value) {
+            try {
+                value.close();
+            } catch (Exception ignored) {
+                // Closing an observational subscription must remain idempotent and best effort.
+            }
+        }
     }
 }

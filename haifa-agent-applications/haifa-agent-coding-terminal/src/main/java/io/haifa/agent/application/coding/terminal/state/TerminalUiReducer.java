@@ -3,6 +3,8 @@ package io.haifa.agent.application.coding.terminal.state;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -177,6 +179,9 @@ public final class TerminalUiReducer {
         }
         if (action instanceof TerminalUiAction.RunEventReceived received) {
             return event(state, received.event());
+        }
+        if (action instanceof TerminalUiAction.RunOutputReceived received) {
+            return output(state, received.event());
         }
         if (action instanceof TerminalUiAction.UserMessageCommitted committed) {
             var items = new ArrayList<>(state.transcript());
@@ -417,6 +422,28 @@ public final class TerminalUiReducer {
                             details));
         }
         return List.copyOf(items);
+    }
+
+    private static TerminalUiState output(TerminalUiState state, AgentRunOutputEvent event) {
+        List<TranscriptItem> items = new ArrayList<>(state.transcript());
+        String itemId = "assistant-" + event.generationId();
+        int index = index(items, itemId);
+        if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {
+            if (index < 0) {
+                items.add(new TranscriptItem(
+                        itemId, TranscriptItem.Kind.ASSISTANT, "Assistant", event.textDelta(), "STREAMING", true));
+            } else {
+                items.set(index, items.get(index).append(event.textDelta()));
+            }
+        } else if (event.type() == AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED && index >= 0) {
+            TranscriptItem current = items.get(index);
+            items.set(index, current.withStatus("COMMITTED", current.body()));
+        } else if ((event.type() == AgentRunOutputEventType.RUN_OUTPUT_FAILED
+                        || event.type() == AgentRunOutputEventType.RUN_OUTPUT_SUPERSEDED)
+                && index >= 0) {
+            items.remove(index);
+        }
+        return copyWithTranscript(state, List.copyOf(items));
     }
 
     private static String status(AgentRunEvent event, String fallback) {

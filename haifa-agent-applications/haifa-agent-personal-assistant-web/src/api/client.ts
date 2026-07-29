@@ -117,6 +117,8 @@ function boundedSignal(parent?: AbortSignal): { signal: AbortSignal; dispose: ()
 }
 
 export class HttpPersonalAssistantClient implements PersonalAssistantClient {
+  private readonly streamCursors = new Map<string, string>();
+
   private async request<T>(
     path: string,
     init: RequestInit = {},
@@ -308,7 +310,12 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     signal: AbortSignal,
   ): Promise<void> {
     const response = await fetch(`${API_ROOT}/runs/${encoded(runId)}/stream`, {
-      headers: { Accept: "text/event-stream" },
+      headers: {
+        Accept: "text/event-stream",
+        ...(this.streamCursors.has(runId)
+          ? { "Last-Event-ID": this.streamCursors.get(runId)! }
+          : {}),
+      },
       signal,
     });
     if (!response.ok || !response.body) {
@@ -335,7 +342,12 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
           .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice(5).trimStart())
           .join("\n");
-        if (data) handlers.onEvent(JSON.parse(data) as StreamEvent);
+        if (data) {
+          const event = JSON.parse(data) as StreamEvent;
+          this.streamCursors.set(runId, event.eventId);
+          handlers.onEvent(event);
+          if (event.type === "run.final") this.streamCursors.delete(runId);
+        }
         boundary = buffer.indexOf("\n\n");
       }
     }

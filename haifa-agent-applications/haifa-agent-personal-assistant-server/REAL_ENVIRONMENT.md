@@ -40,7 +40,7 @@ Set-Location D:\workspace\haifa-agent
 3. 只在后端 JAR 不存在时构建后端；
 4. 只在 `node_modules` 不存在时执行 `npm ci`，只在 `dist` 不存在时构建前端；
 5. 启动或复用健康的 20002 Utility MCP；
-6. 以真实 `deepseek-chat`、外部 MCP 模式启动 20001 后端；
+6. 以真实 `deepseek-v4-flash`、外部 MCP 模式启动 20001 后端；
 7. 用 Node.js `serve` 启动 20000 前端；
 8. 等待三个 HTTP 健康检查成功，并输出 PID、各组件工作目录、数据/日志目录、访问
    地址和状态文件位置。
@@ -100,7 +100,7 @@ Continuation Key 文件必须长期保留。删除或更换它会使旧的加密
 HAIFA_PERSONAL_MODEL_MODE=remote
 HAIFA_PERSONAL_ALLOW_DETERMINISTIC=false
 HAIFA_PERSONAL_MODEL_ENDPOINT=https://api.deepseek.com
-HAIFA_PERSONAL_MODEL_ID=deepseek-chat
+HAIFA_PERSONAL_MODEL_ID=deepseek-v4-flash
 HAIFA_PERSONAL_MODEL_CREDENTIAL=env://DEEPSEEK_API_KEY
 HAIFA_PERSONAL_MCP_MODE=external
 HAIFA_PERSONAL_MCP_ENDPOINT=http://127.0.0.1:20002/mcp

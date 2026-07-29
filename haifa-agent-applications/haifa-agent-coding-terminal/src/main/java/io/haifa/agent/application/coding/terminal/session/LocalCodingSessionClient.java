@@ -272,6 +272,15 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public io.haifa.agent.runtime.api.RunOutputSubscription subscribeOutput(
+            AgentRunId runId,
+            io.haifa.agent.runtime.api.RunOutputCursor after,
+            io.haifa.agent.runtime.api.AgentRunOutputListener listener) {
+        requireRunScoped(runId);
+        return runtime.subscribeOutput(runId, after, listener);
+    }
+
+    @Override
     public List<String> logicalPaths() {
         return List.copyOf(logicalPaths.get());
     }

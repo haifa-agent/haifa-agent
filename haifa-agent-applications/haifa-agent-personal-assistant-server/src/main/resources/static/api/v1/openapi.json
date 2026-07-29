@@ -367,7 +367,7 @@
       },
       "StreamEvent": {
         "type": "object",
-        "required": ["eventId", "type", "runId", "occurredAt", "value", "sequence"],
+        "required": ["eventId", "type", "runId", "occurredAt", "value", "source", "sequence"],
         "properties": {
           "eventId": {"type": "string"},
           "type": {"type": "string"},
@@ -375,6 +375,7 @@
           "occurredAt": {"type": "string", "format": "date-time"},
           "value": {"type": "string"},
           "activity": {"oneOf": [{"$ref": "#/components/schemas/Activity"}, {"type": "null"}]},
+          "source": {"type": "string", "enum": ["durable", "transient", "snapshot"]},
           "sequence": {"type": "integer", "format": "int64"}
         }
       },

@@ -116,6 +116,7 @@ public final class PersonalApiMapper {
                 value.occurredAt(),
                 value.value(),
                 value.activity().map(this::activity),
+                value.source().name().toLowerCase(java.util.Locale.ROOT),
                 value.sequence());
     }
 }

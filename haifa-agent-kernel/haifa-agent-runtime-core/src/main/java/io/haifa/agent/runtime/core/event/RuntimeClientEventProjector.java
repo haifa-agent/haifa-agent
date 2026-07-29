@@ -1,7 +1,6 @@
 package io.haifa.agent.runtime.core.event;
 
 import io.haifa.agent.runtime.api.AgentRunEvent;
-import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
@@ -14,8 +13,6 @@ import java.util.OptionalLong;
 
 /** Typed allowlist projection from committed internal Journal entries to client events. */
 public final class RuntimeClientEventProjector {
-    private static final String OUTPUT_PREFIX = "model.output.";
-
     private final RunStateRepository runs;
 
     public RuntimeClientEventProjector(RunStateRepository runs) {
@@ -98,8 +95,7 @@ public final class RuntimeClientEventProjector {
     }
 
     private static boolean isKnownClientFact(RuntimeEvent event) {
-        return event.type().startsWith(OUTPUT_PREFIX)
-                || event.type().startsWith("runtime.command-")
+        return event.type().startsWith("runtime.command-")
                 || java.util.Set.of(
                                 "tool.requested",
                                 "tool.started",
@@ -128,7 +124,7 @@ public final class RuntimeClientEventProjector {
     }
 
     private static Projection outputOrLifecycle(RuntimeEvent event) {
-        if (event.type().startsWith(OUTPUT_PREFIX)) return output(event);
+        if (event.type().startsWith("model.output.")) return null;
         if (event.type().startsWith("runtime.command-")) {
             return new Projection(
                     "runtime.command.resulted",
@@ -148,41 +144,6 @@ public final class RuntimeClientEventProjector {
                             text(event.data(), "reasonCode", "NONE")));
         }
         return null;
-    }
-
-    private static Projection output(RuntimeEvent event) {
-        AgentRunOutputEventType outputType;
-        try {
-            outputType = AgentRunOutputEventType.valueOf(requiredText(event.data(), "eventType"));
-        } catch (IllegalArgumentException exception) {
-            throw new IllegalStateException("known assistant output event has an invalid discriminator", exception);
-        }
-        String generationId = requiredText(event.data(), "generationId");
-        return switch (outputType) {
-            case RUN_OUTPUT_STARTED ->
-                new Projection(
-                        "assistant.output.started",
-                        new RunEventPayloads.AssistantOutput(generationId, "STARTED", "OUTPUT_STARTED"));
-            case ASSISTANT_TEXT_DELTA ->
-                emptyTextDelta(event)
-                        ? null
-                        : new Projection(
-                                "assistant.text.delta",
-                                new RunEventPayloads.AssistantTextDelta(
-                                        generationId, requiredTextDelta(event.data(), "textDelta")));
-            case ASSISTANT_TEXT_COMMITTED ->
-                new Projection(
-                        "assistant.text.committed",
-                        new RunEventPayloads.AssistantOutput(generationId, "COMMITTED", "FINAL_MESSAGE"));
-            case RUN_OUTPUT_SUPERSEDED ->
-                new Projection(
-                        "assistant.output.superseded",
-                        new RunEventPayloads.AssistantOutput(generationId, "SUPERSEDED", "REPLACED_GENERATION"));
-            case RUN_OUTPUT_FAILED ->
-                new Projection(
-                        "assistant.output.failed",
-                        new RunEventPayloads.AssistantOutput(generationId, "FAILED", "OUTPUT_FAILED"));
-        };
     }
 
     private static Projection interaction(String eventType, RuntimeEvent event, String state, String actionOrReason) {
@@ -236,22 +197,9 @@ public final class RuntimeClientEventProjector {
         return text(event.data(), "kind", "clarification");
     }
 
-    private static boolean emptyTextDelta(RuntimeEvent event) {
-        Object value = event.data().get("textDelta");
-        return value instanceof String text && text.isEmpty();
-    }
-
     private static String requiredText(Map<String, Object> data, String key) {
         Object value = data.get(key);
         if (!(value instanceof String text) || text.isBlank()) {
-            throw new IllegalStateException("known client event is missing a required safe field: " + key);
-        }
-        return text;
-    }
-
-    private static String requiredTextDelta(Map<String, Object> data, String key) {
-        Object value = data.get(key);
-        if (!(value instanceof String text) || text.isEmpty()) {
             throw new IllegalStateException("known client event is missing a required safe field: " + key);
         }
         return text;

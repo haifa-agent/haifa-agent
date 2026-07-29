@@ -192,7 +192,7 @@ public final class ToolPipeline {
         if (!inputValidation.valid()) {
             call.cancel(time.now());
             state.appendToolCall(call);
-            throw new IllegalArgumentException("tool input failed schema validation: " + inputValidation.errors());
+            throw new ToolInputValidationException(inputValidation.errors());
         }
         if (!approved) {
             call.beginPolicyCheck();

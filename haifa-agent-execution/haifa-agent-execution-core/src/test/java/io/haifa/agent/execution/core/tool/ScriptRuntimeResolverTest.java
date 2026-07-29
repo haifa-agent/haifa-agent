@@ -20,7 +20,12 @@ class ScriptRuntimeResolverTest {
                 .containsExactly("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-")
                 .noneMatch(value -> value.contains("script-body"));
         assertThat(new String(prepared.input().bytes(), java.nio.charset.StandardCharsets.UTF_8))
-                .contains("FromBase64String", "'first' 'it''s-safe'")
+                .contains(
+                        "[Console]::InputEncoding = $__haifaUtf8",
+                        "[Console]::OutputEncoding = $__haifaUtf8",
+                        "$OutputEncoding = $__haifaUtf8",
+                        "FromBase64String",
+                        "'first' 'it''s-safe'")
                 .doesNotContain("script-body")
                 .endsWith("\n");
     }

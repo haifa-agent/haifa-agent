@@ -17,6 +17,7 @@ import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.personalassistant.server.observability.LoggingAgentChatModel;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.contribution.ShellPlatformContribution;
@@ -65,6 +66,7 @@ public final class PersonalModelFactory {
                         new EnvironmentCredentialResolver(),
                         false,
                         4 * 1024 * 1024);
+        model = new LoggingAgentChatModel(model);
         return new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),

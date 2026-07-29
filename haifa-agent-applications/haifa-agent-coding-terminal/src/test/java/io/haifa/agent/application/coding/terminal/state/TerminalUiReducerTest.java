@@ -6,6 +6,8 @@ import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionConsequenceView;
 import io.haifa.agent.runtime.api.InteractionInputContract;
@@ -53,6 +55,28 @@ class TerminalUiReducerTest {
 
         assertThat(failed.recoverableError()).contains("EVENT_OUT_OF_ORDER");
         assertThat(failed.appliedCursor()).isEqualTo(state.appliedCursor());
+    }
+
+    @Test
+    void transientOutputDoesNotAdvanceDurableCursorAndFailedDraftIsDiscarded() {
+        TerminalUiState initial = TerminalUiState.initial(120, 40);
+        TerminalUiState streaming = reducer.reduce(
+                initial,
+                new TerminalUiAction.RunOutputReceived(
+                        output(1, "generation-1", AgentRunOutputEventType.ASSISTANT_TEXT_DELTA, "draft")));
+        TerminalUiState failed = reducer.reduce(
+                streaming,
+                new TerminalUiAction.RunOutputReceived(
+                        output(2, "generation-1", AgentRunOutputEventType.RUN_OUTPUT_FAILED, "")));
+        TerminalUiState replacement = reducer.reduce(
+                failed,
+                new TerminalUiAction.RunOutputReceived(
+                        output(3, "generation-2", AgentRunOutputEventType.ASSISTANT_TEXT_DELTA, "replacement")));
+
+        assertThat(streaming.appliedCursor()).isEmpty();
+        assertThat(failed.transcript()).isEmpty();
+        assertThat(replacement.transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .isEqualTo("replacement"));
     }
 
     @Test
@@ -267,5 +291,18 @@ class TerminalUiReducerTest {
                 Optional.empty(),
                 Optional.empty(),
                 payload);
+    }
+
+    private static AgentRunOutputEvent output(
+            long sequence, String generationId, AgentRunOutputEventType type, String text) {
+        return new AgentRunOutputEvent(
+                new AgentRunId("run-1"),
+                generationId,
+                generationId,
+                1,
+                sequence,
+                type,
+                text,
+                Instant.parse("2026-07-27T00:00:00Z"));
     }
 }

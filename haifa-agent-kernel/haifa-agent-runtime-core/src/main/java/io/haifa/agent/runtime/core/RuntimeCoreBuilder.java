@@ -452,7 +452,7 @@ public final class RuntimeCoreBuilder {
         RuntimeEventSubscriptions eventSubscriptions = new RuntimeEventSubscriptions(eventFeed, eventWakeups);
         ExecutionOwnershipPort configuredOwnership =
                 ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
-        RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(events, time);
+        RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
         FrozenModelInvoker models = new FrozenModelInvoker(state, chatModels, ids, modelOutput, controls);
         InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
         var defaultMemoryPolicy = new DefaultMemoryPolicy();
@@ -493,6 +493,9 @@ public final class RuntimeCoreBuilder {
                 unitOfWork,
                 new RetryExecutor(Sleeper.threadSleep()),
                 persistenceRetry);
+        transitions.addListener(snapshot -> {
+            if (snapshot.status().isTerminal()) modelOutput.markRunTerminal(snapshot.runId());
+        });
         RunControlService controlService = new DefaultRunControlService(controls);
         CapabilityAuthorizer authorizer =
                 (run, binding) -> toolNames.contains(binding.alias().value());

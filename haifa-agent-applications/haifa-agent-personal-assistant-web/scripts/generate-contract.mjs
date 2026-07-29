@@ -121,7 +121,6 @@ for (const [name, schema] of Object.entries(document.components.schemas)) {
 }
 lines.push(
   `export type OperationId = ${operationIds.map((value) => JSON.stringify(value)).join(" | ")};`,
-  "",
 );
 const generated = `${lines.join("\n")}\n`;
 

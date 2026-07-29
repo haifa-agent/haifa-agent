@@ -144,6 +144,7 @@ export interface StreamEvent {
   occurredAt: string;
   value: string;
   activity?: Activity | null;
+  source: "durable" | "transient" | "snapshot";
   sequence: number;
 }
 

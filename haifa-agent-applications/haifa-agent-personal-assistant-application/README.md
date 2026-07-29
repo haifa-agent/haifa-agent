@@ -1,5 +1,10 @@
 # Haifa Personal Assistant Application
 
+Run streaming use case 合并两条明确分离的来源：durable Run Event Feed 提供状态、Tool、Interaction 和
+Activity；`subscribeOutput` 提供当前进程活动 Run 的 transient Assistant Delta/lifecycle。两者使用独立
+sequence，订阅统一可关闭。进程重启后不恢复未完成 Delta；终态正文从 Conversation Turns 的权威
+`session_message` 查询。
+
 Personal Assistant 的纯 Java 产品应用层。它只通过 Phase 20 SDK、Conversation Service 和公共
 Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Controller。
 
@@ -15,6 +20,10 @@ Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Con
 - Tool、Skill、MCP 统一冻结到一个 Tool Catalog，并进入同一 Runtime Tool Pipeline。
 
 ## Phase 3 command and script execution
+
+Personal Assistant follows the shared cross-platform mode contract: `COMMAND` omits `language` and `args` and uses
+the trusted host default shell, while `SCRIPT` requires a configured `language`. The bundled execution Skill states
+the same rule so remote models can construct a valid exact-approval request on Windows, macOS, and Linux.
 
 Personal Profile 通过 SDK 的 `ShellPlatformContribution` 接入共享 `execution.run`，产品别名为
 `execution_run`。`PersonalExecutionPlatform` 负责产品级 alias、Skill 和审批文案，不复制

@@ -121,6 +121,7 @@ public final class PersonalApiDtos {
             Instant occurredAt,
             String value,
             Optional<Activity> activity,
+            String source,
             long sequence) {}
 
     public record Error(String code, String message, String correlationId) {}

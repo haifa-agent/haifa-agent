@@ -617,8 +617,8 @@ public final class PersonalAdminQueryService {
      * Aggregates historical persisted deltas without allowing them to consume the diagnostic event
      * row limit. New runs never create these rows.
      */
-    private void legacyStreamingOutput(
-            Connection connection, String runId, String parentId, List<Node> nodes) throws SQLException {
+    private void legacyStreamingOutput(Connection connection, String runId, String parentId, List<Node> nodes)
+            throws SQLException {
         String sql =
                 """
                 SELECT sequence, data_schema_version, data_payload, data_hash, occurred_at
