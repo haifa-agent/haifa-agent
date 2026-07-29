@@ -2,7 +2,11 @@ import {
   Archive,
   Bot,
   Brain,
+  Check,
+  ChevronDown,
+  ChevronUp,
   CircleAlert,
+  Copy,
   Cpu,
   Database,
   Menu,
@@ -18,6 +22,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  type MouseEvent,
   useCallback,
   useEffect,
   useReducer,
@@ -43,6 +48,8 @@ import { renderMarkdown } from "./utils/markdownRenderer";
 const defaultClient = new HttpPersonalAssistantClient();
 const terminalStatuses = new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"]);
 const conversationIdParameter = "conversationId";
+const approvalPreviewCharacters = 640;
+const approvalPreviewLines = 14;
 const number = new Intl.NumberFormat("zh-CN");
 const dateTime = new Intl.DateTimeFormat("zh-CN", {
   month: "numeric",
@@ -80,11 +87,75 @@ function updateConversationUrl(conversationId: string | null, mode: "push" | "re
 }
 
 function MessageContent({ text }: { text: string }) {
+  const handleClick = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    const button = target.closest<HTMLButtonElement>(".copy-code-button");
+    if (!button) return;
+
+    const code = button
+      .closest(".code-block-wrapper")
+      ?.querySelector("pre code")
+      ?.textContent;
+    if (code === undefined || !navigator.clipboard) return;
+
+    try {
+      await navigator.clipboard.writeText(code);
+      button.dataset.copied = "true";
+      button.setAttribute("aria-label", "代码已复制");
+      button.setAttribute("title", "代码已复制");
+      const label = button.querySelector(".copy-code-label");
+      if (label) label.textContent = "已复制";
+      window.setTimeout(() => {
+        delete button.dataset.copied;
+        button.setAttribute("aria-label", "复制代码");
+        button.setAttribute("title", "复制代码");
+        if (label) label.textContent = "复制";
+      }, 2000);
+    } catch {
+      // Clipboard access can be denied by the browser; leave the control retryable.
+    }
+  }, []);
+
   return (
     <div
       className="message-content"
+      onClick={handleClick}
       dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
     />
+  );
+}
+
+function MessageCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+  }, []);
+
+  const copy = async () => {
+    if (!navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+      resetTimer.current = window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can be denied by the browser; leave the control retryable.
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className="message-copy-button"
+      onClick={copy}
+      aria-label={copied ? "完整回答已复制" : "复制完整回答"}
+      title={copied ? "完整回答已复制" : "复制完整回答"}
+    >
+      {copied ? <Check size={14} /> : <Copy size={14} />}
+      <span>{copied ? "已复制" : "复制"}</span>
+    </button>
   );
 }
 
@@ -114,6 +185,29 @@ function statusLabel(status: string): string {
 function formatTime(value: string): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : dateTime.format(parsed);
+}
+
+function previewApprovalContent(value: string): {
+  content: string;
+  preview: string;
+  truncated: boolean;
+} {
+  const content = value.trim();
+  let previewEnd = Math.min(content.length, approvalPreviewCharacters);
+  let lineCount = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content[index] !== "\n") continue;
+    lineCount += 1;
+    if (lineCount === approvalPreviewLines) {
+      previewEnd = Math.min(previewEnd, index);
+      break;
+    }
+  }
+  return {
+    content,
+    preview: content.slice(0, previewEnd).trimEnd(),
+    truncated: previewEnd < content.length,
+  };
 }
 
 function Button({
@@ -241,38 +335,110 @@ function InteractionCard({
   onRespond(action: string, text: string): void;
 }) {
   const [text, setText] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const approvalContent = previewApprovalContent(interaction.safePrompt);
+  const isApproval = interaction.kind.toLowerCase().includes("approval")
+    || interaction.allowedActions.some((action) => (
+      ["APPROVE", "REJECT"].includes(action.toUpperCase())
+    ));
+  const titleId = `interaction-title-${interaction.id}`;
+  const contentId = `interaction-content-${interaction.id}`;
+
+  useEffect(() => {
+    setText("");
+    setExpanded(false);
+  }, [interaction.id]);
+
   return (
-    <section className="interaction-card" aria-labelledby="interaction-title">
-      <div className="interaction-heading">
-        <ShieldCheck size={18} />
-        <div><span className="eyebrow">{interaction.kind}</span><h3 id="interaction-title">{interaction.title}</h3></div>
+    <section className="interaction-card" aria-labelledby={titleId}>
+      <header className="interaction-heading">
+        <span className="interaction-icon"><ShieldCheck size={20} /></span>
+        <div>
+          <span className="eyebrow">{isApproval ? "需要你的审批" : "需要你的回复"}</span>
+          <h3 id={titleId}>{interaction.title}</h3>
+        </div>
+        <span className="interaction-state">待处理</span>
+      </header>
+
+      <div className="interaction-body">
+        <div className="interaction-context">
+          <span className="interaction-type">{interaction.kind}</span>
+          {interaction.safePrompt.includes("Risks: HIGH") && (
+            <span className="execution-risk-badge">
+              <CircleAlert size={13} /> 高风险执行 · 每次必须审批
+            </span>
+          )}
+        </div>
+
+        <section className="approval-content-section" aria-labelledby={`${contentId}-label`}>
+          <div className="approval-section-heading">
+            <div>
+              <h4 id={`${contentId}-label`}>{isApproval ? "审批内容" : "交互内容"}</h4>
+              <span>请确认以下文本、命令或代码符合你的预期</span>
+            </div>
+          </div>
+          <pre id={contentId} className="approval-summary">
+            {expanded || !approvalContent.truncated
+              ? approvalContent.content
+              : `${approvalContent.preview}\n…`}
+          </pre>
+          {approvalContent.truncated && (
+            <button
+              type="button"
+              className="approval-expand-button"
+              aria-expanded={expanded}
+              aria-controls={contentId}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              {expanded ? "收起内容" : "展开查看全部内容"}
+            </button>
+          )}
+        </section>
+
+        {interaction.maximumCharacters > 0 && interaction.inputType !== "NONE" && (
+          <label className="interaction-input">
+            <span>补充信息</span>
+            <textarea
+              value={text}
+              maxLength={interaction.maximumCharacters}
+              onChange={(event) => setText(event.target.value)}
+              placeholder="请输入必要信息"
+            />
+          </label>
+        )}
+
+        <section className="approval-options" aria-labelledby={`${contentId}-options`}>
+          <div className="approval-section-heading">
+            <div>
+              <h4 id={`${contentId}-options`}>{isApproval ? "审批选项" : "回复选项"}</h4>
+              <span>提交后任务将按你的选择继续执行</span>
+            </div>
+          </div>
+          <div className="interaction-actions">
+            {interaction.allowedActions.map((action) => {
+              const normalizedAction = action.toUpperCase();
+              const className = normalizedAction.includes("APPROVE")
+                ? "button primary-button"
+                : normalizedAction.includes("REJECT")
+                  ? "button danger"
+                  : "button";
+              return (
+                <Button
+                  type="button"
+                  className={className}
+                  key={action}
+                  busy={pending}
+                  onClick={() => onRespond(action, text)}
+                >
+                  {statusLabel(normalizedAction)}
+                </Button>
+              );
+            })}
+          </div>
+        </section>
+        <small>该操作只会提交一次，并使用当前交互版本。</small>
       </div>
-      {interaction.safePrompt.includes("Risks: HIGH") && (
-        <div className="execution-risk-badge">高风险执行 · 每次必须审批</div>
-      )}
-      <pre className="approval-summary">{interaction.safePrompt}</pre>
-      {interaction.maximumCharacters > 0 && interaction.inputType !== "NONE" && (
-        <textarea
-          aria-label="补充信息"
-          value={text}
-          maxLength={interaction.maximumCharacters}
-          onChange={(event) => setText(event.target.value)}
-          placeholder="请输入必要信息"
-        />
-      )}
-      <div className="interaction-actions">
-        {interaction.allowedActions.map((action) => (
-          <Button
-            className={action.toUpperCase().includes("APPROVE") ? "button primary-button" : "button"}
-            key={action}
-            busy={pending}
-            onClick={() => onRespond(action, text)}
-          >
-            {statusLabel(action)}
-          </Button>
-        ))}
-      </div>
-      <small>该操作只会提交一次，并使用当前 Interaction revision。</small>
     </section>
   );
 }
@@ -281,20 +447,16 @@ function ActivityPanel({
   open,
   run,
   activities,
-  interaction,
   pending,
   onClose,
   onCancel,
-  onRespond,
 }: {
   open: boolean;
   run: Run | null;
   activities: Activity[];
-  interaction: Interaction | null;
   pending: boolean;
   onClose(): void;
   onCancel(): void;
-  onRespond(action: string, text: string): void;
 }) {
   return (
     <>
@@ -309,7 +471,6 @@ function ActivityPanel({
             <Square size={14} fill="currentColor" /> 停止当前任务
           </Button>
         )}
-        {interaction && <InteractionCard interaction={interaction} pending={pending} onRespond={onRespond} />}
         <section className="panel-section">
           <h3>安全活动</h3>
           <div className="activity-list">
@@ -481,6 +642,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     }
     if (interaction.status === "fulfilled") {
       dispatch({ type: "interactionLoaded", interaction: interaction.value });
+    } else if (["WAITING_APPROVAL", "WAITING_INTERACTION"].includes(run.status)) {
+      dispatch({
+        type: "interactionLoadFailed",
+        runId,
+        message: "审批或交互详情加载失败，请重试；任务尚未继续执行。",
+      });
     }
     return run;
   }, [client]);
@@ -756,7 +923,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             </div>
           )}
           <div className="messages" aria-busy={state.loading}>
-            {!state.turns.length && !state.streamDraft ? (
+            {!state.turns.length && !state.streamDraft && !state.interaction ? (
               <div className="empty hero-empty">
                 <div className="assistant-mark"><Brain size={28} /></div>
                 <h2>今天需要我帮你做什么？</h2>
@@ -769,6 +936,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                   <article className={`message ${turn.role.toLowerCase() === "user" ? "user" : "assistant"}`} key={turn.id}>
                     <span className="message-role">{turn.role.toLowerCase() === "user" ? "你" : "Haifa"}</span>
                     <MessageContent text={turn.text} /><time>{formatTime(turn.createdAt)}</time>
+                    {turn.role.toLowerCase() === "assistant" && (
+                      <div className="message-actions">
+                        <MessageCopyButton text={turn.text} />
+                      </div>
+                    )}
                   </article>
                 ))}
                 {state.streamDraft && (
@@ -776,11 +948,20 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     <span className="message-role">Haifa</span><MessageContent text={state.streamDraft} /><i className="caret" />
                   </article>
                 )}
+                {state.interaction && (
+                  <InteractionCard
+                    interaction={state.interaction}
+                    pending={Boolean(state.pending)}
+                    onRespond={respond}
+                  />
+                )}
               </>
             )}
           </div>
-          {state.interaction && (
-            <div className="inline-interaction"><InteractionCard interaction={state.interaction} pending={Boolean(state.pending)} onRespond={respond} /></div>
+          {state.interactionError && (
+            <div className="error-banner" role="alert">
+              <CircleAlert size={17} /><span>{state.interactionError}</span>
+            </div>
           )}
           <form className="composer" onSubmit={submit}>
             {runActive && (
@@ -815,11 +996,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           open={state.activityOpen}
           run={state.run}
           activities={state.activities}
-          interaction={state.interaction}
           pending={Boolean(state.pending)}
           onClose={() => dispatch({ type: "toggleActivity", open: false })}
           onCancel={cancel}
-          onRespond={respond}
         />
       </div>
 

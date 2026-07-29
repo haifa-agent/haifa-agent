@@ -25,6 +25,11 @@ Personal Assistant follows the shared cross-platform mode contract: `COMMAND` om
 the trusted host default shell, while `SCRIPT` requires a configured `language`. The bundled execution Skill states
 the same rule so remote models can construct a valid exact-approval request on Windows, macOS, and Linux.
 
+Execution approval prompts are bounded to the Runtime public-view limit. They always retain mode, language, purpose,
+bounded arguments, timeout, invocation digest, and risk metadata; script or command content is shown in full when it
+fits and otherwise as a marked preview with the original character count. Authorization continues to bind the complete
+arguments digest and frozen Tool target rather than the display prompt.
+
 Personal Profile 通过 SDK 的 `ShellPlatformContribution` 接入共享 `execution.run`，产品别名为
 `execution_run`。`PersonalExecutionPlatform` 负责产品级 alias、Skill 和审批文案，不复制
 Execution Broker、Sandbox 或 Policy。

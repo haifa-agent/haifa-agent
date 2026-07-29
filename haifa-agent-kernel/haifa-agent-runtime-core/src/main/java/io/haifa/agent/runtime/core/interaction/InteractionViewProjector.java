@@ -10,6 +10,8 @@ import java.util.Optional;
 
 /** Projects internal interaction state through a safe, provider-neutral whitelist. */
 public final class InteractionViewProjector {
+    private static final int MAX_SAFE_PROMPT_LENGTH = 2_048;
+
     public InteractionView project(AgentRun run, InteractionRecord record) {
         InteractionRequest request = record.request();
         InteractionKind kind = InteractionSemantics.kind(request);
@@ -21,7 +23,7 @@ public final class InteractionViewProjector {
                 kind,
                 record.state(),
                 title(kind),
-                request.prompt(),
+                boundedSafePrompt(request.prompt()),
                 InteractionSemantics.allowedActions(kind),
                 InteractionSemantics.inputContract(kind),
                 target(request.target()),
@@ -29,6 +31,14 @@ public final class InteractionViewProjector {
                 request.createdAt(),
                 request.expiresAt(),
                 consequences(request, kind));
+    }
+
+    static String boundedSafePrompt(String prompt) {
+        if (prompt.length() <= MAX_SAFE_PROMPT_LENGTH) return prompt;
+        String marker = "\n\n[Prompt truncated for safe display; original length=" + prompt.length() + "]";
+        int end = MAX_SAFE_PROMPT_LENGTH - marker.length();
+        if (end > 0 && Character.isHighSurrogate(prompt.charAt(end - 1))) end--;
+        return prompt.substring(0, end).stripTrailing() + marker;
     }
 
     private static String title(InteractionKind kind) {
