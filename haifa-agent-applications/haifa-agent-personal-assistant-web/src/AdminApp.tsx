@@ -1,21 +1,35 @@
 import {
   AlertTriangle,
   Bot,
+  Boxes,
   CircleAlert,
+  Database,
+  ListTree,
   RefreshCw,
   Search,
+  Sparkles,
+  Wrench,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { AdminCapabilityDetail } from "./admin/AdminCapabilityDetail";
 import { AdminTraceTree } from "./admin/AdminTraceTree";
 import {
   HttpPersonalAdminClient,
   type PersonalAdminClient,
 } from "./admin/client";
-import type { AdminRun, AdminSession, AdminTrace } from "./admin/types";
+import type {
+  AdminCapabilities,
+  AdminCapabilityKind,
+  AdminRun,
+  AdminSession,
+  AdminTrace,
+} from "./admin/types";
 
 const defaultClient = new HttpPersonalAdminClient();
 const sessionParameter = "sessionId";
 const runParameter = "runId";
+const capabilityParameter = "capabilityId";
+const capabilityKindParameter = "kind";
 
 function updateUrl(sessionId: string | null, runId: string | null): void {
   const url = new URL(window.location.href);
@@ -32,6 +46,25 @@ function initialSelection() {
     sessionId: url.searchParams.get(sessionParameter),
     runId: url.searchParams.get(runParameter),
   };
+}
+
+function initialCapabilitySelection() {
+  const url = new URL(window.location.href);
+  const value = url.searchParams.get(capabilityKindParameter)?.toUpperCase();
+  return {
+    kind: value === "MCP" || value === "SKILL" ? value : "TOOL",
+    capabilityId: url.searchParams.get(capabilityParameter),
+  } satisfies { kind: AdminCapabilityKind; capabilityId: string | null };
+}
+
+function updateCapabilityUrl(kind: AdminCapabilityKind, capabilityId: string | null): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete(sessionParameter);
+  url.searchParams.delete(runParameter);
+  url.searchParams.set(capabilityKindParameter, kind.toLowerCase());
+  if (capabilityId) url.searchParams.set(capabilityParameter, capabilityId);
+  else url.searchParams.delete(capabilityParameter);
+  window.history.replaceState({ kind, capabilityId }, "", url);
 }
 
 function formatted(value: string): string {
@@ -55,7 +88,10 @@ export default function AdminApp({
 }: {
   client?: PersonalAdminClient;
 }) {
+  const capabilityMode = window.location.pathname.replace(/\/+$/, "")
+    .endsWith("/capabilities");
   const initial = initialSelection();
+  const initialCapability = initialCapabilitySelection();
   const [sessions, setSessions] = useState<AdminSession[]>([]);
   const [runs, setRuns] = useState<AdminRun[]>([]);
   const [trace, setTrace] = useState<AdminTrace | null>(null);
@@ -67,8 +103,17 @@ export default function AdminApp({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [capabilities, setCapabilities] = useState<AdminCapabilities | null>(null);
+  const [selectedKind, setSelectedKind] = useState<AdminCapabilityKind>(
+    initialCapability.kind,
+  );
+  const [selectedCapabilityId, setSelectedCapabilityId] = useState<string | null>(
+    initialCapability.capabilityId,
+  );
+  const [capabilityQuery, setCapabilityQuery] = useState("");
 
   useEffect(() => {
+    if (capabilityMode) return;
     const controller = new AbortController();
     setLoading(true);
     setError(null);
@@ -105,7 +150,33 @@ export default function AdminApp({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [client, refreshVersion]);
+  }, [capabilityMode, client, refreshVersion]);
+
+  useEffect(() => {
+    if (!capabilityMode) return;
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    void client.capabilities(controller.signal)
+      .then((value) => {
+        setCapabilities(value);
+        const sameKind = value.registrations.filter((item) => item.kind === selectedKind);
+        const capabilityId = sameKind.some((item) => item.id === selectedCapabilityId)
+          ? selectedCapabilityId
+          : sameKind[0]?.id ?? null;
+        setSelectedCapabilityId(capabilityId);
+        updateCapabilityUrl(selectedKind, capabilityId);
+      })
+      .catch((value: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(value instanceof Error ? value.message : "注册能力加载失败");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [capabilityMode, client, refreshVersion]);
 
   const chooseSession = async (sessionId: string) => {
     setLoading(true);
@@ -148,13 +219,62 @@ export default function AdminApp({
   }, [query, sessions]);
 
   const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null;
+  const counts = useMemo(() => {
+    const values = new Map<AdminCapabilityKind, number>([
+      ["TOOL", 0],
+      ["MCP", 0],
+      ["SKILL", 0],
+    ]);
+    capabilities?.registrations.forEach((item) => {
+      values.set(item.kind, (values.get(item.kind) ?? 0) + 1);
+    });
+    return values;
+  }, [capabilities]);
+  const visibleCapabilities = useMemo(() => {
+    const normalized = capabilityQuery.trim().toLocaleLowerCase();
+    return (capabilities?.registrations ?? [])
+      .filter((item) => item.kind === selectedKind)
+      .filter((item) => !normalized ||
+        item.name.toLocaleLowerCase().includes(normalized) ||
+        item.displayName.toLocaleLowerCase().includes(normalized) ||
+        item.source.toLocaleLowerCase().includes(normalized));
+  }, [capabilities, capabilityQuery, selectedKind]);
+  const selectedCapability = capabilities?.registrations
+    .find((item) => item.id === selectedCapabilityId) ?? null;
+
+  const chooseCapabilityKind = (kind: AdminCapabilityKind) => {
+    const capabilityId = capabilities?.registrations
+      .find((item) => item.kind === kind)?.id ?? null;
+    setSelectedKind(kind);
+    setSelectedCapabilityId(capabilityId);
+    setCapabilityQuery("");
+    updateCapabilityUrl(kind, capabilityId);
+  };
+
+  const chooseCapability = (capabilityId: string) => {
+    setSelectedCapabilityId(capabilityId);
+    updateCapabilityUrl(selectedKind, capabilityId);
+  };
 
   return (
     <main className="admin-app">
       <header className="admin-topbar">
-        <div className="admin-brand">
-          <span className="admin-brand-icon"><Bot size={19} /></span>
-          <div><strong>Haifa Agent</strong><span>Run Diagnostics</span></div>
+        <div className="admin-brand-group">
+          <div className="admin-brand">
+            <span className="admin-brand-icon"><Bot size={19} /></span>
+            <div>
+              <strong>Haifa Agent</strong>
+              <span>{capabilityMode ? "Registered Capabilities" : "Run Diagnostics"}</span>
+            </div>
+          </div>
+          <nav className="admin-primary-nav" aria-label="Admin 功能">
+            <a className={!capabilityMode ? "selected" : ""} href="/admin/">
+              <ListTree size={14} />Runs
+            </a>
+            <a className={capabilityMode ? "selected" : ""} href="/admin/capabilities">
+              <Boxes size={14} />Capabilities
+            </a>
+          </nav>
         </div>
         <div className="admin-sensitive-warning">
           <AlertTriangle size={16} />
@@ -170,7 +290,7 @@ export default function AdminApp({
         </button>
       </header>
 
-      <div className="admin-workspace">
+      {!capabilityMode && <div className="admin-workspace">
         <aside className="admin-rail sessions" aria-label="Sessions">
           <div className="admin-rail-heading">
             <span>SESSIONS</span><strong>{sessions.length}</strong>
@@ -252,7 +372,104 @@ export default function AdminApp({
           )}
           {loading && <div className="admin-loading"><RefreshCw className="spin" size={20} />正在读取诊断事实…</div>}
         </section>
-      </div>
+      </div>}
+
+      {capabilityMode && (
+        <div className="admin-capability-workspace">
+          <aside className="admin-rail admin-kind-rail" aria-label="能力类型">
+            <div className="admin-rail-heading">
+              <span>CAPABILITY TYPES</span>
+              <strong>{capabilities?.registrations.length ?? 0}</strong>
+            </div>
+            <div className="admin-kind-list">
+              {([
+                ["TOOL", Wrench, "Tools"],
+                ["MCP", Database, "MCP Servers"],
+                ["SKILL", Sparkles, "Skills"],
+              ] as const).map(([kind, Icon, label]) => (
+                <button
+                  className={kind === selectedKind ? "selected" : ""}
+                  key={kind}
+                  type="button"
+                  onClick={() => chooseCapabilityKind(kind)}
+                >
+                  <span><Icon size={16} />{label}</span>
+                  <strong>{counts.get(kind) ?? 0}</strong>
+                </button>
+              ))}
+            </div>
+            {capabilities && (
+              <dl className="admin-catalog-digests">
+                <div>
+                  <dt>Tool catalog</dt>
+                  <dd>{capabilities.toolCatalogDigest}</dd>
+                </div>
+                <div>
+                  <dt>Skill catalog</dt>
+                  <dd>{capabilities.skillCatalogDigest}</dd>
+                </div>
+                <div>
+                  <dt>Skill resolution</dt>
+                  <dd>{capabilities.skillResolutionPolicy}</dd>
+                </div>
+              </dl>
+            )}
+          </aside>
+
+          <aside className="admin-rail admin-capability-list-rail" aria-label="注册能力">
+            <div className="admin-rail-heading">
+              <span>{selectedKind} REGISTRATIONS</span>
+              <strong>{counts.get(selectedKind) ?? 0}</strong>
+            </div>
+            <label className="admin-search">
+              <Search size={15} />
+              <input
+                aria-label="搜索注册能力"
+                placeholder="按名称或来源搜索"
+                value={capabilityQuery}
+                onChange={(event) => setCapabilityQuery(event.target.value)}
+              />
+            </label>
+            <div className="admin-list">
+              {visibleCapabilities.map((capability) => (
+                <button
+                  className={`admin-list-item admin-capability-item ${
+                    capability.id === selectedCapabilityId ? "selected" : ""
+                  }`}
+                  key={capability.id}
+                  type="button"
+                  onClick={() => chooseCapability(capability.id)}
+                >
+                  <span className="admin-list-title">{capability.name}</span>
+                  <span className="admin-objective">{capability.displayName}</span>
+                  <span>
+                    {capability.source}
+                    <i className="admin-status succeeded">{capability.status}</i>
+                  </span>
+                </button>
+              ))}
+              {!visibleCapabilities.length && (
+                <p className="admin-empty">没有匹配的注册能力</p>
+              )}
+            </div>
+          </aside>
+
+          <section className="admin-main admin-capability-main">
+            {error && <div className="admin-error"><CircleAlert size={17} />{error}</div>}
+            {selectedCapability && (
+              <AdminCapabilityDetail capability={selectedCapability} />
+            )}
+            {!selectedCapability && !loading && !error && (
+              <div className="admin-empty large">当前没有可展示的注册能力。</div>
+            )}
+            {loading && (
+              <div className="admin-loading">
+                <RefreshCw className="spin" size={20} />正在读取冻结注册快照…
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </main>
   );
 }

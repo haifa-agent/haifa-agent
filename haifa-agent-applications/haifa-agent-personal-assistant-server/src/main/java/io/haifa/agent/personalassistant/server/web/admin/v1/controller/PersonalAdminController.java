@@ -1,5 +1,7 @@
 package io.haifa.agent.personalassistant.server.web.admin.v1.controller;
 
+import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.application.PersonalCapabilityRegistry;
 import io.haifa.agent.personalassistant.server.admin.PersonalAdminQueryService;
 import io.haifa.agent.personalassistant.server.web.admin.v1.dto.PersonalAdminDtos;
 import java.util.List;
@@ -15,9 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/v1/admin")
 public final class PersonalAdminController {
     private final PersonalAdminQueryService queries;
+    private final PersonalAssistantApplication application;
 
-    public PersonalAdminController(PersonalAdminQueryService queries) {
+    public PersonalAdminController(PersonalAdminQueryService queries, PersonalAssistantApplication application) {
         this.queries = queries;
+        this.application = application;
     }
 
     @GetMapping({"", "/"})
@@ -49,6 +53,35 @@ public final class PersonalAdminController {
                 .map(PersonalAdminController::trace)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/capabilities")
+    PersonalAdminDtos.Capabilities capabilities() {
+        PersonalCapabilityRegistry value = application.capabilities();
+        return new PersonalAdminDtos.Capabilities(
+                value.toolCatalogDigest(),
+                value.skillCatalogDigest(),
+                value.skillResolutionPolicy(),
+                value.registrations().stream()
+                        .map(PersonalAdminController::capability)
+                        .toList());
+    }
+
+    private static PersonalAdminDtos.Capability capability(PersonalCapabilityRegistry.CapabilityRegistration value) {
+        return new PersonalAdminDtos.Capability(
+                value.id(),
+                value.kind(),
+                value.name(),
+                value.displayName(),
+                value.description(),
+                value.status(),
+                value.source(),
+                value.tags(),
+                value.attributes().stream()
+                        .map(attribute -> new PersonalAdminDtos.CapabilityAttribute(
+                                attribute.label(), attribute.value(), attribute.tone()))
+                        .toList(),
+                value.details());
     }
 
     private static PersonalAdminDtos.Session session(PersonalAdminQueryService.SessionSummary value) {

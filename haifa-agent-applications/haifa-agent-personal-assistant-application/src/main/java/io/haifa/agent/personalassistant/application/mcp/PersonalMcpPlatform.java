@@ -8,6 +8,7 @@ import io.haifa.agent.credential.api.CredentialOperationRequest;
 import io.haifa.agent.credential.api.CredentialRequest;
 import io.haifa.agent.credential.core.DefaultSecretRedactor;
 import io.haifa.agent.mcp.client.McpConnectionManager;
+import io.haifa.agent.mcp.client.McpServerSnapshot;
 import io.haifa.agent.mcp.client.SdkMcpClientFactory;
 import io.haifa.agent.mcp.config.McpConnectionPolicy;
 import io.haifa.agent.mcp.config.McpProtocolProfile;
@@ -43,10 +44,21 @@ public final class PersonalMcpPlatform implements AutoCloseable {
     public static final String REMOTE_TOOL = "echo";
     public static final String LOCAL_ALIAS = "personal_mcp_echo";
     private final McpConnectionManager connections;
+    private final McpServerDefinition server;
+    private final McpServerSnapshot serverSnapshot;
+    private final List<McpToolImportCandidate> candidates;
     private final List<McpToolCatalogContribution> contributions;
 
-    private PersonalMcpPlatform(McpConnectionManager connections, List<McpToolCatalogContribution> contributions) {
+    private PersonalMcpPlatform(
+            McpConnectionManager connections,
+            McpServerDefinition server,
+            McpServerSnapshot serverSnapshot,
+            List<McpToolImportCandidate> candidates,
+            List<McpToolCatalogContribution> contributions) {
         this.connections = connections;
+        this.server = server;
+        this.serverSnapshot = serverSnapshot;
+        this.candidates = List.copyOf(candidates);
         this.contributions = List.copyOf(contributions);
     }
 
@@ -118,11 +130,29 @@ public final class PersonalMcpPlatform implements AutoCloseable {
                     .sorted(Comparator.comparing(McpToolImportCandidate::remoteName))
                     .map(candidate -> McpToolCatalogContribution.from(candidate, provider))
                     .toList();
-            return new PersonalMcpPlatform(connections, contributions);
+            List<McpToolImportCandidate> importedCandidates = reviewed.values().stream()
+                    .sorted(Comparator.comparing(McpToolImportCandidate::remoteName))
+                    .toList();
+            McpServerSnapshot serverSnapshot = connections
+                    .acquire(server.serverId(), tenant, principal, List.of())
+                    .serverSnapshot();
+            return new PersonalMcpPlatform(connections, server, serverSnapshot, importedCandidates, contributions);
         } catch (RuntimeException exception) {
             connections.close();
             throw exception;
         }
+    }
+
+    public McpServerDefinition server() {
+        return server;
+    }
+
+    public McpServerSnapshot serverSnapshot() {
+        return serverSnapshot;
+    }
+
+    public List<McpToolImportCandidate> candidates() {
+        return candidates;
     }
 
     public List<McpToolCatalogContribution> contributions() {

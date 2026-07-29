@@ -251,6 +251,32 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void adminListsFrozenToolMcpAndSkillRegistrationsWithoutRuntimeSecrets() throws Exception {
+        JsonNode capabilities = get("/v1/admin/capabilities");
+
+        assertThat(capabilities.path("toolCatalogDigest").asText()).isNotBlank();
+        assertThat(capabilities.path("skillCatalogDigest").asText()).isNotBlank();
+        assertThat(capabilities.path("skillResolutionPolicy").asText()).isNotBlank();
+        assertThat(java.util.stream.StreamSupport.stream(
+                                capabilities.path("registrations").spliterator(), false)
+                        .map(registration -> registration.path("kind").asText())
+                        .toList())
+                .contains("TOOL", "MCP", "SKILL");
+
+        String snapshot = capabilities.toString();
+        assertThat(snapshot)
+                .contains(
+                        "execution_run",
+                        "personal-local",
+                        "personal_mcp_echo",
+                        "2025-11-25",
+                        "daily-planning",
+                        "local-script-execution",
+                        "SKILL.md")
+                .doesNotContain("continuation-key-base64", "sessionId", "credentialValue", "resolvedCredential");
+    }
+
+    @Test
     void adminBuildsOneRunTreeWithCompletePromptAndToolPayloads() throws Exception {
         String sensitivePrompt = "[tool] private-admin-prompt-7f29";
         JsonNode conversation = post(

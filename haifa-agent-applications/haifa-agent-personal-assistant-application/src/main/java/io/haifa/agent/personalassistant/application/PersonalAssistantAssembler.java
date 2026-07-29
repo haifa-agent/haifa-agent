@@ -66,7 +66,8 @@ public final class PersonalAssistantAssembler {
                     .contribute(dependencies.execution().shell())
                     .contribute(dependencies.execution().approval())
                     .build();
-            return new PersonalAssistantApplication(agent, mcp, dependencies.clock());
+            return new PersonalAssistantApplication(
+                    agent, mcp, dependencies.clock(), PersonalCapabilityRegistry.create(tools, mcp));
         } catch (RuntimeException | Error exception) {
             mcp.close();
             throw exception;
