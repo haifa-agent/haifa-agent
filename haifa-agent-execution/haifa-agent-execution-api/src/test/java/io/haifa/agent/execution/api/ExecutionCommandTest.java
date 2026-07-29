@@ -35,4 +35,17 @@ class ExecutionCommandTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("ExecutionCommand.shell");
     }
+
+    @Test
+    void boundsAndDefensivelyCopiesInitialInput() {
+        byte[] source = "approved-script".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        ExecutionInput input = ExecutionInput.ofBytes(source);
+        source[0] = 'X';
+
+        assertThat(input.bytes()).asString().isEqualTo("approved-script");
+        assertThat(input.toString()).doesNotContain("approved-script");
+        assertThat(ExecutionInput.none().isEmpty()).isTrue();
+        assertThatThrownBy(() -> ExecutionInput.ofBytes(new byte[ExecutionInput.MAX_BYTES + 1]))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

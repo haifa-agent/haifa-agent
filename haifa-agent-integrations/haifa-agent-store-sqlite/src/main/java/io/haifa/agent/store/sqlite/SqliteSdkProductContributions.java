@@ -6,8 +6,13 @@ import io.haifa.agent.memory.core.DefaultMemoryPolicy;
 import io.haifa.agent.memory.core.DefaultMemoryRetriever;
 import io.haifa.agent.memory.core.DefaultMemoryService;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
+import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
+import io.haifa.agent.sdk.product.ProductCapabilities;
+import io.haifa.agent.sdk.product.ProductContributionCoordinate;
+import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
@@ -17,11 +22,13 @@ import java.util.UUID;
 public record SqliteSdkProductContributions(
         SqliteSdkPersistenceContribution persistence,
         SqliteSdkConversationContribution conversation,
-        MemoryPlatformContribution memory) {
+        MemoryPlatformContribution memory,
+        PolicyPlatformContribution policy) {
     public SqliteSdkProductContributions {
         Objects.requireNonNull(persistence);
         Objects.requireNonNull(conversation);
         Objects.requireNonNull(memory);
+        Objects.requireNonNull(policy);
     }
 
     public static SqliteSdkProductContributions initialize(
@@ -31,6 +38,29 @@ public record SqliteSdkProductContributions(
             SdkContributionMetadata persistenceMetadata,
             SdkContributionMetadata conversationMetadata,
             SdkContributionMetadata memoryMetadata) {
+        return initialize(
+                configuration,
+                clock,
+                protector,
+                persistenceMetadata,
+                conversationMetadata,
+                memoryMetadata,
+                new SdkContributionMetadata(
+                        new ProductContributionCoordinate("haifa-sqlite-policy", "1.0.0"),
+                        ProductCapabilities.POLICY,
+                        SdkConfigurationDigest.sha256("sqlite-policy-v1"),
+                        ProductProviderSuitability.PRODUCTION,
+                        "SQLite Policy decision and authorization evidence"));
+    }
+
+    public static SqliteSdkProductContributions initialize(
+            SqliteStoreConfiguration configuration,
+            Clock clock,
+            ModelContinuationProtector protector,
+            SdkContributionMetadata persistenceMetadata,
+            SdkContributionMetadata conversationMetadata,
+            SdkContributionMetadata memoryMetadata,
+            SdkContributionMetadata policyMetadata) {
         SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(configuration, clock);
         try {
             SqliteMemoryStore store =
@@ -61,7 +91,12 @@ public record SqliteSdkProductContributions(
             return new SqliteSdkProductContributions(
                     new SqliteSdkPersistenceContribution(persistenceMetadata, foundation, protector),
                     new SqliteSdkConversationContribution(conversationMetadata, foundation),
-                    new MemoryPlatformContribution(memoryMetadata, service, retriever, store));
+                    new MemoryPlatformContribution(memoryMetadata, service, retriever, store),
+                    new PolicyPlatformContribution(
+                            policyMetadata,
+                            foundation.policySnapshots(),
+                            foundation.policyDecisions(),
+                            foundation.policyAuthorizationEvidence()));
         } catch (RuntimeException | Error exception) {
             foundation.close();
             throw exception;

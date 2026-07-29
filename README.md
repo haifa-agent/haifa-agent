@@ -83,6 +83,8 @@ haifa-agent-applications/
   haifa-agent-coding-agent/
   haifa-agent-coding-terminal/
   haifa-agent-cli/
+  haifa-agent-personal-assistant-application/
+  haifa-agent-personal-assistant-server/
 haifa-agent-testing/
   haifa-agent-testkit/
   haifa-agent-test-fixtures/

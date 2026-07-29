@@ -164,10 +164,12 @@ public final class RuntimeClientEventProjector {
                         "assistant.output.started",
                         new RunEventPayloads.AssistantOutput(generationId, "STARTED", "OUTPUT_STARTED"));
             case ASSISTANT_TEXT_DELTA ->
-                new Projection(
-                        "assistant.text.delta",
-                        new RunEventPayloads.AssistantTextDelta(
-                                generationId, requiredTextDelta(event.data(), "textDelta")));
+                emptyTextDelta(event)
+                        ? null
+                        : new Projection(
+                                "assistant.text.delta",
+                                new RunEventPayloads.AssistantTextDelta(
+                                        generationId, requiredTextDelta(event.data(), "textDelta")));
             case ASSISTANT_TEXT_COMMITTED ->
                 new Projection(
                         "assistant.text.committed",
@@ -232,6 +234,11 @@ public final class RuntimeClientEventProjector {
     private static String inferredKind(RuntimeEvent event) {
         if (event.type().startsWith("approval.")) return "approval";
         return text(event.data(), "kind", "clarification");
+    }
+
+    private static boolean emptyTextDelta(RuntimeEvent event) {
+        Object value = event.data().get("textDelta");
+        return value instanceof String text && text.isEmpty();
     }
 
     private static String requiredText(Map<String, Object> data, String key) {

@@ -26,3 +26,19 @@ Host。
 
 幂等重放重新执行 Capability、Workspace 和 Policy 授权；相同 idempotency key 的安全上下文、
 Environment、Limits 或 Sandbox Profile 漂移会返回 `IDEMPOTENCY_CONFLICT`。
+
+## Phase 3 shared execution Tool
+
+`ExecutionToolDefinitionFactory` 和 `ExecutionToolProvider` 把一次性命令/脚本执行作为平台级
+Tool 暴露，稳定名称为 `execution.run`，产品可提供 `execution_run` 等别名。它不是 Personal
+Assistant 专用实现，也没有新增 Maven 模块。
+
+冻结输入只包含 `mode`、`content`、`language`、`args`、`purpose`、`timeoutMillis`；只有显式允许
+Workspace 的产品配置才可以增加 `workingDirectory`。操作系统、可执行文件和 Provider 均由可信
+装配解析，模型不能选择。脚本正文通过 stdin 传递，PowerShell、Bash 和 Python 由独立 runtime
+adapter 按当前 OS fail closed 解析。
+
+所有调用均为 HIGH / NON_IDEMPOTENT / ALWAYS approval。审批绑定统一使用
+`ToolArgumentsDigest` 的 canonical digest，并额外冻结 execution configuration identity。相同
+idempotency key 若正文、参数、环境、Profile 或配置发生漂移，将返回冲突而不是复用旧授权。
+模型只收到有界、脱敏的结构化摘要；完整输出继续留在 Execution Result / Output Store 边界。

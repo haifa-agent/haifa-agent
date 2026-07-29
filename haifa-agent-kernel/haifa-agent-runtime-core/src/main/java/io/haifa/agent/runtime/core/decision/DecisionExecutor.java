@@ -264,7 +264,7 @@ public final class DecisionExecutor {
         String requestId = ids.nextValue();
         var binding = approval.binding();
         String interactionType = approval.reauthentication() ? "tool-reauthentication" : "tool-approval";
-        var createdAt = time.now();
+        var createdAt = time.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
         var expiresAt = createdAt.plus(java.time.Duration.ofHours(1));
         var approvalContext = new ApprovalRequestContext(
                 approval.decision().id(),

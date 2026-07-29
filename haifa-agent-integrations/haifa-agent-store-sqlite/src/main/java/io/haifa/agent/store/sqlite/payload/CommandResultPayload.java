@@ -28,7 +28,8 @@ public record CommandResultPayload(
         long runUpdatedAt,
         RunResultPayload result,
         AgentErrorPayload error,
-        String output) {
+        String output,
+        RunUsagePayload usage) {
 
     public static CommandResultPayload from(RuntimeCommandResult value) {
         RuntimeCommand command = value.command();
@@ -48,7 +49,8 @@ public record CommandResultPayload(
                 snapshot.updatedAt().toEpochMilli(),
                 snapshot.result().map(RunResultPayload::from).orElse(null),
                 snapshot.error().map(AgentErrorPayload::from).orElse(null),
-                snapshot.output().orElse(null));
+                snapshot.output().orElse(null),
+                RunUsagePayload.from(snapshot.usage()));
     }
 
     public RuntimeCommandResult toDomain() {
@@ -67,7 +69,8 @@ public record CommandResultPayload(
                 Instant.ofEpochMilli(runUpdatedAt),
                 java.util.Optional.ofNullable(result).map(RunResultPayload::toDomain),
                 java.util.Optional.ofNullable(error).map(AgentErrorPayload::toDomain),
-                java.util.Optional.ofNullable(output));
+                java.util.Optional.ofNullable(output),
+                usage == null ? io.haifa.agent.core.run.AgentRunUsage.ZERO : usage.toDomain());
         return new RuntimeCommandResult(command, RuntimeCommandStatus.valueOf(status), snapshot);
     }
 }

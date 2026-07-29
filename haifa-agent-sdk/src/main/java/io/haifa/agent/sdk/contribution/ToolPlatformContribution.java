@@ -40,7 +40,9 @@ public final class ToolPlatformContribution extends AbstractSdkContribution {
 
     @Override
     public void validate() {
-        if (!configurationDigest().equals(catalog.snapshot().digest())) {
+        String catalogDigest = catalog.snapshot().digest();
+        String normalized = catalogDigest.startsWith("sha256:") ? catalogDigest : "sha256:" + catalogDigest;
+        if (!configurationDigest().equals(normalized)) {
             throw new IllegalArgumentException("tool contribution digest must match the frozen Tool catalog");
         }
     }

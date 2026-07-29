@@ -280,7 +280,9 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                 Process process = builder.start();
                 current = process;
                 shutdownHook = registerShutdownHook(process);
-                process.getOutputStream().close();
+                try (var standardInput = process.getOutputStream()) {
+                    standardInput.write(execution.input().bytes());
+                }
                 CompletableFuture<BoundedBytes> stdout = CompletableFuture.supplyAsync(() -> read(
                         process.getInputStream(),
                         execution.limits().maxStdoutBytes(),
@@ -395,9 +397,6 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                 return;
             }
             String executable = execution.command().executable();
-            if (executable.contains("/") || executable.contains("\\") || executable.contains(":")) {
-                throw failure("CAPABILITY_UNAVAILABLE", "executable path is denied");
-            }
             boolean allowed =
                     profile.allowedExecutables().stream().anyMatch(value -> value.equalsIgnoreCase(executable));
             if (!allowed) throw failure("CAPABILITY_UNAVAILABLE", "executable is denied by the profile");

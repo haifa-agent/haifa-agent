@@ -15,5 +15,7 @@
         <module>haifa-agent-coding-agent</module>
         <module>haifa-agent-coding-terminal</module>
         <module>haifa-agent-cli</module>
+        <module>haifa-agent-personal-assistant-application</module>
+        <module>haifa-agent-personal-assistant-server</module>
     </modules>
 </project>

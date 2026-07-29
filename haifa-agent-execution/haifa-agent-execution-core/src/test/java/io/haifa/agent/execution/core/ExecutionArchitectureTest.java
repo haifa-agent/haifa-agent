@@ -24,7 +24,8 @@ class ExecutionArchitectureTest {
                 .resideInAPackage("io.haifa.agent.execution.core..")
                 .should()
                 .dependOnClassesThat()
-                .resideInAnyPackage("io.haifa.agent.policy.core..", "io.haifa.agent.runtime.core..")
+                .resideInAnyPackage(
+                        "io.haifa.agent.policy.core..", "io.haifa.agent.runtime.core..", "io.haifa.agent.tool.core..")
                 .check(classes);
         noClasses()
                 .that()

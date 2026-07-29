@@ -12,5 +12,6 @@ docs/
 docs/*
 test-config/
 local-tmp/
+.run/
 third-agent/
 coding-terminal-tui4j-demo/

@@ -432,17 +432,7 @@ public final class ToolPipeline {
     }
 
     static String argumentsDigest(ToolRequest request) {
-        try {
-            StringBuilder canonical = new StringBuilder();
-            appendCanonical(canonical, request.arguments().schemaId());
-            appendCanonical(canonical, request.arguments().schemaVersion());
-            appendCanonical(canonical, request.arguments().values());
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(canonical.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            return java.util.HexFormat.of().formatHex(digest);
-        } catch (java.security.NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 is unavailable", exception);
-        }
+        return io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(request.arguments());
     }
 
     private static void validateFailureEnvelope(ToolResult result) {
@@ -471,37 +461,6 @@ public final class ToolPipeline {
             iterable.forEach(element -> inspectFailureValue(element, depth + 1, budget));
         } else if (value != null && !(value instanceof Number) && !(value instanceof Boolean)) {
             throw new IllegalStateException("tool failure envelope contains a non-JSON value");
-        }
-    }
-
-    private static void appendCanonical(StringBuilder target, Object value) {
-        if (value == null) {
-            target.append('n');
-        } else if (value instanceof String text) {
-            target.append('s').append(text.length()).append(':').append(text);
-        } else if (value instanceof Boolean bool) {
-            target.append(bool ? "b1" : "b0");
-        } else if (value instanceof Number number) {
-            target.append('d')
-                    .append(new java.math.BigDecimal(number.toString())
-                            .stripTrailingZeros()
-                            .toPlainString())
-                    .append(';');
-        } else if (value instanceof Map<?, ?> map) {
-            target.append("m{");
-            map.entrySet().stream()
-                    .sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey())))
-                    .forEach(entry -> {
-                        appendCanonical(target, String.valueOf(entry.getKey()));
-                        appendCanonical(target, entry.getValue());
-                    });
-            target.append('}');
-        } else if (value instanceof Iterable<?> iterable) {
-            target.append("l[");
-            iterable.forEach(element -> appendCanonical(target, element));
-            target.append(']');
-        } else {
-            throw new IllegalArgumentException("tool arguments contain a non-JSON value");
         }
     }
 
@@ -602,28 +561,41 @@ public final class ToolPipeline {
                         "reasonCode",
                         reasonCode,
                         "targetSummary",
-                        call.toolName(),
+                        targetSummary(call),
                         "resultRef",
                         resultRef),
                 time.now());
     }
 
+    private static String targetSummary(ToolCall call) {
+        if (!isExecutionTool(call)) return call.toolName();
+        Map<String, Object> arguments = call.arguments().values();
+        String mode = safeText(arguments.get("mode"), "COMMAND");
+        String language = safeText(arguments.get("language"), "default-shell");
+        String purpose = safeText(arguments.get("purpose"), "Approved execution");
+        String content = safeText(arguments.get("content"), "");
+        return mode + " · " + language + " · " + purpose + "\nContent:\n" + content;
+    }
+
     private void appendExecutionAndResourceEvents(AgentRun run, ToolCall call, ToolResult result) {
-        if ("execution.run".equals(call.toolName())) {
+        if (isExecutionTool(call)) {
             Map<String, Object> data = result.structuredData();
-            Object executionId = data.get("executionId");
             Object status = data.get("status");
-            if (executionId instanceof String id && status instanceof String lifecycle) {
+            if (status instanceof String lifecycle) {
                 var event = new java.util.LinkedHashMap<String, Object>();
-                event.put("executionId", id);
+                event.put(
+                        "executionId",
+                        data.get("executionId") instanceof String id
+                                ? id
+                                : call.id().value());
                 event.put("toolCallId", call.id().value());
                 event.put("status", lifecycle);
-                event.put("commandSummary", "shell command");
+                event.put(
+                        "commandSummary",
+                        safeText(call.arguments().values().get("purpose"), "approved command or script"));
                 event.put("logicalWorkdir", safeText(call.arguments().values().get("workdir"), "."));
                 event.put("streamKind", "MERGED");
-                event.put(
-                        "chunkOrRef",
-                        boundedText(data.get("outputRef") != null ? data.get("outputRef") : data.get("output"), 4096));
+                event.put("chunkOrRef", executionOutput(data));
                 event.put("truncated", Boolean.TRUE.equals(data.get("truncated")));
                 if (data.get("exitCode") instanceof Number exitCode) event.put("exitCode", exitCode.intValue());
                 if (data.get("fileChangeSetId") instanceof String changeSet) {
@@ -646,6 +618,16 @@ public final class ToolPipeline {
         result.artifacts()
                 .forEach(reference ->
                         appendResource(run, reference.artifactId(), "artifact", "Published artifact", "AVAILABLE"));
+    }
+
+    private static String executionOutput(Map<String, Object> data) {
+        Object legacy = data.get("outputRef") != null ? data.get("outputRef") : data.get("output");
+        if (legacy != null) return boundedText(legacy, 4096);
+        String stdout = boundedText(data.get("stdoutSummary"), 3072);
+        String stderr = boundedText(data.get("stderrSummary"), 1024);
+        if (stdout.isBlank()) return stderr;
+        if (stderr.isBlank()) return stdout;
+        return stdout + "\n" + stderr;
     }
 
     private void appendResource(AgentRun run, String reference, String kind, String title, String status) {
@@ -685,6 +667,10 @@ public final class ToolPipeline {
         } catch (RuntimeException firstFailure) {
             return resultAssets.put(call.id(), rawResult);
         }
+    }
+
+    private static boolean isExecutionTool(ToolCall call) {
+        return "execution.run".equals(call.toolName()) || "execution_run".equals(call.toolName());
     }
 
     public boolean hasUncertainExecution(AgentRun run) {
