@@ -119,8 +119,8 @@ public record PersonalAssistantProperties(
                 throw new IllegalArgumentException("mcp.endpoint port must be 20002 or higher");
             }
             allowedTools = Set.copyOf(allowedTools == null ? Set.of() : allowedTools);
-            if (allowedTools.isEmpty() || allowedTools.size() > 16) {
-                throw new IllegalArgumentException("mcp.allowedTools must contain 1 to 16 entries");
+            if (allowedTools.isEmpty() || allowedTools.size() > 32) {
+                throw new IllegalArgumentException("mcp.allowedTools must contain 1 to 32 entries");
             }
             if (mode.equals("embedded-echo") && !allowedTools.equals(Set.of("echo"))) {
                 throw new IllegalArgumentException("embedded-echo mode only allows the echo Tool");

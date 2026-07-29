@@ -7,6 +7,7 @@ JAR 的构建或静态资源打包。
 ## 能力
 
 - 新建、搜索、选择、重命名、归档和恢复 Conversation；
+- 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
 - 对话正文的 Markdown、代码块、表格和 KaTeX/LaTeX 公式渲染；
 - Clarification/Approval 的显式结构化回复；

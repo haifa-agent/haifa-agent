@@ -68,3 +68,6 @@ http://127.0.0.1:20001/actuator/health
 
 Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相邻 Web 目录。前端构建和部署
 命令见 `../haifa-agent-personal-assistant-web/README.md`。
+
+真实 DeepSeek、外部 Utility MCP 和独立 Web 的可重复环境搭建方法见
+[`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。

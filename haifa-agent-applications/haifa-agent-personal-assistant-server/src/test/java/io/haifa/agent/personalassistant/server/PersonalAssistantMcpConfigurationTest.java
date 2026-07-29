@@ -26,6 +26,42 @@ class PersonalAssistantMcpConfigurationTest {
     }
 
     @Test
+    void acceptsCompleteUtilityMcpV1Catalog() {
+        Set<String> tools = Set.of(
+                "location_search",
+                "weather_current",
+                "weather_forecast",
+                "air_quality",
+                "time_now",
+                "time_convert",
+                "currency_rate",
+                "currency_convert",
+                "holiday_list",
+                "holiday_next",
+                "workday_is_workday",
+                "workday_add",
+                "calculate",
+                "unit_convert",
+                "wikipedia_search",
+                "wikipedia_summary",
+                "microsoft_docs_search",
+                "microsoft_docs_fetch",
+                "microsoft_code_sample_search");
+
+        var mcp = new PersonalAssistantProperties.Mcp(
+                "external",
+                "127.0.0.1",
+                20002,
+                URI.create("http://127.0.0.1:20002/mcp"),
+                tools,
+                "personal_mcp",
+                "haifa-utility",
+                "Haifa Utility MCP");
+
+        assertThat(mcp.allowedTools()).containsExactlyInAnyOrderElementsOf(tools);
+    }
+
+    @Test
     void rejectsNonLoopbackExternalEndpoint() {
         assertThatThrownBy(() -> new PersonalAssistantProperties.Mcp(
                         "external",

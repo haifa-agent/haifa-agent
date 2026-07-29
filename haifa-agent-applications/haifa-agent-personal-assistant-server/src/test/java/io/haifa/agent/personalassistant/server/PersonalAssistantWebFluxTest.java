@@ -18,6 +18,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.AutoConfigureWebTestClient;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -164,6 +166,46 @@ class PersonalAssistantWebFluxTest {
         assertThat(activities.toString())
                 .contains("execution_run", "SCRIPT", expectedScriptLanguage(), expectedArgumentEchoPurpose())
                 .contains("first argument|second'argument");
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void powerShellCommandRequiresExactApprovalAndPublishesSafeActivity() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"PowerShell command acceptance","message":"[execution-command]"}
+                """);
+        String runId = conversation.path("activeRunId").asText();
+        JsonNode waiting = awaitStatus(runId, Set.of("WAITING_APPROVAL"));
+
+        JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
+        assertThat(interaction.path("safePrompt").asText())
+                .contains(
+                        "Mode: COMMAND",
+                        "Language: default-shell",
+                        "Purpose: 读取当前 PowerShell 版本",
+                        "$PSVersionTable.PSVersion.ToString()",
+                        "Risks: HIGH");
+
+        post(
+                "/api/v1/runs/" + runId + "/interactions/"
+                        + interaction.path("id").asText() + "/response",
+                interaction.path("revision").asLong(),
+                """
+                {"action":"approve","text":null}
+        """);
+        JsonNode completed = awaitTerminal(runId);
+        JsonNode activities = get("/api/v1/runs/" + runId + "/activities");
+        assertThat(completed.path("status").asText())
+                .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
+                .isEqualTo("COMPLETED");
+        assertThat(activities.toString()).contains("execution_run", "COMMAND", "读取当前 PowerShell 版本");
+        assertThat(java.util.stream.StreamSupport.stream(activities.spliterator(), false)
+                        .toList())
+                .anySatisfy(activity -> assertThat(
+                                activity.path("safeResultSummary").asText())
+                        .matches("\\d+\\.\\d+(?:\\.\\d+){0,2}\\s*"));
     }
 
     @Test

@@ -92,4 +92,66 @@ describe("appReducer", () => {
     expect(result.streamSequence).toBe(0);
     expect(result.streamDraft).toBe("");
   });
+
+  it("keeps the streamed answer visible when the run becomes terminal", () => {
+    const running: Run = {
+      id: "run-live",
+      conversationId: "conversation-1",
+      status: "RUNNING",
+      version: 1,
+      updatedAt: "2026-07-28T00:00:00Z",
+      usage,
+    };
+    const completed = { ...running, status: "COMPLETED", version: 2 };
+    const state = {
+      ...initialState,
+      run: running,
+      streamDraft: "Complete streamed answer",
+    };
+
+    const result = appReducer(state, { type: "runLoaded", run: completed });
+
+    expect(result.streamDraft).toBe("Complete streamed answer");
+  });
+
+  it("atomically replaces the streamed answer with its committed assistant turn", () => {
+    const completed: Run = {
+      id: "run-live",
+      conversationId: "conversation-1",
+      status: "COMPLETED",
+      version: 2,
+      updatedAt: "2026-07-28T00:00:00Z",
+      usage,
+    };
+    const state = {
+      ...initialState,
+      run: completed,
+      streamDraft: "Complete streamed answer",
+    };
+
+    const result = appReducer(state, {
+      type: "turnsLoaded",
+      turns: [
+        {
+          id: "turn-user",
+          role: "USER",
+          runId: completed.id,
+          sequence: 1,
+          text: "Question",
+          createdAt: "2026-07-28T00:00:00Z",
+        },
+        {
+          id: "turn-assistant",
+          role: "ASSISTANT",
+          runId: completed.id,
+          sequence: 2,
+          text: "Complete committed answer",
+          createdAt: "2026-07-28T00:00:01Z",
+        },
+      ],
+    });
+
+    expect(result.streamDraft).toBe("");
+    expect(result.turns.at(-1)?.text).toBe("Complete committed answer");
+  });
 });

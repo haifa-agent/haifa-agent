@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Activity,
   Bootstrap,
@@ -10,7 +10,10 @@ import type {
   Run,
   Turn,
 } from "./api/generated";
-import type { PersonalAssistantClient } from "./api/client";
+import {
+  PersonalAssistantApiError,
+  type PersonalAssistantClient,
+} from "./api/client";
 import App from "./App";
 
 const conversation: Conversation = {
@@ -131,6 +134,10 @@ function client(): PersonalAssistantClient {
 }
 
 describe("Personal Assistant application", () => {
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
   it("renders authoritative run usage and safe activity", async () => {
     render(<App client={client()} />);
     expect(await screen.findByText("每日计划")).toBeTruthy();
@@ -141,6 +148,88 @@ describe("Personal Assistant application", () => {
     expect(usage.textContent).toContain("41,343");
     expect(screen.queryByText("Follow-up")).toBeNull();
     expect(screen.queryByText("Steer")).toBeNull();
+  });
+
+  it("restores the conversation selected by the URL on refresh", async () => {
+    const requested = {
+      ...conversation,
+      id: "conversation-2",
+      displayName: "URL selected conversation",
+    };
+    window.history.replaceState(null, "", `/?conversationId=${requested.id}`);
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([conversation, requested]);
+    vi.mocked(api.conversation).mockImplementation(async (id) =>
+      id === requested.id ? requested : conversation,
+    );
+    vi.mocked(api.turns).mockResolvedValue([]);
+
+    render(<App client={api} />);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: requested.displayName }),
+    ).toBeTruthy();
+    expect(api.conversation).toHaveBeenCalledWith(requested.id, expect.any(AbortSignal));
+    expect(new URL(window.location.href).searchParams.get("conversationId")).toBe(
+      requested.id,
+    );
+  });
+
+  it("writes an explicitly selected conversation to browser history", async () => {
+    const second = {
+      ...conversation,
+      id: "conversation-2",
+      displayName: "Second conversation",
+    };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([conversation, second]);
+    vi.mocked(api.conversation).mockImplementation(async (id) =>
+      id === second.id ? second : conversation,
+    );
+
+    render(<App client={api} />);
+    await screen.findByRole("heading", { level: 1, name: conversation.displayName });
+
+    fireEvent.click(screen.getByText(second.displayName).closest("button")!);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: second.displayName }),
+    ).toBeTruthy();
+    expect(new URL(window.location.href).searchParams.get("conversationId")).toBe(
+      second.id,
+    );
+  });
+
+  it("keeps a running conversation usable when an optional activity snapshot is invalid", async () => {
+    const active = { ...conversation, activeRunId: "run-active" };
+    const activeRun = { ...run, id: "run-active", status: "RUNNING" };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(activeRun);
+    vi.mocked(api.activities).mockRejectedValue(
+      new PersonalAssistantApiError(
+        400,
+        "INVALID_REQUEST",
+        "The request is invalid.",
+        "refresh-correlation",
+      ),
+    );
+    vi.mocked(api.streamRun).mockImplementation(async (_runId, handlers, signal) => {
+      handlers.onOpen?.();
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+
+    render(<App client={api} />);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: active.displayName }),
+    ).toBeTruthy();
+    await waitFor(() => expect(api.activities).toHaveBeenCalledWith(activeRun.id, expect.any(AbortSignal)));
+    expect(screen.queryByText(/INVALID_REQUEST/)).toBeNull();
+    expect(screen.getByPlaceholderText("当前任务运行中")).toBeTruthy();
   });
 
   it("renders Markdown and LaTeX in conversation turns", async () => {
@@ -274,6 +363,10 @@ describe("Personal Assistant application", () => {
       runId: "run-live",
       text: "Final committed assistant answer",
     };
+    let resolveCommittedTurns!: (value: Turn[]) => void;
+    const committedTurns = new Promise<Turn[]>((resolve) => {
+      resolveCommittedTurns = resolve;
+    });
     const api = client();
     vi.mocked(api.conversations)
       .mockResolvedValueOnce([activeConversation])
@@ -283,12 +376,20 @@ describe("Personal Assistant application", () => {
       .mockResolvedValue(settledConversation);
     vi.mocked(api.turns)
       .mockResolvedValueOnce([userTurn])
-      .mockResolvedValue([userTurn, assistantTurn]);
+      .mockReturnValue(committedTurns);
     vi.mocked(api.run)
       .mockResolvedValueOnce(runningRun)
       .mockResolvedValue(completedRun);
     vi.mocked(api.streamRun).mockImplementation(async (_runId, handlers) => {
       handlers.onOpen?.();
+      handlers.onEvent({
+        eventId: "event-answer",
+        type: "answer.delta",
+        runId: "run-live",
+        occurredAt: "2026-07-28T01:00:00Z",
+        value: "Complete streamed assistant answer",
+        sequence: 9,
+      });
       handlers.onEvent({
         eventId: "event-final",
         type: "run.status",
@@ -301,7 +402,14 @@ describe("Personal Assistant application", () => {
 
     render(<App client={api} />);
 
+    expect(await screen.findByText("Complete streamed assistant answer")).toBeTruthy();
+    await waitFor(() => expect(api.turns).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Complete streamed assistant answer")).toBeTruthy();
+
+    await act(async () => resolveCommittedTurns([userTurn, assistantTurn]));
+
     expect(await screen.findByText("Final committed assistant answer")).toBeTruthy();
+    expect(screen.queryByText("Complete streamed assistant answer")).toBeNull();
     expect(api.conversation).toHaveBeenCalledTimes(2);
   });
 });

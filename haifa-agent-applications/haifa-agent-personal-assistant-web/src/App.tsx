@@ -42,6 +42,7 @@ import { renderMarkdown } from "./utils/markdownRenderer";
 
 const defaultClient = new HttpPersonalAssistantClient();
 const terminalStatuses = new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"]);
+const conversationIdParameter = "conversationId";
 const number = new Intl.NumberFormat("zh-CN");
 const dateTime = new Intl.DateTimeFormat("zh-CN", {
   month: "numeric",
@@ -60,6 +61,22 @@ function safeError(error: unknown): string {
 
 function isTerminal(run: Run | null): boolean {
   return Boolean(run && terminalStatuses.has(run.status));
+}
+
+function conversationIdFromUrl(): string | null {
+  const value = new URL(window.location.href).searchParams.get(conversationIdParameter)?.trim();
+  return value || null;
+}
+
+function updateConversationUrl(conversationId: string | null, mode: "push" | "replace"): void {
+  const url = new URL(window.location.href);
+  if (conversationId) url.searchParams.set(conversationIdParameter, conversationId);
+  else url.searchParams.delete(conversationIdParameter);
+  window.history[mode === "push" ? "pushState" : "replaceState"](
+    { conversationId },
+    "",
+    url,
+  );
 }
 
 function MessageContent({ text }: { text: string }) {
@@ -431,7 +448,10 @@ function TextPromptDialog({
 }
 
 export default function App({ client = defaultClient }: { client?: PersonalAssistantClient }) {
-  const [state, dispatch] = useReducer(appReducer, initialState);
+  const [state, dispatch] = useReducer(appReducer, initialState, (value) => ({
+    ...value,
+    selectedConversationId: conversationIdFromUrl(),
+  }));
   const previousFocus = useRef<HTMLElement | null>(null);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
   const [reasonTarget, setReasonTarget] = useState<
@@ -450,16 +470,28 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   }, [client]);
 
   const loadRunSnapshot = useCallback(async (runId: string, signal?: AbortSignal) => {
-    const [run, activities, interaction] = await Promise.all([
-      client.run(runId, signal),
+    const run = await client.run(runId, signal);
+    dispatch({ type: "runLoaded", run });
+    const [activities, interaction] = await Promise.allSettled([
       client.activities(runId, signal),
       client.interaction(runId, signal),
     ]);
-    dispatch({ type: "runLoaded", run });
-    dispatch({ type: "activitiesLoaded", activities });
-    dispatch({ type: "interactionLoaded", interaction });
+    if (activities.status === "fulfilled") {
+      dispatch({ type: "activitiesLoaded", activities: activities.value });
+    }
+    if (interaction.status === "fulfilled") {
+      dispatch({ type: "interactionLoaded", interaction: interaction.value });
+    }
     return run;
   }, [client]);
+
+  const selectConversation = useCallback(
+    (conversationId: string | null, mode: "push" | "replace" = "push") => {
+      updateConversationUrl(conversationId, mode);
+      dispatch({ type: "selectConversation", conversationId });
+    },
+    [],
+  );
 
   const loadConversation = useCallback(async (conversationId: string, signal?: AbortSignal) => {
     const [conversation, turns] = await Promise.all([
@@ -496,6 +528,27 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     });
     return () => controller.abort();
   }, [client]);
+
+  useEffect(() => {
+    if (state.loading || conversationIdFromUrl() === state.selectedConversationId) return;
+    updateConversationUrl(state.selectedConversationId, "replace");
+  }, [state.loading, state.selectedConversationId]);
+
+  useEffect(() => {
+    const restoreConversationFromUrl = () => {
+      const requested = conversationIdFromUrl();
+      const selected =
+        requested === null
+          ? null
+          : state.conversations.some((conversation) => conversation.id === requested)
+            ? requested
+            : (state.conversations.find((conversation) => conversation.status !== "ARCHIVED")?.id ??
+              null);
+      dispatch({ type: "selectConversation", conversationId: selected });
+    };
+    window.addEventListener("popstate", restoreConversationFromUrl);
+    return () => window.removeEventListener("popstate", restoreConversationFromUrl);
+  }, [state.conversations]);
 
   useEffect(() => {
     if (!state.selectedConversationId) return;
@@ -580,7 +633,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         : await client.createConversation(message.slice(0, 32), message, { idempotencyKey: key });
       dispatch({ type: "setComposer", value: "" });
       if (state.selectedConversationId !== conversation.id) {
-        dispatch({ type: "selectConversation", conversationId: conversation.id });
+        selectConversation(conversation.id, "replace");
       } else {
         dispatch({ type: "conversationLoaded", conversation });
         await loadConversation(conversation.id);
@@ -606,7 +659,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       await client.updateConversation(conversation, { status }, { idempotencyKey: key });
       const conversations = await loadConversations();
       if (conversation.id === state.selectedConversationId && status === "ARCHIVED") {
-        dispatch({ type: "selectConversation", conversationId: conversations.find((value) => value.status !== "ARCHIVED")?.id ?? null });
+        selectConversation(
+          conversations.find((value) => value.status !== "ARCHIVED")?.id ?? null,
+          "replace",
+        );
       }
     });
   };
@@ -681,8 +737,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           showArchived={state.showArchived}
           open={state.sidebarOpen}
           onSearch={(value) => dispatch({ type: "setSearch", value })}
-          onSelect={(conversationId) => dispatch({ type: "selectConversation", conversationId })}
-          onNew={() => dispatch({ type: "selectConversation", conversationId: null })}
+          onSelect={(conversationId) => selectConversation(conversationId)}
+          onNew={() => selectConversation(null)}
           onToggleArchived={() => dispatch({ type: "toggleArchived" })}
           onRename={setRenameTarget}
           onArchive={archive}

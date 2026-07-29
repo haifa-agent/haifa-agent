@@ -102,8 +102,21 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         ),
       };
     }
-    case "turnsLoaded":
-      return { ...state, turns: [...action.turns].sort((a, b) => a.sequence - b.sequence) };
+    case "turnsLoaded": {
+      const turns = [...action.turns].sort((a, b) => a.sequence - b.sequence);
+      const streamCommitted = Boolean(
+        state.run &&
+          turns.some(
+            (turn) =>
+              turn.runId === state.run?.id && turn.role.toLowerCase() === "assistant",
+          ),
+      );
+      return {
+        ...state,
+        turns,
+        streamDraft: streamCommitted ? "" : state.streamDraft,
+      };
+    }
     case "runLoaded": {
       const next = newestRun(state.run, action.run);
       const changed = Boolean(next && state.run && next.id !== state.run.id);
@@ -114,11 +127,9 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         interaction: changed ? null : state.interaction,
         streamSequence: changed ? 0 : state.streamSequence,
         streamDraft:
-          action.run && !["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"].includes(action.run.status)
-            ? changed
-              ? ""
-              : state.streamDraft
-            : "",
+          !next || changed || ["FAILED", "CANCELLED", "TIMEOUT"].includes(next.status)
+            ? ""
+            : state.streamDraft,
       };
     }
     case "activitiesLoaded":

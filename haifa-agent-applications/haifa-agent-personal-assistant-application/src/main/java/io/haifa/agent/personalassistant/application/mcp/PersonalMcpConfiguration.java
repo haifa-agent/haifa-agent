@@ -12,8 +12,8 @@ public record PersonalMcpConfiguration(
         serverId = text(serverId, "serverId");
         displayName = text(displayName, "displayName");
         allowedTools = Set.copyOf(Objects.requireNonNull(allowedTools, "allowedTools"));
-        if (allowedTools.isEmpty() || allowedTools.size() > 16) {
-            throw new IllegalArgumentException("allowedTools must contain 1 to 16 entries");
+        if (allowedTools.isEmpty() || allowedTools.size() > 32) {
+            throw new IllegalArgumentException("allowedTools must contain 1 to 32 entries");
         }
         if (allowedTools.stream().anyMatch(tool -> !tool.matches("[a-z][a-z0-9_]{0,63}"))) {
             throw new IllegalArgumentException("allowedTools contains an invalid MCP Tool name");
