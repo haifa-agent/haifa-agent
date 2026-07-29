@@ -56,9 +56,9 @@ public final class ExecutionToolSchemaValidator implements ToolSchemaValidator {
     @Override
     public ToolSchemaValidationResult validate(ToolSchema schema, Map<String, Object> instance) {
         ToolSchemaValidationResult base = delegate.validate(schema, instance);
-        if (!base.valid() || !INPUT_SCHEMA_ID.equals(schema.id())) return base;
+        if (!INPUT_SCHEMA_ID.equals(schema.id())) return base;
 
-        List<ToolSchemaValidationError> errors = new ArrayList<>();
+        List<ToolSchemaValidationError> errors = new ArrayList<>(base.errors());
         String mode = instance.get("mode") instanceof String value ? value.toUpperCase(Locale.ROOT) : "";
         if ("COMMAND".equals(mode)) {
             if (instance.containsKey("language")) {

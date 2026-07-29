@@ -103,41 +103,50 @@ public final class FrozenModelInvoker {
                 }
                 return ModelStreamControl.CONTINUE;
             });
-            output.committed(run.id(), callId.value(), attempt, iteration);
+            var decision = responses.map(request, response, binding.tools());
+            return new ModelInvocationResult(
+                    decision,
+                    response.usage().inputTokens(),
+                    response.usage().outputTokens(),
+                    response.usage().costKnown(),
+                    response.usage().costMinorUnits(),
+                    Map.ofEntries(
+                            Map.entry(
+                                    "providerId",
+                                    binding.configuration().model().providerId().value()),
+                            Map.entry(
+                                    "providerVersion",
+                                    binding.configuration().model().providerVersion()),
+                            Map.entry(
+                                    "modelId",
+                                    binding.configuration().model().modelId().value()),
+                            Map.entry(
+                                    "modelVersion",
+                                    binding.configuration().model().modelVersion()),
+                            Map.entry(
+                                    "adapterVersion",
+                                    binding.configuration().model().adapterVersion()),
+                            Map.entry("modelCallId", callId.value()),
+                            Map.entry("responseId", response.responseId()),
+                            Map.entry("finishReason", response.finishReason().name()),
+                            Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
+                            Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
+                            Map.entry("reasoningTokens", response.usage().reasoningTokens())),
+                    callId.value(),
+                    attempt,
+                    binding.configuration().model(),
+                    response.reasoning());
         } catch (RuntimeException exception) {
             output.failed(run.id(), callId.value(), attempt, iteration);
             throw exception;
         }
-        var decision = responses.map(request, response, binding.tools());
-        return new ModelInvocationResult(
-                decision,
-                response.usage().inputTokens(),
-                response.usage().outputTokens(),
-                response.usage().costKnown(),
-                response.usage().costMinorUnits(),
-                Map.ofEntries(
-                        Map.entry(
-                                "providerId",
-                                binding.configuration().model().providerId().value()),
-                        Map.entry(
-                                "providerVersion",
-                                binding.configuration().model().providerVersion()),
-                        Map.entry(
-                                "modelId",
-                                binding.configuration().model().modelId().value()),
-                        Map.entry(
-                                "modelVersion", binding.configuration().model().modelVersion()),
-                        Map.entry(
-                                "adapterVersion",
-                                binding.configuration().model().adapterVersion()),
-                        Map.entry("modelCallId", callId.value()),
-                        Map.entry("responseId", response.responseId()),
-                        Map.entry("finishReason", response.finishReason().name()),
-                        Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
-                        Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
-                        Map.entry("reasoningTokens", response.usage().reasoningTokens())),
-                callId.value(),
-                binding.configuration().model(),
-                response.reasoning());
+    }
+
+    public void committed(AgentRun run, ModelInvocationResult invocation, int iteration) {
+        output.committed(run.id(), invocation.modelCallId(), invocation.physicalAttempt(), iteration);
+    }
+
+    public void failed(AgentRun run, ModelInvocationResult invocation, int iteration) {
+        output.failed(run.id(), invocation.modelCallId(), invocation.physicalAttempt(), iteration);
     }
 }

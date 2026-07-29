@@ -2,6 +2,7 @@ package io.haifa.agent.personalassistant.server.web.v1.controller;
 
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.personalassistant.server.observability.PersonalRunLoggingService;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
 import io.haifa.agent.sdk.conversation.ConversationStatus;
@@ -27,14 +28,17 @@ public final class PersonalAssistantController {
     private final PersonalAssistantApplication application;
     private final PersonalApiMapper mapper;
     private final PersonalAssistantProperties properties;
+    private final PersonalRunLoggingService runLogging;
 
     public PersonalAssistantController(
             PersonalAssistantApplication application,
             PersonalApiMapper mapper,
-            PersonalAssistantProperties properties) {
+            PersonalAssistantProperties properties,
+            PersonalRunLoggingService runLogging) {
         this.application = application;
         this.mapper = mapper;
         this.properties = properties;
+        this.runLogging = runLogging;
     }
 
     @GetMapping("/bootstrap")
@@ -75,6 +79,7 @@ public final class PersonalAssistantController {
             @RequestBody PersonalApiDtos.CreateConversation request) {
         var value = mapper.conversation(application.start(
                 key(idempotencyKey), text(request.displayName(), "displayName"), text(request.message(), "message")));
+        value.activeRunId().ifPresent(runId -> runLogging.observe(value.id(), runId, "conversation-created"));
         return ResponseEntity.created(URI.create("/api/v1/conversations/" + value.id()))
                 .eTag(Long.toString(value.revision()))
                 .body(value);
@@ -126,6 +131,7 @@ public final class PersonalAssistantController {
             @RequestBody PersonalApiDtos.SubmitMessage request) {
         var body = mapper.conversation(application.submit(
                 conversationId, revision(ifMatch), key(idempotencyKey), text(request.message(), "message")));
+        body.activeRunId().ifPresent(runId -> runLogging.observe(body.id(), runId, "message-submitted"));
         return ResponseEntity.accepted().eTag(Long.toString(body.revision())).body(body);
     }
 

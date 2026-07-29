@@ -4,7 +4,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import java.time.Instant;
 import java.util.Objects;
 
-/** Safe public projection of incremental assistant output. */
+/** Safe, transient public projection of incremental assistant output. */
 public record AgentRunOutputEvent(
         AgentRunId runId,
         String modelCallId,

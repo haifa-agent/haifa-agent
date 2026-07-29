@@ -26,6 +26,7 @@ public class PersonalAssistantCorsConfiguration {
 
         var source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", configuration);
+        source.registerCorsConfiguration("/v1/admin/**", configuration);
         return new CorsWebFilter(source);
     }
 }

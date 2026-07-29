@@ -16,6 +16,7 @@ public record ModelInvocationResult(
         long costMinorUnits,
         Map<String, Object> metadata,
         String modelCallId,
+        int physicalAttempt,
         ResolvedModelSnapshot model,
         Optional<SensitiveModelReasoning> reasoning) {
     public ModelInvocationResult {
@@ -28,6 +29,7 @@ public record ModelInvocationResult(
         }
         metadata = Map.copyOf(Objects.requireNonNull(metadata, "metadata must not be null"));
         modelCallId = Objects.requireNonNull(modelCallId, "modelCallId must not be null");
+        if (physicalAttempt < 1) throw new IllegalArgumentException("physicalAttempt must be positive");
         model = Objects.requireNonNull(model, "model must not be null");
         reasoning = Objects.requireNonNull(reasoning, "reasoning must not be null");
     }

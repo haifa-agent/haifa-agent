@@ -3,6 +3,8 @@ package io.haifa.agent.sdk.api;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunHandle;
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRunViewSnapshot;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
@@ -11,7 +13,10 @@ import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventSubscription;
+import io.haifa.agent.runtime.api.RunOutputCursor;
+import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -52,6 +57,25 @@ public final class AgentRuns {
 
     public RunEventSubscription subscribe(AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
         return runtime.subscribe(
+                Objects.requireNonNull(runId, "runId must not be null"),
+                Objects.requireNonNull(after, "after must not be null"),
+                Objects.requireNonNull(listener, "listener must not be null"));
+    }
+
+    /**
+     * Reads the bounded transient output buffer for an active Run. It is not durable replay.
+     */
+    public List<AgentRunOutputEvent> outputEvents(AgentRunId runId, RunOutputCursor after, int limit) {
+        return runtime.outputEvents(
+                Objects.requireNonNull(runId, "runId must not be null"),
+                Objects.requireNonNull(after, "after must not be null"),
+                limit);
+    }
+
+    /** Replays buffered transient output and then tails one active Run until closed. */
+    public RunOutputSubscription subscribeOutput(
+            AgentRunId runId, RunOutputCursor after, AgentRunOutputListener listener) {
+        return runtime.subscribeOutput(
                 Objects.requireNonNull(runId, "runId must not be null"),
                 Objects.requireNonNull(after, "after must not be null"),
                 Objects.requireNonNull(listener, "listener must not be null"));

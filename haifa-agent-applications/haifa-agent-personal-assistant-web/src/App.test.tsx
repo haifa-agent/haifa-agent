@@ -148,6 +148,8 @@ describe("Personal Assistant application", () => {
     expect(usage.textContent).toContain("41,343");
     expect(screen.queryByText("Follow-up")).toBeNull();
     expect(screen.queryByText("Steer")).toBeNull();
+    expect(screen.queryByText("Run Diagnostics")).toBeNull();
+    expect(screen.queryByText("运行诊断")).toBeNull();
   });
 
   it("restores the conversation selected by the URL on refresh", async () => {
@@ -339,6 +341,7 @@ describe("Personal Assistant application", () => {
         runId: waiting.id,
         occurredAt: "2026-07-28T01:00:01Z",
         value: "WAITING_APPROVAL",
+        source: "durable",
         sequence: 1,
       });
       await new Promise<void>((resolve) =>
@@ -388,6 +391,7 @@ describe("Personal Assistant application", () => {
         runId: "run-live",
         occurredAt: "2026-07-28T01:00:00Z",
         value: "Complete streamed assistant answer",
+        source: "transient",
         sequence: 9,
       });
       handlers.onEvent({
@@ -396,6 +400,7 @@ describe("Personal Assistant application", () => {
         runId: "run-live",
         occurredAt: "2026-07-28T01:00:01Z",
         value: "COMPLETED",
+        source: "durable",
         sequence: 10,
       });
     });

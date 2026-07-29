@@ -31,6 +31,8 @@ import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelStreamEvent;
+import io.haifa.agent.model.api.ModelStreamSink;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.policy.api.ApprovalMode;
@@ -82,6 +84,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Duration;
@@ -108,6 +112,67 @@ class SqliteRuntimeRecoveryTest {
 
     @TempDir
     Path directory;
+
+    @Test
+    void streamsDeltasInProcessButPersistsOnlyOneCompleteAssistantMessage() throws Exception {
+        AgentChatModel streaming = new AgentChatModel() {
+            @Override
+            public AgentChatResponse invoke(AgentChatRequest request) {
+                return finalResponse("alpha beta");
+            }
+
+            @Override
+            public AgentChatResponse invokeStreaming(AgentChatRequest request, ModelStreamSink sink) {
+                sink.emit(new ModelStreamEvent.ContentDelta(request.callId(), 1, "alpha"));
+                sink.emit(new ModelStreamEvent.ContentDelta(request.callId(), 2, " "));
+                sink.emit(new ModelStreamEvent.ContentDelta(request.callId(), 3, "beta"));
+                return invoke(request);
+            }
+        };
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = runtime(foundation, streaming, "stream-worker", new TestIds("stream"));
+            AgentRunId runId =
+                    instance.runtime().start(request("transient-stream")).runId();
+            List<String> deltas = new java.util.concurrent.CopyOnWriteArrayList<>();
+            List<io.haifa.agent.runtime.api.AgentRunOutputEventType> outputTypes =
+                    new java.util.concurrent.CopyOnWriteArrayList<>();
+            var subscription = instance.runtime()
+                    .subscribeOutput(runId, io.haifa.agent.runtime.api.RunOutputCursor.BEFORE_FIRST, event -> {
+                        outputTypes.add(event.type());
+                        if (event.type() == io.haifa.agent.runtime.api.AgentRunOutputEventType.ASSISTANT_TEXT_DELTA) {
+                            deltas.add(event.textDelta());
+                        }
+                    });
+
+            instance.scheduler().runAll();
+
+            assertThat(deltas).containsExactly("alpha", " ", "beta");
+            assertThat(outputTypes)
+                    .endsWith(io.haifa.agent.runtime.api.AgentRunOutputEventType.ASSISTANT_TEXT_COMMITTED);
+            assertThat(subscription.closed()).isTrue();
+            assertThat(instance.ports().state().messages(runId))
+                    .filteredOn(message -> message.role() == io.haifa.agent.core.message.MessageRole.ASSISTANT)
+                    .singleElement()
+                    .satisfies(
+                            message -> assertThat(message.contents().toString()).contains("alpha beta"));
+            try (Connection connection = DriverManager.getConnection(
+                    "jdbc:sqlite:" + directory.resolve("runtime.db").toAbsolutePath())) {
+                assertThat(countWhere(
+                                connection,
+                                "SELECT COUNT(*) FROM runtime_event "
+                                        + "WHERE type = 'model.output.assistant_text_delta'"))
+                        .isZero();
+                assertThat(countWhere(
+                                connection, "SELECT COUNT(*) FROM runtime_event WHERE type LIKE 'model.output.%'"))
+                        .isZero();
+                assertThat(countWhere(
+                                connection,
+                                "SELECT COUNT(*) FROM session_message " + "WHERE run_id = ? AND role = 'ASSISTANT'",
+                                runId.value()))
+                        .isOne();
+            }
+        }
+    }
 
     @Test
     void rollsBackRunEventOutboxAndDefersListenerWhenOuterStartUnitFails() throws Exception {
@@ -926,6 +991,18 @@ class SqliteRuntimeRecoveryTest {
                 ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
             assertThat(result.next()).isTrue();
             return result.getLong(1);
+        }
+    }
+
+    private static long countWhere(Connection connection, String sql, String... parameters) throws Exception {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (int index = 0; index < parameters.length; index++) {
+                statement.setString(index + 1, parameters[index]);
+            }
+            try (ResultSet result = statement.executeQuery()) {
+                assertThat(result.next()).isTrue();
+                return result.getLong(1);
+            }
         }
     }
 

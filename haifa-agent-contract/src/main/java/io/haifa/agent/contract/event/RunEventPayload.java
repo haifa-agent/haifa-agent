@@ -28,6 +28,13 @@ public sealed interface RunEventPayload
         }
     }
 
+    /**
+     * Legacy wire payload retained for compatibility with old durable event producers.
+     *
+     * @deprecated current Runtime implementations do not publish Assistant deltas through the
+     *     durable Run Event Feed
+     */
+    @Deprecated(forRemoval = true)
     record AssistantTextDelta(String generationId, String textDelta) implements RunEventPayload {
         public AssistantTextDelta {
             generationId = require(generationId, "generationId", 256);

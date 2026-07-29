@@ -205,3 +205,11 @@ key，并在所有重启间保持不变。
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-coding-agent,:haifa-agent-coding-terminal,:haifa-agent-cli -am test
 ```
+
+## Assistant streaming boundary
+
+Assistant deltas are consumed through the closeable, Run-scoped transient output subscription.
+They are bounded in memory and are not part of the durable Run Event Feed, SQLite journal, JSONL
+projection, checkpoint, or cross-process replay contract. Durable Tool, Interaction and Run
+lifecycle events continue to use the Run Event Feed. After a completed Run is reopened, the
+authoritative Assistant text comes from the persisted Session messages.

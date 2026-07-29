@@ -45,12 +45,52 @@ describe("appReducer", () => {
       occurredAt: "2026-07-28T00:00:00Z",
       value: "SUCCEEDED",
       activity,
+      source: "durable",
       sequence: 5,
     };
     const once = appReducer(initialState, { type: "streamEvent", event });
     const twice = appReducer(once, { type: "streamEvent", event });
     expect(twice.activities).toHaveLength(1);
-    expect(twice.streamSequence).toBe(5);
+    expect(twice.streamSequences.durable).toBe(5);
+  });
+
+  it("deduplicates each stream source independently and resets a failed generation draft", () => {
+    const transient = (type: string, value: string, sequence: number): StreamEvent => ({
+      eventId: `transient-${sequence}`,
+      type,
+      runId: "run-1",
+      occurredAt: "2026-07-28T00:00:00Z",
+      value,
+      source: "transient",
+      sequence,
+    });
+    const durable: StreamEvent = {
+      eventId: "durable-1",
+      type: "run.status",
+      runId: "run-1",
+      occurredAt: "2026-07-28T00:00:00Z",
+      value: "RUNNING",
+      source: "durable",
+      sequence: 1,
+    };
+
+    const first = appReducer(initialState, {
+      type: "streamEvent",
+      event: transient("answer.delta", "failed draft", 1),
+    });
+    const failed = appReducer(first, {
+      type: "streamEvent",
+      event: transient("answer.failed", "generation-1", 2),
+    });
+    const durableAfterTransient = appReducer(failed, { type: "streamEvent", event: durable });
+    const retried = appReducer(durableAfterTransient, {
+      type: "streamEvent",
+      event: transient("answer.delta", "clean retry", 3),
+    });
+
+    expect(failed.streamDraft).toBe("");
+    expect(retried.streamDraft).toBe("clean retry");
+    expect(retried.streamSequences).toEqual({ durable: 1, transient: 3 });
   });
 
   it("clears current-run projections when a new run is selected", () => {
@@ -84,12 +124,12 @@ describe("appReducer", () => {
           version: 3,
         },
       ],
-      streamSequence: 9,
+      streamSequences: { durable: 4, transient: 9 },
       streamDraft: "old",
     };
     const result = appReducer(state, { type: "runLoaded", run: nextRun });
     expect(result.activities).toEqual([]);
-    expect(result.streamSequence).toBe(0);
+    expect(result.streamSequences).toEqual({ durable: 0, transient: 0 });
     expect(result.streamDraft).toBe("");
   });
 

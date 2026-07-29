@@ -3,14 +3,20 @@ package io.haifa.agent.personalassistant.server;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.server.admin.PersonalAdminQueryService;
+import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
+import io.haifa.agent.store.sqlite.SqliteStoreFoundation;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
@@ -42,6 +48,69 @@ class PersonalAssistantRestartTest {
                 assertThat(activity.kind()).isEqualTo(PersonalAssistantApplication.ActivityKind.MCP);
                 assertThat(activity.status()).isEqualTo("SUCCEEDED");
             });
+        }
+    }
+
+    @Test
+    void adminAggregatesLegacyDeltasWithoutHidingLaterFailureEvents() throws Exception {
+        Path data = Files.createTempDirectory("haifa-personal-admin-legacy-");
+        String conversationId;
+        String runId;
+        try (ConfigurableApplicationContext context = start(data, freePort(22601))) {
+            PersonalAssistantApplication application = context.getBean(PersonalAssistantApplication.class);
+            var conversation = application.start("admin-legacy-1", "Admin legacy", "complete once");
+            conversationId = conversation.id();
+            runId = conversation.activeRunId().orElseThrow();
+            assertThat(awaitTerminal(application, runId).status()).isEqualTo("COMPLETED");
+        }
+        Path database = data.resolve("personal-assistant.sqlite");
+        try (SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(
+                new SqliteStoreConfiguration(database, 1_250, 4 * 1024 * 1024), Clock.systemUTC())) {
+            for (int index = 0; index < 600; index++) {
+                foundation
+                        .events()
+                        .append(
+                                new AgentRunId(runId),
+                                "model.output.assistant_text_delta",
+                                Map.of(
+                                        "modelCallId", "legacy-call",
+                                        "generationId", "legacy-generation",
+                                        "physicalAttempt", 1,
+                                        "eventType", "ASSISTANT_TEXT_DELTA",
+                                        "textDelta", "x"),
+                                java.time.Instant.now());
+            }
+            foundation
+                    .events()
+                    .append(
+                            new AgentRunId(runId),
+                            "tool.failed",
+                            Map.of(
+                                    "toolCallId", "legacy-failure",
+                                    "toolName", "execution.run",
+                                    "status", "FAILED",
+                                    "reasonCode", "LEGACY_DIAGNOSTIC_FAILURE"),
+                            java.time.Instant.now());
+        }
+
+        try (ConfigurableApplicationContext context = start(data, freePort(22701))) {
+            PersonalAdminQueryService admin = context.getBean(PersonalAdminQueryService.class);
+            var trace = admin.trace(conversationId, runId).orElseThrow();
+
+            assertThat(trace.nodes())
+                    .filteredOn(node -> node.kind().equals("legacy_streaming_output"))
+                    .singleElement()
+                    .satisfies(node -> {
+                        assertThat(node.details()).containsEntry("deltaCount", 600L);
+                        assertThat(node.details()).containsEntry("characterCount", 600L);
+                        assertThat(node.details().get("aggregatedText")).isEqualTo("x".repeat(600));
+                    });
+            assertThat(trace.nodes()).anySatisfy(node -> {
+                assertThat(node.label()).isEqualTo("tool.failed");
+                assertThat(node.status()).contains("FAILED");
+            });
+            assertThat(trace.failureNodeId())
+                    .hasValueSatisfying(nodeId -> assertThat(nodeId).startsWith("event:"));
         }
     }
 

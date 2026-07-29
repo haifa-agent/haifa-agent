@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core;
 
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
@@ -54,6 +55,22 @@ final class TestToolPlatform {
             Map<String, Object> outputSchema,
             ToolHandler handler) {
         ToolDefinition definition = definition(name, version, inputSchemaId, false, outputSchema);
+        return install(builder, definition, ToolPolicyDecision.ALLOW, handler);
+    }
+
+    static RuntimeCoreBuilder installWithInputSchema(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            Map<String, Object> inputSchema,
+            ToolHandler handler) {
+        ToolDefinition definition = definition(name, version, inputSchemaId, false, inputSchema, objectSchema());
+        return install(builder, definition, ToolPolicyDecision.ALLOW, handler);
+    }
+
+    private static RuntimeCoreBuilder install(
+            RuntimeCoreBuilder builder, ToolDefinition definition, ToolPolicyDecision decision, ToolHandler handler) {
         ToolProvider provider = new ToolProvider() {
             @Override
             public ToolProviderId id() {
@@ -66,9 +83,9 @@ final class TestToolPlatform {
             }
         };
         var catalog = new ToolCatalogBuilder()
-                .register(new ToolAlias(name), definition, "runtime-test", provider)
+                .register(new ToolAlias(definition.name().value()), definition, "runtime-test", provider)
                 .freeze();
-        return builder.toolPolicy((run, binding, request) -> io.haifa.agent.runtime.core.tool.ToolPolicyDecision.ALLOW)
+        return builder.toolPolicy((run, binding, request) -> decision)
                 .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
     }
 
@@ -81,22 +98,7 @@ final class TestToolPlatform {
             io.haifa.agent.runtime.core.tool.ToolPolicyDecision decision,
             ToolHandler handler) {
         ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
-        ToolProvider provider = new ToolProvider() {
-            @Override
-            public ToolProviderId id() {
-                return PROVIDER_ID;
-            }
-
-            @Override
-            public ToolResult invoke(ToolInvocationRequest request) {
-                return handler.invoke(request);
-            }
-        };
-        var catalog = new ToolCatalogBuilder()
-                .register(new ToolAlias(name), definition, "runtime-test", provider)
-                .freeze();
-        return builder.toolPolicy((run, binding, request) -> decision)
-                .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator());
+        return install(builder, definition, decision, handler);
     }
 
     static FrozenToolBinding binding(String name, String version, String inputSchemaId, boolean sideEffecting) {
@@ -132,15 +134,23 @@ final class TestToolPlatform {
             String inputSchemaId,
             boolean sideEffecting,
             Map<String, Object> outputSchema) {
-        Map<String, Object> objectSchema =
-                Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
+        return definition(name, version, inputSchemaId, sideEffecting, objectSchema(), outputSchema);
+    }
+
+    private static ToolDefinition definition(
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            Map<String, Object> inputSchema,
+            Map<String, Object> outputSchema) {
         return new ToolDefinition(
                 new ToolName(name),
                 new SemanticVersion(version),
                 PROVIDER_ID,
                 name,
                 "Runtime test tool " + name,
-                new ToolSchema(inputSchemaId, "1.0", objectSchema),
+                new ToolSchema(inputSchemaId, "1.0", inputSchema),
                 new ToolSchema(name + ".output", "1.0", outputSchema),
                 ToolExecutionMode.IN_PROCESS,
                 true,
@@ -155,6 +165,10 @@ final class TestToolPlatform {
                 "test",
                 false,
                 Set.of("test"));
+    }
+
+    private static Map<String, Object> objectSchema() {
+        return Map.of("$schema", ToolSchema.DRAFT_2020_12, "type", "object", "additionalProperties", true);
     }
 
     @FunctionalInterface

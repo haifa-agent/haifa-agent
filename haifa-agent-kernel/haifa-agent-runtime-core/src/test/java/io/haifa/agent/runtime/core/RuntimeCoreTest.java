@@ -61,6 +61,7 @@ import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
+import io.haifa.agent.tool.api.ToolSchema;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -220,6 +221,57 @@ class RuntimeCoreTest {
         assertThat(fixture.store.toolCalls(accepted.runId()))
                 .allMatch(call -> call.status().name().equals("COMPLETED"))
                 .allMatch(call -> call.arguments().schemaId().equals("echo.input"));
+    }
+
+    @Test
+    void schemaRejectionReturnsAValueFreeRepairHintToTheModel() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> repairRequest = new AtomicReference<>();
+        ToolRequest invalid = toolRequest(
+                "invalid-mode", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of("mode", "COMMAND")));
+        AgentChatModel model = request -> {
+            if (modelCalls.getAndIncrement() == 0) {
+                return response(new ToolCallDecision(List.of(invalid)));
+            }
+            repairRequest.set(request);
+            return response(finalDecision("repaired"));
+        };
+        Map<String, Object> inputSchema = Map.of(
+                "$schema",
+                ToolSchema.DRAFT_2020_12,
+                "type",
+                "object",
+                "properties",
+                Map.of("mode", Map.of("type", "string", "enum", List.of("SCRIPT"))),
+                "required",
+                List.of("mode"),
+                "additionalProperties",
+                false);
+        Fixture fixture = fixture(
+                model,
+                builder -> TestToolPlatform.installWithInputSchema(
+                        builder,
+                        "echo",
+                        "1.0.0",
+                        "echo.input",
+                        inputSchema,
+                        request -> new ToolResult(true, "unexpected", Map.of(), List.of(), List.of(), false)));
+
+        var accepted = fixture.runtime.start(request("safe-schema-repair"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .singleElement()
+                .satisfies(call -> assertThat(call.status().name()).isEqualTo("CANCELLED"));
+        assertThat(repairRequest.get().messages())
+                .filteredOn(message -> message.role() == ModelMessageRole.TOOL)
+                .extracting(message -> message.content())
+                .singleElement()
+                .asString()
+                .contains("Repair the tool arguments", "$/mode", "allowed by the selected mode")
+                .doesNotContain("COMMAND");
     }
 
     @Test

@@ -4,6 +4,7 @@ import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
 import java.util.List;
@@ -22,6 +23,8 @@ public sealed interface TerminalUiAction {
     record ExportCompleted(String logicalPath, int messageCount) implements TerminalUiAction {}
 
     record RunEventReceived(AgentRunEvent event) implements TerminalUiAction {}
+
+    record RunOutputReceived(AgentRunOutputEvent event) implements TerminalUiAction {}
 
     record InteractionPresented(InteractionView interaction) implements TerminalUiAction {}
 

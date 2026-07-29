@@ -58,17 +58,13 @@ class RuntimeEventFeedTest {
         assertThat(first.hasMore()).isTrue();
 
         var second = feed.page(runId, first.nextCursor(), 10);
-        assertThat(second.items()).singleElement().satisfies(event -> {
-            assertThat(event.eventId()).isEqualTo(delta.eventId());
-            assertThat(event.eventType()).isEqualTo("assistant.text.delta");
-            assertThat(event.payload()).isEqualTo(new RunEventPayloads.AssistantTextDelta("generation", "hello"));
-        });
+        assertThat(second.items()).isEmpty();
         assertThat(second.nextCursor()).isEqualTo(second.headCursor());
         assertThat(second.hasMore()).isFalse();
     }
 
     @Test
-    void projectsWhitespaceOnlyAssistantDeltasWithoutPoisoningThePage() {
+    void filtersEveryLegacyAssistantDeltaWithoutPoisoningThePage() {
         InMemoryRuntimeStore store = storeWithRun("run");
         AgentRunId runId = new AgentRunId("run");
         store.append(
@@ -90,9 +86,8 @@ class RuntimeEventFeedTest {
 
         var page = feed.page(runId, RunEventCursor.beforeFirst(runId), 10);
 
-        assertThat(page.items())
-                .extracting(event -> ((RunEventPayloads.AssistantTextDelta) event.payload()).textDelta())
-                .containsExactly("Clamp.java", " ", "boundary");
+        assertThat(page.items()).isEmpty();
+        assertThat(page.nextCursor()).isEqualTo(page.headCursor());
         assertThat(page.hasMore()).isFalse();
     }
 

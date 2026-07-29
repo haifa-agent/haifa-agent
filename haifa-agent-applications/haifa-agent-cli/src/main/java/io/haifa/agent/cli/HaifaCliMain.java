@@ -52,10 +52,17 @@ public final class HaifaCliMain {
                 }
                 try (LocalCodingAgent agent =
                         LocalCodingAgent.createWithTrace(workspace, configuration, output, trace)) {
-                    AtomicBoolean streamed = attachStreamingOutput(agent.runtime()::addOutputListener, output);
+                    java.util.concurrent.atomic.AtomicReference<AgentRunOutputListener> outputListener =
+                            new java.util.concurrent.atomic.AtomicReference<>();
+                    AtomicBoolean streamed = attachStreamingOutput(outputListener::set, output);
                     if (parsed.verbose()) output.println("Submitting coding task in " + workspace.getFileName());
                     if (parsed.verbose()) output.println("DeepSeek thinking disabled. Waiting for stream...");
                     var accepted = agent.start(parsed.message().orElseThrow());
+                    var outputSubscription = agent.runtime()
+                            .subscribeOutput(
+                                    accepted.runId(),
+                                    io.haifa.agent.runtime.api.RunOutputCursor.BEFORE_FIRST,
+                                    outputListener.get());
                     if (parsed.verbose())
                         output.println("Run " + accepted.runId().value() + " submitted.");
                     Thread shutdownHook = Thread.ofPlatform()
@@ -67,6 +74,7 @@ public final class HaifaCliMain {
                         completed = await(
                                 agent, accepted.runId(), configuration.timeout(), configuration.approval(), output);
                     } finally {
+                        outputSubscription.close();
                         removeShutdownHook(shutdownHook);
                     }
                     if (!completed.status().isTerminal()) {

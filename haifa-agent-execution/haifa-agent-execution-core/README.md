@@ -29,6 +29,17 @@ Environment、Limits 或 Sandbox Profile 漂移会返回 `IDEMPOTENCY_CONFLICT`�
 
 ## Phase 3 shared execution Tool
 
+The model-visible input schema exposes two mutually exclusive branches on every operating system:
+
+- `COMMAND` sends complete shell text through the trusted host default shell and forbids `language` and `args`.
+- `SCRIPT` requires one configured `language` and permits optional `args`.
+
+The default trusted host shell is PowerShell on Windows and Bash or a POSIX shell on macOS/Linux. Script runtimes
+remain an explicit host allowlist (`powershell` on Windows, `bash` on macOS/Linux, plus configured optional
+runtimes). Runtime validation independently enforces the same contract before Policy or exact Approval. The
+PowerShell adapter fixes stdin, stdout, and native pipeline output to UTF-8 without a BOM so redirected output is
+decoded consistently by the bounded output store on Windows, macOS, and Linux.
+
 `ExecutionToolDefinitionFactory` 和 `ExecutionToolProvider` 把一次性命令/脚本执行作为平台级
 Tool 暴露，稳定名称为 `execution.run`，产品可提供 `execution_run` 等别名。它不是 Personal
 Assistant 专用实现，也没有新增 Maven 模块。

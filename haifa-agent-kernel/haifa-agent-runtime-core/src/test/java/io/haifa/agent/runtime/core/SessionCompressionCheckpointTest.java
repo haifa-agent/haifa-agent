@@ -148,6 +148,43 @@ class SessionCompressionCheckpointTest {
     }
 
     @Test
+    void nextRunOmitsIncompleteToolProtocolTurnFromSessionContext() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId session = new AgentSessionId("incomplete-tool-session");
+        store.appendSessionMessage(draft("m-user-before", session, "run-1", MessageRole.USER, "before"));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("m-orphan-tool-call"),
+                session,
+                Optional.of(new AgentRunId("run-1")),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(
+                        new ToolCallId("orphan-tool-call"),
+                        new ProviderToolCallCorrelationId("orphan-provider-call"),
+                        "execution_run",
+                        "2.0.0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(draft("m-user-after", session, "run-2", MessageRole.USER, "after"));
+
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(10, 10, 10),
+                () -> "unused-summary",
+                () -> NOW);
+
+        assertThat(source.compact(session).items())
+                .filteredOn(item -> item.content() instanceof MessageGroupContextContent)
+                .flatExtracting(item -> ((MessageGroupContextContent) item.content()).messages())
+                .extracting(AgentMessage::id)
+                .containsExactly(new AgentMessageId("m-user-before"), new AgentMessageId("m-user-after"));
+    }
+
+    @Test
     void manualCompactionKeepsOriginalMessagesAndSummarizesWholeToolTurn() {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         AgentSessionId session = new AgentSessionId("manual-compaction-session");

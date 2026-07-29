@@ -213,12 +213,22 @@ public final class SessionMessageSource {
                     .collect(java.util.stream.Collectors.toCollection(HashSet::new));
             int end = index;
             if (!calls.isEmpty()) {
+                Set<ToolCallId> results = new HashSet<>();
                 for (int candidate = index + 1; candidate < source.size(); candidate++) {
-                    boolean matchingResult = source.get(candidate).contents().stream()
+                    Set<ToolCallId> matchingResults = source.get(candidate).contents().stream()
                             .filter(ToolResultPart.class::isInstance)
                             .map(ToolResultPart.class::cast)
-                            .anyMatch(result -> calls.contains(result.toolCallId()));
-                    if (matchingResult) end = candidate;
+                            .map(ToolResultPart::toolCallId)
+                            .filter(calls::contains)
+                            .collect(java.util.stream.Collectors.toSet());
+                    if (!matchingResults.isEmpty()) {
+                        results.addAll(matchingResults);
+                        end = candidate;
+                    }
+                }
+                if (!results.containsAll(calls)) {
+                    index = end + 1;
+                    continue;
                 }
             }
             groups.add(List.copyOf(source.subList(index, end + 1)));

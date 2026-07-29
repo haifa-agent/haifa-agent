@@ -21,6 +21,21 @@ JAR 的构建或静态资源打包。
 生产代码没有 Mock Client、Fixture fallback、Follow-up/Steer、Preference 编辑、复杂进度投影或
 Deep Research 界面。
 
+## 本机 Run Diagnostics
+
+同一独立 Web 部署单元提供直接访问的 `/admin/` 子路径，用于按 Session 选择一次 Run，并以可折叠
+树查看冻结配置、Prompt/Message、Attempt、Step、Tool/MCP、Checkpoint、Interaction、Skill 和
+Runtime Event。失败 Run 会自动聚焦到持久事实中最后一个失败节点，右侧展示该节点的完整内容。
+
+Admin 是独立入口：普通 Personal Assistant 页面没有 Admin 链接、导航、按钮、capability 或 Client
+接口，两个页面按 URL 动态加载，普通页面不会加载 Admin 应用代码。Admin 只读调用
+`http://127.0.0.1:20001/v1/admin`，并明确展示完整 Prompt、Tool 参数、结果与错误，因此只能在受信
+本机环境中使用。需要覆盖地址时单独设置：
+
+```powershell
+$env:VITE_PERSONAL_ASSISTANT_ADMIN_API_BASE_URL='http://127.0.0.1:20001/v1/admin'
+```
+
 ## 契约
 
 事实链：
@@ -41,8 +56,11 @@ npm run contract:check
 
 `contract:check` 会拒绝过期 TypeScript DTO、错误端口、缺少幂等键的写接口和已延期操作。
 
-Run SSE 收到 `run.status`、`interaction.status` 或 `activity.committed` 时会立即重取对应权威
-Snapshot。因此审批卡片、执行活动和终态不依赖手工刷新；断线恢复仍以 HTTP Snapshot 为事实。
+Run SSE 的 durable 与 transient 事件分别去重：`answer.delta` 实时追加当前 Generation 草稿，
+`answer.failed`/`answer.superseded`/新 `answer.started` 会清除旧草稿，避免重试拼接；完整回复提交后由
+Turns 中的权威 `session_message` 替换草稿。客户端重连发送复合 `Last-Event-ID`，服务重启时只重置
+transient cursor。收到 `run.status`、`interaction.status` 或 `activity.committed` 时仍会立即重取权威
+Snapshot，因此审批卡片、执行活动和终态不依赖手工刷新。
 
 ## 本地开发
 
