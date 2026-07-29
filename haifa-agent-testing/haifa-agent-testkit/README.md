@@ -8,6 +8,10 @@ Clock/ID、Fake Provider 等能力。
 Runner 默认只生成计划。附加的 `runner` JAR 由私有 `test-config/scripts/` 调用；只有显式传入
 `--execute`、安全的仓库外运行根和所需 Secret 后，才会串行执行 Catalog 中的 Maven selector。
 
+`delivery` 包提供自主交付控制面的稳定 Case Catalog、Digest 校验、Python JSON Oracle Grader、
+私有 Suite Loader 与参数化 Harness。Harness 默认只打印计划；Campaign 初始化和 Gate 是显式
+子命令，运行根必须位于主仓、`docs/` 和 `test-config/` 之外，已有目录一律拒绝覆盖。
+
 约束：
 
 - 测试辅助行为必须确定、可重复且默认不访问外部服务；

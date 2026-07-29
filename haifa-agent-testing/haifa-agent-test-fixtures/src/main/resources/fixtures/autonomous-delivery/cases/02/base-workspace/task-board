@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+classes="$root/build/classes"
+mkdir -p "$classes"
+find "$root/src/main/java" -name '*.java' -print0 |
+  xargs -0 javac --release 21 -d "$classes"
+exec java -cp "$classes" io.haifa.board.Main "$@"

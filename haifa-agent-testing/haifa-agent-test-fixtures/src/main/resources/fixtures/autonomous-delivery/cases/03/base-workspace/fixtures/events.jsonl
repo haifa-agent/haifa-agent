@@ -1,0 +1,7 @@
+{"timestamp":"2026-07-29T00:00:00Z","actor":"alice","action":"LOGIN","resource":"console","outcome":"FAILED","ip":"192.0.2.10"}
+{"timestamp":"2026-07-29T00:01:00+00:00","actor":"alice","action":"LOGIN","resource":"console","outcome":"SUCCESS","ip":"192.0.2.10"}
+{"timestamp":"2026-07-29T00:02:00+08:00","actor":"bob","action":"DELETE","resource":"document/7","outcome":"SUCCESS","ip":"2001:db8::7"}
+{"timestamp":"2026-07-29T00:03:00Z","actor":"陈","action":"READ","resource":"document/8","outcome":"DENIED","ip":"198.51.100.4"}
+not-json
+{"timestamp":"2026-07-29T00:04:00Z","actor":"mallory","action":"WRITE","resource":"document/8","outcome":"FAILED"}
+{"timestamp":"2026-07-29T00:05:00Z","actor":"alice","action":"WRITE","resource":"document/9","outcome":"SUCCESS","ip":"203.0.113.5"}

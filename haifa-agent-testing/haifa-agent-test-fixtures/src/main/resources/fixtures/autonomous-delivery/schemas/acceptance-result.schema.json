@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://haifa.io/testing/autonomous-delivery/acceptance-result.schema.json",
+  "title": "Autonomous Delivery Acceptance Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "caseId", "caseVersion", "passed", "checks", "failures"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "caseId": { "type": "string", "pattern": "^(0[1-9]|10)$" },
+    "caseVersion": { "type": "string" },
+    "passed": { "type": "boolean" },
+    "checks": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    },
+    "failures": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "type": "string", "maxLength": 512 }
+    }
+  }
+}

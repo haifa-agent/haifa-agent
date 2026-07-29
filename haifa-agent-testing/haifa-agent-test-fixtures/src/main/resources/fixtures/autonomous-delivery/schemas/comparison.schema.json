@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://haifa.io/testing/autonomous-delivery/comparison.schema.json",
+  "title": "Autonomous Delivery Cohort Comparison",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "leftCohort", "rightCohort", "caseComparisons"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "leftCohort": { "$ref": "#/$defs/cohort" },
+    "rightCohort": { "$ref": "#/$defs/cohort" },
+    "caseComparisons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["caseId", "caseVersion", "metrics"],
+        "properties": {
+          "caseId": { "type": "string" },
+          "caseVersion": { "type": "string" },
+          "metrics": { "type": "object" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "cohort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "catalogDigest",
+        "caseVersion",
+        "modelCoordinate",
+        "productProfileDigest",
+        "sandboxProfileDigest",
+        "toolCatalogDigest",
+        "harnessProtocolDigest"
+      ],
+      "properties": {
+        "catalogDigest": { "type": "string" },
+        "caseVersion": { "type": "string" },
+        "modelCoordinate": { "type": "string" },
+        "productProfileDigest": { "type": "string" },
+        "sandboxProfileDigest": { "type": "string" },
+        "toolCatalogDigest": { "type": "string" },
+        "harnessProtocolDigest": { "type": "string" }
+      }
+    }
+  }
+}

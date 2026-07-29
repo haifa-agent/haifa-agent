@@ -1,0 +1,8 @@
+{
+  "name": "items-protocol-client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

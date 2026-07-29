@@ -21,3 +21,6 @@
   供 Integration Test 验证真实 Adapter 的协议映射；
 - Coding E2E 的工程 Fixture 暂时继续位于 CLI 相邻测试资源，迁移前不复制；
 - `ascii-art` Skill 和 `log-analyzer` Workspace 属于私有 Live 输入，位于独立 `test-config`。
+- `fixtures/autonomous-delivery/`：十个合成 Coding Case 的 Prompt、初始 Workspace、外置
+  Acceptance、版本化 Catalog、Harness Protocol 和结果 Schema。资源不含运行产物；Case 03/04
+  的修正版 Acceptance 使用 `2.0.0`，不得与旧版本混合比较。
