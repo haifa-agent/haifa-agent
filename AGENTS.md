@@ -16,6 +16,7 @@
 
 - 根目录仓库 `haifa-agent` 的功能开发必须使用以 `feat-` 开头的特性分支，例如 `feat-agent-memory`；不要直接在 `main` 或 `dev` 分支上开发。
 - 根目录仓库的功能开发完成并通过验证后，向 GitHub 发起 Pull Request；除非当前任务明确指定其他目标，PR 的目标分支必须是 `dev`。
+- GitHub 平台操作必须使用 GitHub CLI（`gh`）命令，不得使用 GitHub Connector；本地 Git 操作和远端分支推送仍使用 `git` 命令。
 - `docs/` 是独立 Git 仓库 `haifa-agent-internal-docs`，不参与根目录仓库的分支、暂存、提交、推送或 Pull Request 流程。根目录仓库的 Git 命令不得把 `docs/` 当作普通目录处理，也不得用根目录的 `git status` 判断文档仓库状态。
 - 文档仓库操作必须使用 `git -C docs ...`（或先进入 `docs/`），在其独立 `main` 分支上直接提交并推送到 `origin/main`；除非当前任务明确要求其他流程，不为文档改动创建 `feat-*` 分支或 Pull Request。
 - `test-config/` 是独立私有 Git 仓库 `haifa-agent-test-config`，不参与根目录仓库的分支、暂存、提交、推送或 Pull Request 流程。测试配置仓库操作必须使用 `git -C test-config ...`，并遵守其 `AGENTS.md`；默认在独立 `main` 分支上直接提交并推送到 `origin/main`。
