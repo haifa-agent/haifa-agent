@@ -5,7 +5,8 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 ## 当前已实现
 
 - Core 领域模型、`AgentRun` 状态机、Runtime API 与异步 AgentLoop；
-- Provider-neutral 的 Model、Tool、Skill、Credential、Memory 与 Context 契约；
+- Provider-neutral 的 Model、Tool、Skill、Credential、Memory 与 Context 契约，以及对三种文本媒体的
+  有界严格 UTF-8 Asset 文本派生；
 - DeepSeek、阿里云百炼、火山方舟的 OpenAI-compatible Chat Completions 适配，支持流式输出、Tool Call、最终 usage 和受保护的 reasoning continuation；
 - 冻结 Tool Binding、受限 JSON Schema 校验、短生命周期凭据租约与 AES-GCM 本地凭据存储；
 - 固定协议 `2025-11-25` 的 MCP Client，支持 Streamable HTTP 与由 `ExecutionBroker` 托管的 stdio；
@@ -14,8 +15,8 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - Project/Workspace 的受控文件访问、变更集、补丁、索引、快照与显式 Artifact 导出；
 - ExecutionBroker、Sandbox SPI、受控 Host Provider、macOS Seatbelt/Linux bubblewrap Local Native
   Provider，以及只读 Git 适配；
-- SQLite V1～V6 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、持久
-  Interaction/Run Input/Event Journal、事务恢复与故障收敛；
+- SQLite V1～V7 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、持久
+  Interaction/Run Input/Event Journal、事务恢复与故障收敛，以及单机有界 Artifact metadata/BLOB；
 - 纯 Java `haifa-agent-sdk` 高层 Facade、可信 Product Profile、确定性 Capability Contribution
   装配，以及产品中立 Conversation Session；SQLite V5 提供 Conversation metadata、命令幂等绑定，
   V6 提供全人工确认的 Memory Candidate、正式 Memory 与最小只写 Audit，
@@ -140,6 +141,7 @@ flowchart LR
   OAI[model-openai-compatible] --> MAPI
   SQLITE[store-sqlite] --> RCORE
   SQLITE --> PAPI
+  SQLITE --> ARTIFACT
   JSONL[store-jsonl] --> RCORE
   CONTRACT[contract] --> COMMON
   HTTP[transport-http] --> CONTRACT

@@ -1,10 +1,17 @@
 package io.haifa.agent.store.sqlite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.artifact.Artifact;
+import io.haifa.agent.artifact.ArtifactProvenance;
+import io.haifa.agent.artifact.ArtifactService;
+import io.haifa.agent.artifact.ArtifactType;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.ProjectRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.memory.api.MemoryEvidenceRef;
@@ -27,6 +34,7 @@ import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
+import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
 import io.haifa.agent.sdk.conversation.ConversationException;
@@ -37,11 +45,14 @@ import io.haifa.agent.sdk.memory.MemoryListQuery;
 import io.haifa.agent.sdk.memory.MemoryScopeSpec;
 import io.haifa.agent.sdk.memory.ProposeMemoryCommand;
 import io.haifa.agent.sdk.memory.ReviewMemoryCandidateCommand;
+import io.haifa.agent.sdk.product.ProductArtifactPolicy;
+import io.haifa.agent.sdk.product.ProductAssemblyException;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
 import io.haifa.agent.sdk.product.ProductCapabilityRequirement;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductId;
+import io.haifa.agent.sdk.product.ProductPolicies;
 import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductVersion;
@@ -69,6 +80,79 @@ class SqliteSdkPersonalFixtureTest {
             new ProductContributionCoordinate("conversation.sqlite", "1.0");
     private static final ProductContributionCoordinate MEMORY =
             new ProductContributionCoordinate("memory.sqlite", "1.0");
+    private static final ProductContributionCoordinate ARTIFACT =
+            new ProductContributionCoordinate("artifact.sqlite", "1.0");
+
+    @Test
+    void assemblesSqliteArtifactAndRecoversItWithoutEnablingPersonalProfile(@TempDir Path directory) throws Exception {
+        ProductProfile profile = artifactProfile();
+        var protector =
+                new AesGcmModelContinuationProtector(new SecretKeySpec(new byte[32], "AES"), new SecureRandom());
+        Artifact published;
+
+        try (SqliteStoreFoundation artifactStore = SqliteTestSupport.foundation(directory)) {
+            SqliteSdkContributions runtimeStore = sqliteContributions(directory, protector);
+            var artifact = artifactContribution(artifactStore, () -> "artifact-sdk-1");
+            try (HaifaAgent agent = HaifaAgents.builder(profile)
+                    .contribute(modelContribution())
+                    .contribute(runtimeStore.persistence())
+                    .contribute(runtimeStore.conversation())
+                    .contribute(artifact)
+                    .build()) {
+                assertThat(agent.assembly().contributions().keySet())
+                        .containsExactlyInAnyOrder(
+                                ProductCapabilities.MODEL,
+                                ProductCapabilities.PERSISTENCE,
+                                ProductCapabilities.CONVERSATION,
+                                ProductCapabilities.ARTIFACT);
+                published = agent.artifacts()
+                        .orElseThrow()
+                        .publish(
+                                new ArtifactType("document"),
+                                "SDK artifact",
+                                "sdk body".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                                "text/plain",
+                                artifactProvenance());
+                assertThat(artifactStore.artifacts().find(published.id(), published.version()))
+                        .contains(published);
+            }
+        }
+
+        try (SqliteStoreFoundation reopenedArtifactStore = SqliteTestSupport.foundation(directory)) {
+            SqliteSdkContributions reopenedRuntimeStore = sqliteContributions(directory, protector);
+            var reopenedArtifact = artifactContribution(reopenedArtifactStore, () -> "unused");
+            try (HaifaAgent reopened = HaifaAgents.builder(profile)
+                    .contribute(modelContribution())
+                    .contribute(reopenedRuntimeStore.persistence())
+                    .contribute(reopenedRuntimeStore.conversation())
+                    .contribute(reopenedArtifact)
+                    .build()) {
+                assertThat(reopened.artifacts()).contains(reopenedArtifact.service());
+                assertThat(reopenedArtifactStore.artifacts().find(published.id(), published.version()))
+                        .contains(published);
+                assertThat(reopenedArtifactStore
+                                .artifactPayloads()
+                                .load(published.payload())
+                                .orElseThrow())
+                        .isEqualTo("sdk body".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+
+            SqliteSdkContributions forbiddenRuntimeStore = sqliteContributions(directory, protector);
+            try {
+                assertThatThrownBy(() -> HaifaAgents.builder(personalProfile())
+                                .contribute(modelContribution())
+                                .contribute(forbiddenRuntimeStore.persistence())
+                                .contribute(forbiddenRuntimeStore.conversation())
+                                .contribute(reopenedArtifact)
+                                .build())
+                        .isInstanceOf(ProductAssemblyException.class)
+                        .extracting("code")
+                        .isEqualTo("CAPABILITY_FORBIDDEN");
+            } finally {
+                forbiddenRuntimeStore.persistence().close();
+            }
+        }
+    }
 
     @Test
     void promotesConversationEvidenceToMemoryAndRecoversItThroughSdk(@TempDir Path directory) throws Exception {
@@ -336,6 +420,35 @@ class SqliteSdkPersonalFixtureTest {
                 base.allowedExtensions());
     }
 
+    private static ProductProfile artifactProfile() {
+        ProductProfile base = personalProfile();
+        Map<ProductCapabilityId, ProductCapabilityRequirement> requirements =
+                new java.util.HashMap<>(base.capabilityRequirements());
+        requirements.put(
+                ProductCapabilities.ARTIFACT,
+                ProductCapabilityRequirement.required(
+                        ProductCapabilities.ARTIFACT, Set.of(ARTIFACT), ProductProviderSuitability.PRODUCTION));
+        ProductPolicies policies = new ProductPolicies(
+                base.policies().memory(),
+                new ProductArtifactPolicy(8_192, 4, 32_768, Set.of("text/plain"), false, 8_192, 32_768, false),
+                base.policies().execution());
+        return ProductProfile.create(
+                base.productId(),
+                base.productVersion(),
+                base.definitionId(),
+                base.definitionVersion(),
+                base.runProfileId(),
+                base.runProfileVersion(),
+                base.instructions(),
+                base.budget(),
+                base.limits(),
+                policies,
+                requirements,
+                base.allowedTools(),
+                base.allowedSkills(),
+                base.allowedExtensions());
+    }
+
     private static HaifaAgent agent(
             ProductProfile profile, SqliteSdkContributions store, AtomicInteger ids, String instance) {
         return HaifaAgents.builder(profile)
@@ -444,6 +557,33 @@ class SqliteSdkPersonalFixtureTest {
                         ProductCapabilities.MEMORY,
                         SdkConfigurationDigest.sha256("sqlite-memory-v1"),
                         ProductProviderSuitability.PRODUCTION));
+    }
+
+    private static ArtifactPlatformContribution artifactContribution(
+            SqliteStoreFoundation foundation, IdentifierGenerator identifiers) {
+        ArtifactService service = new ArtifactService(
+                foundation.artifacts(), foundation.artifactPayloads(), identifiers, () -> SqliteTestSupport.NOW);
+        return new ArtifactPlatformContribution(
+                metadata(
+                        ARTIFACT,
+                        ProductCapabilities.ARTIFACT,
+                        SdkConfigurationDigest.sha256("sqlite-artifact-v1"),
+                        ProductProviderSuitability.PRODUCTION),
+                service);
+    }
+
+    private static ArtifactProvenance artifactProvenance() {
+        return new ArtifactProvenance(
+                new ProjectRef("sdk-project"),
+                "sdk-workspace",
+                null,
+                null,
+                null,
+                null,
+                "outputs/sdk.txt",
+                "sha256:source",
+                "local-export-v1",
+                new PrincipalRef("sdk-user", "user"));
     }
 
     private static SdkCaller memoryReviewer() {

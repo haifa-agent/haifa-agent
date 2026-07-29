@@ -177,6 +177,14 @@ public final class SqliteStoreFoundation implements AutoCloseable {
         return new SqliteToolResultAssetStore(unitOfWork, runtimeCodecs, clock);
     }
 
+    public SqliteArtifactStore artifacts() {
+        return new SqliteArtifactStore(unitOfWork);
+    }
+
+    public SqliteArtifactPayloadStore artifactPayloads() {
+        return new SqliteArtifactPayloadStore(unitOfWork, maximumPayloadBytes, clock);
+    }
+
     public SqliteRuntimeStateRepository runtimeState(ModelContinuationProtector protector) {
         SqliteSessionMessageRepository messages = messages();
         SqliteModelContinuationRepository continuations =

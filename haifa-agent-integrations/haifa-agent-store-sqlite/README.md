@@ -1,5 +1,18 @@
 # Haifa Agent SQLite Runtime Store
 
+## V7 Artifact 单机持久化
+
+Runtime Migration V7 新增 `artifact_payload` 和 `artifact_record`：
+
+- payload 以 SHA-256 内容寻址并在 SQLite BLOB 中去重，引用计数、byte count 和实际摘要均会校验；
+- Artifact metadata 保存当前领域对象要求的 Project、Workspace、Run/Session、来源和创建者字段，
+  Project 查询按 Artifact ID/version 稳定排序；
+- `SqliteArtifactPayloadStore` 和 `SqliteArtifactStore` 复用线程绑定 UoW，并由
+  `SqliteStoreFoundation` 显式创建；
+- 单个 payload 受 `maximumPayloadBytes` 硬限制，BLOB 不进入 Runtime Codec、Message、Checkpoint、
+  Event 或 JSONL；
+- 这是单机 MVP：发布仍使用同步补偿，崩溃孤儿扫描、GC、对象存储、Range 和完整生命周期未实现。
+
 ## V5 SDK Conversation
 
 Runtime Migration V5 新增产品中立的 `sdk_conversation` 与 `sdk_conversation_command`：
@@ -41,7 +54,7 @@ Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_re
 
 `SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
 
-本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V6 Migration、
+本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V7 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
 
 V6 只新增 `memory_candidate`、`memory_record` 和 `memory_audit_event`。Candidate/Memory 正文以
@@ -69,7 +82,7 @@ worker ID 驱动。
 ## 初始化与所有权
 
 调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成纯 Runtime 初始化；拥有额外
-Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V5 原文的完整 Migration 集合，
+Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V7 原文的完整 Migration 集合，
 并可传入由 Application 自己拥有的静态 `MapperXml`。附加 Mapper 与内建 Mapper 使用相同的
 namespace/statement 唯一性、`${}` 禁止和启动期解析校验：
 
@@ -115,6 +128,7 @@ Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校
 
 V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
 revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
+V5 提供 SDK Conversation，V6 提供正式 Memory，V7 提供单机 Artifact metadata 和内容寻址 BLOB。
 
 ## Port—表—Codec 对照
 
@@ -151,6 +165,7 @@ Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 | Event / Outbox / Idempotency | `SqliteRuntimeEventAppender`、`SqliteRuntimeOutboxPublisher`、`SqliteIdempotencyRepository` |
 | Tool journal / Interaction / Input | `SqliteToolExecutionJournal`、`SqliteInteractionPort`、`SqliteRunInputPort` |
 | Summary / Memory / Continuation / Skill / Asset | 对应 `Sqlite*Repository` / `SqliteToolResultAssetStore` |
+| Artifact metadata / payload | `SqliteArtifactStore`、`SqliteArtifactPayloadStore` |
 | Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
 Project Application/CLI 已实现显式 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL` 选择，并在启动时注入
@@ -167,5 +182,5 @@ Runtime Port、唯一 worker ID 与安全 busy retry。仍未接入的边界包�
 全部主要 Port 的文件重开 round-trip、乐观锁、活动 Attempt、消息 cursor/脱敏、Checkpoint 完整性、
 Event ID/范围/head/earliest/索引计划、Outbox/Idempotency、Journal 状态机、Interaction 与 Input
 重启恢复/竞争、Continuation 固定密钥恢复/错误密钥/
-篡改、Skill/Memory/Asset、busy/locked 分类、权限策略，以及数据库/WAL/SHM 中不出现 Credential、
-reasoning、Provider 原文或测试密钥。
+篡改、Skill/Memory/Asset、Artifact 去重/补偿/跨重启/故障注入、busy/locked 分类、权限策略，以及
+数据库/WAL/SHM 中不出现 Credential、reasoning、Provider 原文或测试密钥。
