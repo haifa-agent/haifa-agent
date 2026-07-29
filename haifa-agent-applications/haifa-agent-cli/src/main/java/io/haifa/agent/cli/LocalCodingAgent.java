@@ -11,6 +11,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportServ
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
+import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -379,7 +380,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             mcpPlatform.contributions(),
                             webPlatform.contributions(),
                             skillTools,
-                            executionPlatform == null ? null : executionPlatform.profile());
+                            executionPlatform == null ? null : executionPlatform.profile(),
+                            CodingToolchainEnvironmentProfile.defaultScratchSpace());
             var interactions = persistence.ports().interactions();
             ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();

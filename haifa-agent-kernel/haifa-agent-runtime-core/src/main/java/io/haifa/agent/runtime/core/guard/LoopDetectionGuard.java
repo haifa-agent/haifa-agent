@@ -28,7 +28,7 @@ public final class LoopDetectionGuard implements AgentLoopGuard {
             }
         }
         var progress = context.progressSignatures();
-        if (progress.size() >= maximumRepeats) {
+        if (context.failureClusterAttempts() == 0 && progress.size() >= maximumRepeats) {
             String current = progress.getLast();
             boolean stalled =
                     progress.stream().skip(progress.size() - maximumRepeats).allMatch(current::equals);

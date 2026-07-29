@@ -75,6 +75,11 @@ Terminal 不是离线演示壳：普通消息进入真实 `CodingSessionService`
 `execution.run`、MCP、`web.search`/`web.fetch` 都走现有 Tool Pipeline、Policy、Approval 和
 ExecutionBroker。下面是 Windows 上“明确可信测试 Workspace”的联网配置要点：
 
+CLI 的 Coding Execution 装配默认请求 private required Scratch：`TMPDIR/TMP/TEMP/GOTMPDIR`
+指向本次执行根，`GOCACHE` 指向其 `go-build` 子目录。Local Native Control Directory 或显式
+Host Guarded Scratch Root 负责物理路径、权限和清理；配置、Prompt、Trace 与普通错误不披露该路径。
+无法安全创建 Scratch 时命令不会启动。
+
 ```yaml
 model:
   providerId: deepseek

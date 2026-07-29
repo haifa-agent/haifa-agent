@@ -130,6 +130,10 @@ class ExecutionToolSchemaValidatorTest {
 
         assertThat(definition.resources().executionProfiles()).containsExactly("profile@1");
         assertThat(definition.inputSchema().document())
-                .containsEntry("x-haifa-configuration-identity", "sha256:configuration-a");
+                .containsEntry("x-haifa-configuration-identity", "sha256:configuration-a")
+                .containsEntry(
+                        "x-haifa-scratch-spec-digest",
+                        io.haifa.agent.execution.api.ExecutionScratchSpaceSpec.genericRequired()
+                                .canonicalDigest());
     }
 }

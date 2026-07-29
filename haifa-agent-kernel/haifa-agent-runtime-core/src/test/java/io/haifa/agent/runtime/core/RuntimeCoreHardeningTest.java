@@ -357,6 +357,112 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void repeatedSemanticEnvironmentFailuresConvergeWithinBoundedModelAndToolCalls() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger toolCalls = new AtomicInteger();
+        Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions = new ArrayDeque<>(List.of(
+                environmentFailureRequest("failure-1", "/private/random-a", "probe"),
+                environmentFailureRequest("failure-2", "/private/random-b", "probe"),
+                environmentFailureRequest("failure-3", "/private/random-c", "alternate-probe"),
+                environmentFailureRequest("failure-4", "/private/random-d", "final-probe")));
+        AgentChatModel boundedModel = request -> {
+            modelCalls.incrementAndGet();
+            return response(decisions.remove());
+        };
+        Fixture fixture = fixture(
+                boundedModel,
+                builder -> TestToolPlatform.install(
+                        builder, "environment-probe", "1.0.0", "environment-probe.input", false, ignored -> {
+                            toolCalls.incrementAndGet();
+                            return new ToolResult(
+                                    false,
+                                    "bounded environment failure",
+                                    Map.of(
+                                            "failureCategory",
+                                            "DEPENDENCY_UNAVAILABLE",
+                                            "stableFailureCode",
+                                            "TOOLCHAIN_TEMP_UNAVAILABLE",
+                                            "resourceClass",
+                                            "TOOLCHAIN",
+                                            "operationFamily",
+                                            "TEST",
+                                            "sandboxProfileDigest",
+                                            "a".repeat(64),
+                                            "status",
+                                            "FAILED"),
+                                    List.of(),
+                                    List.of(),
+                                    false);
+                        }));
+
+        var accepted = fixture.runtime.start(request("bounded-environment-recovery"));
+        fixture.scheduler.runAll();
+
+        assertThat(modelCalls).hasValue(4);
+        assertThat(toolCalls).hasValue(4);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .contains("loop.stall-detected", "tool.recovery-strategy-required", "run.structured-termination");
+    }
+
+    @Test
+    void executionScratchLifecyclePublishesOnlySafeCapabilityEvents() {
+        ToolRequest execution = toolRequest(
+                "scratch-cleanup",
+                "execution_run",
+                "1.0.0",
+                new ToolArguments(
+                        "execution.input", "1", Map.of("operationFamily", "TEST", "purpose", "scratch cleanup probe")));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(execution)), finalDecision("handled")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "execution_run",
+                        "1.0.0",
+                        "execution.input",
+                        false,
+                        ignored -> new ToolResult(
+                                false,
+                                "scratch cleanup failed",
+                                Map.of(
+                                        "failureCategory",
+                                        "OUTCOME_UNKNOWN",
+                                        "stableFailureCode",
+                                        "SCRATCH_CLEANUP_FAILED",
+                                        "resourceClass",
+                                        "FILESYSTEM",
+                                        "operationFamily",
+                                        "TEST",
+                                        "sandboxProfileDigest",
+                                        "b".repeat(64),
+                                        "scratchProvisioned",
+                                        true,
+                                        "scratchCleanupFailed",
+                                        true,
+                                        "scratchSpecDigest",
+                                        "c".repeat(64),
+                                        "status",
+                                        "UNKNOWN"),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = fixture.runtime.start(request("scratch-lifecycle-events"));
+        fixture.scheduler.runAll();
+
+        var scratchEvents = fixture.store.eventsFor(accepted.runId()).stream()
+                .filter(event -> event.type().startsWith("execution.scratch-"))
+                .toList();
+        assertThat(scratchEvents)
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .containsExactly("execution.scratch-provisioned", "execution.scratch-cleanup-failed");
+        assertThat(scratchEvents).allSatisfy(event -> assertThat(event.data().toString())
+                .doesNotContain("/private", "TMPDIR", "command", "stderr"));
+    }
+
+    @Test
     void budgetConvergenceInstructionReachesTheModelContext() {
         AtomicReference<List<String>> messages = new AtomicReference<>();
         Fixture nearBudget = fixture(request -> {
@@ -570,6 +676,17 @@ class RuntimeCoreHardeningTest {
                 name,
                 version,
                 arguments);
+    }
+
+    private static ToolCallDecision environmentFailureRequest(String key, String randomPath, String commandForm) {
+        return new ToolCallDecision(List.of(toolRequest(
+                key,
+                "environment-probe",
+                "1.0.0",
+                new ToolArguments(
+                        "environment-probe.input",
+                        "1",
+                        Map.of("operationFamily", "TEST", "randomPath", randomPath, "commandForm", commandForm)))));
     }
 
     private static ModelToolSpecification toolSpecification(String name, String version, String schemaId) {

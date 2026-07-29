@@ -17,7 +17,39 @@ public record ExecutionResult(
         String sandboxSessionRef,
         ResourceUsageSummary resourceUsage,
         ExecutionFailure failure,
-        boolean replayed) {
+        boolean replayed,
+        boolean scratchProvisioned,
+        boolean scratchCleanupFailed) {
+    public ExecutionResult(
+            ExecutionId id,
+            ExecutionStatus status,
+            Integer exitCode,
+            Instant startedAt,
+            Instant endedAt,
+            ExecutionOutput stdout,
+            ExecutionOutput stderr,
+            FileChangeSetId fileChangeSetId,
+            String sandboxSessionRef,
+            ResourceUsageSummary resourceUsage,
+            ExecutionFailure failure,
+            boolean replayed) {
+        this(
+                id,
+                status,
+                exitCode,
+                startedAt,
+                endedAt,
+                stdout,
+                stderr,
+                fileChangeSetId,
+                sandboxSessionRef,
+                resourceUsage,
+                failure,
+                replayed,
+                false,
+                false);
+    }
+
     public ExecutionResult {
         id = Objects.requireNonNull(id, "id must not be null");
         status = Objects.requireNonNull(status, "status must not be null");
@@ -55,6 +87,8 @@ public record ExecutionResult(
                 sandboxSessionRef,
                 resourceUsage,
                 failure,
-                true);
+                true,
+                scratchProvisioned,
+                scratchCleanupFailed);
     }
 }

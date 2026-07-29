@@ -46,6 +46,7 @@ public record PersonalExecutionPlatform(
         ToolDefinition definition = ExecutionToolDefinitionFactory.create(
                 profileIdentity,
                 provider.configurationIdentity(),
+                provider.scratchSpecDigest(),
                 profile.networkPolicy() == NetworkPolicy.ALLOW,
                 false,
                 runtimes.languages());

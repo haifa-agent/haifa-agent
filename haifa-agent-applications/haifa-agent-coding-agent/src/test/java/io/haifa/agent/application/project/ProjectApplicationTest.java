@@ -106,7 +106,8 @@ class ProjectApplicationTest {
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
-        assertThat(properties).containsOnlyKeys("command", "workdir", "timeoutMillis", "description");
+        assertThat(properties)
+                .containsOnlyKeys("command", "workdir", "timeoutMillis", "description", "operationFamily");
         assertThat(execution.definition().inputSchema().document())
                 .containsEntry("required", List.of("command"))
                 .containsEntry("additionalProperties", false);

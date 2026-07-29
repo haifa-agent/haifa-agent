@@ -513,7 +513,7 @@ public final class ToolPipeline {
                             Retryability.NOT_RETRYABLE,
                             result.summary(),
                             null,
-                            java.util.Map.of("tool", definition.name().value()),
+                            failureAttributes(definition.name().value(), result),
                             time.now())),
                     time.now());
         }
@@ -580,6 +580,32 @@ public final class ToolPipeline {
     private void appendExecutionAndResourceEvents(AgentRun run, ToolCall call, ToolResult result) {
         if (isExecutionTool(call)) {
             Map<String, Object> data = result.structuredData();
+            if (Boolean.TRUE.equals(data.get("scratchProvisioned"))) {
+                events.append(
+                        run.id(),
+                        "execution.scratch-provisioned",
+                        Map.of(
+                                "toolCallId",
+                                call.id().value(),
+                                "specDigest",
+                                safeText(data.get("scratchSpecDigest"), "unknown"),
+                                "capability",
+                                "WRITABLE_PRIVATE_SCRATCH"),
+                        time.now());
+            }
+            if (Boolean.TRUE.equals(data.get("scratchCleanupFailed"))) {
+                events.append(
+                        run.id(),
+                        "execution.scratch-cleanup-failed",
+                        Map.of(
+                                "toolCallId",
+                                call.id().value(),
+                                "specDigest",
+                                safeText(data.get("scratchSpecDigest"), "unknown"),
+                                "status",
+                                "OUTCOME_UNKNOWN"),
+                        time.now());
+            }
             Object status = data.get("status");
             if (status instanceof String lifecycle) {
                 var event = new java.util.LinkedHashMap<String, Object>();
@@ -618,6 +644,26 @@ public final class ToolPipeline {
         result.artifacts()
                 .forEach(reference ->
                         appendResource(run, reference.artifactId(), "artifact", "Published artifact", "AVAILABLE"));
+    }
+
+    private static Map<String, Object> failureAttributes(String toolName, ToolResult result) {
+        var attributes = new java.util.LinkedHashMap<String, Object>();
+        attributes.put("tool", toolName);
+        for (String key : List.of(
+                "failureCategory",
+                "stableFailureCode",
+                "resourceClass",
+                "operationFamily",
+                "sandboxProfileDigest",
+                "failureCode",
+                "status",
+                "fileChangeSetId")) {
+            Object value = result.structuredData().get(key);
+            if (value instanceof String text && !text.isBlank() && text.length() <= 256) {
+                attributes.put(key, text);
+            }
+        }
+        return Map.copyOf(attributes);
     }
 
     private static String executionOutput(Map<String, Object> data) {

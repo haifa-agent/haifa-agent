@@ -1,6 +1,7 @@
 package io.haifa.agent.sandbox.localnative;
 
 import io.haifa.agent.execution.api.ExecutionCommand;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import java.nio.file.Path;
 import java.util.List;
@@ -31,6 +32,7 @@ final class UnsupportedLocalNativeAdapter implements LocalNativeAdapter {
             Path workingDirectory,
             Path controlDirectory,
             List<LocalNativePathGrant> additionalPaths,
+            ExecutionScratchSpaceSpec scratchSpace,
             ExecutionCommand command) {
         throw new LocalNativeSandboxException(
                 "SANDBOX_ADAPTER_UNAVAILABLE", "local-native sandbox is unavailable on this platform");

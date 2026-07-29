@@ -71,15 +71,26 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
     public RuntimeContextBuildResult build(AgentRun run, AgentLoopContext loopContext, FrozenModelBinding model) {
         RuntimeMiddlewareContext middlewareContext = new RuntimeMiddlewareContext(run, state);
         middleware.apply(RuntimePhase.BEFORE_CONTEXT_BUILD, middlewareContext);
-        if (!loopContext.convergenceReasons().isEmpty()) {
+        List<String> convergenceReasons = loopContext.consumeConvergenceReasons();
+        if (!convergenceReasons.isEmpty()) {
             middlewareContext.addPrompt(new PromptComponent(
                     new PromptComponentId("runtime-convergence"),
                     "1.0",
                     PromptLayer.RUNTIME_CONTROL,
                     PromptRole.RUNTIME,
-                    "Completion requirements: " + String.join(", ", loopContext.convergenceReasons()),
+                    "Completion requirements: " + String.join(", ", convergenceReasons),
                     false,
                     java.util.Set.of("internal")));
+        }
+        if (!loopContext.controlPrompt().isBlank()) {
+            middlewareContext.addPrompt(new PromptComponent(
+                    new PromptComponentId("runtime-delivery-control"),
+                    "1.0",
+                    PromptLayer.RUNTIME_CONTROL,
+                    PromptRole.RUNTIME,
+                    loopContext.controlPrompt(),
+                    false,
+                    java.util.Set.of("internal", "budget", "recovery")));
         }
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
         addSkillPrompts(run, middlewareContext);

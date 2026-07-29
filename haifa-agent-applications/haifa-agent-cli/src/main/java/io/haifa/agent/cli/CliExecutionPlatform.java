@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
+import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
@@ -83,8 +84,15 @@ final class CliExecutionPlatform {
         Objects.requireNonNull(configuration, "configuration must not be null");
         var workspaceRedactor = new WorkspacePathRedactor(workspaceRoot);
         HostShell shell = shell(configuration);
-        var host = new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
+        var host = new HostGuardedSandboxProvider(
+                workspaces,
+                bindings,
+                locations,
+                identifiers,
+                time,
+                shell,
+                localConfiguration.controlRoot().resolve("host-scratch"));
         var local =
                 new LocalNativeSandboxProvider(workspaces, bindings, locations, identifiers, time, localConfiguration);
         Map<String, SandboxProvider> configuredProviders = Map.of(host.providerId(), host, local.providerId(), local);
@@ -137,7 +145,8 @@ final class CliExecutionPlatform {
                 configuration.maxOutputLines(),
                 configuration.maxProcesses(),
                 observer,
-                workspaceRedactor::redact);
+                workspaceRedactor::redact,
+                CodingToolchainEnvironmentProfile.defaultScratchSpace());
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary);
@@ -165,6 +174,8 @@ final class CliExecutionPlatform {
 
     static String policyResourceDigest(String command, String workdir, String profileDigest) {
         String invocationDigest = PolicyDigest.sha256Fields(List.of(command, workdir));
+        invocationDigest = io.haifa.agent.execution.api.ExecutionRequest.digestWithScratch(
+                invocationDigest, CodingToolchainEnvironmentProfile.defaultScratchSpace());
         return PolicyDigest.sha256Fields(List.of(invocationDigest, profileDigest));
     }
 
@@ -221,6 +232,9 @@ final class CliExecutionPlatform {
         configuration.inheritEnvironment().stream()
                 .sorted()
                 .forEach(value -> identityFields.add("environment:" + value));
+        CodingToolchainEnvironmentProfile.defaultScratchSpace().environmentNames().stream()
+                .sorted()
+                .forEach(value -> identityFields.add("scratch-environment:" + value));
         configuration.extraPathPolicies().stream()
                 .map(CliConfiguration.ExtraPathPolicy::id)
                 .sorted()
@@ -230,16 +244,20 @@ final class CliExecutionPlatform {
                         .value()
                         .substring("sha256:".length());
         SandboxProfileRef reference = new SandboxProfileRef("cli-" + provider.providerId(), version);
+        Set<String> allowedEnvironment = java.util.stream.Stream.concat(
+                        configuration.inheritEnvironment().stream(),
+                        CodingToolchainEnvironmentProfile.defaultScratchSpace().environmentNames().stream())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         if (provider.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
             return SandboxProfile.hostGuarded(
-                    reference, provider.configurationDigest(), Set.of(), configuration.inheritEnvironment(), true);
+                    reference, provider.configurationDigest(), Set.of(), allowedEnvironment, true);
         }
         return new SandboxProfile(
                 reference,
                 provider.providerId(),
                 provider.configurationDigest(),
                 Set.of(),
-                configuration.inheritEnvironment(),
+                allowedEnvironment,
                 true,
                 network,
                 new SandboxFilesystemPolicy(
@@ -255,7 +273,8 @@ final class CliExecutionPlatform {
         var values = new LinkedHashMap<String, String>();
         configuration.inheritEnvironment().stream().sorted().forEach(name -> {
             if (profile.providerId().equals(LocalNativeSandboxProvider.PROVIDER_ID)
-                    && Set.of("HOME", "USERPROFILE", "TMP", "TEMP").contains(name)) {
+                    && Set.of("HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "GOTMPDIR", "GOCACHE")
+                            .contains(name)) {
                 return;
             }
             String value = System.getenv(name);

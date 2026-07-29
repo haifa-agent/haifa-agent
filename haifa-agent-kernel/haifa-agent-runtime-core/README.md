@@ -1,5 +1,18 @@
 # Haifa Agent Runtime Core
 
+## 自主恢复与有效进展
+
+AgentLoop 按 Tool 坐标、操作族、语义失败类别、稳定错误码、资源类别和 Sandbox 摘要生成
+SHA-256 Failure Fingerprint；随机路径、命令文本和原始 stderr 不进入身份。无有效进展的同一失败簇按
+“诊断、改变策略、收敛、第 4 次结构化终止”推进；`OUTCOME_UNKNOWN`、取消和 Policy 拒绝继续服从
+各自更严格的既有边界。完全重复 Decision、A-B Loop 和单批重复调用仍由原 Guard 独立处理。
+
+有效进展只来自 Workspace/Artifact 变化、Todo 状态推进、成功的 Build/Test 验证、Blocker 移除、
+Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进展。最近 32 条安全摘要组成
+有界 Ledger。恢复时从权威 ToolCall、Plan、Child Run、Interaction 与 Usage 重建控制状态；旧
+Checkpoint 无需 Schema 升级。模型 Context 只获得安全恢复指导与剩余模型、工具、迭代、时间和 Token
+预算；50%、25%、10% 阈值各触发一次收敛信号。
+
 ## Safe Tool argument repair
 
 Input-schema rejection remains before Policy and Approval. Runtime returns the model a bounded repair hint derived

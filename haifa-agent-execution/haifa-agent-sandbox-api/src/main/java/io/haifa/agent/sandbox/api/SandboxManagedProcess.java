@@ -19,6 +19,14 @@ public interface SandboxManagedProcess extends AutoCloseable {
 
     int observedProcessCount();
 
+    default boolean scratchProvisioned() {
+        return false;
+    }
+
+    default boolean scratchCleanupFailed() {
+        return false;
+    }
+
     boolean cancel();
 
     @Override

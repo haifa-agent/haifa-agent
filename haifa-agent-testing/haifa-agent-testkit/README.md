@@ -12,11 +12,18 @@ Runner 默认只生成计划。附加的 `runner` JAR 由私有 `test-config/scr
 私有 Suite Loader 与参数化 Harness。Harness 默认只打印计划；Campaign 初始化和 Gate 是显式
 子命令，运行根必须位于主仓、`docs/` 和 `test-config/` 之外，已有目录一律拒绝覆盖。
 
+`phase-1-gate --execute` 串行驱动生产 Coding Terminal，为每个 Case/Repeat 创建独立 Workspace、
+SQLite、JSONL Transcript、Trace 与会话录像，并在 Workspace 外执行固定 Acceptance。Harness 从安全
+Runtime Event 生成 Usage、Failure Cluster、Meaningful Progress、Scratch、Completion、Secret Scan
+和 Process Cleanup 证据；超时、预算越界、同类失败超过 4 次、Scratch 未创建或 Secret 命中均失败。
+每个 Repeat 和 Gate 生成 SHA-256 Manifest 后整体设为只读。
+
 约束：
 
 - 测试辅助行为必须确定、可重复且默认不访问外部服务；
 - 不为方便测试而复制产品状态机、授权逻辑或 Provider 协议实现；
-- 不读取环境中的 Secret，不记录完整 Prompt、reasoning 或原始 Provider 响应；
+- 真实 Gate 只把环境 Secret 继承给生产进程，并以不输出值的字节扫描检查证据；不持久化 Secret、
+  reasoning 或原始 Provider 响应；
 - 产品模块不得依赖本模块；
 - 当前模块不作为发布制品部署。
 

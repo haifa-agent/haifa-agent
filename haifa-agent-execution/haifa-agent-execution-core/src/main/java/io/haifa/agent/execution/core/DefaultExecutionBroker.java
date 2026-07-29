@@ -112,7 +112,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                                 request.workingDirectory(),
                                 environment,
                                 request.limits(),
-                                request.input()),
+                                request.input(),
+                                request.scratchSpace()),
                         safeObserver);
             }
             byte[] stdoutBytes = redact(process.stdout(), environment);
@@ -158,7 +159,9 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     new ResourceUsageSummary(
                             Duration.between(process.startedAt(), process.endedAt()), process.observedProcessCount()),
                     failure,
-                    false);
+                    false,
+                    process.scratchProvisioned(),
+                    process.scratchCleanupFailed());
             executions.complete(request, result);
             return result;
         } finally {
@@ -187,7 +190,12 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         active.put(request.id(), sandbox);
         try {
             var process = sandbox.openManagedProcess(new SandboxExecution(
-                    request.command(), request.workingDirectory(), environment, request.limits(), request.input()));
+                    request.command(),
+                    request.workingDirectory(),
+                    environment,
+                    request.limits(),
+                    request.input(),
+                    request.scratchSpace()));
             return new BrokerManagedSession(request, sandbox, process, environment, before);
         } catch (RuntimeException exception) {
             active.remove(request.id());
@@ -369,7 +377,9 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                             Duration.between(process.startedAt(), processExit.endedAt()),
                             process.observedProcessCount()),
                     executionFailure,
-                    false);
+                    false,
+                    process.scratchProvisioned(),
+                    process.scratchCleanupFailed());
             executions.complete(request, result);
             active.remove(request.id());
             return new io.haifa.agent.execution.api.ProcessExit(
@@ -386,6 +396,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 && first.limits().equals(second.limits())
                 && first.sandboxProfileRef().equals(second.sandboxProfileRef())
                 && first.input().equals(second.input())
+                && first.scratchSpace().equals(second.scratchSpace())
                 && first.invocationDigest().equals(second.invocationDigest());
     }
 

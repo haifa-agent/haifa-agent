@@ -14,6 +14,8 @@ import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -44,9 +46,10 @@ public final class RunInputApplier {
         this.time = Objects.requireNonNull(time);
     }
 
-    public void applyPending(AgentRun run, AgentRunExecutionAttempt attempt, int iteration) {
+    public List<RunInputRecord> applyPending(AgentRun run, AgentRunExecutionAttempt attempt, int iteration) {
+        List<RunInputRecord> appliedInputs = new ArrayList<>();
         for (RunInputRecord pending : inputs.pending(run.id(), 100)) {
-            unitOfWork.execute(() -> {
+            appliedInputs.add(unitOfWork.execute(() -> {
                 state.appendSessionMessage(new SessionMessageDraft(
                         new AgentMessageId(ids.nextValue()),
                         run.sessionId(),
@@ -84,8 +87,9 @@ public final class RunInputApplier {
                         OutboxMessage.CURRENT_SCHEMA_VERSION,
                         event.data(),
                         event.occurredAt()));
-                return null;
-            });
+                return applied;
+            }));
         }
+        return List.copyOf(appliedInputs);
     }
 }

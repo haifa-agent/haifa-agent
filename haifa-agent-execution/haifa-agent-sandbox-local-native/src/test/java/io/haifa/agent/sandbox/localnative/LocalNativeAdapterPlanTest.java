@@ -3,6 +3,8 @@ package io.haifa.agent.sandbox.localnative;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.execution.api.ExecutionCommand;
+import io.haifa.agent.execution.api.ExecutionScratchBinding;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
@@ -70,6 +72,7 @@ class LocalNativeAdapterPlanTest {
                         workspace.resolve("subdir"),
                         temporary.resolve("controls"),
                         List.of(),
+                        scratch(),
                         command)
                 .argv();
         List<String> allowed = new LinuxBubblewrapAdapter()
@@ -80,10 +83,19 @@ class LocalNativeAdapterPlanTest {
                         workspace,
                         temporary.resolve("controls"),
                         List.of(),
+                        scratch(),
                         command)
                 .argv();
 
         assertThat(denied).contains("--unshare-all", "--die-with-parent", "--chdir", "/workspace/subdir");
+        assertThat(denied)
+                .containsSubsequence("--tmpfs", "/tmp")
+                .containsSubsequence("--dir", "/tmp/go-build")
+                .containsSubsequence("--setenv", "TMPDIR", "/tmp")
+                .containsSubsequence("--setenv", "GOTMPDIR", "/tmp")
+                .containsSubsequence("--setenv", "GOCACHE", "/tmp/go-build");
+        assertThat(denied)
+                .doesNotContain(temporary.resolve("controls").resolve("tmp").toString());
         assertThat(denied).doesNotContain("--share-net");
         assertThat(allowed).contains("--share-net");
         int boundary = denied.lastIndexOf("--");
@@ -98,6 +110,13 @@ class LocalNativeAdapterPlanTest {
                 temporary.resolve("bwrap"),
                 Map.of(),
                 Set.of(temporary.resolve("sensitive")));
+    }
+
+    private static ExecutionScratchSpaceSpec scratch() {
+        return new ExecutionScratchSpaceSpec(
+                true,
+                Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
+                List.of(new ExecutionScratchBinding("GOCACHE", "go-build")));
     }
 
     private SandboxProfile profile(NetworkPolicy network, SandboxWorkspaceAccess access) {

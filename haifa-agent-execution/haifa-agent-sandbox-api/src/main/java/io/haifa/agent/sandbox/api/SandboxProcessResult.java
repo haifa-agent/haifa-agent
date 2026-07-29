@@ -14,7 +14,35 @@ public record SandboxProcessResult(
         boolean stdoutTruncated,
         boolean stderrTruncated,
         boolean processTreeTerminated,
-        int observedProcessCount) {
+        int observedProcessCount,
+        boolean scratchProvisioned,
+        boolean scratchCleanupFailed) {
+    public SandboxProcessResult(
+            SandboxProcessStatus status,
+            Integer exitCode,
+            byte[] stdout,
+            byte[] stderr,
+            Instant startedAt,
+            Instant endedAt,
+            boolean stdoutTruncated,
+            boolean stderrTruncated,
+            boolean processTreeTerminated,
+            int observedProcessCount) {
+        this(
+                status,
+                exitCode,
+                stdout,
+                stderr,
+                startedAt,
+                endedAt,
+                stdoutTruncated,
+                stderrTruncated,
+                processTreeTerminated,
+                observedProcessCount,
+                false,
+                false);
+    }
+
     public SandboxProcessResult {
         status = Objects.requireNonNull(status, "status must not be null");
         stdout = Arrays.copyOf(Objects.requireNonNull(stdout, "stdout must not be null"), stdout.length);

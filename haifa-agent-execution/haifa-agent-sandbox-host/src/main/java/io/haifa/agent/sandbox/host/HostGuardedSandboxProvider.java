@@ -1,9 +1,11 @@
 package io.haifa.agent.sandbox.host;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.io.SecureFilePermissions;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceBindingStatus;
 import io.haifa.agent.project.path.WorkspacePath;
@@ -58,6 +60,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
     private final HostShell shell;
+    private final Path scratchRoot;
 
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
@@ -65,7 +68,14 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             LocalWorkspaceLocationStore locations,
             IdentifierGenerator identifiers,
             TimeProvider time) {
-        this(workspaces, bindings, locations, identifiers, time, HostShell.auto());
+        this(
+                workspaces,
+                bindings,
+                locations,
+                identifiers,
+                time,
+                HostShell.auto(),
+                Path.of(System.getProperty("java.io.tmpdir"), "haifa-agent-host-scratch"));
     }
 
     public HostGuardedSandboxProvider(
@@ -75,12 +85,31 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             IdentifierGenerator identifiers,
             TimeProvider time,
             HostShell shell) {
+        this(
+                workspaces,
+                bindings,
+                locations,
+                identifiers,
+                time,
+                shell,
+                Path.of(System.getProperty("java.io.tmpdir"), "haifa-agent-host-scratch"));
+    }
+
+    public HostGuardedSandboxProvider(
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            LocalWorkspaceLocationStore locations,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            HostShell shell,
+            Path scratchRoot) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.shell = Objects.requireNonNull(shell, "shell must not be null");
+        this.scratchRoot = requireScratchRoot(scratchRoot);
     }
 
     public String shellDisplayName() {
@@ -103,6 +132,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         fields.add(providerId());
         fields.add(shell.displayName());
         fields.addAll(shell.invocationPrefix());
+        fields.add(scratchRoot.toString());
         return SandboxConfigurationDigest.sha256Fields(fields);
     }
 
@@ -142,6 +172,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     locations.resolveForTrustedProvider(binding.locationRef()).toRealPath(LinkOption.NOFOLLOW_LINKS);
             if (!LocalWorkspaceLocationStore.fingerprintFor(root).equals(binding.rootFingerprint()) || isLink(root)) {
                 throw failure("ROOT_CHANGED", "workspace root identity changed");
+            }
+            if (overlaps(root, scratchRoot)) {
+                throw failure("SCRATCH_ROOT_UNSAFE", "host scratch root overlaps the workspace");
             }
             return new Session(new SandboxSessionId(identifiers.nextValue()), profile, workspace.id(), root);
         } catch (IOException exception) {
@@ -188,8 +221,16 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             }
             validateCommand(execution);
             Path cwd = resolveDirectory(execution.workingDirectory());
-            Map<String, String> environment = validateEnvironment(execution.environment());
+            Path scratch = createScratchDirectory(execution.scratchSpace());
+            Map<String, String> environment;
+            try {
+                environment = validateEnvironment(execution.environment(), execution.scratchSpace(), scratch);
+            } catch (RuntimeException exception) {
+                cleanupScratchDirectory(scratch);
+                throw exception;
+            }
             Instant started = time.now();
+            SandboxProcessResult result;
             try {
                 ProcessBuilder builder = new ProcessBuilder(launchCommand(execution));
                 builder.directory(cwd.toFile());
@@ -233,7 +274,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 BoundedBytes out = stdout.get(5, TimeUnit.SECONDS);
                 BoundedBytes err = stderr.get(5, TimeUnit.SECONDS);
                 Instant ended = time.now();
-                return new SandboxProcessResult(
+                result = new SandboxProcessResult(
                         status,
                         exitCode,
                         out.bytes(),
@@ -243,11 +284,14 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         out.truncated(),
                         err.truncated(),
                         treeTerminated,
-                        observedProcesses(process));
+                        observedProcesses(process),
+                        true,
+                        false);
             } catch (HostSandboxException exception) {
+                cleanupScratchDirectory(scratch);
                 throw exception;
             } catch (Exception exception) {
-                return new SandboxProcessResult(
+                result = new SandboxProcessResult(
                         SandboxProcessStatus.UNKNOWN,
                         null,
                         new byte[0],
@@ -257,11 +301,30 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         false,
                         false,
                         current == null || !current.isAlive(),
-                        current == null ? 0 : observedProcesses(current));
+                        current == null ? 0 : observedProcesses(current),
+                        true,
+                        false);
             } finally {
                 current = null;
                 cancelRequested = false;
             }
+            boolean cleaned = cleanupScratchDirectory(scratch);
+            if (!cleaned) {
+                result = new SandboxProcessResult(
+                        SandboxProcessStatus.UNKNOWN,
+                        result.exitCode(),
+                        result.stdout(),
+                        result.stderr(),
+                        result.startedAt(),
+                        result.endedAt(),
+                        result.stdoutTruncated(),
+                        result.stderrTruncated(),
+                        result.processTreeTerminated(),
+                        result.observedProcessCount(),
+                        true,
+                        true);
+            }
+            return result;
         }
 
         @Override
@@ -279,7 +342,14 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             }
             validateCommand(execution);
             Path cwd = resolveDirectory(execution.workingDirectory());
-            Map<String, String> environment = validateEnvironment(execution.environment());
+            Path scratch = createScratchDirectory(execution.scratchSpace());
+            Map<String, String> environment;
+            try {
+                environment = validateEnvironment(execution.environment(), execution.scratchSpace(), scratch);
+            } catch (RuntimeException exception) {
+                cleanupScratchDirectory(scratch);
+                throw exception;
+            }
             try {
                 ProcessBuilder builder = new ProcessBuilder(launchCommand(execution));
                 builder.directory(cwd.toFile());
@@ -288,8 +358,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
-                return new Managed(process, execution, time.now());
+                return new Managed(process, execution, time.now(), scratch);
             } catch (IOException exception) {
+                cleanupScratchDirectory(scratch);
                 throw failure("PROCESS_START_FAILED", "managed process could not be started");
             }
         }
@@ -355,6 +426,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             private final Process process;
             private final SandboxExecution execution;
             private final Instant startedAt;
+            private final Path scratch;
             private final java.util.concurrent.LinkedBlockingQueue<io.haifa.agent.execution.api.ProcessOutputChunk>
                     output = new java.util.concurrent.LinkedBlockingQueue<>(1024);
             private final java.util.concurrent.atomic.AtomicInteger stdoutBytes =
@@ -366,11 +438,14 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     new java.util.concurrent.atomic.AtomicBoolean();
             private final java.util.concurrent.atomic.AtomicBoolean timedOut =
                     new java.util.concurrent.atomic.AtomicBoolean();
+            private final java.util.concurrent.atomic.AtomicBoolean scratchCleanupFailed =
+                    new java.util.concurrent.atomic.AtomicBoolean();
 
-            private Managed(Process process, SandboxExecution execution, Instant startedAt) {
+            private Managed(Process process, SandboxExecution execution, Instant startedAt, Path scratch) {
                 this.process = process;
                 this.execution = execution;
                 this.startedAt = startedAt;
+                this.scratch = scratch;
                 Thread.ofVirtual()
                         .name("haifa-managed-stdout")
                         .start(() -> pump(
@@ -395,6 +470,11 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                                             : io.haifa.agent.execution.api.ExecutionStatus.FAILED;
                     cancelRequested = false;
                     current = null;
+                    boolean cleaned = cleanupScratchDirectory(scratch);
+                    if (!cleaned) {
+                        scratchCleanupFailed.set(true);
+                        status = io.haifa.agent.execution.api.ExecutionStatus.UNKNOWN;
+                    }
                     return new io.haifa.agent.execution.api.ProcessExit(status, process.exitValue(), true, time.now());
                 });
                 java.util.concurrent.CompletableFuture.delayedExecutor(
@@ -449,6 +529,16 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             }
 
             @Override
+            public boolean scratchProvisioned() {
+                return true;
+            }
+
+            @Override
+            public boolean scratchCleanupFailed() {
+                return scratchCleanupFailed.get();
+            }
+
+            @Override
             public boolean cancel() {
                 cancelRequested = true;
                 return terminateTree(process);
@@ -456,7 +546,10 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
             @Override
             public void close() {
-                if (managedClosed.compareAndSet(false, true) && process.isAlive()) cancel();
+                if (managedClosed.compareAndSet(false, true)) {
+                    if (process.isAlive()) cancel();
+                    if (!process.isAlive()) cleanupScratchDirectory(scratch);
+                }
             }
 
             private void pump(
@@ -500,7 +593,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             }
         }
 
-        private Map<String, String> validateEnvironment(Map<String, String> requested) {
+        private Map<String, String> validateEnvironment(
+                Map<String, String> requested, ExecutionScratchSpaceSpec scratchSpace, Path scratch) {
             var safe = new java.util.HashMap<String, String>();
             requested.forEach((name, value) -> {
                 String upper = name.toUpperCase(Locale.ROOT);
@@ -511,7 +605,59 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 }
                 safe.put(name, value);
             });
+            scratchSpace.rootEnvironmentNames().forEach(name -> safe.put(name, scratch.toString()));
+            scratchSpace
+                    .childBindings()
+                    .forEach(binding -> safe.put(
+                            binding.environmentName(),
+                            scratch.resolve(binding.relativeDirectory()).toString()));
             return Map.copyOf(safe);
+        }
+
+        private Path createScratchDirectory(ExecutionScratchSpaceSpec scratchSpace) {
+            Path directory = null;
+            try {
+                Files.createDirectories(scratchRoot);
+                SecureFilePermissions.secureDirectory(scratchRoot);
+                if (isLink(scratchRoot) || overlaps(root, scratchRoot)) {
+                    throw new IOException("scratch root identity is unsafe");
+                }
+                directory = Files.createTempDirectory(scratchRoot, "session-");
+                SecureFilePermissions.secureDirectory(directory);
+                for (var binding : scratchSpace.childBindings()) {
+                    Path current = directory;
+                    for (String segment : binding.relativeDirectory().split("/")) {
+                        current = current.resolve(segment);
+                        if (Files.notExists(current, LinkOption.NOFOLLOW_LINKS)) {
+                            Files.createDirectory(current);
+                        }
+                        SecureFilePermissions.secureDirectory(current);
+                    }
+                    if (!current.normalize().startsWith(directory) || isLink(current) || !Files.isWritable(current)) {
+                        throw new IOException("scratch child is unsafe");
+                    }
+                }
+                if (!Files.isWritable(directory)) throw new IOException("scratch root is not writable");
+                return directory;
+            } catch (IOException exception) {
+                cleanupScratchDirectory(directory);
+                throw failure("SCRATCH_PROVISION_FAILED", "host scratch space could not be provisioned");
+            }
+        }
+
+        private boolean cleanupScratchDirectory(Path directory) {
+            if (directory == null) return true;
+            Path target = directory.toAbsolutePath().normalize();
+            if (!target.startsWith(scratchRoot) || target.equals(scratchRoot)) return false;
+            try (var paths = Files.walk(target)) {
+                for (Path path :
+                        paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                    Files.deleteIfExists(path);
+                }
+                return Files.notExists(target, LinkOption.NOFOLLOW_LINKS);
+            } catch (IOException exception) {
+                return false;
+            }
         }
 
         private static boolean looksLikeSecretName(String upperName) {
@@ -608,6 +754,23 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         } catch (IOException exception) {
             return true;
         }
+    }
+
+    private static Path requireScratchRoot(Path value) {
+        Path root = Objects.requireNonNull(value, "scratchRoot must not be null")
+                .toAbsolutePath()
+                .normalize();
+        Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
+        if (root.getParent() == null || root.equals(home)) {
+            throw new IllegalArgumentException("scratchRoot must be private and outside the user home");
+        }
+        return root;
+    }
+
+    private static boolean overlaps(Path first, Path second) {
+        Path left = first.toAbsolutePath().normalize();
+        Path right = second.toAbsolutePath().normalize();
+        return left.startsWith(right) || right.startsWith(left);
     }
 
     private static HostSandboxException failure(String code, String message) {

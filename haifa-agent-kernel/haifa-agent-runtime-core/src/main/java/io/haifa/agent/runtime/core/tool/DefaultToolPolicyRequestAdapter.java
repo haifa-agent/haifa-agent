@@ -15,6 +15,7 @@ import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSideEffect;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -34,6 +35,9 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
         String invocationDigest = resourceDigest(definition.name().value(), request);
         String resourceDigest;
         if (definition.name().value().equals("execution.run")) {
+            String scratchSpecDigest =
+                    executionScratchSpecDigest(definition.inputSchema().document());
+            invocationDigest = PolicyDigest.sha256Fields(List.of(invocationDigest, scratchSpecDigest));
             String executionProfile = definition.resources().executionProfiles().stream()
                     .reduce((first, ignored) -> {
                         throw new IllegalArgumentException("execution.run must bind exactly one execution profile");
@@ -75,6 +79,14 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
             }
         }
         return ToolPipeline.argumentsDigest(request);
+    }
+
+    private static String executionScratchSpecDigest(Map<String, Object> schema) {
+        Object value = schema.get("x-haifa-scratch-spec-digest");
+        if (!(value instanceof String digest) || !digest.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("execution.run requires a frozen scratch specification");
+        }
+        return digest;
     }
 
     private static PolicyRiskLevel map(ToolRisk risk) {
