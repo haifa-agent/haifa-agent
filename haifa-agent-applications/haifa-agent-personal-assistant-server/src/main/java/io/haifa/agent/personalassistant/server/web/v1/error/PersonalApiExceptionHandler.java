@@ -37,7 +37,8 @@ public final class PersonalApiExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     ResponseEntity<PersonalApiDtos.Error> notFound(NoResourceFoundException exception, ServerWebExchange exchange) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new PersonalApiDtos.Error("NOT_FOUND", "The requested resource was not found.", correlation(exchange)));
+                .body(new PersonalApiDtos.Error(
+                        "NOT_FOUND", "The requested resource was not found.", correlation(exchange)));
     }
 
     @ExceptionHandler(Exception.class)
@@ -49,8 +50,7 @@ public final class PersonalApiExceptionHandler {
                 exception.getClass().getName(),
                 origin(exception));
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(new PersonalApiDtos.Error(
-                        "INTERNAL_ERROR", "The request could not be completed.", correlation));
+                .body(new PersonalApiDtos.Error("INTERNAL_ERROR", "The request could not be completed.", correlation));
     }
 
     private static String correlation(ServerWebExchange exchange) {
