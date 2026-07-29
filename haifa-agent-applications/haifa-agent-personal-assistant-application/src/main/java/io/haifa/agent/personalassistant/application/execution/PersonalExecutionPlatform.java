@@ -27,6 +27,9 @@ public record PersonalExecutionPlatform(
         ExecutionPlatformContribution execution,
         ShellPlatformContribution shell,
         ApprovalPlatformContribution approval) {
+    private static final int MAX_APPROVAL_PROMPT_LENGTH = 2_048;
+    private static final int MAX_ARGS_SUMMARY_LENGTH = 256;
+
     public static final ProductContributionCoordinate EXECUTION_COORDINATE =
             new ProductContributionCoordinate("haifa-personal-execution", "2.0.0");
     public static final ProductContributionCoordinate SHELL_COORDINATE =
@@ -94,18 +97,42 @@ public record PersonalExecutionPlatform(
         String args = safe(arguments.getOrDefault("args", java.util.List.of()));
         String timeout = safe(arguments.getOrDefault("timeoutMillis", 15_000));
         String digest = PolicyDigest.sha256Fields(java.util.List.of(mode, language, content, args, purpose, timeout));
-        return (reauthentication ? "Reauthenticate and approve execution" : "Approve execution")
+        String summary = (reauthentication ? "Reauthenticate and approve execution" : "Approve execution")
                 + "\nMode: " + mode
                 + "\nLanguage: " + language
                 + "\nPurpose: " + purpose
-                + "\nArgs: " + args
+                + "\nArgs: " + boundedValue(args, MAX_ARGS_SUMMARY_LENGTH)
                 + "\nTimeout: " + timeout + " ms"
                 + "\nOutput: bounded and redacted"
                 + "\nWorkspace: application-owned; the model cannot select cwd"
                 + "\nProvider: trusted host process; no strong isolation; network disconnection is not guaranteed"
                 + "\nInvocation digest: " + digest
-                + "\nRisks: HIGH, PROCESS_EXECUTION, NON_IDEMPOTENT, host access; approve once or reject"
-                + "\nFull content:\n" + content;
+                + "\nRisks: HIGH, PROCESS_EXECUTION, NON_IDEMPOTENT, host access; approve once or reject";
+        return boundedContent(summary, content);
+    }
+
+    static String boundedContent(String summary, String content) {
+        String label = "\nFull content:\n";
+        String complete = summary + label + content;
+        if (complete.length() <= MAX_APPROVAL_PROMPT_LENGTH) return complete;
+        String marker =
+                "\n[Content truncated; original length=" + content.length() + "; exact invocation digest shown above]";
+        int available = MAX_APPROVAL_PROMPT_LENGTH - summary.length() - label.length() - marker.length();
+        if (available < 0) {
+            throw new IllegalArgumentException("execution approval summary exceeds safe display limit");
+        }
+        if (available > 0 && available < content.length() && Character.isHighSurrogate(content.charAt(available - 1))) {
+            available--;
+        }
+        return summary + label + content.substring(0, available).stripTrailing() + marker;
+    }
+
+    private static String boundedValue(String value, int maximumLength) {
+        if (value.length() <= maximumLength) return value;
+        String marker = "...[truncated]";
+        int end = maximumLength - marker.length();
+        if (Character.isHighSurrogate(value.charAt(end - 1))) end--;
+        return value.substring(0, end) + marker;
     }
 
     private static String safe(Object value) {

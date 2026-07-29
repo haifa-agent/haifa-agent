@@ -837,6 +837,37 @@ class RuntimeCoreTest {
                 .containsSequence(ModelMessageRole.ASSISTANT, ModelMessageRole.TOOL);
     }
 
+    @Test
+    void oversizedLegacyApprovalPromptStillProjectsAsABoundedPublicInteraction() {
+        String oversizedPrompt = "Approve execution\nFull content:\n" + "Write-Output 'test'\n".repeat(300);
+        AgentChatModel model = model(new ToolCallDecision(List.of(toolRequest(
+                "legacy-approval",
+                "write",
+                "1.0.0",
+                new ToolArguments("write.input", "1.0", Map.of("value", "test"))))));
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        request -> new ToolResult(true, "written", Map.of(), List.of(), List.of(), false))
+                .toolApprovalPrompts((binding, call, reauthentication) -> oversizedPrompt));
+
+        var accepted = fixture.runtime.start(request("legacy-oversized-approval"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.interactions.pending(accepted.runId()).orElseThrow().prompt())
+                .hasSizeGreaterThan(2_048);
+        assertThat(fixture.runtime
+                        .pendingInteraction(accepted.runId())
+                        .orElseThrow()
+                        .safePrompt())
+                .hasSizeLessThanOrEqualTo(2_048)
+                .contains("Approve execution", "Prompt truncated for safe display", "original length=");
+    }
+
     private static Fixture fixture(AgentChatModel model) {
         return fixture(model, builder -> builder);
     }
