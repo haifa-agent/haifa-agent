@@ -585,7 +585,9 @@ public final class ToolPipeline {
                 var event = new java.util.LinkedHashMap<String, Object>();
                 event.put(
                         "executionId",
-                        data.get("executionId") instanceof String id ? id : call.id().value());
+                        data.get("executionId") instanceof String id
+                                ? id
+                                : call.id().value());
                 event.put("toolCallId", call.id().value());
                 event.put("status", lifecycle);
                 event.put(
@@ -593,9 +595,7 @@ public final class ToolPipeline {
                         safeText(call.arguments().values().get("purpose"), "approved command or script"));
                 event.put("logicalWorkdir", safeText(call.arguments().values().get("workdir"), "."));
                 event.put("streamKind", "MERGED");
-                event.put(
-                        "chunkOrRef",
-                        executionOutput(data));
+                event.put("chunkOrRef", executionOutput(data));
                 event.put("truncated", Boolean.TRUE.equals(data.get("truncated")));
                 if (data.get("exitCode") instanceof Number exitCode) event.put("exitCode", exitCode.intValue());
                 if (data.get("fileChangeSetId") instanceof String changeSet) {

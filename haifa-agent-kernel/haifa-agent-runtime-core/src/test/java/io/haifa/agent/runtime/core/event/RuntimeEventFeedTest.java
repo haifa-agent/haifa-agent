@@ -105,8 +105,7 @@ class RuntimeEventFeedTest {
                 "model.output.delta",
                 Map.of("eventType", "ASSISTANT_TEXT_DELTA", "generationId", "generation", "textDelta", ""),
                 NOW);
-        RuntimeEvent status =
-                store.append(runId, "run.status", Map.of("status", "COMPLETED", "version", 2L), NOW);
+        RuntimeEvent status = store.append(runId, "run.status", Map.of("status", "COMPLETED", "version", 2L), NOW);
         RuntimeEventFeed feed = new RuntimeEventFeed(store, new RuntimeClientEventProjector(store));
 
         var page = feed.page(runId, RunEventCursor.beforeFirst(runId), 10);
