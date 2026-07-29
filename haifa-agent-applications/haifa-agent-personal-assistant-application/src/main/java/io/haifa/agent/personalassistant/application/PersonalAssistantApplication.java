@@ -328,6 +328,20 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private Optional<ActivityView> activity(AgentRunEvent event) {
+        if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle execution) {
+            return Optional.of(new ActivityView(
+                    event.eventId(),
+                    event.runId().value(),
+                    ActivityKind.TOOL,
+                    PersonalAssistantProfile.EXECUTION_TOOL_ALIAS,
+                    execution.commandSummary(),
+                    execution.status(),
+                    event.occurredAt(),
+                    Optional.of(event.occurredAt()),
+                    execution.chunkOrRef(),
+                    Optional.empty(),
+                    event.sequence()));
+        }
         if (!(event.payload() instanceof RunEventPayloads.ToolLifecycle tool)) return Optional.empty();
         ActivityKind kind =
                 Set.of(PersonalAssistantProfile.SKILL_LOAD_ALIAS, PersonalAssistantProfile.SKILL_RESOURCE_ALIAS)

@@ -108,7 +108,11 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 ExecutionOutputObserver safeObserver = new RedactingExecutionOutputObserver(asynchronous, environment);
                 process = session.execute(
                         new SandboxExecution(
-                                request.command(), request.workingDirectory(), environment, request.limits()),
+                                request.command(),
+                                request.workingDirectory(),
+                                environment,
+                                request.limits(),
+                                request.input()),
                         safeObserver);
             }
             byte[] stdoutBytes = redact(process.stdout(), environment);
@@ -167,6 +171,9 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             io.haifa.agent.execution.api.ManagedProcessRequest managedRequest) {
         Objects.requireNonNull(managedRequest, "managedRequest must not be null");
         ExecutionRequest request = managedRequest.execution();
+        if (!request.input().isEmpty()) {
+            throw new IllegalArgumentException("managed execution does not accept initial input");
+        }
         if (executions.findByIdempotencyKey(request.idempotencyKey()).isPresent()) {
             throw reject("MANAGED_SESSION_REPLAY_DENIED", "managed process sessions cannot be replayed");
         }
@@ -179,8 +186,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         SandboxSession sandbox = resolved.provider().open(resolved.profile(), resolved.mount());
         active.put(request.id(), sandbox);
         try {
-            var process = sandbox.openManagedProcess(
-                    new SandboxExecution(request.command(), request.workingDirectory(), environment, request.limits()));
+            var process = sandbox.openManagedProcess(new SandboxExecution(
+                    request.command(), request.workingDirectory(), environment, request.limits(), request.input()));
             return new BrokerManagedSession(request, sandbox, process, environment, before);
         } catch (RuntimeException exception) {
             active.remove(request.id());
@@ -377,7 +384,9 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 && first.command().equals(second.command())
                 && first.environmentRef().equals(second.environmentRef())
                 && first.limits().equals(second.limits())
-                && first.sandboxProfileRef().equals(second.sandboxProfileRef());
+                && first.sandboxProfileRef().equals(second.sandboxProfileRef())
+                && first.input().equals(second.input())
+                && first.invocationDigest().equals(second.invocationDigest());
     }
 
     private static ExecutionStatus map(SandboxProcessStatus status, Integer exitCode) {

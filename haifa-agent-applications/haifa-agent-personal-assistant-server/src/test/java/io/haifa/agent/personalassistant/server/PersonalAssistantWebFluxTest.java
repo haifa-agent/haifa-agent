@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,7 @@ class PersonalAssistantWebFluxTest {
         registry.add("haifa.personal.model.provider-model-id", () -> "personal-test");
         registry.add("haifa.personal.model.credential-reference", () -> "env://UNUSED");
         registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
+        registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
     }
 
     @Test
@@ -124,6 +126,66 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void executionRequiresExactApprovalAndPublishesSafeActivity() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Execution acceptance","message":"[execution-script]"}
+                """);
+        String runId = conversation.path("activeRunId").asText();
+        JsonNode waiting = awaitStatus(runId, Set.of("WAITING_APPROVAL"));
+        assertThat(waiting.path("status").asText()).isEqualTo("WAITING_APPROVAL");
+
+        JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
+        assertThat(interaction.path("kind").asText()).isEqualTo("approval");
+        assertThat(interaction.path("allowedActions").toString()).contains("approve", "reject");
+        assertThat(interaction.path("safePrompt").asText())
+                .contains(
+                        "Mode: SCRIPT",
+                        "Language: powershell",
+                        "Purpose: 验证 PowerShell 脚本参数通过 stdin 安全传递",
+                        "Risks: HIGH",
+                        "$args -join '|'")
+                .doesNotContain("operatingSystem", "executable");
+
+        post(
+                "/api/v1/runs/" + runId + "/interactions/"
+                        + interaction.path("id").asText() + "/response",
+                interaction.path("revision").asLong(),
+                """
+                {"action":"approve","text":null}
+        """);
+        JsonNode completed = awaitTerminal(runId);
+        JsonNode activities = get("/api/v1/runs/" + runId + "/activities");
+        assertThat(completed.path("status").asText())
+                .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
+                .isEqualTo("COMPLETED");
+        assertThat(activities.toString())
+                .contains("execution_run", "SCRIPT", "powershell", "验证 PowerShell 脚本参数通过 stdin 安全传递")
+                .contains("first argument|second'argument");
+    }
+
+    @Test
+    void cpuObservationScriptWaitsForExactApproval() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"CPU observation","message":"请看下当前系统的CPU使用率 [execution-cpu]"}
+                """);
+        String runId = conversation.path("activeRunId").asText();
+
+        JsonNode waiting = awaitStatus(runId, Set.of("WAITING_APPROVAL", "FAILED"));
+        assertThat(waiting.path("status").asText()).isEqualTo("WAITING_APPROVAL");
+        JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
+        assertThat(interaction.path("safePrompt").asText())
+                .contains(
+                        "Mode: SCRIPT",
+                        "Language: powershell",
+                        "读取当前系统 CPU 使用率与逻辑处理器数量",
+                        "Get-CimInstance Win32_Processor");
+    }
+
+    @Test
     void mutationsRequireCsrfAndIdempotencyHeaders() {
         web.post()
                 .uri("/api/v1/conversations")
@@ -183,12 +245,17 @@ class PersonalAssistantWebFluxTest {
     }
 
     private JsonNode post(String uri, String json) throws Exception {
-        byte[] body = web.post()
+        return post(uri, null, json);
+    }
+
+    private JsonNode post(String uri, Long revision, String json) throws Exception {
+        WebTestClient.RequestBodySpec request = web.post()
                 .uri(uri)
                 .header("X-Haifa-CSRF", "1")
                 .header("Idempotency-Key", "test-" + IDS.incrementAndGet())
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(json)
+                .contentType(MediaType.APPLICATION_JSON);
+        if (revision != null) request.header("If-Match", '"' + revision.toString() + '"');
+        byte[] body = request.bodyValue(json)
                 .exchange()
                 .expectStatus()
                 .is2xxSuccessful()
@@ -211,12 +278,15 @@ class PersonalAssistantWebFluxTest {
     }
 
     private JsonNode awaitTerminal(String runId) throws Exception {
+        return awaitStatus(runId, Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"));
+    }
+
+    private JsonNode awaitStatus(String runId, Set<String> expected) throws Exception {
         long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
         JsonNode latest;
         do {
             latest = get("/api/v1/runs/" + runId);
-            if (Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT")
-                    .contains(latest.path("status").asText())) {
+            if (expected.contains(latest.path("status").asText())) {
                 return latest;
             }
             Thread.sleep(25);
@@ -226,7 +296,10 @@ class PersonalAssistantWebFluxTest {
 
     private static Path temporaryDirectory() {
         try {
-            return Files.createTempDirectory("haifa-personal-webflux-");
+            Path root = Path.of("target", "personal-webflux-" + UUID.randomUUID())
+                    .toAbsolutePath()
+                    .normalize();
+            return Files.createDirectories(root);
         } catch (IOException exception) {
             throw new ExceptionInInitializerError(exception);
         }

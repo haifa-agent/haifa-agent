@@ -44,7 +44,18 @@ public final class PersonalAssistantController {
                 "v1",
                 "connected",
                 properties.caller().principal(),
-                List.of("conversation", "usage", "tool", "skill", "mcp", "memory", "interaction", "sse"),
+                List.of(
+                        "conversation",
+                        "usage",
+                        "tool",
+                        "skill",
+                        "mcp",
+                        "memory",
+                        "interaction",
+                        "approval",
+                        "shell",
+                        "execution",
+                        "sse"),
                 application.productDigest());
     }
 

@@ -240,6 +240,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         Objects.requireNonNull(request, "request must not be null");
         AgentRun resumable = requireRun(request.runId());
         requireCaller(resumable);
+        awaitPreviousAttempt(resumable);
         var caller = callers.current();
         String callerScope = callerScope(caller);
         Optional<AgentRunId> existing = idempotency.findRun(callerScope, "resume", request.idempotencyKey());
@@ -281,6 +282,25 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             scheduler.submit(run.id(), () -> attemptExecutor.execute(submittedRun, createdAttempt.get()));
         }
         return accepted;
+    }
+
+    private void awaitPreviousAttempt(AgentRun run) {
+        if (run.status() != AgentRunStatus.WAITING_INTERACTION && run.status() != AgentRunStatus.WAITING_APPROVAL) {
+            return;
+        }
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(2).toNanos();
+        while (attempts.activeFor(run.id()).isPresent()) {
+            if (System.nanoTime() >= deadline) {
+                throw new IllegalStateException("previous execution attempt did not pause before resume");
+            }
+            try {
+                Thread.sleep(5);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(
+                        "interrupted while waiting for the previous execution attempt", exception);
+            }
+        }
     }
 
     @Override

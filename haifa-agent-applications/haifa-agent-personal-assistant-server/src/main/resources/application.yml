@@ -46,4 +46,13 @@ haifa:
       alias-namespace: ${HAIFA_PERSONAL_MCP_ALIAS_NAMESPACE:personal_mcp}
       server-id: ${HAIFA_PERSONAL_MCP_SERVER_ID:personal-local}
       display-name: ${HAIFA_PERSONAL_MCP_DISPLAY_NAME:Personal local utility}
+    execution:
+      default-timeout-millis: ${HAIFA_PERSONAL_EXECUTION_DEFAULT_TIMEOUT_MILLIS:15000}
+      maximum-timeout-millis: ${HAIFA_PERSONAL_EXECUTION_MAXIMUM_TIMEOUT_MILLIS:30000}
+      maximum-output-bytes: ${HAIFA_PERSONAL_EXECUTION_MAXIMUM_OUTPUT_BYTES:65536}
+      maximum-output-lines: ${HAIFA_PERSONAL_EXECUTION_MAXIMUM_OUTPUT_LINES:1000}
+      maximum-processes: ${HAIFA_PERSONAL_EXECUTION_MAXIMUM_PROCESSES:4}
+      trusted-host-enabled: ${HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED:false}
+      python-path: ${HAIFA_PERSONAL_PYTHON_PATH:}
+      power-shell-path: ${HAIFA_PERSONAL_POWERSHELL_PATH:}
     local-skill-root: ${HAIFA_PERSONAL_SKILL_ROOT:}

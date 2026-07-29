@@ -82,6 +82,7 @@ class PersonalAssistantRestartTest {
             "--haifa.personal.model.endpoint=http://127.0.0.1:20999",
             "--haifa.personal.model.provider-model-id=personal-test",
             "--haifa.personal.model.credential-reference=env://UNUSED",
+            "--haifa.personal.execution.trusted-host-enabled=true",
             "--haifa.personal.mcp.port=" + mcpPort
         };
     }

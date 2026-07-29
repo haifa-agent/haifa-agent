@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
+import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.binding.WorkspaceBinding;
@@ -227,6 +228,32 @@ class HostSandboxTest {
     }
 
     @Test
+    void writesBoundedInitialInputThenClosesStdin() throws Exception {
+        Fixture fixture = fixture(root, "workspace-stdin", "binding-stdin", "location-stdin");
+        copyProcessClass(root, StdinEchoProcess.class);
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, () -> "stdin-session", Instant::now);
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("stdin-test", "1"),
+                provider.configurationDigest(),
+                Set.of("java"),
+                Set.of(),
+                false);
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of("java", "-cp", ".", StdinEchoProcess.class.getName())),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2),
+                    ExecutionInput.utf8("script-through-stdin")));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                    .isEqualTo("script-through-stdin");
+        }
+    }
+
+    @Test
     void createsBudgetedEphemeralCopyWithNarrowedAuthorityAndSafeRelease() throws Exception {
         Files.writeString(root.resolve("visible.txt"), "visible");
         Files.writeString(root.resolve(".env"), "secret");
@@ -325,9 +352,13 @@ class HostSandboxTest {
     }
 
     private static void copySleepClass(Path target) throws Exception {
-        Path destination = target.resolve("io/haifa/agent/sandbox/host/SleepProcess.class");
+        copyProcessClass(target, SleepProcess.class);
+    }
+
+    private static void copyProcessClass(Path target, Class<?> type) throws Exception {
+        Path destination = target.resolve(type.getName().replace('.', '/') + ".class");
         Files.createDirectories(destination.getParent());
-        try (InputStream input = SleepProcess.class.getResourceAsStream("SleepProcess.class")) {
+        try (InputStream input = type.getResourceAsStream(type.getSimpleName() + ".class")) {
             Files.copy(java.util.Objects.requireNonNull(input), destination);
         }
     }

@@ -7,16 +7,55 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("haifa.personal")
 public record PersonalAssistantProperties(
-        Path dataDirectory, String continuationKeyBase64, Caller caller, Model model, Mcp mcp, String localSkillRoot) {
+        Path dataDirectory,
+        String continuationKeyBase64,
+        Caller caller,
+        Model model,
+        Mcp mcp,
+        Execution execution,
+        String localSkillRoot) {
     public PersonalAssistantProperties {
         if (dataDirectory == null) throw new IllegalArgumentException("dataDirectory is required");
         if (continuationKeyBase64 == null || continuationKeyBase64.isBlank()) {
             throw new IllegalArgumentException("HAIFA_PERSONAL_CONTINUATION_KEY is required");
         }
-        if (caller == null || model == null || mcp == null) {
-            throw new IllegalArgumentException("caller, model, and mcp configuration are required");
+        if (caller == null || model == null || mcp == null || execution == null) {
+            throw new IllegalArgumentException("caller, model, mcp, and execution configuration are required");
         }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
+    }
+
+    public record Execution(
+            long defaultTimeoutMillis,
+            long maximumTimeoutMillis,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            int maximumProcesses,
+            boolean trustedHostEnabled,
+            String pythonPath,
+            String powerShellPath) {
+        public Execution {
+            if (defaultTimeoutMillis < 1000
+                    || maximumTimeoutMillis < defaultTimeoutMillis
+                    || maximumTimeoutMillis > 30_000) {
+                throw new IllegalArgumentException("execution timeouts must be between 1000 and 30000 milliseconds");
+            }
+            if (maximumOutputBytes < 1024 || maximumOutputBytes > 1024 * 1024) {
+                throw new IllegalArgumentException("execution.maximumOutputBytes is out of range");
+            }
+            if (maximumOutputLines < 1 || maximumOutputLines > 10_000) {
+                throw new IllegalArgumentException("execution.maximumOutputLines is out of range");
+            }
+            if (maximumProcesses < 1 || maximumProcesses > 64) {
+                throw new IllegalArgumentException("execution.maximumProcesses is out of range");
+            }
+            if (!trustedHostEnabled) {
+                throw new IllegalArgumentException(
+                        "Host Guarded execution requires explicit execution.trustedHostEnabled=true");
+            }
+            pythonPath = pythonPath == null ? "" : pythonPath.trim();
+            powerShellPath = powerShellPath == null ? "" : powerShellPath.trim();
+        }
     }
 
     public record Caller(String tenant, String principal, String reviewer) {

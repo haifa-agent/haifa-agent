@@ -2,6 +2,7 @@ package io.haifa.agent.personalassistant.application;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpConfiguration;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
@@ -34,8 +35,8 @@ public final class PersonalAssistantAssembler {
         PersonalMcpPlatform mcp = PersonalMcpPlatform.connect(
                 dependencies.mcp(), dependencies.tenant(), dependencies.principal(), dependencies.clock());
         try {
-            var tools =
-                    PersonalToolPlatform.create(dependencies.persistence(), skills, mcp, dependencies.clock()::instant);
+            var tools = PersonalToolPlatform.create(
+                    dependencies.persistence(), skills, mcp, dependencies.execution(), dependencies.clock()::instant);
             var coordinates = new PersonalAssistantProfile.ContributionCoordinates(
                     dependencies.model().coordinate(),
                     dependencies.persistence().coordinate(),
@@ -44,11 +45,15 @@ public final class PersonalAssistantAssembler {
                     dependencies.policy().coordinate(),
                     tools.tool().coordinate(),
                     tools.skill().coordinate(),
-                    tools.mcp().coordinate());
+                    tools.mcp().coordinate(),
+                    dependencies.execution().execution().coordinate(),
+                    dependencies.execution().shell().coordinate(),
+                    dependencies.execution().approval().coordinate());
             var profile = PersonalAssistantProfile.create(coordinates, skills.aliases(), mcp.aliases());
             var agent = HaifaAgents.builder(profile)
                     .callerProvider(dependencies.callers())
                     .timeProvider(dependencies.clock()::instant)
+                    .toolApprovalPrompts(dependencies.execution()::approvalPrompt)
                     .contribute(dependencies.model())
                     .contribute(dependencies.persistence())
                     .contribute(dependencies.conversation())
@@ -57,6 +62,9 @@ public final class PersonalAssistantAssembler {
                     .contribute(tools.tool())
                     .contribute(tools.skill())
                     .contribute(tools.mcp())
+                    .contribute(dependencies.execution().execution())
+                    .contribute(dependencies.execution().shell())
+                    .contribute(dependencies.execution().approval())
                     .build();
             return new PersonalAssistantApplication(agent, mcp, dependencies.clock());
         } catch (RuntimeException | Error exception) {
@@ -74,6 +82,7 @@ public final class PersonalAssistantAssembler {
             SdkConversationContribution conversation,
             MemoryPlatformContribution memory,
             PolicyPlatformContribution policy,
+            PersonalExecutionPlatform execution,
             PersonalMcpConfiguration mcp,
             Optional<Path> localSkillRoot,
             List<Path> protectedPaths,
@@ -87,6 +96,7 @@ public final class PersonalAssistantAssembler {
             Objects.requireNonNull(conversation);
             Objects.requireNonNull(memory);
             Objects.requireNonNull(policy);
+            Objects.requireNonNull(execution);
             Objects.requireNonNull(mcp);
             localSkillRoot = Objects.requireNonNull(localSkillRoot);
             protectedPaths = List.copyOf(protectedPaths);

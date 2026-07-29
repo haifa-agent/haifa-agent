@@ -25,6 +25,19 @@ $env:HAIFA_PERSONAL_MODEL_MODE='deterministic'
 $env:HAIFA_PERSONAL_ALLOW_DETERMINISTIC='true'
 ```
 
+Phase 3 的本机命令/脚本能力复用平台 Execution Broker 和 Host Guarded Sandbox。因为当前
+Provider 会启动可信主机进程、不能保证强隔离或断网，Server 默认 fail closed；本机管理员必须
+显式确认该部署边界：
+
+```powershell
+$env:HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED='true'
+```
+
+Personal 产品使用 Server 私有 Workspace，模型不能指定 cwd。默认单次 15 秒、最大 30 秒、
+64 KiB / 1000 行输出和最多 4 个并发进程；可执行文件从可信 Server 配置和当前 OS 解析。环境变量
+采用最小 allowlist，不把 Server 凭据注入子进程。每次调用仍必须经过 Runtime Interaction exact
+approval；开关只确认 Provider 部署风险，不构成某次调用授权。
+
 默认 MCP 模式为 `embedded-echo`，用于离线测试。连接已经单独启动的 loopback MCP 服务时，必须显式
 切换为 `external` 并给出最小 Tool allowlist；Server 不会代替外部进程启动或扫描全局 MCP：
 

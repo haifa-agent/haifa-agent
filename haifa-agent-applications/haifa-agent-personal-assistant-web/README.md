@@ -13,6 +13,8 @@ JAR 的构建或静态资源打包。
 - Tool、Skill、MCP 的安全 Activity 投影，不展示原始参数、结果、路径或协议 JSON；
 - Memory Candidate 确认/拒绝、Memory 查看/停用；
 - 最终 Run 的后端权威 Token Usage；
+- 命令/脚本 exact approval 的完整可读正文、调用摘要和高风险警示；
+- 执行 REQUESTED / STARTED / SUCCEEDED / FAILED / TIMED_OUT 安全活动及有界结果摘要；
 - 桌面三栏布局和移动端互斥抽屉。
 
 生产代码没有 Mock Client、Fixture fallback、Follow-up/Steer、Preference 编辑、复杂进度投影或
@@ -37,6 +39,9 @@ npm run contract:check
 ```
 
 `contract:check` 会拒绝过期 TypeScript DTO、错误端口、缺少幂等键的写接口和已延期操作。
+
+Run SSE 收到 `run.status`、`interaction.status` 或 `activity.committed` 时会立即重取对应权威
+Snapshot。因此审批卡片、执行活动和终态不依赖手工刷新；断线恢复仍以 HTTP Snapshot 为事实。
 
 ## 本地开发
 

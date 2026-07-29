@@ -59,7 +59,7 @@ public record PersonalSkillPlatform(SkillCatalog catalog, SkillContentLoader con
         return new ClasspathSkillSource(
                 PersonalSkillPlatform.class.getClassLoader(),
                 "META-INF/haifa-agent/personal-skills",
-                List.of("daily-planning"),
+                List.of("daily-planning", "local-script-execution"),
                 new SkillSourceDescriptor(
                         new SkillSourceRef("classpath:haifa-personal-skills", "1"),
                         SkillScopeRef.product(),

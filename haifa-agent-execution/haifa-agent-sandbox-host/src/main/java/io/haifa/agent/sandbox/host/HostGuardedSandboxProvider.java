@@ -198,7 +198,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
-                process.getOutputStream().close();
+                try (var standardInput = process.getOutputStream()) {
+                    standardInput.write(execution.input().bytes());
+                }
                 var stdout = CompletableFuture.supplyAsync(() -> read(
                         process.getInputStream(),
                         execution.limits().maxStdoutBytes(),
@@ -324,9 +326,6 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 return;
             }
             String executable = execution.command().executable();
-            if (executable.contains("/") || executable.contains("\\") || executable.contains(":")) {
-                throw failure("EXECUTABLE_PATH_DENIED", "executable must be selected by approved name");
-            }
             boolean allowed =
                     profile.allowedExecutables().stream().anyMatch(value -> value.equalsIgnoreCase(executable));
             if (!allowed) throw failure("EXECUTABLE_DENIED", "executable is not allowed by profile");

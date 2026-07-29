@@ -79,6 +79,8 @@ function statusLabel(status: string): string {
     RUNNING: "运行中",
     WAITING_FOR_INTERACTION: "等待回复",
     WAITING_FOR_APPROVAL: "等待确认",
+    WAITING_INTERACTION: "等待回复",
+    WAITING_APPROVAL: "等待确认",
     COMPLETED: "已完成",
     FAILED: "失败",
     CANCELLED: "已停止",
@@ -228,7 +230,10 @@ function InteractionCard({
         <ShieldCheck size={18} />
         <div><span className="eyebrow">{interaction.kind}</span><h3 id="interaction-title">{interaction.title}</h3></div>
       </div>
-      <p>{interaction.safePrompt}</p>
+      {interaction.safePrompt.includes("Risks: HIGH") && (
+        <div className="execution-risk-badge">高风险执行 · 每次必须审批</div>
+      )}
+      <pre className="approval-summary">{interaction.safePrompt}</pre>
       {interaction.maximumCharacters > 0 && interaction.inputType !== "NONE" && (
         <textarea
           aria-label="补充信息"
@@ -297,8 +302,8 @@ function ActivityPanel({
                   <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
                 </div>
                 <strong>{activity.displayName}</strong>
-                {activity.safeTargetSummary && <p>{activity.safeTargetSummary}</p>}
-                {activity.safeResultSummary && <p className="safe-result">{activity.safeResultSummary}</p>}
+                {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
+                {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
                 <time>{formatTime(activity.startedAt)}</time>
               </article>
             ))}
@@ -514,7 +519,16 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           dispatch({ type: "setConnection", connection: retry ? "reconnecting" : "connecting" });
           await client.streamRun(runId, {
             onOpen: () => dispatch({ type: "setConnection", connection: "connected" }),
-            onEvent: (event) => dispatch({ type: "streamEvent", event }),
+            onEvent: (event) => {
+              dispatch({ type: "streamEvent", event });
+              if (
+                event.type === "run.status" ||
+                event.type === "interaction.status" ||
+                event.type === "activity.committed"
+              ) {
+                void loadRunSnapshot(runId, controller.signal).catch(() => undefined);
+              }
+            },
           }, controller.signal);
           if (controller.signal.aborted) return;
           const latest = await loadRunSnapshot(runId, controller.signal);

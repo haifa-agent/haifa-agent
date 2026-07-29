@@ -20,6 +20,8 @@ import io.haifa.agent.sdk.contribution.McpToolCatalogContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
+import io.haifa.agent.sdk.contribution.ProductApprovalPromptFormatter;
+import io.haifa.agent.sdk.contribution.ShellPlatformContribution;
 import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
@@ -48,6 +50,7 @@ public final class HaifaAgentBuilder {
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
     private IdentifierGenerator ids = new UuidV7IdentifierGenerator();
     private TimeProvider time = new SystemTimeProvider();
+    private ProductApprovalPromptFormatter toolApprovalPrompts = ProductApprovalPromptFormatter.defaultFormatter();
 
     HaifaAgentBuilder() {}
 
@@ -68,6 +71,11 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder timeProvider(TimeProvider value) {
         time = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder toolApprovalPrompts(ProductApprovalPromptFormatter value) {
+        toolApprovalPrompts = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -106,6 +114,7 @@ public final class HaifaAgentBuilder {
         optional(resolution.selected(), ProductCapabilities.MCP, McpToolCatalogContribution.class);
         ExecutionPlatformContribution execution =
                 optional(resolution.selected(), ProductCapabilities.EXECUTION, ExecutionPlatformContribution.class);
+        optional(resolution.selected(), ProductCapabilities.SHELL, ShellPlatformContribution.class);
         if (artifact != null && profile.policies().artifact().maxArtifactsPerRun() == 0) {
             throw new ProductAssemblyException(
                     "ARTIFACT_POLICY_DISABLED", "Artifact contribution is forbidden by the Product Profile policy");
@@ -129,6 +138,7 @@ public final class HaifaAgentBuilder {
                     .identifierGenerator(ids)
                     .timeProvider(time)
                     .scheduler(scheduler)
+                    .toolApprovalPrompts(toolApprovalPrompts::format)
                     .persistence(persistence.runtimePersistence())
                     .callers(() -> {
                         SdkCaller caller = Objects.requireNonNull(callers.current(), "caller provider returned null");

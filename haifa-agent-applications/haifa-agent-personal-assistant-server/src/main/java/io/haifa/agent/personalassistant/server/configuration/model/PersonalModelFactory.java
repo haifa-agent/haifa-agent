@@ -99,7 +99,66 @@ public final class PersonalModelFactory {
                     .orElse("");
             String alias;
             Map<String, Object> arguments;
-            if (prompt.contains("[skill]")) {
+            if (prompt.contains("CPU使用率") || prompt.contains("[execution-cpu]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "SCRIPT",
+                        "language",
+                        "powershell",
+                        "content",
+                        """
+                        $sample = Get-CimInstance Win32_Processor |
+                          Measure-Object -Property LoadPercentage -Average
+                        [pscustomobject]@{
+                          CpuUsagePercent = [math]::Round($sample.Average, 1)
+                          LogicalProcessors = [Environment]::ProcessorCount
+                        } | ConvertTo-Json -Compress
+                        """,
+                        "purpose",
+                        "读取当前系统 CPU 使用率与逻辑处理器数量",
+                        "timeoutMillis",
+                        10_000);
+            } else if (prompt.contains("[execution-command]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "COMMAND",
+                        "content",
+                        "$PSVersionTable.PSVersion.ToString()",
+                        "purpose",
+                        "读取当前 PowerShell 版本",
+                        "timeoutMillis",
+                        5_000);
+            } else if (prompt.contains("[execution-script]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "SCRIPT",
+                        "language",
+                        "powershell",
+                        "content",
+                        "$args -join '|'",
+                        "args",
+                        List.of("first argument", "second'argument"),
+                        "purpose",
+                        "验证 PowerShell 脚本参数通过 stdin 安全传递",
+                        "timeoutMillis",
+                        5_000);
+            } else if (prompt.contains("[execution-timeout]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "SCRIPT",
+                        "language",
+                        "powershell",
+                        "content",
+                        "Start-Sleep -Seconds 5; 'unexpected completion'",
+                        "purpose",
+                        "验证执行超时与进程终止",
+                        "timeoutMillis",
+                        1_000);
+            } else if (prompt.contains("[skill]")) {
                 alias = PersonalAssistantProfile.SKILL_LOAD_ALIAS;
                 arguments = Map.of("skill", PersonalAssistantProfile.BUNDLED_SKILL_ALIAS);
             } else if (prompt.contains("[mcp]")) {

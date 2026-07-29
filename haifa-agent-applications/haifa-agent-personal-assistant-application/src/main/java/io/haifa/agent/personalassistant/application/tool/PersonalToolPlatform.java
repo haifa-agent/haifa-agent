@@ -1,7 +1,9 @@
 package io.haifa.agent.personalassistant.application.tool;
 
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.execution.core.tool.ExecutionToolSchemaValidator;
 import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
+import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
@@ -36,11 +38,17 @@ public record PersonalToolPlatform(
             SdkPersistenceContribution persistence,
             PersonalSkillPlatform skills,
             PersonalMcpPlatform mcp,
+            PersonalExecutionPlatform execution,
             TimeProvider time) {
         var builder = new ToolCatalogBuilder();
         var checklist = new PersonalChecklistTool();
         builder.register(
                 PersonalChecklistTool.ALIAS, PersonalChecklistTool.definition(), "personal-checklist-v1", checklist);
+        builder.register(
+                io.haifa.agent.execution.core.tool.ExecutionToolDefinitionFactory.ALIAS,
+                execution.definition(),
+                "personal-execution-v2",
+                execution.provider());
         List<SkillToolCatalogContribution> skillTools =
                 SkillToolContributions.create(persistence, skills.contentLoader(), time);
         skillTools.forEach(item ->
@@ -58,7 +66,7 @@ public record PersonalToolPlatform(
                         "Personal unified Tool catalog"),
                 catalog,
                 new DefaultToolInvoker(catalog),
-                new JsonSchema202012Validator());
+                new ExecutionToolSchemaValidator(new JsonSchema202012Validator()));
         var skill = new SkillPlatformContribution(
                 metadata(
                         SKILL_COORDINATE,

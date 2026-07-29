@@ -187,6 +187,82 @@ describe("Personal Assistant application", () => {
     expect(screen.getByText(/当前任务运行中，完成或停止后可继续输入/)).toBeTruthy();
   });
 
+  it("shows the exact high-risk execution approval content", async () => {
+    const active = { ...conversation, activeRunId: "run-approval" };
+    const waiting = { ...run, id: "run-approval", status: "WAITING_APPROVAL" };
+    const interaction: Interaction = {
+      id: "interaction-execution",
+      runId: waiting.id,
+      conversationId: conversation.id,
+      revision: 1,
+      kind: "approval",
+      state: "PENDING",
+      title: "Approve execution",
+      safePrompt:
+        "Mode: SCRIPT\nLanguage: powershell\nPurpose: inspect CPU\nRisks: HIGH\nFull content:\nGet-CimInstance Win32_Processor",
+      allowedActions: ["approve", "reject"],
+      inputType: "NONE",
+      maximumCharacters: 0,
+      createdAt: "2026-07-28T01:00:00Z",
+      expiresAt: "2026-07-28T02:00:00Z",
+    };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(waiting);
+    vi.mocked(api.interaction).mockResolvedValue(interaction);
+
+    const { container } = render(<App client={api} />);
+
+    expect((await screen.findAllByText("Approve execution")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/Get-CimInstance Win32_Processor/)).not.toHaveLength(0);
+    expect(container.querySelector(".execution-risk-badge")).toBeTruthy();
+  });
+
+  it("refreshes the approval snapshot when SSE reports an interaction change", async () => {
+    const active = { ...conversation, activeRunId: "run-stream-approval" };
+    const waiting = { ...run, id: "run-stream-approval", status: "WAITING_APPROVAL" };
+    const interaction: Interaction = {
+      id: "interaction-stream-execution",
+      runId: waiting.id,
+      conversationId: conversation.id,
+      revision: 1,
+      kind: "approval",
+      state: "PENDING",
+      title: "Approve execution",
+      safePrompt: "Risks: HIGH\nFull content:\nGet-Date",
+      allowedActions: ["approve", "reject"],
+      inputType: "NONE",
+      maximumCharacters: 0,
+      createdAt: "2026-07-28T01:00:00Z",
+      expiresAt: "2026-07-28T02:00:00Z",
+    };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(waiting);
+    vi.mocked(api.interaction).mockResolvedValueOnce(null).mockResolvedValue(interaction);
+    vi.mocked(api.streamRun).mockImplementation(async (_runId, handlers, signal) => {
+      handlers.onOpen?.();
+      handlers.onEvent({
+        eventId: "event-interaction",
+        type: "interaction.status",
+        runId: waiting.id,
+        occurredAt: "2026-07-28T01:00:01Z",
+        value: "WAITING_APPROVAL",
+        sequence: 1,
+      });
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+
+    render(<App client={api} />);
+
+    expect((await screen.findAllByText(/Get-Date/)).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => expect(api.interaction).toHaveBeenCalledTimes(2));
+  });
+
   it("reconciles the committed assistant turn after a terminal stream event", async () => {
     const activeConversation = { ...conversation, activeRunId: "run-live", revision: 4 };
     const settledConversation = { ...conversation, activeRunId: null, revision: 5 };

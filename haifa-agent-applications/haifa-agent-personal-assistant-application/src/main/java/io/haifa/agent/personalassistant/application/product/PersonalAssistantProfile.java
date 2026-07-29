@@ -27,6 +27,8 @@ public final class PersonalAssistantProfile {
     public static final String SKILL_RESOURCE_ALIAS = "skill_resource_read";
     public static final String MCP_TOOL_ALIAS = "personal_mcp_echo";
     public static final String BUNDLED_SKILL_ALIAS = "daily-planning";
+    public static final String EXECUTION_SKILL_ALIAS = "local-script-execution";
+    public static final String EXECUTION_TOOL_ALIAS = "execution_run";
 
     private PersonalAssistantProfile() {}
 
@@ -45,23 +47,25 @@ public final class PersonalAssistantProfile {
         none(requirements, ProductCapabilities.PROJECT);
         none(requirements, ProductCapabilities.WORKSPACE);
         none(requirements, ProductCapabilities.GIT);
-        none(requirements, ProductCapabilities.SHELL);
-        none(requirements, ProductCapabilities.EXECUTION);
-        none(requirements, ProductCapabilities.APPROVAL);
+        required(requirements, ProductCapabilities.SHELL, coordinates.shell());
+        required(requirements, ProductCapabilities.EXECUTION, coordinates.execution());
+        required(requirements, ProductCapabilities.APPROVAL, coordinates.approval());
         none(requirements, ProductCapabilities.CREDENTIAL);
         none(requirements, ProductCapabilities.CONTEXT);
 
         Set<String> skills = java.util.stream.Stream.concat(
-                        java.util.stream.Stream.of(BUNDLED_SKILL_ALIAS), localSkillAliases.stream())
+                        java.util.stream.Stream.of(BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS),
+                        localSkillAliases.stream())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         Set<String> allowedTools = java.util.stream.Stream.concat(
-                        java.util.stream.Stream.of(PRODUCT_TOOL_ALIAS, SKILL_LOAD_ALIAS, SKILL_RESOURCE_ALIAS),
+                        java.util.stream.Stream.of(
+                                PRODUCT_TOOL_ALIAS, EXECUTION_TOOL_ALIAS, SKILL_LOAD_ALIAS, SKILL_RESOURCE_ALIAS),
                         mcpToolAliases.stream())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         ProductPolicies policies = new ProductPolicies(
                 new ProductMemoryPolicy(true, 16_384, 100),
                 ProductArtifactPolicy.disabled(),
-                ProductExecutionPolicy.disabled());
+                new ProductExecutionPolicy(true, true, true, 1, 30_000));
         return ProductProfile.create(
                 new ProductId("haifa-personal-assistant"),
                 new ProductVersion("1.0.0"),
@@ -102,5 +106,8 @@ public final class PersonalAssistantProfile {
             ProductContributionCoordinate policy,
             ProductContributionCoordinate tool,
             ProductContributionCoordinate skill,
-            ProductContributionCoordinate mcp) {}
+            ProductContributionCoordinate mcp,
+            ProductContributionCoordinate execution,
+            ProductContributionCoordinate shell,
+            ProductContributionCoordinate approval) {}
 }

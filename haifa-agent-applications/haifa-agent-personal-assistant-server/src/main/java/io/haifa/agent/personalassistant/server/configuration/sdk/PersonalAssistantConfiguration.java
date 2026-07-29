@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
+import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
 import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
 import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelFactory;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
@@ -78,6 +79,8 @@ public class PersonalAssistantConfiguration {
                     sqlite.conversation(),
                     sqlite.memory(),
                     sqlite.policy(),
+                    PersonalExecutionRuntime.create(
+                            dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock),
                     mcpRuntime.configuration(),
                     localSkillRoot,
                     List.of(
