@@ -77,7 +77,9 @@ class PersonalAssistantWebFluxTest {
                 .contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
                 .expectBody()
                 .jsonPath("$.capabilities")
-                .value(value -> assertThat(value.toString()).contains("tool", "skill", "mcp"));
+                .value(value -> assertThat(value.toString())
+                        .contains("tool", "skill", "mcp")
+                        .doesNotContain("admin"));
 
         Set<String> observedKinds = new HashSet<>();
         for (var vertical : java.util.List.of(
@@ -249,6 +251,39 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void adminBuildsOneRunTreeWithCompletePromptAndToolPayloads() throws Exception {
+        String sensitivePrompt = "[tool] private-admin-prompt-7f29";
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Admin diagnostics","message":%s}
+                """
+                        .formatted(mapper.writeValueAsString(sensitivePrompt)));
+        String sessionId = conversation.path("id").asText();
+        String runId = conversation.path("activeRunId").asText();
+        assertThat(awaitTerminal(runId).path("status").asText()).isEqualTo("COMPLETED");
+
+        JsonNode sessions = get("/v1/admin/sessions");
+        assertThat(sessions.toString()).contains(sessionId);
+        JsonNode runs = get("/v1/admin/sessions/" + sessionId + "/runs");
+        assertThat(runs.toString()).contains(runId, sensitivePrompt);
+
+        JsonNode tree = get("/v1/admin/sessions/" + sessionId + "/runs/" + runId + "/tree");
+        assertThat(tree.path("root").path("id").asText()).isEqualTo("run:" + runId);
+        assertThat(tree.toString())
+                .contains(
+                        "Frozen agent and model configuration",
+                        sensitivePrompt,
+                        "personal_checklist",
+                        "review the plan",
+                        "confirm completion");
+        assertThat(java.util.stream.StreamSupport.stream(tree.path("nodes").spliterator(), false)
+                        .map(node -> node.path("kind").asText())
+                        .toList())
+                .contains("configuration", "message", "attempt", "step", "tool", "event");
+    }
+
+    @Test
     void publishesTheVersionedOpenApiContract() {
         web.get()
                 .uri("/api/v1/openapi.json")
@@ -285,6 +320,16 @@ class PersonalAssistantWebFluxTest {
                 .valueEquals("Access-Control-Allow-Origin", "http://127.0.0.1:20000")
                 .expectHeader()
                 .doesNotExist("Access-Control-Allow-Credentials");
+
+        web.options()
+                .uri("/v1/admin/sessions")
+                .header("Origin", "http://127.0.0.1:20000")
+                .header("Access-Control-Request-Method", "GET")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .valueEquals("Access-Control-Allow-Origin", "http://127.0.0.1:20000");
     }
 
     private JsonNode post(String uri, String json) throws Exception {

@@ -13,7 +13,7 @@ class PersonalAssistantServerArchitectureTest {
     void dtoDoesNotExposeDomainSdkOrProviderTypes() {
         noClasses()
                 .that()
-                .resideInAPackage("..web.v1.dto..")
+                .resideInAnyPackage("..web.v1.dto..", "..web.admin.v1.dto..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage(
@@ -29,7 +29,7 @@ class PersonalAssistantServerArchitectureTest {
     void controllersDoNotQueryPersistenceOrInternalMappers() {
         noClasses()
                 .that()
-                .resideInAPackage("..web.v1.controller..")
+                .resideInAnyPackage("..web.v1.controller..", "..web.admin.v1.controller..")
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage("io.haifa.agent.store..", "..mybatis..")

@@ -13,6 +13,21 @@ Server 负责：
 - 固定可信 Caller、Host/Origin/CSRF、请求体上限和安全响应头；
 - Actuator liveness/readiness。
 
+Server 另提供与普通产品 API 隔离的只读本机诊断面：
+
+```text
+GET /v1/admin/
+GET /v1/admin/sessions
+GET /v1/admin/sessions/{sessionId}/runs
+GET /v1/admin/sessions/{sessionId}/runs/{runId}/tree
+```
+
+诊断树直接读取同一 SQLite 事实源，并在解码前校验各 payload 的实际字节哈希。它展示冻结 Agent
+指令/模型配置、完整 Prompt/Message、Attempt、Step、Tool 参数与结果、Checkpoint、Interaction、
+Skill、Runtime Event 和错误原文，用于快速定位单次 Run 的失败节点。所有接口均为 GET、只读、
+`no-store`，仍受 loopback Host/Origin 边界约束；该能力不会出现在 `/api/v1/bootstrap`，普通
+Personal Assistant 页面也没有入口或 Client 接口。
+
 Server 不构建、不复制也不托管 React Web；`/` 和前端 history 路由返回 `404`。独立的
 `haifa-agent-personal-assistant-web` 在 `127.0.0.1:20000` 提供 SPA，浏览器直接访问本
 Server。CORS 只允许 loopback `20000` Origin，且不启用浏览器凭据；Host/Origin/CSRF、
