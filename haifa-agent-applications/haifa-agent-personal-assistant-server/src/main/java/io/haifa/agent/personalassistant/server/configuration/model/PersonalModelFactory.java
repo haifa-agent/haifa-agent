@@ -19,6 +19,7 @@ import io.haifa.agent.personalassistant.application.product.PersonalAssistantPro
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
+import io.haifa.agent.sdk.contribution.ShellPlatformContribution;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
@@ -33,7 +34,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class PersonalModelFactory {
     private PersonalModelFactory() {}
 
-    public static ModelContribution create(PersonalAssistantProperties.Model properties, ObjectMapper mapper) {
+    public static ModelContribution create(
+            PersonalAssistantProperties.Model properties, ObjectMapper mapper, ShellPlatformContribution shell) {
         boolean deterministic = "deterministic".equals(properties.mode());
         String adapter = deterministic ? "personal-deterministic" : "openai-compatible";
         ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
@@ -52,7 +54,7 @@ public final class PersonalModelFactory {
                 Map.of(),
                 Map.of());
         AgentChatModel model = deterministic
-                ? new DeterministicAcceptanceModel(properties.providerModelId())
+                ? new DeterministicAcceptanceModel(properties.providerModelId(), shell)
                 : new OpenAiCompatibleChatModel(
                         adapter,
                         "1.0.0",
@@ -80,10 +82,18 @@ public final class PersonalModelFactory {
      */
     private static final class DeterministicAcceptanceModel implements AgentChatModel {
         private final String modelId;
+        private final String operatingSystem;
+        private final String scriptLanguage;
         private final AtomicLong sequence = new AtomicLong();
 
-        private DeterministicAcceptanceModel(String modelId) {
+        private DeterministicAcceptanceModel(String modelId, ShellPlatformContribution shell) {
             this.modelId = modelId;
+            this.operatingSystem = shell.operatingSystem();
+            this.scriptLanguage = "WINDOWS".equals(operatingSystem) ? "powershell" : "bash";
+            if (!shell.scriptLanguages().contains(scriptLanguage)) {
+                throw new IllegalArgumentException(
+                        "deterministic acceptance model requires configured script language " + scriptLanguage);
+            }
         }
 
         @Override
@@ -105,16 +115,9 @@ public final class PersonalModelFactory {
                         "mode",
                         "SCRIPT",
                         "language",
-                        "powershell",
+                        scriptLanguage,
                         "content",
-                        """
-                        $sample = Get-CimInstance Win32_Processor |
-                          Measure-Object -Property LoadPercentage -Average
-                        [pscustomobject]@{
-                          CpuUsagePercent = [math]::Round($sample.Average, 1)
-                          LogicalProcessors = [Environment]::ProcessorCount
-                        } | ConvertTo-Json -Compress
-                        """,
+                        cpuObservationScript(),
                         "purpose",
                         "读取当前系统 CPU 使用率与逻辑处理器数量",
                         "timeoutMillis",
@@ -136,13 +139,13 @@ public final class PersonalModelFactory {
                         "mode",
                         "SCRIPT",
                         "language",
-                        "powershell",
+                        scriptLanguage,
                         "content",
-                        "$args -join '|'",
+                        argumentEchoScript(),
                         "args",
                         List.of("first argument", "second'argument"),
                         "purpose",
-                        "验证 PowerShell 脚本参数通过 stdin 安全传递",
+                        argumentEchoPurpose(),
                         "timeoutMillis",
                         5_000);
             } else if (prompt.contains("[execution-timeout]")) {
@@ -151,9 +154,9 @@ public final class PersonalModelFactory {
                         "mode",
                         "SCRIPT",
                         "language",
-                        "powershell",
+                        scriptLanguage,
                         "content",
-                        "Start-Sleep -Seconds 5; 'unexpected completion'",
+                        timeoutScript(),
                         "purpose",
                         "验证执行超时与进程终止",
                         "timeoutMillis",
@@ -189,6 +192,60 @@ public final class PersonalModelFactory {
                     ModelUsage.unpriced(12, Math.max(1, content.length() / 4)),
                     "",
                     Map.of("deterministic", true));
+        }
+
+        private String cpuObservationScript() {
+            return switch (operatingSystem) {
+                case "WINDOWS" ->
+                    """
+                        $sample = Get-CimInstance Win32_Processor |
+                          Measure-Object -Property LoadPercentage -Average
+                        [pscustomobject]@{
+                          CpuUsagePercent = [math]::Round($sample.Average, 1)
+                          LogicalProcessors = [Environment]::ProcessorCount
+                        } | ConvertTo-Json -Compress
+                        """;
+                case "MACOS" ->
+                    """
+                        cpu_usage=$(top -l 2 -n 0 | awk '/CPU usage/ { idle=$7 } END {
+                          gsub("%", "", idle)
+                          printf "%.1f", 100 - idle
+                        }')
+                        logical_processors=$(sysctl -n hw.logicalcpu)
+                        printf '{"cpuUsagePercent":%s,"logicalProcessors":%s}\n' \
+                          "$cpu_usage" "$logical_processors"
+                        """;
+                default ->
+                    """
+                        read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+                        total_before=$((user + nice + system + idle + iowait + irq + softirq + steal))
+                        idle_before=$((idle + iowait))
+                        sleep 1
+                        read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+                        total_after=$((user + nice + system + idle + iowait + irq + softirq + steal))
+                        idle_after=$((idle + iowait))
+                        total_delta=$((total_after - total_before))
+                        idle_delta=$((idle_after - idle_before))
+                        cpu_usage=$((100 * (total_delta - idle_delta) / total_delta))
+                        logical_processors=$(grep -c '^processor' /proc/cpuinfo)
+                        printf '{"cpuUsagePercent":%s,"logicalProcessors":%s}\n' \
+                          "$cpu_usage" "$logical_processors"
+                        """;
+            };
+        }
+
+        private String argumentEchoScript() {
+            return "WINDOWS".equals(operatingSystem) ? "$args -join '|'" : "printf '%s|%s' \"$1\" \"$2\"";
+        }
+
+        private String argumentEchoPurpose() {
+            return "验证 " + ("WINDOWS".equals(operatingSystem) ? "PowerShell" : "Bash") + " 脚本参数通过 stdin 安全传递";
+        }
+
+        private String timeoutScript() {
+            return "WINDOWS".equals(operatingSystem)
+                    ? "Start-Sleep -Seconds 5; 'unexpected completion'"
+                    : "sleep 5; printf 'unexpected completion'";
         }
     }
 }

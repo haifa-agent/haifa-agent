@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.execution.core.tool.ExecutionOperatingSystem;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -142,10 +143,10 @@ class PersonalAssistantWebFluxTest {
         assertThat(interaction.path("safePrompt").asText())
                 .contains(
                         "Mode: SCRIPT",
-                        "Language: powershell",
-                        "Purpose: 验证 PowerShell 脚本参数通过 stdin 安全传递",
+                        "Language: " + expectedScriptLanguage(),
+                        "Purpose: " + expectedArgumentEchoPurpose(),
                         "Risks: HIGH",
-                        "$args -join '|'")
+                        expectedArgumentEchoScript())
                 .doesNotContain("operatingSystem", "executable");
 
         post(
@@ -161,7 +162,7 @@ class PersonalAssistantWebFluxTest {
                 .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
                 .isEqualTo("COMPLETED");
         assertThat(activities.toString())
-                .contains("execution_run", "SCRIPT", "powershell", "验证 PowerShell 脚本参数通过 stdin 安全传递")
+                .contains("execution_run", "SCRIPT", expectedScriptLanguage(), expectedArgumentEchoPurpose())
                 .contains("first argument|second'argument");
     }
 
@@ -180,9 +181,9 @@ class PersonalAssistantWebFluxTest {
         assertThat(interaction.path("safePrompt").asText())
                 .contains(
                         "Mode: SCRIPT",
-                        "Language: powershell",
+                        "Language: " + expectedScriptLanguage(),
                         "读取当前系统 CPU 使用率与逻辑处理器数量",
-                        "Get-CimInstance Win32_Processor");
+                        expectedCpuProbe());
     }
 
     @Test
@@ -279,6 +280,30 @@ class PersonalAssistantWebFluxTest {
 
     private JsonNode awaitTerminal(String runId) throws Exception {
         return awaitStatus(runId, Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"));
+    }
+
+    private static String expectedScriptLanguage() {
+        return ExecutionOperatingSystem.current() == ExecutionOperatingSystem.WINDOWS ? "powershell" : "bash";
+    }
+
+    private static String expectedArgumentEchoScript() {
+        return ExecutionOperatingSystem.current() == ExecutionOperatingSystem.WINDOWS
+                ? "$args -join '|'"
+                : "printf '%s|%s' \"$1\" \"$2\"";
+    }
+
+    private static String expectedArgumentEchoPurpose() {
+        return "验证 "
+                + (ExecutionOperatingSystem.current() == ExecutionOperatingSystem.WINDOWS ? "PowerShell" : "Bash")
+                + " 脚本参数通过 stdin 安全传递";
+    }
+
+    private static String expectedCpuProbe() {
+        return switch (ExecutionOperatingSystem.current()) {
+            case WINDOWS -> "Get-CimInstance Win32_Processor";
+            case MACOS -> "top -l 2 -n 0";
+            case LINUX -> "/proc/stat";
+        };
     }
 
     private JsonNode awaitStatus(String runId, Set<String> expected) throws Exception {

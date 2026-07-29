@@ -70,17 +70,18 @@ public class PersonalAssistantConfiguration {
                 : Optional.of(
                         Path.of(properties.localSkillRoot()).toAbsolutePath().normalize());
         try {
+            var execution = PersonalExecutionRuntime.create(
+                    dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock);
             return PersonalAssistantAssembler.assemble(new PersonalAssistantAssembler.Dependencies(
                     tenant,
                     principal,
                     () -> caller,
-                    PersonalModelFactory.create(properties.model(), mapper),
+                    PersonalModelFactory.create(properties.model(), mapper, execution.shell()),
                     sqlite.persistence(),
                     sqlite.conversation(),
                     sqlite.memory(),
                     sqlite.policy(),
-                    PersonalExecutionRuntime.create(
-                            dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock),
+                    execution,
                     mcpRuntime.configuration(),
                     localSkillRoot,
                     List.of(
