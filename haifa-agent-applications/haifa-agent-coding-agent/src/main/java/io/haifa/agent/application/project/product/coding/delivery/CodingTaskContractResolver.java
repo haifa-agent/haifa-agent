@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 /**
  * Conservative product resolver. Trusted metadata wins; otherwise multiple structural request
@@ -23,6 +25,11 @@ public final class CodingTaskContractResolver {
             Set.of("create", "add", "implement", "build", "write", "创建", "新增", "实现");
     private static final Set<String> CHANGE_OPENERS =
             Set.of("change", "fix", "update", "modify", "refactor", "修复", "修改", "更新", "重构");
+    private static final int MAX_ACCEPTANCE_CRITERIA_REFS = 16;
+    private static final int MAX_ACCEPTANCE_CRITERIA_REF_LENGTH = 256;
+    private static final Pattern ACCEPTANCE_CRITERIA_REF = Pattern.compile("(?<![\\\\/:\\p{L}\\p{N}_./-])"
+            + "((?:[\\p{L}\\p{N}_.-]+/)*[\\p{L}\\p{N}_.-]+\\.(?i:md|markdown|txt|rst|adoc))"
+            + "(?![\\\\/\\p{L}\\p{N}_./-])");
 
     private final RuntimeStateRepository state;
 
@@ -43,7 +50,7 @@ public final class CodingTaskContractResolver {
                 resolution.intent(),
                 resolution.source(),
                 resolution.confidencePercent(),
-                Set.of(),
+                acceptanceCriteriaRefs(text(initial)),
                 requirements(resolution.intent()),
                 run.createdAt());
     }
@@ -99,6 +106,20 @@ public final class CodingTaskContractResolver {
         } catch (IllegalArgumentException invalid) {
             throw new IllegalArgumentException("trusted coding task intent is invalid", invalid);
         }
+    }
+
+    private static Set<String> acceptanceCriteriaRefs(String request) {
+        var refs = new TreeSet<String>();
+        var matcher = ACCEPTANCE_CRITERIA_REF.matcher(request);
+        while (matcher.find() && refs.size() < MAX_ACCEPTANCE_CRITERIA_REFS) {
+            String candidate = matcher.group(1);
+            if (candidate.length() > MAX_ACCEPTANCE_CRITERIA_REF_LENGTH) continue;
+            boolean unsafe = candidate.startsWith(".")
+                    || candidate.endsWith(".")
+                    || java.util.Arrays.stream(candidate.split("/")).anyMatch(segment -> segment.equals(".."));
+            if (!unsafe) refs.add(candidate);
+        }
+        return Set.copyOf(refs);
     }
 
     private static String text(AgentMessage message) {

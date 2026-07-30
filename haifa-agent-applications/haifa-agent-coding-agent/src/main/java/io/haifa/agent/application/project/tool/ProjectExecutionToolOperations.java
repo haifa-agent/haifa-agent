@@ -163,9 +163,11 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
-        if (startsWithAbsoluteDirectoryChange(command)) {
+        CommandNormalization normalization = normalizeLeadingAbsoluteDirectoryChange(command);
+        if (normalization.rejected()) {
             return rejectedAbsoluteDirectoryChange(operationFamily);
         }
+        command = normalization.command();
         String workdir = optionalText(arguments, "workdir", ".");
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
@@ -374,26 +376,61 @@ public final class ProjectExecutionToolOperations {
                 false);
     }
 
-    private static boolean startsWithAbsoluteDirectoryChange(String command) {
+    private static CommandNormalization normalizeLeadingAbsoluteDirectoryChange(String command) {
         String remaining = command.stripLeading();
         if (!remaining.startsWith("cd") || (remaining.length() > 2 && !Character.isWhitespace(remaining.charAt(2)))) {
-            return false;
+            return new CommandNormalization(command, false);
         }
         remaining = remaining.substring(2).stripLeading();
         if (remaining.startsWith("--") && (remaining.length() == 2 || Character.isWhitespace(remaining.charAt(2)))) {
             remaining = remaining.substring(2).stripLeading();
         }
-        if (remaining.isEmpty()) return false;
+        if (remaining.isEmpty()) return new CommandNormalization(command, false);
         char quote = remaining.charAt(0);
+        String path = remaining;
         if (quote == '\'' || quote == '"') {
-            remaining = remaining.substring(1);
+            path = remaining.substring(1);
         }
-        if (remaining.startsWith("/") || remaining.startsWith("\\\\") || remaining.startsWith("~/")) return true;
-        return remaining.length() >= 3
-                && Character.isLetter(remaining.charAt(0))
-                && remaining.charAt(1) == ':'
-                && (remaining.charAt(2) == '\\' || remaining.charAt(2) == '/');
+        boolean absolute = path.startsWith("/") || path.startsWith("\\\\") || path.startsWith("~/");
+        absolute = absolute
+                || (path.length() >= 3
+                        && Character.isLetter(path.charAt(0))
+                        && path.charAt(1) == ':'
+                        && (path.charAt(2) == '\\' || path.charAt(2) == '/'));
+        if (!absolute) return new CommandNormalization(command, false);
+        int separator = leadingAndSeparator(remaining);
+        if (separator < 0) return new CommandNormalization(command, true);
+        String normalized = remaining.substring(separator + 2).stripLeading();
+        return normalized.isEmpty()
+                ? new CommandNormalization(command, true)
+                : new CommandNormalization(normalized, false);
     }
+
+    private static int leadingAndSeparator(String commandAfterCd) {
+        char quote = 0;
+        boolean escaped = false;
+        for (int index = 0; index < commandAfterCd.length() - 1; index++) {
+            char current = commandAfterCd.charAt(index);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (current == '\\' && quote != '\'') {
+                escaped = true;
+                continue;
+            }
+            if ((current == '\'' || current == '"') && (quote == 0 || quote == current)) {
+                quote = quote == 0 ? current : 0;
+                continue;
+            }
+            if (quote == 0 && current == '&' && commandAfterCd.charAt(index + 1) == '&') {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private record CommandNormalization(String command, boolean rejected) {}
 
     private static String fallbackOutput(ExecutionResult result) {
         String stdout = result.stdout().summary();

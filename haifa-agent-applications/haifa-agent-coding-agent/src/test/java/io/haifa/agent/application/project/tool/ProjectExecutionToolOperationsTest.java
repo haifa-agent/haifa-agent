@@ -164,7 +164,34 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void rejectsAbsoluteDirectoryChangesAsRecoverableInvalidInputBeforeCallingTheBroker() {
+    void removesLeadingAbsoluteDirectoryChangeAndExecutesTheRemainderInsideTheWorkspace() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        for (var example : Map.of(
+                        "cd /workspace && go test ./...", "go test ./...",
+                        " cd '/home/user' && make test", "make test",
+                        "cd C:\\temp && gradlew test", "gradlew test")
+                .entrySet()) {
+            var result = operations(broker, 1024, 2000)
+                    .execute(
+                            invocation(Map.of("command", example.getKey(), "operationFamily", "TEST"), () -> false),
+                            access());
+
+            assertThat(result.successful()).isTrue();
+            assertThat(captured.get().workingDirectory().projectPath().isRoot()).isTrue();
+            assertThat(captured.get().command().shellCommand()).isEqualTo(example.getValue());
+        }
+    }
+
+    @Test
+    void rejectsAbsoluteDirectoryChangeWithoutASafeRemainderBeforeCallingTheBroker() {
         AtomicBoolean invoked = new AtomicBoolean();
         ExecutionBroker broker = new StubBroker() {
             @Override
@@ -174,18 +201,15 @@ class ProjectExecutionToolOperationsTest {
             }
         };
 
-        for (String command : List.of(
-                "cd /workspace && go test ./...", " cd '/home/user' && make test", "cd C:\\temp && gradlew test")) {
-            var result = operations(broker, 1024, 2000)
-                    .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
+        var result = operations(broker, 1024, 2000)
+                .execute(
+                        invocation(Map.of("command", "cd /workspace", "operationFamily", "TEST"), () -> false),
+                        access());
 
-            assertThat(result.successful()).isFalse();
-            assertThat(result.summary()).contains("omit cd", "workspace-relative workdir");
-            assertThat(result.structuredData())
-                    .containsEntry("failureCategory", "INVALID_INPUT")
-                    .containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN")
-                    .containsEntry("operationFamily", "TEST");
-        }
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN");
         assertThat(invoked).isFalse();
     }
 

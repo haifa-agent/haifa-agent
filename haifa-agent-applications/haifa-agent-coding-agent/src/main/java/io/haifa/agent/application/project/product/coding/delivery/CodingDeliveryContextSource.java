@@ -76,6 +76,10 @@ public final class CodingDeliveryContextSource implements ContextSource {
                 .map(Enum::name)
                 .reduce((left, right) -> left + "|" + right)
                 .orElse("NONE");
+        String acceptanceCriteriaRefs = contract.acceptanceCriteriaRefs().stream()
+                .sorted()
+                .reduce((left, right) -> left + "|" + right)
+                .orElse("NONE");
         String evidenceCodes = snapshot.codes().isEmpty() ? "NONE" : String.join("|", snapshot.codes());
         String text = String.join(
                 "\n",
@@ -83,6 +87,10 @@ public final class CodingDeliveryContextSource implements ContextSource {
                 "taskIntent=" + contract.intent().name(),
                 "intentSource=" + contract.intentSource().name(),
                 "deliveryRequired=" + requirements,
+                "acceptanceCriteriaRefs=" + acceptanceCriteriaRefs,
+                contract.acceptanceCriteriaRefs().isEmpty()
+                        ? "acceptanceAction=NONE"
+                        : "acceptanceAction=before editing, read every referenced criteria file and inspect each affected entry point and end-to-end boundary",
                 "evidence=" + evidenceCodes,
                 "remainingModelCalls=" + remainingModelCalls,
                 "remainingToolCalls=" + remainingToolCalls,

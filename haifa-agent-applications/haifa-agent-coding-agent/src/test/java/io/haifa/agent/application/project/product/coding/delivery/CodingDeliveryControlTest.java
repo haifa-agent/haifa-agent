@@ -88,6 +88,15 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void resolverFreezesBoundedWorkspaceRelativeAcceptanceCriteriaReferences() {
+        CodingTaskContract contract =
+                contract("fix the end-to-end behavior required by PERF.md and docs/CONCURRENCY.md; "
+                        + "ignore /tmp/SECRET.md, ../outside.md, https://example.test/remote.md");
+
+        assertThat(contract.acceptanceCriteriaRefs()).containsExactlyInAnyOrder("PERF.md", "docs/CONCURRENCY.md");
+    }
+
+    @Test
     void changeRequiresWorkspaceValidationAndDiffEvidence() {
         Fixture fixture = fixture("fix the implementation", Map.of());
         CodingCompletionPolicy policy = policy(fixture.store());
@@ -185,6 +194,27 @@ class CodingDeliveryControlTest {
         assertThat(fixture.run().budget().maxModelCalls()).isEqualTo(20);
         assertThat(fixture.run().budget().maxToolCalls()).isEqualTo(20);
         assertThat(fixture.run().limits().maxWallTimeMillis()).isEqualTo(60_000);
+    }
+
+    @Test
+    void deliveryContextMakesReferencedAcceptanceDocumentsAnExplicitPreEditAction() {
+        Fixture fixture = fixture("fix behavior according to PERF.md and docs/CONCURRENCY.md", Map.of());
+        CodingDeliveryContextSource source = new CodingDeliveryContextSource(
+                fixture.store(),
+                new CodingTaskContractResolver(fixture.store()),
+                new CodingDeliveryEvidenceLedger(fixture.store()),
+                CodingDeliveryProfile.safeDefault());
+
+        String text = ((TextContextContent) source.load(
+                                request(fixture.run(), new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 0)))
+                        .getFirst()
+                        .content())
+                .text();
+
+        assertThat(text)
+                .contains("acceptanceCriteriaRefs=PERF.md|docs/CONCURRENCY.md")
+                .contains("before editing, read every referenced criteria file")
+                .contains("each affected entry point and end-to-end boundary");
     }
 
     @Test
