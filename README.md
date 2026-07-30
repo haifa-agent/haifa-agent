@@ -73,6 +73,7 @@ haifa-agent-capabilities/
   haifa-agent-skill-core/
   haifa-agent-skill-base/
 haifa-agent-integrations/
+  haifa-agent-web/
   haifa-agent-model-openai-compatible/
   haifa-agent-git/
   haifa-agent-mcp/

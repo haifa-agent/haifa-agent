@@ -11,6 +11,7 @@ public record PersonalAssistantProperties(
         String continuationKeyBase64,
         Caller caller,
         Model model,
+        Web web,
         Mcp mcp,
         Execution execution,
         String localSkillRoot) {
@@ -19,10 +20,33 @@ public record PersonalAssistantProperties(
         if (continuationKeyBase64 == null || continuationKeyBase64.isBlank()) {
             throw new IllegalArgumentException("HAIFA_PERSONAL_CONTINUATION_KEY is required");
         }
-        if (caller == null || model == null || mcp == null || execution == null) {
-            throw new IllegalArgumentException("caller, model, mcp, and execution configuration are required");
+        if (caller == null || model == null || web == null || mcp == null || execution == null) {
+            throw new IllegalArgumentException("caller, model, web, mcp, and execution configuration are required");
         }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
+    }
+
+    public record Web(
+            boolean enabled,
+            String credentialReference,
+            long timeoutMillis,
+            int searchMaximumResponseBytes,
+            int fetchMaximumResponseBytes) {
+        public Web {
+            credentialReference = text(credentialReference, "web.credentialReference");
+            if (!credentialReference.startsWith("env://") || credentialReference.length() == "env://".length()) {
+                throw new IllegalArgumentException("web.credentialReference must use env://");
+            }
+            if (timeoutMillis < 1000 || timeoutMillis > 120_000) {
+                throw new IllegalArgumentException("web.timeoutMillis must be between 1000 and 120000");
+            }
+            if (searchMaximumResponseBytes < 1024 || searchMaximumResponseBytes > 16 * 1024 * 1024) {
+                throw new IllegalArgumentException("web.searchMaximumResponseBytes is out of range");
+            }
+            if (fetchMaximumResponseBytes < 1024 || fetchMaximumResponseBytes > 16 * 1024 * 1024) {
+                throw new IllegalArgumentException("web.fetchMaximumResponseBytes is out of range");
+            }
+        }
     }
 
     public record Execution(

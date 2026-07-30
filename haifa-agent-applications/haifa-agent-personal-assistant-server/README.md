@@ -7,6 +7,8 @@ Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 Server 负责：
 
 - 显式装配 Product Profile、Model、SQLite、Policy、Memory、Tool、Skill 和 MCP；
+- 按配置启用公共 `haifa-agent-web` 的 Aliyun IQS Search/Fetch，并把环境变量凭据绑定到
+  Runtime `CredentialBroker`，不把 Key 放入 Profile、Tool Definition 或日志；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；
 - Reactor Netty / Spring WebFlux HTTP；
 - `Flux<ServerSentEvent<?>>` Run 流合并 durable Run/Tool/Interaction Activity 与 transient Assistant
@@ -68,6 +70,21 @@ $env:HAIFA_PERSONAL_MCP_DISPLAY_NAME='Haifa Utility MCP'
 
 外部 endpoint 只接受 `http` loopback 地址和 `20002+` 端口。发现失败、Tool 缺失或本地审查失败都会
 使 Server 启动失败；不会回退到 embedded echo。
+
+Web Tool 默认关闭。启用后会同时装配 `web_search -> web.search` 和
+`web_fetch -> web.fetch`，当前 Personal Profile 固定使用 Aliyun IQS：
+
+```powershell
+$env:HAIFA_PERSONAL_WEB_ENABLED='true'
+$env:HAIFA_PERSONAL_WEB_CREDENTIAL='env://ALIYUN_IQS_API_KEY'
+$env:ALIYUN_IQS_API_KEY='<aliyun-iqs-key>'
+```
+
+可信本地 Skill Source 的配置值是“包含各 Skill 子目录的根目录”。例如 finance 集合应配置为：
+
+```powershell
+$env:HAIFA_PERSONAL_SKILL_ROOT='D:\agents\hermes-agent\optional-skills\finance'
+```
 
 启动还必须提供可持久恢复的 32 字节 AES Key（Base64），不得记录该值：
 

@@ -6,6 +6,7 @@ import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
+import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
@@ -38,6 +39,7 @@ public record PersonalToolPlatform(
             SdkPersistenceContribution persistence,
             PersonalSkillPlatform skills,
             PersonalMcpPlatform mcp,
+            PersonalWebPlatform web,
             PersonalExecutionPlatform execution,
             TimeProvider time) {
         var builder = new ToolCatalogBuilder();
@@ -49,6 +51,9 @@ public record PersonalToolPlatform(
                 execution.definition(),
                 "personal-execution-v2",
                 execution.provider());
+        web.contributions()
+                .forEach(item -> builder.register(
+                        item.alias(), item.definition(), item.providerBindingReference(), item.provider()));
         List<SkillToolCatalogContribution> skillTools =
                 SkillToolContributions.create(persistence, skills.contentLoader(), time);
         skillTools.forEach(item ->

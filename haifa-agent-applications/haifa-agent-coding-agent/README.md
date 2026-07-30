@@ -15,7 +15,8 @@ Decision/Approval evidence Store 和本地同主体 Verifier。它不包含组�
 
 本模块承载 Project 产品的内建 Tool，包括 Workspace 文件/Git/Execution Tool，以及默认关闭的 Web
 Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Policy 和具体 HTTP Provider
-按包分层放在 `io.haifa.agent.application.project.tool.web` 内，不形成独立 Capability 或 Maven Artifact。
+由公共 `haifa-agent-web` Integration 模块提供；本模块只负责 Coding Agent 的 Provider、Credential
+和 Tool alias 装配。
 本模块不建立第二套 Context、Tool Registry、Policy、Credential Broker 或 Session 聚合。
 
 ## 持久化装配

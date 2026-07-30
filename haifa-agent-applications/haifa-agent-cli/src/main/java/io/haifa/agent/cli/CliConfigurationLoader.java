@@ -179,14 +179,12 @@ final class CliConfigurationLoader {
             if (!providerId.equals("aliyun")) {
                 throw new IllegalArgumentException("web.fetch.provider must be aliyun");
             }
-            return io.haifa.agent.application.project.tool.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT;
+            return io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT;
         }
         return switch (providerId) {
-            case "aliyun" -> io.haifa.agent.application.project.tool.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT;
-            case "brave" ->
-                io.haifa.agent.application.project.tool.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT;
-            case "tavily" ->
-                io.haifa.agent.application.project.tool.web.provider.TavilyWebSearchProvider.DEFAULT_ENDPOINT;
+            case "aliyun" -> io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT;
+            case "brave" -> io.haifa.agent.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT;
+            case "tavily" -> io.haifa.agent.web.provider.TavilyWebSearchProvider.DEFAULT_ENDPOINT;
             default -> throw new IllegalArgumentException("web.search.provider is unsupported");
         };
     }

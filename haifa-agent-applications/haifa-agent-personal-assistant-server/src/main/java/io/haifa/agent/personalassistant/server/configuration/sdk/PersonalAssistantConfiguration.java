@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
+import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
 import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
 import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelFactory;
@@ -23,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
@@ -72,6 +74,16 @@ public class PersonalAssistantConfiguration {
         try {
             var execution = PersonalExecutionRuntime.create(
                     dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock);
+            var web = PersonalWebPlatform.create(
+                    tenant,
+                    principal,
+                    properties.web().enabled(),
+                    resolveCredential(properties.web()),
+                    Duration.ofMillis(properties.web().timeoutMillis()),
+                    properties.web().searchMaximumResponseBytes(),
+                    properties.web().fetchMaximumResponseBytes(),
+                    mapper,
+                    personalClock);
             return PersonalAssistantAssembler.assemble(new PersonalAssistantAssembler.Dependencies(
                     tenant,
                     principal,
@@ -82,6 +94,7 @@ public class PersonalAssistantConfiguration {
                     sqlite.memory(),
                     sqlite.policy(),
                     execution,
+                    web,
                     mcpRuntime.configuration(),
                     localSkillRoot,
                     List.of(
@@ -92,6 +105,17 @@ public class PersonalAssistantConfiguration {
             sqlite.persistence().close();
             throw exception;
         }
+    }
+
+    private static String resolveCredential(PersonalAssistantProperties.Web web) {
+        if (!web.enabled()) return "";
+        String variable = web.credentialReference().substring("env://".length());
+        String value = System.getenv(variable);
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Personal Web Tool credential environment variable is unavailable: " + variable);
+        }
+        return value;
     }
 
     private static SdkContributionMetadata metadata(

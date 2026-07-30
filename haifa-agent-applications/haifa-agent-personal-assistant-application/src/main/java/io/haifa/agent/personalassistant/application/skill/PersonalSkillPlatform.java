@@ -33,6 +33,9 @@ import java.util.Set;
 
 /** Deterministic bundled Skill plus an explicitly configured trusted read-only local source. */
 public record PersonalSkillPlatform(SkillCatalog catalog, SkillContentLoader contentLoader, Set<String> aliases) {
+    private static final SkillPackageLimits IMPORTED_SKILL_LIMITS =
+            new SkillPackageLimits(128, 8, 512 * 1024, 2 * 1024 * 1024, 256 * 1024, 2_000, 20_000);
+
     public PersonalSkillPlatform {
         Objects.requireNonNull(catalog);
         Objects.requireNonNull(contentLoader);
@@ -88,10 +91,10 @@ public record PersonalSkillPlatform(SkillCatalog catalog, SkillContentLoader con
                         SkillScopeRef.user(tenant, principal),
                         SkillOrigin.IMPORTED,
                         100,
-                        SkillParserMode.STRICT,
+                        SkillParserMode.COMPATIBLE,
                         true,
                         false),
-                new SkillPackageParser(SkillPackageLimits.defaults()),
+                new SkillPackageParser(IMPORTED_SKILL_LIMITS),
                 SkillAvailability.ENABLED);
     }
 

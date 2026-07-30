@@ -8,6 +8,7 @@ import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import io.haifa.agent.personalassistant.application.tool.PersonalToolPlatform;
+import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
@@ -36,7 +37,12 @@ public final class PersonalAssistantAssembler {
                 dependencies.mcp(), dependencies.tenant(), dependencies.principal(), dependencies.clock());
         try {
             var tools = PersonalToolPlatform.create(
-                    dependencies.persistence(), skills, mcp, dependencies.execution(), dependencies.clock()::instant);
+                    dependencies.persistence(),
+                    skills,
+                    mcp,
+                    dependencies.web(),
+                    dependencies.execution(),
+                    dependencies.clock()::instant);
             var coordinates = new PersonalAssistantProfile.ContributionCoordinates(
                     dependencies.model().coordinate(),
                     dependencies.persistence().coordinate(),
@@ -46,10 +52,15 @@ public final class PersonalAssistantAssembler {
                     tools.tool().coordinate(),
                     tools.skill().coordinate(),
                     tools.mcp().coordinate(),
+                    dependencies.web().credential().coordinate(),
                     dependencies.execution().execution().coordinate(),
                     dependencies.execution().shell().coordinate(),
                     dependencies.execution().approval().coordinate());
-            var profile = PersonalAssistantProfile.create(coordinates, skills.aliases(), mcp.aliases());
+            var profile = PersonalAssistantProfile.create(
+                    coordinates,
+                    skills.aliases(),
+                    mcp.aliases(),
+                    dependencies.web().aliases());
             var agent = HaifaAgents.builder(profile)
                     .callerProvider(dependencies.callers())
                     .timeProvider(dependencies.clock()::instant)
@@ -62,6 +73,7 @@ public final class PersonalAssistantAssembler {
                     .contribute(tools.tool())
                     .contribute(tools.skill())
                     .contribute(tools.mcp())
+                    .contribute(dependencies.web().credential())
                     .contribute(dependencies.execution().execution())
                     .contribute(dependencies.execution().shell())
                     .contribute(dependencies.execution().approval())
@@ -83,6 +95,7 @@ public final class PersonalAssistantAssembler {
             MemoryPlatformContribution memory,
             PolicyPlatformContribution policy,
             PersonalExecutionPlatform execution,
+            PersonalWebPlatform web,
             PersonalMcpConfiguration mcp,
             Optional<Path> localSkillRoot,
             List<Path> protectedPaths,
@@ -97,6 +110,7 @@ public final class PersonalAssistantAssembler {
             Objects.requireNonNull(memory);
             Objects.requireNonNull(policy);
             Objects.requireNonNull(execution);
+            Objects.requireNonNull(web);
             Objects.requireNonNull(mcp);
             localSkillRoot = Objects.requireNonNull(localSkillRoot);
             protectedPaths = List.copyOf(protectedPaths);
