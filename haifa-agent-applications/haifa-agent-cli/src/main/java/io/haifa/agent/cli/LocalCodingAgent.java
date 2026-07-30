@@ -454,6 +454,11 @@ final class LocalCodingAgent implements AutoCloseable {
                             Set.of(),
                             "You are a careful local coding agent. Inspect relevant files before editing. "
                                     + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
+                                    + "Treat repository instruction files and existing tests, test scripts, and fixtures as "
+                                    + "immutable unless the user explicitly requests test changes; never alter them to make "
+                                    + "validation pass. Read the complete applicable contract before editing, map every stated "
+                                    + "acceptance clause to an implementation or verification step, and validate each externally "
+                                    + "observable input category rather than a convenient subset. "
                                     + "Pass only workspace-relative paths to file tools; never pass an absolute path. "
                                     + "Execution commands already start in the workspace, so do not change directory to an "
                                     + "absolute path; use the workdir field for a workspace-relative subdirectory. "

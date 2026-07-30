@@ -407,7 +407,13 @@ class LocalCodingAgentTest {
         var successfulModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = successfulCalls.incrementAndGet();
             return switch (call) {
-                case 1 -> answer("delivery-premature", "premature final");
+                case 1 -> {
+                    assertThat(request.messages())
+                            .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
+                                    && message.content().contains("existing tests, test scripts, and fixtures")
+                                    && message.content().contains("map every stated acceptance clause"));
+                    yield answer("delivery-premature", "premature final");
+                }
                 case 2 -> {
                     yield toolResponse(
                             "delivery-write", "file_create", Map.of("path", "delivered.txt", "content", "delivered\n"));

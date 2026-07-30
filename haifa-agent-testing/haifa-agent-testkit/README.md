@@ -21,6 +21,9 @@ Scratch、Scratch 清理失败或 Secret 命中均失败。每个 Repeat 和 Gat
 设为只读。Manifest 只排除可被 Finder 异步改写、且不承载交付事实的 `.DS_Store`；Workspace、
 Runtime 与其余 Gate 证据文件全部纳入摘要。
 
+自主交付 Harness 的隔离 Local Native 配置保持网络禁用，并允许最多 32 个进程，以容纳
+`go test -race` 等会并行启动编译器子进程的受控 Toolchain 验证；该上限不授予额外路径或网络能力。
+
 约束：
 
 - 测试辅助行为必须确定、可重复且默认不访问外部服务；

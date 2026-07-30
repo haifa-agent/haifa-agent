@@ -523,7 +523,7 @@ final class AutonomousDeliveryPhaseOneGate {
                   maxTimeoutMillis: 600000
                   maxOutputLines: 2000
                   maxOutputBytes: 102400
-                  maxProcesses: 8
+                  maxProcesses: 32
                   inheritEnvironment: [PATH, HOME, JAVA_HOME]
                   extraPathPolicies:
                     - { id: java-home, path: %s, readOnly: true }
