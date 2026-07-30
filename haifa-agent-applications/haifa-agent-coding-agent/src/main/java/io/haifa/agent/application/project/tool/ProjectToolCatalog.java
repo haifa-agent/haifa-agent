@@ -339,9 +339,10 @@ public final class ProjectToolCatalog {
                                 "type",
                                 "string",
                                 "enum",
-                                List.of("BUILD", "TEST", "INSPECT", "MUTATE", "UNKNOWN"),
+                                List.of("BUILD", "TEST", "DIFF", "INSPECT", "MUTATE", "UNKNOWN"),
                                 "description",
-                                "Stable operation family for recovery control. Use UNKNOWN when the command cannot "
+                                "Stable operation family for delivery and recovery control. Use DIFF only for "
+                                        + "read-only diff inspection and UNKNOWN when the command cannot "
                                         + "be reliably classified; do not infer it from arbitrary shell syntax."));
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);

@@ -8,8 +8,10 @@ import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
@@ -63,8 +65,8 @@ class LocalCodingProductAssemblyTest {
         CliConfiguration configuration = memoryConfiguration();
         AtomicInteger modelCalls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
-            modelCalls.incrementAndGet();
-            return response("terminal-answer");
+            int call = modelCalls.incrementAndGet();
+            return call == 1 ? readWorkspace("terminal-read") : response("terminal-answer");
         };
         AtomicReference<LocalCodingAgent> assembled = new AtomicReference<>();
         ByteArrayOutputStream terminalOutput = new ByteArrayOutputStream();
@@ -82,7 +84,7 @@ class LocalCodingProductAssemblyTest {
         runner.run(workspace, configuration, new PrintStream(new ByteArrayOutputStream()), ignored -> {});
         awaitNoActiveRun(assembled.get());
 
-        assertThat(modelCalls).hasValue(1);
+        assertThat(modelCalls).hasValue(2);
         assertThat(terminalOutput.toString(java.nio.charset.StandardCharsets.UTF_8))
                 .contains("Haifa Coding Agent");
     }
@@ -220,7 +222,7 @@ class LocalCodingProductAssemblyTest {
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = modelCalls.incrementAndGet();
             if (call == 1) await(finishFirstRun);
-            return response("answer-" + call);
+            return call % 2 == 1 ? readWorkspace("restart-read-" + call) : response("answer-" + call);
         };
         io.haifa.agent.core.session.AgentSessionId sessionId;
         AgentRunId firstRunId;
@@ -271,7 +273,7 @@ class LocalCodingProductAssemblyTest {
             assertThatThrownBy(() -> client.events(firstRunId, RunEventCursor.beforeFirst(firstRunId), 10))
                     .hasMessageContaining("Session is unavailable");
         }
-        assertThat(modelCalls).hasValue(2);
+        assertThat(modelCalls).hasValue(4);
     }
 
     private LocalCodingAgent agent(
@@ -415,6 +417,19 @@ class LocalCodingProductAssemblyTest {
                 text,
                 List.of(),
                 ModelFinishReason.STOP,
+                ModelUsage.unpriced(1, 1),
+                "stub",
+                Map.of());
+    }
+
+    private static AgentChatResponse readWorkspace(String id) {
+        return new AgentChatResponse(
+                id,
+                "stub-model",
+                "",
+                List.of(new ModelToolCall(
+                        new ProviderToolCallCorrelationId(id + "-call"), "file_list", Map.of("path", "."))),
+                ModelFinishReason.TOOL_CALLS,
                 ModelUsage.unpriced(1, 1),
                 "stub",
                 Map.of());

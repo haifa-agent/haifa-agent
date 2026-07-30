@@ -64,9 +64,9 @@ public final class AutonomousDeliveryHarnessMain {
             runPhaseZeroGate(options, catalog, repositories);
             return;
         }
-        if (options.command().equals("phase-1-gate")) {
+        if (options.command().equals("phase-1-gate") || options.command().equals("phase-2-gate")) {
             if (!options.execute()) {
-                throw new IllegalArgumentException("phase-1-gate requires explicit --execute");
+                throw new IllegalArgumentException(options.command() + " requires explicit --execute");
             }
             Path campaign = requireCampaign(options.campaignRoot(), repositories);
             String build = requireCommit(options.buildCommit());
@@ -79,8 +79,9 @@ public final class AutonomousDeliveryHarnessMain {
             toolchains.put("node", options.nodeHome());
             toolchains.put("go", options.goHome());
             Path gate = new AutonomousDeliveryPhaseOneGate(clock)
-                    .run(campaign, build, suite, catalog, options.cliJar(), toolchains);
-            System.out.println("Phase 1 gate PASS: " + gate);
+                    .run(campaign, build, suite, catalog, options.cliJar(), toolchains, options.projectRoot());
+            System.out.println(
+                    (options.command().equals("phase-2-gate") ? "Phase 2" : "Phase 1") + " gate PASS: " + gate);
             return;
         }
         throw new IllegalArgumentException("unknown command");
@@ -253,7 +254,8 @@ public final class AutonomousDeliveryHarnessMain {
             Path goHome = null;
             for (int index = 0; index < arguments.length; index++) {
                 switch (arguments[index]) {
-                    case "plan", "initialize-campaign", "phase-0-gate", "phase-1-gate" -> command = arguments[index];
+                    case "plan", "initialize-campaign", "phase-0-gate", "phase-1-gate", "phase-2-gate" ->
+                        command = arguments[index];
                     case "--project-root" -> projectRoot = Path.of(value(arguments, ++index));
                     case "--config-root" -> configRoot = Path.of(value(arguments, ++index));
                     case "--run-parent" -> runParent = Path.of(value(arguments, ++index));

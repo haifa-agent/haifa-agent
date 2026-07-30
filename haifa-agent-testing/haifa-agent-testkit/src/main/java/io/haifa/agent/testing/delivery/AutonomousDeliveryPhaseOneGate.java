@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Serial, repository-external Phase 1 production Gate and evidence collector. */
+/** Serial, repository-external Phase 1/2 production Gate and evidence collector. */
 final class AutonomousDeliveryPhaseOneGate {
     private static final DateTimeFormatter GATE_TIME =
             DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
@@ -43,16 +43,21 @@ final class AutonomousDeliveryPhaseOneGate {
             AutonomousDeliverySuiteManifest suite,
             AutonomousDeliveryCaseCatalog catalog,
             Path cliJar,
-            Map<String, Path> toolchainHomes)
+            Map<String, Path> toolchainHomes,
+            Path projectRoot)
             throws Exception {
-        if (!suite.phase().equals("PHASE_1")) {
-            throw new IllegalArgumentException("phase-1-gate requires a PHASE_1 suite");
+        if (!suite.phase().equals("PHASE_1") && !suite.phase().equals("PHASE_2")) {
+            throw new IllegalArgumentException("production Gate requires a PHASE_1 or PHASE_2 suite");
+        }
+        int phaseNumber = suite.phase().equals("PHASE_2") ? 2 : 1;
+        if (phaseNumber == 2 && !"deterministic-read-only-analyze-v1".equals(suite.readOnlyAnalyzeStubId())) {
+            throw new IllegalArgumentException("phase-2-gate requires the reviewed read-only ANALYZE Stub");
         }
         requireSecret("DEEPSEEK_API_KEY");
         requireSecret("HAIFA_CONTINUATION_KEY");
         Path jar = requireFile(cliJar, "CLI JAR");
         Map<String, Path> homes = validateToolchains(toolchainHomes);
-        Path gate = campaign.resolve("phase-1")
+        Path gate = campaign.resolve("phase-" + phaseNumber)
                 .resolve("build-" + buildCommit)
                 .resolve("gate-" + GATE_TIME.format(clock.instant()));
         Files.createDirectories(gate.getParent());
@@ -62,6 +67,10 @@ final class AutonomousDeliveryPhaseOneGate {
 
         List<Map<String, Object>> results = new ArrayList<>();
         boolean successful = true;
+        Map<String, Object> deterministicAnalyze =
+                phaseNumber == 2 ? runDeterministicAnalyzeStub(gate, projectRoot) : Map.of("required", false);
+        successful &= !Boolean.TRUE.equals(deterministicAnalyze.get("required"))
+                || Boolean.TRUE.equals(deterministicAnalyze.get("passed"));
         for (AutonomousDeliverySuiteManifest.CaseSelection selection : suite.cases()) {
             AutonomousDeliveryCase testCase = catalog.require(selection.caseId());
             for (int repetition = 1; repetition <= selection.repetitions(); repetition++) {
@@ -93,37 +102,88 @@ final class AutonomousDeliveryPhaseOneGate {
         summary.put("executionCalls", executionCalls);
         summary.put("scratchProvisionedCount", scratchProvisioned);
         summary.put("scratchExercised", scratchExercised);
+        summary.put("deterministicReadOnlyAnalyzeStub", deterministicAnalyze);
         summary.put("results", results);
         writeJson(gate.resolve("phase-summary.json"), summary);
-        writeBaselineComparison(campaign, gate, buildCommit, summary);
+        writeBaselineComparison(campaign, gate, buildCommit, summary, phaseNumber);
         AutonomousDeliveryHarnessMain.writeManifest(gate);
         AutonomousDeliveryHarnessMain.makeReadOnly(gate);
         if (!successful) {
-            throw new IllegalStateException("Phase 1 gate failed; immutable evidence: " + gate);
+            throw new IllegalStateException("Phase " + phaseNumber + " gate failed; immutable evidence: " + gate);
         }
         return gate;
     }
 
-    private void writeBaselineComparison(Path campaign, Path gate, String buildCommit, Map<String, Object> summary)
+    private Map<String, Object> runDeterministicAnalyzeStub(Path gate, Path projectRoot) throws Exception {
+        Path repository = projectRoot.toAbsolutePath().normalize().toRealPath();
+        Path repeat = gate.resolve("deterministic-read-only-analyze").resolve("repeat-01");
+        Files.createDirectories(repeat);
+        Path log = repeat.resolve("maven-test.log");
+        ProcessBuilder builder = new ProcessBuilder(
+                        repository.resolve("mvnw").toString(),
+                        "--batch-mode",
+                        "--no-transfer-progress",
+                        "-pl",
+                        ":haifa-agent-cli",
+                        "-am",
+                        "-Dtest=LocalCodingAgentTest#stubAnalyzeRunUsesReadOnlyEvidenceWithoutRequiringWorkspaceChange",
+                        "-Dsurefire.failIfNoSpecifiedTests=false",
+                        "test")
+                .directory(repository.toFile())
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile());
+        builder.environment().remove("DEEPSEEK_API_KEY");
+        builder.environment().remove("HAIFA_CONTINUATION_KEY");
+        long started = System.nanoTime();
+        Process process = builder.start();
+        boolean finished = process.waitFor(10, TimeUnit.MINUTES);
+        if (!finished) {
+            process.destroy();
+            if (!process.waitFor(10, TimeUnit.SECONDS)) process.destroyForcibly();
+        }
+        int exitStatus = finished ? process.exitValue() : 124;
+        Map<String, Object> result = Map.of(
+                "schemaVersion",
+                1,
+                "required",
+                true,
+                "providerAccess",
+                false,
+                "test",
+                "LocalCodingAgentTest#stubAnalyzeRunUsesReadOnlyEvidenceWithoutRequiringWorkspaceChange",
+                "exitStatus",
+                exitStatus,
+                "wallTimeMillis",
+                Math.round((System.nanoTime() - started) / 1_000_000.0),
+                "passed",
+                exitStatus == 0);
+        writeJson(repeat.resolve("result.json"), result);
+        return result;
+    }
+
+    private void writeBaselineComparison(
+            Path campaign, Path gate, String buildCommit, Map<String, Object> summary, int phaseNumber)
             throws IOException {
         Path baselineIndex = campaign.resolve("baseline").resolve("historical-evidence-index.json");
         JsonNode baselines = json.readTree(baselineIndex.toFile());
         LinkedHashMap<String, Object> comparison = new LinkedHashMap<>();
         comparison.put("schemaVersion", 1);
-        comparison.put("comparisonType", "PHASE_1_GATE_VS_READ_ONLY_HISTORICAL_EVIDENCE");
+        comparison.put("comparisonType", "PHASE_" + phaseNumber + "_GATE_VS_READ_ONLY_HISTORICAL_EVIDENCE");
         comparison.put("buildCommit", buildCommit);
         comparison.put("gateEvidence", campaign.relativize(gate).toString().replace('\\', '/'));
         comparison.put("generatedAt", Instant.now(clock).toString());
         comparison.put("historicalEvidence", baselines);
         comparison.put(
                 "interpretation",
-                "Historical entries are integrity-pinned evidence references; Phase 1 outcomes are not "
+                "Historical entries are integrity-pinned evidence references; Phase " + phaseNumber
+                        + " outcomes are not "
                         + "treated as performance-equivalent unless case and harness versions match.");
         comparison.put("phaseOutcome", summary);
         Path output = campaign.resolve("comparison")
-                .resolve("phase-1-build-" + buildCommit + "-" + gate.getFileName() + "-vs-baseline.json");
+                .resolve("phase-" + phaseNumber + "-build-" + buildCommit + "-" + gate.getFileName()
+                        + "-vs-baseline.json");
         if (Files.exists(output)) {
-            throw new IOException("Phase 1 baseline comparison already exists");
+            throw new IOException("Phase " + phaseNumber + " baseline comparison already exists");
         }
         writeJson(output, comparison);
     }

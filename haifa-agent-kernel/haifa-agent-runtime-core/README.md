@@ -1,5 +1,17 @@
 # Haifa Agent Runtime Core
 
+## 结构化完成纠偏
+
+`CompletionPolicy` 返回 Provider-neutral 的 `CompletionPolicyResult`：包括稳定
+`CompletionBlocker(code, safeMessage, recoverable, evidenceRequirement)` 与安全 Evidence Code。
+Runtime Core 不依赖 Coding 产品类型，也不读取 Coding 表。Final 缺少证据时，AgentLoop 追加
+`completion.deferred` 安全事件和固定顺序的内部纠偏 Context；次数由 `RepairRetryPolicy` 限制，
+默认产品装配最多两次。纠偏计数保存在权威 Session Message metadata，Checkpoint/进程恢复时重建，
+耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 失败，不能伪装为成功。
+
+Client Event 投影只把结构化字段映射为 `DeliveryLifecycle`，用于 Recovering、Verifying 和 Budget
+Threshold 展示；Prompt、Host Path、stderr、Fingerprint 和 Tool 原始参数不进入公共投影。
+
 ## 自主恢复与有效进展
 
 AgentLoop 按 Tool 坐标、操作族、语义失败类别、稳定错误码、资源类别和 Sandbox 摘要生成

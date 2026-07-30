@@ -247,6 +247,51 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void deliveryEventsDriveRecoveringVerifyingAndBudgetStateWithoutParsingText() {
+        TerminalUiState recovering = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "RECOVERING",
+                                "RECOVERY_REQUIRED",
+                                "REPEATED_ENVIRONMENT_FAILURE",
+                                List.of("WORKSPACE_CHANGE"),
+                                30,
+                                1))));
+        TerminalUiState verifying = reducer.reduce(
+                recovering,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "VERIFYING",
+                                "COMPLETION_DEFERRED",
+                                "DIFF_INSPECTION_MISSING",
+                                List.of("DIFF_INSPECTION", "VALIDATION_ATTEMPT"),
+                                24,
+                                2))));
+        TerminalUiState budget = reducer.reduce(
+                verifying,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-3",
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "BUDGET", "BUDGET_THRESHOLD_REACHED", "REMAINING_25_PERCENT", List.of(), 25, 0))));
+
+        assertThat(recovering.status()).isEqualTo("Recovering");
+        assertThat(verifying.status()).isEqualTo("Verifying");
+        assertThat(verifying.transcript())
+                .filteredOn(item -> item.id().equals("delivery-COMPLETION_DEFERRED"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.body())
+                        .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining budget: 24%")
+                        .doesNotContain("/Users/", "stderr", "fingerprint"));
+        assertThat(budget.status()).isEqualTo("Budget threshold");
+    }
+
+    @Test
     void recoveryCodesHaveActionableCategoriesWithoutLeakingExceptionMessages() {
         assertThat(TerminalRecovery.fromCode("EVENT_OUT_OF_ORDER").category())
                 .isEqualTo(TerminalRecovery.Category.RETRYABLE);

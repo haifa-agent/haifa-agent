@@ -10,6 +10,11 @@ import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryContextSource;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
+import io.haifa.agent.application.project.product.coding.delivery.CodingTaskContractResolver;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
@@ -80,6 +85,7 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
@@ -385,6 +391,11 @@ final class LocalCodingAgent implements AutoCloseable {
             var interactions = persistence.ports().interactions();
             ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
+            var taskContracts =
+                    new CodingTaskContractResolver(persistence.ports().state());
+            var deliveryEvidence =
+                    new CodingDeliveryEvidenceLedger(persistence.ports().state());
+            var deliveryProfile = CodingDeliveryProfile.safeDefault();
             var runtime = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -393,6 +404,10 @@ final class LocalCodingAgent implements AutoCloseable {
                         traces.add(event);
                         traceObserver.accept(event);
                     })
+                    .completionPolicy(new CodingCompletionPolicy(taskContracts, deliveryEvidence, deliveryProfile))
+                    .repairRetry(new RepairRetryPolicy(2))
+                    .registerContextSource(new CodingDeliveryContextSource(
+                            persistence.ports().runs(), taskContracts, deliveryEvidence, deliveryProfile))
                     .registerChatModel("openai-compatible", "1.0.0", model)
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
@@ -442,7 +457,9 @@ final class LocalCodingAgent implements AutoCloseable {
                                     + "Pass only workspace-relative paths to file tools; never pass an absolute path. "
                                     + "Execution commands already start in the workspace, so do not change directory to an "
                                     + "absolute path. After the requested verification passes, stop using tools unless its "
-                                    + "output identifies an unresolved failure, then return a concise completion summary."
+                                    + "output identifies an unresolved failure, then return a concise completion summary. "
+                                    + "For change/create delivery, use operationFamily DIFF for the final diff inspection "
+                                    + "and BUILD or TEST for the smallest relevant validation."
                                     + resources.snapshot().instructionBlock(),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(

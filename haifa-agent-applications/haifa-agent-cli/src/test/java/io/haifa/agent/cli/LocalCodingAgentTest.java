@@ -111,15 +111,13 @@ class LocalCodingAgentTest {
                 defaults.maxToolCalls(),
                 ProjectPersistenceConfiguration.sqliteWithJsonl(
                         database, transcripts, "env://HAIFA_TEST_CONTINUATION_KEY"));
-        var model = (io.haifa.agent.model.api.AgentChatModel) request -> new AgentChatResponse(
-                "cli-persistence",
-                "stub-model",
-                "persisted",
-                List.of(),
-                ModelFinishReason.STOP,
-                ModelUsage.unpriced(5, 2),
-                "stub",
-                Map.of());
+        AtomicInteger modelCalls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            int call = modelCalls.incrementAndGet();
+            return call % 2 == 1
+                    ? toolResponse("cli-persistence-read-" + call, "file_list", Map.of("path", "."))
+                    : answer("cli-persistence-" + call, "persisted");
+        };
         io.haifa.agent.core.run.AgentRunId runId;
 
         try (var agent = LocalCodingAgent.create(
@@ -261,12 +259,12 @@ class LocalCodingAgentTest {
                 Thread.sleep(25);
                 completed = agent.runtime().find(accepted.runId()).orElseThrow();
             }
-            assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
-            assertThat(completed.output()).contains("rejection respected");
+            assertThat(completed.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(completed.error().orElseThrow().code().value()).isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
         }
 
         assertThat(workspace.resolve("must-not-exist.txt")).doesNotExist();
-        assertThat(calls).hasValue(2);
+        assertThat(calls).hasValue(4);
         assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
         assertThat(new JsonlTranscriptReader(transcripts).read(runId.value()).events())
                 .extracting(event -> event.eventType())
@@ -276,7 +274,7 @@ class LocalCodingAgentTest {
                         "approval.authority.verified",
                         "approval.target.validated",
                         "approval.responded",
-                        "run.completed");
+                        "run.failed");
     }
 
     @Test
@@ -312,48 +310,63 @@ class LocalCodingAgentTest {
         String command =
                 isWindows() ? "Set-Content -NoNewline -Path shell-e2e.txt -Value stub" : "printf stub > shell-e2e.txt";
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
-            if (calls.incrementAndGet() == 1) {
+            int call = calls.incrementAndGet();
+            if (call == 1) {
                 assertThat(request.tools())
                         .extracting(io.haifa.agent.model.api.ModelToolSpecification::name)
                         .contains("execution_run", "skill_load", "skill_resource_read");
-                return new AgentChatResponse(
-                        "cli-shell-1",
-                        "stub-model",
-                        "",
-                        List.of(new ModelToolCall(
-                                new ProviderToolCallCorrelationId("shell-call-1"),
-                                "execution_run",
-                                Map.of(
-                                        "command",
-                                        command,
-                                        "workdir",
-                                        ".",
-                                        "timeoutMillis",
-                                        5000,
-                                        "description",
-                                        "Write a test file"))),
-                        ModelFinishReason.TOOL_CALLS,
-                        ModelUsage.unpriced(10, 3),
-                        "stub",
-                        Map.of());
+                return toolResponse(
+                        "shell-call-1",
+                        "execution_run",
+                        Map.of(
+                                "command",
+                                command,
+                                "workdir",
+                                ".",
+                                "timeoutMillis",
+                                5000,
+                                "description",
+                                "Write a test file",
+                                "operationFamily",
+                                "MUTATE"));
             }
-            assertThat(request.messages())
-                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                            && message.providerCorrelationId()
-                                    .orElseThrow()
-                                    .value()
-                                    .equals("shell-call-1")
-                            && "SUCCEEDED".equals(message.toolResultData().get("status"))
-                            && message.toolResultData().containsKey("fileChangeSetId"));
-            return new AgentChatResponse(
-                    "cli-shell-2",
-                    "stub-model",
-                    "shell complete",
-                    List.of(),
-                    ModelFinishReason.STOP,
-                    ModelUsage.unpriced(15, 4),
-                    "stub",
-                    Map.of());
+            if (call == 2) {
+                assertThat(request.messages())
+                        .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                                && "SUCCEEDED".equals(message.toolResultData().get("status"))
+                                && message.toolResultData().containsKey("fileChangeSetId"));
+                return toolResponse(
+                        "shell-test",
+                        "execution_run",
+                        Map.of(
+                                "command",
+                                fileExistsCommand("shell-e2e.txt"),
+                                "workdir",
+                                ".",
+                                "timeoutMillis",
+                                5000,
+                                "description",
+                                "Validate shell output",
+                                "operationFamily",
+                                "TEST"));
+            }
+            if (call == 3) {
+                return toolResponse(
+                        "shell-diff",
+                        "execution_run",
+                        Map.of(
+                                "command",
+                                fileExistsCommand("shell-e2e.txt"),
+                                "workdir",
+                                ".",
+                                "timeoutMillis",
+                                5000,
+                                "description",
+                                "Inspect shell diff",
+                                "operationFamily",
+                                "DIFF"));
+            }
+            return answer("cli-shell-complete", "shell complete");
         };
         CliConfiguration defaults = CliConfiguration.defaults();
         var automatic = new CliConfiguration(
@@ -383,7 +396,117 @@ class LocalCodingAgentTest {
             assertThat(snapshot.output()).contains("shell complete");
         }
         assertThat(Files.readString(workspace.resolve("shell-e2e.txt"))).isEqualTo("stub");
-        assertThat(calls).hasValue(2);
+        assertThat(calls).hasValue(4);
+    }
+
+    @Test
+    void stubModelCannotFinishChangeUntilDeliveryEvidenceExistsAndRepairsRemainBounded() throws Exception {
+        Path successfulWorkspace = Files.createDirectory(workspace.resolve("delivery-success"));
+        Path failedWorkspace = Files.createDirectory(workspace.resolve("delivery-failure"));
+        AtomicInteger successfulCalls = new AtomicInteger();
+        var successfulModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            int call = successfulCalls.incrementAndGet();
+            return switch (call) {
+                case 1 -> answer("delivery-premature", "premature final");
+                case 2 -> {
+                    yield toolResponse(
+                            "delivery-write", "file_create", Map.of("path", "delivered.txt", "content", "delivered\n"));
+                }
+                case 3 ->
+                    toolResponse(
+                            "delivery-test",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    fileExistsCommand("delivered.txt"),
+                                    "workdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    5_000,
+                                    "description",
+                                    "Validate delivered file",
+                                    "operationFamily",
+                                    "TEST"));
+                case 4 ->
+                    toolResponse(
+                            "delivery-diff",
+                            "execution_run",
+                            Map.of(
+                                    "command",
+                                    fileExistsCommand("delivered.txt"),
+                                    "workdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    5_000,
+                                    "description",
+                                    "Inspect delivered change",
+                                    "operationFamily",
+                                    "DIFF"));
+                default -> answer("delivery-complete", "delivery complete");
+            };
+        };
+        CliConfiguration configuration = automaticHostConfiguration();
+
+        try (var agent = LocalCodingAgent.create(
+                successfulWorkspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                successfulModel)) {
+            var accepted = agent.start("fix the implementation by creating the requested delivery file");
+            var snapshot = awaitTerminal(agent, accepted.runId());
+            assertThat(snapshot.status())
+                    .withFailMessage(
+                            "run did not complete: snapshot=%s calls=%s pending=%s",
+                            snapshot,
+                            successfulCalls.get(),
+                            agent.interactions().pending(accepted.runId()))
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(snapshot.output()).contains("delivery complete");
+        }
+        assertThat(Files.readString(successfulWorkspace.resolve("delivered.txt")))
+                .isEqualTo("delivered\n");
+        assertThat(successfulCalls).hasValue(5);
+
+        AtomicInteger failedCalls = new AtomicInteger();
+        var failedModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            failedCalls.incrementAndGet();
+            return answer("delivery-still-premature-" + failedCalls.get(), "still premature");
+        };
+        try (var agent = LocalCodingAgent.create(
+                failedWorkspace,
+                configuration,
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                failedModel)) {
+            var accepted = agent.start("fix the implementation but do not provide delivery evidence");
+            var snapshot = awaitTerminal(agent, accepted.runId());
+            assertThat(snapshot.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(snapshot.error().orElseThrow().code().value()).isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
+        }
+        assertThat(failedCalls).hasValue(3);
+    }
+
+    @Test
+    void stubAnalyzeRunUsesReadOnlyEvidenceWithoutRequiringWorkspaceChange() throws Exception {
+        Files.writeString(workspace.resolve("README.md"), "deterministic root cause evidence\n");
+        AtomicInteger calls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> switch (calls.incrementAndGet()) {
+            case 1 -> answer("analyze-premature", "premature analysis");
+            case 2 -> toolResponse("analyze-read", "file_read", Map.of("path", "README.md"));
+            default -> answer("analyze-complete", "root cause analyzed from deterministic read-only evidence");
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                trustedHostConfiguration(CliConfiguration.defaults()),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var accepted = agent.start("analyze root cause and report evidence without changing files");
+            var snapshot = awaitTerminal(agent, accepted.runId());
+            assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(snapshot.output().orElseThrow()).contains("root cause analyzed");
+        }
+        assertThat(calls).hasValue(3);
+        assertThat(Files.readString(workspace.resolve("README.md"))).isEqualTo("deterministic root cause evidence\n");
     }
 
     @Test
@@ -557,22 +680,16 @@ class LocalCodingAgentTest {
                 defaults.maxToolCalls());
         AtomicInteger calls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
-            calls.incrementAndGet();
+            int call = calls.incrementAndGet();
             assertThat(request.tools())
                     .extracting(io.haifa.agent.model.api.ModelToolSpecification::name)
                     .doesNotContain("skill_load", "skill_resource_read");
             assertThat(request.messages())
                     .noneMatch(message -> message.role() == ModelMessageRole.SYSTEM
                             && message.content().contains("Available Skills"));
-            return new AgentChatResponse(
-                    "cli-no-skills",
-                    "stub-model",
-                    "complete",
-                    List.of(),
-                    ModelFinishReason.STOP,
-                    ModelUsage.unpriced(5, 2),
-                    "stub",
-                    Map.of());
+            return call == 1
+                    ? toolResponse("cli-no-skills-read", "file_list", Map.of("path", "."))
+                    : answer("cli-no-skills", "complete");
         };
 
         try (var agent = LocalCodingAgent.create(
@@ -586,7 +703,7 @@ class LocalCodingAgentTest {
             }
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
         }
-        assertThat(calls).hasValue(1);
+        assertThat(calls).hasValue(2);
     }
 
     @Test
@@ -728,6 +845,54 @@ class LocalCodingAgentTest {
             assertThat(snapshot.output()).contains("recovered");
         }
         assertThat(calls).hasValue(2);
+    }
+
+    private static AgentChatResponse answer(String id, String text) {
+        return new AgentChatResponse(
+                id, "stub-model", text, List.of(), ModelFinishReason.STOP, ModelUsage.unpriced(5, 2), "stub", Map.of());
+    }
+
+    private static AgentChatResponse toolResponse(String id, String tool, Map<String, Object> arguments) {
+        return new AgentChatResponse(
+                id,
+                "stub-model",
+                "",
+                List.of(new ModelToolCall(new ProviderToolCallCorrelationId(id + "-call"), tool, arguments)),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(5, 2),
+                "stub",
+                Map.of());
+    }
+
+    private static String fileExistsCommand(String file) {
+        return isWindows() ? "if (Test-Path '" + file + "') { exit 0 } else { exit 1 }" : "test -f '" + file + "'";
+    }
+
+    private static CliConfiguration automaticHostConfiguration() {
+        CliConfiguration trusted = trustedHostConfiguration(CliConfiguration.defaults());
+        return new CliConfiguration(
+                trusted.model(),
+                trusted.enabledTools(),
+                trusted.mcpServers(),
+                trusted.web(),
+                trusted.skills(),
+                trusted.execution(),
+                ApprovalMode.AUTO,
+                trusted.timeout(),
+                trusted.maxIterations(),
+                trusted.maxToolCalls(),
+                trusted.persistence());
+    }
+
+    private static io.haifa.agent.runtime.api.AgentRunSnapshot awaitTerminal(
+            LocalCodingAgent agent, io.haifa.agent.core.run.AgentRunId runId) throws InterruptedException {
+        Instant deadline = now().plusSeconds(30);
+        var snapshot = agent.runtime().find(runId).orElseThrow();
+        while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
+            Thread.sleep(25);
+            snapshot = agent.runtime().find(runId).orElseThrow();
+        }
+        return snapshot;
     }
 
     private static CliConfiguration trustedHostConfiguration(CliConfiguration configuration) {

@@ -208,6 +208,13 @@ public final class AgentLoopContext {
         return repairAttempts;
     }
 
+    public void restoreRepairAttempts(int attempts) {
+        if (attempts < repairAttempts) {
+            throw new IllegalArgumentException("repair attempts must not move backwards");
+        }
+        repairAttempts = attempts;
+    }
+
     public int recordForcedContextRebuild() {
         if (forcedContextRebuildAttempts >= 1) {
             throw new ContextRebuildExhaustedException("model context remained too long after forced rebuild");

@@ -162,8 +162,54 @@ class RuntimeCoreHardeningTest {
                         .repairRetry(new RepairRetryPolicy(1)));
         var blockedRun = blocked.runtime.start(request("artifact-blocked"));
         blocked.scheduler.runAll();
-        assertThat(blocked.runtime.find(blockedRun.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.FAILED);
+        var failed = blocked.store.find(blockedRun.runId()).orElseThrow();
+        assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(failed.error().orElseThrow().code().value()).isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
+        assertThat(blocked.store.messages(blockedRun.runId()))
+                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
+                .singleElement()
+                .satisfies(message -> assertThat(message.metadata())
+                        .containsEntry("completionRepairAttempt", 1)
+                        .containsKey("completionBlockerCodes"));
+        assertThat(blocked.store.eventsFor(blockedRun.runId()))
+                .filteredOn(event -> event.type().equals("completion.deferred"))
+                .singleElement()
+                .satisfies(event ->
+                        assertThat(event.data()).containsEntry("attempt", 1).containsEntry("maximumAttempts", 1));
+    }
+
+    @Test
+    void completionRepairAttemptsSurviveProcessRecovery() {
+        AtomicBoolean firstAttemptOwned = new AtomicBoolean(true);
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel interrupted = request -> {
+            int call = calls.incrementAndGet();
+            if (call == 2) throw new AssertionError("simulated process loss after first repair");
+            return response(finalDecision("premature-" + call));
+        };
+        Fixture fixture = fixture(interrupted, builder -> builder.requiredArtifactChecker((run, decision) -> false)
+                .repairRetry(new RepairRetryPolicy(2))
+                .executionOwnership(attempt -> firstAttemptOwned.get() || attempt.attemptNumber() > 1));
+        var accepted = fixture.runtime.start(request("repair-recovery"));
+
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        firstAttemptOwned.set(false);
+        fixture.runtime.recover(accepted.runId());
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.store
+                        .find(accepted.runId())
+                        .orElseThrow()
+                        .error()
+                        .orElseThrow()
+                        .code()
+                        .value())
+                .isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
+        assertThat(fixture.store.messages(accepted.runId()))
+                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
+                .extracting(message -> message.metadata().get("completionRepairAttempt"))
+                .containsExactly(1, 2);
+        assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(2);
     }
 
     @Test

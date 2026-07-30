@@ -1,5 +1,22 @@
 # Haifa Coding Agent
 
+## 自主交付契约与完成证据
+
+Coding 产品在每个 Run 上从可信调用方元数据或首条权威用户消息确定
+`CHANGE/CREATE/ANALYZE/REVIEW/UNKNOWN`，并生成内容寻址的不可变
+`CodingTaskContract`。低置信度请求保持 `UNKNOWN`；模型消息不能改变 Intent，也不能制造交付证据。
+当前 Contract 由已有 Run/Session 事实确定性重建，因此不新增 SQLite 表或 Migration。
+
+`CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、ChangeSet、Execution 状态和 Artifact
+引用重建工作区修改、Diff、验证、只读检查、文档、阻塞和有证据的 No-change 事实。模型自由文本不构成
+修改、验证通过或 Artifact 证据。`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限
+No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改；UNKNOWN 必须收敛到
+完整修改证据、确定性只读证据或结构化阻塞路径之一。
+
+默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只改变模型收到的有界
+收敛指导，不增加 Runtime 的总预算或时限。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
+从持久消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
+
 ## Policy 持久化装配
 
 `ProjectPersistenceAssembly.policy()` 是应用级 Policy 权威 Store 组合：内存模式共享同一 `InMemoryPolicyStore`，SQLite 模式复用 `SqliteStoreFoundation` 的 Snapshot、Decision、Evidence、Grant 与 Trust Store。Coding Agent 重启时复用内容一致的固定 Policy Snapshot；不在应用层实现企业组织或审批工作流。
@@ -68,8 +85,8 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
 新 Profile；模型可见 Schema 包含 command、逻辑 workdir、有界 timeout、安全描述和显式
-`operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/MUTATE/UNKNOWN`，不能可靠识别时使用
-`UNKNOWN`，用于语义失败归类而不是命令特例。
+`operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，不能可靠识别时使用
+`UNKNOWN`；这些操作族用于语义失败归类和权威交付证据，而不是命令特例。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
 `task-planning`、`result-verification` 两个 Classpath SDK 基础 Skill，并允许上层 Application 显式加入

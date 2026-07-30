@@ -121,6 +121,9 @@ public final class DefaultAgentLoop implements AgentLoop {
         AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
                         value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
                 .orElseGet(() -> new AgentLoopContext(1, List.of()));
+        progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
+                .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
+                .count());
         RunBudgetSnapshot initialBudget =
                 RunBudgetSnapshot.from(run, progress.iteration(), 0, progress.repairAttempts(), time.now());
         progress.rebuildControlState(

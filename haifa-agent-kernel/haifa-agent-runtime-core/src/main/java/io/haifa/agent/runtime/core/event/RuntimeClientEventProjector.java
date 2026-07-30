@@ -5,6 +5,7 @@ import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -75,6 +76,27 @@ public final class RuntimeClientEventProjector {
                     case "workspace.change-set.available" -> resource("workspace.change-set.available", event);
                     case "artifact.available" -> resource("artifact.available", event);
                     case "checkpoint.available" -> resource("checkpoint.available", event);
+                    case "completion.deferred" ->
+                        delivery(
+                                "completion.deferred",
+                                event,
+                                text(event.data(), "phase", "RECOVERING"),
+                                "COMPLETION_DEFERRED",
+                                text(event.data(), "reasonCode", "DELIVERY_EVIDENCE_MISSING"),
+                                texts(event.data(), "missingEvidence"),
+                                integer(event.data(), "remainingPercent", 0),
+                                integer(event.data(), "attempt", 0));
+                    case "tool.recovery-strategy-required" ->
+                        delivery(
+                                "recovery.required",
+                                event,
+                                "RECOVERING",
+                                "RECOVERY_REQUIRED",
+                                text(event.data(), "directive", "RECOVERY_REQUIRED"),
+                                List.of(),
+                                0,
+                                integer(event.data(), "attempts", 0));
+                    case "loop.budget-snapshot" -> budgetThreshold(event);
                     default -> outputOrLifecycle(event);
                 };
         if (projection == null) return Optional.empty();
@@ -111,6 +133,9 @@ public final class RuntimeClientEventProjector {
                                 "artifact.available",
                                 "checkpoint.available")
                         .contains(event.type())
+                || event.type().equals("completion.deferred")
+                || event.type().equals("tool.recovery-strategy-required")
+                || event.type().equals("loop.budget-snapshot")
                 || event.type().equals("run.created")
                 || event.type().equals("approval.requested")
                 || event.type().equals("approval.responded")
@@ -192,6 +217,35 @@ public final class RuntimeClientEventProjector {
                         text(event.data(), "action", "inspect")));
     }
 
+    private static Projection budgetThreshold(RuntimeEvent event) {
+        List<String> thresholds = texts(event.data(), "newThresholds");
+        if (thresholds.isEmpty()) return null;
+        return delivery(
+                "budget.threshold-reached",
+                event,
+                "BUDGET",
+                "BUDGET_THRESHOLD_REACHED",
+                "REMAINING_" + thresholds.getFirst() + "_PERCENT",
+                List.of(),
+                integer(event.data(), "remainingPercent", 0),
+                0);
+    }
+
+    private static Projection delivery(
+            String eventType,
+            RuntimeEvent event,
+            String phase,
+            String status,
+            String reasonCode,
+            List<String> missingEvidence,
+            int remainingPercent,
+            int attempt) {
+        return new Projection(
+                eventType,
+                new RunEventPayloads.DeliveryLifecycle(
+                        phase, status, reasonCode, missingEvidence, remainingPercent, attempt));
+    }
+
     private static String inferredKind(RuntimeEvent event) {
         if (event.type().startsWith("approval.")) return "approval";
         return text(event.data(), "kind", "clarification");
@@ -218,6 +272,20 @@ public final class RuntimeClientEventProjector {
     private static Integer integer(Map<String, Object> data, String key) {
         Object value = data.get(key);
         return value instanceof Number number ? number.intValue() : null;
+    }
+
+    private static int integer(Map<String, Object> data, String key, int fallback) {
+        Integer value = integer(data, key);
+        return value == null ? fallback : value;
+    }
+
+    private static List<String> texts(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        if (!(value instanceof List<?> values)) return List.of();
+        return values.stream()
+                .map(String::valueOf)
+                .filter(text -> !text.isBlank())
+                .toList();
     }
 
     private record Projection(String eventType, AgentRunEvent.Payload payload) {}

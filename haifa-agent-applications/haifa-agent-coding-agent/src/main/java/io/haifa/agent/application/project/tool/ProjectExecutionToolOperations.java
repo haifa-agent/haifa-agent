@@ -393,7 +393,7 @@ public final class ProjectExecutionToolOperations {
             throw new IllegalArgumentException("operationFamily must be text");
         }
         String normalized = text.trim().toUpperCase(java.util.Locale.ROOT);
-        if (!Set.of("BUILD", "TEST", "INSPECT", "MUTATE", "UNKNOWN").contains(normalized)) {
+        if (!Set.of("BUILD", "TEST", "DIFF", "INSPECT", "MUTATE", "UNKNOWN").contains(normalized)) {
             throw new IllegalArgumentException("operationFamily is unsupported");
         }
         return normalized;

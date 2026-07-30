@@ -5,6 +5,14 @@ Coding Agent 的 tui4j 交互产品层。布局、信息层级和交互以
 `docs/prompts/19-coding-agent-terminal-ui-ux-refactor-prompt.md` 为准，不自行发明 Sidebar、
 Dashboard、Scenario toolbar 或另一套产品 UI。
 
+## 自主交付状态
+
+Terminal 只消费 Runtime API 的 `DeliveryLifecycle` 安全 DTO，不读取 Runtime Store、SQLite、模型正文或
+Tool 原始输出来推断交付状态。`completion.deferred` 显示 Recovering 或 Verifying，
+`recovery.required` 显示 Recovering，`budget.threshold-reached` 显示 Budget threshold；卡片只包含
+稳定 reason code、缺失 Evidence code、剩余百分比和纠偏次数。Run 到达终态后仍由既有生命周期归约
+收起活动状态。NoColor 模式保留同样的稳定文字，不显示 Host Path、stderr、Fingerprint 或 Credential。
+
 ## 模块定位
 
 三个模块的职责固定如下：
