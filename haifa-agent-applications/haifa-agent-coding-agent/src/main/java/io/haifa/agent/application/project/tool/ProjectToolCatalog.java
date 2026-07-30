@@ -344,6 +344,7 @@ public final class ProjectToolCatalog {
                                 "Stable operation family for delivery and recovery control. Use DIFF only for "
                                         + "read-only diff inspection and UNKNOWN when the command cannot "
                                         + "be reliably classified; do not infer it from arbitrary shell syntax."));
+                required.add("operationFamily");
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }

@@ -109,7 +109,7 @@ class ProjectApplicationTest {
         assertThat(properties)
                 .containsOnlyKeys("command", "workdir", "timeoutMillis", "description", "operationFamily");
         assertThat(execution.definition().inputSchema().document())
-                .containsEntry("required", List.of("command"))
+                .containsEntry("required", List.of("command", "operationFamily"))
                 .containsEntry("additionalProperties", false);
         assertThat(execution.definition().outputSchema().document()).containsEntry("additionalProperties", false);
         assertThat(execution.definition().resources().executionProfiles())

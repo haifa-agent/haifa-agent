@@ -466,8 +466,8 @@ final class LocalCodingAgent implements AutoCloseable {
                                     + "Give BUILD or TEST commands enough timeout for a cold toolchain when the remaining "
                                     + "budget permits. After the requested verification passes, stop using tools unless its "
                                     + "output identifies an unresolved failure, then return a concise completion summary. "
-                                    + "For change/create delivery, use operationFamily DIFF for the final diff inspection "
-                                    + "and BUILD or TEST for the smallest relevant validation."
+                                    + "Every execution.run call must supply operationFamily. For change/create delivery, use "
+                                    + "DIFF for the final diff inspection and BUILD or TEST for the smallest relevant validation."
                                     + resources.snapshot().instructionBlock(),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(
