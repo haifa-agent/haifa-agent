@@ -22,6 +22,45 @@ Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-term
 
 ## 构建与运行
 
+### 本地发行目录（macOS / Linux）
+
+`scripts/package-local-coding-agent.sh` 会构建唯一的 shaded CLI JAR，并把可搬运的本地制品放进
+同一个目录：
+
+```text
+haifa-coding-agent/
+  haifa-coding          # 可加入 PATH 的 POSIX 启动脚本
+  haifa-agent.jar       # 包含全部运行依赖的 shaded JAR
+  haifa-coding.yaml     # 无密钥的安全默认配置
+```
+
+默认发布到用户目录 `~/.haifa-agent/coding/`：
+
+```bash
+./scripts/package-local-coding-agent.sh
+export PATH="$HOME/.haifa-agent/coding:$PATH"
+export DEEPSEEK_API_KEY="<secret>"
+
+cd /path/to/any/project
+haifa-coding
+```
+
+也可以将其他绝对路径作为第一个参数，覆盖默认发布目录。
+
+把 `PATH` 配置写入 `~/.zshrc` 或 `~/.bashrc` 后可长期使用。`haifa-coding` 不切换目录，且 Java
+入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
+发行配置只使用 `env://DEEPSEEK_API_KEY`，不包含密钥，默认保持
+`approval=ask`、`local-native + network deny` 和内存存储。可通过
+`haifa-coding --config /absolute/path/to/config.yaml` 使用自定义配置，也可显式传
+`--workspace /absolute/path/to/project`；调用方参数位于默认参数之后，因此优先级更高。
+
+需要让 `execution.run` 读取 JDK、SDK 或其他 Workspace 外工具链目录时，应将其物理绝对路径作为
+只读 `execution.extraPathPolicies` 写入可信的自定义配置。不要把 API Key 写进 YAML。Java 21
+必须能从 `JAVA_HOME/bin/java` 或 `PATH` 找到。
+
+该发行入口用于日常本地项目。仓库根目录的 `scripts/run-haifa-coding-terminal.command` 继续保留，
+作为会创建隔离 Fixture、Trace、SQLite 和人工验收证据的 macOS 测试入口；两者用途不同。
+
 ### macOS 全工具人工测试入口
 
 仓库根目录的 `scripts/run-haifa-coding-terminal.command` 是可版本控制的 macOS 人工测试启动器。

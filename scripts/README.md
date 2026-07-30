@@ -2,6 +2,26 @@
 
 后续可复用的构建、迁移和发布脚本统一放置在此目录。当前构建入口为根目录 Maven Reactor。
 
+## Local Coding Agent 发行目录
+
+`package-local-coding-agent.sh` 构建 `haifa-agent-cli` shaded JAR，并生成包含启动脚本、JAR 和
+无密钥默认配置的可搬运目录。默认输出为
+`haifa-agent-applications/haifa-agent-cli/target/haifa-coding-agent`：
+
+```bash
+./scripts/package-local-coding-agent.sh
+```
+
+也可直接生成到准备加入 `PATH` 的用户目录：
+
+```bash
+./scripts/package-local-coding-agent.sh "$HOME/.local/haifa-coding-agent"
+export PATH="$HOME/.local/haifa-coding-agent:$PATH"
+```
+
+随后在任意已有项目目录执行 `haifa-coding`；启动脚本不会改变当前目录，CLI 会把它作为默认
+Workspace。详细配置与安全边界见 `haifa-agent-applications/haifa-agent-cli/README.md`。
+
 ## Terminal UI 离线冒烟
 
 `terminal-ui-smoke.mjs` 通过 Windows ConPTY 启动真实 shaded CLI 系统终端，记录 ANSI、
