@@ -13,8 +13,13 @@ import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class CheckpointManager {
+    private static final Logger LOGGER = LoggerFactory.getLogger(CheckpointManager.class);
+
     private final CheckpointRepository repository;
     private final CheckpointPolicy policy;
     private final CheckpointSnapshotBuilder snapshotBuilder;
@@ -122,10 +127,18 @@ public final class CheckpointManager {
             int forcedContextRebuildAttempts,
             CheckpointType type) {
         if (!policy.shouldCapture(run, completedIteration, type)) return Optional.empty();
+        long started = System.nanoTime();
+        long phaseStarted = started;
         long sequence = repository.latest(run.id()).map(Checkpoint::sequence).orElse(0L) + 1L;
+        long latestMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         var snapshot = snapshotBuilder.build(
                 run, completedIteration, fingerprints, forcedContextRebuildAttempts, type, sequence);
+        long snapshotMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         repository.append(snapshot.checkpoint(), snapshot.state());
+        long persistMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         if (events != null) {
             events.append(
                     run.id(),
@@ -138,7 +151,23 @@ public final class CheckpointManager {
                             "action", "resume"),
                     time.now());
         }
+        long eventMillis = elapsedMillis(phaseStarted);
+        LOGGER.info(
+                "event=checkpoint.capture runId={} checkpointId={} sequence={} type={} latestMs={} snapshotMs={} persistMs={} eventMs={} totalMs={}",
+                run.id().value(),
+                snapshot.checkpoint().id().value(),
+                sequence,
+                type,
+                latestMillis,
+                snapshotMillis,
+                persistMillis,
+                eventMillis,
+                elapsedMillis(started));
         return Optional.of(snapshot.checkpoint());
+    }
+
+    private static long elapsedMillis(long started) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
     }
 
     public Optional<RuntimeCheckpointState> restoreLatest(AgentRun run) {

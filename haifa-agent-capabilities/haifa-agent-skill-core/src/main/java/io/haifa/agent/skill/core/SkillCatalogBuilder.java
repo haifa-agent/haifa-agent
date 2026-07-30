@@ -7,23 +7,53 @@ import io.haifa.agent.skill.api.SkillCatalogSnapshot;
 import io.haifa.agent.skill.api.SkillDiagnostic;
 import io.haifa.agent.skill.api.SkillDiagnosticSeverity;
 import io.haifa.agent.skill.api.SkillDiscoveryContext;
+import io.haifa.agent.skill.api.SkillPackageReviewGrant;
 import io.haifa.agent.skill.api.SkillRegistration;
 import io.haifa.agent.skill.api.SkillResolutionPolicy;
 import io.haifa.agent.skill.api.SkillSource;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
+import io.haifa.agent.skill.api.SkillTrustSubject;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 public final class SkillCatalogBuilder {
     private final List<SkillSource> sources;
     private final SkillResolutionPolicy policy;
+    private final SkillTrustSnapshot trust;
+    private final Optional<SkillTrustSubject> trustSubject;
+    private final Clock clock;
 
     public SkillCatalogBuilder(List<SkillSource> sources, SkillResolutionPolicy policy) {
+        this(sources, policy, SkillTrustSnapshot.empty(), Optional.empty(), Clock.systemUTC());
+    }
+
+    public SkillCatalogBuilder(
+            List<SkillSource> sources,
+            SkillResolutionPolicy policy,
+            SkillTrustSnapshot trust,
+            SkillTrustSubject trustSubject,
+            Clock clock) {
+        this(sources, policy, trust, Optional.of(Objects.requireNonNull(trustSubject)), clock);
+    }
+
+    private SkillCatalogBuilder(
+            List<SkillSource> sources,
+            SkillResolutionPolicy policy,
+            SkillTrustSnapshot trust,
+            Optional<SkillTrustSubject> trustSubject,
+            Clock clock) {
         this.sources = List.copyOf(java.util.Objects.requireNonNull(sources));
         this.policy = java.util.Objects.requireNonNull(policy);
+        this.trust = Objects.requireNonNull(trust, "trust must not be null");
+        this.trustSubject = Objects.requireNonNull(trustSubject, "trustSubject must not be null");
+        this.clock = Objects.requireNonNull(clock, "clock must not be null");
         long distinct = this.sources.stream()
                 .map(source -> source.descriptor().reference())
                 .distinct()
@@ -33,6 +63,7 @@ public final class SkillCatalogBuilder {
     }
 
     public DefaultSkillCatalog build(SkillDiscoveryContext context) {
+        Instant now = clock.instant();
         List<SkillRegistration> registrations = new ArrayList<>();
         List<SkillDiagnostic> diagnostics = new ArrayList<>();
         sources.stream()
@@ -42,9 +73,27 @@ public final class SkillCatalogBuilder {
                     registrations.addAll(result.registrations());
                     diagnostics.addAll(result.diagnostics());
                 });
+        Map<SkillRegistration, Optional<SkillPackageReviewGrant>> reviewGrants = new LinkedHashMap<>();
+        for (SkillRegistration registration : registrations) {
+            Optional<SkillPackageReviewGrant> grant = matchingReviewGrant(registration, now);
+            reviewGrants.put(registration, grant);
+            if (registration.availability() == SkillAvailability.REVIEW_REQUIRED && grant.isPresent()) {
+                diagnostics.add(new SkillDiagnostic(
+                        "SKILL_PACKAGE_REVIEW_GRANT_ACCEPTED",
+                        SkillDiagnosticSeverity.INFO,
+                        registration.coordinate().source(),
+                        Optional.of(registration.coordinate().name()),
+                        Optional.of(registration.provenance().logicalPackageRef()),
+                        "the exact reviewed package is eligible for this catalog"));
+            }
+        }
         Map<SkillAlias, List<SkillRegistration>> groups = new LinkedHashMap<>();
         registrations.stream()
-                .filter(registration -> registration.availability() == SkillAvailability.ENABLED)
+                .filter(registration -> registration.availability() == SkillAvailability.ENABLED
+                        || (registration.availability() == SkillAvailability.REVIEW_REQUIRED
+                                && reviewGrants
+                                        .getOrDefault(registration, Optional.empty())
+                                        .isPresent()))
                 .filter(registration ->
                         policy.rank(registration.coordinate().scope().scope()) != Integer.MAX_VALUE)
                 .sorted(Comparator.comparing(SkillRegistration::alias).thenComparing(SkillRegistration::coordinate))
@@ -95,7 +144,8 @@ public final class SkillCatalogBuilder {
                     selected.packageIndex(),
                     selected.packageIndex().digest(),
                     selected.registrationDigest(),
-                    policy.reference()));
+                    policy.reference(),
+                    reviewGrants.getOrDefault(selected, Optional.empty()).map(SkillPackageReviewGrant::id)));
         }
         bindings.sort(Comparator.comparing(FrozenSkillBinding::alias));
         String canonical = policy.reference() + "|"
@@ -107,5 +157,18 @@ public final class SkillCatalogBuilder {
         SkillCatalogSnapshot snapshot =
                 new SkillCatalogSnapshot(SkillDigests.sha256(canonical), policy.reference(), bindings, diagnostics);
         return new DefaultSkillCatalog(snapshot);
+    }
+
+    private Optional<SkillPackageReviewGrant> matchingReviewGrant(SkillRegistration registration, Instant now) {
+        if (registration.availability() != SkillAvailability.REVIEW_REQUIRED || trustSubject.isEmpty()) {
+            return Optional.empty();
+        }
+        List<SkillPackageReviewGrant> matches = trust.packageReviewGrants().stream()
+                .filter(grant -> grant.matches(registration, trustSubject.orElseThrow(), now))
+                .toList();
+        if (matches.size() > 1) {
+            throw new IllegalStateException("multiple active package review grants match one Skill registration");
+        }
+        return matches.stream().findFirst();
     }
 }

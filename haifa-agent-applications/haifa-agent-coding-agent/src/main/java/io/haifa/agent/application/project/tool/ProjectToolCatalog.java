@@ -1,6 +1,5 @@
 package io.haifa.agent.application.project.tool;
 
-import io.haifa.agent.application.project.tool.web.WebToolCatalogContribution;
 import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
@@ -19,6 +18,7 @@ import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.api.ToolSideEffect;
 import io.haifa.agent.tool.core.DefaultToolCatalog;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
+import io.haifa.agent.web.WebToolCatalogContribution;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;

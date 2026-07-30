@@ -6,6 +6,7 @@ import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
+import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
@@ -26,7 +27,8 @@ import java.util.Set;
 public record PersonalToolPlatform(
         ToolPlatformContribution tool,
         SkillPlatformContribution skill,
-        io.haifa.agent.sdk.contribution.McpToolCatalogContribution mcp) {
+        io.haifa.agent.sdk.contribution.McpToolCatalogContribution mcp,
+        Set<String> trustedScriptToolAliases) {
     public static final ProductContributionCoordinate TOOL_COORDINATE =
             new ProductContributionCoordinate("haifa-personal-tools", "1.0.0");
     public static final ProductContributionCoordinate SKILL_COORDINATE =
@@ -38,6 +40,7 @@ public record PersonalToolPlatform(
             SdkPersistenceContribution persistence,
             PersonalSkillPlatform skills,
             PersonalMcpPlatform mcp,
+            PersonalWebPlatform web,
             PersonalExecutionPlatform execution,
             TimeProvider time) {
         var builder = new ToolCatalogBuilder();
@@ -49,6 +52,13 @@ public record PersonalToolPlatform(
                 execution.definition(),
                 "personal-execution-v2",
                 execution.provider());
+        PersonalTrustedFinanceTools.Prepared trusted = PersonalTrustedFinanceTools.prepare(skills, execution);
+        trusted.provider().ifPresent(provider -> trusted.entries()
+                .forEach(item -> builder.register(
+                        item.alias(), item.spec().definition(), item.providerBindingReference(), provider)));
+        web.contributions()
+                .forEach(item -> builder.register(
+                        item.alias(), item.definition(), item.providerBindingReference(), item.provider()));
         List<SkillToolCatalogContribution> skillTools =
                 SkillToolContributions.create(persistence, skills.contentLoader(), time);
         skillTools.forEach(item ->
@@ -57,6 +67,7 @@ public record PersonalToolPlatform(
         mcpTools.forEach(item ->
                 builder.register(item.alias(), item.definition(), item.providerBindingReference(), item.provider()));
         var catalog = builder.freeze();
+        var trust = PersonalTrustedFinanceTools.freezeTrust(skills, trusted, catalog);
 
         var tool = new ToolPlatformContribution(
                 metadata(
@@ -74,7 +85,8 @@ public record PersonalToolPlatform(
                         skills.catalog().snapshot().digest().value(),
                         "Personal bundled and trusted local Skills"),
                 skills.catalog(),
-                skills.contentLoader());
+                skills.contentLoader(),
+                trust);
         Set<String> aliases = mcpTools.stream()
                 .map(item -> item.alias().value())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
@@ -85,7 +97,7 @@ public record PersonalToolPlatform(
                         SdkConfigurationDigest.sha256(aliases.stream().sorted().toArray(String[]::new)),
                         "Personal explicit loopback MCP allowlist"),
                 aliases);
-        return new PersonalToolPlatform(tool, skill, mcpContribution);
+        return new PersonalToolPlatform(tool, skill, mcpContribution, trusted.aliases());
     }
 
     private static SdkContributionMetadata metadata(

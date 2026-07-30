@@ -76,7 +76,7 @@ public final class ScriptRuntimeResolver {
     }
 
     public static ScriptRuntimeAdapter python(Path executable) {
-        return new StandardInputRuntimeAdapter("python", executable, List.of("-I", "-"));
+        return new StandardInputRuntimeAdapter("python", executable, List.of("-X", "utf8", "-I", "-"));
     }
 
     public static ScriptRuntimeAdapter powerShell(Path executable) {

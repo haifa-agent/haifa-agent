@@ -6,10 +6,18 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 import org.apache.ibatis.session.SqlSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
+    private static final Logger LOGGER = LoggerFactory.getLogger(SqliteRuntimeUnitOfWork.class);
+    private static final AtomicLong UNIT_OF_WORK_IDS = new AtomicLong();
+    private static final long SLOW_OPERATION_MILLIS = 50;
+
     private final SqliteConnectionFactory connections;
     private final SqliteMyBatisSessionFactory myBatis;
     private final ThreadLocal<Context> active = new ThreadLocal<>();
@@ -35,6 +43,10 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
 
     public boolean isActive() {
         return active.get() != null;
+    }
+
+    long currentId() {
+        return requireContext().id();
     }
 
     Connection currentConnection() {
@@ -63,26 +75,46 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     }
 
     private <T> T executeOutermost(Supplier<T> work) {
+        long started = System.nanoTime();
+        long unitOfWorkId = UNIT_OF_WORK_IDS.incrementAndGet();
         T result;
         java.util.List<Runnable> committedListeners;
         try (Connection connection = connections.openConnection();
                 SqlSession session = myBatis.openSession(connection)) {
-            Context context = new Context(connection, session);
+            long setupMillis = elapsedMillis(started);
+            Context context = new Context(unitOfWorkId, connection, session);
             active.set(context);
             boolean transactionStarted = false;
             try {
+                long phaseStarted = System.nanoTime();
                 beginImmediate(connection);
+                long beginMillis = elapsedMillis(phaseStarted);
                 transactionStarted = true;
+                phaseStarted = System.nanoTime();
                 result = work.get();
+                long workMillis = elapsedMillis(phaseStarted);
                 if (context.rollbackOnly) {
                     throw new SqliteStoreException(
                             SqliteStoreFailure.TRANSACTION_FAILED,
                             "SQLite unit of work was marked rollback-only by a nested failure");
                 }
+                phaseStarted = System.nanoTime();
                 session.flushStatements();
+                long flushMillis = elapsedMillis(phaseStarted);
+                phaseStarted = System.nanoTime();
                 executeControl(connection, "COMMIT");
+                long commitMillis = elapsedMillis(phaseStarted);
                 transactionStarted = false;
                 committedListeners = java.util.List.copyOf(context.afterCommit);
+                logUnitOfWork(
+                        unitOfWorkId,
+                        setupMillis,
+                        beginMillis,
+                        workMillis,
+                        flushMillis,
+                        commitMillis,
+                        committedListeners.size(),
+                        elapsedMillis(started));
             } catch (RuntimeException | Error | SQLException exception) {
                 if (transactionStarted) {
                     rollback(connection, exception);
@@ -101,6 +133,44 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         }
         committedListeners.forEach(Runnable::run);
         return result;
+    }
+
+    private static long elapsedMillis(long started) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+    }
+
+    private static void logUnitOfWork(
+            long unitOfWorkId,
+            long setupMillis,
+            long beginMillis,
+            long workMillis,
+            long flushMillis,
+            long commitMillis,
+            int listenerCount,
+            long totalMillis) {
+        if (totalMillis >= SLOW_OPERATION_MILLIS) {
+            LOGGER.info(
+                    "event=sqlite.uow uowId={} setupMs={} beginImmediateMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={}",
+                    unitOfWorkId,
+                    setupMillis,
+                    beginMillis,
+                    workMillis,
+                    flushMillis,
+                    commitMillis,
+                    listenerCount,
+                    totalMillis);
+        } else {
+            LOGGER.debug(
+                    "event=sqlite.uow uowId={} setupMs={} beginImmediateMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={}",
+                    unitOfWorkId,
+                    setupMillis,
+                    beginMillis,
+                    workMillis,
+                    flushMillis,
+                    commitMillis,
+                    listenerCount,
+                    totalMillis);
+        }
     }
 
     private Context requireContext() {
@@ -141,15 +211,21 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     }
 
     private static final class Context {
+        private final long id;
         private final Connection connection;
         private final SqlSession session;
         private int depth = 1;
         private boolean rollbackOnly;
         private final java.util.List<Runnable> afterCommit = new java.util.ArrayList<>();
 
-        private Context(Connection connection, SqlSession session) {
+        private Context(long id, Connection connection, SqlSession session) {
+            this.id = id;
             this.connection = connection;
             this.session = session;
+        }
+
+        private long id() {
+            return id;
         }
 
         private Connection connection() {

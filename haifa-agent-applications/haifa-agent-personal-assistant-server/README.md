@@ -7,6 +7,8 @@ Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 Server 负责：
 
 - 显式装配 Product Profile、Model、SQLite、Policy、Memory、Tool、Skill 和 MCP；
+- 按配置启用公共 `haifa-agent-web` 的 Aliyun IQS Search/Fetch，并把环境变量凭据绑定到
+  Runtime `CredentialBroker`，不把 Key 放入 Profile、Tool Definition 或日志；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；
 - Reactor Netty / Spring WebFlux HTTP；
 - `Flux<ServerSentEvent<?>>` Run 流合并 durable Run/Tool/Interaction Activity 与 transient Assistant
@@ -74,6 +76,21 @@ $env:HAIFA_PERSONAL_MCP_DISPLAY_NAME='Haifa Utility MCP'
 外部 endpoint 只接受 `http` loopback 地址和 `20002+` 端口。发现失败、Tool 缺失或本地审查失败都会
 使 Server 启动失败；不会回退到 embedded echo。
 
+Web Tool 默认关闭。启用后会同时装配 `web_search -> web.search` 和
+`web_fetch -> web.fetch`，当前 Personal Profile 固定使用 Aliyun IQS：
+
+```powershell
+$env:HAIFA_PERSONAL_WEB_ENABLED='true'
+$env:HAIFA_PERSONAL_WEB_CREDENTIAL='env://ALIYUN_IQS_API_KEY'
+$env:ALIYUN_IQS_API_KEY='<aliyun-iqs-key>'
+```
+
+可信本地 Skill Source 的配置值是“包含各 Skill 子目录的根目录”。例如 finance 集合应配置为：
+
+```powershell
+$env:HAIFA_PERSONAL_SKILL_ROOT='D:\agents\hermes-agent\optional-skills\finance'
+```
+
 启动还必须提供可持久恢复的 32 字节 AES Key（Base64），不得记录该值：
 
 ```powershell
@@ -98,3 +115,23 @@ Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相�
 
 The server uses Spring Boot's SLF4J/Logback logging stack. At `INFO`, it records safe operational milestones for Run acceptance and status changes, interaction/approval state, Tool and execution activity, and model call start/completion/failure with token counts and elapsed time. Normalized model failures additionally include their safe category, retryability, HTTP status, provider code, safe message, and stack trace. Logs intentionally exclude full prompts, assistant text, Tool arguments, command or script content, credentials, raw provider responses, result bodies, and messages from unclassified exceptions.
 Invalid server-side argument failures are logged with correlation ID, HTTP method/path, exception type, and bounded stack origin while omitting the exception message and request content.
+
+## Trusted Skill script manifest
+
+Trusted script auto-approval is a separate explicit opt-in. The manifest must be an external regular file and
+must pin the reviewed package, registration, script, generated Tool, execution configuration, sandbox,
+capability, network, subject, expiry, and revocation facts. It contains no credential or script source:
+
+```powershell
+$env:HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST='D:\secure-config\trusted-skill-scripts.yml'
+.\scripts\start-real-environment.ps1 `
+  -SkillRoot 'D:\agents\hermes-agent\optional-skills\finance' `
+  -TrustedScriptManifest 'D:\secure-config\trusted-skill-scripts.yml'
+```
+
+For initial diagnostics, a script entry may be `REVOKED` with an all-zero expected Tool definition hash. The
+server starts and Admin exposes the computed safe binding/digest metadata, but the script cannot be
+auto-approved. After reviewing the exact package, script, fixed Tool Schema, runtime, sandbox, capabilities,
+and hosts, the operator records the real hash, changes the grant to `ACTIVE`, and restarts. Any subsequent
+drift returns that invocation to ordinary approval or rejection. Generic `execution.run` always keeps its
+existing exact human approval.

@@ -322,8 +322,7 @@ class CliConfigurationLoaderTest {
         assertThat(result.web().search().enabled()).isTrue();
         assertThat(result.web().search().providerId()).isEqualTo("brave");
         assertThat(result.web().search().endpoint())
-                .isEqualTo(
-                        io.haifa.agent.application.project.tool.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT);
+                .isEqualTo(io.haifa.agent.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT);
         assertThat(result.web().search().credentialRef()).isEqualTo("env://BRAVE_SEARCH_API_KEY");
         assertThat(result.web().fetch().enabled()).isFalse();
     }

@@ -351,14 +351,14 @@ record CliConfiguration(
                     new WebProvider(
                             false,
                             "aliyun",
-                            io.haifa.agent.application.project.tool.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
+                            io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
                             "env://ALIYUN_IQS_API_KEY",
                             Duration.ofSeconds(30),
                             2 * 1024 * 1024),
                     new WebProvider(
                             false,
                             "aliyun",
-                            io.haifa.agent.application.project.tool.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT,
+                            io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT,
                             "env://ALIYUN_IQS_API_KEY",
                             Duration.ofSeconds(30),
                             4 * 1024 * 1024));

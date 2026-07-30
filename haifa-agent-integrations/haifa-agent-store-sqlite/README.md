@@ -157,6 +157,16 @@ Project Application/CLI 已实现显式 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL
 Runtime Port、唯一 worker ID 与安全 busy retry。仍未接入的边界包括常驻 Outbox 后台投递器，以及生产
 环境 KMS/Vault 密钥解析与轮换；当前 CLI 只解析稳定 `env://` secret reference。
 
+## 性能诊断日志
+
+- 每次 Checkpoint 持久化输出 `checkpoint.sqlite.persist` INFO 日志，包含状态 Hash、latest 查询、
+  JSON 编码、两次 INSERT、Payload 字节数和总耗时。
+- SQLite 连接与 UoW 输出 `sqlite.connection.raw`、`sqlite.connection.open`、`sqlite.uow` 日志；
+  总耗时达到 50ms 时使用 INFO，快速操作使用 DEBUG。UoW 日志区分连接/Session 准备、
+  `BEGIN IMMEDIATE` 写锁获取、事务工作、flush 和 commit。
+- 日志不输出数据库路径、SQL 参数、Payload 正文、Hash 值或凭据，可直接由应用的 SLF4J
+  实现（例如 Spring Boot Logback）采集。
+
 ## 验证
 
 ```powershell

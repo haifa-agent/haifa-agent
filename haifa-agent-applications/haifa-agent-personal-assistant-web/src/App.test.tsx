@@ -350,6 +350,47 @@ describe("Personal Assistant application", () => {
     expect(container.querySelector(".activity-panel .interaction-card")).toBeNull();
   });
 
+  it("renders an approval without waiting for the activities snapshot", async () => {
+    const active = { ...conversation, activeRunId: "run-fast-approval" };
+    const waiting = { ...run, id: "run-fast-approval", status: "WAITING_APPROVAL" };
+    const interaction: Interaction = {
+      id: "interaction-fast-approval",
+      runId: waiting.id,
+      conversationId: conversation.id,
+      revision: 1,
+      kind: "approval",
+      state: "PENDING",
+      title: "Approve immediately",
+      safePrompt: "Risks: HIGH\nFull content:\nGet-Date",
+      allowedActions: ["approve", "reject"],
+      inputType: "NONE",
+      maximumCharacters: 0,
+      createdAt: "2026-07-28T01:00:00Z",
+      expiresAt: "2026-07-28T02:00:00Z",
+    };
+    let resolveActivities!: (activities: Activity[]) => void;
+    const activitiesPending = new Promise<Activity[]>((resolve) => {
+      resolveActivities = resolve;
+    });
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(waiting);
+    vi.mocked(api.activities).mockReturnValue(activitiesPending);
+    vi.mocked(api.interaction).mockResolvedValue(interaction);
+    vi.mocked(api.streamRun).mockImplementation(async (_runId, _handlers, signal) => {
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+
+    render(<App client={api} />);
+
+    expect(await screen.findByRole("heading", { name: "Approve immediately" })).toBeTruthy();
+    expect(api.activities).toHaveBeenCalled();
+    await act(async () => resolveActivities([activity]));
+  });
+
   it("previews long approval content and expands it on demand", async () => {
     const active = { ...conversation, activeRunId: "run-long-approval" };
     const waiting = { ...run, id: "run-long-approval", status: "WAITING_APPROVAL" };
@@ -437,11 +478,17 @@ describe("Personal Assistant application", () => {
       createdAt: "2026-07-28T01:00:00Z",
       expiresAt: "2026-07-28T02:00:00Z",
     };
+    let resolveInitialInteraction!: (interaction: Interaction | null) => void;
+    const initialInteractionPending = new Promise<Interaction | null>((resolve) => {
+      resolveInitialInteraction = resolve;
+    });
     const api = client();
     vi.mocked(api.conversations).mockResolvedValue([active]);
     vi.mocked(api.conversation).mockResolvedValue(active);
     vi.mocked(api.run).mockResolvedValue(waiting);
-    vi.mocked(api.interaction).mockResolvedValueOnce(null).mockResolvedValue(interaction);
+    vi.mocked(api.interaction)
+      .mockReturnValueOnce(initialInteractionPending)
+      .mockResolvedValue(interaction);
     vi.mocked(api.streamRun).mockImplementation(async (_runId, handlers, signal) => {
       handlers.onOpen?.();
       handlers.onEvent({
@@ -462,6 +509,8 @@ describe("Personal Assistant application", () => {
 
     expect((await screen.findAllByText(/Get-Date/)).length).toBeGreaterThanOrEqual(1);
     await waitFor(() => expect(api.interaction).toHaveBeenCalledTimes(2));
+    await act(async () => resolveInitialInteraction(null));
+    expect(screen.getByRole("heading", { name: "Approve execution" })).toBeTruthy();
   });
 
   it("reconciles the committed assistant turn after a terminal stream event", async () => {

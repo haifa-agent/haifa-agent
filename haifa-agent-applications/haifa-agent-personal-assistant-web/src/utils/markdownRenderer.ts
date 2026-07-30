@@ -47,7 +47,7 @@ function splitMarkdownTableRow(row: string): string[] {
 
 function isMarkdownTableSeparator(row: string): boolean {
   const cells = splitMarkdownTableRow(row);
-  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  return cells.length > 1 && cells.every((cell) => /^:?-+:?$/.test(cell));
 }
 
 function tableAlignClass(separatorCell: string): string {

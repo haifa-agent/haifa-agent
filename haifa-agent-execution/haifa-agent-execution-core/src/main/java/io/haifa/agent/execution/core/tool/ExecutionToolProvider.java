@@ -40,6 +40,7 @@ public final class ExecutionToolProvider implements ToolProvider {
     private final TimeProvider time;
     private final ExecutionInvocationScopeResolver scopes;
     private final ExecutionToolConfiguration configuration;
+    private final TrustedWorkspacePathValidator trustedWorkspacePaths;
 
     public ExecutionToolProvider(
             ExecutionBroker broker,
@@ -47,11 +48,23 @@ public final class ExecutionToolProvider implements ToolProvider {
             TimeProvider time,
             ExecutionInvocationScopeResolver scopes,
             ExecutionToolConfiguration configuration) {
+        this(broker, identifiers, time, scopes, configuration, TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+    }
+
+    public ExecutionToolProvider(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionInvocationScopeResolver scopes,
+            ExecutionToolConfiguration configuration,
+            TrustedWorkspacePathValidator trustedWorkspacePaths) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.scopes = Objects.requireNonNull(scopes, "scopes must not be null");
         this.configuration = Objects.requireNonNull(configuration, "configuration must not be null");
+        this.trustedWorkspacePaths =
+                Objects.requireNonNull(trustedWorkspacePaths, "trustedWorkspacePaths must not be null");
     }
 
     @Override
@@ -67,6 +80,11 @@ public final class ExecutionToolProvider implements ToolProvider {
         return configuration.identityDigest();
     }
 
+    public String sandboxProfileIdentity() {
+        return configuration.sandboxProfileRef().value() + "@"
+                + configuration.sandboxProfileRef().version();
+    }
+
     @Override
     public ToolResult invoke(ToolInvocationRequest invocation) {
         Objects.requireNonNull(invocation, "invocation must not be null");
@@ -78,6 +96,97 @@ public final class ExecutionToolProvider implements ToolProvider {
             throw new SecurityException("execution.run is not authorized by the invocation scope");
         }
         ParsedInvocation parsed = parse(invocation.arguments().values());
+        return invokeParsed(invocation, scope, parsed);
+    }
+
+    /**
+     * Executes content selected by a fixed trusted Skill Tool. The script content and runtime are
+     * supplied by the product-owned immutable descriptor, never by model arguments.
+     */
+    public ToolResult invokeTrustedScript(
+            ToolInvocationRequest invocation,
+            String language,
+            String content,
+            List<String> arguments,
+            String purpose,
+            String workdir,
+            Duration requestedTimeout,
+            java.util.Set<String> requiredCapabilities) {
+        return invokeTrustedScript(
+                invocation,
+                language,
+                content,
+                arguments,
+                purpose,
+                workdir,
+                requestedTimeout,
+                requiredCapabilities,
+                List.of());
+    }
+
+    public ToolResult invokeTrustedScript(
+            ToolInvocationRequest invocation,
+            String language,
+            String content,
+            List<String> arguments,
+            String purpose,
+            String workdir,
+            Duration requestedTimeout,
+            java.util.Set<String> requiredCapabilities,
+            List<ProjectPath> workspaceInputPaths) {
+        Objects.requireNonNull(invocation, "invocation must not be null");
+        Objects.requireNonNull(requiredCapabilities, "requiredCapabilities must not be null");
+        var scope = scopes.resolve(invocation);
+        if (!scope.capabilities().containsAll(requiredCapabilities)) {
+            throw new SecurityException("trusted script capabilities are not authorized by the invocation scope");
+        }
+        trustedWorkspacePaths.validate(
+                scope.workspaceId(),
+                List.copyOf(Objects.requireNonNull(workspaceInputPaths, "workspaceInputPaths must not be null")));
+        String runtime = Objects.requireNonNull(language, "language must not be null")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+        if (runtime.isEmpty()) throw new IllegalArgumentException("language must not be blank");
+        String source = Objects.requireNonNull(content, "content must not be null");
+        if (source.isBlank() || source.length() > 524_288 || source.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("trusted script content is invalid");
+        }
+        List<String> safeArguments =
+                arguments(List.copyOf(Objects.requireNonNull(arguments, "arguments must not be null")));
+        String safePurpose =
+                Objects.requireNonNull(purpose, "purpose must not be null").trim();
+        if (safePurpose.isEmpty() || safePurpose.length() > 256) {
+            throw new IllegalArgumentException("purpose is invalid");
+        }
+        String safeWorkdir =
+                Objects.requireNonNull(workdir, "workdir must not be null").trim();
+        if (safeWorkdir.isEmpty() || safeWorkdir.length() > 4096) {
+            throw new IllegalArgumentException("workdir is invalid");
+        }
+        Duration timeout = Objects.requireNonNull(requestedTimeout, "requestedTimeout must not be null");
+        if (timeout.isZero() || timeout.isNegative() || timeout.compareTo(configuration.maximumTimeout()) > 0) {
+            throw new IllegalArgumentException("trusted script timeout is out of range");
+        }
+        ScriptRuntimeAdapter.PreparedScript prepared =
+                configuration.runtimes().resolve(runtime).prepare(source, safeArguments);
+        return invokeParsed(
+                invocation,
+                scope,
+                new ParsedInvocation(
+                        "SCRIPT",
+                        runtime,
+                        source,
+                        safePurpose,
+                        safeWorkdir,
+                        timeout,
+                        prepared.command(),
+                        prepared.input()));
+    }
+
+    private ToolResult invokeParsed(
+            ToolInvocationRequest invocation,
+            ExecutionInvocationScopeResolver.ExecutionInvocationScope scope,
+            ParsedInvocation parsed) {
         Duration remaining = Duration.between(time.now(), invocation.deadline());
         if (remaining.isZero() || remaining.isNegative()) {
             throw new IllegalStateException("tool invocation deadline has expired");

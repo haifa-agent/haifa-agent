@@ -16,8 +16,14 @@ Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Con
 - Memory Candidate review 和 Memory invalidate；
 - Personal Product Profile；
 - 一个确定性产品 Tool、版本化内置 Skill、可信只读本地 Skill Source；
+- 从公共 `haifa-agent-web` 模块显式装配 Aliyun IQS `web.search` / `web.fetch` 和短生命周期凭据；
 - 显式本地 MCP connect/discover/allowlist；
 - Tool、Skill、MCP 统一冻结到一个 Tool Catalog，并进入同一 Runtime Tool Pipeline。
+
+内置 Skill 使用 `STRICT` parser。显式配置的可信只读导入目录使用 `COMPATIBLE` parser，以兼容
+Hermes 等外部 `SKILL.md` 的扩展 front matter；未知或嵌套 metadata 不获得执行权限。Personal 导入
+边界仍限制 128 个文件、8 层目录、2 MiB 包大小、2000 行指令和 20000 估算 Token，脚本资源只索引为
+待审内容，不直接执行。
 
 ## Phase 3 command and script execution
 
@@ -47,3 +53,14 @@ Contract、Store、Starter、Tools 或 Skills 子工程。
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-personal-assistant-application -am test
 ```
+
+## Trusted finance Skill reference
+
+An optional product-owned trust manifest can promote exact reviewed external Skill packages and expose fixed
+business Tools for market data, workbook recalculation, and DCF validation. Their Schemas accept only bounded
+business inputs; workbook paths must be logical `.xlsx` Workspace paths and are physically checked before
+Broker dispatch. The market-data Tool requires explicit frozen hosts, while workbook Tools reject network hosts.
+
+This reference vertical uses the shared package/script grant, Runtime policy, and fixed-script execution
+facility. Removing it does not change public Trust, Policy, Runtime, or Execution code. A missing manifest keeps
+the feature disabled; invalid, unknown, duplicate, drifted, expired, or revoked entries fail closed.
