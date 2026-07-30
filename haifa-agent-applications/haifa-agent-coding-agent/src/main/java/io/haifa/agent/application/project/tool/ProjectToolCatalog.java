@@ -349,8 +349,10 @@ public final class ProjectToolCatalog {
                         Map.of(
                                 "type",
                                 "string",
-                                "pattern",
-                                "^sha256:[0-9a-f]{64}$",
+                                "minLength",
+                                71,
+                                "maxLength",
+                                71,
                                 "description",
                                 "Exact frozen Coding Verification Plan digest from product context. Supply it only "
                                         + "when this command performs plan checks."));
