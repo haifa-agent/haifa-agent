@@ -1,5 +1,36 @@
 # Haifa Coding Agent
 
+## Prompt-first 自主交付
+
+Coding Agent 的基础工作方法由产品拥有的版本化资源
+`META-INF/haifa-agent/prompts/coding-agent-v1.txt` 提供。资源具有稳定版本和 SHA-256 身份，CLI
+只负责装配，不再维护按评测 Case 累积的长 Prompt。基础 Prompt 保持通用；Tool 专属路径、
+`operationFamily` 和验证/Diff 用法由对应 Tool Definition 描述；`task-planning` 与
+`result-verification` 继续通过 Skill 渐进披露。
+
+每轮动态 Context 使用 `[CODING_RUN_STATE]`，只披露剩余预算、实际 Workspace 修改、验证尝试与
+结果、Diff 检查、结构化阻塞和缺失交付证据。它不注入业务分类教程、Case/Fixture 信息、宿主路径、
+原始 Tool 输出或模型自报的语义覆盖。
+
+## 自主交付模式与完成证据
+
+Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持
+`UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
+
+`CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、ChangeSet 和 Execution 状态
+引用重建工作区修改、Diff、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
+修改或验证通过证据。`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限
+No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改；UNKNOWN 必须收敛到
+完整修改证据、确定性只读证据或结构化阻塞路径之一。
+
+默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为有界运行事实，
+不增加 Runtime 的总预算或时限。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
+从持久消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
+
+生产控制面不维护 Verification Plan/Dimension/Evidence，也不接受模型自报的验证标签。外部
+Evaluation/Trace Replay 继续独立使用隐藏验收、Workspace 快照与 Scratch 清理事实，不与生产完成门禁
+共享模型声明。
+
 ## Policy 持久化装配
 
 `ProjectPersistenceAssembly.policy()` 是应用级 Policy 权威 Store 组合：内存模式共享同一 `InMemoryPolicyStore`，SQLite 模式复用 `SqliteStoreFoundation` 的 Snapshot、Decision、Evidence、Grant 与 Trust Store。Coding Agent 重启时复用内容一致的固定 Policy Snapshot；不在应用层实现企业组织或审批工作流。
@@ -68,7 +99,9 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 `execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
-新 Profile；模型可见 Schema 仍只有 command、逻辑 workdir、有界 timeout 和安全描述。
+新 Profile；模型可见 Schema 包含 command、逻辑 workdir、有界 timeout、安全描述和显式
+必填的 `operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，不能可靠识别时使用
+`UNKNOWN`；这些操作族用于语义失败归类和权威交付证据，而不是命令特例。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
 `task-planning`、`result-verification` 两个 Classpath SDK 基础 Skill，并允许上层 Application 显式加入
@@ -85,6 +118,15 @@ Brave 或 Tavily，Fetch 当前只允许 Aliyun。具体 Provider、endpoint、�
 
 经审查启用的 MCP Tool 由 `McpToolCatalogContribution` 写入同一个 `ToolCatalogBuilder`，不会建立 MCP 专用 Registry。每个 MCP server 使用独立 `mcp.<serverId>` Provider；本地 definition hash 与远端 definition digest 分别冻结，Runtime 只通过 `FrozenToolBinding.providerBindingReference` 恢复精确 binding。
 
-`ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 只把 `command/workdir/timeoutMillis/description` 映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。最终 `ToolResult` 提供状态、退出码、有界合并尾部、Output Ref、耗时、安全失败和 FileChangeSet 引用。
+`ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把
+`command/workdir/timeoutMillis/description/operationFamily`
+映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
+目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
+`GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
+退出码、有界合并尾部、Output Ref、耗时、安全失败类别、Scratch 状态和 FileChangeSet 引用。
+执行命令已经从受控 Workspace 启动；绝对路径 `cd ...` 或绝对 `workdir` 会在进入 Broker 前以
+`ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝，不会被误记为
+结果未知。调用方应省略 `cd` 或使用逻辑相对 `workdir`，保证 Tool Policy 授权的命令与实际执行
+命令完全一致。
 
 Workspace Checkpoint Adapter 将 Project Snapshot 作为通用 Runtime Capability Checkpoint Participant 接入，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。

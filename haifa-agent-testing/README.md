@@ -32,6 +32,10 @@ Integration 与 E2E 之间的层级：
 - `haifa-agent-live-tests`：真实外部 Provider 的窄范围连通性与兼容性验证；
 - `haifa-agent-e2e-tests`：完整 CLI/AgentRun 路径，包含 Simulated 与显式 opt-in Live E2E。
 
+自主交付泛化能力资产由 `haifa-agent-test-fixtures` 保存稳定输入和 Schema，
+`haifa-agent-testkit` 保存 Catalog 校验、Suite 解析、Campaign 隔离与 Harness 编排。真实运行
+产物始终写到主仓、`docs/` 和 `test-config/` 之外。
+
 Critical Path v1 使用稳定 `CP-01`～`CP-11`：
 
 | Case | 路径 | 当前实现 |

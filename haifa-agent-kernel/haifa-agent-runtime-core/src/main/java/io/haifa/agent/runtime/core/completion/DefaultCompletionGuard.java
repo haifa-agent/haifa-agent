@@ -42,18 +42,33 @@ public final class DefaultCompletionGuard implements CompletionGuard {
 
     @Override
     public CompletionReadiness evaluate(AgentRun run, FinalAnswerDecision decision) {
-        List<String> blockers = new ArrayList<>();
-        if (!outputContract.isValid(run, decision)) blockers.add("invalid output contract");
-        if (!artifacts.isSatisfied(run, decision)) blockers.add("required artifact missing");
-        if (!policy.allows(run, decision)) blockers.add("completion policy denied");
-        if (run.budget().isExceededBy(run.usage())) blockers.add("budget exceeded");
-        if (tools.hasUncertainExecution(run)) blockers.add("uncertain tool execution");
+        List<CompletionBlocker> blockers = new ArrayList<>();
+        if (!outputContract.isValid(run, decision))
+            blockers.add(CompletionBlocker.recoverable(
+                    "OUTPUT_CONTRACT_INVALID", "Output contract is incomplete.", "VALID_OUTPUT"));
+        if (!artifacts.isSatisfied(run, decision))
+            blockers.add(CompletionBlocker.recoverable(
+                    "REQUIRED_ARTIFACT_MISSING", "A required artifact is missing.", "REQUIRED_ARTIFACT"));
+        CompletionPolicyResult policyResult = policy.evaluate(run, decision);
+        blockers.addAll(policyResult.blockers());
+        if (run.budget().isExceededBy(run.usage()))
+            blockers.add(CompletionBlocker.terminal("BUDGET_EXCEEDED", "Run budget is exhausted.", "BUDGET"));
+        if (tools.hasUncertainExecution(run))
+            blockers.add(CompletionBlocker.recoverable(
+                    "UNCERTAIN_TOOL_EXECUTION", "A tool execution has an uncertain outcome.", "TOOL_RECONCILIATION"));
         if (state.toolCalls(run.id()).stream().anyMatch(call -> !isTerminal(call.status())))
-            blockers.add("pending tool call");
-        todos.blocker(run).ifPresent(blockers::add);
-        if (interactions.pending(run.id()).isPresent()) blockers.add("pending interaction");
-        if (delegations.hasPendingChildren(run)) blockers.add("pending child run");
-        return new CompletionReadiness(blockers.isEmpty(), blockers);
+            blockers.add(CompletionBlocker.recoverable(
+                    "PENDING_TOOL_CALL", "A tool call is still pending.", "TERMINAL_TOOL_CALL"));
+        todos.blocker(run)
+                .ifPresent(value -> blockers.add(CompletionBlocker.recoverable(
+                        "PENDING_TODO", "Required planned work is still pending.", "TODO_RECONCILIATION")));
+        if (interactions.pending(run.id()).isPresent())
+            blockers.add(CompletionBlocker.recoverable(
+                    "PENDING_INTERACTION", "A user interaction is pending.", "INTERACTION_RESPONSE"));
+        if (delegations.hasPendingChildren(run))
+            blockers.add(CompletionBlocker.recoverable(
+                    "PENDING_CHILD_RUN", "A delegated child run is pending.", "TERMINAL_CHILD_RUN"));
+        return new CompletionReadiness(blockers.isEmpty(), blockers, policyResult.evidenceCodes());
     }
 
     private static boolean isTerminal(ToolCallStatus status) {

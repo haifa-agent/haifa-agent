@@ -1,5 +1,8 @@
 package io.haifa.agent.runtime.api;
 
+import java.util.List;
+import java.util.Objects;
+
 /** Typed, bounded client-event payloads. Internal maps and store rows never cross this boundary. */
 public final class RunEventPayloads {
     private static final int MAXIMUM_TEXT_DELTA_LENGTH = 65_536;
@@ -114,6 +117,35 @@ public final class RunEventPayloads {
             title = text(title, "title", 256);
             status = text(status, "status", 64);
             action = text(action, "action", 128);
+        }
+    }
+
+    /** Safe delivery-control projection; it intentionally excludes prompts, paths and raw tool output. */
+    public record DeliveryLifecycle(
+            String phase,
+            String status,
+            String reasonCode,
+            List<String> missingEvidence,
+            int remainingPercent,
+            int attempt)
+            implements AgentRunEvent.Payload {
+        public DeliveryLifecycle {
+            phase = text(phase, "phase", 64);
+            status = text(status, "status", 64);
+            reasonCode = text(reasonCode, "reasonCode", 128);
+            missingEvidence = List.copyOf(Objects.requireNonNull(missingEvidence, "missingEvidence must not be null"));
+            if (missingEvidence.size() > 32
+                    || missingEvidence.stream()
+                            .anyMatch(value -> value == null
+                                    || value.isBlank()
+                                    || value.length() > 128
+                                    || !value.matches("[A-Z][A-Z0-9_]*"))) {
+                throw new IllegalArgumentException("missingEvidence contains an invalid safe code");
+            }
+            if (remainingPercent < 0 || remainingPercent > 100) {
+                throw new IllegalArgumentException("remainingPercent must be between zero and one hundred");
+            }
+            if (attempt < 0) throw new IllegalArgumentException("attempt must not be negative");
         }
     }
 

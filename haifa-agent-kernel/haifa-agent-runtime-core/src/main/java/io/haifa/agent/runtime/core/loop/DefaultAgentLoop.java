@@ -3,6 +3,11 @@ package io.haifa.agent.runtime.core.loop;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.checkpoint.CheckpointType;
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCategory;
+import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.core.error.AgentErrorSeverity;
+import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
@@ -33,6 +38,9 @@ import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.model.FrozenModelBinding;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelInvocationResult;
+import io.haifa.agent.runtime.core.recovery.RecoveryController;
+import io.haifa.agent.runtime.core.recovery.RecoveryDirective;
+import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -45,6 +53,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /** Persisted, guarded and resumable observe-decide-act Agent loop. */
 public final class DefaultAgentLoop implements AgentLoop {
@@ -112,6 +121,19 @@ public final class DefaultAgentLoop implements AgentLoop {
         AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
                         value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
                 .orElseGet(() -> new AgentLoopContext(1, List.of()));
+        progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
+                .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
+                .count());
+        RunBudgetSnapshot initialBudget =
+                RunBudgetSnapshot.from(run, progress.iteration(), 0, progress.repairAttempts(), time.now());
+        progress.rebuildControlState(
+                state.toolCalls(run.id()),
+                state.plan(run.id()),
+                run.usage().childRuns(),
+                restored.isPresent(),
+                initialBudget);
+        progress.updateBudgetSnapshot(RunBudgetSnapshot.from(
+                run, progress.iteration(), progress.failureClusterAttempts(), progress.repairAttempts(), time.now()));
         decisionExecutor.applyPendingToolApproval(run);
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         String traceId = ids.nextValue();
@@ -120,7 +142,21 @@ public final class DefaultAgentLoop implements AgentLoop {
             if (applyControl(run, progress, SafePoint.BEFORE_ITERATION, progress.iteration() - 1)) {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
-            runInputs.applyPending(run, attempt, progress.iteration());
+            var appliedInputs = runInputs.applyPending(run, attempt, progress.iteration());
+            progress.observeInteractions(appliedInputs.stream()
+                            .map(input -> input.submission().inputId().value())
+                            .toList())
+                    .ifPresent(progressDigest -> events.append(
+                            run.id(),
+                            "loop.progress-observed",
+                            Map.of(
+                                    "iteration",
+                                    progress.iteration(),
+                                    "progressDigest",
+                                    progressDigest,
+                                    "evidence",
+                                    "INTERACTION_SUPPLIED"),
+                            time.now()));
             if (Duration.between(run.createdAt(), time.now()).toMillis()
                     > run.limits().maxWallTimeMillis()) {
                 transitions.timedOut(
@@ -134,6 +170,38 @@ public final class DefaultAgentLoop implements AgentLoop {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
             guards.forEach(guard -> guard.check(run, progress));
+            RunBudgetSnapshot budget = RunBudgetSnapshot.from(
+                    run,
+                    progress.iteration(),
+                    progress.failureClusterAttempts(),
+                    progress.repairAttempts(),
+                    time.now());
+            Set<Integer> thresholds = progress.updateBudgetSnapshot(budget);
+            events.append(
+                    run.id(),
+                    "loop.budget-snapshot",
+                    Map.of(
+                            "remainingModelCalls",
+                            budget.remainingModelCalls(),
+                            "remainingToolCalls",
+                            budget.remainingToolCalls(),
+                            "remainingIterations",
+                            budget.remainingIterations(),
+                            "remainingWallTimeMillis",
+                            budget.remainingWallTimeMillis(),
+                            "remainingInputTokens",
+                            budget.remainingInputTokens(),
+                            "remainingOutputTokens",
+                            budget.remainingOutputTokens(),
+                            "failureClusterAttempts",
+                            budget.failureClusterAttempts(),
+                            "completionRepairAttempts",
+                            budget.completionRepairAttempts(),
+                            "remainingPercent",
+                            budget.remainingPercent(),
+                            "newThresholds",
+                            thresholds.stream().sorted().toList()),
+                    time.now());
             Optional<AgentLoopDirective> pendingTools = decisionExecutor.resumePendingTools(run, progress);
             if (pendingTools.filter(value -> value == AgentLoopDirective.WAIT).isPresent()) {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.WAIT);
@@ -394,7 +462,70 @@ public final class DefaultAgentLoop implements AgentLoop {
                     "loop.iteration-persisted",
                     Map.of("iteration", progress.iteration(), "directive", directive.name()),
                     time.now());
-            progress.recordProgress(progressSignature(run));
+            AgentLoopContext.ControlObservation control = progress.observeAuthoritativeState(
+                    state.toolCalls(run.id()), state.plan(run.id()), run.usage().childRuns());
+            if (control.progressObserved()) {
+                events.append(
+                        run.id(),
+                        "loop.progress-observed",
+                        Map.of(
+                                "iteration",
+                                progress.iteration(),
+                                "progressDigest",
+                                control.progressDigest(),
+                                "evidence",
+                                "MEANINGFUL"),
+                        time.now());
+            }
+            for (RecoveryController.Update update : control.recoveryUpdates()) {
+                events.append(
+                        run.id(),
+                        "tool.failure-cluster-updated",
+                        Map.of(
+                                "iteration",
+                                progress.iteration(),
+                                "fingerprintDigest",
+                                update.observation().fingerprint().digest(),
+                                "failureCategory",
+                                update.observation().category().name(),
+                                "attempts",
+                                update.attempts(),
+                                "directive",
+                                update.directive().name()),
+                        time.now());
+                if (update.attempts() >= 2) {
+                    events.append(
+                            run.id(),
+                            "loop.stall-detected",
+                            Map.of(
+                                    "iteration",
+                                    progress.iteration(),
+                                    "fingerprintDigest",
+                                    update.observation().fingerprint().digest(),
+                                    "attempts",
+                                    update.attempts()),
+                            time.now());
+                }
+                if (update.directive() != RecoveryDirective.CONTINUE_WITH_DIAGNOSTIC) {
+                    events.append(
+                            run.id(),
+                            "tool.recovery-strategy-required",
+                            Map.of(
+                                    "iteration",
+                                    progress.iteration(),
+                                    "fingerprintDigest",
+                                    update.observation().fingerprint().digest(),
+                                    "attempts",
+                                    update.attempts(),
+                                    "directive",
+                                    update.directive().name()),
+                            time.now());
+                }
+                if (update.directive().terminal()) {
+                    return structuredTermination(run, iteration, update);
+                }
+            }
+            progress.recordProgress(control.progressDigest());
             checkpoints.capture(
                     run,
                     progress.iteration(),
@@ -510,21 +641,49 @@ public final class DefaultAgentLoop implements AgentLoop {
         return attributes;
     }
 
-    private String progressSignature(AgentRun run) {
-        long completedTools = state.toolCalls(run.id()).stream()
-                .filter(call -> call.status() == io.haifa.agent.core.tool.ToolCallStatus.COMPLETED)
-                .count();
-        long artifacts = state.toolCalls(run.id()).stream()
-                .flatMap(call -> call.result().stream())
-                .mapToLong(result -> result.artifacts().size())
-                .sum();
-        String todos = state.plan(run.id())
-                .map(plan -> plan.items().stream()
-                        .map(item -> item.id() + ":" + item.status())
-                        .toList()
-                        .toString())
-                .orElse("none");
-        return state.messages(run.id()).size() + "|" + completedTools + "|" + artifacts + "|"
-                + run.usage().childRuns() + "|" + todos + "|" + run.status();
+    private AgentLoopResult structuredTermination(
+            AgentRun run, AgentLoopIteration iteration, RecoveryController.Update update) {
+        RecoveryDirective directive = update.directive();
+        events.append(
+                run.id(),
+                "run.structured-termination",
+                Map.of(
+                        "reason",
+                        directive.name(),
+                        "fingerprintDigest",
+                        update.observation().fingerprint().digest(),
+                        "failureCategory",
+                        update.observation().category().name(),
+                        "attempts",
+                        update.attempts()),
+                time.now());
+        if (directive == RecoveryDirective.TERMINATE_CANCELLED) {
+            transitions.cancelled(
+                    run, new RunTerminationReason("TOOL_CANCELLED", "Tool cancellation ended the current run"));
+        } else {
+            String code = directive == RecoveryDirective.TERMINATE_OUTCOME_UNKNOWN
+                    ? "TOOL_OUTCOME_UNKNOWN"
+                    : "REPEATED_TOOL_FAILURE";
+            transitions.failed(
+                    run,
+                    new AgentError(
+                            new AgentErrorCode(code),
+                            AgentErrorCategory.TOOL,
+                            AgentErrorSeverity.ERROR,
+                            Retryability.NOT_RETRYABLE,
+                            directive == RecoveryDirective.TERMINATE_OUTCOME_UNKNOWN
+                                    ? "Tool outcome is unknown; automatic replay is forbidden"
+                                    : "Repeated semantic Tool failure made no meaningful progress",
+                            null,
+                            Map.of(
+                                    "failureCategory",
+                                    update.observation().category().name(),
+                                    "fingerprintDigest",
+                                    update.observation().fingerprint().digest(),
+                                    "attempts",
+                                    update.attempts()),
+                            time.now()));
+        }
+        return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
     }
 }

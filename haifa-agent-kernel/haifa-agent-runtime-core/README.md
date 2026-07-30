@@ -1,5 +1,38 @@
 # Haifa Agent Runtime Core
 
+## 结构化完成纠偏
+
+`CompletionPolicy` 返回 Provider-neutral 的 `CompletionPolicyResult`：包括稳定
+`CompletionBlocker(code, safeMessage, recoverable, evidenceRequirement)` 与安全 Evidence Code。
+Runtime Core 不依赖 Coding 产品类型，也不读取 Coding 表。Final 缺少证据时，AgentLoop 追加
+`completion.deferred` 安全事件和固定顺序的内部纠偏 Context；次数由 `RepairRetryPolicy` 限制，
+默认产品装配最多两次。纠偏计数保存在权威 Session Message metadata，Checkpoint/进程恢复时重建，
+耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 失败，不能伪装为成功。
+
+Client Event 投影只把结构化字段映射为 `DeliveryLifecycle`，用于 Recovering、Verifying 和 Budget
+Threshold 展示；Prompt、Host Path、stderr、Fingerprint 和 Tool 原始参数不进入公共投影。
+
+`RuntimeControlTraceReplay` 为这些生产控制事件提供确定性只读 Reducer。Replay 输入只接受安全事件
+类型与白名单化结构字段，不读取 Prompt、Credential、Provider Response、命令、stderr 或 Host Path；
+测试覆盖环境恢复、失败簇策略切换、结构化终止、Completion Repair、验证完成、outcome unknown、
+Checkpoint 恢复、失败副作用和 Interaction/Approval 继续等十类控制序列。未知事件保持前向兼容，
+非幂等 outcome unknown 只记录为不可重放，不触发执行。
+
+## 自主恢复与有效进展
+
+AgentLoop 按 Tool 坐标、操作族、语义失败类别、稳定错误码、资源类别和 Sandbox 摘要生成
+SHA-256 Failure Fingerprint；随机路径、命令文本和原始 stderr 不进入身份。无有效进展的同一失败簇按
+“诊断、改变策略、收敛、第 4 次结构化终止”推进；`OUTCOME_UNKNOWN`、取消和 Policy 拒绝继续服从
+各自更严格的既有边界。完全重复 Decision、A-B Loop 和单批重复调用仍由原 Guard 独立处理。
+
+有效进展只来自 Workspace/Artifact 变化、Todo 状态推进、成功的 Build/Test 验证、Blocker 移除、
+Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进展。最近 32 条安全摘要组成
+有界 Ledger。通用无进展窗口在首次权威有效进展后才开始计数；初始只读侦察仍受完全重复 Decision、
+A-B Loop、失败簇和硬预算约束，不会被误当成已停滞的交付。恢复时从权威 ToolCall、Plan、Child Run、
+Interaction 与 Usage 重建控制状态；旧
+Checkpoint 无需 Schema 升级。模型 Context 只获得安全恢复指导与剩余模型、工具、迭代、时间和 Token
+预算；50%、25%、10% 阈值各触发一次收敛信号。
+
 ## Safe Tool argument repair
 
 Input-schema rejection remains before Policy and Approval. Runtime returns the model a bounded repair hint derived

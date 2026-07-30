@@ -6,6 +6,7 @@ import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceBindingStatus;
 import io.haifa.agent.project.path.WorkspacePath;
@@ -254,16 +255,25 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                         false,
                         false,
                         true,
-                        0);
+                        0,
+                        false,
+                        false);
             }
             Path controls = createControlDirectory();
             controlDirectory = controls;
             Map<String, String> environment;
             LocalNativeLaunchPlan plan;
             try {
-                environment = validateEnvironment(execution.environment(), controls);
+                environment = validateEnvironment(execution.environment(), controls, execution.scratchSpace());
                 plan = adapter.prepare(
-                        configuration, profile, root, cwd, controls, additionalPaths, execution.command());
+                        configuration,
+                        profile,
+                        root,
+                        cwd,
+                        controls,
+                        additionalPaths,
+                        execution.scratchSpace(),
+                        execution.command());
             } catch (RuntimeException exception) {
                 cleanupControlDirectory(controls);
                 controlDirectory = null;
@@ -324,7 +334,9 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                         out.truncated(),
                         err.truncated(),
                         treeTerminated,
-                        observedProcesses(process));
+                        observedProcesses(process),
+                        true,
+                        false);
             } catch (IOException exception) {
                 cleanupControlDirectory(controls);
                 controlDirectory = null;
@@ -345,13 +357,16 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                         false,
                         false,
                         terminated,
-                        current == null ? 0 : observedProcesses(current));
+                        current == null ? 0 : observedProcesses(current),
+                        true,
+                        false);
             } finally {
                 removeShutdownHook(shutdownHook);
                 current = null;
                 cancelRequested = false;
             }
-            if (!cleanupControlDirectory(controls) && result.status() != SandboxProcessStatus.UNKNOWN) {
+            boolean cleaned = cleanupControlDirectory(controls);
+            if (!cleaned) {
                 result = new SandboxProcessResult(
                         SandboxProcessStatus.UNKNOWN,
                         result.exitCode(),
@@ -362,7 +377,9 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                         result.stdoutTruncated(),
                         result.stderrTruncated(),
                         result.processTreeTerminated(),
-                        result.observedProcessCount());
+                        result.observedProcessCount(),
+                        result.scratchProvisioned(),
+                        true);
             }
             controlDirectory = null;
             return result;
@@ -415,7 +432,8 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
             return currentPath;
         }
 
-        private Map<String, String> validateEnvironment(Map<String, String> requested, Path controls) {
+        private Map<String, String> validateEnvironment(
+                Map<String, String> requested, Path controls, ExecutionScratchSpaceSpec scratchSpace) {
             var safe = new java.util.LinkedHashMap<String, String>();
             requested.forEach((name, value) -> {
                 String upper = name.toUpperCase(Locale.ROOT);
@@ -428,8 +446,10 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
             });
             if (adapter.adapterId().equals("linux-bubblewrap")) {
                 safe.put("HOME", "/tmp/haifa-home");
-                safe.put("TMP", "/tmp");
-                safe.put("TEMP", "/tmp");
+                scratchSpace.rootEnvironmentNames().forEach(name -> safe.put(name, "/tmp"));
+                scratchSpace
+                        .childBindings()
+                        .forEach(binding -> safe.put(binding.environmentName(), "/tmp/" + binding.relativeDirectory()));
             } else {
                 Path home = controls.resolve("home");
                 try {
@@ -439,10 +459,40 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                     throw failure("SANDBOX_PROVISION_FAILED", "sandbox home could not be created");
                 }
                 safe.put("HOME", home.toString());
-                safe.put("TMP", controls.toString());
-                safe.put("TEMP", controls.toString());
+                Path scratchRoot = provisionScratch(controls, scratchSpace);
+                scratchSpace.rootEnvironmentNames().forEach(name -> safe.put(name, scratchRoot.toString()));
+                scratchSpace
+                        .childBindings()
+                        .forEach(binding -> safe.put(
+                                binding.environmentName(),
+                                scratchRoot.resolve(binding.relativeDirectory()).toString()));
             }
             return Map.copyOf(safe);
+        }
+
+        private Path provisionScratch(Path controls, ExecutionScratchSpaceSpec scratchSpace) {
+            Path scratchRoot = controls.resolve("tmp");
+            try {
+                Files.createDirectory(scratchRoot);
+                SecureFilePermissions.secureDirectory(scratchRoot);
+                for (var binding : scratchSpace.childBindings()) {
+                    Path current = scratchRoot;
+                    for (String segment : binding.relativeDirectory().split("/")) {
+                        current = current.resolve(segment);
+                        if (Files.notExists(current, LinkOption.NOFOLLOW_LINKS)) {
+                            Files.createDirectory(current);
+                        }
+                        SecureFilePermissions.secureDirectory(current);
+                    }
+                    if (!current.normalize().startsWith(scratchRoot) || isLink(current) || !Files.isWritable(current)) {
+                        throw new IOException("scratch child is unsafe");
+                    }
+                }
+                if (!Files.isWritable(scratchRoot)) throw new IOException("scratch root is not writable");
+                return scratchRoot;
+            } catch (IOException exception) {
+                throw failure("SANDBOX_PROVISION_FAILED", "sandbox scratch space could not be created");
+            }
         }
 
         private WaitOutcome waitFor(Process process, Duration timeout, int maxProcesses) throws InterruptedException {

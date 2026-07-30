@@ -2,6 +2,7 @@ package io.haifa.agent.sandbox.localnative;
 
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
@@ -50,6 +51,7 @@ final class LinuxBubblewrapAdapter implements LocalNativeAdapter {
             Path workingDirectory,
             Path controlDirectory,
             List<LocalNativePathGrant> additionalPaths,
+            ExecutionScratchSpaceSpec scratchSpace,
             ExecutionCommand command) {
         List<String> argv = new ArrayList<>();
         argv.add(configuration.bubblewrapExecutable().toString());
@@ -75,6 +77,23 @@ final class LinuxBubblewrapAdapter implements LocalNativeAdapter {
         argv.add("--setenv");
         argv.add("TMP");
         argv.add("/tmp");
+        argv.add("--setenv");
+        argv.add("TMPDIR");
+        argv.add("/tmp");
+        argv.add("--setenv");
+        argv.add("TEMP");
+        argv.add("/tmp");
+        for (var binding : scratchSpace.childBindings()) {
+            addLogicalScratchDirectories(argv, binding.relativeDirectory());
+            argv.add("--setenv");
+            argv.add(binding.environmentName());
+            argv.add("/tmp/" + binding.relativeDirectory());
+        }
+        for (String environmentName : scratchSpace.rootEnvironmentNames()) {
+            argv.add("--setenv");
+            argv.add(environmentName);
+            argv.add("/tmp");
+        }
 
         String workspaceBind = profile.filesystemPolicy().workspaceAccess() == SandboxWorkspaceAccess.READ_ONLY
                 ? "--ro-bind"
@@ -117,6 +136,15 @@ final class LinuxBubblewrapAdapter implements LocalNativeAdapter {
                 argv.add("--dir");
                 argv.add(parent.toString());
             }
+        }
+    }
+
+    private static void addLogicalScratchDirectories(List<String> argv, String relativeDirectory) {
+        Path current = Path.of("/tmp");
+        for (String segment : relativeDirectory.split("/")) {
+            current = current.resolve(segment);
+            argv.add("--dir");
+            argv.add(current.toString());
         }
     }
 

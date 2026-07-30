@@ -1,7 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -64,6 +63,7 @@ class ProjectExecutionToolOperationsTest {
                                 "command", "printf 'first\\nsecond\\nthird\\n' | cat > result.txt",
                                 "workdir", "src",
                                 "timeoutMillis", 5000,
+                                "operationFamily", "TEST",
                                 "description", "Write representative output"),
                         () -> false),
                 access());
@@ -73,6 +73,14 @@ class ProjectExecutionToolOperationsTest {
         assertThat(captured.get().workingDirectory().projectPath().value()).isEqualTo("src");
         assertThat(captured.get().limits().timeout()).isEqualTo(Duration.ofSeconds(5));
         assertThat(captured.get().context().frozenCapabilities()).contains("execution.run");
+        assertThat(captured.get().scratchSpace()).isEqualTo(CodingToolchainEnvironmentProfile.defaultScratchSpace());
+        assertThat(captured.get().scratchSpace().rootEnvironmentNames()).contains("GOTMPDIR");
+        assertThat(captured.get().scratchSpace().childBindings())
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.environmentName()).isEqualTo("GOCACHE");
+                    assertThat(binding.relativeDirectory()).isEqualTo("go-build");
+                });
         assertThat(result.successful()).isFalse();
         assertThat(result.summary())
                 .contains("Command failed (exit 7)", "second", "third")
@@ -83,7 +91,14 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("truncated", true)
                 .containsEntry("outputRef", "stdout-asset")
                 .containsEntry("fileChangeSetId", "changes-1")
-                .containsEntry("failureCode", "PROCESS_EXIT_NONZERO");
+                .containsEntry("failureCode", "PROCESS_EXIT_NONZERO")
+                .containsEntry("operationFamily", "TEST")
+                .containsEntry("failureCategory", "COMMAND_FAILED")
+                .containsEntry("stableFailureCode", "PROCESS_EXIT_NONZERO")
+                .containsEntry("resourceClass", "COMMAND")
+                .containsEntry(
+                        "scratchSpecDigest",
+                        CodingToolchainEnvironmentProfile.defaultScratchSpace().canonicalDigest());
         assertThat(result.assets()).extracting(AssetRef::assetId).containsExactly("stdout-asset");
     }
 
@@ -137,13 +152,64 @@ class ProjectExecutionToolOperationsTest {
             }
         };
 
-        assertThatThrownBy(() -> operations(broker, 1024, 2000)
-                        .execute(
-                                invocation(
-                                        Map.of("command", "representative command", "workdir", "../outside"),
-                                        () -> false),
-                                access()))
-                .isInstanceOf(IllegalArgumentException.class);
+        var result = operations(broker, 1024, 2000)
+                .execute(
+                        invocation(Map.of("command", "representative command", "workdir", "../outside"), () -> false),
+                        access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("stableFailureCode", "WORKDIR_INVALID");
+        assertThat(invoked).isFalse();
+    }
+
+    @Test
+    void rejectsLeadingAbsoluteDirectoryChangeBeforePolicyBoundExecution() {
+        AtomicBoolean invoked = new AtomicBoolean();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                invoked.set(true);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        for (String command : List.of(
+                "cd /workspace && go test ./...", " cd '/home/user' && make test", "cd C:\\temp && gradlew test")) {
+            var result = operations(broker, 1024, 2000)
+                    .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
+
+            assertThat(result.successful()).isFalse();
+            assertThat(result.structuredData())
+                    .containsEntry("failureCategory", "INVALID_INPUT")
+                    .containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN");
+        }
+        assertThat(invoked).isFalse();
+    }
+
+    @Test
+    void rejectsAbsoluteWorkdirBeforeCallingTheBroker() {
+        AtomicBoolean invoked = new AtomicBoolean();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                invoked.set(true);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        var result = operations(broker, 1024, 2000)
+                .execute(
+                        invocation(
+                                Map.of("command", "go test ./...", "workdir", "/workspace", "operationFamily", "TEST"),
+                                () -> false),
+                        access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN");
         assertThat(invoked).isFalse();
     }
 
@@ -222,7 +288,9 @@ class ProjectExecutionToolOperationsTest {
                 maximumOutputBytes,
                 maximumOutputLines,
                 8,
-                ExecutionOutputObserver.noop());
+                ExecutionOutputObserver.noop(),
+                java.util.function.UnaryOperator.identity(),
+                CodingToolchainEnvironmentProfile.defaultScratchSpace());
     }
 
     private static ToolInvocationRequest invocation(

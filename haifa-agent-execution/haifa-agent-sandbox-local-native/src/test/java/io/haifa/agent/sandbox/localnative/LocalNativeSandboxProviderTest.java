@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionScratchBinding;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
@@ -118,6 +120,81 @@ class LocalNativeSandboxProviderTest {
                 .isEqualTo("SANDBOX_ADAPTER_UNAVAILABLE");
     }
 
+    @Test
+    void provisionsWritableCodingScratchBindingsAndCleansThemAfterExecution() throws Exception {
+        Path workspaceRoot = temporary.resolve("workspace-scratch");
+        java.nio.file.Files.createDirectory(workspaceRoot);
+        Fixture fixture = fixture(workspaceRoot);
+        LocalNativeSandboxConfiguration configuration = configuration();
+        LocalNativeSandboxProvider provider = new LocalNativeSandboxProvider(
+                fixture.workspaces(),
+                fixture.bindings(),
+                fixture.locations(),
+                () -> "session-scratch",
+                Instant::now,
+                configuration,
+                new ScratchProbeAdapter());
+        var scratch = new ExecutionScratchSpaceSpec(
+                true,
+                Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
+                List.of(new ExecutionScratchBinding("GOCACHE", "go-build")));
+
+        try (var session =
+                provider.open(profile(configuration, false), new WorkspaceMount(fixture.workspaceId(), false))) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of("tool")),
+                    WorkspacePath.root(fixture.workspaceId()),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2),
+                    io.haifa.agent.execution.api.ExecutionInput.none(),
+                    scratch));
+
+            assertThat(result.status()).isEqualTo(io.haifa.agent.sandbox.api.SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isZero();
+            assertThat(result.scratchProvisioned()).isTrue();
+            assertThat(result.scratchCleanupFailed()).isFalse();
+            assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                    .contains("root-consistent", "root-writable", "go-writable");
+        }
+        assertThat(configuration.controlRoot()).isDirectory().isEmptyDirectory();
+    }
+
+    @Test
+    void failsClosedWhenPrivateControlDirectoryCannotBeProvisioned() throws Exception {
+        Path workspaceRoot = temporary.resolve("workspace-provision-failure");
+        java.nio.file.Files.createDirectory(workspaceRoot);
+        Path controlFile = temporary.resolve("control-root-is-a-file");
+        java.nio.file.Files.writeString(controlFile, "not a directory");
+        Fixture fixture = fixture(workspaceRoot);
+        LocalNativeSandboxConfiguration configuration = new LocalNativeSandboxConfiguration(
+                List.of("/bin/bash", "-lc"),
+                controlFile,
+                temporary.resolve("sandbox-exec-provision-failure"),
+                temporary.resolve("bwrap-provision-failure"),
+                Map.of(),
+                Set.of(temporary.resolve("sensitive-provision-failure")));
+        LocalNativeSandboxProvider provider = new LocalNativeSandboxProvider(
+                fixture.workspaces(),
+                fixture.bindings(),
+                fixture.locations(),
+                () -> "session-provision-failure",
+                Instant::now,
+                configuration,
+                new PassingAdapter());
+
+        try (var session =
+                provider.open(profile(configuration, false), new WorkspaceMount(fixture.workspaceId(), false))) {
+            assertThatThrownBy(() -> session.execute(new SandboxExecution(
+                            ExecutionCommand.direct(List.of("tool")),
+                            WorkspacePath.root(fixture.workspaceId()),
+                            Map.of(),
+                            new ExecutionLimits(Duration.ofSeconds(1), 64, 64, 1))))
+                    .isInstanceOf(LocalNativeSandboxException.class)
+                    .extracting(exception -> ((LocalNativeSandboxException) exception).code())
+                    .isEqualTo("SANDBOX_PROVISION_FAILED");
+        }
+    }
+
     private LocalNativeSandboxProvider provider(
             LocalNativeSandboxConfiguration configuration, LocalNativeAdapter adapter) {
         return new LocalNativeSandboxProvider(
@@ -215,8 +292,38 @@ class LocalNativeSandboxProviderTest {
                 Path workingDirectory,
                 Path controlDirectory,
                 List<LocalNativePathGrant> additionalPaths,
+                ExecutionScratchSpaceSpec scratchSpace,
                 ExecutionCommand command) {
             throw new AssertionError("managed-process rejection must not prepare a launch");
+        }
+    }
+
+    private static final class ScratchProbeAdapter implements LocalNativeAdapter {
+        @Override
+        public String adapterId() {
+            return "fake-scratch-probe";
+        }
+
+        @Override
+        public void preflight(LocalNativeSandboxConfiguration configuration) {}
+
+        @Override
+        public LocalNativeLaunchPlan prepare(
+                LocalNativeSandboxConfiguration configuration,
+                SandboxProfile profile,
+                Path workspaceRoot,
+                Path workingDirectory,
+                Path controlDirectory,
+                List<LocalNativePathGrant> additionalPaths,
+                ExecutionScratchSpaceSpec scratchSpace,
+                ExecutionCommand command) {
+            return new LocalNativeLaunchPlan(List.of(
+                    "/bin/sh",
+                    "-c",
+                    "test \"$TMPDIR\" = \"$TMP\" && test \"$TMP\" = \"$TEMP\" && echo root-consistent; "
+                            + "test -w \"$TMPDIR\" && echo root-writable; "
+                            + "test \"$GOTMPDIR\" = \"$TMPDIR\" && test -w \"$GOCACHE\" && "
+                            + "touch \"$GOCACHE/probe\" && echo go-writable"));
         }
     }
 }

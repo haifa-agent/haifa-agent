@@ -94,23 +94,43 @@ class TerminalUiReducerTest {
     }
 
     @Test
-    void committedRunLifecycleKeepsFooterStatusConsistentWithTheTranscriptStatus() {
+    void committedRunLifecycleKeepsFooterStatusAndConsumesInternalCheckpointsWithoutRenderingThem() {
         TerminalUiState completed = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(
                         event(1, "event-1", new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
-        TerminalUiState postCompletionResource = reducer.reduce(
-                completed,
-                new TerminalUiAction.RunEventReceived(event(
-                        2,
-                        "event-2",
-                        new RunEventPayloads.ResourceAvailable(
-                                "checkpoint-1", "checkpoint", "Checkpoint", "AVAILABLE", "resume"))));
+        AgentRunEvent checkpointEvent = event(
+                2,
+                "event-2",
+                new RunEventPayloads.ResourceAvailable(
+                        "checkpoint-1", "checkpoint", "Checkpoint", "AVAILABLE", "resume"));
+        TerminalUiState postCompletionResource =
+                reducer.reduce(completed, new TerminalUiAction.RunEventReceived(checkpointEvent));
 
         assertThat(completed.status()).isEqualTo("COMPLETED");
         assertThat(completed.footer().runStatus()).isEqualTo("COMPLETED");
         assertThat(completed.currentRunId()).isEmpty();
         assertThat(postCompletionResource.currentRunId()).isEmpty();
+        assertThat(postCompletionResource.transcript()).isEmpty();
+        assertThat(postCompletionResource.appliedCursor()).contains(checkpointEvent.cursor());
+        assertThat(postCompletionResource.seenEventIds()).contains("event-2");
+    }
+
+    @Test
+    void keepsUserRelevantResourcesVisible() {
+        TerminalUiState resource = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ResourceAvailable(
+                                "artifact-1", "artifact", "Changed files", "AVAILABLE", "inspect"))));
+
+        assertThat(resource.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.RESOURCE);
+            assertThat(item.title()).isEqualTo("Changed files");
+            assertThat(item.body()).isEqualTo("artifact · artifact-1");
+        });
     }
 
     @Test
@@ -244,6 +264,51 @@ class TerminalUiReducerTest {
         TerminalUiState cleared = reducer.reduce(accepted, new TerminalUiAction.SessionCleared("Choose a session"));
 
         assertThat(cleared.pending()).isEmpty();
+    }
+
+    @Test
+    void deliveryEventsDriveRecoveringVerifyingAndBudgetStateWithoutParsingText() {
+        TerminalUiState recovering = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "RECOVERING",
+                                "RECOVERY_REQUIRED",
+                                "REPEATED_ENVIRONMENT_FAILURE",
+                                List.of("WORKSPACE_CHANGE"),
+                                30,
+                                1))));
+        TerminalUiState verifying = reducer.reduce(
+                recovering,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "VERIFYING",
+                                "COMPLETION_DEFERRED",
+                                "DIFF_INSPECTION_MISSING",
+                                List.of("DIFF_INSPECTION", "VALIDATION_ATTEMPT"),
+                                24,
+                                2))));
+        TerminalUiState budget = reducer.reduce(
+                verifying,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-3",
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "BUDGET", "BUDGET_THRESHOLD_REACHED", "REMAINING_25_PERCENT", List.of(), 25, 0))));
+
+        assertThat(recovering.status()).isEqualTo("Recovering");
+        assertThat(verifying.status()).isEqualTo("Verifying");
+        assertThat(verifying.transcript())
+                .filteredOn(item -> item.id().equals("delivery-COMPLETION_DEFERRED"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.body())
+                        .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining budget: 24%")
+                        .doesNotContain("/Users/", "stderr", "fingerprint"));
+        assertThat(budget.status()).isEqualTo("Budget threshold");
     }
 
     @Test

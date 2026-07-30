@@ -11,14 +11,17 @@ import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionId;
+import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.tool.api.ToolCancellation;
@@ -30,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
 
@@ -50,6 +54,7 @@ public final class ProjectExecutionToolOperations {
     private final int maximumProcesses;
     private final ExecutionOutputObserver outputObserver;
     private final UnaryOperator<String> outputSanitizer;
+    private final ExecutionScratchSpaceSpec scratchSpace;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -75,7 +80,8 @@ public final class ProjectExecutionToolOperations {
                 maximumModelOutputLines,
                 maximumProcesses,
                 outputObserver,
-                UnaryOperator.identity());
+                UnaryOperator.identity(),
+                ExecutionScratchSpaceSpec.genericRequired());
     }
 
     public ProjectExecutionToolOperations(
@@ -91,6 +97,36 @@ public final class ProjectExecutionToolOperations {
             int maximumProcesses,
             ExecutionOutputObserver outputObserver,
             UnaryOperator<String> outputSanitizer) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                outputSanitizer,
+                ExecutionScratchSpaceSpec.genericRequired());
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -118,6 +154,7 @@ public final class ProjectExecutionToolOperations {
         this.maximumProcesses = maximumProcesses;
         this.outputObserver = Objects.requireNonNull(outputObserver, "outputObserver must not be null");
         this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
+        this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -125,7 +162,14 @@ public final class ProjectExecutionToolOperations {
         Objects.requireNonNull(access, "access must not be null");
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
+        String operationFamily = operationFamily(arguments.get("operationFamily"));
+        if (hasLeadingAbsoluteDirectoryChange(command)) {
+            return rejectedAbsoluteDirectoryChange(operationFamily);
+        }
         String workdir = optionalText(arguments, "workdir", ".");
+        if (isAbsoluteDirectoryPath(workdir)) {
+            return rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN");
+        }
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
         Duration remaining = Duration.between(time.now(), invocation.deadline());
@@ -134,8 +178,13 @@ public final class ProjectExecutionToolOperations {
         }
         Duration timeout = requestedTimeout.compareTo(remaining) <= 0 ? requestedTimeout : remaining;
         ExecutionId executionId = new ExecutionId(identifiers.nextValue());
-        WorkspacePath workingDirectory = new WorkspacePath(
-                access.workspaceId(), workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(workdir));
+        WorkspacePath workingDirectory;
+        try {
+            workingDirectory = new WorkspacePath(
+                    access.workspaceId(), workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(workdir));
+        } catch (IllegalArgumentException exception) {
+            return rejectedWorkdir(operationFamily, "WORKDIR_INVALID");
+        }
         ExecutionRequest request = new ExecutionRequest(
                 executionId,
                 invocation
@@ -157,8 +206,11 @@ public final class ProjectExecutionToolOperations {
                 environmentRef,
                 new ExecutionLimits(
                         timeout, FULL_OUTPUT_BYTES_PER_CHANNEL, FULL_OUTPUT_BYTES_PER_CHANNEL, maximumProcesses),
-                sandboxProfileRef);
-        return executeRequest(request, invocation.cancellation());
+                sandboxProfileRef,
+                ExecutionInput.none(),
+                ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
+                scratchSpace);
+        return executeRequest(request, invocation.cancellation(), operationFamily);
     }
 
     /**
@@ -201,11 +253,15 @@ public final class ProjectExecutionToolOperations {
                 environmentRef,
                 new ExecutionLimits(
                         timeout, FULL_OUTPUT_BYTES_PER_CHANNEL, FULL_OUTPUT_BYTES_PER_CHANNEL, maximumProcesses),
-                sandboxProfileRef);
-        return executeRequest(request, () -> false);
+                sandboxProfileRef,
+                ExecutionInput.none(),
+                ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
+                scratchSpace);
+        return executeRequest(request, () -> false, "UNKNOWN");
     }
 
-    private ToolResult executeRequest(ExecutionRequest request, ToolCancellation cancellationSignal) {
+    private ToolResult executeRequest(
+            ExecutionRequest request, ToolCancellation cancellationSignal, String operationFamily) {
         MergedTailObserver merged =
                 new MergedTailObserver(outputObserver, maximumModelOutputBytes, maximumModelOutputLines);
         AtomicBoolean complete = new AtomicBoolean();
@@ -224,7 +280,13 @@ public final class ProjectExecutionToolOperations {
                     }
                 });
         try {
-            return toToolResult(broker.execute(request, merged), merged, outputSanitizer);
+            return toToolResult(
+                    broker.execute(request, merged),
+                    merged,
+                    outputSanitizer,
+                    operationFamily,
+                    sandboxProfileRef,
+                    scratchSpace);
         } finally {
             complete.set(true);
             cancellation.interrupt();
@@ -232,7 +294,12 @@ public final class ProjectExecutionToolOperations {
     }
 
     private static ToolResult toToolResult(
-            ExecutionResult result, MergedTailObserver merged, UnaryOperator<String> outputSanitizer) {
+            ExecutionResult result,
+            MergedTailObserver merged,
+            UnaryOperator<String> outputSanitizer,
+            String operationFamily,
+            SandboxProfileRef sandboxProfileRef,
+            ExecutionScratchSpaceSpec scratchSpace) {
         String output = merged.text();
         if (output.isBlank()) output = MergedTailObserver.sanitize(fallbackOutput(result));
         output = Objects.requireNonNull(outputSanitizer.apply(output), "outputSanitizer must not return null");
@@ -246,11 +313,25 @@ public final class ProjectExecutionToolOperations {
         data.put("output", output);
         data.put("truncated", truncated);
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
+        data.put("operationFamily", operationFamily);
+        data.put(
+                "sandboxProfileDigest",
+                io.haifa.agent.policy.api.PolicyDigest.sha256Fields(
+                        List.of(sandboxProfileRef.value(), sandboxProfileRef.version())));
+        data.put("scratchSpecDigest", scratchSpace.canonicalDigest());
+        data.put("scratchProvisioned", result.scratchProvisioned());
+        data.put("scratchCleanupFailed", result.scratchCleanupFailed());
         result.optionalFileChangeSetId().ifPresent(value -> data.put("fileChangeSetId", value.value()));
         result.optionalFailure().ifPresent(value -> {
             data.put("failureCode", value.code());
             data.put("failureDetail", value.safeDetail());
         });
+        if (result.status() != ExecutionStatus.SUCCEEDED) {
+            var classification = CodingExecutionFailureClassifier.classify(result, output);
+            data.put("failureCategory", classification.category());
+            data.put("stableFailureCode", classification.stableFailureCode());
+            data.put("resourceClass", classification.resourceClass());
+        }
         List<AssetRef> assets = new ArrayList<>();
         result.stdout().optionalAssetRef().ifPresent(assets::add);
         result.stderr().optionalAssetRef().ifPresent(assets::add);
@@ -278,6 +359,75 @@ public final class ProjectExecutionToolOperations {
                 List.copyOf(assets),
                 List.of(),
                 truncated);
+    }
+
+    private static ToolResult rejectedAbsoluteDirectoryChange(String operationFamily) {
+        return new ToolResult(
+                false,
+                "Command rejected before execution: absolute directory changes are not allowed; omit cd or use the "
+                        + "workspace-relative workdir field.",
+                Map.of(
+                        "status",
+                        "FAILED",
+                        "operationFamily",
+                        operationFamily,
+                        "failureCategory",
+                        "INVALID_INPUT",
+                        "stableFailureCode",
+                        "ABSOLUTE_WORKDIR_FORBIDDEN",
+                        "resourceClass",
+                        "COMMAND"),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static ToolResult rejectedWorkdir(String operationFamily, String stableFailureCode) {
+        return new ToolResult(
+                false,
+                "Command rejected before execution: workdir must be a workspace-relative path.",
+                Map.of(
+                        "status",
+                        "FAILED",
+                        "operationFamily",
+                        operationFamily,
+                        "failureCategory",
+                        "INVALID_INPUT",
+                        "stableFailureCode",
+                        stableFailureCode,
+                        "resourceClass",
+                        "WORKDIR"),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static boolean hasLeadingAbsoluteDirectoryChange(String command) {
+        String remaining = command.stripLeading();
+        if (!remaining.startsWith("cd") || (remaining.length() > 2 && !Character.isWhitespace(remaining.charAt(2)))) {
+            return false;
+        }
+        remaining = remaining.substring(2).stripLeading();
+        if (remaining.startsWith("--") && (remaining.length() == 2 || Character.isWhitespace(remaining.charAt(2)))) {
+            remaining = remaining.substring(2).stripLeading();
+        }
+        if (remaining.isEmpty()) return false;
+        char quote = remaining.charAt(0);
+        String path = remaining;
+        if (quote == '\'' || quote == '"') {
+            path = remaining.substring(1);
+        }
+        return isAbsoluteDirectoryPath(path);
+    }
+
+    private static boolean isAbsoluteDirectoryPath(String path) {
+        return path.startsWith("/")
+                || path.startsWith("\\\\")
+                || path.startsWith("~/")
+                || (path.length() >= 3
+                        && Character.isLetter(path.charAt(0))
+                        && path.charAt(1) == ':'
+                        && (path.charAt(2) == '\\' || path.charAt(2) == '/'));
     }
 
     private static String fallbackOutput(ExecutionResult result) {
@@ -315,6 +465,18 @@ public final class ProjectExecutionToolOperations {
         long result = number.longValue();
         if (result < minimum || result > maximum) throw new IllegalArgumentException(key + " is out of range");
         return result;
+    }
+
+    private static String operationFamily(Object value) {
+        if (value == null) return "UNKNOWN";
+        if (!(value instanceof String text)) {
+            throw new IllegalArgumentException("operationFamily must be text");
+        }
+        String normalized = text.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!Set.of("BUILD", "TEST", "DIFF", "INSPECT", "MUTATE", "UNKNOWN").contains(normalized)) {
+            throw new IllegalArgumentException("operationFamily is unsupported");
+        }
+        return normalized;
     }
 
     private static Duration positive(Duration value, String field) {

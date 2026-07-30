@@ -1,5 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.mcp.tool.McpToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
@@ -69,7 +70,8 @@ public final class ProjectToolCatalog {
                 List.of(),
                 List.of(),
                 List.of(),
-                Objects.requireNonNull(executionProfile, "executionProfile"));
+                Objects.requireNonNull(executionProfile, "executionProfile"),
+                ExecutionScratchSpaceSpec.genericRequired());
     }
 
     /** Coding profile assembly path for locally reviewed MCP imports and built-in project tools. */
@@ -138,12 +140,35 @@ public final class ProjectToolCatalog {
             List<WebToolCatalogContribution> webTools,
             List<SkillToolCatalogContribution> skillTools,
             SandboxProfile executionProfile) {
+        return freeze(
+                configuredTools,
+                effectiveCapabilities,
+                modelSupportsTools,
+                provider,
+                mcpTools,
+                webTools,
+                skillTools,
+                executionProfile,
+                ExecutionScratchSpaceSpec.genericRequired());
+    }
+
+    public DefaultToolCatalog freeze(
+            Set<String> configuredTools,
+            Set<String> effectiveCapabilities,
+            boolean modelSupportsTools,
+            ToolProvider provider,
+            List<McpToolCatalogContribution> mcpTools,
+            List<WebToolCatalogContribution> webTools,
+            List<SkillToolCatalogContribution> skillTools,
+            SandboxProfile executionProfile,
+            ExecutionScratchSpaceSpec scratchSpace) {
         Objects.requireNonNull(mcpTools, "mcpTools");
         Objects.requireNonNull(webTools, "webTools");
         Objects.requireNonNull(skillTools, "skillTools");
         Objects.requireNonNull(configuredTools, "configuredTools");
         Objects.requireNonNull(effectiveCapabilities, "effectiveCapabilities");
         Objects.requireNonNull(provider, "provider");
+        Objects.requireNonNull(scratchSpace, "scratchSpace");
         ToolCatalogBuilder builder = new ToolCatalogBuilder();
         if (!modelSupportsTools) return builder.freeze();
         REQUIRED_CAPABILITY.keySet().stream()
@@ -151,7 +176,10 @@ public final class ProjectToolCatalog {
                 .filter(configuredTools::contains)
                 .filter(name -> effectiveCapabilities.contains(REQUIRED_CAPABILITY.get(name)))
                 .forEach(name -> builder.register(
-                        modelAlias(name), definition(name, executionProfile), "project-workspace", provider));
+                        modelAlias(name),
+                        definition(name, executionProfile, scratchSpace),
+                        "project-workspace",
+                        provider));
         mcpTools.stream()
                 .sorted(java.util.Comparator.comparing(McpToolCatalogContribution::alias))
                 .forEach(contribution -> builder.register(
@@ -184,7 +212,8 @@ public final class ProjectToolCatalog {
         return new ToolAlias(name.replace('.', '_'));
     }
 
-    private static ToolDefinition definition(String name, SandboxProfile executionProfile) {
+    private static ToolDefinition definition(
+            String name, SandboxProfile executionProfile, ExecutionScratchSpaceSpec scratchSpace) {
         boolean execution = name.equals("execution.run");
         if (execution && executionProfile == null) {
             throw new IllegalArgumentException("execution.run requires a frozen sandbox profile");
@@ -211,7 +240,10 @@ public final class ProjectToolCatalog {
                 ProjectToolExecutor.PROVIDER_ID,
                 title(name),
                 description(name, executionProfile),
-                new ToolSchema("haifa." + name + ".input", "1.0.0", inputSchema(name)),
+                new ToolSchema(
+                        "haifa." + name + ".input",
+                        "1.0.0",
+                        inputSchema(name, execution ? scratchSpace.canonicalDigest() : null)),
                 new ToolSchema("haifa." + name + ".output", "1.0.0", outputSchema(name)),
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
                 true,
@@ -252,7 +284,16 @@ public final class ProjectToolCatalog {
         if (name.equals("execution.run")) {
             return "Run complete command text through the frozen "
                     + executionProfile.providerId()
-                    + " execution profile inside the project workspace.";
+                    + " execution profile inside the project workspace. Use it for inspection and verification; "
+                    + "classify every call with operationFamily, using BUILD or TEST for validation and DIFF only "
+                    + "for read-only final diff inspection.";
+        }
+        if (name.equals("git.diff")) {
+            return "Read the final Git diff within the frozen project workspace and capability boundary.";
+        }
+        if (WRITES.contains(name)) {
+            return title(name)
+                    + " within the frozen project workspace and capability boundary. Preserve unrelated user changes.";
         }
         return title(name) + " within the frozen project workspace and capability boundary.";
     }
@@ -262,7 +303,7 @@ public final class ProjectToolCatalog {
         return profile.ref().value() + "@" + profile.ref().version();
     }
 
-    private static Map<String, Object> inputSchema(String name) {
+    private static Map<String, Object> inputSchema(String name, String scratchSpecDigest) {
         var properties = new LinkedHashMap<String, Object>();
         var required = new java.util.ArrayList<String>();
         switch (name) {
@@ -301,20 +342,31 @@ public final class ProjectToolCatalog {
                 properties.put("workdir", Map.of("type", "string", "minLength", 1, "maxLength", 4096));
                 properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 1800000));
                 properties.put("description", Map.of("type", "string", "minLength", 1, "maxLength", 256));
+                properties.put(
+                        "operationFamily",
+                        Map.of(
+                                "type",
+                                "string",
+                                "enum",
+                                List.of("BUILD", "TEST", "DIFF", "INSPECT", "MUTATE", "UNKNOWN"),
+                                "description",
+                                "Stable operation family for delivery and recovery control. Use DIFF only for "
+                                        + "read-only diff inspection and UNKNOWN when the command cannot "
+                                        + "be reliably classified; do not infer it from arbitrary shell syntax."));
+                required.add("operationFamily");
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         }
-        return Map.of(
-                "$schema",
-                ToolSchema.DRAFT_2020_12,
-                "type",
-                "object",
-                "properties",
-                Map.copyOf(properties),
-                "required",
-                List.copyOf(required),
-                "additionalProperties",
-                false);
+        var schema = new LinkedHashMap<String, Object>();
+        schema.put("$schema", ToolSchema.DRAFT_2020_12);
+        if (scratchSpecDigest != null) {
+            schema.put("x-haifa-scratch-spec-digest", scratchSpecDigest);
+        }
+        schema.put("type", "object");
+        schema.put("properties", Map.copyOf(properties));
+        schema.put("required", List.copyOf(required));
+        schema.put("additionalProperties", false);
+        return Map.copyOf(schema);
     }
 
     private static Map<String, Object> outputSchema(String name) {
@@ -336,7 +388,15 @@ public final class ProjectToolCatalog {
                             Map.entry("fileChangeSetId", Map.of("type", "string")),
                             Map.entry("durationMillis", Map.of("type", "integer", "minimum", 0)),
                             Map.entry("failureCode", Map.of("type", "string")),
-                            Map.entry("failureDetail", Map.of("type", "string"))),
+                            Map.entry("failureDetail", Map.of("type", "string")),
+                            Map.entry("failureCategory", Map.of("type", "string")),
+                            Map.entry("stableFailureCode", Map.of("type", "string")),
+                            Map.entry("resourceClass", Map.of("type", "string")),
+                            Map.entry("operationFamily", Map.of("type", "string")),
+                            Map.entry("sandboxProfileDigest", Map.of("type", "string")),
+                            Map.entry("scratchSpecDigest", Map.of("type", "string")),
+                            Map.entry("scratchProvisioned", Map.of("type", "boolean")),
+                            Map.entry("scratchCleanupFailed", Map.of("type", "boolean"))),
                     "required",
                     List.of("executionId", "status", "output", "truncated", "durationMillis"),
                     "additionalProperties",

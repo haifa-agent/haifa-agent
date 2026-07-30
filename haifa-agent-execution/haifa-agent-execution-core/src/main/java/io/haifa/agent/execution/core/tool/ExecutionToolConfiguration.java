@@ -2,6 +2,7 @@ package io.haifa.agent.execution.core.tool;
 
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.policy.api.PolicyDigest;
 import java.time.Duration;
@@ -20,7 +21,35 @@ public record ExecutionToolConfiguration(
         boolean workingDirectoryAllowed,
         ScriptRuntimeResolver runtimes,
         ExecutionOutputObserver outputObserver,
-        UnaryOperator<String> outputSanitizer) {
+        UnaryOperator<String> outputSanitizer,
+        ExecutionScratchSpaceSpec scratchSpace) {
+    public ExecutionToolConfiguration(
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            int maximumProcesses,
+            boolean workingDirectoryAllowed,
+            ScriptRuntimeResolver runtimes,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer) {
+        this(
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumOutputBytes,
+                maximumOutputLines,
+                maximumProcesses,
+                workingDirectoryAllowed,
+                runtimes,
+                outputObserver,
+                outputSanitizer,
+                ExecutionScratchSpaceSpec.genericRequired());
+    }
+
     public ExecutionToolConfiguration {
         Objects.requireNonNull(environmentRef, "environmentRef must not be null");
         Objects.requireNonNull(sandboxProfileRef, "sandboxProfileRef must not be null");
@@ -41,6 +70,7 @@ public record ExecutionToolConfiguration(
         Objects.requireNonNull(runtimes, "runtimes must not be null");
         Objects.requireNonNull(outputObserver, "outputObserver must not be null");
         Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
+        Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
     }
 
     public String identityDigest() {
@@ -58,6 +88,7 @@ public record ExecutionToolConfiguration(
         fields.add(runtimes.operatingSystem().name());
         runtimes.languages().stream().sorted().forEach(fields::add);
         runtimes.executableNames().stream().sorted().forEach(fields::add);
+        fields.add(scratchSpace.canonicalDigest());
         return PolicyDigest.sha256Fields(fields);
     }
 

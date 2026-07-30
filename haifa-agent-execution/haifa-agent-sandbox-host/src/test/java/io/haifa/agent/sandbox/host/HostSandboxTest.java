@@ -8,6 +8,8 @@ import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionScratchBinding;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
@@ -233,15 +235,17 @@ class HostSandboxTest {
         copyProcessClass(root, StdinEchoProcess.class);
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces, fixture.bindings, fixture.locations, () -> "stdin-session", Instant::now);
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java")
+                .toString();
         SandboxProfile profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("stdin-test", "1"),
                 provider.configurationDigest(),
-                Set.of("java"),
+                Set.of(javaExecutable),
                 Set.of(),
                 false);
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
             var result = session.execute(new SandboxExecution(
-                    ExecutionCommand.direct(List.of("java", "-cp", ".", StdinEchoProcess.class.getName())),
+                    ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", StdinEchoProcess.class.getName())),
                     WorkspacePath.root(fixture.workspaceId),
                     Map.of(),
                     new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2),
@@ -251,6 +255,181 @@ class HostSandboxTest {
             assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8))
                     .isEqualTo("script-through-stdin");
         }
+    }
+
+    @Test
+    void injectsPrivateWritableScratchAndCleansItWithoutClaimingIsolation() throws Exception {
+        Fixture fixture = fixture(root, "workspace-scratch", "binding-scratch", "location-scratch");
+        Path scratchRoot = isolatedBase.resolve("host-scratch");
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces,
+                fixture.bindings,
+                fixture.locations,
+                () -> "scratch-session",
+                Instant::now,
+                HostShell.auto(),
+                scratchRoot);
+        var profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("scratch-test", "1"),
+                provider.configurationDigest(),
+                Set.of("/bin/sh"),
+                Set.of(),
+                false);
+        var scratch = new ExecutionScratchSpaceSpec(
+                true,
+                Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
+                List.of(new ExecutionScratchBinding("GOCACHE", "go-build")));
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of(
+                            "/bin/sh",
+                            "-c",
+                            "test \"$TMPDIR\" = \"$TMP\" && test \"$TMP\" = \"$TEMP\"; "
+                                    + "test \"$GOTMPDIR\" = \"$TMPDIR\"; "
+                                    + "test -w \"$TMPDIR\" && test -w \"$GOCACHE\"; "
+                                    + "touch \"$GOCACHE/probe\"; printf scratch-ok")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2),
+                    ExecutionInput.none(),
+                    scratch));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isZero();
+            assertThat(result.scratchProvisioned()).isTrue();
+            assertThat(result.scratchCleanupFailed()).isFalse();
+            assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                    .isEqualTo("scratch-ok");
+        }
+        assertThat(scratchRoot).isDirectory().isEmptyDirectory();
+        assertThat(provider.capabilities().filesystemMountIsolation()).isFalse();
+    }
+
+    @Test
+    void rejectsHomeSystemRootAndWorkspaceOverlappingScratchRoots() {
+        Fixture fixture =
+                fixture(root, "workspace-unsafe-scratch", "binding-unsafe-scratch", "location-unsafe-scratch");
+        assertThatThrownBy(() -> new HostGuardedSandboxProvider(
+                        fixture.workspaces,
+                        fixture.bindings,
+                        fixture.locations,
+                        () -> "unsafe-home",
+                        Instant::now,
+                        HostShell.auto(),
+                        Path.of(System.getProperty("user.home"))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new HostGuardedSandboxProvider(
+                        fixture.workspaces,
+                        fixture.bindings,
+                        fixture.locations,
+                        () -> "unsafe-root",
+                        Instant::now,
+                        HostShell.auto(),
+                        root.getRoot()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        var overlapsWorkspace = new HostGuardedSandboxProvider(
+                fixture.workspaces,
+                fixture.bindings,
+                fixture.locations,
+                () -> "unsafe-workspace",
+                Instant::now,
+                HostShell.auto(),
+                root.resolve("scratch"));
+        assertThatThrownBy(() -> overlapsWorkspace.open(
+                        SandboxProfile.hostGuarded(
+                                new SandboxProfileRef("unsafe-workspace", "1"),
+                                overlapsWorkspace.configurationDigest(),
+                                Set.of("/bin/sh"),
+                                Set.of(),
+                                false),
+                        new WorkspaceMount(fixture.workspaceId, false)))
+                .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
+                        .isEqualTo("SCRATCH_ROOT_UNSAFE"));
+    }
+
+    @Test
+    void failsClosedWhenScratchCannotBeProvisioned() throws Exception {
+        Fixture fixture =
+                fixture(root, "workspace-scratch-failure", "binding-scratch-failure", "location-scratch-failure");
+        Path scratchRoot = isolatedBase.resolve("scratch-root-is-a-file");
+        Files.writeString(scratchRoot, "not a directory");
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces,
+                fixture.bindings,
+                fixture.locations,
+                () -> "scratch-provision-failure",
+                Instant::now,
+                HostShell.auto(),
+                scratchRoot);
+        var profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("scratch-provision-failure", "1"),
+                provider.configurationDigest(),
+                Set.of("/bin/sh"),
+                Set.of(),
+                false);
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            assertThatThrownBy(() -> session.execute(new SandboxExecution(
+                            ExecutionCommand.direct(List.of("/bin/sh", "-c", "true")),
+                            WorkspacePath.root(fixture.workspaceId),
+                            Map.of(),
+                            new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2))))
+                    .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
+                            .isEqualTo("SCRATCH_PROVISION_FAILED"));
+        }
+    }
+
+    @Test
+    void reportsScratchCleanupFailureWithoutExposingItsPhysicalPath() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse(isWindows());
+        Fixture fixture =
+                fixture(root, "workspace-cleanup-failure", "binding-cleanup-failure", "location-cleanup-failure");
+        Path scratchRoot = isolatedBase.resolve("host-cleanup-failure");
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces,
+                fixture.bindings,
+                fixture.locations,
+                () -> "scratch-cleanup-failure",
+                Instant::now,
+                HostShell.auto(),
+                scratchRoot);
+        var profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("scratch-cleanup-failure", "1"),
+                provider.configurationDigest(),
+                Set.of("/bin/sh"),
+                Set.of(),
+                false);
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of(
+                            "/bin/sh", "-c", "touch \"$TMPDIR/locked\"; chmod 500 \"$TMPDIR\"; printf cleanup-probe")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2)));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.UNKNOWN);
+            assertThat(result.scratchProvisioned()).isTrue();
+            assertThat(result.scratchCleanupFailed()).isTrue();
+        } finally {
+            if (Files.isDirectory(scratchRoot)) {
+                try (var sessions = Files.list(scratchRoot)) {
+                    for (Path directory : sessions.toList()) {
+                        Files.setPosixFilePermissions(
+                                directory, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+                        try (var paths = Files.walk(directory)) {
+                            for (Path path : paths.sorted(java.util.Comparator.reverseOrder())
+                                    .toList()) {
+                                Files.deleteIfExists(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertThat(scratchRoot).isDirectory().isEmptyDirectory();
     }
 
     @Test

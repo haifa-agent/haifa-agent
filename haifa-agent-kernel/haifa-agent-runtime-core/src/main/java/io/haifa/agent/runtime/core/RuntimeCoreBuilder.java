@@ -56,6 +56,7 @@ import io.haifa.agent.runtime.core.checkpoint.MemoryCheckpointValidator;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCheckpointSelector;
 import io.haifa.agent.runtime.core.checkpoint.ResumeCoordinator;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
+import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
 import io.haifa.agent.runtime.core.completion.DefaultRunFinalizer;
 import io.haifa.agent.runtime.core.completion.OutputContractValidator;
@@ -202,7 +203,7 @@ public final class RuntimeCoreBuilder {
             (run, decision) -> !decision.outputSchemaId().isBlank()
                     && !decision.outputSchemaVersion().isBlank();
     private RequiredArtifactChecker requiredArtifacts = (run, decision) -> true;
-    private CompletionPolicy completionPolicy = (run, decision) -> true;
+    private CompletionPolicy completionPolicy = (run, decision) -> CompletionPolicyResult.accepted();
     private final List<AgentRuntimeMiddleware> additionalMiddleware = new ArrayList<>();
     private final List<ContextSource> additionalContextSources = new ArrayList<>();
     private final List<CapabilityCheckpointParticipant> capabilityCheckpointParticipants = new ArrayList<>();

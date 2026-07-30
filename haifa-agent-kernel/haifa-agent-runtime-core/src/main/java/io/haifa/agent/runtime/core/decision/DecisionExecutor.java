@@ -36,6 +36,7 @@ import io.haifa.agent.policy.api.PolicyDecisionStore;
 import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
+import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionGuard;
 import io.haifa.agent.runtime.core.completion.RunFinalizer;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
@@ -146,12 +147,98 @@ public final class DecisionExecutor {
     private AgentLoopDirective executeFinal(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
         var readiness = completionGuard.evaluate(run, decision);
         if (!readiness.ready()) {
-            repairRetry.check(loopContext.recordRepairAttempt());
+            int attempt = loopContext.recordRepairAttempt();
+            List<String> missingEvidence = readiness.blockers().stream()
+                    .map(CompletionBlocker::evidenceRequirement)
+                    .distinct()
+                    .sorted()
+                    .toList();
+            List<String> blockerCodes = readiness.blockers().stream()
+                    .map(CompletionBlocker::code)
+                    .distinct()
+                    .sorted()
+                    .toList();
+            int remainingPercent = loopContext
+                    .budgetSnapshot()
+                    .map(value -> value.remainingPercent())
+                    .orElse(0);
+            if (attempt > repairRetry.maxAttempts()) {
+                events.append(
+                        run.id(),
+                        "run.structured-termination",
+                        Map.of(
+                                "reason",
+                                "COMPLETION_REPAIR_EXHAUSTED",
+                                "attempts",
+                                attempt - 1,
+                                "blockerCodes",
+                                blockerCodes,
+                                "missingEvidence",
+                                missingEvidence),
+                        time.now());
+                transitions.failed(
+                        run,
+                        new AgentError(
+                                new AgentErrorCode("COMPLETION_REPAIR_EXHAUSTED"),
+                                AgentErrorCategory.POLICY,
+                                AgentErrorSeverity.ERROR,
+                                Retryability.NOT_RETRYABLE,
+                                "Required delivery evidence remained missing after bounded completion repair.",
+                                null,
+                                Map.of(
+                                        "blockerCodes", blockerCodes,
+                                        "missingEvidence", missingEvidence,
+                                        "attempts", attempt - 1),
+                                time.now()));
+                return AgentLoopDirective.STOP;
+            }
+            String phase = blockerCodes.stream().anyMatch(code -> code.contains("VALIDATION") || code.contains("DIFF"))
+                    ? "VERIFYING"
+                    : "RECOVERING";
+            events.append(
+                    run.id(),
+                    "completion.deferred",
+                    Map.of(
+                            "phase",
+                            phase,
+                            "status",
+                            "COMPLETION_DEFERRED",
+                            "reasonCode",
+                            blockerCodes.getFirst(),
+                            "blockerCodes",
+                            blockerCodes,
+                            "missingEvidence",
+                            missingEvidence,
+                            "evidenceCodes",
+                            readiness.evidenceCodes(),
+                            "attempt",
+                            attempt,
+                            "maximumAttempts",
+                            repairRetry.maxAttempts(),
+                            "remainingPercent",
+                            remainingPercent),
+                    time.now());
             appendMessage(
                     run,
                     MessageRole.RUNTIME,
-                    "Completion deferred: " + String.join(", ", readiness.blockers()),
-                    MessageVisibility.INTERNAL);
+                    structuredCorrection(
+                            phase,
+                            attempt,
+                            repairRetry.maxAttempts(),
+                            blockerCodes,
+                            readiness.evidenceCodes(),
+                            missingEvidence,
+                            remainingPercent),
+                    MessageVisibility.INTERNAL,
+                    Map.of(
+                            "completionRepair",
+                            true,
+                            "completionRepairAttempt",
+                            attempt,
+                            "completionBlockerCodes",
+                            blockerCodes,
+                            "completionEvidenceCodes",
+                            readiness.evidenceCodes()));
             return AgentLoopDirective.CONTINUE;
         }
         transitions.completedWithOutput(
@@ -165,6 +252,26 @@ public final class DecisionExecutor {
                         MessageVisibility.USER_VISIBLE,
                         Map.of("final", true)));
         return AgentLoopDirective.STOP;
+    }
+
+    private static String structuredCorrection(
+            String phase,
+            int attempt,
+            int maximumAttempts,
+            List<String> blockerCodes,
+            List<String> evidenceCodes,
+            List<String> missingEvidence,
+            int remainingPercent) {
+        return String.join(
+                "\n",
+                "[DELIVERY_COMPLETION_REPAIR]",
+                "phase=" + phase,
+                "attempt=" + attempt + "/" + maximumAttempts,
+                "blockers=" + String.join("|", blockerCodes),
+                "evidence=" + (evidenceCodes.isEmpty() ? "NONE" : String.join("|", evidenceCodes)),
+                "missing=" + String.join("|", missingEvidence),
+                "remainingPercent=" + remainingPercent,
+                "nextAction=collect the smallest authoritative missing evidence, then submit final output");
     }
 
     private AgentLoopDirective executeTools(AgentRun run, ToolCallDecision decision, AgentLoopContext loopContext) {

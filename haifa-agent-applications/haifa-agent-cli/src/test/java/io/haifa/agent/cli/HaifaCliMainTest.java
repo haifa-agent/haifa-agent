@@ -9,6 +9,7 @@ import io.haifa.agent.runtime.api.AgentRunOutputListener;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,6 +50,16 @@ class HaifaCliMainTest {
         assertThat(main.run(new String[] {"--terminal"}, output(), output())).isZero();
         assertThat(main.run(new String[0], output(), output())).isZero();
         assertThat(launches).hasValue(2);
+    }
+
+    @Test
+    void defaultTerminalUsesTheProcessWorkingDirectoryAsItsWorkspace() {
+        AtomicReference<Path> launchedWorkspace = new AtomicReference<>();
+        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launchedWorkspace.set(workspace));
+
+        assertThat(main.run(new String[0], output(), output())).isZero();
+
+        assertThat(launchedWorkspace).hasValue(Path.of(".").toAbsolutePath().normalize());
     }
 
     @Test

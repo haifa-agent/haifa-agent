@@ -39,6 +39,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private int editorCursor;
     private int historyIndex;
     private boolean browsingHistory;
+    private boolean followTranscript = true;
     private boolean newOutputPending;
     private boolean fullRepaintRequested;
 
@@ -100,7 +101,7 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public String view() {
         TerminalUiState state = controller.state();
-        return view.render(state, transcript, editor, transcript.atBottom(), newOutputPending);
+        return view.render(state, transcript, editor, followTranscript, newOutputPending);
     }
 
     private Command key(KeyPressMessage key) {
@@ -159,12 +160,13 @@ final class Tui4jCodingTerminalModel implements Model {
         }
         if (key.type() == KeyType.KeyPgUp) {
             transcript.scrollUp(Math.max(1, transcript.getHeight() - 1));
-            newOutputPending = true;
+            followTranscript = false;
             return Command.none();
         }
         if (key.type() == KeyType.KeyPgDown) {
             transcript.scrollDown(Math.max(1, transcript.getHeight() - 1));
             if (transcript.atBottom()) {
+                followTranscript = true;
                 newOutputPending = false;
             }
             return Command.none();
@@ -308,11 +310,10 @@ final class Tui4jCodingTerminalModel implements Model {
         if (!nextTranscript.equals(transcriptContent)) {
             int nextTranscriptRows = (int) nextTranscript.lines().count();
             fullRepaintRequested = transcriptRows != 0 && transcriptRows != nextTranscriptRows;
-            boolean follow = transcriptContent.isEmpty() || transcript.atBottom();
             transcript.setContent(nextTranscript);
             transcriptContent = nextTranscript;
             transcriptRows = nextTranscriptRows;
-            if (follow) {
+            if (followTranscript) {
                 transcript.gotoBottom();
                 newOutputPending = false;
             } else {

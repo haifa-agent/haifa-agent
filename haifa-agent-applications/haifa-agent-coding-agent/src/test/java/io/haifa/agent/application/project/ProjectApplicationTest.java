@@ -106,9 +106,10 @@ class ProjectApplicationTest {
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
-        assertThat(properties).containsOnlyKeys("command", "workdir", "timeoutMillis", "description");
+        assertThat(properties)
+                .containsOnlyKeys("command", "workdir", "timeoutMillis", "description", "operationFamily");
         assertThat(execution.definition().inputSchema().document())
-                .containsEntry("required", List.of("command"))
+                .containsEntry("required", List.of("command", "operationFamily"))
                 .containsEntry("additionalProperties", false);
         assertThat(execution.definition().outputSchema().document()).containsEntry("additionalProperties", false);
         assertThat(execution.definition().resources().executionProfiles())
@@ -118,6 +119,8 @@ class ProjectApplicationTest {
         assertThat(execution.definition().sideEffects())
                 .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION);
         assertThat(execution.definition().provenance()).isEqualTo("haifa-coding-agent");
+        assertThat(execution.definition().description())
+                .contains("inspection and verification", "operationFamily", "BUILD or TEST", "final diff inspection");
         @SuppressWarnings("unchecked")
         var fileProperties = (java.util.Map<String, Object>)
                 fileRead.definition().inputSchema().document().get("properties");

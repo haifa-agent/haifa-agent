@@ -51,7 +51,7 @@ final class Tui4jTerminalView {
             TerminalUiState state,
             Viewport transcript,
             Textarea editor,
-            boolean viewportAtBottom,
+            boolean followTranscript,
             boolean newOutputPending) {
         if (state.columns() < MIN_COLUMNS || state.rows() < MIN_ROWS) {
             return String.join(
@@ -65,10 +65,13 @@ final class Tui4jTerminalView {
 
         boolean compact = state.rows() < 24;
         List<String> before = header(state, compact);
-        List<String> after = lowerRegions(state, editor, newOutputPending && !viewportAtBottom, compact);
+        List<String> after = lowerRegions(state, editor, newOutputPending && !followTranscript, compact);
         int viewportRows = Math.max(1, state.rows() - visualRows(before) - visualRows(after));
         transcript.setWidth(state.columns());
         transcript.setHeight(viewportRows);
+        if (followTranscript) {
+            transcript.gotoBottom();
+        }
 
         List<String> lines = new ArrayList<>(state.rows());
         lines.addAll(before);

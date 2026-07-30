@@ -22,6 +22,7 @@ import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -253,6 +254,53 @@ class RuntimeEventFeedTest {
         assertThat(execution.payload()).isInstanceOf(RunEventPayloads.ExecutionLifecycle.class);
         assertThat(resource.eventType()).isEqualTo("checkpoint.available");
         assertThat(resource.payload()).isInstanceOf(RunEventPayloads.ResourceAvailable.class);
+    }
+
+    @Test
+    void projectsOnlySafeStructuredDeliveryControlFields() {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
+
+        var deferred = projector
+                .project(new RuntimeEvent(
+                        "deferred",
+                        runId,
+                        1,
+                        "completion.deferred",
+                        "1",
+                        Map.of(
+                                "phase", "VERIFYING",
+                                "status", "COMPLETION_DEFERRED",
+                                "reasonCode", "DIFF_INSPECTION_MISSING",
+                                "missingEvidence", List.of("DIFF_INSPECTION"),
+                                "remainingPercent", 24,
+                                "attempt", 1,
+                                "fullPrompt", "must-not-project",
+                                "hostPath", "/private/workspace",
+                                "stderr", "must-not-project"),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+        var payload = (RunEventPayloads.DeliveryLifecycle) deferred.payload();
+
+        assertThat(deferred.eventType()).isEqualTo("completion.deferred");
+        assertThat(payload.phase()).isEqualTo("VERIFYING");
+        assertThat(payload.missingEvidence()).containsExactly("DIFF_INSPECTION");
+        assertThat(payload.toString()).doesNotContain("must-not-project", "/private/workspace");
+
+        assertThat(projector.project(new RuntimeEvent(
+                        "budget",
+                        runId,
+                        2,
+                        "loop.budget-snapshot",
+                        "1",
+                        Map.of("newThresholds", List.of(), "remainingPercent", 90),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty())))
+                .isEmpty();
     }
 
     @Test

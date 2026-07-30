@@ -1,5 +1,6 @@
 package io.haifa.agent.execution.core.tool;
 
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.tool.api.SemanticVersion;
 import io.haifa.agent.tool.api.ToolAlias;
 import io.haifa.agent.tool.api.ToolApprovalRequirement;
@@ -31,6 +32,7 @@ public final class ExecutionToolDefinitionFactory {
         return create(
                 executionProfileIdentity,
                 executionProfileIdentity,
+                ExecutionScratchSpaceSpec.genericRequired().canonicalDigest(),
                 networkAllowed,
                 workingDirectoryAllowed,
                 scriptLanguages);
@@ -39,6 +41,22 @@ public final class ExecutionToolDefinitionFactory {
     public static ToolDefinition create(
             String executionProfileIdentity,
             String configurationIdentity,
+            boolean networkAllowed,
+            boolean workingDirectoryAllowed,
+            Set<String> scriptLanguages) {
+        return create(
+                executionProfileIdentity,
+                configurationIdentity,
+                ExecutionScratchSpaceSpec.genericRequired().canonicalDigest(),
+                networkAllowed,
+                workingDirectoryAllowed,
+                scriptLanguages);
+    }
+
+    public static ToolDefinition create(
+            String executionProfileIdentity,
+            String configurationIdentity,
+            String scratchSpecDigest,
             boolean networkAllowed,
             boolean workingDirectoryAllowed,
             Set<String> scriptLanguages) {
@@ -57,7 +75,8 @@ public final class ExecutionToolDefinitionFactory {
                 new ToolSchema(
                         "haifa.execution.run.input",
                         "2.0.0",
-                        inputSchema(configurationIdentity, workingDirectoryAllowed, scriptLanguages)),
+                        inputSchema(
+                                configurationIdentity, scratchSpecDigest, workingDirectoryAllowed, scriptLanguages)),
                 new ToolSchema("haifa.execution.run.output", "2.0.0", outputSchema()),
                 ToolExecutionMode.HOST_PROCESS,
                 true,
@@ -78,7 +97,13 @@ public final class ExecutionToolDefinitionFactory {
     }
 
     private static Map<String, Object> inputSchema(
-            String configurationIdentity, boolean workingDirectoryAllowed, Set<String> scriptLanguages) {
+            String configurationIdentity,
+            String scratchSpecDigest,
+            boolean workingDirectoryAllowed,
+            Set<String> scriptLanguages) {
+        if (scratchSpecDigest == null || !scratchSpecDigest.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("scratchSpecDigest must be a lowercase SHA-256 digest");
+        }
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put(
                 "mode",
@@ -117,6 +142,7 @@ public final class ExecutionToolDefinitionFactory {
         return Map.ofEntries(
                 Map.entry("$schema", ToolSchema.DRAFT_2020_12),
                 Map.entry("x-haifa-configuration-identity", configurationIdentity),
+                Map.entry("x-haifa-scratch-spec-digest", scratchSpecDigest),
                 Map.entry("title", "Execution request"),
                 Map.entry(
                         "description",
@@ -195,7 +221,10 @@ public final class ExecutionToolDefinitionFactory {
                         Map.entry("stdoutSummary", Map.of("type", "string")),
                         Map.entry("stderrSummary", Map.of("type", "string")),
                         Map.entry("truncated", Map.of("type", "boolean")),
-                        Map.entry("durationMillis", Map.of("type", "integer", "minimum", 0))),
+                        Map.entry("durationMillis", Map.of("type", "integer", "minimum", 0)),
+                        Map.entry("scratchSpecDigest", Map.of("type", "string")),
+                        Map.entry("scratchProvisioned", Map.of("type", "boolean")),
+                        Map.entry("scratchCleanupFailed", Map.of("type", "boolean"))),
                 "required",
                 List.of(
                         "status",
@@ -205,7 +234,10 @@ public final class ExecutionToolDefinitionFactory {
                         "stdoutSummary",
                         "stderrSummary",
                         "truncated",
-                        "durationMillis"),
+                        "durationMillis",
+                        "scratchSpecDigest",
+                        "scratchProvisioned",
+                        "scratchCleanupFailed"),
                 "additionalProperties",
                 false);
     }

@@ -13,6 +13,21 @@ import org.junit.jupiter.api.Test;
 
 class CliConfigurationLoaderTest {
     @Test
+    void packagedDistributionConfigurationIsValidAndSecretFree() {
+        Path configuration = Path.of("distribution", "haifa-coding.yaml").toAbsolutePath();
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+
+        assertThat(result.model().credentialRef()).isEqualTo("env://DEEPSEEK_API_KEY");
+        assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
+        assertThat(result.execution().provider()).isEqualTo("local-native");
+        assertThat(result.execution().network()).isEqualTo("deny");
+        assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.MEMORY);
+        assertThat(result.enabledTools()).contains("file.read", "file.write", "execution.run");
+    }
+
+    @Test
     void freezesDisabledDeepSeekThinkingForCliRuns() {
         var snapshot = LocalCodingAgent.modelSnapshot(CliConfiguration.defaults());
 

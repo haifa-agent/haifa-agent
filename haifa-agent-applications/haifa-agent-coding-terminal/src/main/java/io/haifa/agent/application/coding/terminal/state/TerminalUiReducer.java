@@ -394,7 +394,8 @@ public final class TerminalUiReducer {
                             executionBody(payload),
                             payload.status(),
                             false));
-        } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload) {
+        } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
+                && !isInternalCheckpoint(payload)) {
             upsert(
                     items,
                     new TranscriptItem(
@@ -420,8 +421,22 @@ public final class TerminalUiReducer {
                             payload.state(),
                             true,
                             details));
+        } else if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle payload) {
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "delivery-" + payload.status(),
+                            TranscriptItem.Kind.RESOURCE,
+                            deliveryTitle(payload),
+                            deliveryBody(payload),
+                            payload.status(),
+                            false));
         }
         return List.copyOf(items);
+    }
+
+    private static boolean isInternalCheckpoint(RunEventPayloads.ResourceAvailable payload) {
+        return "checkpoint".equalsIgnoreCase(payload.kind());
     }
 
     private static TerminalUiState output(TerminalUiState state, AgentRunOutputEvent event) {
@@ -466,6 +481,14 @@ public final class TerminalUiReducer {
                 case "ACCEPTED" -> "Applying steer";
                 case "APPLIED" -> "Working";
                 default -> fallback;
+            };
+        }
+        if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle lifecycle) {
+            return switch (lifecycle.phase()) {
+                case "RECOVERING" -> "Recovering";
+                case "VERIFYING" -> "Verifying";
+                case "BUDGET" -> "Budget threshold";
+                default -> "Completion deferred";
             };
         }
         return fallback;
@@ -566,6 +589,26 @@ public final class TerminalUiReducer {
         if (payload.truncated()) lines.add("Output truncated");
         if (!payload.fileChangeSetRef().isBlank()) lines.add("Changes: " + payload.fileChangeSetRef());
         return lines.isEmpty() ? "No execution details available." : String.join("\n", lines);
+    }
+
+    private static String deliveryTitle(RunEventPayloads.DeliveryLifecycle payload) {
+        return switch (payload.phase()) {
+            case "RECOVERING" -> "Recovering";
+            case "VERIFYING" -> "Verifying";
+            case "BUDGET" -> "Budget threshold";
+            default -> "Completion deferred";
+        };
+    }
+
+    private static String deliveryBody(RunEventPayloads.DeliveryLifecycle payload) {
+        List<String> lines = new ArrayList<>();
+        lines.add("Reason: " + payload.reasonCode());
+        if (!payload.missingEvidence().isEmpty()) {
+            lines.add("Missing: " + String.join(", ", payload.missingEvidence()));
+        }
+        if (payload.attempt() > 0) lines.add("Repair: " + payload.attempt());
+        lines.add("Remaining budget: " + payload.remainingPercent() + "%");
+        return String.join("\n", lines);
     }
 
     private static TerminalUiState copyWithTranscript(TerminalUiState state, List<TranscriptItem> transcript) {

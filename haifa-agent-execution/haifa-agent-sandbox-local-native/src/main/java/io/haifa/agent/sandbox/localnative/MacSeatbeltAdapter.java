@@ -3,6 +3,7 @@ package io.haifa.agent.sandbox.localnative;
 import io.haifa.agent.common.io.SecureFilePermissions;
 import io.haifa.agent.execution.api.ExecutionCommand;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
@@ -41,6 +42,7 @@ final class MacSeatbeltAdapter implements LocalNativeAdapter {
             Path workingDirectory,
             Path controlDirectory,
             List<LocalNativePathGrant> additionalPaths,
+            ExecutionScratchSpaceSpec scratchSpace,
             ExecutionCommand command) {
         Path policyFile = controlDirectory.resolve("seatbelt.sb");
         try {

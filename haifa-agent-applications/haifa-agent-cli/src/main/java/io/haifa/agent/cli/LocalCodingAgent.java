@@ -10,7 +10,14 @@ import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryContextSource;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
+import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
+import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
+import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -79,6 +86,7 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
@@ -379,10 +387,15 @@ final class LocalCodingAgent implements AutoCloseable {
                             mcpPlatform.contributions(),
                             webPlatform.contributions(),
                             skillTools,
-                            executionPlatform == null ? null : executionPlatform.profile());
+                            executionPlatform == null ? null : executionPlatform.profile(),
+                            CodingToolchainEnvironmentProfile.defaultScratchSpace());
             var interactions = persistence.ports().interactions();
             ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
+            var taskModes = new CodingTaskModeResolver(persistence.ports().state());
+            var deliveryEvidence =
+                    new CodingDeliveryEvidenceLedger(persistence.ports().state());
+            var deliveryProfile = CodingDeliveryProfile.safeDefault();
             var runtime = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -391,6 +404,10 @@ final class LocalCodingAgent implements AutoCloseable {
                         traces.add(event);
                         traceObserver.accept(event);
                     })
+                    .completionPolicy(new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile))
+                    .repairRetry(new RepairRetryPolicy(2))
+                    .registerContextSource(new CodingDeliveryContextSource(
+                            persistence.ports().runs(), taskModes, deliveryEvidence, deliveryProfile))
                     .registerChatModel("openai-compatible", "1.0.0", model)
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
@@ -435,12 +452,7 @@ final class LocalCodingAgent implements AutoCloseable {
                                     .collect(java.util.stream.Collectors.toUnmodifiableSet()),
                             configuration.skills().allowedAliases(),
                             Set.of(),
-                            "You are a careful local coding agent. Inspect relevant files before editing. "
-                                    + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
-                                    + "Pass only workspace-relative paths to file tools; never pass an absolute path. "
-                                    + "Execution commands already start in the workspace, so do not change directory to an "
-                                    + "absolute path. After the requested verification passes, stop using tools unless its "
-                                    + "output identifies an unresolved failure, then return a concise completion summary."
+                            CodingAgentPrompt.current().text()
                                     + resources.snapshot().instructionBlock(),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(

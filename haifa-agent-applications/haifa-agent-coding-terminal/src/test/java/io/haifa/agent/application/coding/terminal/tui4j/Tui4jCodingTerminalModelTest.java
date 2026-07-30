@@ -14,6 +14,7 @@ import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
+import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
@@ -25,14 +26,19 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
+import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -81,6 +87,29 @@ class Tui4jCodingTerminalModelTest {
 
         assertThat(fixture.controller.state().selector()).isEmpty();
         assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/r");
+    }
+
+    @Test
+    void keepsFollowingNewOutputWhenActiveRunLayoutShrinksALongTranscriptViewport() {
+        var fixture = fixture();
+        fixture.model.init();
+        fixture.model.view();
+        for (int index = 1; index <= 30; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("history-30");
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.view();
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(2, new RunEventPayloads.AssistantTextDelta("generation-1", "LATEST_ASSISTANT_OUTPUT"))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+
+        assertThat(fixture.model.view()).contains("LATEST_ASSISTANT_OUTPUT").doesNotContain("new output below");
     }
 
     @Test
@@ -168,14 +197,31 @@ class Tui4jCodingTerminalModelTest {
                 pump,
                 new TerminalUiReducer(),
                 TerminalUiState.initial(80, 24));
-        return new Fixture(controller, new Tui4jCodingTerminalModel(controller, pump));
+        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
     }
 
     private KeyPressMessage key(KeyType type) {
         return new KeyPressMessage(new Key(type));
     }
 
-    private record Fixture(CodingTerminalController controller, Tui4jCodingTerminalModel model) {}
+    private AgentRunEvent event(long sequence, AgentRunEvent.Payload payload) {
+        AgentRunId runId = new AgentRunId("run-1");
+        return new AgentRunEvent(
+                "event-" + sequence,
+                "run.status.changed",
+                "1",
+                runId,
+                new AgentSessionId("session-1"),
+                sequence,
+                new RunEventCursor(runId, "1", OptionalLong.of(sequence)),
+                Instant.parse("2026-07-30T00:00:00Z"),
+                Optional.empty(),
+                Optional.empty(),
+                payload);
+    }
+
+    private record Fixture(
+            CodingTerminalController controller, TerminalEventPump pump, Tui4jCodingTerminalModel model) {}
 
     private static final class UnusedClient implements CodingSessionClient {
         @Override

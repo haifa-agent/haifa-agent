@@ -80,6 +80,10 @@ public final class ExecutionToolProvider implements ToolProvider {
         return configuration.identityDigest();
     }
 
+    public String scratchSpecDigest() {
+        return configuration.scratchSpace().canonicalDigest();
+    }
+
     public String sandboxProfileIdentity() {
         return configuration.sandboxProfileRef().value() + "@"
                 + configuration.sandboxProfileRef().version();
@@ -220,7 +224,10 @@ public final class ExecutionToolProvider implements ToolProvider {
                         configuration.maximumProcesses()),
                 configuration.sandboxProfileRef(),
                 parsed.input,
-                io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(invocation.arguments()));
+                ExecutionRequest.digestWithScratch(
+                        io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(invocation.arguments()),
+                        configuration.scratchSpace()),
+                configuration.scratchSpace());
         invocation.observer().dispatched();
         ToolResult result = execute(request, invocation.cancellation(), parsed);
         invocation.observer().acknowledged();
@@ -323,6 +330,9 @@ public final class ExecutionToolProvider implements ToolProvider {
         data.put("stderrSummary", stderr);
         data.put("truncated", truncated);
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
+        data.put("scratchSpecDigest", configuration.scratchSpace().canonicalDigest());
+        data.put("scratchProvisioned", result.scratchProvisioned());
+        data.put("scratchCleanupFailed", result.scratchCleanupFailed());
         String headline =
                 switch (result.status()) {
                     case SUCCEEDED -> parsed.mode.equals("SCRIPT") ? "Script succeeded" : "Command succeeded";

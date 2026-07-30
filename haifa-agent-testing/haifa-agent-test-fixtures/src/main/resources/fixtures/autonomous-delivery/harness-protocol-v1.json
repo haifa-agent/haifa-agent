@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "haifa-autonomous-delivery-harness",
+  "protocolVersion": "1.0.0",
+  "caseIsolation": {
+    "freshWorkspace": true,
+    "freshRuntimeDatabase": true,
+    "freshTrace": true,
+    "freshTranscript": true,
+    "freshRecording": true,
+    "freshScratch": true,
+    "freshModelSession": true,
+    "acceptanceOutsideWorkspace": true,
+    "failedRunsRetained": true
+  },
+  "hardBudget": {
+    "maxWallTimeMillis": 1800000,
+    "maxIterations": 80,
+    "maxToolCalls": 96,
+    "maxModelCalls": 64,
+    "maxParallelExternalCalls": 1
+  },
+  "behaviorGates": {
+    "maximumEquivalentFailureAdaptations": 3,
+    "terminateOnEquivalentFailureAttempt": 4,
+    "maximumModelCallsAfterLastProgress": 3,
+    "maximumCompletionRepairs": 2,
+    "reserveDiffAndMinimalValidationForChangeTasks": true
+  },
+  "requiredRepeatArtifacts": [
+    "run-manifest.json",
+    "result.json",
+    "acceptance-result.json",
+    "usage.json",
+    "failure-clusters.json",
+    "progress-evidence.json",
+    "completion-evidence.json",
+    "workspace-before.sha256",
+    "workspace-after.sha256",
+    "workspace.diff",
+    "runtime.db",
+    "trace-detail.jsonl",
+    "transcripts",
+    "session.cast",
+    "secret-scan.json",
+    "process-cleanup.json",
+    "manifest.sha256"
+  ],
+  "comparisonDimensions": [
+    "hiddenAcceptance",
+    "modelCalls",
+    "toolCalls",
+    "toolFailures",
+    "maxSameFailureCluster",
+    "callsAfterLastProgress",
+    "firstWorkspaceChange",
+    "completionRepairs",
+    "inputTokens",
+    "outputTokens",
+    "wallTimeMillis",
+    "failureAtomicity"
+  ]
+}
