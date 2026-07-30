@@ -164,6 +164,32 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void rejectsAbsoluteDirectoryChangesAsRecoverableInvalidInputBeforeCallingTheBroker() {
+        AtomicBoolean invoked = new AtomicBoolean();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                invoked.set(true);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        for (String command : List.of(
+                "cd /workspace && go test ./...", " cd '/home/user' && make test", "cd C:\\temp && gradlew test")) {
+            var result = operations(broker, 1024, 2000)
+                    .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
+
+            assertThat(result.successful()).isFalse();
+            assertThat(result.summary()).contains("omit cd", "workspace-relative workdir");
+            assertThat(result.structuredData())
+                    .containsEntry("failureCategory", "INVALID_INPUT")
+                    .containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN")
+                    .containsEntry("operationFamily", "TEST");
+        }
+        assertThat(invoked).isFalse();
+    }
+
+    @Test
     void userInitiatedCommandUsesTheSameBrokerAndPolicyReference() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {

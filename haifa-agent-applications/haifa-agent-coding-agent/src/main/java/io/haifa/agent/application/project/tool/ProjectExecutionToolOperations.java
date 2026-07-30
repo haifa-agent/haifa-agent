@@ -163,6 +163,9 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
+        if (startsWithAbsoluteDirectoryChange(command)) {
+            return rejectedAbsoluteDirectoryChange(operationFamily);
+        }
         String workdir = optionalText(arguments, "workdir", ".");
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
@@ -348,6 +351,48 @@ public final class ProjectExecutionToolOperations {
                 List.copyOf(assets),
                 List.of(),
                 truncated);
+    }
+
+    private static ToolResult rejectedAbsoluteDirectoryChange(String operationFamily) {
+        return new ToolResult(
+                false,
+                "Command rejected: absolute directory changes are not allowed; omit cd or use the workspace-relative "
+                        + "workdir field.",
+                Map.of(
+                        "status",
+                        "FAILED",
+                        "operationFamily",
+                        operationFamily,
+                        "failureCategory",
+                        "INVALID_INPUT",
+                        "stableFailureCode",
+                        "ABSOLUTE_WORKDIR_FORBIDDEN",
+                        "resourceClass",
+                        "COMMAND"),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static boolean startsWithAbsoluteDirectoryChange(String command) {
+        String remaining = command.stripLeading();
+        if (!remaining.startsWith("cd") || (remaining.length() > 2 && !Character.isWhitespace(remaining.charAt(2)))) {
+            return false;
+        }
+        remaining = remaining.substring(2).stripLeading();
+        if (remaining.startsWith("--") && (remaining.length() == 2 || Character.isWhitespace(remaining.charAt(2)))) {
+            remaining = remaining.substring(2).stripLeading();
+        }
+        if (remaining.isEmpty()) return false;
+        char quote = remaining.charAt(0);
+        if (quote == '\'' || quote == '"') {
+            remaining = remaining.substring(1);
+        }
+        if (remaining.startsWith("/") || remaining.startsWith("\\\\") || remaining.startsWith("~/")) return true;
+        return remaining.length() >= 3
+                && Character.isLetter(remaining.charAt(0))
+                && remaining.charAt(1) == ':'
+                && (remaining.charAt(2) == '\\' || remaining.charAt(2) == '/');
     }
 
     private static String fallbackOutput(ExecutionResult result) {
