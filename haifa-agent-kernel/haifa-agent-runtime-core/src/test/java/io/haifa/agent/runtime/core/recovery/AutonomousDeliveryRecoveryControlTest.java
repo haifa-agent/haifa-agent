@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.core.recovery;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.error.AgentError;
@@ -209,6 +210,27 @@ class AutonomousDeliveryRecoveryControlTest {
         assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, context))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("alternating");
+    }
+
+    @Test
+    void noProgressWindowStartsAfterFirstAuthoritativeProgress() {
+        var initialExploration = new AgentLoopContext(1, List.of("inspect-a", "inspect-b", "inspect-c"));
+        initialExploration.recordProgress("no-progress");
+        initialExploration.recordProgress("no-progress");
+        initialExploration.recordProgress("no-progress");
+
+        assertThatCode(() -> new LoopDetectionGuard(3).check(null, initialExploration))
+                .doesNotThrowAnyException();
+
+        var afterDelivery = new AgentLoopContext(1, List.of("inspect-a", "inspect-b", "inspect-c"));
+        assertThat(afterDelivery.observeInteractions(List.of("interaction-1"))).isPresent();
+        afterDelivery.recordProgress("stable-delivery-state");
+        afterDelivery.recordProgress("stable-delivery-state");
+        afterDelivery.recordProgress("stable-delivery-state");
+
+        assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, afterDelivery))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no observable progress");
     }
 
     private static RunBudgetSnapshot budgetAt(int remainingPercent) {

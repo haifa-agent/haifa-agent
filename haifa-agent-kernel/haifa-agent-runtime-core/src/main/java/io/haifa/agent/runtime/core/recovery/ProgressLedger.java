@@ -83,6 +83,10 @@ public final class ProgressLedger {
         return evidence.size();
     }
 
+    public boolean hasMeaningfulProgress() {
+        return !evidence.isEmpty();
+    }
+
     public List<ProgressEvidence> evidence() {
         return List.copyOf(evidence);
     }

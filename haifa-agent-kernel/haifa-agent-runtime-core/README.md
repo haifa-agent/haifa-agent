@@ -9,7 +9,9 @@ SHA-256 Failure Fingerprint；随机路径、命令文本和原始 stderr 不进
 
 有效进展只来自 Workspace/Artifact 变化、Todo 状态推进、成功的 Build/Test 验证、Blocker 移除、
 Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进展。最近 32 条安全摘要组成
-有界 Ledger。恢复时从权威 ToolCall、Plan、Child Run、Interaction 与 Usage 重建控制状态；旧
+有界 Ledger。通用无进展窗口在首次权威有效进展后才开始计数；初始只读侦察仍受完全重复 Decision、
+A-B Loop、失败簇和硬预算约束，不会被误当成已停滞的交付。恢复时从权威 ToolCall、Plan、Child Run、
+Interaction 与 Usage 重建控制状态；旧
 Checkpoint 无需 Schema 升级。模型 Context 只获得安全恢复指导与剩余模型、工具、迭代、时间和 Token
 预算；50%、25%、10% 阈值各触发一次收敛信号。
 

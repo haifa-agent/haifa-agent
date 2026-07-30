@@ -83,6 +83,10 @@ public final class AgentLoopContext {
         return List.copyOf(progressSignatures);
     }
 
+    public boolean hasMeaningfulProgress() {
+        return progressLedger.hasMeaningfulProgress();
+    }
+
     public void rebuildControlState(
             List<ToolCall> toolCalls,
             Optional<AgentPlan> plan,
