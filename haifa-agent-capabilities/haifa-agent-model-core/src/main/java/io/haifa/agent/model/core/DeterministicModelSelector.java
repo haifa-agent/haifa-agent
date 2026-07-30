@@ -6,18 +6,29 @@ import io.haifa.agent.model.api.ModelStatus;
 import io.haifa.agent.model.api.ProviderStatus;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
 
 /** Selects exactly the requested model with no implicit routing or fallback. */
 public final class DeterministicModelSelector {
     private final ModelCatalog catalog;
     private final ModelAccessPolicy accessPolicy;
-    private final String adapterVersion;
+    private final Function<String, String> adapterVersionResolver;
 
     public DeterministicModelSelector(ModelCatalog catalog, ModelAccessPolicy accessPolicy, String adapterVersion) {
         this.catalog = Objects.requireNonNull(catalog, "catalog must not be null");
         this.accessPolicy = Objects.requireNonNull(accessPolicy, "accessPolicy must not be null");
-        this.adapterVersion = requireText(adapterVersion, "adapterVersion");
+        String fixedVersion = requireText(adapterVersion, "adapterVersion");
+        adapterVersionResolver = ignored -> fixedVersion;
+    }
+
+    public DeterministicModelSelector(
+            ModelCatalog catalog, ModelAccessPolicy accessPolicy, Map<String, String> adapterVersions) {
+        this.catalog = Objects.requireNonNull(catalog, "catalog must not be null");
+        this.accessPolicy = Objects.requireNonNull(accessPolicy, "accessPolicy must not be null");
+        Map<String, String> frozenVersions = normalizeAdapterVersions(adapterVersions);
+        adapterVersionResolver = frozenVersions::get;
     }
 
     public ResolvedModelSnapshot select(ModelSelectionRequest request) {
@@ -43,6 +54,12 @@ public final class DeterministicModelSelector {
         if (!accessPolicy.allowed(request, provider, model)) {
             throw new ModelSelectionException(ModelSelectionFailure.ACCESS_DENIED, "model access is denied");
         }
+        String adapterVersion = adapterVersionResolver.apply(provider.adapterType());
+        if (adapterVersion == null) {
+            throw new ModelSelectionException(
+                    ModelSelectionFailure.ADAPTER_NOT_AVAILABLE,
+                    "model adapter is not configured: " + provider.adapterType());
+        }
         LinkedHashMap<String, Object> invocationOptions = new LinkedHashMap<>(model.options());
         return ResolvedModelSnapshot.create(
                 provider.id(),
@@ -66,5 +83,18 @@ public final class DeterministicModelSelector {
                 Objects.requireNonNull(value, field + " must not be null").trim();
         if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
         return normalized;
+    }
+
+    private static Map<String, String> normalizeAdapterVersions(Map<String, String> versions) {
+        Objects.requireNonNull(versions, "adapterVersions must not be null");
+        LinkedHashMap<String, String> normalized = new LinkedHashMap<>();
+        versions.forEach((type, version) -> {
+            String normalizedType = requireText(type, "adapter type");
+            String normalizedVersion = requireText(version, "adapter version");
+            if (normalized.putIfAbsent(normalizedType, normalizedVersion) != null) {
+                throw new IllegalArgumentException("duplicate adapter type: " + normalizedType);
+            }
+        });
+        return Map.copyOf(normalized);
     }
 }
