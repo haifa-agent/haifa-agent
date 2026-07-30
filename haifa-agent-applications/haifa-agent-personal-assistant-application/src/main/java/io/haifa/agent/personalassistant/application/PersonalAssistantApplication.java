@@ -12,6 +12,8 @@ import io.haifa.agent.memory.api.MemoryStatus;
 import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
+import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender;
+import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender.RecommendationTurn;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
@@ -45,6 +47,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /** Pure-Java product use cases over the Phase 20 SDK and public Runtime views. */
 public final class PersonalAssistantApplication implements AutoCloseable {
@@ -52,14 +56,21 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final PersonalMcpPlatform mcp;
     private final Clock clock;
     private final PersonalCapabilityRegistry capabilities;
+    private final PersonalQuestionRecommender questionRecommender;
     private final Set<String> mcpToolAliases;
+    private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
     public PersonalAssistantApplication(
-            HaifaAgent agent, PersonalMcpPlatform mcp, Clock clock, PersonalCapabilityRegistry capabilities) {
+            HaifaAgent agent,
+            PersonalMcpPlatform mcp,
+            Clock clock,
+            PersonalCapabilityRegistry capabilities,
+            PersonalQuestionRecommender questionRecommender) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
         this.capabilities = Objects.requireNonNull(capabilities);
+        this.questionRecommender = Objects.requireNonNull(questionRecommender);
         this.mcpToolAliases = mcp.aliases();
     }
 
@@ -95,6 +106,32 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 .stream()
                 .map(PersonalAssistantApplication::turn)
                 .toList();
+    }
+
+    public List<String> recommendQuestions(String sessionId, String runId) {
+        RunView completed = run(runId).orElseThrow(() -> new IllegalArgumentException("run is unavailable"));
+        if (!completed.conversationId().equals(sessionId) || !"COMPLETED".equals(completed.status())) {
+            return List.of();
+        }
+        List<TurnView> history = turns(sessionId, 100);
+        if (history.isEmpty()) return List.of();
+        TurnView latest = history.getLast();
+        if (!"ASSISTANT".equalsIgnoreCase(latest.role())
+                || latest.runId().filter(runId::equals).isEmpty()) {
+            return List.of();
+        }
+        if (recommendedQuestions.size() >= 256 && !recommendedQuestions.containsKey(runId)) {
+            recommendedQuestions.keySet().stream().findFirst().ifPresent(recommendedQuestions::remove);
+        }
+        return recommendedQuestions.computeIfAbsent(
+                runId,
+                ignored -> questionRecommender.recommend(
+                        new AgentRunId(runId),
+                        history.stream()
+                                .filter(turn -> "USER".equalsIgnoreCase(turn.role())
+                                        || "ASSISTANT".equalsIgnoreCase(turn.role()))
+                                .map(turn -> new RecommendationTurn(turn.role(), turn.text()))
+                                .toList()));
     }
 
     public ConversationView submit(String sessionId, long expectedRevision, String idempotencyKey, String message) {

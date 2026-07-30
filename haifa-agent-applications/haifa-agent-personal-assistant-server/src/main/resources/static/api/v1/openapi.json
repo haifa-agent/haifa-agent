@@ -74,6 +74,20 @@
         }
       }
     },
+    "/api/v1/conversations/{conversationId}/runs/{runId}/recommend-questions": {
+      "post": {
+        "operationId": "recommendQuestions",
+        "parameters": [
+          {"$ref": "#/components/parameters/ConversationId"},
+          {"$ref": "#/components/parameters/RunId"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "responses": {
+          "200": {"description": "Optional bounded questions for the completed answer", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RecommendedQuestions"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
     "/api/v1/runs/{runId}": {
       "get": {
         "operationId": "getRun",
@@ -217,6 +231,18 @@
         "type": "object",
         "required": ["message"],
         "properties": {"message": {"type": "string"}}
+      },
+      "RecommendedQuestions": {
+        "type": "object",
+        "required": ["questions"],
+        "properties": {
+          "questions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 3,
+            "items": {"type": "string", "maxLength": 80}
+          }
+        }
       },
       "UpdateConversation": {
         "type": "object",

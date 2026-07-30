@@ -8,6 +8,7 @@ param(
     [string] $TrustedScriptManifest = '',
     [switch] $Rebuild,
     [switch] $Stop,
+    [switch] $Force,
     [ValidateRange(30, 600)]
     [int] $StartupTimeoutSeconds = 180
 )
@@ -260,13 +261,28 @@ function Wait-ForPortRelease {
 if ($Stop -and $Rebuild) {
     throw '-Stop and -Rebuild cannot be used together.'
 }
+if ($Force -and -not $Stop) {
+    throw '-Force can only be used with -Stop.'
+}
 
 if ($Stop) {
-    if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
+    $startRecords = @()
+    if (Test-Path -LiteralPath $stateFile -PathType Leaf) {
+        try {
+            $parsedStartRecords = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+            $startRecords = @($parsedStartRecords)
+        } catch {
+            if (-not $Force) {
+                throw
+            }
+            Write-Warning "Startup state file could not be read. Force stop will use the current port listeners: $stateFile"
+        }
+    } elseif ($Force) {
+        Write-Warning "Startup state file was not found. Force stop will use the current port listeners: $stateFile"
+    } else {
         throw "Startup state file was not found: $stateFile. No process was stopped."
     }
 
-    $startRecords = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
     $serviceDefinitions = @(
         [pscustomobject]@{
             Role = 'personal-web'
@@ -305,17 +321,30 @@ if ($Stop) {
             continue
         }
         if ($null -eq $record -or $null -eq $record.Pid) {
-            throw "No recorded PID exists for $($definition.Role), but port $($definition.Port) is listening. No process was stopped."
-        }
-        if ([int] $record.Pid -ne [int] $listeningProcessId) {
-            throw "$($definition.Role) port $($definition.Port) belongs to PID $listeningProcessId, but state records PID $($record.Pid). No process was stopped."
+            if (-not $Force) {
+                throw "No recorded PID exists for $($definition.Role), but port $($definition.Port) is listening. No process was stopped."
+            }
+            Write-Warning "No recorded PID exists for $($definition.Role). Force stop will target current listener PID $listeningProcessId on port $($definition.Port)."
+        } elseif ([int] $record.Pid -ne [int] $listeningProcessId) {
+            if (-not $Force) {
+                throw "$($definition.Role) port $($definition.Port) belongs to PID $listeningProcessId, but state records PID $($record.Pid). No process was stopped."
+            }
+            Write-Warning "$($definition.Role) port $($definition.Port) belongs to PID $listeningProcessId, but state records PID $($record.Pid). Force stop will target the current listener."
         }
 
-        $processInfo = Get-ValidatedServiceProcess `
-            -Role $definition.Role `
-            -ProcessId $listeningProcessId `
-            -ExpectedProcessName $definition.ProcessName `
-            -ExpectedCommandLineToken $definition.CommandLineToken
+        $processInfo = $null
+        try {
+            $processInfo = Get-ValidatedServiceProcess `
+                -Role $definition.Role `
+                -ProcessId $listeningProcessId `
+                -ExpectedProcessName $definition.ProcessName `
+                -ExpectedCommandLineToken $definition.CommandLineToken
+        } catch {
+            if (-not $Force) {
+                throw
+            }
+            Write-Warning "$($_.Exception.Message) Force stop will target current listener PID $listeningProcessId on port $($definition.Port)."
+        }
         $stopTargets.Add([pscustomobject]@{
                 Role = $definition.Role
                 Port = $definition.Port
@@ -326,12 +355,17 @@ if ($Stop) {
 
     foreach ($target in $stopTargets) {
         $description = "$($target.Role) PID $($target.Pid) on port $($target.Port)"
-        if ($PSCmdlet.ShouldProcess($description, 'Stop validated Personal Assistant service')) {
-            Stop-Process -Id $target.Pid -ErrorAction Stop
+        $stopAction = if ($Force) {
+            'Force-stop current Personal Assistant port listener'
+        } else {
+            'Stop validated Personal Assistant service'
+        }
+        if ($PSCmdlet.ShouldProcess($description, $stopAction)) {
+            Stop-Process -Id $target.Pid -Force:$Force -ErrorAction Stop
             Wait-ForPortRelease -Port $target.Port
             $stopResults.Add([pscustomobject]@{
                     Role = $target.Role
-                    Status = 'stopped'
+                    Status = if ($Force) { 'force-stopped' } else { 'stopped' }
                     Pid = $target.Pid
                     Port = $target.Port
                 })

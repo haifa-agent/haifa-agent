@@ -75,6 +75,17 @@ Set-ExecutionPolicy -Scope Process Bypass
 & .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 -Stop -WhatIf
 ```
 
+状态文件缺失、记录 PID 已过期或进程身份校验无法通过时，可按三个固定端口的当前监听
+进程显式强制停止：
+
+```powershell
+& .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 -Stop -Force
+```
+
+`-Force` 只允许与 `-Stop` 一起使用。它会把状态或身份不一致降级为警告，并强制结束
+当前监听 `20000`、`20001`、`20002` 的进程，因此可能终止占用这些端口的非目标程序。
+需要先核对强制停止目标时，可使用 `-Stop -Force -WhatIf`。
+
 确认 20000、20001、20002 均已释放后，再执行：
 
 ```powershell

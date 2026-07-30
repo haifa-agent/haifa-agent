@@ -7,6 +7,7 @@ import io.haifa.agent.personalassistant.application.mcp.PersonalMcpConfiguration
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.policy.PersonalWebAllowPolicy;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
+import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import io.haifa.agent.personalassistant.application.tool.PersonalToolPlatform;
 import io.haifa.agent.personalassistant.application.trust.PersonalTrustedScriptManifest;
@@ -88,7 +89,11 @@ public final class PersonalAssistantAssembler {
                     .contribute(dependencies.execution().approval())
                     .build();
             return new PersonalAssistantApplication(
-                    agent, mcp, dependencies.clock(), PersonalCapabilityRegistry.create(tools, mcp));
+                    agent,
+                    mcp,
+                    dependencies.clock(),
+                    PersonalCapabilityRegistry.create(tools, mcp),
+                    new PersonalQuestionRecommender(dependencies.model()));
         } catch (RuntimeException | Error exception) {
             mcp.close();
             throw exception;
