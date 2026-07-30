@@ -1,8 +1,10 @@
 package io.haifa.agent.sandbox.host;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -41,8 +43,25 @@ public record HostShell(String displayName, List<String> invocationPrefix) {
     public List<String> launch(String command) {
         String value = requireText(command, "command");
         var launch = new ArrayList<>(invocationPrefix);
-        launch.add(value);
+        launch.add(usesPowerShellCommand() ? wrapPowerShellCommand(value) : value);
         return List.copyOf(launch);
+    }
+
+    private boolean usesPowerShellCommand() {
+        return displayName.equals("PowerShell")
+                && invocationPrefix.get(invocationPrefix.size() - 1).equalsIgnoreCase("-Command");
+    }
+
+    private static String wrapPowerShellCommand(String command) {
+        String encodedCommand = Base64.getEncoder().encodeToString(command.getBytes(StandardCharsets.UTF_8));
+        return "$__haifaUtf8 = [Text.UTF8Encoding]::new($false)\n"
+                + "[Console]::InputEncoding = $__haifaUtf8\n"
+                + "[Console]::OutputEncoding = $__haifaUtf8\n"
+                + "$OutputEncoding = $__haifaUtf8\n"
+                + "$__haifaCommandSource = [Text.Encoding]::UTF8.GetString("
+                + "[Convert]::FromBase64String('" + encodedCommand + "'))\n"
+                + "& ([ScriptBlock]::Create($__haifaCommandSource))\n"
+                + "if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }\n";
     }
 
     private static HostShell configured(String displayName, Path executable, List<String> arguments) {

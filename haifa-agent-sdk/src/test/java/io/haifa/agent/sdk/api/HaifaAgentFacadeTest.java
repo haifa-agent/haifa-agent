@@ -16,11 +16,28 @@ import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
 import java.time.Instant;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class HaifaAgentFacadeTest {
+    @Test
+    void appliesProductPublicToolPolicyDecoratorDuringRuntimeAssembly() {
+        AtomicBoolean decorated = new AtomicBoolean();
+
+        try (HaifaAgent ignored = HaifaAgents.builder()
+                .product(SdkTestFixtures.profile("personal", Map.of()))
+                .contributeAll(SdkTestFixtures.baseContributions())
+                .publicToolPolicyDecorator(delegate -> {
+                    decorated.set(true);
+                    return delegate;
+                })
+                .build()) {
+            assertThat(decorated).isTrue();
+        }
+    }
+
     @Test
     void completesMultiRunConversationAndLifecycleCommands() throws Exception {
         AtomicInteger ids = new AtomicInteger();

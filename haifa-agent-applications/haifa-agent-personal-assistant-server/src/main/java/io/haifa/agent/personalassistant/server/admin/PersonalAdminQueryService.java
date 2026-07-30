@@ -234,18 +234,70 @@ public final class PersonalAdminQueryService {
             try (ResultSet row = statement.executeQuery()) {
                 if (!row.next()) return;
                 Object content = payload(row, "content_schema_version", "content_payload", "content_payload_hash");
+                String configurationNodeId = "configuration:" + configurationRef;
+                Instant createdAt = instant(row, "created_at").orElse(null);
                 nodes.add(node(
-                        "configuration:" + configurationRef,
+                        configurationNodeId,
                         parentId,
                         "configuration",
                         "Frozen agent and model configuration",
                         "FROZEN",
-                        instant(row, "created_at").orElse(null),
+                        createdAt,
                         null,
                         null,
                         "Includes the complete agent instruction and frozen tool/model bindings",
                         Map.of("configurationRef", configurationRef, "content", content)));
+                appendSkillTrustNodes(content, configurationNodeId, createdAt, nodes);
             }
+        }
+    }
+
+    private static void appendSkillTrustNodes(Object content, String parentId, Instant createdAt, List<Node> nodes) {
+        if (!(content instanceof Map<?, ?> configuration)
+                || !(configuration.get("skillTrust") instanceof Map<?, ?> trust)) {
+            return;
+        }
+        appendGrantNodes(
+                trust.get("packageReviewGrants"),
+                parentId,
+                "skill_package_review_grant",
+                "Package Review Grant",
+                createdAt,
+                nodes);
+        appendGrantNodes(
+                trust.get("scriptExecutionGrants"),
+                parentId,
+                "skill_script_execution_grant",
+                "Script Execution Grant",
+                createdAt,
+                nodes);
+    }
+
+    private static void appendGrantNodes(
+            Object grants, String parentId, String kind, String title, Instant createdAt, List<Node> nodes) {
+        if (!(grants instanceof List<?> list)) return;
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> raw)) continue;
+            Map<String, Object> details = new LinkedHashMap<>();
+            raw.forEach((key, value) -> {
+                String name = String.valueOf(key);
+                if (!name.toLowerCase(java.util.Locale.ROOT).contains("content")) {
+                    details.put(name, value);
+                }
+            });
+            String id = String.valueOf(raw.containsKey("id") ? raw.get("id") : "unknown");
+            String state = String.valueOf(raw.containsKey("state") ? raw.get("state") : "UNKNOWN");
+            nodes.add(node(
+                    kind + ":" + id,
+                    parentId,
+                    kind,
+                    title + " · " + id,
+                    state,
+                    createdAt,
+                    null,
+                    null,
+                    String.valueOf(raw.containsKey("reasonCode") ? raw.get("reasonCode") : ""),
+                    details));
         }
     }
 

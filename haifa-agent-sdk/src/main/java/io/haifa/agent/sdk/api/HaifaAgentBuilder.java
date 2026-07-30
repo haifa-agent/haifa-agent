@@ -11,6 +11,7 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
+import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.ContextSourceContribution;
@@ -51,6 +52,8 @@ public final class HaifaAgentBuilder {
     private IdentifierGenerator ids = new UuidV7IdentifierGenerator();
     private TimeProvider time = new SystemTimeProvider();
     private ProductApprovalPromptFormatter toolApprovalPrompts = ProductApprovalPromptFormatter.defaultFormatter();
+    private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
+            java.util.function.UnaryOperator.identity();
 
     HaifaAgentBuilder() {}
 
@@ -76,6 +79,16 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder toolApprovalPrompts(ProductApprovalPromptFormatter value) {
         toolApprovalPrompts = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    /**
+     * Decorates the Runtime-selected public Tool policy after compatibility and trusted-skill
+     * policies have been assembled. Product overrides must preserve request-bound decisions and
+     * delegate every action they do not explicitly own.
+     */
+    public HaifaAgentBuilder publicToolPolicyDecorator(java.util.function.UnaryOperator<PublicToolPolicy> value) {
+        publicToolPolicyDecorator = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -139,6 +152,7 @@ public final class HaifaAgentBuilder {
                     .timeProvider(time)
                     .scheduler(scheduler)
                     .toolApprovalPrompts(toolApprovalPrompts::format)
+                    .publicToolPolicyDecorator(publicToolPolicyDecorator)
                     .persistence(persistence.runtimePersistence())
                     .callers(() -> {
                         SdkCaller caller = Objects.requireNonNull(callers.current(), "caller provider returned null");
@@ -162,6 +176,7 @@ public final class HaifaAgentBuilder {
                             resolvedCapabilities(resolution)))
                     .registerChatModel(
                             model.snapshot().adapterType(), model.snapshot().adapterVersion(), model.model());
+            runtimeBuilder.policyProductId(profile.productId().value());
 
             ProductContribution tool = resolution.selected().get(ProductCapabilities.TOOL);
             if (tool instanceof ToolPlatformContribution platform) {
@@ -169,7 +184,7 @@ public final class HaifaAgentBuilder {
             }
             ProductContribution skill = resolution.selected().get(ProductCapabilities.SKILL);
             if (skill instanceof SkillPlatformContribution platform) {
-                runtimeBuilder.skillPlatform(platform.catalog(), platform.contentLoader());
+                runtimeBuilder.skillPlatform(platform.catalog(), platform.contentLoader(), platform.trust());
             }
             if (context != null) {
                 context.sources().forEach(runtimeBuilder::registerContextSource);

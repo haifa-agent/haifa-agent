@@ -567,14 +567,13 @@ public final class ToolPipeline {
                 time.now());
     }
 
-    private static String targetSummary(ToolCall call) {
+    static String targetSummary(ToolCall call) {
         if (!isExecutionTool(call)) return call.toolName();
         Map<String, Object> arguments = call.arguments().values();
         String mode = safeText(arguments.get("mode"), "COMMAND");
         String language = safeText(arguments.get("language"), "default-shell");
         String purpose = safeText(arguments.get("purpose"), "Approved execution");
-        String content = safeText(arguments.get("content"), "");
-        return mode + " · " + language + " · " + purpose + "\nContent:\n" + content;
+        return boundedText(mode + " · " + language + " · " + purpose, 512);
     }
 
     private void appendExecutionAndResourceEvents(AgentRun run, ToolCall call, ToolResult result) {
@@ -696,13 +695,12 @@ public final class ToolPipeline {
     private static String boundedText(Object value, int maximum) {
         if (!(value instanceof String text)) return "";
         StringBuilder safe = new StringBuilder(Math.min(text.length(), maximum));
-        text.codePoints()
-                .filter(codePoint -> codePoint == '\n'
-                        || codePoint == '\r'
-                        || codePoint == '\t'
-                        || !Character.isISOControl(codePoint))
-                .limit(maximum)
-                .forEach(safe::appendCodePoint);
+        text.codePoints().forEach(codePoint -> {
+            if ((codePoint == '\n' || codePoint == '\r' || codePoint == '\t' || !Character.isISOControl(codePoint))
+                    && safe.length() + Character.charCount(codePoint) <= maximum) {
+                safe.appendCodePoint(codePoint);
+            }
+        });
         return safe.toString();
     }
 

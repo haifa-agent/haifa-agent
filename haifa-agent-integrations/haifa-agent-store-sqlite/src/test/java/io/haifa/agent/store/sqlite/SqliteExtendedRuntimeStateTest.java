@@ -14,7 +14,9 @@ import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
+import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
@@ -54,10 +56,14 @@ import io.haifa.agent.skill.api.SkillCoordinate;
 import io.haifa.agent.skill.api.SkillMetadata;
 import io.haifa.agent.skill.api.SkillName;
 import io.haifa.agent.skill.api.SkillPackageIndex;
+import io.haifa.agent.skill.api.SkillPackageReviewGrant;
 import io.haifa.agent.skill.api.SkillResourceKind;
 import io.haifa.agent.skill.api.SkillResourceRef;
 import io.haifa.agent.skill.api.SkillScopeRef;
 import io.haifa.agent.skill.api.SkillSourceRef;
+import io.haifa.agent.skill.api.SkillTrustGrantState;
+import io.haifa.agent.skill.api.SkillTrustScope;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
@@ -170,6 +176,11 @@ class SqliteExtendedRuntimeStateTest {
         SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory);
         var reopenedState = reopened.runtimeState(protector(KEY));
         assertThat(reopenedState.configuration(configuration.reference())).contains(configuration);
+        assertThat(reopenedState
+                        .configuration(configuration.reference())
+                        .orElseThrow()
+                        .skillTrust())
+                .isEqualTo(configuration.skillTrust());
         assertThat(reopenedState.memorySelection(run.id())).contains(memorySelection);
         assertThat(reopenedState.skillActivation(run.id(), new SkillAlias("test-skill")))
                 .contains(activation);
@@ -215,6 +226,35 @@ class SqliteExtendedRuntimeStateTest {
     }
 
     private static RuntimeConfigurationSnapshot configuration() {
+        FrozenSkillBinding original = activation().binding();
+        FrozenSkillBinding skill = new FrozenSkillBinding(
+                original.alias(),
+                original.coordinate(),
+                original.metadata(),
+                original.packageIndex(),
+                original.resourceIndexDigest(),
+                original.registrationDigest(),
+                original.resolutionPolicyRef(),
+                Optional.of("package-review"));
+        SkillPackageReviewGrant packageGrant = new SkillPackageReviewGrant(
+                "package-review",
+                1,
+                1,
+                new TenantRef("tenant"),
+                new PrincipalRef("principal", "user"),
+                "profile",
+                SkillTrustScope.PRODUCT,
+                Optional.empty(),
+                skill.coordinate(),
+                skill.registrationDigest(),
+                skill.resourceIndexDigest(),
+                NOW.minusSeconds(60),
+                Optional.of(NOW.plusSeconds(600)),
+                Optional.empty(),
+                SkillTrustGrantState.ACTIVE,
+                "reviewer",
+                "sqlite-fixture",
+                "SKILL_PACKAGE_REVIEWED");
         ResolvedModelSnapshot model = ResolvedModelSnapshot.create(
                 new ModelProviderId("deepseek"),
                 "1",
@@ -240,9 +280,10 @@ class SqliteExtendedRuntimeStateTest {
                 new AgentRunBudget(100, 100, 100, 10, 10, 2, "USD", 100),
                 new AgentRunLimits(10, 2, 1, 60_000, 10_000),
                 List.of(),
-                List.of(),
+                List.of(skill),
                 new SkillContentDigest("sha256:" + "0".repeat(64)),
                 "skill-policy-1",
+                new SkillTrustSnapshot("sha256:" + "3".repeat(64), List.of(packageGrant), List.of()),
                 Set.of(),
                 "answer",
                 RuntimeOverrides.NONE,

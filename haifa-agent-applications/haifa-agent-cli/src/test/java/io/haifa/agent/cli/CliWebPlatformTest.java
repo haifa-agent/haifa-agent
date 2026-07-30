@@ -76,14 +76,14 @@ class CliWebPlatformTest {
                 new CliConfiguration.WebProvider(
                         true,
                         "brave",
-                        io.haifa.agent.application.project.tool.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT,
+                        io.haifa.agent.web.provider.BraveWebSearchProvider.DEFAULT_ENDPOINT,
                         "env://BRAVE_SEARCH_API_KEY",
                         java.time.Duration.ofSeconds(20),
                         1024 * 1024),
                 new CliConfiguration.WebProvider(
                         true,
                         "aliyun",
-                        io.haifa.agent.application.project.tool.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT,
+                        io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT,
                         "env://ALIYUN_IQS_API_KEY",
                         java.time.Duration.ofSeconds(20),
                         2 * 1024 * 1024));

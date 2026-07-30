@@ -39,3 +39,31 @@ export interface AdminTrace {
   nodes: AdminTraceNode[];
   failureNodeId: string | null;
 }
+
+export type AdminCapabilityKind = "TOOL" | "MCP" | "SKILL";
+
+export interface AdminCapabilityAttribute {
+  label: string;
+  value: string;
+  tone: "neutral" | "failed" | "succeeded" | "running" | "waiting";
+}
+
+export interface AdminCapability {
+  id: string;
+  kind: AdminCapabilityKind;
+  name: string;
+  displayName: string;
+  description: string;
+  status: string;
+  source: string;
+  tags: string[];
+  attributes: AdminCapabilityAttribute[];
+  details: Record<string, unknown>;
+}
+
+export interface AdminCapabilities {
+  toolCatalogDigest: string;
+  skillCatalogDigest: string;
+  skillResolutionPolicy: string;
+  registrations: AdminCapability[];
+}

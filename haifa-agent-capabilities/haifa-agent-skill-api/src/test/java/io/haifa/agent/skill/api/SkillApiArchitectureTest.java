@@ -19,6 +19,7 @@ class SkillApiArchitectureTest {
                         "org.springframework..",
                         "io.modelcontextprotocol..",
                         "io.haifa.agent.runtime..",
+                        "io.haifa.agent.personalassistant..",
                         "jakarta.persistence..")
                 .check(classes);
     }

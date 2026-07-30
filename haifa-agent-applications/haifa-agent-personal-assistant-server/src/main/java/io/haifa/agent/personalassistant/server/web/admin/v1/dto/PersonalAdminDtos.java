@@ -31,6 +31,26 @@ public final class PersonalAdminDtos {
 
     public record Trace(String sessionId, String runId, Node root, List<Node> nodes, Optional<String> failureNodeId) {}
 
+    public record Capabilities(
+            String toolCatalogDigest,
+            String skillCatalogDigest,
+            String skillResolutionPolicy,
+            List<Capability> registrations) {}
+
+    public record Capability(
+            String id,
+            String kind,
+            String name,
+            String displayName,
+            String description,
+            String status,
+            String source,
+            List<String> tags,
+            List<CapabilityAttribute> attributes,
+            Map<String, Object> details) {}
+
+    public record CapabilityAttribute(String label, String value, String tone) {}
+
     public record Node(
             String id,
             Optional<String> parentId,

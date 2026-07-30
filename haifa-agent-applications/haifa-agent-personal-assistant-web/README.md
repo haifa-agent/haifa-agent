@@ -10,7 +10,8 @@ JAR 的构建或静态资源打包。
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
 - 对话正文的 Markdown、代码块、表格和 KaTeX/LaTeX 公式渲染；
-- Clarification/Approval 的显式结构化回复；
+- 助手完整 Markdown 回答和独立代码块的复制按钮，复制成功后显示图标反馈；
+- Clarification/Approval 的显式结构化回复；审批只在主对话区展示，长文本或代码默认预览并支持展开全文；
 - Tool、Skill、MCP 的安全 Activity 投影，不展示原始参数、结果、路径或协议 JSON；
 - Memory Candidate 确认/拒绝、Memory 查看/停用；
 - 最终 Run 的后端权威 Token Usage；
@@ -23,9 +24,13 @@ Deep Research 界面。
 
 ## 本机 Run Diagnostics
 
-同一独立 Web 部署单元提供直接访问的 `/admin/` 子路径，用于按 Session 选择一次 Run，并以可折叠
-树查看冻结配置、Prompt/Message、Attempt、Step、Tool/MCP、Checkpoint、Interaction、Skill 和
-Runtime Event。失败 Run 会自动聚焦到持久事实中最后一个失败节点，右侧展示该节点的完整内容。
+同一独立 Web 部署单元提供两个 Admin 只读视图：
+
+- `/admin/` 按 Session 选择一次 Run，并以可折叠树查看冻结配置、Prompt/Message、Attempt、Step、
+  Tool/MCP、Checkpoint、Interaction、Skill 和 Runtime Event。失败 Run 会自动聚焦到持久事实中
+  最后一个失败节点，右侧展示该节点的完整内容。
+- `/admin/capabilities` 按 Tool、MCP Server、Skill 浏览产品组装时冻结的注册清单，可搜索并查看定义、
+  策略、Schema、资源、协议、导入关系和摘要；不展示凭据值或临时连接状态。
 
 Admin 是独立入口：普通 Personal Assistant 页面没有 Admin 链接、导航、按钮、capability 或 Client
 接口，两个页面按 URL 动态加载，普通页面不会加载 Admin 应用代码。Admin 只读调用
@@ -59,8 +64,12 @@ npm run contract:check
 Run SSE 的 durable 与 transient 事件分别去重：`answer.delta` 实时追加当前 Generation 草稿，
 `answer.failed`/`answer.superseded`/新 `answer.started` 会清除旧草稿，避免重试拼接；完整回复提交后由
 Turns 中的权威 `session_message` 替换草稿。客户端重连发送复合 `Last-Event-ID`，服务重启时只重置
-transient cursor。收到 `run.status`、`interaction.status` 或 `activity.committed` 时仍会立即重取权威
-Snapshot，因此审批卡片、执行活动和终态不依赖手工刷新。
+transient cursor。`run.status` 只刷新 Run，`interaction.status` 只刷新 Interaction；带有安全 Activity
+投影的 `activity.committed` 直接合并到本地状态，缺少投影时才重取 Activities。Interaction 请求使用
+generation 门禁丢弃旧响应，审批卡片不会等待 Activities，也不会被较早返回的空响应覆盖。
+
+When a Run is waiting for approval or interaction and its interaction snapshot cannot be loaded, the page displays
+an explicit blocking error instead of silently hiding the approval controls.
 
 ## 本地开发
 

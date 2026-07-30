@@ -51,12 +51,15 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final HaifaAgent agent;
     private final PersonalMcpPlatform mcp;
     private final Clock clock;
+    private final PersonalCapabilityRegistry capabilities;
     private final Set<String> mcpToolAliases;
 
-    public PersonalAssistantApplication(HaifaAgent agent, PersonalMcpPlatform mcp, Clock clock) {
+    public PersonalAssistantApplication(
+            HaifaAgent agent, PersonalMcpPlatform mcp, Clock clock, PersonalCapabilityRegistry capabilities) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
+        this.capabilities = Objects.requireNonNull(capabilities);
         this.mcpToolAliases = mcp.aliases();
     }
 
@@ -305,6 +308,10 @@ public final class PersonalAssistantApplication implements AutoCloseable {
 
     public String productDigest() {
         return agent.assembly().assemblyDigest();
+    }
+
+    public PersonalCapabilityRegistry capabilities() {
+        return capabilities;
     }
 
     @Override

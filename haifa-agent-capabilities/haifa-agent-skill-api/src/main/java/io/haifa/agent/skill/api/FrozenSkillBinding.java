@@ -1,6 +1,7 @@
 package io.haifa.agent.skill.api;
 
 import java.util.Objects;
+import java.util.Optional;
 
 public record FrozenSkillBinding(
         SkillAlias alias,
@@ -9,7 +10,27 @@ public record FrozenSkillBinding(
         SkillPackageIndex packageIndex,
         SkillContentDigest resourceIndexDigest,
         SkillContentDigest registrationDigest,
-        String resolutionPolicyRef) {
+        String resolutionPolicyRef,
+        Optional<String> packageReviewGrantId) {
+    public FrozenSkillBinding(
+            SkillAlias alias,
+            SkillCoordinate coordinate,
+            SkillMetadata metadata,
+            SkillPackageIndex packageIndex,
+            SkillContentDigest resourceIndexDigest,
+            SkillContentDigest registrationDigest,
+            String resolutionPolicyRef) {
+        this(
+                alias,
+                coordinate,
+                metadata,
+                packageIndex,
+                resourceIndexDigest,
+                registrationDigest,
+                resolutionPolicyRef,
+                Optional.empty());
+    }
+
     public FrozenSkillBinding {
         alias = Objects.requireNonNull(alias, "alias must not be null");
         coordinate = Objects.requireNonNull(coordinate, "coordinate must not be null");
@@ -18,6 +39,9 @@ public record FrozenSkillBinding(
         resourceIndexDigest = Objects.requireNonNull(resourceIndexDigest, "resourceIndexDigest must not be null");
         registrationDigest = Objects.requireNonNull(registrationDigest, "registrationDigest must not be null");
         resolutionPolicyRef = SkillValues.text(resolutionPolicyRef, "resolutionPolicyRef", 256);
+        packageReviewGrantId = Optional.ofNullable(packageReviewGrantId)
+                .orElseGet(Optional::empty)
+                .map(value -> SkillValues.text(value, "packageReviewGrantId", 128));
         if (!metadata.name().equals(coordinate.name())) {
             throw new IllegalArgumentException("frozen metadata and coordinate names differ");
         }

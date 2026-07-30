@@ -20,6 +20,9 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 - Utility MCP 仓库：
   `D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server`；
 - DeepSeek Key 文件：`D:\workspace\ss-deepseek.txt`，文件中只放 Key 本身。
+- Aliyun IQS Key 文件：`D:\workspace\ss-aliyun-iqs.txt`，文件中只放 Key 本身；
+- Personal Skill 根目录：`D:\agents\hermes-agent\optional-skills\finance`，其直接子目录分别包含
+  `SKILL.md`。
 
 Key 文件不能提交到 Git，也不要把内容复制到命令历史、日志或文档。
 
@@ -34,13 +37,14 @@ Set-Location D:\workspace\haifa-agent
 
 脚本会依次完成：
 
-1. 校验本机工具、DeepSeek Key 和 Utility MCP 目录；
+1. 校验本机工具、DeepSeek/IQS Key、finance Skill 根目录和 Utility MCP 目录；
 2. 首次运行时生成随机 32 字节 Continuation Key，并持久化到
    `D:\workspace\ss-haifa-personal-continuation.txt`；
 3. 只在后端 JAR 不存在时构建后端；
 4. 只在 `node_modules` 不存在时执行 `npm ci`，只在 `dist` 不存在时构建前端；
 5. 启动或复用健康的 20002 Utility MCP；
-6. 以真实 `deepseek-v4-flash`、外部 MCP 模式启动 20001 后端；
+6. 以真实 `deepseek-v4-flash`、Aliyun IQS Web Tool、finance Skills 和外部 MCP 模式启动
+   20001 后端；
 7. 用 Node.js `serve` 启动 20000 前端；
 8. 等待三个 HTTP 健康检查成功，并输出 PID、各组件工作目录、数据/日志目录、访问
    地址和状态文件位置。
@@ -85,7 +89,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```powershell
 & .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 `
   -DeepSeekKeyFile 'D:\secure\deepseek.txt' `
+  -AliyunIqsKeyFile 'D:\secure\aliyun-iqs.txt' `
   -ContinuationKeyFile 'D:\secure\personal-continuation.txt' `
+  -PersonalSkillRoot 'D:\agents\hermes-agent\optional-skills\finance' `
   -UtilityMcpDirectory 'D:\src\haifa-ai-utility-mcp-server'
 ```
 
@@ -102,10 +108,14 @@ HAIFA_PERSONAL_ALLOW_DETERMINISTIC=false
 HAIFA_PERSONAL_MODEL_ENDPOINT=https://api.deepseek.com
 HAIFA_PERSONAL_MODEL_ID=deepseek-v4-flash
 HAIFA_PERSONAL_MODEL_CREDENTIAL=env://DEEPSEEK_API_KEY
+HAIFA_PERSONAL_WEB_ENABLED=true
+HAIFA_PERSONAL_WEB_CREDENTIAL=env://ALIYUN_IQS_API_KEY
+HAIFA_PERSONAL_SKILL_ROOT=D:\agents\hermes-agent\optional-skills\finance
 HAIFA_PERSONAL_MCP_MODE=external
 HAIFA_PERSONAL_MCP_ENDPOINT=http://127.0.0.1:20002/mcp
 HAIFA_PERSONAL_MCP_ALIAS_NAMESPACE=utility
 HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED=true
+HAIFA_PERSONAL_PYTHON_PATH='D:\Program Files\Python311\python.exe'
 ```
 
 允许的 Utility MCP 工具共 19 个：
@@ -157,10 +167,16 @@ Get-NetTCPConnection -State Listen |
   Where-Object LocalPort -in 20000, 20001, 20002
 ```
 
-## 6. Aliyun IQS 说明
+## 6. Web Tool 与 finance Skills
 
-当前 Personal Assistant Server 尚未装配 Aliyun IQS Web Search Provider，因此脚本
-不会读取或注入 `D:\workspace\ss-aliyun-iqs.txt`，避免造成“已经启用 IQS”的误解。
-目前外部网络能力来自真实 DeepSeek 调用和 Utility MCP 中已配置的网络工具。
-后续完成 Personal 产品的 IQS 适配与受控 Tool 接入后，再把 IQS Key 文件加入启动
-参数和最小权限配置。
+脚本读取 `D:\workspace\ss-aliyun-iqs.txt`，只向后端子进程注入
+`ALIYUN_IQS_API_KEY`。Personal Profile 同时允许 `web_search` 和 `web_fetch`，两者分别精确绑定
+公共模块中的 `web.search` 与 `web.fetch`，并继续经过 Runtime Tool Pipeline、Policy、Approval 和
+Credential lease；没有隐式 Provider fallback。
+
+`D:\agents\hermes-agent\optional-skills\finance` 是 Skill Source 根目录，不是一个 Skill 包。启动时会
+发现它下面直接包含 `SKILL.md` 的子目录（当前包括 `3-statement-model`、`comps-analysis`、
+`dcf-model`、`excel-author`、`lbo-model`、`merger-model`、`pptx-author` 和 `stocks`）。
+其中带脚本资源的 `dcf-model`、`excel-author` 和 `stocks` 按当前 Skill 安全基线标记为
+`REVIEW_REQUIRED`，不会进入模型可用 Catalog；其余五个 finance Skill 会直接启用。配置可信目录
+只表示允许发现和读取包，不等同于批准包内脚本。

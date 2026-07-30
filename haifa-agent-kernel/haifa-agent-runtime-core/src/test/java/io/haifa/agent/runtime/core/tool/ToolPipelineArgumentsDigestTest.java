@@ -2,12 +2,16 @@ package io.haifa.agent.runtime.core.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +50,32 @@ class ToolPipelineArgumentsDigestTest {
         ToolResult redacted = ToolPipeline.redactResult(result, value -> value.replace("secret", "[REDACTED]"));
 
         assertThat(redacted.toString()).doesNotContain("secret").contains("[REDACTED]");
+    }
+
+    @Test
+    void boundsExecutionTargetSummaryWithoutCopyingApprovedContent() {
+        String content = "Write-Output 'sensitive approved content'\n".repeat(500);
+        String purpose = "Generate a calendar ".repeat(50);
+        var call = new ToolCall(
+                new ToolCallId("call"),
+                new AgentRunId("run"),
+                new AgentStepId("step"),
+                new ProviderToolCallCorrelationId("provider-call"),
+                new RuntimeIdempotencyKey("runtime-call"),
+                "execution_run",
+                "2.0.0",
+                new ToolArguments(
+                        "execution.run.input",
+                        "2.0",
+                        Map.of("mode", "SCRIPT", "language", "python", "purpose", purpose, "content", content)),
+                Instant.parse("2026-07-30T00:00:00Z"));
+
+        String summary = ToolPipeline.targetSummary(call);
+
+        assertThat(summary)
+                .hasSizeLessThanOrEqualTo(512)
+                .startsWith("SCRIPT · python · Generate a calendar")
+                .doesNotContain("sensitive approved content", "Content:");
     }
 
     private static ToolRequest request(String schemaId, String schemaVersion, Map<String, Object> values) {

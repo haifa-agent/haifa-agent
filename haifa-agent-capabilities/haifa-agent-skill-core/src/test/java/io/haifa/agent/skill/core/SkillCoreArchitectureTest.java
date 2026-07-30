@@ -17,6 +17,7 @@ class SkillCoreArchitectureTest {
                         "io.haifa.agent.context..",
                         "io.haifa.agent.execution..",
                         "io.haifa.agent.credential.core..",
+                        "io.haifa.agent.personalassistant..",
                         "io.modelcontextprotocol..",
                         "org.springframework..",
                         "jakarta.persistence..")

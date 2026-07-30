@@ -9,14 +9,22 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.skill.api.SkillAvailability;
 import io.haifa.agent.skill.api.SkillDiscoveryContext;
 import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillPackageReviewGrant;
 import io.haifa.agent.skill.api.SkillParserMode;
 import io.haifa.agent.skill.api.SkillResolutionPolicy;
 import io.haifa.agent.skill.api.SkillScope;
 import io.haifa.agent.skill.api.SkillScopeRef;
 import io.haifa.agent.skill.api.SkillSourceDescriptor;
 import io.haifa.agent.skill.api.SkillSourceRef;
+import io.haifa.agent.skill.api.SkillTrustGrantState;
+import io.haifa.agent.skill.api.SkillTrustScope;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
+import io.haifa.agent.skill.api.SkillTrustSubject;
 import io.haifa.agent.skill.api.SkillVisibilityContext;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -152,6 +160,92 @@ class SkillCatalogBuilderTest {
                 .isEmpty();
     }
 
+    @Test
+    void exactPackageReviewGrantOnlyChangesCatalogEligibility() {
+        var review = scriptSource();
+        var context = new SkillDiscoveryContext(visibility);
+        var registration = review.discover(context).registrations().getFirst();
+        var policy = new SkillResolutionPolicy("reviewed@1", List.of(SkillScope.SDK), true);
+        Instant now = Instant.parse("2026-07-30T00:00:00Z");
+        var subject =
+                new SkillTrustSubject(visibility.tenant(), visibility.principal(), "test-product", Optional.empty());
+        var grant = new SkillPackageReviewGrant(
+                "package-review-1",
+                1,
+                1,
+                visibility.tenant(),
+                visibility.principal(),
+                "test-product",
+                SkillTrustScope.PRODUCT,
+                Optional.empty(),
+                registration.coordinate(),
+                registration.registrationDigest(),
+                registration.packageIndex().digest(),
+                now.minusSeconds(60),
+                Optional.of(now.plusSeconds(60)),
+                Optional.empty(),
+                SkillTrustGrantState.ACTIVE,
+                "reviewer",
+                "test-fixture",
+                "SKILL_PACKAGE_REVIEWED");
+        var trust = new SkillTrustSnapshot(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", List.of(grant), List.of());
+
+        var catalog = new SkillCatalogBuilder(List.of(review), policy, trust, subject, Clock.fixed(now, ZoneOffset.UTC))
+                .build(context);
+
+        assertThat(catalog.snapshot().bindings()).singleElement().satisfies(binding -> {
+            assertThat(binding.packageReviewGrantId()).contains(grant.id());
+            assertThat(binding.packageIndex().resources())
+                    .anyMatch(resource -> resource.relativePath().equals("scripts/run.sh"));
+        });
+        assertThat(catalog.snapshot().diagnostics())
+                .extracting(value -> value.code())
+                .contains("SKILL_PACKAGE_REVIEW_GRANT_ACCEPTED");
+    }
+
+    @Test
+    void expiredPackageReviewGrantFailsClosed() {
+        var review = scriptSource();
+        var context = new SkillDiscoveryContext(visibility);
+        var registration = review.discover(context).registrations().getFirst();
+        Instant now = Instant.parse("2026-07-30T00:00:00Z");
+        var grant = new SkillPackageReviewGrant(
+                "package-review-expired",
+                1,
+                1,
+                visibility.tenant(),
+                visibility.principal(),
+                "test-product",
+                SkillTrustScope.USER,
+                Optional.empty(),
+                registration.coordinate(),
+                registration.registrationDigest(),
+                registration.packageIndex().digest(),
+                now.minusSeconds(120),
+                Optional.of(now.minusSeconds(1)),
+                Optional.empty(),
+                SkillTrustGrantState.ACTIVE,
+                "reviewer",
+                "test-fixture",
+                "SKILL_PACKAGE_REVIEWED");
+
+        assertThat(new SkillCatalogBuilder(
+                                List.of(review),
+                                new SkillResolutionPolicy("reviewed@1", List.of(SkillScope.SDK), true),
+                                new SkillTrustSnapshot(
+                                        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                                        List.of(grant),
+                                        List.of()),
+                                new SkillTrustSubject(
+                                        visibility.tenant(), visibility.principal(), "test-product", Optional.empty()),
+                                Clock.fixed(now, ZoneOffset.UTC))
+                        .build(context)
+                        .snapshot()
+                        .bindings())
+                .isEmpty();
+    }
+
     private InMemorySkillSource source(String id, SkillScopeRef scope, int priority, String body) {
         var descriptor = new SkillSourceDescriptor(
                 new SkillSourceRef(id, "1"), scope, SkillOrigin.BUNDLED, priority, SkillParserMode.STRICT, true, false);
@@ -160,6 +254,27 @@ class SkillCatalogBuilderTest {
                 parser,
                 SkillAvailability.ENABLED,
                 Map.of("shared-skill", Map.of("SKILL.md", skillBytes(body))));
+    }
+
+    private InMemorySkillSource scriptSource() {
+        return new InMemorySkillSource(
+                new SkillSourceDescriptor(
+                        new SkillSourceRef("review", "1"),
+                        SkillScopeRef.sdk(),
+                        SkillOrigin.BUNDLED,
+                        0,
+                        SkillParserMode.STRICT,
+                        true,
+                        false),
+                parser,
+                SkillAvailability.ENABLED,
+                Map.of(
+                        "shared-skill",
+                        Map.of(
+                                "SKILL.md",
+                                skillBytes("# Reviewed"),
+                                "scripts/run.sh",
+                                "printf transform".getBytes(StandardCharsets.UTF_8))));
     }
 
     private static byte[] skillBytes(String body) {

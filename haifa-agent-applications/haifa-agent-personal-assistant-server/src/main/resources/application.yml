@@ -43,6 +43,12 @@ haifa:
       endpoint: ${HAIFA_PERSONAL_MODEL_ENDPOINT:https://api.deepseek.com}
       provider-model-id: ${HAIFA_PERSONAL_MODEL_ID:deepseek-v4-flash}
       credential-reference: ${HAIFA_PERSONAL_MODEL_CREDENTIAL:env://DEEPSEEK_API_KEY}
+    web:
+      enabled: ${HAIFA_PERSONAL_WEB_ENABLED:false}
+      credential-reference: ${HAIFA_PERSONAL_WEB_CREDENTIAL:env://ALIYUN_IQS_API_KEY}
+      timeout-millis: ${HAIFA_PERSONAL_WEB_TIMEOUT_MILLIS:30000}
+      search-maximum-response-bytes: ${HAIFA_PERSONAL_WEB_SEARCH_MAXIMUM_RESPONSE_BYTES:2097152}
+      fetch-maximum-response-bytes: ${HAIFA_PERSONAL_WEB_FETCH_MAXIMUM_RESPONSE_BYTES:4194304}
     mcp:
       mode: ${HAIFA_PERSONAL_MCP_MODE:embedded-echo}
       address: 127.0.0.1
@@ -62,3 +68,4 @@ haifa:
       python-path: ${HAIFA_PERSONAL_PYTHON_PATH:}
       power-shell-path: ${HAIFA_PERSONAL_POWERSHELL_PATH:}
     local-skill-root: ${HAIFA_PERSONAL_SKILL_ROOT:}
+    trusted-script-manifest: ${HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST:}

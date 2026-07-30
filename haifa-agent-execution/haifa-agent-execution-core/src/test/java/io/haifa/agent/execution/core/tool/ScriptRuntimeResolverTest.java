@@ -41,6 +41,15 @@ class ScriptRuntimeResolverTest {
     }
 
     @Test
+    void pythonRuntimeForcesUtf8EvenInIsolatedMode() {
+        var prepared = ScriptRuntimeResolver.python(Path.of("python")).prepare("print('中文输出')", List.of());
+
+        assertThat(prepared.command().argv()).containsExactly("python", "-X", "utf8", "-I", "-");
+        assertThat(new String(prepared.input().bytes(), java.nio.charset.StandardCharsets.UTF_8))
+                .isEqualTo("print('中文输出')\n");
+    }
+
+    @Test
     void canonicalDefinitionRequiresApprovalAndDoesNotExposeOperatingSystemSelection() {
         var definition =
                 ExecutionToolDefinitionFactory.create("profile@1", true, false, java.util.Set.of("powershell"));

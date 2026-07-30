@@ -83,7 +83,7 @@ public final class PersonalExecutionRuntime {
                         locationRef,
                         WorkspaceBindingMode.DIRECT,
                         principal,
-                        new WorkspaceCapabilitySet(Set.of("execution.run")),
+                        new WorkspaceCapabilitySet(Set.of("execution.run", "workspace.write")),
                         WorkspacePermissionSet.readWriteExecute(),
                         LocalWorkspaceLocationStore.fingerprintFor(workspaceRoot),
                         time.now())
@@ -147,8 +147,10 @@ public final class PersonalExecutionRuntime {
                 broker,
                 identifiers,
                 time,
-                ignored -> new ExecutionInvocationScope(workspaceId, Set.of("execution.run")),
-                configuration);
+                ignored -> new ExecutionInvocationScope(workspaceId, Set.of("execution.run", "workspace.write")),
+                configuration,
+                (resolvedWorkspaceId, inputPaths) -> inputPaths.forEach(path ->
+                        files.stat(new io.haifa.agent.project.path.WorkspacePath(resolvedWorkspaceId, path), false)));
         return PersonalExecutionPlatform.create(provider, profile, runtimes, (request, responder) -> {
             boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
                     && request.requester().principal().equals(responder.principal());

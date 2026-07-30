@@ -28,8 +28,23 @@ public final class PersonalApiExceptionHandler {
                 .body(new PersonalApiDtos.Error(code, exception.getMessage(), exception.correlation()));
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, ServerWebInputException.class})
-    ResponseEntity<PersonalApiDtos.Error> badRequest(Exception exception, ServerWebExchange exchange) {
+    @ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<PersonalApiDtos.Error> illegalArgument(
+            IllegalArgumentException exception, ServerWebExchange exchange) {
+        String correlation = correlation(exchange);
+        LOGGER.warn(
+                "personal_api_invalid_argument correlationId={} method={} path={} exceptionType={} origin={}",
+                correlation,
+                exchange.getRequest().getMethod(),
+                exchange.getRequest().getPath().value(),
+                exception.getClass().getName(),
+                origin(exception));
+        return ResponseEntity.badRequest()
+                .body(new PersonalApiDtos.Error("INVALID_REQUEST", "The request is invalid.", correlation));
+    }
+
+    @ExceptionHandler(ServerWebInputException.class)
+    ResponseEntity<PersonalApiDtos.Error> badRequest(ServerWebInputException exception, ServerWebExchange exchange) {
         return ResponseEntity.badRequest()
                 .body(new PersonalApiDtos.Error("INVALID_REQUEST", "The request is invalid.", correlation(exchange)));
     }

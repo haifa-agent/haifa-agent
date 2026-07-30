@@ -125,10 +125,13 @@ import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.ToolExecutionEnvironment;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPolicy;
+import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
+import io.haifa.agent.runtime.core.tool.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import io.haifa.agent.skill.api.SkillCatalog;
 import io.haifa.agent.skill.api.SkillContentLoader;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.tool.api.ToolCatalog;
 import io.haifa.agent.tool.api.ToolInvoker;
 import io.haifa.agent.tool.api.ToolSchemaValidationResult;
@@ -165,6 +168,8 @@ public final class RuntimeCoreBuilder {
     private ToolCatalog toolCatalog = ToolCatalog.empty();
     private SkillCatalog skillCatalog = SkillCatalog.empty();
     private SkillContentLoader skillContentLoader = SkillContentLoader.empty();
+    private SkillTrustSnapshot skillTrust = SkillTrustSnapshot.empty();
+    private String policyProductId = "runtime-compatibility";
     private ToolInvoker toolInvoker = request -> {
         throw new IllegalStateException("no tool invoker configured for "
                 + request.binding().coordinate().externalForm());
@@ -173,6 +178,8 @@ public final class RuntimeCoreBuilder {
     private boolean toolPlatformConfigured;
     private ToolPolicy toolPolicy = new DefaultToolPolicy();
     private PublicToolPolicy publicToolPolicy;
+    private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
+            java.util.function.UnaryOperator.identity();
     private PolicyDecisionStore policyDecisions = new RuntimePolicyDecisionStore();
     private PolicySnapshotStore policySnapshots;
     private PolicyAuthorizationEvidenceStore policyAuthorizationEvidence =
@@ -311,8 +318,21 @@ public final class RuntimeCoreBuilder {
     }
 
     public RuntimeCoreBuilder skillPlatform(SkillCatalog catalog, SkillContentLoader contentLoader) {
+        return skillPlatform(catalog, contentLoader, SkillTrustSnapshot.empty());
+    }
+
+    public RuntimeCoreBuilder skillPlatform(
+            SkillCatalog catalog, SkillContentLoader contentLoader, SkillTrustSnapshot trust) {
         skillCatalog = Objects.requireNonNull(catalog, "catalog");
         skillContentLoader = Objects.requireNonNull(contentLoader, "contentLoader");
+        skillTrust = Objects.requireNonNull(trust, "trust");
+        return this;
+    }
+
+    public RuntimeCoreBuilder policyProductId(String value) {
+        String normalized = Objects.requireNonNull(value, "value").trim();
+        if (normalized.isEmpty()) throw new IllegalArgumentException("policy product id must not be blank");
+        policyProductId = normalized;
         return this;
     }
 
@@ -324,6 +344,11 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder publicToolPolicy(PublicToolPolicy value) {
         publicToolPolicy = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
+    public RuntimeCoreBuilder publicToolPolicyDecorator(java.util.function.UnaryOperator<PublicToolPolicy> value) {
+        publicToolPolicyDecorator = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -501,15 +526,12 @@ public final class RuntimeCoreBuilder {
         CapabilityAuthorizer authorizer =
                 (run, binding) -> toolNames.contains(binding.alias().value());
         PublicToolPolicy configuredToolPolicy;
+        ToolPolicyRequestAdapter policyRequests =
+                new DefaultToolPolicyRequestAdapter(policyProductId, ApprovalMode.ASK);
         if (publicToolPolicy != null) {
             configuredToolPolicy = publicToolPolicy;
         } else if (policySnapshots == null) {
-            configuredToolPolicy = new LegacyToolPolicyAdapter(
-                    toolPolicy,
-                    new DefaultToolPolicyRequestAdapter("runtime-compatibility", ApprovalMode.ASK),
-                    ids,
-                    time,
-                    policyDecisions);
+            configuredToolPolicy = new LegacyToolPolicyAdapter(toolPolicy, policyRequests, ids, time, policyDecisions);
         } else {
             PolicySnapshotRef legacySnapshotRef = new PolicySnapshotRef("legacy-tool-policy-v1");
             PolicySnapshot newLegacySnapshot = new PolicySnapshot(
@@ -528,13 +550,14 @@ public final class RuntimeCoreBuilder {
                         return newLegacySnapshot;
                     });
             configuredToolPolicy = new LegacyToolPolicyAdapter(
-                    toolPolicy,
-                    new DefaultToolPolicyRequestAdapter("runtime-compatibility", ApprovalMode.ASK),
-                    ids,
-                    time,
-                    policyDecisions,
-                    legacySnapshot.ref());
+                    toolPolicy, policyRequests, ids, time, policyDecisions, legacySnapshot.ref());
         }
+        if (!skillTrust.scriptExecutionGrants().isEmpty()) {
+            configuredToolPolicy = new TrustedSkillScriptPublicToolPolicy(
+                    configuredToolPolicy, state, policyRequests, ids, time, policyDecisions);
+        }
+        configuredToolPolicy = Objects.requireNonNull(
+                publicToolPolicyDecorator.apply(configuredToolPolicy), "public tool policy decorator returned null");
         ToolPipeline pipeline = new ToolPipeline(
                 toolInvoker,
                 toolSchemaValidator,
@@ -659,7 +682,7 @@ public final class RuntimeCoreBuilder {
                 trace);
         ConfigurationSnapshotFactory configuredSnapshots = snapshots != null
                 ? snapshots
-                : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot());
+                : new ContentAddressedSnapshotFactory(toolCatalog.snapshot(), skillCatalog.snapshot(), skillTrust);
         RunBootstrapper bootstrapper =
                 new RunBootstrapper(definitionResolver, profileResolver, access, configuredSnapshots, ids, time);
         return new DefaultAgentRuntime(

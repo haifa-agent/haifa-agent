@@ -1,8 +1,11 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string] $DeepSeekKeyFile = 'D:\workspace\ss-deepseek.txt',
+    [string] $AliyunIqsKeyFile = 'D:\workspace\ss-aliyun-iqs.txt',
     [string] $ContinuationKeyFile = 'D:\workspace\ss-haifa-personal-continuation.txt',
     [string] $UtilityMcpDirectory = 'D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server',
+    [string] $PersonalSkillRoot = 'D:\agents\hermes-agent\optional-skills\finance',
+    [string] $TrustedScriptManifest = '',
     [switch] $Rebuild,
     [switch] $Stop,
     [ValidateRange(30, 600)]
@@ -357,6 +360,19 @@ if ($Stop) {
 if (-not (Test-Path -LiteralPath $DeepSeekKeyFile -PathType Leaf)) {
     throw "DeepSeek key file was not found: $DeepSeekKeyFile"
 }
+if (-not (Test-Path -LiteralPath $AliyunIqsKeyFile -PathType Leaf)) {
+    throw "Aliyun IQS key file was not found: $AliyunIqsKeyFile"
+}
+if (-not (Test-Path -LiteralPath $PersonalSkillRoot -PathType Container)) {
+    throw "Personal Skill root was not found: $PersonalSkillRoot"
+}
+$personalSkillPackages = @(
+    Get-ChildItem -LiteralPath $PersonalSkillRoot -Directory |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'SKILL.md') -PathType Leaf }
+)
+if ($personalSkillPackages.Count -eq 0) {
+    throw "Personal Skill root contains no immediate child with SKILL.md: $PersonalSkillRoot"
+}
 if (-not (Test-Path -LiteralPath $UtilityMcpDirectory -PathType Container)) {
     throw "Utility MCP directory was not found: $UtilityMcpDirectory"
 }
@@ -370,6 +386,18 @@ if (-not (Test-Path -LiteralPath $mavenWrapper -PathType Leaf)) {
 $deepSeekApiKey = (Get-Content -LiteralPath $DeepSeekKeyFile -Raw).Trim()
 if ([string]::IsNullOrWhiteSpace($deepSeekApiKey)) {
     throw "DeepSeek key file is empty: $DeepSeekKeyFile"
+}
+$aliyunIqsApiKey = (Get-Content -LiteralPath $AliyunIqsKeyFile -Raw).Trim()
+if ([string]::IsNullOrWhiteSpace($aliyunIqsApiKey)) {
+    throw "Aliyun IQS key file is empty: $AliyunIqsKeyFile"
+}
+$personalSkillRoot = (Resolve-Path -LiteralPath $PersonalSkillRoot).Path
+$trustedScriptManifestPath = ''
+if (-not [string]::IsNullOrWhiteSpace($TrustedScriptManifest)) {
+    $trustedScriptManifestPath = (Resolve-Path -LiteralPath $TrustedScriptManifest).Path
+    if (-not (Test-Path -LiteralPath $trustedScriptManifestPath -PathType Leaf)) {
+        throw "Trusted script manifest is not a file: $trustedScriptManifestPath"
+    }
 }
 
 if (-not (Test-Path -LiteralPath $ContinuationKeyFile -PathType Leaf)) {
@@ -523,6 +551,7 @@ if (Test-HttpEndpoint -Uri $backendHealthUri) {
     $backendStderr = Join-Path $logDirectory "personal-backend-$timestamp.err.log"
     $backendEnvironment = @{
         DEEPSEEK_API_KEY = $deepSeekApiKey
+        ALIYUN_IQS_API_KEY = $aliyunIqsApiKey
         HAIFA_PERSONAL_CONTINUATION_KEY = $continuationKey
         HAIFA_PERSONAL_DATA_DIR = $dataDirectory
         HAIFA_PERSONAL_MODEL_MODE = 'remote'
@@ -530,6 +559,10 @@ if (Test-HttpEndpoint -Uri $backendHealthUri) {
         HAIFA_PERSONAL_MODEL_ENDPOINT = 'https://api.deepseek.com'
         HAIFA_PERSONAL_MODEL_ID = 'deepseek-v4-flash'
         HAIFA_PERSONAL_MODEL_CREDENTIAL = 'env://DEEPSEEK_API_KEY'
+        HAIFA_PERSONAL_WEB_ENABLED = 'true'
+        HAIFA_PERSONAL_WEB_CREDENTIAL = 'env://ALIYUN_IQS_API_KEY'
+        HAIFA_PERSONAL_SKILL_ROOT = $personalSkillRoot
+        HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST = $trustedScriptManifestPath
         HAIFA_PERSONAL_MCP_MODE = 'external'
         HAIFA_PERSONAL_MCP_ENDPOINT = "http://127.0.0.1:$mcpPort/mcp"
         HAIFA_PERSONAL_MCP_ALLOWED_TOOLS = $allowedMcpTools
@@ -624,6 +657,10 @@ Write-Host "  Repository:       $repositoryRoot"
 Write-Host "  Personal Web:     $webDirectory"
 Write-Host "  Personal Server:  $serverDirectory"
 Write-Host "  Utility MCP:      $UtilityMcpDirectory"
+Write-Host "  Personal Skills:  $personalSkillRoot"
+if (-not [string]::IsNullOrWhiteSpace($trustedScriptManifestPath)) {
+    Write-Host "  Trust Manifest:   $trustedScriptManifestPath"
+}
 Write-Host "  Runtime data:     $dataDirectory"
 Write-Host "  Runtime logs:     $logDirectory"
 Write-Host ''
@@ -634,6 +671,7 @@ Write-Host "  Backend health:   $backendHealthUri"
 Write-Host "  Backend OpenAPI:  http://127.0.0.1:$backendPort/api/v1/openapi.json"
 Write-Host "  Utility MCP:      http://127.0.0.1:$mcpPort/mcp"
 Write-Host "  MCP health:       $mcpHealthUri"
+Write-Host '  Web Tools:        web.search, web.fetch (Aliyun IQS)'
 Write-Host ''
 Write-Host "State: $stateFile"
 Write-Host "Logs:  $logDirectory"
