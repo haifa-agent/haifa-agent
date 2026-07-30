@@ -422,6 +422,9 @@ class LocalCodingAgentTest {
                                             && message.content().contains("map every stated acceptance clause")
                                             && message.content()
                                                     .contains(
+                                                            "do not write files through shell redirection, inline scripts, or Git commands")
+                                            && message.content()
+                                                    .contains(
                                                             "deduplication, rejected-record accounting, and accepted-record counts")
                                             && message.content()
                                                     .contains(
