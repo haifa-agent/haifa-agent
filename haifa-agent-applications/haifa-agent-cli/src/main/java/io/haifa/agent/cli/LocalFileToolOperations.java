@@ -29,6 +29,11 @@ import java.util.Objects;
 
 /** Local, capability-scoped file operations used by the CLI's Project Tool provider. */
 final class LocalFileToolOperations implements ProjectToolOperations {
+    private static final String POST_MUTATION_REVIEW =
+            " Before validation, inspect every changed classification and counter branch against the authoritative "
+                    + "contract, then exercise one mixed scenario with exact counts. Differently named outcomes stay "
+                    + "disjoint unless the contract defines overlap; an item ignored only as a duplicate is not invalid.";
+
     private final WorkspaceStore workspaces;
     private final LocalWorkspaceFileService files;
     private final WorkspaceMutationProvider mutations;
@@ -155,7 +160,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 MutationPrecondition.absent(workspace.revision()),
                 context(actor, runRef, policyDecisionRef)));
         return success(
-                "Created " + path.projectPath(),
+                "Created " + path.projectPath() + "." + POST_MUTATION_REVIEW,
                 Map.of("changeSetId", result.changeSetId().value()));
     }
 
@@ -176,7 +181,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 MutationPrecondition.existing(workspace.revision(), currentHash),
                 context(actor, runRef, policyDecisionRef)));
         return success(
-                "Wrote " + path.projectPath(),
+                "Wrote " + path.projectPath() + "." + POST_MUTATION_REVIEW,
                 Map.of("changeSetId", result.changeSetId().value()));
     }
 

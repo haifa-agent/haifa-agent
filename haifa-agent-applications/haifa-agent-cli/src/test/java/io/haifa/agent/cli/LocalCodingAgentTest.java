@@ -435,8 +435,13 @@ class LocalCodingAgentTest {
                     yield toolResponse(
                             "delivery-write", "file_create", Map.of("path", "delivered.txt", "content", "delivered\n"));
                 }
-                case 3 ->
-                    toolResponse(
+                case 3 -> {
+                    assertThat(request.messages())
+                            .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                                    && message.content()
+                                            .contains("inspect every changed classification and counter branch")
+                                    && message.content().contains("ignored only as a duplicate is not invalid"));
+                    yield toolResponse(
                             "delivery-test",
                             "execution_run",
                             verificationArguments(
@@ -452,6 +457,7 @@ class LocalCodingAgentTest {
                                             "Validate delivered file",
                                             "operationFamily",
                                             "TEST")));
+                }
                 case 4 ->
                     toolResponse(
                             "delivery-diff",
