@@ -109,6 +109,10 @@ public final class CodingDeliveryContextSource implements ContextSource {
                                 + "constraint, and inspect each affected entry point and end-to-end boundary",
                 "coverageAction=for input-facing behavior, validate representative success, malformed, boundary, and "
                         + "operational-failure paths including exit status and safe diagnostics",
+                "classificationAuditAction=when a contract names different input outcomes, keep their meanings and "
+                        + "metrics disjoint unless it explicitly defines overlap; inspect every changed classification "
+                        + "and counter branch, then run one mixed scenario containing each outcome and assert every exact "
+                        + "count. An item ignored only as a duplicate is not rejected or invalid unless the contract says so",
                 "evidence=" + evidenceCodes,
                 "remainingModelCalls=" + remainingModelCalls,
                 "remainingToolCalls=" + remainingToolCalls,

@@ -221,7 +221,11 @@ class CodingDeliveryControlTest {
                 .contains("map every stated constraint")
                 .contains("each affected entry point and end-to-end boundary")
                 .contains("implement all mapped constraints before validation")
-                .contains("malformed, boundary, and operational-failure paths");
+                .contains("malformed, boundary, and operational-failure paths")
+                .contains("keep their meanings and metrics disjoint")
+                .contains("inspect every changed classification and counter branch")
+                .contains("run one mixed scenario containing each outcome")
+                .contains("ignored only as a duplicate is not rejected or invalid");
     }
 
     @Test
