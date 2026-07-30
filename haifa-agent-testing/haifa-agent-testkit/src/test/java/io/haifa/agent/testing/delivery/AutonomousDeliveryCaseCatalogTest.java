@@ -42,6 +42,7 @@ class AutonomousDeliveryCaseCatalogTest {
         assertTrue(Files.isDirectory(caseRoot.resolve("base-workspace")));
         assertFalse(Files.exists(caseRoot.resolve("runtime.db")));
         assertFalse(Files.exists(caseRoot.resolve(".git")));
+        assertTrue(Files.isExecutable(caseRoot.resolve("base-workspace/task-board")));
         assertTrue(Files.isExecutable(caseRoot.resolve("base-workspace/test.sh")));
         assertThrows(java.nio.file.FileAlreadyExistsException.class, () -> new AutonomousDeliveryFixtureStore()
                 .materializeCase(testCase, caseRoot));

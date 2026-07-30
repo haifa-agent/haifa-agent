@@ -11,10 +11,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /** Reads only bounded, safe evidence fields from the authoritative per-repeat SQLite store. */
 final class AutonomousDeliveryRuntimeEvidenceReader {
@@ -112,6 +114,7 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
         int executionCalls = 0;
         int maximumAttempts = 0;
         boolean terminal = false;
+        Set<String> scratchToolCallIds = new HashSet<>();
         try (PreparedStatement statement =
                         connection.prepareStatement("SELECT type, data_payload FROM runtime_event ORDER BY sequence");
                 ResultSet rows = statement.executeQuery()) {
@@ -125,9 +128,19 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                         clusters.add(safeEvent(type, payload));
                     }
                     case "loop.progress-observed" -> progress.add(safeEvent(type, payload));
-                    case "execution.scratch-provisioned" -> scratchProvisioned++;
+                    case "execution.scratch-provisioned" -> {
+                        scratchProvisioned++;
+                        scratchToolCallIds.add(payload.path("toolCallId").asText());
+                    }
                     case "execution.scratch-cleanup-failed" -> scratchCleanupFailures++;
-                    case "execution.completed", "execution.failed" -> executionCalls++;
+                    case "execution.completed", "execution.failed" -> {
+                        String toolCallId = payload.path("toolCallId").asText();
+                        String executionId = payload.path("executionId").asText();
+                        boolean enteredSandbox = scratchToolCallIds.contains(toolCallId)
+                                || payload.has("exitCode")
+                                || (!executionId.isBlank() && !executionId.equals(toolCallId));
+                        if (enteredSandbox) executionCalls++;
+                    }
                     case "run.completed", "run.failed", "run.cancelled", "run.timed-out" -> terminal = true;
                     default -> {
                         // Other authoritative events are intentionally excluded from the safe Gate projection.

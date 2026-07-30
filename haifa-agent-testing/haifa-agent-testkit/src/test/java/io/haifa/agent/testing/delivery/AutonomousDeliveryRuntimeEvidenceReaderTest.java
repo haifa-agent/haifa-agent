@@ -29,11 +29,24 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
             insertTool(connection, "execution_run", "DENIED", "UNKNOWN");
             insertEvent(connection, 1, "execution.scratch-provisioned", Map.of("toolCallId", "call-1"));
             insertEvent(connection, 2, "execution.scratch-provisioned", Map.of("toolCallId", "call-2"));
-            insertEvent(connection, 3, "execution.completed", Map.of("toolCallId", "call-1"));
-            insertEvent(connection, 4, "execution.failed", Map.of("toolCallId", "call-2"));
+            insertEvent(
+                    connection,
+                    3,
+                    "execution.completed",
+                    Map.of("toolCallId", "call-1", "executionId", "execution-1", "exitCode", 0));
+            insertEvent(
+                    connection,
+                    4,
+                    "execution.failed",
+                    Map.of("toolCallId", "call-2", "executionId", "execution-2", "exitCode", 1));
             insertEvent(
                     connection,
                     5,
+                    "execution.failed",
+                    Map.of("toolCallId", "call-rejected", "executionId", "call-rejected"));
+            insertEvent(
+                    connection,
+                    6,
                     "tool.failure-cluster-updated",
                     Map.of(
                             "iteration",
@@ -50,10 +63,10 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
                             "/private/secret"));
             insertEvent(
                     connection,
-                    6,
+                    7,
                     "loop.progress-observed",
                     Map.of("iteration", 3, "progressDigest", "b".repeat(64), "unsafePrompt", "do not project"));
-            insertEvent(connection, 7, "run.completed", Map.of("status", "COMPLETED"));
+            insertEvent(connection, 8, "run.completed", Map.of("status", "COMPLETED"));
         }
 
         var evidence = new AutonomousDeliveryRuntimeEvidenceReader(json).read(database);
@@ -101,7 +114,11 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         try (Connection connection = createDatabase(database)) {
             insertRun(connection, "FAILED", 10, 5, 1, 1, 0);
             insertTool(connection, "execution_run", "FAILED", "TEST");
-            insertEvent(connection, 1, "execution.failed", Map.of("toolCallId", "call-1"));
+            insertEvent(
+                    connection,
+                    1,
+                    "execution.failed",
+                    Map.of("toolCallId", "call-1", "executionId", "execution-1", "exitCode", 1));
             insertEvent(connection, 2, "execution.scratch-cleanup-failed", Map.of("toolCallId", "call-1"));
             insertEvent(connection, 3, "run.failed", Map.of("status", "FAILED"));
         }

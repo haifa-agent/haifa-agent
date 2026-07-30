@@ -40,7 +40,7 @@
       "promptSha256": "f274421411e65373d8eb78e7f56c26f6f66e4fdf0e6e642026cab267df2572db",
       "workspaceResource": "fixtures/autonomous-delivery/cases/02/base-workspace",
       "workspaceSha256": "43fbb8b3c5d72846272f36b9e0fa0304ff2f4587a500e7ff5e65554f2b3c3205",
-      "executableWorkspacePaths": ["test.sh"],
+      "executableWorkspacePaths": ["task-board", "test.sh"],
       "acceptanceResource": "fixtures/autonomous-delivery/cases/02/acceptance.py",
       "acceptanceSha256": "0348caacf07bf9b44f0905f8762ba3d4b54623b5a3c9284a66b08aeef19532f8",
       "oracleId": "python-hidden-acceptance-v1",

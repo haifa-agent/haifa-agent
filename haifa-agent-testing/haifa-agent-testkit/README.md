@@ -23,6 +23,9 @@ Runtime 与其余 Gate 证据文件全部纳入摘要。
 
 自主交付 Harness 的隔离 Local Native 配置保持网络禁用，并允许最多 32 个进程，以容纳
 `go test -race` 等会并行启动编译器子进程的受控 Toolchain 验证；该上限不授予额外路径或网络能力。
+Catalog 显式声明的 Workspace 脚本在 Fixture 物化时恢复可执行位。Scratch Gate 只统计已进入
+Sandbox 的执行；参数或路径预检阶段拒绝、从未启动进程的请求仍记录为 Tool Failure，但不伪报为
+“执行后缺少 Scratch”。
 
 约束：
 
