@@ -235,15 +235,17 @@ class HostSandboxTest {
         copyProcessClass(root, StdinEchoProcess.class);
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces, fixture.bindings, fixture.locations, () -> "stdin-session", Instant::now);
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java")
+                .toString();
         SandboxProfile profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("stdin-test", "1"),
                 provider.configurationDigest(),
-                Set.of("java"),
+                Set.of(javaExecutable),
                 Set.of(),
                 false);
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
             var result = session.execute(new SandboxExecution(
-                    ExecutionCommand.direct(List.of("java", "-cp", ".", StdinEchoProcess.class.getName())),
+                    ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", StdinEchoProcess.class.getName())),
                     WorkspacePath.root(fixture.workspaceId),
                     Map.of(),
                     new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2),
