@@ -156,25 +156,36 @@ persistence:
 
 ```yaml
 models:
-  default: deepseek-coding
-  entries:
-    - id: deepseek-coding
-      displayName: DeepSeek Coding
-      providerId: deepseek
-      providerModelId: deepseek-v4-pro
+  default: deepseek-v4-pro
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
-    - id: bailian-coding
-      displayName: Bailian Coding
-      providerId: aliyun-bailian
-      providerModelId: qwen-plus
+      models:
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
+        - id: deepseek-v4-flash
+          displayName: DeepSeek V4 Flash
+          providerModelId: deepseek-v4-flash
+    - id: aliyun-bailian
+      displayName: Alibaba Cloud Bailian
       workspaceId: workspace-id
       region: cn-beijing
       credentialRef: env://DASHSCOPE_API_KEY
+      models:
+        - id: bailian-qwen-plus
+          displayName: Qwen Plus
+          providerModelId: qwen-plus
 ```
 
 旧 `model` 配置仍按单模型读取。`--model`/`HAIFA_MODEL_ID` 只能选择已注册的内部 ID，不能临时
 注入 Endpoint 或 Credential；未知 ID 会 fail closed。
+
+Provider 是一级接入实例：Endpoint、Credential、百炼 Workspace/Region 只配置一次；其 `models`
+是该 Provider 可用的模型列表。模型 `id` 是产品内全局唯一选择 ID，`providerModelId` 是供应商实际
+模型或部署名称。
 
 `host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；
 只应对自己检查并信任的测试 Workspace 使用。模型与 Web Provider 调用可能计费。密钥只通过

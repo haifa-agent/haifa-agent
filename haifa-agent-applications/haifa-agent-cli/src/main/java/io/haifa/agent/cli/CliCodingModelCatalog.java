@@ -105,7 +105,7 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
         return new ModelProviderDefinition(
                 id,
                 "cli-v1",
-                providerId,
+                first.providerDisplayName(),
                 "openai-compatible",
                 first.endpoint(),
                 new io.haifa.agent.model.api.CredentialRef(first.credentialRef()),

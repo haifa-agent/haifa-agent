@@ -92,7 +92,7 @@ public class PersonalAssistantConfiguration {
                     mapper,
                     personalClock);
             var models = PersonalModelFactory.createPlatform(
-                    properties.models(), properties.defaultModelId(), mapper, execution.shell());
+                    properties.modelProviders(), properties.defaultModelId(), mapper, execution.shell());
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),
                     properties.caller().tenant(),

@@ -221,6 +221,7 @@ record CliConfiguration(
 
     record Model(
             String providerId,
+            String providerDisplayName,
             String modelId,
             URI endpoint,
             String credentialRef,
@@ -229,7 +230,7 @@ record CliConfiguration(
             String id,
             String displayName) {
         Model(String providerId, String modelId, URI endpoint, String credentialRef) {
-            this(providerId, modelId, endpoint, credentialRef, null, null, modelId, modelId);
+            this(providerId, providerId, modelId, endpoint, credentialRef, null, null, modelId, modelId);
         }
 
         Model(
@@ -239,11 +240,12 @@ record CliConfiguration(
                 String credentialRef,
                 String workspaceId,
                 String region) {
-            this(providerId, modelId, endpoint, credentialRef, workspaceId, region, modelId, modelId);
+            this(providerId, providerId, modelId, endpoint, credentialRef, workspaceId, region, modelId, modelId);
         }
 
         Model {
             providerId = text(providerId, "model.providerId");
+            providerDisplayName = text(providerDisplayName, "model.providerDisplayName");
             modelId = text(modelId, "model.modelId");
             id = text(id, "model.id");
             displayName = text(displayName, "model.displayName");

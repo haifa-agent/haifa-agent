@@ -19,35 +19,53 @@ class CliConfigurationLoaderTest {
                 configuration,
                 """
                 models:
-                  default: deepseek-coding
-                  entries:
-                    - id: deepseek-coding
-                      displayName: DeepSeek Coding
-                      providerId: deepseek
-                      providerModelId: deepseek-v4-pro
+                  default: deepseek-v4-pro
+                  providers:
+                    - id: deepseek
+                      displayName: DeepSeek
                       endpoint: https://api.deepseek.com
                       credentialRef: env://DEEPSEEK_API_KEY
-                    - id: bailian-coding
-                      displayName: Bailian Coding
-                      providerId: aliyun-bailian
-                      providerModelId: qwen-plus
+                      models:
+                        - id: deepseek-v4-pro
+                          displayName: DeepSeek V4 Pro
+                          providerModelId: deepseek-v4-pro
+                        - id: deepseek-v4-flash
+                          displayName: DeepSeek V4 Flash
+                          providerModelId: deepseek-v4-flash
+                    - id: aliyun-bailian
+                      displayName: Alibaba Cloud Bailian
                       workspaceId: workspace-123
                       region: cn-beijing
                       credentialRef: env://DASHSCOPE_API_KEY
+                      models:
+                        - id: bailian-qwen-plus
+                          displayName: Qwen Plus
+                          providerModelId: qwen-plus
                 """);
 
         CliConfiguration result = new CliConfigurationLoader()
                 .load(
                         CliArguments.parse(
-                                new String[] {"--config", configuration.toString(), "--model", "bailian-coding"}),
+                                new String[] {"--config", configuration.toString(), "--model", "deepseek-v4-flash"}),
                         Path.of("."));
 
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
-                .containsExactly("deepseek-coding", "bailian-coding");
-        assertThat(result.model().id()).isEqualTo("bailian-coding");
-        assertThat(result.model().modelId()).isEqualTo("qwen-plus");
-        assertThat(LocalCodingAgent.modelSnapshot(result).modelId().value()).isEqualTo("bailian-coding");
+                .containsExactly("deepseek-v4-pro", "deepseek-v4-flash", "bailian-qwen-plus");
+        assertThat(result.availableModels())
+                .filteredOn(model -> model.providerId().equals("deepseek"))
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly("deepseek-v4-pro", "deepseek-v4-flash");
+        assertThat(result.model().id()).isEqualTo("deepseek-v4-flash");
+        assertThat(result.model().modelId()).isEqualTo("deepseek-v4-flash");
+        assertThat(LocalCodingAgent.modelSnapshot(result).modelId().value()).isEqualTo("deepseek-v4-flash");
+        assertThat(new CliCodingModelCatalog(result)
+                        .available(
+                                new io.haifa.agent.core.reference.TenantRef("local"),
+                                new io.haifa.agent.core.reference.PrincipalRef("user", "user")))
+                .filteredOn(model -> model.providerId().equals("deepseek"))
+                .extracting(io.haifa.agent.application.project.product.coding.CodingModelOption::id)
+                .containsExactly("deepseek-v4-pro", "deepseek-v4-flash");
     }
 
     @Test

@@ -111,28 +111,43 @@ final class CliConfigurationLoader {
     }
 
     private static List<CliConfiguration.Model> models(Map<String, Object> source) {
-        Object configured = source.get("entries");
-        if (!(configured instanceof List<?> entries) || entries.isEmpty()) {
-            throw new IllegalArgumentException("configuration models.entries must be a non-empty list");
+        Object configured = source.get("providers");
+        if (!(configured instanceof List<?> providers) || providers.isEmpty()) {
+            throw new IllegalArgumentException("configuration models.providers must be a non-empty list");
         }
         List<CliConfiguration.Model> result = new ArrayList<>();
-        for (Object entry : entries) {
-            if (!(entry instanceof Map<?, ?> raw)) {
-                throw new IllegalArgumentException("configuration models.entries must contain objects");
+        Set<String> providerIds = new java.util.LinkedHashSet<>();
+        for (Object entry : providers) {
+            if (!(entry instanceof Map<?, ?> rawProvider)) {
+                throw new IllegalArgumentException("configuration models.providers must contain objects");
             }
-            Map<String, Object> model = stringObject(raw, "configuration models.entries");
-            String providerId = text(model, "providerId", "");
+            Map<String, Object> provider = stringObject(rawProvider, "configuration models.providers");
+            String providerId = text(provider, "id", "");
+            if (!providerIds.add(providerId)) {
+                throw new IllegalArgumentException("configuration contains duplicate model provider id: " + providerId);
+            }
             boolean bailian = providerId.equals("aliyun-bailian");
-            String endpoint = nullableText(model, "endpoint");
-            result.add(new CliConfiguration.Model(
-                    providerId,
-                    text(model, "providerModelId", ""),
-                    endpoint == null ? null : java.net.URI.create(endpoint),
-                    text(model, "credentialRef", bailian ? "env://DASHSCOPE_API_KEY" : "env://DEEPSEEK_API_KEY"),
-                    nullableText(model, "workspaceId"),
-                    nullableText(model, "region"),
-                    text(model, "id", ""),
-                    text(model, "displayName", text(model, "id", ""))));
+            String endpoint = nullableText(provider, "endpoint");
+            Object configuredModels = provider.get("models");
+            if (!(configuredModels instanceof List<?> providerModels) || providerModels.isEmpty()) {
+                throw new IllegalArgumentException("configuration models.providers[].models must be a non-empty list");
+            }
+            for (Object configuredModel : providerModels) {
+                if (!(configuredModel instanceof Map<?, ?> rawModel)) {
+                    throw new IllegalArgumentException("configuration models.providers[].models must contain objects");
+                }
+                Map<String, Object> model = stringObject(rawModel, "configuration models.providers[].models");
+                result.add(new CliConfiguration.Model(
+                        providerId,
+                        text(provider, "displayName", providerId),
+                        text(model, "providerModelId", ""),
+                        endpoint == null ? null : java.net.URI.create(endpoint),
+                        text(provider, "credentialRef", bailian ? "env://DASHSCOPE_API_KEY" : "env://DEEPSEEK_API_KEY"),
+                        nullableText(provider, "workspaceId"),
+                        nullableText(provider, "region"),
+                        text(model, "id", ""),
+                        text(model, "displayName", text(model, "id", ""))));
+            }
         }
         return List.copyOf(result);
     }

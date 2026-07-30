@@ -40,7 +40,6 @@ import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.net.http.HttpClient;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -52,33 +51,47 @@ public final class PersonalModelFactory {
 
     public static ModelContribution create(
             PersonalAssistantProperties.Model properties, ObjectMapper mapper, ShellPlatformContribution shell) {
-        return createPlatform(List.of(properties), properties.id(), mapper, shell)
+        return createPlatform(
+                        List.of(PersonalAssistantProperties.ModelProvider.fromLegacy(properties)),
+                        properties.id(),
+                        mapper,
+                        shell)
                 .contribution();
     }
 
     public static Platform createPlatform(
-            List<PersonalAssistantProperties.Model> configured,
+            List<PersonalAssistantProperties.ModelProvider> configured,
             String defaultModelId,
             ObjectMapper mapper,
             ShellPlatformContribution shell) {
-        List<PersonalAssistantProperties.Model> properties = List.copyOf(configured);
-        if (properties.isEmpty()) throw new IllegalArgumentException("at least one Personal model is required");
-        boolean deterministic = properties.stream().anyMatch(value -> "deterministic".equals(value.mode()));
+        List<PersonalAssistantProperties.ModelProvider> providers = List.copyOf(configured);
+        if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
+        boolean deterministic = providers.stream().anyMatch(value -> "deterministic".equals(value.mode()));
         if (deterministic
-                && (properties.size() != 1
-                        || !"deterministic".equals(properties.getFirst().mode()))) {
+                && (providers.size() != 1
+                        || providers.getFirst().models().size() != 1
+                        || !"deterministic".equals(providers.getFirst().mode()))) {
             throw new IllegalArgumentException("deterministic acceptance model cannot enter the production model list");
         }
-        PersonalAssistantProperties.Model selected = properties.stream()
-                .filter(value -> value.id().equals(defaultModelId))
+        List<ConfiguredModel> models = providers.stream()
+                .flatMap(provider -> provider.models().stream().map(model -> new ConfiguredModel(provider, model)))
+                .toList();
+        ConfiguredModel selected = models.stream()
+                .filter(value -> value.model().id().equals(defaultModelId))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("default Personal model is unavailable"));
         String adapter = deterministic ? "personal-deterministic" : "openai-compatible";
-        LinkedHashMap<String, ResolvedModelSnapshot> snapshots = new LinkedHashMap<>();
-        properties.forEach(value -> snapshots.put(value.id(), snapshot(value, adapter)));
-        ResolvedModelSnapshot snapshot = snapshots.get(selected.id());
+        Map<String, ResolvedModelSnapshot> snapshots = models.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        value -> value.model().id(),
+                        value -> snapshot(value.provider(), value.model(), adapter),
+                        (left, right) -> {
+                            throw new IllegalArgumentException("duplicate Personal model id");
+                        },
+                        java.util.LinkedHashMap::new));
+        ResolvedModelSnapshot snapshot = snapshots.get(selected.model().id());
         AgentChatModel model = deterministic
-                ? new DeterministicAcceptanceModel(selected.providerModelId(), shell)
+                ? new DeterministicAcceptanceModel(selected.model().providerModelId(), shell)
                 : new OpenAiCompatibleChatModel(
                         adapter,
                         "1.0.0",
@@ -100,13 +113,13 @@ public final class PersonalModelFactory {
                 model,
                 snapshot,
                 snapshots);
-        StaticModelPlatform modelPlatform = modelPlatform(properties, adapter);
+        StaticModelPlatform modelPlatform = modelPlatform(providers, adapter);
         TenantRef tenant = new TenantRef("personal-product");
         PrincipalRef principal = new PrincipalRef("personal-user", "user");
         PersonalModelCatalog catalog = new PersonalModelCatalog() {
             @Override
             public String defaultModelId() {
-                return selected.id();
+                return selected.model().id();
             }
 
             @Override
@@ -144,17 +157,20 @@ public final class PersonalModelFactory {
         return new Platform(contribution, catalog);
     }
 
-    private static ResolvedModelSnapshot snapshot(PersonalAssistantProperties.Model properties, String adapter) {
+    private static ResolvedModelSnapshot snapshot(
+            PersonalAssistantProperties.ModelProvider provider,
+            PersonalAssistantProperties.ProviderModel model,
+            String adapter) {
         return ResolvedModelSnapshot.create(
-                new ModelProviderId(properties.providerId()),
+                new ModelProviderId(provider.id()),
                 "1.0.0",
-                new ModelDefinitionId(properties.id()),
+                new ModelDefinitionId(model.id()),
                 "1.0.0",
-                properties.providerModelId(),
+                model.providerModelId(),
                 adapter,
                 "1.0.0",
-                properties.endpoint(),
-                new CredentialRef(properties.credentialReference()),
+                provider.endpoint(),
+                new CredentialRef(provider.credentialReference()),
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                 64_000,
                 8_192,
@@ -163,27 +179,17 @@ public final class PersonalModelFactory {
     }
 
     private static StaticModelPlatform modelPlatform(
-            List<PersonalAssistantProperties.Model> configured, String adapter) {
-        Map<String, List<PersonalAssistantProperties.Model>> grouped = new LinkedHashMap<>();
-        configured.forEach(value -> grouped.computeIfAbsent(value.providerId(), ignored -> new java.util.ArrayList<>())
-                .add(value));
-        List<ModelProviderDefinition> providers = grouped.entrySet().stream()
-                .map(entry -> {
-                    var first = entry.getValue().getFirst();
-                    if (entry.getValue().stream()
-                            .anyMatch(value -> !value.endpoint().equals(first.endpoint())
-                                    || !value.credentialReference().equals(first.credentialReference()))) {
-                        throw new IllegalArgumentException(
-                                "Personal models for one provider must share endpoint and credential");
-                    }
-                    ModelProviderId providerId = new ModelProviderId(entry.getKey());
-                    List<ModelDefinition> models = entry.getValue().stream()
-                            .map(value -> new ModelDefinition(
-                                    new ModelDefinitionId(value.id()),
+            List<PersonalAssistantProperties.ModelProvider> configured, String adapter) {
+        List<ModelProviderDefinition> providers = configured.stream()
+                .map(provider -> {
+                    ModelProviderId providerId = new ModelProviderId(provider.id());
+                    List<ModelDefinition> models = provider.models().stream()
+                            .map(model -> new ModelDefinition(
+                                    new ModelDefinitionId(model.id()),
                                     "1.0.0",
                                     providerId,
-                                    value.providerModelId(),
-                                    value.displayName(),
+                                    model.providerModelId(),
+                                    model.displayName(),
                                     ModelStatus.ACTIVE,
                                     Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                                     64_000,
@@ -194,10 +200,10 @@ public final class PersonalModelFactory {
                     return new ModelProviderDefinition(
                             providerId,
                             "1.0.0",
-                            first.providerDisplayName(),
+                            provider.displayName(),
                             adapter,
-                            first.endpoint(),
-                            new CredentialRef(first.credentialReference()),
+                            provider.endpoint(),
+                            new CredentialRef(provider.credentialReference()),
                             ProviderStatus.ACTIVE,
                             models,
                             Map.of(),
@@ -210,6 +216,9 @@ public final class PersonalModelFactory {
                 Map.of(adapter, "1.0.0"),
                 new InMemoryProviderHealthRegistry());
     }
+
+    private record ConfiguredModel(
+            PersonalAssistantProperties.ModelProvider provider, PersonalAssistantProperties.ProviderModel model) {}
 
     public record Platform(ModelContribution contribution, PersonalModelCatalog catalog) {}
 

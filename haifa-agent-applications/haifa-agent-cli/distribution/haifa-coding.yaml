@@ -1,14 +1,19 @@
 # Portable, secret-free defaults for the local Coding Agent distribution.
 # Secrets are injected through environment variables, never stored in this file.
 models:
-  default: deepseek-coding
-  entries:
-    - id: deepseek-coding
-      displayName: DeepSeek Coding
-      providerId: deepseek
-      providerModelId: deepseek-v4-pro
+  default: deepseek-v4-pro
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
+      models:
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
+        - id: deepseek-v4-flash
+          displayName: DeepSeek V4 Flash
+          providerModelId: deepseek-v4-flash
 
 tools:
   enabled:
