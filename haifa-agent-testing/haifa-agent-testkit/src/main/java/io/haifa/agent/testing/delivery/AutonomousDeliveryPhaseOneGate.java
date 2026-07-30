@@ -74,6 +74,14 @@ final class AutonomousDeliveryPhaseOneGate {
                 }
             }
         }
+        int executionCalls = results.stream()
+                .mapToInt(result -> ((Number) result.get("executionCalls")).intValue())
+                .sum();
+        int scratchProvisioned = results.stream()
+                .mapToInt(result -> ((Number) result.get("scratchProvisionedCount")).intValue())
+                .sum();
+        boolean scratchExercised = executionCalls > 0 && executionCalls == scratchProvisioned;
+        successful &= scratchExercised;
         Files.delete(driver);
         LinkedHashMap<String, Object> summary = new LinkedHashMap<>();
         summary.put("schemaVersion", 1);
@@ -82,6 +90,9 @@ final class AutonomousDeliveryPhaseOneGate {
         summary.put("buildCommit", buildCommit);
         summary.put("finishedAt", Instant.now(clock).toString());
         summary.put("successful", successful);
+        summary.put("executionCalls", executionCalls);
+        summary.put("scratchProvisionedCount", scratchProvisioned);
+        summary.put("scratchExercised", scratchExercised);
         summary.put("results", results);
         writeJson(gate.resolve("phase-summary.json"), summary);
         writeBaselineComparison(campaign, gate, buildCommit, summary);
@@ -186,35 +197,48 @@ final class AutonomousDeliveryPhaseOneGate {
         double wallSeconds = (System.nanoTime() - startedNanos) / 1_000_000_000.0;
         JsonNode driverEvidence = Files.isRegularFile(driverResult) ? json.readTree(driverResult.toFile()) : null;
 
-        Files.writeString(
-                repeat.resolve("workspace-after.sha256"),
-                workspaceDigest(workspace) + "\n",
-                StandardOpenOption.CREATE_NEW);
+        String after = workspaceDigest(workspace);
+        Files.writeString(repeat.resolve("workspace-after.sha256"), after + "\n", StandardOpenOption.CREATE_NEW);
         runCommand(workspace, repeat.resolve("workspace.diff"), "git", "diff", "--binary", "--no-ext-diff");
-        Evidence evidence = collectEvidence(repeat, suite);
-        boolean acceptancePassed = driverEvidence != null
-                && driverEvidence.path("acceptancePassed").asBoolean(false);
+        AutonomousDeliveryRuntimeEvidenceReader.Evidence authoritative =
+                new AutonomousDeliveryRuntimeEvidenceReader(json).read(repeat.resolve("runtime.db"));
+        long wallTimeMillis = Math.round(wallSeconds * 1000.0);
+        int iterations = maximumIteration(repeat.resolve("trace-detail.jsonl"));
+        boolean withinBudget = authoritative.modelCalls() <= suite.budget().maxModelCalls()
+                && authoritative.toolCalls() <= suite.budget().maxToolCalls()
+                && iterations <= suite.budget().maxIterations()
+                && wallTimeMillis <= suite.budget().maxWallTimeMillis();
+        Acceptance acceptance = acceptance(driverEvidence, testCase);
+        boolean acceptancePassed = acceptance.passed();
         boolean bounded = finished
                 && wallSeconds < TimeUnit.MILLISECONDS.toSeconds(suite.budget().maxWallTimeMillis())
-                && evidence.withinBudget()
-                && evidence.maximumClusterAttempts() <= 4;
+                && withinBudget
+                && authoritative.maximumClusterAttempts() <= 4;
         boolean caseTenConverged = testCase.caseId().equals("10") && bounded && wallSeconds < 900;
-        boolean gatePassed = (acceptancePassed || caseTenConverged) && evidence.scratchProvisioned() && bounded;
+        boolean gatePassed = (acceptancePassed || caseTenConverged)
+                && authoritative.scratchSatisfied()
+                && authoritative.terminalStateObserved()
+                && bounded;
 
+        writeJson(repeat.resolve("acceptance-result.json"), acceptance.artifact());
+        Map<String, Object> resultUsage = resultUsage(authoritative, wallTimeMillis);
+        LinkedHashMap<String, Object> usageArtifact = new LinkedHashMap<>(resultUsage);
+        usageArtifact.put("schemaVersion", 1);
+        usageArtifact.put("iterations", iterations);
+        usageArtifact.put("withinBudget", withinBudget);
+        writeJson(repeat.resolve("usage.json"), usageArtifact);
         writeJson(
-                repeat.resolve("acceptance-result.json"),
+                repeat.resolve("failure-clusters.json"),
                 Map.of(
                         "schemaVersion",
                         1,
-                        "exitStatus",
-                        driverEvidence == null
-                                ? -1
-                                : driverEvidence.path("acceptanceExitStatus").asInt(-1),
-                        "passed",
-                        acceptancePassed));
-        writeJson(repeat.resolve("usage.json"), evidence.usage());
-        writeJson(repeat.resolve("failure-clusters.json"), evidence.failureClusters());
-        writeJson(repeat.resolve("progress-evidence.json"), evidence.progress());
+                        "clusters",
+                        authoritative.failureClusters(),
+                        "maximumAttempts",
+                        authoritative.maximumClusterAttempts()));
+        writeJson(
+                repeat.resolve("progress-evidence.json"),
+                Map.of("schemaVersion", 1, "meaningfulProgress", authoritative.progress()));
         writeJson(
                 repeat.resolve("completion-evidence.json"),
                 Map.of(
@@ -225,7 +249,10 @@ final class AutonomousDeliveryPhaseOneGate {
                         "caseTenBoundedConvergence",
                         caseTenConverged,
                         "terminalStateObserved",
-                        evidence.terminalStateObserved()));
+                        authoritative.terminalStateObserved()));
+        long descendantsAlive =
+                process.descendants().filter(ProcessHandle::isAlive).count();
+        boolean cleanupPassed = descendantsAlive == 0;
         writeJson(
                 repeat.resolve("process-cleanup.json"),
                 Map.of(
@@ -236,104 +263,135 @@ final class AutonomousDeliveryPhaseOneGate {
                         "timedOut",
                         !finished,
                         "descendantsAlive",
-                        process.descendants().filter(ProcessHandle::isAlive).count(),
+                        descendantsAlive,
                         "passed",
-                        process.descendants().noneMatch(ProcessHandle::isAlive)));
+                        cleanupPassed));
+        gatePassed &= cleanupPassed;
         Map<String, Object> secretScan = secretScan(repeat);
         writeJson(repeat.resolve("secret-scan.json"), secretScan);
         gatePassed &= Boolean.TRUE.equals(secretScan.get("passed"));
-        LinkedHashMap<String, Object> result = new LinkedHashMap<>();
-        result.put("caseId", testCase.caseId());
-        result.put("caseVersion", testCase.caseVersion());
-        result.put("repetition", repetition);
-        result.put("driverExitStatus", driverExit);
-        result.put("wallTimeSeconds", Math.round(wallSeconds * 1000.0) / 1000.0);
-        result.put("acceptancePassed", acceptancePassed);
-        result.put("boundedConvergence", bounded);
-        result.put("scratchProvisioned", evidence.scratchProvisioned());
-        result.put("maximumFailureClusterAttempts", evidence.maximumClusterAttempts());
-        result.put("gatePassed", gatePassed);
-        writeJson(repeat.resolve("result.json"), result);
+        writeJson(
+                repeat.resolve("result.json"),
+                Map.of(
+                        "schemaVersion",
+                        1,
+                        "caseId",
+                        testCase.caseId(),
+                        "caseVersion",
+                        testCase.caseVersion(),
+                        "repeat",
+                        repetition,
+                        "termination",
+                        authoritative.termination(),
+                        "successful",
+                        gatePassed,
+                        "hiddenAcceptance",
+                        acceptancePassed ? "PASS" : "FAIL",
+                        "usage",
+                        resultUsage,
+                        "evidence",
+                        Map.of(
+                                "workspaceChanged",
+                                !before.equals(after),
+                                "validationAttempted",
+                                authoritative.validationAttempted(),
+                                "diffInspected",
+                                authoritative.diffInspected(),
+                                "failureAtomicity",
+                                "NOT_APPLICABLE")));
+        LinkedHashMap<String, Object> summaryResult = new LinkedHashMap<>();
+        summaryResult.put("caseId", testCase.caseId());
+        summaryResult.put("caseVersion", testCase.caseVersion());
+        summaryResult.put("repetition", repetition);
+        summaryResult.put("driverExitStatus", driverExit);
+        summaryResult.put("wallTimeSeconds", Math.round(wallSeconds * 1000.0) / 1000.0);
+        summaryResult.put("acceptancePassed", acceptancePassed);
+        summaryResult.put("boundedConvergence", bounded);
+        summaryResult.put("executionCalls", authoritative.executionCalls());
+        summaryResult.put("scratchProvisionedCount", authoritative.scratchProvisionedCount());
+        summaryResult.put("scratchCleanupFailures", authoritative.scratchCleanupFailures());
+        summaryResult.put("scratchSatisfied", authoritative.scratchSatisfied());
+        summaryResult.put("maximumFailureClusterAttempts", authoritative.maximumClusterAttempts());
+        summaryResult.put("gatePassed", gatePassed);
         Files.deleteIfExists(driverResult);
         AutonomousDeliveryHarnessMain.writeManifest(repeat);
-        return result;
+        return Map.copyOf(summaryResult);
     }
 
-    private Evidence collectEvidence(Path repeat, AutonomousDeliverySuiteManifest suite) throws IOException {
-        List<Map<String, Object>> clusters = new ArrayList<>();
-        List<Map<String, Object>> progress = new ArrayList<>();
-        boolean scratch = false;
-        boolean terminal = false;
-        int maximumAttempts = 0;
-        try (var files = Files.walk(repeat.resolve("transcripts"))) {
-            for (Path transcript : files.filter(Files::isRegularFile).sorted().toList()) {
-                for (String line : Files.readAllLines(transcript, StandardCharsets.UTF_8)) {
-                    JsonNode event = json.readTree(line);
-                    String type = event.path("eventType").asText();
-                    JsonNode payload = event.path("payload");
-                    if (type.equals("tool.failure-cluster-updated")) {
-                        int attempts = payload.path("attempts").asInt();
-                        maximumAttempts = Math.max(maximumAttempts, attempts);
-                        clusters.add(safeEvent(type, payload));
-                    } else if (type.equals("loop.progress-observed")) {
-                        progress.add(safeEvent(type, payload));
-                    } else if (type.equals("execution.scratch-provisioned")) {
-                        scratch = true;
-                    } else if (type.equals("run.completed") || type.equals("run.failed")) {
-                        terminal = true;
-                    }
-                }
-            }
-        }
-        int modelCalls = 0;
-        int toolCalls = 0;
+    private int maximumIteration(Path trace) throws IOException {
         int iterations = 0;
-        Path trace = repeat.resolve("trace-detail.jsonl");
         if (Files.isRegularFile(trace)) {
             for (String line : Files.readAllLines(trace, StandardCharsets.UTF_8)) {
-                if (line.contains("operation=model.invoke")) modelCalls++;
-                if (line.contains("operation=tool.persisted")) toolCalls++;
                 Matcher matcher = ITERATION.matcher(line);
                 while (matcher.find()) iterations = Math.max(iterations, Integer.parseInt(matcher.group(1)));
             }
         }
-        boolean withinBudget = modelCalls <= suite.budget().maxModelCalls()
-                && toolCalls <= suite.budget().maxToolCalls()
-                && iterations <= suite.budget().maxIterations();
-        Map<String, Object> usage = Map.of(
-                "schemaVersion",
-                1,
-                "modelCalls",
-                modelCalls,
-                "toolCalls",
-                toolCalls,
-                "iterations",
-                iterations,
-                "costKnown",
-                false,
-                "withinBudget",
-                withinBudget);
-        return new Evidence(
-                usage,
-                Map.of("schemaVersion", 1, "clusters", clusters, "maximumAttempts", maximumAttempts),
-                Map.of("schemaVersion", 1, "meaningfulProgress", progress),
-                scratch,
-                terminal,
-                maximumAttempts,
-                withinBudget);
+        return iterations;
     }
 
-    private static Map<String, Object> safeEvent(String type, JsonNode payload) {
-        LinkedHashMap<String, Object> event = new LinkedHashMap<>();
-        event.put("eventType", type);
-        for (String key : List.of(
-                "iteration", "fingerprintDigest", "failureCategory", "attempts", "directive", "progressDigest")) {
-            if (payload.has(key)) {
-                JsonNode value = payload.get(key);
-                event.put(key, value.isNumber() ? value.numberValue() : value.asText());
+    private Acceptance acceptance(JsonNode driverEvidence, AutonomousDeliveryCase testCase) {
+        LinkedHashMap<String, Boolean> checks = new LinkedHashMap<>();
+        List<String> failures = new ArrayList<>();
+        boolean passed = false;
+        if (driverEvidence != null) {
+            try {
+                JsonNode grader =
+                        json.readTree(driverEvidence.path("acceptanceStdout").asText(""));
+                JsonNode graderChecks = grader.path("checks");
+                if (graderChecks.isObject()) {
+                    graderChecks.fields().forEachRemaining(entry -> {
+                        if (entry.getValue().isBoolean())
+                            checks.put(entry.getKey(), entry.getValue().asBoolean());
+                    });
+                }
+                JsonNode graderFailures = grader.path("failures");
+                if (graderFailures.isArray()) {
+                    graderFailures.forEach(value -> {
+                        String text = value.asText("");
+                        if (!text.isBlank() && text.length() <= 512 && failures.size() < 128) {
+                            failures.add(text);
+                        }
+                    });
+                }
+                passed = driverEvidence.path("acceptanceExitStatus").asInt(-1) == 0
+                        && grader.path("passed").asBoolean(false);
+            } catch (IOException ignored) {
+                // Converted into bounded, non-sensitive evidence below.
             }
         }
-        return event;
+        if (checks.isEmpty()) {
+            checks.put("graderOutputValid", false);
+            failures.clear();
+            failures.add("GRADER_OUTPUT_INVALID");
+            passed = false;
+        }
+        LinkedHashMap<String, Object> artifact = new LinkedHashMap<>();
+        artifact.put("schemaVersion", 1);
+        artifact.put("caseId", testCase.caseId());
+        artifact.put("caseVersion", testCase.caseVersion());
+        artifact.put("passed", passed);
+        artifact.put("checks", Map.copyOf(checks));
+        artifact.put("failures", List.copyOf(failures));
+        return new Acceptance(passed, Map.copyOf(artifact));
+    }
+
+    private static Map<String, Object> resultUsage(
+            AutonomousDeliveryRuntimeEvidenceReader.Evidence evidence, long wallTimeMillis) {
+        return Map.of(
+                "modelCalls",
+                evidence.modelCalls(),
+                "toolCalls",
+                evidence.toolCalls(),
+                "toolFailures",
+                evidence.toolFailures(),
+                "inputTokens",
+                evidence.inputTokens(),
+                "outputTokens",
+                evidence.outputTokens(),
+                "wallTimeMillis",
+                wallTimeMillis,
+                "costKnown",
+                false);
     }
 
     private Map<String, Object> secretScan(Path repeat) throws IOException {
@@ -546,12 +604,5 @@ final class AutonomousDeliveryPhaseOneGate {
         return false;
     }
 
-    private record Evidence(
-            Map<String, Object> usage,
-            Map<String, Object> failureClusters,
-            Map<String, Object> progress,
-            boolean scratchProvisioned,
-            boolean terminalStateObserved,
-            int maximumClusterAttempts,
-            boolean withinBudget) {}
+    private record Acceptance(boolean passed, Map<String, Object> artifact) {}
 }
