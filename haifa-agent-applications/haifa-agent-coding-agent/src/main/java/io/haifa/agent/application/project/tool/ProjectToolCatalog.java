@@ -284,7 +284,16 @@ public final class ProjectToolCatalog {
         if (name.equals("execution.run")) {
             return "Run complete command text through the frozen "
                     + executionProfile.providerId()
-                    + " execution profile inside the project workspace.";
+                    + " execution profile inside the project workspace. Use it for inspection and verification; "
+                    + "classify every call with operationFamily, using BUILD or TEST for validation and DIFF only "
+                    + "for read-only final diff inspection.";
+        }
+        if (name.equals("git.diff")) {
+            return "Read the final Git diff within the frozen project workspace and capability boundary.";
+        }
+        if (WRITES.contains(name)) {
+            return title(name)
+                    + " within the frozen project workspace and capability boundary. Preserve unrelated user changes.";
         }
         return title(name) + " within the frozen project workspace and capability boundary.";
     }
@@ -354,8 +363,8 @@ public final class ProjectToolCatalog {
                                 "maxLength",
                                 71,
                                 "description",
-                                "Exact frozen Coding Verification Plan digest from product context. Supply it only "
-                                        + "when this command performs plan checks."));
+                                "Optional correlation digest for model-declared verification labels. It does not "
+                                        + "prove semantic coverage."));
                 properties.put(
                         "verificationDimensions",
                         Map.of(
@@ -383,8 +392,8 @@ public final class ProjectToolCatalog {
                                                 "SECURITY_NORMALIZATION",
                                                 "RESOURCE_CLEANUP")),
                                 "description",
-                                "Only dimensions actually exercised by this command. A terminal failure records "
-                                        + "failed evidence and can never pass the dimension."));
+                                "Optional labels declared by the model for checks exercised by this command. "
+                                        + "Successful execution proves command success, not semantic completeness."));
                 required.add("operationFamily");
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);

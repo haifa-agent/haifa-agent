@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** Bounded plan/evidence projection; no executable command or host path is placed in context. */
+/** Legacy evaluation projection for model-declared verification labels; not used by production assembly. */
 public final class CodingVerificationContextSource implements ContextSource {
     public static final String SOURCE_ID = "coding.verification.plan";
 
@@ -40,7 +40,7 @@ public final class CodingVerificationContextSource implements ContextSource {
 
     @Override
     public String version() {
-        return "1.0";
+        return "2.0";
     }
 
     @Override
@@ -62,16 +62,11 @@ public final class CodingVerificationContextSource implements ContextSource {
                 .orElse("NONE");
         String text = String.join(
                 "\n",
-                "[CODING_VERIFICATION_PLAN]",
+                "[CODING_VERIFICATION_LABEL_STATE]",
                 "planDigest=" + plan.digest(),
-                "riskLevel=" + plan.riskLevel(),
-                "requiredDimensions=" + dimensions,
-                "passedDimensions=" + completed,
-                "verificationAction=run bounded checks that cover every required dimension; on execution_run set "
-                        + "verificationPlanDigest to this exact digest and verificationDimensions to only the "
-                        + "dimensions actually covered by that command",
-                "evidenceRule=only successful terminal Execution results can pass dimensions; a failed check remains "
-                        + "failed and must be repaired or reported");
+                "modelRequestedLabels=" + dimensions,
+                "modelDeclaredPassedLabels=" + completed,
+                "semanticCoverageVerifiedByRuntime=false");
         return List.of(new ContextItem(
                 new ContextItemId("coding-verification:" + run.id().value() + ":"
                         + plan.digest().substring(7, 23)),

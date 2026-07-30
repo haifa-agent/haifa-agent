@@ -27,7 +27,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -308,13 +307,11 @@ class LocalCodingAgentTest {
     @Test
     void stubModelRunsGeneralShellThroughTheCliAssembly() throws Exception {
         AtomicInteger calls = new AtomicInteger();
-        AtomicReference<Map<String, Object>> verification = new AtomicReference<>();
         String command =
                 isWindows() ? "Set-Content -NoNewline -Path shell-e2e.txt -Value stub" : "printf stub > shell-e2e.txt";
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = calls.incrementAndGet();
             if (call == 1) {
-                verification.set(verificationLabel(request));
                 assertThat(request.tools())
                         .extracting(io.haifa.agent.model.api.ModelToolSpecification::name)
                         .contains("execution_run", "skill_load", "skill_resource_read");
@@ -341,19 +338,17 @@ class LocalCodingAgentTest {
                 return toolResponse(
                         "shell-test",
                         "execution_run",
-                        verificationArguments(
-                                verification.get(),
-                                Map.of(
-                                        "command",
-                                        fileExistsCommand("shell-e2e.txt"),
-                                        "workdir",
-                                        ".",
-                                        "timeoutMillis",
-                                        5000,
-                                        "description",
-                                        "Validate shell output",
-                                        "operationFamily",
-                                        "TEST")));
+                        Map.of(
+                                "command",
+                                fileExistsCommand("shell-e2e.txt"),
+                                "workdir",
+                                ".",
+                                "timeoutMillis",
+                                5000,
+                                "description",
+                                "Validate shell output",
+                                "operationFamily",
+                                "TEST"));
             }
             if (call == 3) {
                 return toolResponse(
@@ -409,26 +404,23 @@ class LocalCodingAgentTest {
         Path successfulWorkspace = Files.createDirectory(workspace.resolve("delivery-success"));
         Path failedWorkspace = Files.createDirectory(workspace.resolve("delivery-failure"));
         AtomicInteger successfulCalls = new AtomicInteger();
-        AtomicReference<Map<String, Object>> verification = new AtomicReference<>();
         var successfulModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = successfulCalls.incrementAndGet();
             return switch (call) {
                 case 1 -> {
-                    verification.set(verificationLabel(request));
                     assertThat(request.messages())
+                            .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
+                                    && message.content().contains("smallest complete change")
+                                    && message.content().contains("result-verification skill"))
                             .anyMatch(
                                     message -> message.role() == ModelMessageRole.SYSTEM
-                                            && message.content().contains("existing tests, test scripts, and fixtures")
-                                            && message.content().contains("map every stated acceptance clause")
+                                            && message.content().contains("[CODING_RUN_STATE]")
+                                            && message.content().contains("workspaceChanged=false")
                                             && message.content()
                                                     .contains(
-                                                            "do not write files through shell redirection, inline scripts, or Git commands")
-                                            && message.content()
-                                                    .contains(
-                                                            "deduplication, rejected-record accounting, and accepted-record counts")
-                                            && message.content()
-                                                    .contains(
-                                                            "a record ignored only because it duplicates an accepted record is not rejected or invalid"));
+                                                            "missingDeliveryEvidence=WORKSPACE_CHANGE|VALIDATION_ATTEMPT|DIFF_INSPECTION"))
+                            .noneMatch(message -> message.content().contains("[CODING_VERIFICATION_PLAN]"))
+                            .noneMatch(message -> message.content().contains("deduplication, rejected-record"));
                     yield answer("delivery-premature", "premature final");
                 }
                 case 2 -> {
@@ -436,27 +428,20 @@ class LocalCodingAgentTest {
                             "delivery-write", "file_create", Map.of("path", "delivered.txt", "content", "delivered\n"));
                 }
                 case 3 -> {
-                    assertThat(request.messages())
-                            .anyMatch(message -> message.role() == ModelMessageRole.TOOL
-                                    && message.content()
-                                            .contains("inspect every changed classification and counter branch")
-                                    && message.content().contains("ignored only as a duplicate is not invalid"));
                     yield toolResponse(
                             "delivery-test",
                             "execution_run",
-                            verificationArguments(
-                                    verification.get(),
-                                    Map.of(
-                                            "command",
-                                            fileExistsCommand("delivered.txt"),
-                                            "workdir",
-                                            ".",
-                                            "timeoutMillis",
-                                            5_000,
-                                            "description",
-                                            "Validate delivered file",
-                                            "operationFamily",
-                                            "TEST")));
+                            Map.of(
+                                    "command",
+                                    fileExistsCommand("delivered.txt"),
+                                    "workdir",
+                                    ".",
+                                    "timeoutMillis",
+                                    5_000,
+                                    "description",
+                                    "Validate delivered file",
+                                    "operationFamily",
+                                    "TEST"));
                 }
                 case 4 ->
                     toolResponse(
@@ -893,34 +878,6 @@ class LocalCodingAgentTest {
                 ModelUsage.unpriced(5, 2),
                 "stub",
                 Map.of());
-    }
-
-    private static Map<String, Object> verificationLabel(AgentChatRequest request) {
-        String plan = request.messages().stream()
-                .filter(message -> message.role() == ModelMessageRole.SYSTEM)
-                .map(message -> message.content())
-                .filter(content -> content.contains("[CODING_VERIFICATION_PLAN]"))
-                .findFirst()
-                .orElseThrow();
-        return Map.of(
-                "verificationPlanDigest", verificationValue(plan, "planDigest="),
-                "verificationDimensions",
-                        List.of(verificationValue(plan, "requiredDimensions=").split("\\|")));
-    }
-
-    private static Map<String, Object> verificationArguments(
-            Map<String, Object> verification, Map<String, Object> arguments) {
-        Map<String, Object> result = new LinkedHashMap<>(arguments);
-        result.putAll(verification);
-        return Map.copyOf(result);
-    }
-
-    private static String verificationValue(String plan, String prefix) {
-        return plan.lines()
-                .filter(line -> line.startsWith(prefix))
-                .map(line -> line.substring(prefix.length()))
-                .findFirst()
-                .orElseThrow();
     }
 
     private static String fileExistsCommand(String file) {

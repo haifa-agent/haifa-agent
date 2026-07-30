@@ -193,7 +193,12 @@ class CodingDeliveryControlTest {
         assertThat(text)
                 .contains("remainingModelCalls=20")
                 .contains("remainingToolCalls=20")
+                .contains("remainingIterations=19")
                 .contains("remainingWallTimeSeconds=12")
+                .contains("workspaceChanged=false")
+                .contains("validationAttempted=false")
+                .contains("validationPassed=unknown")
+                .contains("diffInspected=false")
                 .contains("deliveryReserve=ACTIVE");
         assertThat(fixture.run().budget().maxModelCalls()).isEqualTo(20);
         assertThat(fixture.run().budget().maxToolCalls()).isEqualTo(20);
@@ -201,7 +206,7 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void deliveryContextMakesReferencedAcceptanceDocumentsAnExplicitPreEditAction() {
+    void deliveryContextContainsOnlyBoundedAuthoritativeState() {
         Fixture fixture = fixture("fix behavior according to PERF.md and docs/CONCURRENCY.md", Map.of());
         CodingDeliveryContextSource source = new CodingDeliveryContextSource(
                 fixture.store(),
@@ -216,16 +221,22 @@ class CodingDeliveryControlTest {
                 .text();
 
         assertThat(text)
-                .contains("acceptanceCriteriaRefs=PERF.md|docs/CONCURRENCY.md")
-                .contains("before editing, read every referenced criteria file")
-                .contains("map every stated constraint")
-                .contains("each affected entry point and end-to-end boundary")
-                .contains("implement all mapped constraints before validation")
-                .contains("malformed, boundary, and operational-failure paths")
-                .contains("keep their meanings and metrics disjoint")
-                .contains("inspect every changed classification and counter branch")
-                .contains("run one mixed scenario containing each outcome")
-                .contains("ignored only as a duplicate is not rejected or invalid");
+                .startsWith("[CODING_RUN_STATE]")
+                .contains(
+                        "workspaceChanged=false",
+                        "validationAttempted=false",
+                        "validationPassed=unknown",
+                        "diffInspected=false",
+                        "missingDeliveryEvidence=WORKSPACE_CHANGE|VALIDATION_ATTEMPT|DIFF_INSPECTION")
+                .doesNotContain(
+                        "PERF.md",
+                        "CONCURRENCY.md",
+                        "before editing",
+                        "malformed",
+                        "deduplication",
+                        "rejected",
+                        "ignored only as a duplicate",
+                        "/Users/");
     }
 
     @Test
@@ -370,7 +381,8 @@ class CodingDeliveryControlTest {
         String text = ((TextContextContent) contextItem.content()).text();
         assertThat(text)
                 .contains("planDigest=" + plan.digest())
-                .contains("requiredDimensions=")
+                .contains("modelRequestedLabels=")
+                .contains("semanticCoverageVerifiedByRuntime=false")
                 .doesNotContain("mvn", "bash", "python", "/Users/");
         assertThat(contextItem.security().providerDisclosureAllowed()).isTrue();
     }

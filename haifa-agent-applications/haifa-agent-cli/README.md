@@ -16,9 +16,9 @@ Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSession
 Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-terminal` 只负责 UI，不是第二个
 可执行胖 JAR。
 
-生产 Coding Agent 会把仓库指令、现有测试、测试脚本和 Fixture 视为只读验收资产，除非用户明确要求
-修改测试；它在实现前读取完整适用契约，并把每项验收条件映射到实现或验证步骤。命令行等输入边界须按
-契约覆盖各类可观察输入，不能用修改测试来制造通过结果。
+生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
+字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
+Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。
 
 ## 构建与运行
 

@@ -126,6 +126,12 @@ class ProjectApplicationTest {
         assertThat(execution.definition().sideEffects())
                 .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION);
         assertThat(execution.definition().provenance()).isEqualTo("haifa-coding-agent");
+        assertThat(execution.definition().description())
+                .contains("inspection and verification", "operationFamily", "BUILD or TEST", "final diff inspection");
+        @SuppressWarnings("unchecked")
+        var verificationDimensions = (java.util.Map<String, Object>) properties.get("verificationDimensions");
+        assertThat(verificationDimensions.get("description").toString())
+                .contains("declared by the model", "not semantic completeness");
         @SuppressWarnings("unchecked")
         var fileProperties = (java.util.Map<String, Object>)
                 fileRead.definition().inputSchema().document().get("properties");

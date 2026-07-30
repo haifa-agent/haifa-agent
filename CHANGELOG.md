@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Coding Agent 改用产品拥有的版本化短 Prompt，移除 CLI 中按 Case 累积的方法论字符串；动态 Context
+  只披露预算、实际修改、验证、Diff 和缺失证据等事实，生产完成门禁不再依赖关键词验证计划或模型
+  自报的语义覆盖标签。
 - 新增 macOS/Linux Local Coding Agent 可搬运发行目录：打包脚本生成 shaded JAR、无密钥安全配置和
   `haifa-coding` 启动器；将发行目录加入 `PATH` 后可从任意项目目录启动，并默认以当前目录作为
   Workspace。

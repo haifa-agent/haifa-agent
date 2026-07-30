@@ -55,8 +55,7 @@ class HaifaCliMainTest {
     @Test
     void defaultTerminalUsesTheProcessWorkingDirectoryAsItsWorkspace() {
         AtomicReference<Path> launchedWorkspace = new AtomicReference<>();
-        var main = new HaifaCliMain(
-                (workspace, configuration, output, trace) -> launchedWorkspace.set(workspace));
+        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launchedWorkspace.set(workspace));
 
         assertThat(main.run(new String[0], output(), output())).isZero();
 

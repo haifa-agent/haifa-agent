@@ -1,5 +1,17 @@
 # Haifa Coding Agent
 
+## Prompt-first 自主交付
+
+Coding Agent 的基础工作方法由产品拥有的版本化资源
+`META-INF/haifa-agent/prompts/coding-agent-v1.txt` 提供。资源具有稳定版本和 SHA-256 身份，CLI
+只负责装配，不再维护按评测 Case 累积的长 Prompt。基础 Prompt 保持通用；Tool 专属路径、
+`operationFamily` 和验证/Diff 用法由对应 Tool Definition 描述；`task-planning` 与
+`result-verification` 继续通过 Skill 渐进披露。
+
+每轮动态 Context 使用 `[CODING_RUN_STATE]`，只披露剩余预算、实际 Workspace 修改、验证尝试与
+结果、Diff 检查、结构化阻塞和缺失交付证据。它不注入业务分类教程、Case/Fixture 信息、宿主路径、
+原始 Tool 输出或模型自报的语义覆盖。
+
 ## 自主交付契约与完成证据
 
 Coding 产品在每个 Run 上从可信调用方元数据或首条权威用户消息确定
@@ -13,22 +25,21 @@ Coding 产品在每个 Run 上从可信调用方元数据或首条权威用户�
 No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改；UNKNOWN 必须收敛到
 完整修改证据、确定性只读证据或结构化阻塞路径之一。
 
-默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只改变模型收到的有界
-收敛指导，不增加 Runtime 的总预算或时限。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
+默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为有界运行事实，
+不增加 Runtime 的总预算或时限。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
 从持久消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
 
-## 有界 Verification Plan
+## Verification Plan 评测资产
 
-CHANGE/CREATE Run 还会从冻结 `CodingTaskContract` 与首条权威用户消息确定性重建
+现有 Evaluation/Trace Replay 可以从冻结 `CodingTaskContract` 与首条权威用户消息确定性重建
 `CodingVerificationPlan`。Plan 只包含九种受限验证维度、风险级别和 Evidence 要求，不包含命令、
-Host Path、权限或可执行代码；其内容摘要在 Completion 时必须与权威 `execution.run` 结果中的
-`verificationPlanDigest` 精确匹配。文件修改默认补齐失败路径、失败原子性和资源清理；数据库、并发、
-安全路径与公共兼容性风险再按任务事实加入相应维度，不读取 Case 编号或特定文件名。
+Host Path、权限或可执行代码。该模型保留用于 Prompt-first 消融和既有确定性回归，但生产 CLI
+不再把关键词推导的 Plan 注入 Context，也不再要求这些标签才能完成交付。
 
-模型只能给实际执行的检查标注 `verificationDimensions`。只有终态成功的 Execution ToolCall 才能生成
-通过 Evidence；失败、Digest 漂移、未知维度或仅存在计划都会被 Completion Gate 拒绝。产品 Context
-只披露有界 Plan/Evidence 摘要，不披露命令、原始输出或宿主路径。外部 Phase 3 Gate 另外从隐藏验收、
-Workspace 快照与 Scratch 清理事实生成独立的验证和失败副作用证据。
+`verificationPlanDigest` 与 `verificationDimensions` 仍可作为可选的模型声明标签进入评测证据。
+终态成功只证明对应命令成功，不代表 Runtime 已证明语义覆盖。生产 Completion Gate 只使用实际修改、
+验证尝试/结果、Diff、只读检查和结构化阻塞等权威事实。外部 Gate 继续从隐藏验收、Workspace 快照与
+Scratch 清理事实生成独立证据。
 
 ## Policy 持久化装配
 
@@ -118,8 +129,8 @@ Brave 或 Tavily，Fetch 当前只允许 Aliyun。具体 Provider、endpoint、�
 
 `ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把
 `command/workdir/timeoutMillis/description/operationFamily/verificationPlanDigest/verificationDimensions`
-映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。Verification 字段必须成对出现、严格匹配
-受限 Schema，且只回写到权威终态结果。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
+映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。可选 Verification 标签必须成对出现、严格
+匹配受限 Schema，且只回写到终态结果；它们不是生产语义验收证明。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
 目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
 退出码、有界合并尾部、Output Ref、耗时、安全失败类别、Scratch 状态和 FileChangeSet 引用。

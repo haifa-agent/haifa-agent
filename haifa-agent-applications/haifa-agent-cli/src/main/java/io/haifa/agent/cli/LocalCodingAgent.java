@@ -15,9 +15,7 @@ import io.haifa.agent.application.project.product.coding.delivery.CodingDelivery
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskContractResolver;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationContextSource;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationEvidenceLedger;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationPlanResolver;
+import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
@@ -399,10 +397,6 @@ final class LocalCodingAgent implements AutoCloseable {
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
-            var verificationPlans =
-                    new CodingVerificationPlanResolver(persistence.ports().state(), taskContracts);
-            var verificationEvidence =
-                    new CodingVerificationEvidenceLedger(persistence.ports().state());
             var runtime = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -411,13 +405,10 @@ final class LocalCodingAgent implements AutoCloseable {
                         traces.add(event);
                         traceObserver.accept(event);
                     })
-                    .completionPolicy(new CodingCompletionPolicy(
-                            taskContracts, deliveryEvidence, deliveryProfile, verificationPlans, verificationEvidence))
+                    .completionPolicy(new CodingCompletionPolicy(taskContracts, deliveryEvidence, deliveryProfile))
                     .repairRetry(new RepairRetryPolicy(2))
                     .registerContextSource(new CodingDeliveryContextSource(
                             persistence.ports().runs(), taskContracts, deliveryEvidence, deliveryProfile))
-                    .registerContextSource(new CodingVerificationContextSource(
-                            persistence.ports().runs(), verificationPlans, verificationEvidence))
                     .registerChatModel("openai-compatible", "1.0.0", model)
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
@@ -462,36 +453,7 @@ final class LocalCodingAgent implements AutoCloseable {
                                     .collect(java.util.stream.Collectors.toUnmodifiableSet()),
                             configuration.skills().allowedAliases(),
                             Set.of(),
-                            "You are a careful local coding agent. Inspect relevant files before editing. "
-                                    + "Use tools for workspace facts, preserve existing changes, and summarize completed work. "
-                                    + "Treat repository instruction files and existing tests, test scripts, and fixtures as "
-                                    + "immutable unless the user explicitly requests test changes; never alter them to make "
-                                    + "validation pass. Read the complete applicable contract before editing, map every stated "
-                                    + "acceptance clause to an implementation or verification step, and validate each externally "
-                                    + "observable input category rather than a convenient subset. "
-                                    + "Use the file create, update, or patch tools for source changes; do not write files through "
-                                    + "shell redirection, inline scripts, or Git commands. Reserve execution tools for inspection "
-                                    + "and verification commands. "
-                                    + "Pass only workspace-relative paths to file tools; never pass an absolute path. "
-                                    + "Execution commands already start in the workspace, so do not change directory to an "
-                                    + "absolute path; use the workdir field for a workspace-relative subdirectory. "
-                                    + "For performance or scale work, read the stated performance contract, inspect end-to-end "
-                                    + "I/O limits as well as the named hot path, map every stated constraint to an affected "
-                                    + "boundary before validating, and validate representative large inputs. "
-                                    + "For command-line or other input-facing behavior, validate representative valid, malformed, "
-                                    + "boundary, and operational-failure inputs, including exit status and diagnostics without "
-                                    + "stack traces. "
-                                    + "For parsers, importers, and batch workflows, keep deduplication, rejected-record accounting, "
-                                    + "and accepted-record counts as separate contract semantics; validate exact numeric boundary "
-                                    + "values and do not silently merge one metric into another. Treat differently named outcome "
-                                    + "categories as disjoint unless the authoritative contract explicitly defines overlap; in "
-                                    + "particular, a record ignored only because it duplicates an accepted record is not rejected "
-                                    + "or invalid unless the contract says it is. "
-                                    + "Give BUILD or TEST commands enough timeout for a cold toolchain when the remaining "
-                                    + "budget permits. After the requested verification passes, stop using tools unless its "
-                                    + "output identifies an unresolved failure, then return a concise completion summary. "
-                                    + "Every execution.run call must supply operationFamily. For change/create delivery, use "
-                                    + "DIFF for the final diff inspection and BUILD or TEST for the smallest relevant validation."
+                            CodingAgentPrompt.current().text()
                                     + resources.snapshot().instructionBlock(),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(

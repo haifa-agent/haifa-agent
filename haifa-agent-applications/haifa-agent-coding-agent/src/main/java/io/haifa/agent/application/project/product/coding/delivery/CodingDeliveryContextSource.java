@@ -15,13 +15,14 @@ import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** Bounded structured delivery context rebuilt on every iteration from product and Runtime facts. */
+/** Bounded delivery state rebuilt on every iteration from authoritative product and Runtime facts. */
 public final class CodingDeliveryContextSource implements ContextSource {
     public static final String SOURCE_ID = "coding.delivery.control";
 
@@ -48,7 +49,7 @@ public final class CodingDeliveryContextSource implements ContextSource {
 
     @Override
     public String version() {
-        return "1.0";
+        return "2.0";
     }
 
     @Override
@@ -71,58 +72,30 @@ public final class CodingDeliveryContextSource implements ContextSource {
                                 <= profile.toolCallsReservePercent()
                         || percent(remainingWallTimeMillis, run.limits().maxWallTimeMillis())
                                 <= profile.wallTimeReservePercent());
-        String requirements = contract.deliveryRequirements().stream()
-                .sorted(java.util.Comparator.comparing(Enum::name))
-                .map(Enum::name)
-                .reduce((left, right) -> left + "|" + right)
-                .orElse("NONE");
-        String acceptanceCriteriaRefs = contract.acceptanceCriteriaRefs().stream()
-                .sorted()
-                .reduce((left, right) -> left + "|" + right)
-                .orElse("NONE");
-        String evidenceCodes = snapshot.codes().isEmpty() ? "NONE" : String.join("|", snapshot.codes());
-        boolean changeIntent =
-                contract.intent() == CodingTaskIntent.CHANGE || contract.intent() == CodingTaskIntent.CREATE;
-        String nextAction;
-        if (!changeIntent) {
-            nextAction = "collect only authoritative evidence required by the task contract";
-        } else if (!snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
-            nextAction = contract.acceptanceCriteriaRefs().isEmpty()
-                    ? "inspect each affected entry point once, map success, malformed, boundary, and operational-failure "
-                            + "paths, then make the smallest complete change before validation"
-                    : "read each criteria file once, map every stated constraint to its affected entry point and "
-                            + "end-to-end boundary, then implement all mapped constraints before validation";
-        } else {
-            nextAction = "validate every mapped requirement including boundary and negative paths, then inspect the "
-                    + "final diff; repair only evidence-backed failures";
-        }
+        boolean workspaceChanged = snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
+        boolean validationAttempted = snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT);
+        String validationPassed = snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED)
+                ? "true"
+                : snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED) ? "false" : "unknown";
+        boolean diffInspected = snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
+        boolean blockerConfirmed = snapshot.has(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED);
+        String missingEvidence = String.join("|", missingEvidence(contract.intent(), snapshot));
+        if (missingEvidence.isEmpty()) missingEvidence = "NONE";
         String text = String.join(
                 "\n",
-                "[CODING_DELIVERY_CONTROL]",
-                "taskIntent=" + contract.intent().name(),
-                "intentSource=" + contract.intentSource().name(),
-                "deliveryRequired=" + requirements,
-                "acceptanceCriteriaRefs=" + acceptanceCriteriaRefs,
-                contract.acceptanceCriteriaRefs().isEmpty()
-                        ? "acceptanceAction=NONE"
-                        : "acceptanceAction=before editing, read every referenced criteria file, map every stated "
-                                + "constraint, and inspect each affected entry point and end-to-end boundary",
-                "coverageAction=for input-facing behavior, validate representative success, malformed, boundary, and "
-                        + "operational-failure paths including exit status and safe diagnostics",
-                "classificationAuditAction=when a contract names different input outcomes, keep their meanings and "
-                        + "metrics disjoint unless it explicitly defines overlap; inspect every changed classification "
-                        + "and counter branch, then run one mixed scenario containing each outcome and assert every exact "
-                        + "count. An item ignored only as a duplicate is not rejected or invalid unless the contract says so",
-                "evidence=" + evidenceCodes,
+                "[CODING_RUN_STATE]",
                 "remainingModelCalls=" + remainingModelCalls,
                 "remainingToolCalls=" + remainingToolCalls,
+                "remainingIterations=" + Math.max(0, run.limits().maxIterations() - request.iteration()),
                 "remainingWallTimeSeconds=" + remainingWallTimeMillis / 1_000,
+                "workspaceChanged=" + workspaceChanged,
+                "validationAttempted=" + validationAttempted,
+                "validationPassed=" + validationPassed,
+                "diffInspected=" + diffInspected,
+                "blockerConfirmed=" + blockerConfirmed,
                 "deliveryReserve=" + (reserve ? "ACTIVE" : "INACTIVE"),
-                reserve
-                        ? "nextAction=stop unbounded diagnosis; make the smallest safe change or record a structured blocker, then inspect diff and validate"
-                        : "nextAction=" + nextAction);
-        String digest = digest(contract.contractDigest() + "|" + evidenceCodes + "|" + reserve + "|"
-                + remainingModelCalls + "|" + remainingToolCalls + "|" + remainingWallTimeMillis);
+                "missingDeliveryEvidence=" + missingEvidence);
+        String digest = digest(text);
         return List.of(new ContextItem(
                 new ContextItemId("coding-delivery:" + run.id().value() + ":" + digest.substring(7, 23)),
                 ContextItemType.RUNTIME_STATE,
@@ -130,12 +103,49 @@ public final class CodingDeliveryContextSource implements ContextSource {
                 Math.max(1, text.length() / 4),
                 ContextPriority.CRITICAL,
                 ContextRetention.MUST_KEEP,
-                new ContextSecurity(Set.of("product-control", "safe-evidence"), false),
+                new ContextSecurity(Set.of("product-control", "safe-evidence"), true),
                 new ContextProvenance("coding-product", run.id().value(), version(), digest),
-                Map.of(
-                        "contractDigest", contract.contractDigest(),
-                        "evidenceDigest", digest,
-                        "deliveryReserve", Boolean.toString(reserve))));
+                Map.of("evidenceDigest", digest, "deliveryReserve", Boolean.toString(reserve))));
+    }
+
+    private static List<String> missingEvidence(
+            CodingTaskIntent intent, CodingDeliveryEvidenceLedger.Snapshot snapshot) {
+        List<String> missing = new ArrayList<>();
+        switch (intent) {
+            case CHANGE, CREATE -> addChangeEvidence(snapshot, missing);
+            case ANALYZE, REVIEW -> {
+                if (!snapshot.has(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION)) {
+                    missing.add("READ_ONLY_EVIDENCE");
+                }
+            }
+            case UNKNOWN -> {
+                if (snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
+                    addChangeEvidence(snapshot, missing);
+                } else if (!snapshot.has(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION)
+                        && !(snapshot.has(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED)
+                                && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT))) {
+                    missing.add("TASK_EVIDENCE");
+                }
+            }
+        }
+        return List.copyOf(missing);
+    }
+
+    private static void addChangeEvidence(CodingDeliveryEvidenceLedger.Snapshot snapshot, List<String> missing) {
+        if (!snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
+                && !snapshot.has(CodingDeliveryEvidenceKind.NO_CHANGE_JUSTIFICATION)) {
+            missing.add("WORKSPACE_CHANGE");
+        }
+        if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)) {
+            missing.add("VALIDATION_ATTEMPT");
+        }
+        if (!snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION)) {
+            missing.add("DIFF_INSPECTION");
+        }
+        if (snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)
+                && !snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED)) {
+            missing.add("VALIDATION_PASSED");
+        }
     }
 
     private static int percent(long remaining, long maximum) {
