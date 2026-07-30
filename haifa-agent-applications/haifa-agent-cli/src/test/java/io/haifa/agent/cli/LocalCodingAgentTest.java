@@ -422,7 +422,10 @@ class LocalCodingAgentTest {
                                             && message.content().contains("map every stated acceptance clause")
                                             && message.content()
                                                     .contains(
-                                                            "deduplication, rejected-record accounting, and accepted-record counts"));
+                                                            "deduplication, rejected-record accounting, and accepted-record counts")
+                                            && message.content()
+                                                    .contains(
+                                                            "a record ignored only because it duplicates an accepted record is not rejected or invalid"));
                     yield answer("delivery-premature", "premature final");
                 }
                 case 2 -> {
