@@ -56,3 +56,14 @@ adapter 按当前 OS fail closed 解析。
 `ToolArgumentsDigest` 的 canonical digest，并额外冻结 execution configuration identity。相同
 idempotency key 若正文、参数、环境、Profile 或配置发生漂移，将返回冲突而不是复用旧授权。
 模型只收到有界、脱敏的结构化摘要；完整输出继续留在 Execution Result / Output Store 边界。
+
+## Fixed trusted-script Tool facility
+
+`TrustedSkillScriptToolSpec` and `TrustedSkillScriptToolProvider` let an application define a narrow business
+Tool backed by one frozen Skill resource. The provider reloads and hashes host-owned script content, validates
+bounded business arguments and Workspace paths, resolves an application-configured runtime, then uses the same
+`ExecutionBroker`, Sandbox, Journal, cancellation, timeout, output, and asset path as ordinary execution.
+
+The model cannot supply executable paths, source content, environment variables, arbitrary argv, endpoints, or
+trust claims. This facility does not change `execution.run` approval semantics and is neutral to products and
+script languages.

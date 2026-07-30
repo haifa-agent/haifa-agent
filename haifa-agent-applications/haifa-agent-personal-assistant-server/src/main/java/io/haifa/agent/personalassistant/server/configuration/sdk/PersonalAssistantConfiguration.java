@@ -71,6 +71,12 @@ public class PersonalAssistantConfiguration {
                 ? Optional.empty()
                 : Optional.of(
                         Path.of(properties.localSkillRoot()).toAbsolutePath().normalize());
+        Optional<Path> trustedScriptManifest =
+                properties.trustedScriptManifest().isBlank()
+                        ? Optional.empty()
+                        : Optional.of(Path.of(properties.trustedScriptManifest())
+                                .toAbsolutePath()
+                                .normalize());
         try {
             var execution = PersonalExecutionRuntime.create(
                     dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock);
@@ -97,6 +103,7 @@ public class PersonalAssistantConfiguration {
                     web,
                     mcpRuntime.configuration(),
                     localSkillRoot,
+                    trustedScriptManifest,
                     List.of(
                             dataDirectory,
                             Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath()),

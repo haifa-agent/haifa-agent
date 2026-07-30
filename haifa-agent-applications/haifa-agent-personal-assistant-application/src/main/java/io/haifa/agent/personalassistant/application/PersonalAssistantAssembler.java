@@ -8,6 +8,7 @@ import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import io.haifa.agent.personalassistant.application.tool.PersonalToolPlatform;
+import io.haifa.agent.personalassistant.application.trust.PersonalTrustedScriptManifest;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
@@ -28,11 +29,15 @@ public final class PersonalAssistantAssembler {
 
     public static PersonalAssistantApplication assemble(Dependencies dependencies) {
         Objects.requireNonNull(dependencies);
+        PersonalTrustedScriptManifest trustManifest =
+                PersonalTrustedScriptManifest.load(dependencies.trustedScriptManifest());
         var skills = PersonalSkillPlatform.create(
                 dependencies.tenant(),
                 dependencies.principal(),
                 dependencies.localSkillRoot(),
-                dependencies.protectedPaths());
+                dependencies.protectedPaths(),
+                trustManifest,
+                dependencies.clock());
         PersonalMcpPlatform mcp = PersonalMcpPlatform.connect(
                 dependencies.mcp(), dependencies.tenant(), dependencies.principal(), dependencies.clock());
         try {
@@ -60,7 +65,8 @@ public final class PersonalAssistantAssembler {
                     coordinates,
                     skills.aliases(),
                     mcp.aliases(),
-                    dependencies.web().aliases());
+                    dependencies.web().aliases(),
+                    tools.trustedScriptToolAliases());
             var agent = HaifaAgents.builder(profile)
                     .callerProvider(dependencies.callers())
                     .timeProvider(dependencies.clock()::instant)
@@ -98,8 +104,42 @@ public final class PersonalAssistantAssembler {
             PersonalWebPlatform web,
             PersonalMcpConfiguration mcp,
             Optional<Path> localSkillRoot,
+            Optional<Path> trustedScriptManifest,
             List<Path> protectedPaths,
             Clock clock) {
+        public Dependencies(
+                TenantRef tenant,
+                PrincipalRef principal,
+                SdkCallerProvider callers,
+                ModelContribution model,
+                SdkPersistenceContribution persistence,
+                SdkConversationContribution conversation,
+                MemoryPlatformContribution memory,
+                PolicyPlatformContribution policy,
+                PersonalExecutionPlatform execution,
+                PersonalWebPlatform web,
+                PersonalMcpConfiguration mcp,
+                Optional<Path> localSkillRoot,
+                List<Path> protectedPaths,
+                Clock clock) {
+            this(
+                    tenant,
+                    principal,
+                    callers,
+                    model,
+                    persistence,
+                    conversation,
+                    memory,
+                    policy,
+                    execution,
+                    web,
+                    mcp,
+                    localSkillRoot,
+                    Optional.empty(),
+                    protectedPaths,
+                    clock);
+        }
+
         public Dependencies {
             Objects.requireNonNull(tenant);
             Objects.requireNonNull(principal);
@@ -113,6 +153,7 @@ public final class PersonalAssistantAssembler {
             Objects.requireNonNull(web);
             Objects.requireNonNull(mcp);
             localSkillRoot = Objects.requireNonNull(localSkillRoot);
+            trustedScriptManifest = Objects.requireNonNull(trustedScriptManifest);
             protectedPaths = List.copyOf(protectedPaths);
             Objects.requireNonNull(clock);
         }

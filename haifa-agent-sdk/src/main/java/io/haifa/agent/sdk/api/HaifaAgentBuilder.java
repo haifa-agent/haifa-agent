@@ -162,6 +162,7 @@ public final class HaifaAgentBuilder {
                             resolvedCapabilities(resolution)))
                     .registerChatModel(
                             model.snapshot().adapterType(), model.snapshot().adapterVersion(), model.model());
+            runtimeBuilder.policyProductId(profile.productId().value());
 
             ProductContribution tool = resolution.selected().get(ProductCapabilities.TOOL);
             if (tool instanceof ToolPlatformContribution platform) {
@@ -169,7 +170,7 @@ public final class HaifaAgentBuilder {
             }
             ProductContribution skill = resolution.selected().get(ProductCapabilities.SKILL);
             if (skill instanceof SkillPlatformContribution platform) {
-                runtimeBuilder.skillPlatform(platform.catalog(), platform.contentLoader());
+                runtimeBuilder.skillPlatform(platform.catalog(), platform.contentLoader(), platform.trust());
             }
             if (context != null) {
                 context.sources().forEach(runtimeBuilder::registerContextSource);

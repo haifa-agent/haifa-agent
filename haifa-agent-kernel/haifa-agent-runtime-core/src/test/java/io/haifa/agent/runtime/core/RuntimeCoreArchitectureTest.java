@@ -31,7 +31,8 @@ class RuntimeCoreArchitectureTest {
                         "com.openai..",
                         "dev.langchain4j..",
                         "org.testcontainers..",
-                        "io.haifa.agent.admin..")
+                        "io.haifa.agent.admin..",
+                        "io.haifa.agent.personalassistant..")
                 .check(new ClassFileImporter()
                         .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
                         .importPackages("io.haifa.agent.runtime.core"));

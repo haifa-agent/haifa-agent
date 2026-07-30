@@ -68,3 +68,4 @@ haifa:
       python-path: ${HAIFA_PERSONAL_PYTHON_PATH:}
       power-shell-path: ${HAIFA_PERSONAL_POWERSHELL_PATH:}
     local-skill-root: ${HAIFA_PERSONAL_SKILL_ROOT:}
+    trusted-script-manifest: ${HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST:}

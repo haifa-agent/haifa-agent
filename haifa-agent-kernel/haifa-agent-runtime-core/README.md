@@ -108,3 +108,12 @@ AgentLoop，Run 终态后清理。有效模型决策仍由 `DecisionExecutor` �
 - Runtime 使用可信 Run 身份检索 RUN/SESSION/USER Scope 的 ACTIVE Memory；授权和状态过滤先于排序，结果仍通过 `ContextItem` IR 和统一 Token 预算。Checkpoint 只保存 Memory ID/Version、Scope、策略版本和查询摘要，Resume 会重新授权且不会恢复已失效或清除的正文。
 - Checkpoint 创建通过 SLF4J 输出 `checkpoint.snapshot` 与 `checkpoint.capture` 结构化耗时日志，分别覆盖状态读取/组装/Hash，以及 latest 查询、Snapshot、持久化和 Event 发布阶段。日志只包含 Run/Checkpoint 标识、计数和毫秒耗时，不输出正文、Payload 或凭据。
 - 模块不依赖 Spring、模型 Provider SDK、MCP、Docker、JPA、产品模块或管理端。
+
+## Trusted Skill script policy
+
+`TrustedSkillScriptPublicToolPolicy` runs before the ordinary `ALWAYS + ASK` branch. It produces an audited
+`ALLOW` with reason `TRUSTED_SKILL_SCRIPT_AUTO_APPROVED` only when the current Run configuration contains one
+unambiguous, active package/script grant pair and every frozen Skill, script, Tool, argument-policy,
+runtime/profile/sandbox, capability, network, and caller-scope fact matches exactly. It never trusts model
+arguments as provenance, never applies to generic `execution.run`, and never fabricates an Approval response.
+Missing or drifted evidence delegates to the existing approval policy.

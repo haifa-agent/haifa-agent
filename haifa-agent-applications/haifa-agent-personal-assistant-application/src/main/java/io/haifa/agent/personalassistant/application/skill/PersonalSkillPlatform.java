@@ -2,11 +2,13 @@ package io.haifa.agent.personalassistant.application.skill;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.personalassistant.application.trust.PersonalTrustedScriptManifest;
 import io.haifa.agent.skill.api.SkillAvailability;
 import io.haifa.agent.skill.api.SkillCatalog;
 import io.haifa.agent.skill.api.SkillContentLoader;
 import io.haifa.agent.skill.api.SkillDiscoveryContext;
 import io.haifa.agent.skill.api.SkillOrigin;
+import io.haifa.agent.skill.api.SkillPackageReviewGrant;
 import io.haifa.agent.skill.api.SkillParserMode;
 import io.haifa.agent.skill.api.SkillResolutionPolicy;
 import io.haifa.agent.skill.api.SkillScope;
@@ -14,6 +16,8 @@ import io.haifa.agent.skill.api.SkillScopeRef;
 import io.haifa.agent.skill.api.SkillSource;
 import io.haifa.agent.skill.api.SkillSourceDescriptor;
 import io.haifa.agent.skill.api.SkillSourceRef;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
+import io.haifa.agent.skill.api.SkillTrustSubject;
 import io.haifa.agent.skill.api.SkillVisibilityContext;
 import io.haifa.agent.skill.core.ClasspathSkillSource;
 import io.haifa.agent.skill.core.CompositeSkillContentLoader;
@@ -25,6 +29,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -32,7 +37,13 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Deterministic bundled Skill plus an explicitly configured trusted read-only local source. */
-public record PersonalSkillPlatform(SkillCatalog catalog, SkillContentLoader contentLoader, Set<String> aliases) {
+public record PersonalSkillPlatform(
+        SkillCatalog catalog,
+        SkillContentLoader contentLoader,
+        Set<String> aliases,
+        SkillTrustSnapshot packageTrust,
+        PersonalTrustedScriptManifest trustManifest) {
+    private static final String PRODUCT_ID = "haifa-personal-assistant";
     private static final SkillPackageLimits IMPORTED_SKILL_LIMITS =
             new SkillPackageLimits(128, 8, 512 * 1024, 2 * 1024 * 1024, 256 * 1024, 2_000, 20_000);
 
@@ -40,10 +51,28 @@ public record PersonalSkillPlatform(SkillCatalog catalog, SkillContentLoader con
         Objects.requireNonNull(catalog);
         Objects.requireNonNull(contentLoader);
         aliases = Set.copyOf(aliases);
+        Objects.requireNonNull(packageTrust);
+        Objects.requireNonNull(trustManifest);
     }
 
     public static PersonalSkillPlatform create(
             TenantRef tenant, PrincipalRef principal, Optional<Path> configuredLocalRoot, List<Path> forbiddenRoots) {
+        return create(
+                tenant,
+                principal,
+                configuredLocalRoot,
+                forbiddenRoots,
+                PersonalTrustedScriptManifest.empty(),
+                Clock.systemUTC());
+    }
+
+    public static PersonalSkillPlatform create(
+            TenantRef tenant,
+            PrincipalRef principal,
+            Optional<Path> configuredLocalRoot,
+            List<Path> forbiddenRoots,
+            PersonalTrustedScriptManifest trustManifest,
+            Clock clock) {
         List<SkillSource> sources = new ArrayList<>();
         sources.add(bundled());
         configuredLocalRoot.ifPresent(root -> sources.add(local(tenant, principal, root, forbiddenRoots)));
@@ -51,11 +80,67 @@ public record PersonalSkillPlatform(SkillCatalog catalog, SkillContentLoader con
                 tenant, principal, Optional.empty(), false, Set.of(SkillScope.PRODUCT, SkillScope.USER));
         var policy = new SkillResolutionPolicy(
                 "personal-skill-resolution@1", List.of(SkillScope.USER, SkillScope.PRODUCT), true);
-        var catalog = new SkillCatalogBuilder(sources, policy).build(new SkillDiscoveryContext(visibility));
+        List<io.haifa.agent.skill.api.SkillRegistration> registrations = sources.stream()
+                .flatMap(source -> source.discover(new SkillDiscoveryContext(visibility)).registrations().stream())
+                .toList();
+        List<SkillPackageReviewGrant> packageGrants = trustManifest.packages().stream()
+                .map(entry -> packageGrant(entry, registrations, tenant, principal))
+                .toList();
+        SkillTrustSnapshot packageTrust = new SkillTrustSnapshot(trustManifest.digest(), packageGrants, List.of());
+        var subject = new SkillTrustSubject(tenant, principal, PRODUCT_ID, Optional.empty());
+        var catalog = new SkillCatalogBuilder(sources, policy, packageTrust, subject, clock)
+                .build(new SkillDiscoveryContext(visibility));
+        Set<String> effectiveGrantIds = catalog.snapshot().bindings().stream()
+                .flatMap(binding -> binding.packageReviewGrantId().stream())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (!effectiveGrantIds.containsAll(
+                packageGrants.stream().map(SkillPackageReviewGrant::id).toList())) {
+            throw new IllegalArgumentException("a reviewed Skill package is not effective in the Personal catalog");
+        }
         Set<String> aliases = catalog.snapshot().bindings().stream()
                 .map(binding -> binding.alias().value())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
-        return new PersonalSkillPlatform(catalog, new CompositeSkillContentLoader(sources), aliases);
+        return new PersonalSkillPlatform(
+                catalog, new CompositeSkillContentLoader(sources), aliases, packageTrust, trustManifest);
+    }
+
+    private static SkillPackageReviewGrant packageGrant(
+            PersonalTrustedScriptManifest.PackageReview entry,
+            List<io.haifa.agent.skill.api.SkillRegistration> registrations,
+            TenantRef tenant,
+            PrincipalRef principal) {
+        var matches = registrations.stream()
+                .filter(registration -> registration.alias().value().equals(entry.skillAlias()))
+                .filter(registration -> registration.registrationDigest().equals(entry.registrationContentDigest()))
+                .filter(registration -> registration.packageIndex().digest().equals(entry.packageContentDigest()))
+                .toList();
+        if (matches.size() != 1) {
+            throw new IllegalArgumentException(
+                    "package review entry must match exactly one discovered Skill registration");
+        }
+        var registration = matches.getFirst();
+        if (registration.availability() != SkillAvailability.REVIEW_REQUIRED) {
+            throw new IllegalArgumentException("package review entry does not identify a review-required Skill");
+        }
+        return new SkillPackageReviewGrant(
+                entry.id(),
+                1,
+                entry.version(),
+                tenant,
+                principal,
+                PRODUCT_ID,
+                entry.scope(),
+                Optional.empty(),
+                registration.coordinate(),
+                registration.registrationDigest(),
+                registration.packageIndex().digest(),
+                entry.issuedInstant(),
+                entry.expiresInstant(),
+                entry.revokedInstant(),
+                entry.state(),
+                entry.reviewerRef(),
+                entry.reviewSourceRef(),
+                "SKILL_PACKAGE_REVIEWED");
     }
 
     private static SkillSource bundled() {

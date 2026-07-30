@@ -53,3 +53,14 @@ Contract、Store、Starter、Tools 或 Skills 子工程。
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-personal-assistant-application -am test
 ```
+
+## Trusted finance Skill reference
+
+An optional product-owned trust manifest can promote exact reviewed external Skill packages and expose fixed
+business Tools for market data, workbook recalculation, and DCF validation. Their Schemas accept only bounded
+business inputs; workbook paths must be logical `.xlsx` Workspace paths and are physically checked before
+Broker dispatch. The market-data Tool requires explicit frozen hosts, while workbook Tools reject network hosts.
+
+This reference vertical uses the shared package/script grant, Runtime policy, and fixed-script execution
+facility. Removing it does not change public Trust, Policy, Runtime, or Execution code. A missing manifest keeps
+the feature disabled; invalid, unknown, duplicate, drifted, expired, or revoked entries fail closed.

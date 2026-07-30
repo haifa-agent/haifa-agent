@@ -14,7 +14,8 @@ public record PersonalAssistantProperties(
         Web web,
         Mcp mcp,
         Execution execution,
-        String localSkillRoot) {
+        String localSkillRoot,
+        String trustedScriptManifest) {
     public PersonalAssistantProperties {
         if (dataDirectory == null) throw new IllegalArgumentException("dataDirectory is required");
         if (continuationKeyBase64 == null || continuationKeyBase64.isBlank()) {
@@ -24,6 +25,7 @@ public record PersonalAssistantProperties(
             throw new IllegalArgumentException("caller, model, web, mcp, and execution configuration are required");
         }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
+        trustedScriptManifest = trustedScriptManifest == null ? "" : trustedScriptManifest.trim();
     }
 
     public record Web(

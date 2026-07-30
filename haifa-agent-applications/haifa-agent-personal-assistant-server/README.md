@@ -110,3 +110,23 @@ Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相�
 
 The server uses Spring Boot's SLF4J/Logback logging stack. At `INFO`, it records safe operational milestones for Run acceptance and status changes, interaction/approval state, Tool and execution activity, and model call start/completion/failure with token counts and elapsed time. Normalized model failures additionally include their safe category, retryability, HTTP status, provider code, safe message, and stack trace. Logs intentionally exclude full prompts, assistant text, Tool arguments, command or script content, credentials, raw provider responses, result bodies, and messages from unclassified exceptions.
 Invalid server-side argument failures are logged with correlation ID, HTTP method/path, exception type, and bounded stack origin while omitting the exception message and request content.
+
+## Trusted Skill script manifest
+
+Trusted script auto-approval is a separate explicit opt-in. The manifest must be an external regular file and
+must pin the reviewed package, registration, script, generated Tool, execution configuration, sandbox,
+capability, network, subject, expiry, and revocation facts. It contains no credential or script source:
+
+```powershell
+$env:HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST='D:\secure-config\trusted-skill-scripts.yml'
+.\scripts\start-real-environment.ps1 `
+  -SkillRoot 'D:\agents\hermes-agent\optional-skills\finance' `
+  -TrustedScriptManifest 'D:\secure-config\trusted-skill-scripts.yml'
+```
+
+For initial diagnostics, a script entry may be `REVOKED` with an all-zero expected Tool definition hash. The
+server starts and Admin exposes the computed safe binding/digest metadata, but the script cannot be
+auto-approved. After reviewing the exact package, script, fixed Tool Schema, runtime, sandbox, capabilities,
+and hosts, the operator records the real hash, changes the grant to `ACTIVE`, and restarts. Any subsequent
+drift returns that invocation to ordinary approval or rejection. Generic `execution.run` always keeps its
+existing exact human approval.

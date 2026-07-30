@@ -39,6 +39,15 @@ public final class PersonalAssistantProfile {
             Set<String> localSkillAliases,
             Set<String> mcpToolAliases,
             Set<String> webToolAliases) {
+        return create(coordinates, localSkillAliases, mcpToolAliases, webToolAliases, Set.of());
+    }
+
+    public static ProductProfile create(
+            ContributionCoordinates coordinates,
+            Set<String> localSkillAliases,
+            Set<String> mcpToolAliases,
+            Set<String> webToolAliases,
+            Set<String> trustedScriptToolAliases) {
         Map<ProductCapabilityId, ProductCapabilityRequirement> requirements = new LinkedHashMap<>();
         required(requirements, ProductCapabilities.MODEL, coordinates.model());
         required(requirements, ProductCapabilities.PERSISTENCE, coordinates.persistence());
@@ -66,7 +75,8 @@ public final class PersonalAssistantProfile {
                         java.util.stream.Stream.of(
                                 PRODUCT_TOOL_ALIAS, EXECUTION_TOOL_ALIAS, SKILL_LOAD_ALIAS, SKILL_RESOURCE_ALIAS),
                         mcpToolAliases.stream(),
-                        webToolAliases.stream())
+                        webToolAliases.stream(),
+                        trustedScriptToolAliases.stream())
                 .flatMap(java.util.function.Function.identity())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         ProductPolicies policies = new ProductPolicies(

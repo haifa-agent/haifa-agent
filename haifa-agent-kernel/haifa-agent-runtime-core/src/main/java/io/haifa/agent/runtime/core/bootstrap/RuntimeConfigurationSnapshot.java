@@ -10,6 +10,7 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
 import io.haifa.agent.skill.api.SkillContentDigest;
+import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.List;
 import java.util.Objects;
@@ -29,11 +30,51 @@ public record RuntimeConfigurationSnapshot(
         List<FrozenSkillBinding> skillBindings,
         SkillContentDigest skillCatalogDigest,
         String skillResolutionPolicyRef,
+        SkillTrustSnapshot skillTrust,
         Set<AgentDefinitionId> allowedChildAgents,
         String agentInstruction,
         RuntimeOverrides overrides,
         List<EffectiveCapability> capabilities,
         ResolvedModelSnapshot model) {
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            List<FrozenToolBinding> toolBindings,
+            List<FrozenSkillBinding> skillBindings,
+            SkillContentDigest skillCatalogDigest,
+            String skillResolutionPolicyRef,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides,
+            List<EffectiveCapability> capabilities,
+            ResolvedModelSnapshot model) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                SkillTrustSnapshot.empty(),
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                model);
+    }
+
     public RuntimeConfigurationSnapshot {
         reference = Objects.requireNonNull(reference, "reference must not be null");
         definitionId = Objects.requireNonNull(definitionId, "definitionId must not be null");
@@ -57,6 +98,7 @@ public record RuntimeConfigurationSnapshot(
         }
         skillCatalogDigest = Objects.requireNonNull(skillCatalogDigest, "skillCatalogDigest must not be null");
         skillResolutionPolicyRef = requireText(skillResolutionPolicyRef, "skillResolutionPolicyRef");
+        skillTrust = Objects.requireNonNullElseGet(skillTrust, SkillTrustSnapshot::empty);
         allowedChildAgents =
                 Set.copyOf(Objects.requireNonNull(allowedChildAgents, "allowedChildAgents must not be null"));
         agentInstruction = requireText(agentInstruction, "agentInstruction");
