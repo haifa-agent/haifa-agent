@@ -18,7 +18,8 @@ SQLite 权威存储读取有界的安全 Runtime Event、Run Usage 和 Tool Call
 投影，不承担内部 Gate 取证。Harness 生成 Failure Cluster、Meaningful Progress、Scratch、Completion、
 Secret Scan 和 Process Cleanup 证据；超时、预算越界、同类失败超过 4 次、已实际执行的命令缺少
 Scratch、Scratch 清理失败或 Secret 命中均失败。每个 Repeat 和 Gate 生成 SHA-256 Manifest 后整体
-设为只读。
+设为只读。Manifest 只排除可被 Finder 异步改写、且不承载交付事实的 `.DS_Store`；Workspace、
+Runtime 与其余 Gate 证据文件全部纳入摘要。
 
 约束：
 

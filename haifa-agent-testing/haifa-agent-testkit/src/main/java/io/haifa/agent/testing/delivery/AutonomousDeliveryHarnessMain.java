@@ -203,6 +203,7 @@ public final class AutonomousDeliveryHarnessMain {
         try (var paths = Files.walk(gate)) {
             for (Path file : paths.filter(Files::isRegularFile)
                     .filter(path -> !path.getFileName().toString().equals("manifest.sha256"))
+                    .filter(path -> !path.getFileName().toString().equals(".DS_Store"))
                     .sorted(Comparator.comparing(path -> gate.relativize(path).toString()))
                     .toList()) {
                 lines.add(Sha256Digests.file(file) + "  "
