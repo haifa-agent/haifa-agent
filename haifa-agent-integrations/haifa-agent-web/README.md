@@ -5,6 +5,7 @@
 - `io.haifa.agent.web` 保存 Provider-neutral 契约、Provider Registry、URL 安全策略和 Tool Adapter。
 - `io.haifa.agent.web.provider` 保存 Aliyun IQS、Brave 和 Tavily HTTP Provider。
 - 模块不依赖 Runtime、Spring 或任何具体产品；Provider 选择、凭据来源和允许的 Tool alias 由产品装配层冻结。
+- `web.search` 的模型可见输入 Schema 根据冻结 Provider 的 capability 精确生成；不支持的可选参数不会暴露给模型，执行前仍保留能力校验作为防御。
 - `web.fetch` 在请求交给远端 Provider 前执行 URL 策略检查；返回内容始终按不可信外部内容处理。
 
 当前 Provider：

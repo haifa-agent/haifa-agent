@@ -83,6 +83,46 @@ class WebToolTest {
     }
 
     @Test
+    void searchSchemaExposesOnlyOptionsSupportedByTheFrozenProvider() {
+        var catalog = new WebToolCatalog();
+        var aliyun = catalog.search(searchProvider(
+                "aliyun",
+                Set.of(WebSearchOption.FRESHNESS, WebSearchOption.INCLUDE_DOMAINS, WebSearchOption.EXCLUDE_DOMAINS)));
+        var brave = catalog.search(searchProvider(
+                "brave",
+                Set.of(
+                        WebSearchOption.LANGUAGE,
+                        WebSearchOption.COUNTRY,
+                        WebSearchOption.FRESHNESS,
+                        WebSearchOption.SAFE_SEARCH)));
+        var tavily = catalog.search(searchProvider(
+                "tavily",
+                Set.of(
+                        WebSearchOption.COUNTRY,
+                        WebSearchOption.FRESHNESS,
+                        WebSearchOption.INCLUDE_DOMAINS,
+                        WebSearchOption.EXCLUDE_DOMAINS)));
+
+        assertThat(inputProperties(aliyun))
+                .containsOnlyKeys("query", "maxResults", "freshness", "includeDomains", "excludeDomains");
+        assertThat(inputProperties(brave))
+                .containsOnlyKeys("query", "maxResults", "language", "country", "freshness", "safeSearch");
+        assertThat(inputProperties(tavily))
+                .containsOnlyKeys("query", "maxResults", "country", "freshness", "includeDomains", "excludeDomains");
+    }
+
+    @Test
+    void searchBindingIdentityChangesWhenProviderCapabilitiesChange() {
+        var catalog = new WebToolCatalog();
+        var language = catalog.search(searchProvider("same", Set.of(WebSearchOption.LANGUAGE)));
+        var country = catalog.search(searchProvider("same", Set.of(WebSearchOption.COUNTRY)));
+
+        assertThat(language.providerBindingReference()).isNotEqualTo(country.providerBindingReference());
+        assertThat(inputProperties(language)).containsKey("language").doesNotContainKey("country");
+        assertThat(inputProperties(country)).containsKey("country").doesNotContainKey("language");
+    }
+
+    @Test
     void fetchToolReturnsStructuredUntrustedContent() {
         var contribution = new WebToolCatalog().fetch(fetchProvider(), new DefaultWebUrlPolicy());
         var catalog = new ToolCatalogBuilder()
@@ -130,7 +170,7 @@ class WebToolTest {
     }
 
     @Test
-    void rejectsOptionsUnsupportedByTheFrozenSearchProviderBeforeDispatch() {
+    void providerAdapterRejectsUnsupportedOptionsBeforeDispatchAsDefenseInDepth() {
         var contribution = new WebToolCatalog().search(searchProvider("aliyun"));
         var catalog = new ToolCatalogBuilder()
                 .register(
@@ -165,8 +205,12 @@ class WebToolTest {
     }
 
     private static WebSearchProvider searchProvider(String id) {
+        return searchProvider(id, Set.of());
+    }
+
+    private static WebSearchProvider searchProvider(String id, Set<WebSearchOption> supportedOptions) {
         return new WebSearchProvider() {
-            private final WebProviderDescriptor descriptor = WebToolTest.descriptor(id, true);
+            private final WebProviderDescriptor descriptor = WebToolTest.descriptor(id, supportedOptions);
 
             @Override
             public WebProviderDescriptor descriptor() {
@@ -220,16 +264,28 @@ class WebToolTest {
     }
 
     private static WebProviderDescriptor descriptor(String id, boolean search) {
+        return descriptor(id, search ? Set.of() : null);
+    }
+
+    private static WebProviderDescriptor descriptor(String id, Set<WebSearchOption> supportedOptions) {
         URI endpoint = URI.create("https://" + id + ".example/api");
         return new WebProviderDescriptor(
                 new WebProviderId(id),
                 id,
-                search ? WebProviderCapabilities.searchOnly(Set.of()) : WebProviderCapabilities.fetchOnly(),
+                supportedOptions == null
+                        ? WebProviderCapabilities.fetchOnly()
+                        : WebProviderCapabilities.searchOnly(supportedOptions),
                 "test",
                 "1.0.0",
                 endpoint,
                 Set.of(endpoint.getHost()),
                 Optional.empty(),
                 Map.of("mode", "test"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> inputProperties(WebToolCatalogContribution contribution) {
+        return (Map<String, Object>)
+                contribution.definition().inputSchema().document().get("properties");
     }
 }

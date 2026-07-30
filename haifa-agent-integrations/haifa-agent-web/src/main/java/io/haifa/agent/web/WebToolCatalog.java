@@ -27,12 +27,16 @@ import java.util.TreeMap;
 public final class WebToolCatalog {
     public WebToolCatalogContribution search(WebSearchProvider provider) {
         var adapter = new WebSearchToolProvider(provider);
-        String binding = bindingReference("search", provider.descriptor(), Map.of());
+        var descriptor = provider.descriptor();
+        String supportedOptions = String.join(
+                ",",
+                descriptor.capabilities().supportedSearchOptions().stream()
+                        .map(Enum::name)
+                        .sorted()
+                        .toList());
+        String binding = bindingReference("search", descriptor, Map.of("supportedSearchOptions", supportedOptions));
         return new WebToolCatalogContribution(
-                new ToolAlias("web_search"),
-                searchDefinition(adapter, provider.descriptor(), binding),
-                binding,
-                adapter);
+                new ToolAlias("web_search"), searchDefinition(adapter, descriptor, binding), binding, adapter);
     }
 
     public WebToolCatalogContribution fetch(WebFetchProvider provider, WebUrlPolicy urlPolicy) {
@@ -53,7 +57,7 @@ public final class WebToolCatalog {
                 provider.id(),
                 "Search the public web",
                 "Search public web sources and return structured, untrusted external results.",
-                searchInputSchema(),
+                searchInputSchema(descriptor.capabilities().supportedSearchOptions()),
                 searchOutputSchema(),
                 descriptor,
                 binding,
@@ -133,16 +137,31 @@ public final class WebToolCatalog {
         }
     }
 
-    private static Map<String, Object> searchInputSchema() {
+    private static Map<String, Object> searchInputSchema(Set<WebSearchOption> supportedOptions) {
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("query", Map.of("type", "string", "minLength", 1, "maxLength", 2048));
         properties.put("maxResults", Map.of("type", "integer", "minimum", 1, "maximum", 20));
-        properties.put("language", Map.of("type", "string", "minLength", 1, "maxLength", 32));
-        properties.put("country", Map.of("type", "string", "minLength", 1, "maxLength", 64));
-        properties.put("freshness", Map.of("type", "string", "enum", List.of("day", "week", "month", "year")));
-        properties.put("includeDomains", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 50));
-        properties.put("excludeDomains", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 50));
-        properties.put("safeSearch", Map.of("type", "string", "enum", List.of("off", "moderate", "strict")));
+        for (WebSearchOption option : WebSearchOption.values()) {
+            if (!supportedOptions.contains(option)) continue;
+            switch (option) {
+                case LANGUAGE -> properties.put("language", Map.of("type", "string", "minLength", 1, "maxLength", 32));
+                case COUNTRY -> properties.put("country", Map.of("type", "string", "minLength", 1, "maxLength", 64));
+                case FRESHNESS ->
+                    properties.put(
+                            "freshness", Map.of("type", "string", "enum", List.of("day", "week", "month", "year")));
+                case INCLUDE_DOMAINS ->
+                    properties.put(
+                            "includeDomains",
+                            Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 50));
+                case EXCLUDE_DOMAINS ->
+                    properties.put(
+                            "excludeDomains",
+                            Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 50));
+                case SAFE_SEARCH ->
+                    properties.put(
+                            "safeSearch", Map.of("type", "string", "enum", List.of("off", "moderate", "strict")));
+            }
+        }
         return objectSchema(properties, List.of("query"));
     }
 
