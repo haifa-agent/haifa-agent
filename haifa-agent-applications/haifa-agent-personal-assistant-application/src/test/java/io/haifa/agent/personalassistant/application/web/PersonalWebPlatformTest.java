@@ -8,6 +8,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class PersonalWebPlatformTest {
@@ -31,6 +32,12 @@ class PersonalWebPlatformTest {
         assertThat(platform.contributions())
                 .extracting(item -> item.definition().name().value())
                 .containsExactly("web.search", "web.fetch");
+        var search = platform.contributions().stream()
+                .filter(item -> item.definition().name().value().equals("web.search"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(inputProperties(search.definition().inputSchema().document()))
+                .containsOnlyKeys("query", "maxResults", "freshness", "includeDomains", "excludeDomains");
     }
 
     @Test
@@ -64,5 +71,10 @@ class PersonalWebPlatformTest {
                         Clock.systemUTC()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Aliyun IQS credential");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> inputProperties(Map<String, Object> schema) {
+        return (Map<String, Object>) schema.get("properties");
     }
 }
