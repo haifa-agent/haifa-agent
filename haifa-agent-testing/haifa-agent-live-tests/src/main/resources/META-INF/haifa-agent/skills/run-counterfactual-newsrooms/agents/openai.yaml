@@ -1,0 +1,4 @@
+interface:
+  display_name: "平行世界新闻编辑部"
+  short_description: "Create alternate-history newsrooms and audit causality"
+  default_prompt: "Use $run-counterfactual-newsrooms to publish an alternate timeline across several eras and audit its causal continuity."
