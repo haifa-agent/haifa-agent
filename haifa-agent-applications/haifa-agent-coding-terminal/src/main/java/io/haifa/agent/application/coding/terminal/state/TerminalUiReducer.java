@@ -394,7 +394,8 @@ public final class TerminalUiReducer {
                             executionBody(payload),
                             payload.status(),
                             false));
-        } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload) {
+        } else if (event.payload() instanceof RunEventPayloads.ResourceAvailable payload
+                && !isInternalCheckpoint(payload)) {
             upsert(
                     items,
                     new TranscriptItem(
@@ -432,6 +433,10 @@ public final class TerminalUiReducer {
                             false));
         }
         return List.copyOf(items);
+    }
+
+    private static boolean isInternalCheckpoint(RunEventPayloads.ResourceAvailable payload) {
+        return "checkpoint".equalsIgnoreCase(payload.kind());
     }
 
     private static TerminalUiState output(TerminalUiState state, AgentRunOutputEvent event) {

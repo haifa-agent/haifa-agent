@@ -100,6 +100,7 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 
 - Tool 与 Execution 按稳定 ID 原位更新，不为同一调用重复创建卡片；显示明确 lifecycle、Target、
   Workdir、Stream、Exit、Result Ref 和 FileChangeSet Ref，缺失的 Duration 不伪造；
+- Runtime Checkpoint 继续持久化并推进事件 Cursor，但作为内部恢复事实不投影到 Transcript；
 - Approval 从 `InteractionView` 显示 Action、Target、Risk、Scope、Network、Reason 与允许动作；
   `InteractionLifecycle.actionOrReason` 等自由文本不参与 UI 解析。Selector 接管输入期间以及响应回执后，
   原有 editor buffer/cursor 均保持不变；
@@ -107,7 +108,8 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   合并展示且按稳定 ID 去重，Alt+Up 仍从产品队列恢复原文；
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
-- viewport 不在底部时不抢滚动位置，只显示 `new output below`；回到底部后恢复自动跟随。
+- viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
+  Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
 50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成

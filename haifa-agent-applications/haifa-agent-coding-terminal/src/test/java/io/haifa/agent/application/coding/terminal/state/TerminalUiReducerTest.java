@@ -94,23 +94,43 @@ class TerminalUiReducerTest {
     }
 
     @Test
-    void committedRunLifecycleKeepsFooterStatusConsistentWithTheTranscriptStatus() {
+    void committedRunLifecycleKeepsFooterStatusAndConsumesInternalCheckpointsWithoutRenderingThem() {
         TerminalUiState completed = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(
                         event(1, "event-1", new RunEventPayloads.RunLifecycle("COMPLETED", 1, "NONE"))));
-        TerminalUiState postCompletionResource = reducer.reduce(
-                completed,
-                new TerminalUiAction.RunEventReceived(event(
-                        2,
-                        "event-2",
-                        new RunEventPayloads.ResourceAvailable(
-                                "checkpoint-1", "checkpoint", "Checkpoint", "AVAILABLE", "resume"))));
+        AgentRunEvent checkpointEvent = event(
+                2,
+                "event-2",
+                new RunEventPayloads.ResourceAvailable(
+                        "checkpoint-1", "checkpoint", "Checkpoint", "AVAILABLE", "resume"));
+        TerminalUiState postCompletionResource =
+                reducer.reduce(completed, new TerminalUiAction.RunEventReceived(checkpointEvent));
 
         assertThat(completed.status()).isEqualTo("COMPLETED");
         assertThat(completed.footer().runStatus()).isEqualTo("COMPLETED");
         assertThat(completed.currentRunId()).isEmpty();
         assertThat(postCompletionResource.currentRunId()).isEmpty();
+        assertThat(postCompletionResource.transcript()).isEmpty();
+        assertThat(postCompletionResource.appliedCursor()).contains(checkpointEvent.cursor());
+        assertThat(postCompletionResource.seenEventIds()).contains("event-2");
+    }
+
+    @Test
+    void keepsUserRelevantResourcesVisible() {
+        TerminalUiState resource = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ResourceAvailable(
+                                "artifact-1", "artifact", "Changed files", "AVAILABLE", "inspect"))));
+
+        assertThat(resource.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.RESOURCE);
+            assertThat(item.title()).isEqualTo("Changed files");
+            assertThat(item.body()).isEqualTo("artifact · artifact-1");
+        });
     }
 
     @Test
