@@ -416,9 +416,13 @@ class LocalCodingAgentTest {
                 case 1 -> {
                     verification.set(verificationLabel(request));
                     assertThat(request.messages())
-                            .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
-                                    && message.content().contains("existing tests, test scripts, and fixtures")
-                                    && message.content().contains("map every stated acceptance clause"));
+                            .anyMatch(
+                                    message -> message.role() == ModelMessageRole.SYSTEM
+                                            && message.content().contains("existing tests, test scripts, and fixtures")
+                                            && message.content().contains("map every stated acceptance clause")
+                                            && message.content()
+                                                    .contains(
+                                                            "deduplication, rejected-record accounting, and accepted-record counts"));
                     yield answer("delivery-premature", "premature final");
                 }
                 case 2 -> {
