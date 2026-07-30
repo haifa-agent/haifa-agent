@@ -177,6 +177,8 @@ public final class RuntimeCoreBuilder {
     private boolean toolPlatformConfigured;
     private ToolPolicy toolPolicy = new DefaultToolPolicy();
     private PublicToolPolicy publicToolPolicy;
+    private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
+            java.util.function.UnaryOperator.identity();
     private PolicyDecisionStore policyDecisions = new RuntimePolicyDecisionStore();
     private PolicySnapshotStore policySnapshots;
     private PolicyAuthorizationEvidenceStore policyAuthorizationEvidence =
@@ -341,6 +343,11 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder publicToolPolicy(PublicToolPolicy value) {
         publicToolPolicy = Objects.requireNonNull(value, "value");
+        return this;
+    }
+
+    public RuntimeCoreBuilder publicToolPolicyDecorator(java.util.function.UnaryOperator<PublicToolPolicy> value) {
+        publicToolPolicyDecorator = Objects.requireNonNull(value, "value");
         return this;
     }
 
@@ -548,6 +555,8 @@ public final class RuntimeCoreBuilder {
             configuredToolPolicy = new TrustedSkillScriptPublicToolPolicy(
                     configuredToolPolicy, state, policyRequests, ids, time, policyDecisions);
         }
+        configuredToolPolicy = Objects.requireNonNull(
+                publicToolPolicyDecorator.apply(configuredToolPolicy), "public tool policy decorator returned null");
         ToolPipeline pipeline = new ToolPipeline(
                 toolInvoker,
                 toolSchemaValidator,

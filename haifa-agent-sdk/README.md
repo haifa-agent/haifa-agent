@@ -75,6 +75,9 @@ try (HaifaAgent agent = HaifaAgents.builder()
 - Model、Tool、Skill、MCP Tool binding、Context、Memory、Artifact、Policy、Approval、
   Credential 和 Execution/Sandbox 均通过显式 typed Contribution 注册。MCP alias 还必须同时
   出现在 Profile allowlist 与统一 Tool Catalog 中，不存在第二条 MCP 执行通道。
+- 产品可通过 `publicToolPolicyDecorator` 对 Runtime 已选定的公共 Tool Policy 做有界装饰；装饰器
+  必须为自己拥有的精确动作生成 request-bound Decision，并把其它动作委托给既有 Policy，不得建立
+  第二条 Tool 执行通道。
 - `HaifaAgentException` 及 `ConversationException` 对外只暴露安全的 `code`、`operation` 和
   `correlation`。Conversation Adapter、SQLite/Runtime 底层异常和输入正文不会进入公共错误消息。
 - `HaifaAgent.memories()` 暴露受 Product Profile、可信 `SdkCaller` 与权限约束的产品级
