@@ -3,6 +3,10 @@ package io.haifa.agent.application.project.product.coding.delivery;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationContextSource;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationDimension;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationEvidenceLedger;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationPlanResolver;
 import io.haifa.agent.context.api.ContextBuildRequest;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.core.agent.AgentDefinitionId;
@@ -250,6 +254,121 @@ class CodingDeliveryControlTest {
                         .reconstruct(fixture.run().id())
                         .codes())
                 .contains("NO_CHANGE_JUSTIFICATION", "VALIDATION_PASSED", "DIFF_INSPECTION");
+    }
+
+    @Test
+    void verificationPlanIsBoundedFrozenAndMapsGenericRiskFacts() {
+        Fixture fixture = fixture("fix the concurrent database migration and preserve API compatibility", Map.of());
+        var contracts = new CodingTaskContractResolver(fixture.store());
+        var plans = new CodingVerificationPlanResolver(fixture.store(), contracts);
+
+        var first = plans.resolve(fixture.run());
+        var restored = plans.resolve(fixture.run());
+
+        assertThat(restored).isEqualTo(first);
+        assertThat(first.digest()).startsWith("sha256:");
+        assertThat(first.dimensions())
+                .contains(
+                        CodingVerificationDimension.SUCCESS_PATH,
+                        CodingVerificationDimension.BOUNDARY,
+                        CodingVerificationDimension.FAILURE_PATH,
+                        CodingVerificationDimension.FAILURE_ATOMICITY,
+                        CodingVerificationDimension.RESOURCE_CLEANUP,
+                        CodingVerificationDimension.COMPATIBILITY,
+                        CodingVerificationDimension.IDEMPOTENCY,
+                        CodingVerificationDimension.CONCURRENCY)
+                .hasSizeLessThanOrEqualTo(9);
+    }
+
+    @Test
+    void completionRequiresEveryPlanDimensionFromMatchingSuccessfulExecution() {
+        Fixture fixture = fixture("fix the implementation", Map.of());
+        var contracts = new CodingTaskContractResolver(fixture.store());
+        var plans = new CodingVerificationPlanResolver(fixture.store(), contracts);
+        var verification = new CodingVerificationEvidenceLedger(fixture.store());
+        var policy = new CodingCompletionPolicy(
+                contracts,
+                new CodingDeliveryEvidenceLedger(fixture.store()),
+                CodingDeliveryProfile.safeDefault(),
+                plans,
+                verification);
+        var plan = plans.resolve(fixture.run());
+        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "TEST",
+                        "status",
+                        "SUCCEEDED",
+                        "exitCode",
+                        0,
+                        "verificationPlanDigest",
+                        plan.digest(),
+                        "verificationDimensions",
+                        plan.dimensions().stream().map(Enum::name).toList()));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of("operationFamily", "DIFF", "status", "SUCCEEDED", "exitCode", 0));
+
+        assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
+        assertThat(verification.reconstruct(fixture.run().id(), plan).passedDimensions())
+                .containsExactlyInAnyOrderElementsOf(plan.dimensions());
+    }
+
+    @Test
+    void failedOrMismatchedVerificationCannotPassAndContextContainsNoExecutableCheck() {
+        Fixture fixture = fixture("fix the implementation", Map.of());
+        var contracts = new CodingTaskContractResolver(fixture.store());
+        var plans = new CodingVerificationPlanResolver(fixture.store(), contracts);
+        var verification = new CodingVerificationEvidenceLedger(fixture.store());
+        var plan = plans.resolve(fixture.run());
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "TEST",
+                        "status",
+                        "FAILED",
+                        "exitCode",
+                        1,
+                        "verificationPlanDigest",
+                        plan.digest(),
+                        "verificationDimensions",
+                        List.of("SUCCESS_PATH")));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "TEST",
+                        "status",
+                        "SUCCEEDED",
+                        "exitCode",
+                        0,
+                        "verificationPlanDigest",
+                        "sha256:" + "0".repeat(64),
+                        "verificationDimensions",
+                        List.of("BOUNDARY")));
+
+        assertThat(verification.reconstruct(fixture.run().id(), plan).passedDimensions())
+                .isEmpty();
+        String text = ((TextContextContent) new CodingVerificationContextSource(fixture.store(), plans, verification)
+                        .load(request(fixture.run(), new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 0)))
+                        .getFirst()
+                        .content())
+                .text();
+        assertThat(text)
+                .contains("planDigest=" + plan.digest())
+                .contains("requiredDimensions=")
+                .doesNotContain("mvn", "bash", "python", "/Users/");
     }
 
     private static CodingTaskContract contract(String request) {

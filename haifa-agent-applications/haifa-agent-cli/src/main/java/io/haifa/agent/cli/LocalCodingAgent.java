@@ -15,6 +15,9 @@ import io.haifa.agent.application.project.product.coding.delivery.CodingDelivery
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskContractResolver;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationContextSource;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationEvidenceLedger;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationPlanResolver;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
@@ -396,6 +399,10 @@ final class LocalCodingAgent implements AutoCloseable {
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
+            var verificationPlans =
+                    new CodingVerificationPlanResolver(persistence.ports().state(), taskContracts);
+            var verificationEvidence =
+                    new CodingVerificationEvidenceLedger(persistence.ports().state());
             var runtime = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -404,10 +411,13 @@ final class LocalCodingAgent implements AutoCloseable {
                         traces.add(event);
                         traceObserver.accept(event);
                     })
-                    .completionPolicy(new CodingCompletionPolicy(taskContracts, deliveryEvidence, deliveryProfile))
+                    .completionPolicy(new CodingCompletionPolicy(
+                            taskContracts, deliveryEvidence, deliveryProfile, verificationPlans, verificationEvidence))
                     .repairRetry(new RepairRetryPolicy(2))
                     .registerContextSource(new CodingDeliveryContextSource(
                             persistence.ports().runs(), taskContracts, deliveryEvidence, deliveryProfile))
+                    .registerContextSource(new CodingVerificationContextSource(
+                            persistence.ports().runs(), verificationPlans, verificationEvidence))
                     .registerChatModel("openai-compatible", "1.0.0", model)
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())

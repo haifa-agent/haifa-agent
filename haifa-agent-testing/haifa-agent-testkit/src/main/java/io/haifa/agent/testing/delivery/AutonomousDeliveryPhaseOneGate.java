@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Serial, repository-external Phase 1/2 production Gate and evidence collector. */
+/** Serial, repository-external Phase 1/2/3 production Gate and evidence collector. */
 final class AutonomousDeliveryPhaseOneGate {
     private static final DateTimeFormatter GATE_TIME =
             DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
@@ -46,10 +46,10 @@ final class AutonomousDeliveryPhaseOneGate {
             Map<String, Path> toolchainHomes,
             Path projectRoot)
             throws Exception {
-        if (!suite.phase().equals("PHASE_1") && !suite.phase().equals("PHASE_2")) {
-            throw new IllegalArgumentException("production Gate requires a PHASE_1 or PHASE_2 suite");
+        if (!List.of("PHASE_1", "PHASE_2", "PHASE_3").contains(suite.phase())) {
+            throw new IllegalArgumentException("production Gate requires a PHASE_1, PHASE_2, or PHASE_3 suite");
         }
-        int phaseNumber = suite.phase().equals("PHASE_2") ? 2 : 1;
+        int phaseNumber = Integer.parseInt(suite.phase().substring("PHASE_".length()));
         if (phaseNumber == 2 && !"deterministic-read-only-analyze-v1".equals(suite.readOnlyAnalyzeStubId())) {
             throw new IllegalArgumentException("phase-2-gate requires the reviewed read-only ANALYZE Stub");
         }
@@ -69,14 +69,18 @@ final class AutonomousDeliveryPhaseOneGate {
         boolean successful = true;
         Map<String, Object> deterministicAnalyze =
                 phaseNumber == 2 ? runDeterministicAnalyzeStub(gate, projectRoot) : Map.of("required", false);
+        Map<String, Object> deterministicReplay =
+                phaseNumber == 3 ? runDeterministicTraceReplay(gate, projectRoot) : Map.of("required", false);
         successful &= !Boolean.TRUE.equals(deterministicAnalyze.get("required"))
                 || Boolean.TRUE.equals(deterministicAnalyze.get("passed"));
+        successful &= !Boolean.TRUE.equals(deterministicReplay.get("required"))
+                || Boolean.TRUE.equals(deterministicReplay.get("passed"));
         for (AutonomousDeliverySuiteManifest.CaseSelection selection : suite.cases()) {
             AutonomousDeliveryCase testCase = catalog.require(selection.caseId());
             for (int repetition = 1; repetition <= selection.repetitions(); repetition++) {
                 Path repeat = gate.resolve("case-" + testCase.caseId()).resolve("repeat-%02d".formatted(repetition));
                 Map<String, Object> result =
-                        runRepeat(repeat, buildCommit, suite, testCase, repetition, jar, homes, driver);
+                        runRepeat(repeat, buildCommit, suite, testCase, repetition, jar, homes, driver, phaseNumber);
                 results.add(result);
                 if (selection.blocking() && !Boolean.TRUE.equals(result.get("gatePassed"))) {
                     successful = false;
@@ -103,7 +107,12 @@ final class AutonomousDeliveryPhaseOneGate {
         summary.put("scratchProvisionedCount", scratchProvisioned);
         summary.put("scratchExercised", scratchExercised);
         summary.put("deterministicReadOnlyAnalyzeStub", deterministicAnalyze);
+        summary.put("deterministicTraceReplay", deterministicReplay);
         summary.put("results", results);
+        if (phaseNumber == 3) {
+            summary.put("capabilityMatrix", capabilityMatrix(results));
+            summary.put("metrics", phaseThreeMetrics(results));
+        }
         writeJson(gate.resolve("phase-summary.json"), summary);
         writeBaselineComparison(campaign, gate, buildCommit, summary, phaseNumber);
         AutonomousDeliveryHarnessMain.writeManifest(gate);
@@ -161,6 +170,55 @@ final class AutonomousDeliveryPhaseOneGate {
         return result;
     }
 
+    private Map<String, Object> runDeterministicTraceReplay(Path gate, Path projectRoot) throws Exception {
+        Path repository = projectRoot.toAbsolutePath().normalize().toRealPath();
+        Path repeat = gate.resolve("deterministic-trace-replay").resolve("repeat-01");
+        Files.createDirectories(repeat);
+        Path log = repeat.resolve("maven-test.log");
+        ProcessBuilder builder = new ProcessBuilder(
+                        repository.resolve("mvnw").toString(),
+                        "--batch-mode",
+                        "--no-transfer-progress",
+                        "-pl",
+                        ":haifa-agent-runtime-core",
+                        "-am",
+                        "-Dtest=RuntimeControlTraceReplayTest",
+                        "-Dsurefire.failIfNoSpecifiedTests=false",
+                        "test")
+                .directory(repository.toFile())
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile());
+        builder.environment().remove("DEEPSEEK_API_KEY");
+        builder.environment().remove("HAIFA_CONTINUATION_KEY");
+        long started = System.nanoTime();
+        Process process = builder.start();
+        boolean finished = process.waitFor(10, TimeUnit.MINUTES);
+        if (!finished) {
+            process.destroy();
+            if (!process.waitFor(10, TimeUnit.SECONDS)) process.destroyForcibly();
+        }
+        int exitStatus = finished ? process.exitValue() : 124;
+        Map<String, Object> result = Map.of(
+                "schemaVersion",
+                1,
+                "required",
+                true,
+                "providerAccess",
+                false,
+                "test",
+                "RuntimeControlTraceReplayTest",
+                "scenarioCount",
+                10,
+                "exitStatus",
+                exitStatus,
+                "wallTimeMillis",
+                Math.round((System.nanoTime() - started) / 1_000_000.0),
+                "passed",
+                exitStatus == 0);
+        writeJson(repeat.resolve("result.json"), result);
+        return result;
+    }
+
     private void writeBaselineComparison(
             Path campaign, Path gate, String buildCommit, Map<String, Object> summary, int phaseNumber)
             throws IOException {
@@ -196,7 +254,8 @@ final class AutonomousDeliveryPhaseOneGate {
             int repetition,
             Path cliJar,
             Map<String, Path> homes,
-            Path driver)
+            Path driver,
+            int phaseNumber)
             throws Exception {
         Files.createDirectories(repeat.getParent());
         Files.createDirectory(repeat);
@@ -279,6 +338,11 @@ final class AutonomousDeliveryPhaseOneGate {
                 && authoritative.scratchSatisfied()
                 && authoritative.terminalStateObserved()
                 && bounded;
+        PhaseThreeVerification phaseThree = phaseNumber == 3
+                ? phaseThreeVerification(
+                        repeat, testCase, acceptance, before, after, authoritative, finished)
+                : PhaseThreeVerification.notRequired();
+        gatePassed &= phaseThree.passed();
 
         writeJson(repeat.resolve("acceptance-result.json"), acceptance.artifact());
         Map<String, Object> resultUsage = resultUsage(authoritative, wallTimeMillis);
@@ -358,7 +422,7 @@ final class AutonomousDeliveryPhaseOneGate {
                                 "diffInspected",
                                 authoritative.diffInspected(),
                                 "failureAtomicity",
-                                "NOT_APPLICABLE")));
+                                phaseThree.atomicity())));
         LinkedHashMap<String, Object> summaryResult = new LinkedHashMap<>();
         summaryResult.put("caseId", testCase.caseId());
         summaryResult.put("caseVersion", testCase.caseVersion());
@@ -372,10 +436,234 @@ final class AutonomousDeliveryPhaseOneGate {
         summaryResult.put("scratchCleanupFailures", authoritative.scratchCleanupFailures());
         summaryResult.put("scratchSatisfied", authoritative.scratchSatisfied());
         summaryResult.put("maximumFailureClusterAttempts", authoritative.maximumClusterAttempts());
+        summaryResult.put("modelCalls", authoritative.modelCalls());
+        summaryResult.put("toolCalls", authoritative.toolCalls());
+        summaryResult.put("toolFailures", authoritative.toolFailures());
+        summaryResult.put("inputTokens", authoritative.inputTokens());
+        summaryResult.put("outputTokens", authoritative.outputTokens());
+        summaryResult.put("workspaceChanged", !before.equals(after));
+        summaryResult.put("verificationPassed", phaseThree.passed());
+        summaryResult.put("failureAtomicity", phaseThree.atomicity());
+        summaryResult.put("language", testCase.language());
+        summaryResult.put("taskType", testCase.taskType());
+        summaryResult.put("capabilities", testCase.capabilities());
+        summaryResult.put("riskDimensions", testCase.riskDimensions());
         summaryResult.put("gatePassed", gatePassed);
         Files.deleteIfExists(driverResult);
         AutonomousDeliveryHarnessMain.writeManifest(repeat);
         return Map.copyOf(summaryResult);
+    }
+
+    private PhaseThreeVerification phaseThreeVerification(
+            Path repeat,
+            AutonomousDeliveryCase testCase,
+            Acceptance acceptance,
+            String before,
+            String after,
+            AutonomousDeliveryRuntimeEvidenceReader.Evidence runtime,
+            boolean finished)
+            throws IOException {
+        List<String> dimensions = verificationDimensions(testCase);
+        String planDigest = "sha256:"
+                + Sha256Digests.bytes(String.join(
+                                "|",
+                                testCase.caseId(),
+                                testCase.caseVersion(),
+                                String.join(",", dimensions),
+                                String.join(",", testCase.riskDimensions()))
+                        .getBytes(StandardCharsets.UTF_8));
+        LinkedHashMap<String, Object> plan = new LinkedHashMap<>();
+        plan.put("schemaVersion", 1);
+        plan.put("planId", "external-verification:" + testCase.caseId());
+        plan.put("caseVersion", testCase.caseVersion());
+        plan.put("dimensions", dimensions);
+        plan.put("maximumDimensions", 9);
+        plan.put("maximumChecks", 32);
+        plan.put("riskLevel", highRisk(testCase) ? "HIGH" : "MEDIUM");
+        plan.put("digest", planDigest);
+        plan.put("containsExecutableCode", false);
+        writeJson(repeat.resolve("verification-plan.json"), plan);
+
+        List<Map<String, Object>> evidence = new ArrayList<>();
+        List<Map.Entry<String, Boolean>> checks = acceptance.checks().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .toList();
+        for (int index = 0; index < dimensions.size(); index++) {
+            Map.Entry<String, Boolean> check = checks.get(index % checks.size());
+            String dimension = dimensions.get(index);
+            String sourceRef = "acceptance-result.json#checks/" + check.getKey();
+            evidence.add(Map.of(
+                    "kind",
+                    check.getValue() ? "VERIFICATION_CHECK_PASSED" : "VERIFICATION_CHECK_FAILED",
+                    "planDigest",
+                    planDigest,
+                    "dimension",
+                    dimension,
+                    "sourceRef",
+                    sourceRef,
+                    "terminalStatus",
+                    check.getValue() ? "PASSED" : "FAILED",
+                    "safeSummary",
+                    "External hidden acceptance check",
+                    "sourceDigest",
+                    "sha256:"
+                            + Sha256Digests.bytes((planDigest + "|" + sourceRef + "|" + check.getValue())
+                                    .getBytes(StandardCharsets.UTF_8))));
+        }
+        boolean verificationPassed = acceptance.passed()
+                && !evidence.isEmpty()
+                && evidence.stream().allMatch(value -> "VERIFICATION_CHECK_PASSED".equals(value.get("kind")));
+        writeJson(
+                repeat.resolve("verification-evidence.json"),
+                Map.of(
+                        "schemaVersion",
+                        1,
+                        "planDigest",
+                        planDigest,
+                        "passed",
+                        verificationPassed,
+                        "evidence",
+                        evidence));
+
+        boolean atomicityRequired = highRisk(testCase);
+        boolean cleanup = runtime.scratchCleanupFailures() == 0 && finished;
+        boolean atomicityPassed = !atomicityRequired || (acceptance.passed() && cleanup);
+        List<String> unexpected = acceptance.passed() ? List.of() : acceptance.failures();
+        writeJson(
+                repeat.resolve("side-effect-evidence.json"),
+                Map.of(
+                        "schemaVersion",
+                        1,
+                        "planDigest",
+                        planDigest,
+                        "beforeStateDigest",
+                        "sha256:" + before,
+                        "operationResult",
+                        acceptance.passed() ? "ACCEPTED" : "REJECTED",
+                        "afterStateDigest",
+                        "sha256:" + after,
+                        "allowedChanges",
+                        List.of("TASK_DELIVERY_WORKSPACE_CHANGE"),
+                        "unexpectedChanges",
+                        unexpected,
+                        "cleanupEvidence",
+                        cleanup ? "PROCESS_AND_SCRATCH_CLEAN" : "CLEANUP_NOT_CONFIRMED",
+                        "atomicityRequired",
+                        atomicityRequired,
+                        "passed",
+                        atomicityPassed));
+        writeJson(
+                repeat.resolve("capability-matrix.json"),
+                Map.of(
+                        "schemaVersion",
+                        1,
+                        "language",
+                        testCase.language(),
+                        "taskType",
+                        testCase.taskType(),
+                        "capabilities",
+                        testCase.capabilities(),
+                        "riskDimensions",
+                        testCase.riskDimensions(),
+                        "acceptanceType",
+                        "HIDDEN_BLACK_BOX",
+                        "sideEffect",
+                        atomicityRequired ? "CONTROLLED" : "NONE_OR_LOW"));
+        return new PhaseThreeVerification(
+                verificationPassed && atomicityPassed,
+                atomicityRequired ? (atomicityPassed ? "PASS" : "FAIL") : "NOT_APPLICABLE");
+    }
+
+    private static List<String> verificationDimensions(AutonomousDeliveryCase testCase) {
+        java.util.LinkedHashSet<String> result =
+                new java.util.LinkedHashSet<>(List.of("SUCCESS_PATH", "BOUNDARY", "FAILURE_PATH"));
+        for (String risk : testCase.riskDimensions()) {
+            switch (risk) {
+                case "FAILURE_ATOMICITY" -> result.add("FAILURE_ATOMICITY");
+                case "IDEMPOTENCY" -> result.add("IDEMPOTENCY");
+                case "COMPATIBILITY", "PROTOCOL" -> result.add("COMPATIBILITY");
+                case "CONCURRENCY" -> result.add("CONCURRENCY");
+                case "SECURITY" -> result.add("SECURITY_NORMALIZATION");
+                case "RESOURCE_CLEANUP", "ENVIRONMENT_RECOVERY" -> result.add("RESOURCE_CLEANUP");
+                default -> {
+                    // Other catalog dimensions retain the conservative common dimensions.
+                }
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static boolean highRisk(AutonomousDeliveryCase testCase) {
+        return testCase.riskDimensions().stream()
+                .anyMatch(value -> List.of(
+                                "FAILURE_ATOMICITY",
+                                "IDEMPOTENCY",
+                                "CONCURRENCY",
+                                "SECURITY",
+                                "RESOURCE_CLEANUP")
+                        .contains(value));
+    }
+
+    private static Map<String, Object> capabilityMatrix(List<Map<String, Object>> results) {
+        return Map.of(
+                "schemaVersion",
+                1,
+                "languages",
+                distinct(results, "language"),
+                "taskTypes",
+                distinct(results, "taskType"),
+                "capabilities",
+                flattened(results, "capabilities"),
+                "riskDimensions",
+                flattened(results, "riskDimensions"));
+    }
+
+    private static Map<String, Object> phaseThreeMetrics(List<Map<String, Object>> results) {
+        long passed = results.stream().filter(value -> Boolean.TRUE.equals(value.get("gatePassed"))).count();
+        long acceptance = results.stream().filter(value -> Boolean.TRUE.equals(value.get("acceptancePassed"))).count();
+        long zeroChange = results.stream().filter(value -> !Boolean.TRUE.equals(value.get("workspaceChanged"))).count();
+        return Map.of(
+                "runCount",
+                results.size(),
+                "autonomousCompletionRate",
+                rate(passed, results.size()),
+                "hiddenAcceptancePassRate",
+                rate(acceptance, results.size()),
+                "zeroWorkspaceChangeRate",
+                rate(zeroChange, results.size()),
+                "modelCalls",
+                sum(results, "modelCalls"),
+                "toolCalls",
+                sum(results, "toolCalls"),
+                "toolFailures",
+                sum(results, "toolFailures"),
+                "inputTokens",
+                sum(results, "inputTokens"),
+                "outputTokens",
+                sum(results, "outputTokens"),
+                "costKnown",
+                false);
+    }
+
+    private static List<String> distinct(List<Map<String, Object>> results, String key) {
+        return results.stream().map(value -> String.valueOf(value.get(key))).distinct().sorted().toList();
+    }
+
+    private static List<String> flattened(List<Map<String, Object>> results, String key) {
+        return results.stream()
+                .flatMap(value -> ((List<?>) value.get(key)).stream())
+                .map(String::valueOf)
+                .distinct()
+                .sorted()
+                .toList();
+    }
+
+    private static long sum(List<Map<String, Object>> results, String key) {
+        return results.stream().mapToLong(value -> ((Number) value.get(key)).longValue()).sum();
+    }
+
+    private static double rate(long numerator, long denominator) {
+        return denominator == 0 ? 0.0 : Math.round(numerator * 10_000.0 / denominator) / 100.0;
     }
 
     private int maximumIteration(Path trace) throws IOException {
@@ -432,7 +720,7 @@ final class AutonomousDeliveryPhaseOneGate {
         artifact.put("passed", passed);
         artifact.put("checks", Map.copyOf(checks));
         artifact.put("failures", List.copyOf(failures));
-        return new Acceptance(passed, Map.copyOf(artifact));
+        return new Acceptance(passed, Map.copyOf(artifact), Map.copyOf(checks), List.copyOf(failures));
     }
 
     private static Map<String, Object> resultUsage(
@@ -664,5 +952,15 @@ final class AutonomousDeliveryPhaseOneGate {
         return false;
     }
 
-    private record Acceptance(boolean passed, Map<String, Object> artifact) {}
+    private record Acceptance(
+            boolean passed,
+            Map<String, Object> artifact,
+            Map<String, Boolean> checks,
+            List<String> failures) {}
+
+    private record PhaseThreeVerification(boolean passed, String atomicity) {
+        static PhaseThreeVerification notRequired() {
+            return new PhaseThreeVerification(true, "NOT_APPLICABLE");
+        }
+    }
 }

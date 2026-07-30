@@ -16,17 +16,20 @@ class AutonomousDeliveryCaseCatalogTest {
     Path temporary;
 
     @Test
-    void loadsExactlyTenVerifiedVersionedCases() {
+    void loadsAllVerifiedVersionedKnownAndHiddenCases() {
         AutonomousDeliveryCaseCatalog catalog = AutonomousDeliveryCaseCatalog.loadVerified();
 
         assertEquals("generalized-coding-v1", catalog.catalogId());
         assertEquals(
-                List.of("01", "02", "03", "04", "05", "06", "07", "08", "09", "10"),
+                java.util.stream.IntStream.rangeClosed(1, 17)
+                        .mapToObj(value -> "%02d".formatted(value))
+                        .toList(),
                 catalog.cases().stream().map(AutonomousDeliveryCase::caseId).toList());
         assertEquals("2.0.0", catalog.require("03").caseVersion());
         assertEquals("2.0.0", catalog.require("04").caseVersion());
         assertTrue(catalog.require("03").optionalChangeNote().isPresent());
-        assertThrows(IllegalArgumentException.class, () -> catalog.require("11"));
+        assertEquals("ANALYZE", catalog.require("14").taskType());
+        assertThrows(IllegalArgumentException.class, () -> catalog.require("18"));
     }
 
     @Test

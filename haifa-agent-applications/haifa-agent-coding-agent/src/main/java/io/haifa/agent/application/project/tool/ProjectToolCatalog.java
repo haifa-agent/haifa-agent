@@ -344,6 +344,45 @@ public final class ProjectToolCatalog {
                                 "Stable operation family for delivery and recovery control. Use DIFF only for "
                                         + "read-only diff inspection and UNKNOWN when the command cannot "
                                         + "be reliably classified; do not infer it from arbitrary shell syntax."));
+                properties.put(
+                        "verificationPlanDigest",
+                        Map.of(
+                                "type",
+                                "string",
+                                "pattern",
+                                "^sha256:[0-9a-f]{64}$",
+                                "description",
+                                "Exact frozen Coding Verification Plan digest from product context. Supply it only "
+                                        + "when this command performs plan checks."));
+                properties.put(
+                        "verificationDimensions",
+                        Map.of(
+                                "type",
+                                "array",
+                                "minItems",
+                                1,
+                                "maxItems",
+                                9,
+                                "uniqueItems",
+                                true,
+                                "items",
+                                Map.of(
+                                        "type",
+                                        "string",
+                                        "enum",
+                                        List.of(
+                                                "SUCCESS_PATH",
+                                                "BOUNDARY",
+                                                "FAILURE_PATH",
+                                                "FAILURE_ATOMICITY",
+                                                "IDEMPOTENCY",
+                                                "COMPATIBILITY",
+                                                "CONCURRENCY",
+                                                "SECURITY_NORMALIZATION",
+                                                "RESOURCE_CLEANUP")),
+                                "description",
+                                "Only dimensions actually exercised by this command. A terminal failure records "
+                                        + "failed evidence and can never pass the dimension."));
                 required.add("operationFamily");
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
@@ -387,7 +426,11 @@ public final class ProjectToolCatalog {
                             Map.entry("sandboxProfileDigest", Map.of("type", "string")),
                             Map.entry("scratchSpecDigest", Map.of("type", "string")),
                             Map.entry("scratchProvisioned", Map.of("type", "boolean")),
-                            Map.entry("scratchCleanupFailed", Map.of("type", "boolean"))),
+                            Map.entry("scratchCleanupFailed", Map.of("type", "boolean")),
+                            Map.entry("verificationPlanDigest", Map.of("type", "string")),
+                            Map.entry(
+                                    "verificationDimensions",
+                                    Map.of("type", "array", "items", Map.of("type", "string")))),
                     "required",
                     List.of("executionId", "status", "output", "truncated", "durationMillis"),
                     "additionalProperties",

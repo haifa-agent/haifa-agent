@@ -1,5 +1,9 @@
 package io.haifa.agent.application.project.product.coding.delivery;
 
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationDimension;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationEvidenceLedger;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationPlan;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationPlanResolver;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
@@ -14,14 +18,30 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
     private final CodingTaskContractResolver contracts;
     private final CodingDeliveryEvidenceLedger evidence;
     private final CodingDeliveryProfile profile;
+    private final CodingVerificationPlanResolver verificationPlans;
+    private final CodingVerificationEvidenceLedger verificationEvidence;
 
     public CodingCompletionPolicy(
             CodingTaskContractResolver contracts,
             CodingDeliveryEvidenceLedger evidence,
             CodingDeliveryProfile profile) {
+        this(contracts, evidence, profile, null, null);
+    }
+
+    public CodingCompletionPolicy(
+            CodingTaskContractResolver contracts,
+            CodingDeliveryEvidenceLedger evidence,
+            CodingDeliveryProfile profile,
+            CodingVerificationPlanResolver verificationPlans,
+            CodingVerificationEvidenceLedger verificationEvidence) {
         this.contracts = Objects.requireNonNull(contracts, "contracts must not be null");
         this.evidence = Objects.requireNonNull(evidence, "evidence must not be null");
         this.profile = Objects.requireNonNull(profile, "profile must not be null");
+        if ((verificationPlans == null) != (verificationEvidence == null)) {
+            throw new IllegalArgumentException("verification plan and evidence must be configured together");
+        }
+        this.verificationPlans = verificationPlans;
+        this.verificationEvidence = verificationEvidence;
     }
 
     @Override
@@ -35,8 +55,29 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
             case REVIEW -> readOnlyBlockers(snapshot, blockers, "REVIEW_EVIDENCE_MISSING");
             case UNKNOWN -> unknownBlockers(snapshot, blockers);
         }
+        if (verificationPlans != null
+                && (contract.intent() == CodingTaskIntent.CHANGE || contract.intent() == CodingTaskIntent.CREATE)) {
+            verificationBlockers(run, blockers);
+        }
         if (blockers.isEmpty()) return CompletionPolicyResult.accepted(snapshot.codes());
         return CompletionPolicyResult.blocked(blockers, snapshot.codes());
+    }
+
+    private void verificationBlockers(AgentRun run, List<CompletionBlocker> blockers) {
+        CodingVerificationPlan plan = verificationPlans.resolve(run);
+        var passed = verificationEvidence.reconstruct(run.id(), plan).passedDimensions();
+        plan.dimensions().stream()
+                .sorted(java.util.Comparator.comparing(Enum::name))
+                .filter(dimension -> !passed.contains(dimension))
+                .forEach(dimension -> blockers.add(CompletionBlocker.recoverable(
+                        "VERIFICATION_" + dimension.name() + "_MISSING",
+                        "The frozen verification plan has no matching successful terminal check for " + dimension.name()
+                                + ".",
+                        evidenceRequirement(dimension))));
+    }
+
+    private static String evidenceRequirement(CodingVerificationDimension dimension) {
+        return "VERIFICATION_CHECK_PASSED:" + dimension.name();
     }
 
     private void changeBlockers(CodingDeliveryEvidenceLedger.Snapshot snapshot, List<CompletionBlocker> blockers) {

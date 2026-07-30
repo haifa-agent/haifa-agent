@@ -26,14 +26,14 @@ public record AutonomousDeliveryCase(
         String source,
         String license,
         String changeNote) {
-    private static final Pattern CASE_ID = Pattern.compile("0[1-9]|10");
+    private static final Pattern CASE_ID = Pattern.compile("0[1-9]|1[0-7]");
     private static final Pattern VERSION = Pattern.compile("[1-9][0-9]*\\.[0-9]+\\.[0-9]+");
     private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
     private static final Pattern STABLE_TOKEN = Pattern.compile("[A-Z][A-Z0-9_]{0,63}");
 
     public AutonomousDeliveryCase {
         if (!CASE_ID.matcher(requireText(caseId, "caseId")).matches()) {
-            throw new IllegalArgumentException("caseId must be 01 through 10");
+            throw new IllegalArgumentException("caseId must be 01 through 17");
         }
         if (!VERSION.matcher(requireText(caseVersion, "caseVersion")).matches()) {
             throw new IllegalArgumentException("caseVersion must use semantic version syntax");

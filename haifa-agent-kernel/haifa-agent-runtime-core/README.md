@@ -12,6 +12,12 @@ Runtime Core 不依赖 Coding 产品类型，也不读取 Coding 表。Final 缺
 Client Event 投影只把结构化字段映射为 `DeliveryLifecycle`，用于 Recovering、Verifying 和 Budget
 Threshold 展示；Prompt、Host Path、stderr、Fingerprint 和 Tool 原始参数不进入公共投影。
 
+`RuntimeControlTraceReplay` 为这些生产控制事件提供确定性只读 Reducer。Replay 输入只接受安全事件
+类型与白名单化结构字段，不读取 Prompt、Credential、Provider Response、命令、stderr 或 Host Path；
+测试覆盖环境恢复、失败簇策略切换、结构化终止、Completion Repair、验证完成、outcome unknown、
+Checkpoint 恢复、失败副作用和 Interaction/Approval 继续等十类控制序列。未知事件保持前向兼容，
+非幂等 outcome unknown 只记录为不可重放，不触发执行。
+
 ## 自主恢复与有效进展
 
 AgentLoop 按 Tool 坐标、操作族、语义失败类别、稳定错误码、资源类别和 Sandbox 摘要生成

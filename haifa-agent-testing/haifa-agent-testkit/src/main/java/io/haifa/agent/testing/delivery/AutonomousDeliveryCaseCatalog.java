@@ -53,9 +53,11 @@ public final class AutonomousDeliveryCaseCatalog {
                     throw new IllegalArgumentException("duplicate autonomous-delivery case " + testCase.caseId());
                 }
             }
-            List<String> expectedIds = List.of("01", "02", "03", "04", "05", "06", "07", "08", "09", "10");
+            List<String> expectedIds = java.util.stream.IntStream.rangeClosed(1, 17)
+                    .mapToObj(value -> "%02d".formatted(value))
+                    .toList();
             if (!List.copyOf(cases.keySet()).equals(expectedIds)) {
-                throw new IllegalArgumentException("catalog must contain exactly cases 01 through 10");
+                throw new IllegalArgumentException("catalog must contain exactly cases 01 through 17");
             }
             return new AutonomousDeliveryCaseCatalog(
                     document.catalogId(),

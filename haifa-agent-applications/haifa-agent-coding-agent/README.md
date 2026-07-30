@@ -17,6 +17,19 @@ No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意
 收敛指导，不增加 Runtime 的总预算或时限。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
 从持久消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
 
+## 有界 Verification Plan
+
+CHANGE/CREATE Run 还会从冻结 `CodingTaskContract` 与首条权威用户消息确定性重建
+`CodingVerificationPlan`。Plan 只包含九种受限验证维度、风险级别和 Evidence 要求，不包含命令、
+Host Path、权限或可执行代码；其内容摘要在 Completion 时必须与权威 `execution.run` 结果中的
+`verificationPlanDigest` 精确匹配。文件修改默认补齐失败路径、失败原子性和资源清理；数据库、并发、
+安全路径与公共兼容性风险再按任务事实加入相应维度，不读取 Case 编号或特定文件名。
+
+模型只能给实际执行的检查标注 `verificationDimensions`。只有终态成功的 Execution ToolCall 才能生成
+通过 Evidence；失败、Digest 漂移、未知维度或仅存在计划都会被 Completion Gate 拒绝。产品 Context
+只披露有界 Plan/Evidence 摘要，不披露命令、原始输出或宿主路径。外部 Phase 3 Gate 另外从隐藏验收、
+Workspace 快照与 Scratch 清理事实生成独立的验证和失败副作用证据。
+
 ## Policy 持久化装配
 
 `ProjectPersistenceAssembly.policy()` 是应用级 Policy 权威 Store 组合：内存模式共享同一 `InMemoryPolicyStore`，SQLite 模式复用 `SqliteStoreFoundation` 的 Snapshot、Decision、Evidence、Grant 与 Trust Store。Coding Agent 重启时复用内容一致的固定 Policy Snapshot；不在应用层实现企业组织或审批工作流。
@@ -103,7 +116,13 @@ Brave 或 Tavily，Fetch 当前只允许 Aliyun。具体 Provider、endpoint、�
 
 经审查启用的 MCP Tool 由 `McpToolCatalogContribution` 写入同一个 `ToolCatalogBuilder`，不会建立 MCP 专用 Registry。每个 MCP server 使用独立 `mcp.<serverId>` Provider；本地 definition hash 与远端 definition digest 分别冻结，Runtime 只通过 `FrozenToolBinding.providerBindingReference` 恢复精确 binding。
 
-`ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把 `command/workdir/timeoutMillis/description/operationFamily` 映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、退出码、有界合并尾部、Output Ref、耗时、安全失败类别、Scratch 状态和 FileChangeSet 引用。
+`ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把
+`command/workdir/timeoutMillis/description/operationFamily/verificationPlanDigest/verificationDimensions`
+映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。Verification 字段必须成对出现、严格匹配
+受限 Schema，且只回写到权威终态结果。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
+目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
+`GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
+退出码、有界合并尾部、Output Ref、耗时、安全失败类别、Scratch 状态和 FileChangeSet 引用。
 执行命令已经从受控 Workspace 启动；绝对路径 `cd ...` 或绝对 `workdir` 会在进入 Broker 前以
 `ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝，不会被误记为
 结果未知。调用方应省略 `cd` 或使用逻辑相对 `workdir`，保证 Tool Policy 授权的命令与实际执行

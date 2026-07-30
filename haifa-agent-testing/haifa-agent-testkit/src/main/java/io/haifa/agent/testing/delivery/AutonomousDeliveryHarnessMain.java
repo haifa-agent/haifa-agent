@@ -64,7 +64,7 @@ public final class AutonomousDeliveryHarnessMain {
             runPhaseZeroGate(options, catalog, repositories);
             return;
         }
-        if (options.command().equals("phase-1-gate") || options.command().equals("phase-2-gate")) {
+        if (List.of("phase-1-gate", "phase-2-gate", "phase-3-gate").contains(options.command())) {
             if (!options.execute()) {
                 throw new IllegalArgumentException(options.command() + " requires explicit --execute");
             }
@@ -81,7 +81,7 @@ public final class AutonomousDeliveryHarnessMain {
             Path gate = new AutonomousDeliveryPhaseOneGate(clock)
                     .run(campaign, build, suite, catalog, options.cliJar(), toolchains, options.projectRoot());
             System.out.println(
-                    (options.command().equals("phase-2-gate") ? "Phase 2" : "Phase 1") + " gate PASS: " + gate);
+                    "Phase " + options.command().charAt("phase-".length()) + " gate PASS: " + gate);
             return;
         }
         throw new IllegalArgumentException("unknown command");
@@ -121,7 +121,7 @@ public final class AutonomousDeliveryHarnessMain {
         summary.put("startedAndFinishedAt", Instant.now(clock).toString());
         summary.put("catalogSha256", catalog.catalogSha256());
         summary.put("caseCount", results.size());
-        summary.put("successful", results.size() == 10);
+        summary.put("successful", results.size() == catalog.cases().size());
         summary.put("results", results);
         json.writerWithDefaultPrettyPrinter()
                 .writeValue(gate.resolve("phase-summary.json").toFile(), summary);
@@ -195,7 +195,7 @@ public final class AutonomousDeliveryHarnessMain {
         String trackedChanges = new String(status.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
         if (!status.waitFor(30, TimeUnit.SECONDS) || status.exitValue() != 0 || !trackedChanges.isEmpty()) {
             status.destroyForcibly();
-            throw new IllegalArgumentException("root checkout must have no tracked changes before Phase 1 Gate");
+            throw new IllegalArgumentException("root checkout must have no tracked changes before production Gate");
         }
     }
 
@@ -254,7 +254,12 @@ public final class AutonomousDeliveryHarnessMain {
             Path goHome = null;
             for (int index = 0; index < arguments.length; index++) {
                 switch (arguments[index]) {
-                    case "plan", "initialize-campaign", "phase-0-gate", "phase-1-gate", "phase-2-gate" ->
+                    case "plan",
+                            "initialize-campaign",
+                            "phase-0-gate",
+                            "phase-1-gate",
+                            "phase-2-gate",
+                            "phase-3-gate" ->
                         command = arguments[index];
                     case "--project-root" -> projectRoot = Path.of(value(arguments, ++index));
                     case "--config-root" -> configRoot = Path.of(value(arguments, ++index));
