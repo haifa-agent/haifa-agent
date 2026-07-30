@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpConfiguration;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
+import io.haifa.agent.personalassistant.application.policy.PersonalWebAllowPolicy;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import io.haifa.agent.personalassistant.application.tool.PersonalToolPlatform;
@@ -71,6 +72,8 @@ public final class PersonalAssistantAssembler {
                     .callerProvider(dependencies.callers())
                     .timeProvider(dependencies.clock()::instant)
                     .toolApprovalPrompts(dependencies.execution()::approvalPrompt)
+                    .publicToolPolicyDecorator(PersonalWebAllowPolicy.decorator(
+                            tools.tool().catalog(), dependencies.web(), dependencies.policy(), dependencies.clock()))
                     .contribute(dependencies.model())
                     .contribute(dependencies.persistence())
                     .contribute(dependencies.conversation())

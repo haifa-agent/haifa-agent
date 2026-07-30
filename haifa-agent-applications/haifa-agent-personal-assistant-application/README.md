@@ -20,6 +20,12 @@ Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Con
 - 显式本地 MCP connect/discover/allowlist；
 - Tool、Skill、MCP 统一冻结到一个 Tool Catalog，并进入同一 Runtime Tool Pipeline。
 
+Personal 在产品装配层对冻结目录中精确选中的 `web.search` / `web.fetch` coordinate 生成
+request-bound `ALLOW` Decision，因此公共 Web Search/Fetch 默认不创建 Approval Interaction。
+启动时会复核 Tool 名称、完整 coordinate、Provider binding、`POLICY` 声明、Medium 风险、
+幂等性、Remote Provider、网络 Host 约束和 Side Effect 集；任一事实漂移都会 fail closed。
+其它 Tool 完整委托给 Runtime 原有 Policy，Execution 和高风险业务 Tool 的审批行为不变。
+
 内置 Skill 使用 `STRICT` parser。显式配置的可信只读导入目录使用 `COMPATIBLE` parser，以兼容
 Hermes 等外部 `SKILL.md` 的扩展 front matter；未知或嵌套 metadata 不获得执行权限。Personal 导入
 边界仍限制 128 个文件、8 层目录、2 MiB 包大小、2000 行指令和 20000 估算 Token，脚本资源只索引为
