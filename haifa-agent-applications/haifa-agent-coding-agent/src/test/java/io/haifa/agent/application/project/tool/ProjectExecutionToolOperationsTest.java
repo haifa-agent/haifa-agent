@@ -1,7 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -153,45 +152,44 @@ class ProjectExecutionToolOperationsTest {
             }
         };
 
-        assertThatThrownBy(() -> operations(broker, 1024, 2000)
-                        .execute(
-                                invocation(
-                                        Map.of("command", "representative command", "workdir", "../outside"),
-                                        () -> false),
-                                access()))
-                .isInstanceOf(IllegalArgumentException.class);
+        var result = operations(broker, 1024, 2000)
+                .execute(
+                        invocation(Map.of("command", "representative command", "workdir", "../outside"), () -> false),
+                        access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("failureCategory", "INVALID_INPUT")
+                .containsEntry("stableFailureCode", "WORKDIR_INVALID");
         assertThat(invoked).isFalse();
     }
 
     @Test
-    void removesLeadingAbsoluteDirectoryChangeAndExecutesTheRemainderInsideTheWorkspace() {
-        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+    void rejectsLeadingAbsoluteDirectoryChangeBeforePolicyBoundExecution() {
+        AtomicBoolean invoked = new AtomicBoolean();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                captured.set(request);
+                invoked.set(true);
                 return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
             }
         };
 
-        for (var example : Map.of(
-                        "cd /workspace && go test ./...", "go test ./...",
-                        " cd '/home/user' && make test", "make test",
-                        "cd C:\\temp && gradlew test", "gradlew test")
-                .entrySet()) {
+        for (String command : List.of(
+                "cd /workspace && go test ./...", " cd '/home/user' && make test", "cd C:\\temp && gradlew test")) {
             var result = operations(broker, 1024, 2000)
-                    .execute(
-                            invocation(Map.of("command", example.getKey(), "operationFamily", "TEST"), () -> false),
-                            access());
+                    .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
 
-            assertThat(result.successful()).isTrue();
-            assertThat(captured.get().workingDirectory().projectPath().isRoot()).isTrue();
-            assertThat(captured.get().command().shellCommand()).isEqualTo(example.getValue());
+            assertThat(result.successful()).isFalse();
+            assertThat(result.structuredData())
+                    .containsEntry("failureCategory", "INVALID_INPUT")
+                    .containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN");
         }
+        assertThat(invoked).isFalse();
     }
 
     @Test
-    void rejectsAbsoluteDirectoryChangeWithoutASafeRemainderBeforeCallingTheBroker() {
+    void rejectsAbsoluteWorkdirBeforeCallingTheBroker() {
         AtomicBoolean invoked = new AtomicBoolean();
         ExecutionBroker broker = new StubBroker() {
             @Override
@@ -203,7 +201,9 @@ class ProjectExecutionToolOperationsTest {
 
         var result = operations(broker, 1024, 2000)
                 .execute(
-                        invocation(Map.of("command", "cd /workspace", "operationFamily", "TEST"), () -> false),
+                        invocation(
+                                Map.of("command", "go test ./...", "workdir", "/workspace", "operationFamily", "TEST"),
+                                () -> false),
                         access());
 
         assertThat(result.successful()).isFalse();

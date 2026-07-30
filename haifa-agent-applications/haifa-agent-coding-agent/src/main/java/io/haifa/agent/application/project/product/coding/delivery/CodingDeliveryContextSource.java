@@ -81,6 +81,21 @@ public final class CodingDeliveryContextSource implements ContextSource {
                 .reduce((left, right) -> left + "|" + right)
                 .orElse("NONE");
         String evidenceCodes = snapshot.codes().isEmpty() ? "NONE" : String.join("|", snapshot.codes());
+        boolean changeIntent =
+                contract.intent() == CodingTaskIntent.CHANGE || contract.intent() == CodingTaskIntent.CREATE;
+        String nextAction;
+        if (!changeIntent) {
+            nextAction = "collect only authoritative evidence required by the task contract";
+        } else if (!snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
+            nextAction = contract.acceptanceCriteriaRefs().isEmpty()
+                    ? "inspect each affected entry point once, map success, malformed, boundary, and operational-failure "
+                            + "paths, then make the smallest complete change before validation"
+                    : "read each criteria file once, map every stated constraint to its affected entry point and "
+                            + "end-to-end boundary, then implement all mapped constraints before validation";
+        } else {
+            nextAction = "validate every mapped requirement including boundary and negative paths, then inspect the "
+                    + "final diff; repair only evidence-backed failures";
+        }
         String text = String.join(
                 "\n",
                 "[CODING_DELIVERY_CONTROL]",
@@ -90,7 +105,10 @@ public final class CodingDeliveryContextSource implements ContextSource {
                 "acceptanceCriteriaRefs=" + acceptanceCriteriaRefs,
                 contract.acceptanceCriteriaRefs().isEmpty()
                         ? "acceptanceAction=NONE"
-                        : "acceptanceAction=before editing, read every referenced criteria file and inspect each affected entry point and end-to-end boundary",
+                        : "acceptanceAction=before editing, read every referenced criteria file, map every stated "
+                                + "constraint, and inspect each affected entry point and end-to-end boundary",
+                "coverageAction=for input-facing behavior, validate representative success, malformed, boundary, and "
+                        + "operational-failure paths including exit status and safe diagnostics",
                 "evidence=" + evidenceCodes,
                 "remainingModelCalls=" + remainingModelCalls,
                 "remainingToolCalls=" + remainingToolCalls,
@@ -98,7 +116,7 @@ public final class CodingDeliveryContextSource implements ContextSource {
                 "deliveryReserve=" + (reserve ? "ACTIVE" : "INACTIVE"),
                 reserve
                         ? "nextAction=stop unbounded diagnosis; make the smallest safe change or record a structured blocker, then inspect diff and validate"
-                        : "nextAction=collect only authoritative evidence required by the task contract");
+                        : "nextAction=" + nextAction);
         String digest = digest(contract.contractDigest() + "|" + evidenceCodes + "|" + reserve + "|"
                 + remainingModelCalls + "|" + remainingToolCalls + "|" + remainingWallTimeMillis);
         return List.of(new ContextItem(

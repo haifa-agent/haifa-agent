@@ -163,12 +163,13 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
-        CommandNormalization normalization = normalizeLeadingAbsoluteDirectoryChange(command);
-        if (normalization.rejected()) {
+        if (hasLeadingAbsoluteDirectoryChange(command)) {
             return rejectedAbsoluteDirectoryChange(operationFamily);
         }
-        command = normalization.command();
         String workdir = optionalText(arguments, "workdir", ".");
+        if (isAbsoluteDirectoryPath(workdir)) {
+            return rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN");
+        }
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
         Duration remaining = Duration.between(time.now(), invocation.deadline());
@@ -177,8 +178,13 @@ public final class ProjectExecutionToolOperations {
         }
         Duration timeout = requestedTimeout.compareTo(remaining) <= 0 ? requestedTimeout : remaining;
         ExecutionId executionId = new ExecutionId(identifiers.nextValue());
-        WorkspacePath workingDirectory = new WorkspacePath(
-                access.workspaceId(), workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(workdir));
+        WorkspacePath workingDirectory;
+        try {
+            workingDirectory = new WorkspacePath(
+                    access.workspaceId(), workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(workdir));
+        } catch (IllegalArgumentException exception) {
+            return rejectedWorkdir(operationFamily, "WORKDIR_INVALID");
+        }
         ExecutionRequest request = new ExecutionRequest(
                 executionId,
                 invocation
@@ -358,8 +364,8 @@ public final class ProjectExecutionToolOperations {
     private static ToolResult rejectedAbsoluteDirectoryChange(String operationFamily) {
         return new ToolResult(
                 false,
-                "Command rejected: absolute directory changes are not allowed; omit cd or use the workspace-relative "
-                        + "workdir field.",
+                "Command rejected before execution: absolute directory changes are not allowed; omit cd or use the "
+                        + "workspace-relative workdir field.",
                 Map.of(
                         "status",
                         "FAILED",
@@ -376,61 +382,53 @@ public final class ProjectExecutionToolOperations {
                 false);
     }
 
-    private static CommandNormalization normalizeLeadingAbsoluteDirectoryChange(String command) {
+    private static ToolResult rejectedWorkdir(String operationFamily, String stableFailureCode) {
+        return new ToolResult(
+                false,
+                "Command rejected before execution: workdir must be a workspace-relative path.",
+                Map.of(
+                        "status",
+                        "FAILED",
+                        "operationFamily",
+                        operationFamily,
+                        "failureCategory",
+                        "INVALID_INPUT",
+                        "stableFailureCode",
+                        stableFailureCode,
+                        "resourceClass",
+                        "WORKDIR"),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static boolean hasLeadingAbsoluteDirectoryChange(String command) {
         String remaining = command.stripLeading();
         if (!remaining.startsWith("cd") || (remaining.length() > 2 && !Character.isWhitespace(remaining.charAt(2)))) {
-            return new CommandNormalization(command, false);
+            return false;
         }
         remaining = remaining.substring(2).stripLeading();
         if (remaining.startsWith("--") && (remaining.length() == 2 || Character.isWhitespace(remaining.charAt(2)))) {
             remaining = remaining.substring(2).stripLeading();
         }
-        if (remaining.isEmpty()) return new CommandNormalization(command, false);
+        if (remaining.isEmpty()) return false;
         char quote = remaining.charAt(0);
         String path = remaining;
         if (quote == '\'' || quote == '"') {
             path = remaining.substring(1);
         }
-        boolean absolute = path.startsWith("/") || path.startsWith("\\\\") || path.startsWith("~/");
-        absolute = absolute
+        return isAbsoluteDirectoryPath(path);
+    }
+
+    private static boolean isAbsoluteDirectoryPath(String path) {
+        return path.startsWith("/")
+                || path.startsWith("\\\\")
+                || path.startsWith("~/")
                 || (path.length() >= 3
                         && Character.isLetter(path.charAt(0))
                         && path.charAt(1) == ':'
                         && (path.charAt(2) == '\\' || path.charAt(2) == '/'));
-        if (!absolute) return new CommandNormalization(command, false);
-        int separator = leadingAndSeparator(remaining);
-        if (separator < 0) return new CommandNormalization(command, true);
-        String normalized = remaining.substring(separator + 2).stripLeading();
-        return normalized.isEmpty()
-                ? new CommandNormalization(command, true)
-                : new CommandNormalization(normalized, false);
     }
-
-    private static int leadingAndSeparator(String commandAfterCd) {
-        char quote = 0;
-        boolean escaped = false;
-        for (int index = 0; index < commandAfterCd.length() - 1; index++) {
-            char current = commandAfterCd.charAt(index);
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if (current == '\\' && quote != '\'') {
-                escaped = true;
-                continue;
-            }
-            if ((current == '\'' || current == '"') && (quote == 0 || quote == current)) {
-                quote = quote == 0 ? current : 0;
-                continue;
-            }
-            if (quote == 0 && current == '&' && commandAfterCd.charAt(index + 1) == '&') {
-                return index;
-            }
-        }
-        return -1;
-    }
-
-    private record CommandNormalization(String command, boolean rejected) {}
 
     private static String fallbackOutput(ExecutionResult result) {
         String stdout = result.stdout().summary();

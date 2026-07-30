@@ -214,7 +214,10 @@ class CodingDeliveryControlTest {
         assertThat(text)
                 .contains("acceptanceCriteriaRefs=PERF.md|docs/CONCURRENCY.md")
                 .contains("before editing, read every referenced criteria file")
-                .contains("each affected entry point and end-to-end boundary");
+                .contains("map every stated constraint")
+                .contains("each affected entry point and end-to-end boundary")
+                .contains("implement all mapped constraints before validation")
+                .contains("malformed, boundary, and operational-failure paths");
     }
 
     @Test
