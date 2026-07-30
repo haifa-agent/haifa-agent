@@ -98,7 +98,7 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
                 JsonNode arguments = decodeValues(rows.getBytes(3));
                 String family = arguments.path("operationFamily").asText("UNKNOWN");
                 validationAttempted |= family.equals("TEST") || family.equals("BUILD");
-                diffInspected |= family.equals("INSPECT");
+                diffInspected |= "COMPLETED".equals(status) && family.equals("DIFF");
             }
         }
         return new ToolFacts(failures, validationAttempted, diffInspected);

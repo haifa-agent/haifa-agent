@@ -24,9 +24,9 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         try (Connection connection = createDatabase(database)) {
             insertRun(connection, "COMPLETED", 1200, 80, 4, 4, 0);
             insertTool(connection, "execution_run", "COMPLETED", "TEST");
+            insertTool(connection, "execution_run", "COMPLETED", "DIFF");
             insertTool(connection, "execution_run", "FAILED", "INSPECT");
             insertTool(connection, "execution_run", "DENIED", "UNKNOWN");
-            insertTool(connection, "file_read", "COMPLETED", "UNKNOWN");
             insertEvent(connection, 1, "execution.scratch-provisioned", Map.of("toolCallId", "call-1"));
             insertEvent(connection, 2, "execution.scratch-provisioned", Map.of("toolCallId", "call-2"));
             insertEvent(connection, 3, "execution.completed", Map.of("toolCallId", "call-1"));
@@ -79,6 +79,20 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
             assertFalse(event.containsKey("unsafeHostPath"));
             assertFalse(event.containsKey("unsafePrompt"));
         });
+    }
+
+    @Test
+    void doesNotCountFailedOrGenericInspectionAsDiffEvidence(@TempDir Path temporary) throws Exception {
+        Path database = temporary.resolve("runtime.db");
+        try (Connection connection = createDatabase(database)) {
+            insertRun(connection, "FAILED", 10, 5, 2, 2, 0);
+            insertTool(connection, "execution_run", "FAILED", "DIFF");
+            insertTool(connection, "execution_run", "COMPLETED", "INSPECT");
+        }
+
+        var evidence = new AutonomousDeliveryRuntimeEvidenceReader(json).read(database);
+
+        assertFalse(evidence.diffInspected());
     }
 
     @Test
