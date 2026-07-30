@@ -93,7 +93,9 @@ tui4j Terminal UI 与富 Tool/Execution/Resource 客户端事件已进入独立
 `haifa-agent-coding-terminal` 模块，避免产品 façade 依赖终端实现。`CodingShellService` 与
 `CodingSessionExportService` 只定义产品边界；CLI 生产装配分别复用既有
 Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree/Fork/Clone、PTY、
-后台 Job、模型登录/目录仍未实现。
+后台 Job、模型登录和动态目录仍未实现。静态可信模型目录、Session 模型偏好及 SQLite 恢复已经
+实现：偏好保存内部 Model ID 和独立 revision，只允许在无活动 Run/dispatch 时切换，下一新 Run
+冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
 `ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`git.inspect/status/diff` 与 `execution.run` 共 14 个能力注册到唯一 Tool Catalog。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
 `execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，

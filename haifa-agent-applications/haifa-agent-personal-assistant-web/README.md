@@ -1,5 +1,8 @@
 # Haifa Personal Assistant Web
 
+会话标题区提供模型 Selector。新会话使用 Bootstrap 默认值或用户选择；已有会话仅在无活动 Run 时
+调用带 `If-Match` 与幂等键的切换 API。页面只提交内部 Model ID。
+
 Personal Assistant 的独立 React Web 部署单元。它只消费
 `haifa-agent-personal-assistant-server` 发布的 `/api/v1` HTTP/WebFlux SSE 契约，不参与 Server
 JAR 的构建或静态资源打包。

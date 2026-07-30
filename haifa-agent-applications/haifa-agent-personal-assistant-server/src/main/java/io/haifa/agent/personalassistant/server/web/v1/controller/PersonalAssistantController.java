@@ -60,7 +60,14 @@ public final class PersonalAssistantController {
                         "shell",
                         "execution",
                         "sse"),
-                application.productDigest());
+                application.productDigest(),
+                properties.defaultModelId(),
+                application.models().stream().map(mapper::model).toList());
+    }
+
+    @GetMapping("/models")
+    List<PersonalApiDtos.Model> models() {
+        return application.models().stream().map(mapper::model).toList();
     }
 
     @GetMapping("/conversations")
@@ -77,12 +84,28 @@ public final class PersonalAssistantController {
     ResponseEntity<PersonalApiDtos.Conversation> create(
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PersonalApiDtos.CreateConversation request) {
+        String modelId = request.modelId() == null || request.modelId().isBlank()
+                ? properties.defaultModelId()
+                : text(request.modelId(), "modelId");
         var value = mapper.conversation(application.start(
-                key(idempotencyKey), text(request.displayName(), "displayName"), text(request.message(), "message")));
+                key(idempotencyKey),
+                text(request.displayName(), "displayName"),
+                text(request.message(), "message"),
+                modelId));
         value.activeRunId().ifPresent(runId -> runLogging.observe(value.id(), runId, "conversation-created"));
         return ResponseEntity.created(URI.create("/api/v1/conversations/" + value.id()))
                 .eTag(Long.toString(value.revision()))
                 .body(value);
+    }
+
+    @PatchMapping("/conversations/{conversationId}/model")
+    PersonalApiDtos.ModelSelection selectModel(
+            @PathVariable String conversationId,
+            @RequestHeader("If-Match") String ifMatch,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody PersonalApiDtos.SelectModel request) {
+        return mapper.modelSelection(application.selectModel(
+                conversationId, revision(ifMatch), key(idempotencyKey), text(request.modelId(), "modelId")));
     }
 
     @GetMapping("/conversations/{conversationId}")

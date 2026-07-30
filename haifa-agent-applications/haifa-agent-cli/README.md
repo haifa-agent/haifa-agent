@@ -152,6 +152,30 @@ persistence:
   protectorRef: env://HAIFA_CONTINUATION_KEY
 ```
 
+也可使用可信多模型配置；内部 `id` 与供应商 `providerModelId` 分离：
+
+```yaml
+models:
+  default: deepseek-coding
+  entries:
+    - id: deepseek-coding
+      displayName: DeepSeek Coding
+      providerId: deepseek
+      providerModelId: deepseek-v4-pro
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+    - id: bailian-coding
+      displayName: Bailian Coding
+      providerId: aliyun-bailian
+      providerModelId: qwen-plus
+      workspaceId: workspace-id
+      region: cn-beijing
+      credentialRef: env://DASHSCOPE_API_KEY
+```
+
+旧 `model` 配置仍按单模型读取。`--model`/`HAIFA_MODEL_ID` 只能选择已注册的内部 ID，不能临时
+注入 Endpoint 或 Credential；未知 ID 会 fail closed。
+
 `host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；
 只应对自己检查并信任的测试 Workspace 使用。模型与 Web Provider 调用可能计费。密钥只通过
 `env://...` 注入，不写入配置；`HAIFA_CONTINUATION_KEY` 必须是跨重启稳定的 Base64 32 字节 AES key。
@@ -333,7 +357,8 @@ reasoning 内容。
 当前已包含 tui4j Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
 `/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久
 Follow-up、Cancel、Approval selector 和 SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护
-进程、Session Tree/Fork/Clone、模型登录/切换或 Workflow Graph。Host Provider 不是容器或虚拟机，
+进程、Session Tree/Fork/Clone、模型登录或 Workflow Graph。模型切换只覆盖可信静态目录内的空闲
+Session，不包含动态发现或自动 fallback。Host Provider 不是容器或虚拟机，
 不能阻止当前 OS 用户本来可访问的 Workspace 外文件、网络或系统资源。
 
 ## 真实模型 Coding E2E

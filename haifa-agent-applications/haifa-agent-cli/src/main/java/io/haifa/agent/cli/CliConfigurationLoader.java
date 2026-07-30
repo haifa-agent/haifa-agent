@@ -37,25 +37,24 @@ final class CliConfigurationLoader {
 
     private CliConfiguration resolve(Map<String, Object> source, CliArguments arguments) {
         CliConfiguration defaults = CliConfiguration.defaults();
-        Map<String, Object> model = object(source, "model");
-        String providerId = environment("HAIFA_MODEL_PROVIDER_ID")
-                .orElseGet(() -> text(model, "providerId", defaults.model().providerId()));
-        boolean bailian = providerId.equals("aliyun-bailian");
-        String modelId = arguments.model().orElseGet(() -> environment("HAIFA_MODEL_ID")
-                .orElseGet(() -> text(
-                        model,
-                        "modelId",
-                        bailian ? "qwen-plus" : defaults.model().modelId())));
-        String endpoint = environment("HAIFA_MODEL_ENDPOINT").orElseGet(() -> nullableText(model, "endpoint"));
-        String credential = environment("HAIFA_CREDENTIAL_REF")
-                .orElseGet(() -> text(
-                        model,
-                        "credentialRef",
-                        bailian ? "env://DASHSCOPE_API_KEY" : defaults.model().credentialRef()));
-        String workspaceId =
-                environment("HAIFA_BAILIAN_WORKSPACE_ID").orElseGet(() -> nullableText(model, "workspaceId"));
-        String region = environment("HAIFA_BAILIAN_REGION").orElseGet(() -> nullableText(model, "region"));
-        if (!bailian && endpoint == null) endpoint = defaults.model().endpoint().toString();
+        List<CliConfiguration.Model> configuredModels;
+        String defaultModelId;
+        if (source.containsKey("models")) {
+            Map<String, Object> models = object(source, "models");
+            configuredModels = models(models);
+            defaultModelId = text(models, "default", configuredModels.getFirst().id());
+        } else {
+            CliConfiguration.Model legacy = legacyModel(object(source, "model"), defaults);
+            configuredModels = List.of(legacy);
+            defaultModelId = legacy.id();
+        }
+        String selectedModelId =
+                arguments.model().orElseGet(() -> environment("HAIFA_MODEL_ID").orElse(defaultModelId));
+        CliConfiguration.Model selectedModel = configuredModels.stream()
+                .filter(value -> value.id().equals(selectedModelId))
+                .findFirst()
+                .orElseThrow(
+                        () -> new IllegalArgumentException("configured model id is unavailable: " + selectedModelId));
         Set<String> tools = stringSet(object(source, "tools").get("enabled"), defaults.enabledTools());
         List<CliConfiguration.McpServer> mcpServers = mcpServers(object(source, "mcp"));
         CliConfiguration.Web web = web(object(source, "web"), defaults.web());
@@ -72,13 +71,8 @@ final class CliConfigurationLoader {
                 .orElseGet(() -> Duration.ofMillis(
                         number(runtime, "maxWallTimeMillis", defaults.timeout().toMillis())));
         return new CliConfiguration(
-                new CliConfiguration.Model(
-                        providerId,
-                        modelId,
-                        endpoint == null ? null : java.net.URI.create(endpoint),
-                        credential,
-                        workspaceId,
-                        region),
+                selectedModel,
+                configuredModels,
                 tools,
                 mcpServers,
                 web,
@@ -89,6 +83,58 @@ final class CliConfigurationLoader {
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()),
                 persistence);
+    }
+
+    private static CliConfiguration.Model legacyModel(Map<String, Object> model, CliConfiguration defaults) {
+        String providerId = environment("HAIFA_MODEL_PROVIDER_ID")
+                .orElseGet(() -> text(model, "providerId", defaults.model().providerId()));
+        boolean bailian = providerId.equals("aliyun-bailian");
+        String providerModelId =
+                text(model, "modelId", bailian ? "qwen-plus" : defaults.model().modelId());
+        String endpoint = environment("HAIFA_MODEL_ENDPOINT").orElseGet(() -> nullableText(model, "endpoint"));
+        String credential = environment("HAIFA_CREDENTIAL_REF")
+                .orElseGet(() -> text(
+                        model,
+                        "credentialRef",
+                        bailian ? "env://DASHSCOPE_API_KEY" : defaults.model().credentialRef()));
+        String workspaceId =
+                environment("HAIFA_BAILIAN_WORKSPACE_ID").orElseGet(() -> nullableText(model, "workspaceId"));
+        String region = environment("HAIFA_BAILIAN_REGION").orElseGet(() -> nullableText(model, "region"));
+        if (!bailian && endpoint == null) endpoint = defaults.model().endpoint().toString();
+        return new CliConfiguration.Model(
+                providerId,
+                providerModelId,
+                endpoint == null ? null : java.net.URI.create(endpoint),
+                credential,
+                workspaceId,
+                region);
+    }
+
+    private static List<CliConfiguration.Model> models(Map<String, Object> source) {
+        Object configured = source.get("entries");
+        if (!(configured instanceof List<?> entries) || entries.isEmpty()) {
+            throw new IllegalArgumentException("configuration models.entries must be a non-empty list");
+        }
+        List<CliConfiguration.Model> result = new ArrayList<>();
+        for (Object entry : entries) {
+            if (!(entry instanceof Map<?, ?> raw)) {
+                throw new IllegalArgumentException("configuration models.entries must contain objects");
+            }
+            Map<String, Object> model = stringObject(raw, "configuration models.entries");
+            String providerId = text(model, "providerId", "");
+            boolean bailian = providerId.equals("aliyun-bailian");
+            String endpoint = nullableText(model, "endpoint");
+            result.add(new CliConfiguration.Model(
+                    providerId,
+                    text(model, "providerModelId", ""),
+                    endpoint == null ? null : java.net.URI.create(endpoint),
+                    text(model, "credentialRef", bailian ? "env://DASHSCOPE_API_KEY" : "env://DEEPSEEK_API_KEY"),
+                    nullableText(model, "workspaceId"),
+                    nullableText(model, "region"),
+                    text(model, "id", ""),
+                    text(model, "displayName", text(model, "id", ""))));
+        }
+        return List.copyOf(result);
     }
 
     private static ProjectPersistenceConfiguration persistence(Map<String, Object> source) {
@@ -300,6 +346,13 @@ final class CliConfigurationLoader {
             throw new IllegalArgumentException("configuration " + key + " must be an object");
         Map<String, Object> values = new LinkedHashMap<>();
         raw.forEach((entryKey, entryValue) -> values.put(String.valueOf(entryKey), entryValue));
+        return values;
+    }
+
+    private static Map<String, Object> stringObject(Map<?, ?> raw, String field) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        raw.forEach((entryKey, entryValue) -> values.put(String.valueOf(entryKey), entryValue));
+        if (values.isEmpty()) throw new IllegalArgumentException(field + " must not contain empty objects");
         return values;
     }
 

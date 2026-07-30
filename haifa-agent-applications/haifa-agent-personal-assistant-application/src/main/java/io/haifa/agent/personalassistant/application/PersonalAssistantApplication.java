@@ -53,25 +53,66 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final Clock clock;
     private final PersonalCapabilityRegistry capabilities;
     private final Set<String> mcpToolAliases;
+    private final PersonalModelCatalog models;
+    private final PersonalModelPreferenceStore modelPreferences;
 
     public PersonalAssistantApplication(
             HaifaAgent agent, PersonalMcpPlatform mcp, Clock clock, PersonalCapabilityRegistry capabilities) {
+        this(
+                agent,
+                mcp,
+                clock,
+                capabilities,
+                new PersonalModelCatalog() {
+                    @Override
+                    public String defaultModelId() {
+                        return "personal-chat";
+                    }
+
+                    @Override
+                    public List<PersonalModelOption> available() {
+                        return List.of(new PersonalModelOption(
+                                "personal-chat",
+                                "Configured model",
+                                "configured",
+                                "Configured",
+                                Set.of("TEXT_CHAT", "TOOL_CALLING"),
+                                64_000));
+                    }
+                },
+                new InMemoryPersonalModelPreferenceStore());
+    }
+
+    public PersonalAssistantApplication(
+            HaifaAgent agent,
+            PersonalMcpPlatform mcp,
+            Clock clock,
+            PersonalCapabilityRegistry capabilities,
+            PersonalModelCatalog models,
+            PersonalModelPreferenceStore modelPreferences) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
         this.capabilities = Objects.requireNonNull(capabilities);
+        this.models = Objects.requireNonNull(models);
+        this.modelPreferences = Objects.requireNonNull(modelPreferences);
         this.mcpToolAliases = mcp.aliases();
     }
 
     public ConversationView start(String idempotencyKey, String displayName, String message) {
-        return conversation(
-                agent.conversations().start(new StartConversationCommand(idempotencyKey, displayName, message)));
+        return start(idempotencyKey, displayName, message, models.defaultModelId());
+    }
+
+    public ConversationView start(String idempotencyKey, String displayName, String message, String modelId) {
+        PersonalModelOption selected = requireModel(modelId);
+        ConversationRecord started = agent.conversations()
+                .start(new StartConversationCommand(idempotencyKey, displayName, message, Optional.of(selected.id())));
+        modelPreferences.create(started.sessionId().value(), selected.id(), clock.instant());
+        return conversation(started);
     }
 
     public Optional<ConversationView> conversation(String sessionId) {
-        return agent.conversations()
-                .find(new AgentSessionId(sessionId))
-                .map(PersonalAssistantApplication::conversation);
+        return agent.conversations().find(new AgentSessionId(sessionId)).map(this::conversation);
     }
 
     public List<ConversationView> conversations(Optional<String> query, Set<String> statuses, int limit) {
@@ -83,7 +124,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 .list(new ConversationQuery(query, mapped, Optional.empty(), limit))
                 .items()
                 .stream()
-                .map(PersonalAssistantApplication::conversation)
+                .map(this::conversation)
                 .toList();
     }
 
@@ -98,9 +139,39 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     public ConversationView submit(String sessionId, long expectedRevision, String idempotencyKey, String message) {
+        PersonalModelPreference preference = requirePreference(sessionId);
+        requireModel(preference.modelId());
         return conversation(agent.conversations()
                 .submit(new SubmitConversationTurnCommand(
-                        new AgentSessionId(sessionId), expectedRevision, idempotencyKey, message)));
+                        new AgentSessionId(sessionId),
+                        expectedRevision,
+                        idempotencyKey,
+                        message,
+                        Optional.of(preference.modelId()))));
+    }
+
+    public List<PersonalModelOption> models() {
+        return models.available();
+    }
+
+    public ModelSelectionView selectModel(
+            String sessionId, long expectedRevision, String idempotencyKey, String modelId) {
+        PersonalModelOption selected = requireModel(modelId);
+        ConversationRecord conversation = agent.conversations()
+                .find(new AgentSessionId(sessionId))
+                .orElseThrow(() -> new IllegalStateException("CONVERSATION_UNAVAILABLE"));
+        if (conversation.activeRunId().isPresent()
+                || conversation.activeDispatchKey().isPresent()) {
+            throw new IllegalStateException("CONVERSATION_ACTIVE");
+        }
+        PersonalModelPreference changed = modelPreferences.change(
+                sessionId,
+                expectedRevision,
+                selected.id(),
+                digest(idempotencyKey),
+                digest(sessionId + "|" + selected.id()),
+                clock.instant());
+        return new ModelSelectionView(selected, changed.revision(), true);
     }
 
     public ConversationView rename(String sessionId, long expectedRevision, String idempotencyKey, String displayName) {
@@ -331,7 +402,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         if (failure != null) throw failure;
     }
 
-    private static ConversationView conversation(ConversationRecord value) {
+    private ConversationView conversation(ConversationRecord value) {
+        ModelSelectionView model = modelSelection(value.sessionId().value());
         return new ConversationView(
                 value.sessionId().value(),
                 value.displayName(),
@@ -339,7 +411,40 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 value.activeRunId().map(AgentRunId::value),
                 value.createdAt(),
                 value.lastActivityAt(),
-                value.revision());
+                value.revision(),
+                model);
+    }
+
+    private ModelSelectionView modelSelection(String conversationId) {
+        PersonalModelPreference preference = modelPreferences
+                .find(conversationId)
+                .orElse(new PersonalModelPreference(
+                        conversationId, models.defaultModelId(), 0, Optional.empty(), Optional.empty(), Instant.EPOCH));
+        Optional<PersonalModelOption> available = models.find(preference.modelId());
+        PersonalModelOption value = available.orElseGet(() -> new PersonalModelOption(
+                preference.modelId(), preference.modelId(), "unavailable", "Unavailable", Set.of(), 1));
+        return new ModelSelectionView(value, preference.revision(), available.isPresent());
+    }
+
+    private PersonalModelPreference requirePreference(String conversationId) {
+        return modelPreferences
+                .find(conversationId)
+                .orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
+    }
+
+    private PersonalModelOption requireModel(String modelId) {
+        return models.find(Objects.requireNonNull(modelId).trim())
+                .orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
+    }
+
+    private static String digest(String value) {
+        try {
+            byte[] bytes = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(Objects.requireNonNull(value).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(bytes);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 
     private static TurnView turn(ConversationTurn value) {
@@ -496,7 +601,10 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Optional<String> activeRunId,
             Instant createdAt,
             Instant lastActivityAt,
-            long revision) {}
+            long revision,
+            ModelSelectionView model) {}
+
+    public record ModelSelectionView(PersonalModelOption model, long revision, boolean available) {}
 
     public record TurnView(
             String id, String role, Optional<String> runId, long sequence, String text, Instant createdAt) {}

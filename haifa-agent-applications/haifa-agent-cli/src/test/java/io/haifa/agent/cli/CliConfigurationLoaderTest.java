@@ -13,6 +13,44 @@ import org.junit.jupiter.api.Test;
 
 class CliConfigurationLoaderTest {
     @Test
+    void loadsTrustedMultiModelConfigurationAndSelectsByInternalId() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-models", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                models:
+                  default: deepseek-coding
+                  entries:
+                    - id: deepseek-coding
+                      displayName: DeepSeek Coding
+                      providerId: deepseek
+                      providerModelId: deepseek-v4-pro
+                      endpoint: https://api.deepseek.com
+                      credentialRef: env://DEEPSEEK_API_KEY
+                    - id: bailian-coding
+                      displayName: Bailian Coding
+                      providerId: aliyun-bailian
+                      providerModelId: qwen-plus
+                      workspaceId: workspace-123
+                      region: cn-beijing
+                      credentialRef: env://DASHSCOPE_API_KEY
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(
+                                new String[] {"--config", configuration.toString(), "--model", "bailian-coding"}),
+                        Path.of("."));
+
+        assertThat(result.availableModels())
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly("deepseek-coding", "bailian-coding");
+        assertThat(result.model().id()).isEqualTo("bailian-coding");
+        assertThat(result.model().modelId()).isEqualTo("qwen-plus");
+        assertThat(LocalCodingAgent.modelSnapshot(result).modelId().value()).isEqualTo("bailian-coding");
+    }
+
+    @Test
     void packagedDistributionConfigurationIsValidAndSecretFree() {
         Path configuration = Path.of("distribution", "haifa-coding.yaml").toAbsolutePath();
 

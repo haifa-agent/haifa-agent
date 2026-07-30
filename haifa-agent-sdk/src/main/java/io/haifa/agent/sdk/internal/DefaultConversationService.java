@@ -80,7 +80,11 @@ public final class DefaultConversationService implements ConversationService {
                 caller,
                 "start",
                 command.idempotencyKey(),
-                command.displayName() + "\u0000" + command.message(),
+                command.displayName()
+                        + "\u0000"
+                        + command.message()
+                        + "\u0000"
+                        + command.runProfileId().orElse(""),
                 proposedSession,
                 now);
         ConversationCommandBinding binding = persistence.inTransaction(() -> {
@@ -123,7 +127,7 @@ public final class DefaultConversationService implements ConversationService {
         if (binding.completed()) {
             return requireAuthorized(binding.sessionId(), caller);
         }
-        AgentRunSnapshot run = runtime.start(runRequest(binding, command.message()));
+        AgentRunSnapshot run = runtime.start(runRequest(binding, command.message(), command.runProfileId()));
         return persistence.inTransaction(() -> {
             ConversationRecord activated = conversations.activateRun(
                     binding.sessionId(), binding.dispatchKey(), run.runId(), run.version(), time.now());
@@ -211,8 +215,13 @@ public final class DefaultConversationService implements ConversationService {
             throw conflict("CONVERSATION_ARCHIVED");
         }
         Instant now = time.now();
-        ConversationCommandBinding proposal =
-                commandBinding(caller, "submit", command.idempotencyKey(), command.message(), command.sessionId(), now);
+        ConversationCommandBinding proposal = commandBinding(
+                caller,
+                "submit",
+                command.idempotencyKey(),
+                command.message() + "\u0000" + command.runProfileId().orElse(""),
+                command.sessionId(),
+                now);
         ConversationCommandBinding binding = persistence.inTransaction(() -> {
             ConversationCommandBinding reserved = conversations.reserveCommand(proposal);
             if (reserved.completed()) return reserved;
@@ -228,7 +237,7 @@ public final class DefaultConversationService implements ConversationService {
         if (binding.completed()) {
             return reconcileTerminalRun(requireAuthorized(command.sessionId(), caller));
         }
-        AgentRunSnapshot run = runtime.start(runRequest(binding, command.message()));
+        AgentRunSnapshot run = runtime.start(runRequest(binding, command.message(), command.runProfileId()));
         return persistence.inTransaction(() -> {
             ConversationRecord activated = conversations.activateRun(
                     binding.sessionId(), binding.dispatchKey(), run.runId(), run.version(), time.now());
@@ -355,12 +364,13 @@ public final class DefaultConversationService implements ConversationService {
         }
     }
 
-    private AgentRunRequest runRequest(ConversationCommandBinding binding, String message) {
+    private AgentRunRequest runRequest(
+            ConversationCommandBinding binding, String message, Optional<String> runProfileId) {
         return new AgentRunRequest(
                 binding.dispatchKey(),
                 profile.definitionId(),
                 Optional.of(profile.definitionVersion()),
-                profile.runProfileId(),
+                runProfileId.orElse(profile.runProfileId()),
                 binding.sessionId(),
                 Optional.empty(),
                 message,

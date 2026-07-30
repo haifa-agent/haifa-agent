@@ -16,6 +16,14 @@ import {
 } from "./api/client";
 import App from "./App";
 
+const model = {
+  id: "personal-chat",
+  displayName: "Personal Chat",
+  providerId: "deepseek",
+  providerDisplayName: "DeepSeek",
+  capabilities: ["TEXT_CHAT", "TOOL_CALLING"],
+  contextWindow: 64000,
+};
 const conversation: Conversation = {
   id: "conversation-1",
   displayName: "每日计划",
@@ -24,6 +32,7 @@ const conversation: Conversation = {
   createdAt: "2026-07-28T01:00:00Z",
   lastActivityAt: "2026-07-28T02:00:00Z",
   revision: 3,
+  model: { model, revision: 0, available: true },
 };
 const turns: Turn[] = [
   {
@@ -100,6 +109,8 @@ const bootstrap: Bootstrap = {
   caller: "public-user",
   capabilities: ["conversation", "tool", "skill", "mcp", "memory", "usage", "sse"],
   assemblyDigest: "safe-digest",
+  defaultModelId: model.id,
+  models: [model],
 };
 
 function client(): PersonalAssistantClient {

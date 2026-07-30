@@ -16,6 +16,7 @@ import java.util.Set;
 
 record CliConfiguration(
         Model model,
+        List<Model> availableModels,
         Set<String> enabledTools,
         List<McpServer> mcpServers,
         Web web,
@@ -55,6 +56,13 @@ record CliConfiguration(
 
     CliConfiguration {
         model = Objects.requireNonNull(model, "model must not be null");
+        availableModels = List.copyOf(Objects.requireNonNull(availableModels, "availableModels must not be null"));
+        String selectedModelId = model.id();
+        if (availableModels.isEmpty()
+                || availableModels.stream().map(Model::id).distinct().count() != availableModels.size()
+                || availableModels.stream().noneMatch(value -> value.id().equals(selectedModelId))) {
+            throw new IllegalArgumentException("models must be non-empty, uniquely identified, and contain default");
+        }
         enabledTools =
                 Set.copyOf(new LinkedHashSet<>(Objects.requireNonNull(enabledTools, "enabledTools must not be null")));
         mcpServers = List.copyOf(Objects.requireNonNull(mcpServers, "mcpServers must not be null"));
@@ -86,6 +94,11 @@ record CliConfiguration(
                         "deepseek-v4-pro",
                         URI.create("https://api.deepseek.com"),
                         "env://DEEPSEEK_API_KEY"),
+                List.of(new Model(
+                        "deepseek",
+                        "deepseek-v4-pro",
+                        URI.create("https://api.deepseek.com"),
+                        "env://DEEPSEEK_API_KEY")),
                 DEFAULT_TOOLS,
                 List.of(),
                 Web.defaults(),
@@ -179,15 +192,61 @@ record CliConfiguration(
                 maxToolCalls);
     }
 
+    CliConfiguration(
+            Model model,
+            Set<String> enabledTools,
+            List<McpServer> mcpServers,
+            Web web,
+            Skills skills,
+            Execution execution,
+            ApprovalMode approval,
+            Duration timeout,
+            int maxIterations,
+            long maxToolCalls,
+            ProjectPersistenceConfiguration persistence) {
+        this(
+                model,
+                List.of(model),
+                enabledTools,
+                mcpServers,
+                web,
+                skills,
+                execution,
+                approval,
+                timeout,
+                maxIterations,
+                maxToolCalls,
+                persistence);
+    }
+
     record Model(
-            String providerId, String modelId, URI endpoint, String credentialRef, String workspaceId, String region) {
+            String providerId,
+            String modelId,
+            URI endpoint,
+            String credentialRef,
+            String workspaceId,
+            String region,
+            String id,
+            String displayName) {
         Model(String providerId, String modelId, URI endpoint, String credentialRef) {
-            this(providerId, modelId, endpoint, credentialRef, null, null);
+            this(providerId, modelId, endpoint, credentialRef, null, null, modelId, modelId);
+        }
+
+        Model(
+                String providerId,
+                String modelId,
+                URI endpoint,
+                String credentialRef,
+                String workspaceId,
+                String region) {
+            this(providerId, modelId, endpoint, credentialRef, workspaceId, region, modelId, modelId);
         }
 
         Model {
             providerId = text(providerId, "model.providerId");
             modelId = text(modelId, "model.modelId");
+            id = text(id, "model.id");
+            displayName = text(displayName, "model.displayName");
             credentialRef = text(credentialRef, "model.credentialRef");
             if (!credentialRef.startsWith("env://")) {
                 throw new IllegalArgumentException("model.credentialRef must use env://");

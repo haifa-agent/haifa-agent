@@ -1,6 +1,8 @@
 package io.haifa.agent.application.coding.terminal.session;
 
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
+import io.haifa.agent.application.project.product.coding.CodingModelSelection;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportResult;
@@ -36,6 +38,15 @@ public interface CodingSessionClient {
     CodingSessionView open(AgentSessionId sessionId);
 
     CodingSessionView reconcile(AgentSessionId sessionId);
+
+    default List<CodingModelOption> models() {
+        return List.of();
+    }
+
+    default CodingModelSelection selectModel(
+            AgentSessionId sessionId, String modelId, long expectedRevision, String idempotencyKey) {
+        throw new UnsupportedOperationException("Model selection is unavailable");
+    }
 
     void submit(AgentSessionId sessionId, String message, String idempotencyKey);
 

@@ -9,6 +9,7 @@ import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
 import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
 import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelFactory;
+import io.haifa.agent.personalassistant.server.configuration.model.SqlitePersonalModelPreferenceStore;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
@@ -90,11 +91,19 @@ public class PersonalAssistantConfiguration {
                     properties.web().fetchMaximumResponseBytes(),
                     mapper,
                     personalClock);
+            var models = PersonalModelFactory.createPlatform(
+                    properties.models(), properties.defaultModelId(), mapper, execution.shell());
+            var modelPreferences = new SqlitePersonalModelPreferenceStore(
+                    dataDirectory.resolve("personal-assistant.sqlite"),
+                    properties.caller().tenant(),
+                    properties.caller().principal());
             return PersonalAssistantAssembler.assemble(new PersonalAssistantAssembler.Dependencies(
                     tenant,
                     principal,
                     () -> caller,
-                    PersonalModelFactory.create(properties.model(), mapper, execution.shell()),
+                    models.contribution(),
+                    models.catalog(),
+                    modelPreferences,
                     sqlite.persistence(),
                     sqlite.conversation(),
                     sqlite.memory(),

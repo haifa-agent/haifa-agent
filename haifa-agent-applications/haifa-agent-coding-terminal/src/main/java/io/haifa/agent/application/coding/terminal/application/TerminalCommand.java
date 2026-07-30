@@ -10,6 +10,7 @@ public enum TerminalCommand {
     RELOAD,
     COMPACT,
     EXPORT,
+    MODEL,
     SETTINGS,
     TRUST,
     SESSION,

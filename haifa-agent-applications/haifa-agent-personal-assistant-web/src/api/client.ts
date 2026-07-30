@@ -7,6 +7,7 @@ import type {
   InteractionReceipt,
   Memory,
   MemoryCandidate,
+  ModelSelection,
   Run,
   StreamEvent,
   Turn,
@@ -47,7 +48,13 @@ export interface PersonalAssistantClient {
     displayName: string,
     message: string,
     options?: CommandOptions,
+    modelId?: string,
   ): Promise<Conversation>;
+  selectModel?(
+    conversation: Conversation,
+    modelId: string,
+    options?: CommandOptions,
+  ): Promise<ModelSelection>;
   conversation(id: string, signal?: AbortSignal): Promise<Conversation>;
   updateConversation(
     conversation: Conversation,
@@ -163,13 +170,30 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     displayName: string,
     message: string,
     options: CommandOptions = {},
+    modelId?: string,
   ) {
     return this.request<Conversation>(
       "/conversations",
       {
         method: "POST",
         headers: commandHeaders(undefined, options.idempotencyKey),
-        body: JSON.stringify({ displayName, message }),
+        body: JSON.stringify({ displayName, message, modelId }),
+      },
+      options.signal,
+    );
+  }
+
+  selectModel(
+    conversation: Conversation,
+    modelId: string,
+    options: CommandOptions = {},
+  ) {
+    return this.request<ModelSelection>(
+      `/conversations/${encoded(conversation.id)}/model`,
+      {
+        method: "PATCH",
+        headers: commandHeaders(conversation.model.revision, options.idempotencyKey),
+        body: JSON.stringify({ modelId }),
       },
       options.signal,
     );

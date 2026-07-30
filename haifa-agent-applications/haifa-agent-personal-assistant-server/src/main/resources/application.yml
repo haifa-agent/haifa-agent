@@ -43,6 +43,11 @@ haifa:
       endpoint: ${HAIFA_PERSONAL_MODEL_ENDPOINT:https://api.deepseek.com}
       provider-model-id: ${HAIFA_PERSONAL_MODEL_ID:deepseek-v4-flash}
       credential-reference: ${HAIFA_PERSONAL_MODEL_CREDENTIAL:env://DEEPSEEK_API_KEY}
+      id: ${HAIFA_PERSONAL_MODEL_INTERNAL_ID:personal-chat}
+      display-name: ${HAIFA_PERSONAL_MODEL_DISPLAY_NAME:DeepSeek Personal}
+      provider-id: ${HAIFA_PERSONAL_MODEL_PROVIDER_ID:deepseek}
+      provider-display-name: ${HAIFA_PERSONAL_MODEL_PROVIDER_DISPLAY_NAME:DeepSeek}
+    default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:${HAIFA_PERSONAL_MODEL_INTERNAL_ID:personal-chat}}
     web:
       enabled: ${HAIFA_PERSONAL_WEB_ENABLED:false}
       credential-reference: ${HAIFA_PERSONAL_WEB_CREDENTIAL:env://ALIYUN_IQS_API_KEY}

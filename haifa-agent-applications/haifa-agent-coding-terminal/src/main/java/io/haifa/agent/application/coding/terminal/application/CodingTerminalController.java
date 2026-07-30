@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
@@ -49,6 +50,7 @@ public final class CodingTerminalController implements AutoCloseable {
     private boolean awaitingNewSessionMessage;
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
+    private List<CodingModelOption> modelOptions = List.of();
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
     private RunEventCursor pendingAcknowledgement;
@@ -339,6 +341,36 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.ExportCompleted(exported.logicalPath(), exported.messageCount()));
                 apply(new TerminalUiAction.StatusChanged("Session exported"));
             }
+            case MODEL -> {
+                CodingSessionView current = refresh();
+                modelOptions = client.models();
+                if (!argument.isBlank()) {
+                    client.selectModel(
+                            current.summary().sessionId(),
+                            argument,
+                            current.model().revision(),
+                            UUID.randomUUID().toString());
+                    load(client.open(current.summary().sessionId()));
+                    apply(new TerminalUiAction.StatusChanged("Model changed for future new Runs"));
+                } else if (modelOptions.isEmpty()) {
+                    apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
+                } else {
+                    int selected = java.util.stream.IntStream.range(0, modelOptions.size())
+                            .filter(index -> modelOptions
+                                    .get(index)
+                                    .id()
+                                    .equals(current.model().model().id()))
+                            .findFirst()
+                            .orElse(0);
+                    apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                            "model",
+                            "Model for future new Runs",
+                            modelOptions.stream()
+                                    .map(value -> value.displayName() + " · " + value.providerDisplayName())
+                                    .toList(),
+                            selected)));
+                }
+            }
             case SETTINGS, TRUST ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
             case SESSION -> {
@@ -507,6 +539,18 @@ public final class CodingTerminalController implements AutoCloseable {
                 refresh();
             }
             case "session" -> apply(new TerminalUiAction.SelectorClosed());
+            case "model" -> {
+                CodingSessionView current = requireCurrentSession();
+                CodingModelOption option = modelOptions.get(selected);
+                client.selectModel(
+                        current.summary().sessionId(),
+                        option.id(),
+                        current.model().revision(),
+                        UUID.randomUUID().toString());
+                apply(new TerminalUiAction.SelectorClosed());
+                load(client.open(current.summary().sessionId()));
+                apply(new TerminalUiAction.StatusChanged("Model changed for future new Runs"));
+            }
             case "archive-session" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) {

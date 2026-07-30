@@ -8,6 +8,7 @@ import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.coding.CodingFollowUp;
 import io.haifa.agent.application.project.product.coding.CodingFollowUpStatus;
+import io.haifa.agent.application.project.product.coding.CodingModelPreference;
 import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
@@ -227,6 +228,10 @@ class ProjectPersistenceAssemblyTest {
                             0));
             first.codingSessions().enqueue(followUp("follow-1", sessionId, activeRunId, "secret queued turn", "key-1"));
             first.codingSessions().enqueue(followUp("follow-2", sessionId, activeRunId, "second queued turn", "key-2"));
+            first.codingSessions().createModelPreference(CodingModelPreference.initial(sessionId, "deepseek", NOW));
+            first.codingSessions()
+                    .changeModel(
+                            sessionId, 0, "bailian", "model-key-digest", "model-request-digest", NOW.plusSeconds(1));
 
             byte[] databaseBytes = Files.readAllBytes(database);
             assertThat(new String(databaseBytes, java.nio.charset.StandardCharsets.UTF_8))
@@ -243,6 +248,12 @@ class ProjectPersistenceAssemblyTest {
                     .extracting(CodingSessionActivity::sessionId)
                     .containsExactly(sessionId);
             assertThat(reopened.codingSessions().queuedCount(sessionId)).isEqualTo(2);
+            assertThat(reopened.codingSessions().findModelPreference(sessionId))
+                    .get()
+                    .satisfies(preference -> {
+                        assertThat(preference.modelId()).isEqualTo("bailian");
+                        assertThat(preference.revision()).isEqualTo(1);
+                    });
             CodingSessionActivity idle =
                     reopened.codingSessions().clearActive(sessionId, activeRunId, 0, NOW.plusSeconds(1));
             var claim = reopened.codingSessions()

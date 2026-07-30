@@ -14,7 +14,22 @@ public final class PersonalApiMapper {
                 value.activeRunId(),
                 value.createdAt(),
                 value.lastActivityAt(),
-                value.revision());
+                value.revision(),
+                modelSelection(value.model()));
+    }
+
+    public PersonalApiDtos.Model model(io.haifa.agent.personalassistant.application.PersonalModelOption value) {
+        return new PersonalApiDtos.Model(
+                value.id(),
+                value.displayName(),
+                value.providerId(),
+                value.providerDisplayName(),
+                value.capabilities().stream().sorted().toList(),
+                value.contextWindow());
+    }
+
+    public PersonalApiDtos.ModelSelection modelSelection(PersonalAssistantApplication.ModelSelectionView value) {
+        return new PersonalApiDtos.ModelSelection(model(value.model()), value.revision(), value.available());
     }
 
     public PersonalApiDtos.Turn turn(PersonalAssistantApplication.TurnView value) {

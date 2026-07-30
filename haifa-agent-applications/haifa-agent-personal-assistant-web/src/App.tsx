@@ -616,6 +616,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const previousFocus = useRef<HTMLElement | null>(null);
   const interactionRequestGeneration = useRef(0);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
+  const [newModelId, setNewModelId] = useState("");
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
   >(null);
@@ -724,6 +725,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       client.memoryCandidates(controller.signal),
       client.memories(controller.signal),
     ]).then(([bootstrap, conversations, memoryCandidates, memories]) => {
+      setNewModelId(bootstrap.defaultModelId);
       dispatch({ type: "bootstrapLoaded", bootstrap, conversations, memoryCandidates, memories });
     }).catch((error) => {
       const message = safeError(error);
@@ -847,7 +849,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     void execute("提交消息", async () => {
       const conversation = state.selectedConversation
         ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key })
-        : await client.createConversation(message.slice(0, 32), message, { idempotencyKey: key });
+        : await client.createConversation(
+            message.slice(0, 32),
+            message,
+            { idempotencyKey: key },
+            newModelId || state.bootstrap?.defaultModelId,
+          );
       dispatch({ type: "setComposer", value: "" });
       if (state.selectedConversationId !== conversation.id) {
         selectConversation(conversation.id, "replace");
@@ -855,6 +862,20 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         dispatch({ type: "conversationLoaded", conversation });
         await loadConversation(conversation.id);
       }
+      await loadConversations();
+    });
+  };
+
+  const selectModel = (modelId: string) => {
+    const conversation = state.selectedConversation;
+    if (!conversation) {
+      setNewModelId(modelId);
+      return;
+    }
+    if (conversation.activeRunId || !client.selectModel) return;
+    void execute("切换模型", async () => {
+      await client.selectModel!(conversation, modelId, { idempotencyKey: crypto.randomUUID() });
+      await loadConversation(conversation.id);
       await loadConversations();
     });
   };
@@ -965,7 +986,24 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         <main className="conversation">
           <div className="conversation-heading">
             <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>
-            {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
+            <div className="conversation-model-controls">
+              <label>
+                <span className="sr-only">选择模型</span>
+                <select
+                  aria-label="选择模型"
+                  value={state.selectedConversation?.model.model.id ?? newModelId}
+                  disabled={composerDisabled}
+                  onChange={(event) => selectModel(event.target.value)}
+                >
+                  {(state.bootstrap?.models ?? []).map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.displayName} · {model.providerDisplayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
+            </div>
           </div>
           {state.error && (
             <div className="error-banner" role="alert">

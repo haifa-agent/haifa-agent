@@ -15,11 +15,12 @@ public final class TerminalCompletionProvider {
             "/reload",
             "/compact",
             "/export",
+            "/model",
             "/session",
             "/help",
             "/commands",
             "/quit");
-    private static final int MAX_CANDIDATES = 12;
+    private static final int MAX_CANDIDATES = 16;
 
     private final Supplier<List<String>> logicalPaths;
 

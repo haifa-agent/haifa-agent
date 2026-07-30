@@ -49,6 +49,15 @@ public final class PersonalApiExceptionHandler {
                 .body(new PersonalApiDtos.Error("INVALID_REQUEST", "The request is invalid.", correlation(exchange)));
     }
 
+    @ExceptionHandler(IllegalStateException.class)
+    ResponseEntity<PersonalApiDtos.Error> conflict(IllegalStateException exception, ServerWebExchange exchange) {
+        String candidate = exception.getMessage();
+        String code = candidate != null && candidate.matches("[A-Z][A-Z0-9_]{2,63}") ? candidate : "OPERATION_CONFLICT";
+        HttpStatus status = code.contains("UNAVAILABLE") ? HttpStatus.NOT_FOUND : HttpStatus.CONFLICT;
+        return ResponseEntity.status(status)
+                .body(new PersonalApiDtos.Error(code, "The operation cannot be completed.", correlation(exchange)));
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     ResponseEntity<PersonalApiDtos.Error> notFound(NoResourceFoundException exception, ServerWebExchange exchange) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)

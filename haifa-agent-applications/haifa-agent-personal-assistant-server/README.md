@@ -1,5 +1,10 @@
 # Haifa Personal Assistant Server
 
+Server 兼容旧 `haifa.personal.model`，并支持 `haifa.personal.models` 受信列表和
+`default-model-id`。`/api/v1/models`、Bootstrap 和 Conversation 只返回脱敏信息；Endpoint、
+Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
+SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
+
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
 端口冲突会使启动失败，不会自动换端口。

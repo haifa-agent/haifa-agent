@@ -2,8 +2,10 @@ package io.haifa.agent.personalassistant.server.configuration.product;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 @ConfigurationProperties("haifa.personal")
 public record PersonalAssistantProperties(
@@ -11,11 +13,14 @@ public record PersonalAssistantProperties(
         String continuationKeyBase64,
         Caller caller,
         Model model,
+        List<Model> models,
+        String defaultModelId,
         Web web,
         Mcp mcp,
         Execution execution,
         String localSkillRoot,
         String trustedScriptManifest) {
+    @ConstructorBinding
     public PersonalAssistantProperties {
         if (dataDirectory == null) throw new IllegalArgumentException("dataDirectory is required");
         if (continuationKeyBase64 == null || continuationKeyBase64.isBlank()) {
@@ -24,8 +29,43 @@ public record PersonalAssistantProperties(
         if (caller == null || model == null || web == null || mcp == null || execution == null) {
             throw new IllegalArgumentException("caller, model, web, mcp, and execution configuration are required");
         }
+        models = List.copyOf(models == null || models.isEmpty() ? List.of(model) : models);
+        if (models.stream().map(Model::id).distinct().count() != models.size()) {
+            throw new IllegalArgumentException("models ids must be unique");
+        }
+        defaultModelId = defaultModelId == null || defaultModelId.isBlank()
+                ? model.id()
+                : text(defaultModelId, "defaultModelId");
+        String selectedDefaultModelId = defaultModelId;
+        if (models.stream().noneMatch(value -> value.id().equals(selectedDefaultModelId))) {
+            throw new IllegalArgumentException("defaultModelId must identify a configured model");
+        }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
         trustedScriptManifest = trustedScriptManifest == null ? "" : trustedScriptManifest.trim();
+    }
+
+    public PersonalAssistantProperties(
+            Path dataDirectory,
+            String continuationKeyBase64,
+            Caller caller,
+            Model model,
+            Web web,
+            Mcp mcp,
+            Execution execution,
+            String localSkillRoot,
+            String trustedScriptManifest) {
+        this(
+                dataDirectory,
+                continuationKeyBase64,
+                caller,
+                model,
+                List.of(model),
+                model.id(),
+                web,
+                mcp,
+                execution,
+                localSkillRoot,
+                trustedScriptManifest);
     }
 
     public record Web(
@@ -93,7 +133,34 @@ public record PersonalAssistantProperties(
     }
 
     public record Model(
-            String mode, boolean allowDeterministic, URI endpoint, String providerModelId, String credentialReference) {
+            String mode,
+            boolean allowDeterministic,
+            URI endpoint,
+            String providerModelId,
+            String credentialReference,
+            String id,
+            String displayName,
+            String providerId,
+            String providerDisplayName) {
+        public Model(
+                String mode,
+                boolean allowDeterministic,
+                URI endpoint,
+                String providerModelId,
+                String credentialReference) {
+            this(
+                    mode,
+                    allowDeterministic,
+                    endpoint,
+                    providerModelId,
+                    credentialReference,
+                    "personal-chat",
+                    providerModelId,
+                    "deepseek",
+                    "DeepSeek");
+        }
+
+        @ConstructorBinding
         public Model {
             mode = text(mode, "model.mode").toLowerCase(java.util.Locale.ROOT);
             if (!mode.equals("remote") && !mode.equals("deterministic")) {
@@ -107,6 +174,15 @@ public record PersonalAssistantProperties(
             }
             providerModelId = text(providerModelId, "model.providerModelId");
             credentialReference = text(credentialReference, "model.credentialReference");
+            id = text(id == null ? "personal-chat" : id, "model.id");
+            displayName = text(displayName == null ? providerModelId : displayName, "model.displayName");
+            providerId = text(providerId == null ? "deepseek" : providerId, "model.providerId");
+            providerDisplayName =
+                    text(providerDisplayName == null ? providerId : providerDisplayName, "model.providerDisplayName");
+            if (mode.equals("deterministic")) {
+                providerId = "personal-local";
+                providerDisplayName = "Local acceptance";
+            }
         }
     }
 

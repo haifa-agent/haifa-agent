@@ -41,6 +41,7 @@
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sdk</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-store-sqlite</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-model-openai-compatible</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-model-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-policy-api</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-policy-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-execution-core</artifactId></dependency>

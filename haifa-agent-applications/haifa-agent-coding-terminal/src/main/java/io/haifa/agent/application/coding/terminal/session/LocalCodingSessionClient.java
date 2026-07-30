@@ -2,6 +2,8 @@ package io.haifa.agent.application.coding.terminal.session;
 
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
+import io.haifa.agent.application.project.product.coding.CodingModelOption;
+import io.haifa.agent.application.project.product.coding.CodingModelSelection;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportResult;
@@ -141,6 +143,18 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public CodingSessionView reconcile(AgentSessionId sessionId) {
         requireScoped(sessionId);
         return scoped(sessions.reconcileSession(sessionId));
+    }
+
+    @Override
+    public List<CodingModelOption> models() {
+        return sessions.availableModels();
+    }
+
+    @Override
+    public CodingModelSelection selectModel(
+            AgentSessionId sessionId, String modelId, long expectedRevision, String idempotencyKey) {
+        requireScoped(sessionId);
+        return sessions.selectModel(sessionId, modelId, expectedRevision, idempotencyKey);
     }
 
     @Override
