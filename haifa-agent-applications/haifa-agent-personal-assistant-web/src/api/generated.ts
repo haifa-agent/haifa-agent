@@ -18,6 +18,10 @@ export interface SubmitMessage {
   message: string;
 }
 
+export interface RecommendedQuestions {
+  questions: Array<string>;
+}
+
 export interface UpdateConversation {
   displayName?: string;
   status?: string;
@@ -154,4 +158,4 @@ export interface ApiError {
   correlationId: string;
 }
 
-export type OperationId = "bootstrap" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "submitMessage" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory";
+export type OperationId = "bootstrap" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory";

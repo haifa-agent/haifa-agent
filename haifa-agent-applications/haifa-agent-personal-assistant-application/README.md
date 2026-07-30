@@ -11,6 +11,7 @@ Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Con
 本模块负责：
 
 - Conversation start/list/search/get/turns/submit/rename/archive/unarchive；
+- 完成态回答的可选推荐问题：绑定精确 Conversation/Run，使用最近 6 条有界 Turn 做一次辅助模型推理；
 - Run 查询、取消、最终结果、权威 Usage 与安全 Activity；
 - Interaction 查询与响应；
 - Memory Candidate review 和 Memory invalidate；
@@ -19,6 +20,12 @@ Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Con
 - 从公共 `haifa-agent-web` 模块显式装配 Aliyun IQS `web.search` / `web.fetch` 和短生命周期凭据；
 - 显式本地 MCP connect/discover/allowlist；
 - Tool、Skill、MCP 统一冻结到一个 Tool Catalog，并进入同一 Runtime Tool Pipeline。
+
+推荐问题不是新的 Run，也不进入权威 Conversation Turn。它只在精确 Run 已 `COMPLETED`、对应
+Assistant Turn 已持久化且仍是会话最后一条 Turn 时生成；结果仅保留 2～3 个不超过 80 字符的问题，
+最多缓存 256 个完成态 Run。模型必须对快问快答、定义/翻译、简单查询、算术/单位换算/数据计算、
+问候和已完全闭合的请求返回空数组。解析失败、模型失败或不足 2 个有效问题时同样返回空数组，不影响
+主回答。该辅助调用的 Token 不计入已终态 Run 的权威 Usage。
 
 Personal 在产品装配层对冻结目录中精确选中的 `web.search` / `web.fetch` coordinate 生成
 request-bound `ALLOW` Decision，因此公共 Web Search/Fetch 默认不创建 Approval Interaction。

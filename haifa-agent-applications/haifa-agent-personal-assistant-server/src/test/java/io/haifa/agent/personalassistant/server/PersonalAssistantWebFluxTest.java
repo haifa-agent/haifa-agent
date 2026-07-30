@@ -131,6 +131,25 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void recommendationEndpointBindsToTheCompletedAnswerAndAllowsAnEmptyResult() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Recommendations","message":"What is 2 + 2?"}
+                """);
+        String conversationId = conversation.path("id").asText();
+        String runId = conversation.path("activeRunId").asText();
+        assertThat(awaitTerminal(runId).path("status").asText()).isEqualTo("COMPLETED");
+
+        JsonNode result =
+                post("/api/v1/conversations/" + conversationId + "/runs/" + runId + "/recommend-questions", "{}");
+
+        assertThat(result.path("questions").isArray()).isTrue();
+        assertThat(result.path("questions")).isEmpty();
+        assertThat(get("/api/v1/bootstrap").path("capabilities").toString()).contains("recommended-questions");
+    }
+
+    @Test
     void executionRequiresExactApprovalAndPublishesSafeActivity() throws Exception {
         JsonNode conversation = post(
                 "/api/v1/conversations",
