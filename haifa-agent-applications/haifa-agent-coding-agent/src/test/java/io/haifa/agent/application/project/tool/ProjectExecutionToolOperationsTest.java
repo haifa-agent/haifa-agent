@@ -64,9 +64,7 @@ class ProjectExecutionToolOperationsTest {
                                 "workdir", "src",
                                 "timeoutMillis", 5000,
                                 "operationFamily", "TEST",
-                                "description", "Write representative output",
-                                "verificationPlanDigest", "sha256:" + "a".repeat(64),
-                                "verificationDimensions", List.of("SUCCESS_PATH", "FAILURE_PATH")),
+                                "description", "Write representative output"),
                         () -> false),
                 access());
 
@@ -98,8 +96,6 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("failureCategory", "COMMAND_FAILED")
                 .containsEntry("stableFailureCode", "PROCESS_EXIT_NONZERO")
                 .containsEntry("resourceClass", "COMMAND")
-                .containsEntry("verificationPlanDigest", "sha256:" + "a".repeat(64))
-                .containsEntry("verificationDimensions", List.of("SUCCESS_PATH", "FAILURE_PATH"))
                 .containsEntry(
                         "scratchSpecDigest",
                         CodingToolchainEnvironmentProfile.defaultScratchSpace().canonicalDigest());

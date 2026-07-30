@@ -1,6 +1,5 @@
 package io.haifa.agent.application.project.tool;
 
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationDimension;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.AssetRef;
@@ -164,7 +163,6 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
-        VerificationLabel verification = verificationLabel(arguments);
         if (hasLeadingAbsoluteDirectoryChange(command)) {
             return rejectedAbsoluteDirectoryChange(operationFamily);
         }
@@ -212,7 +210,7 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
-        return executeRequest(request, invocation.cancellation(), operationFamily, verification);
+        return executeRequest(request, invocation.cancellation(), operationFamily);
     }
 
     /**
@@ -259,14 +257,11 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
-        return executeRequest(request, () -> false, "UNKNOWN", VerificationLabel.none());
+        return executeRequest(request, () -> false, "UNKNOWN");
     }
 
     private ToolResult executeRequest(
-            ExecutionRequest request,
-            ToolCancellation cancellationSignal,
-            String operationFamily,
-            VerificationLabel verification) {
+            ExecutionRequest request, ToolCancellation cancellationSignal, String operationFamily) {
         MergedTailObserver merged =
                 new MergedTailObserver(outputObserver, maximumModelOutputBytes, maximumModelOutputLines);
         AtomicBoolean complete = new AtomicBoolean();
@@ -291,8 +286,7 @@ public final class ProjectExecutionToolOperations {
                     outputSanitizer,
                     operationFamily,
                     sandboxProfileRef,
-                    scratchSpace,
-                    verification);
+                    scratchSpace);
         } finally {
             complete.set(true);
             cancellation.interrupt();
@@ -305,8 +299,7 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             String operationFamily,
             SandboxProfileRef sandboxProfileRef,
-            ExecutionScratchSpaceSpec scratchSpace,
-            VerificationLabel verification) {
+            ExecutionScratchSpaceSpec scratchSpace) {
         String output = merged.text();
         if (output.isBlank()) output = MergedTailObserver.sanitize(fallbackOutput(result));
         output = Objects.requireNonNull(outputSanitizer.apply(output), "outputSanitizer must not return null");
@@ -328,7 +321,6 @@ public final class ProjectExecutionToolOperations {
         data.put("scratchSpecDigest", scratchSpace.canonicalDigest());
         data.put("scratchProvisioned", result.scratchProvisioned());
         data.put("scratchCleanupFailed", result.scratchCleanupFailed());
-        verification.addTo(data);
         result.optionalFileChangeSetId().ifPresent(value -> data.put("fileChangeSetId", value.value()));
         result.optionalFailure().ifPresent(value -> {
             data.put("failureCode", value.code());
@@ -487,53 +479,10 @@ public final class ProjectExecutionToolOperations {
         return normalized;
     }
 
-    private static VerificationLabel verificationLabel(Map<String, Object> values) {
-        Object rawDigest = values.get("verificationPlanDigest");
-        Object rawDimensions = values.get("verificationDimensions");
-        if (rawDigest == null && rawDimensions == null) return VerificationLabel.none();
-        if (!(rawDigest instanceof String digest) || !digest.matches("sha256:[0-9a-f]{64}")) {
-            throw new IllegalArgumentException("verificationPlanDigest must be a canonical SHA-256 reference");
-        }
-        if (!(rawDimensions instanceof List<?> raw) || raw.isEmpty() || raw.size() > 9) {
-            throw new IllegalArgumentException("verificationDimensions must contain between 1 and 9 values");
-        }
-        List<String> dimensions = new ArrayList<>();
-        for (Object value : raw) {
-            if (!(value instanceof String name)) {
-                throw new IllegalArgumentException("verificationDimensions must contain text values");
-            }
-            try {
-                dimensions.add(CodingVerificationDimension.valueOf(name).name());
-            } catch (IllegalArgumentException unsupported) {
-                throw new IllegalArgumentException("verificationDimensions contains an unsupported value", unsupported);
-            }
-        }
-        if (dimensions.stream().distinct().count() != dimensions.size()) {
-            throw new IllegalArgumentException("verificationDimensions must not contain duplicates");
-        }
-        return new VerificationLabel(digest, List.copyOf(dimensions));
-    }
-
     private static Duration positive(Duration value, String field) {
         Objects.requireNonNull(value, field + " must not be null");
         if (value.isZero() || value.isNegative()) throw new IllegalArgumentException(field + " must be positive");
         return value;
-    }
-
-    private record VerificationLabel(String planDigest, List<String> dimensions) {
-        private VerificationLabel {
-            dimensions = List.copyOf(dimensions);
-        }
-
-        static VerificationLabel none() {
-            return new VerificationLabel(null, List.of());
-        }
-
-        void addTo(Map<String, Object> data) {
-            if (planDigest == null) return;
-            data.put("verificationPlanDigest", planDigest);
-            data.put("verificationDimensions", dimensions);
-        }
     }
 
     private static final class MergedTailObserver implements ExecutionOutputObserver {

@@ -27,17 +27,17 @@ public final class CodingDeliveryContextSource implements ContextSource {
     public static final String SOURCE_ID = "coding.delivery.control";
 
     private final RunStateRepository runs;
-    private final CodingTaskContractResolver contracts;
+    private final CodingTaskModeResolver taskModes;
     private final CodingDeliveryEvidenceLedger evidence;
     private final CodingDeliveryProfile profile;
 
     public CodingDeliveryContextSource(
             RunStateRepository runs,
-            CodingTaskContractResolver contracts,
+            CodingTaskModeResolver taskModes,
             CodingDeliveryEvidenceLedger evidence,
             CodingDeliveryProfile profile) {
         this.runs = Objects.requireNonNull(runs, "runs must not be null");
-        this.contracts = Objects.requireNonNull(contracts, "contracts must not be null");
+        this.taskModes = Objects.requireNonNull(taskModes, "taskModes must not be null");
         this.evidence = Objects.requireNonNull(evidence, "evidence must not be null");
         this.profile = Objects.requireNonNull(profile, "profile must not be null");
     }
@@ -49,14 +49,14 @@ public final class CodingDeliveryContextSource implements ContextSource {
 
     @Override
     public String version() {
-        return "2.0";
+        return "3.0";
     }
 
     @Override
     public List<ContextItem> load(ContextBuildRequest request) {
         var run = runs.find(request.runId()).orElse(null);
         if (run == null) return List.of();
-        CodingTaskContract contract = contracts.resolve(run);
+        CodingTaskIntent taskMode = taskModes.resolve(run);
         CodingDeliveryEvidenceLedger.Snapshot snapshot = evidence.reconstruct(run.id());
         long remainingModelCalls = Math.max(
                 0, request.runBudget().maxModelCalls() - request.runUsage().modelCalls());
@@ -64,7 +64,7 @@ public final class CodingDeliveryContextSource implements ContextSource {
                 0, request.runBudget().maxToolCalls() - request.runUsage().toolCalls());
         long remainingWallTimeMillis = Math.max(
                 0, run.limits().maxWallTimeMillis() - request.runUsage().wallTimeMillis());
-        boolean reserve = (contract.intent() == CodingTaskIntent.CHANGE || contract.intent() == CodingTaskIntent.CREATE)
+        boolean reserve = (taskMode == CodingTaskIntent.CHANGE || taskMode == CodingTaskIntent.CREATE)
                 && !snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
                 && (percent(remainingModelCalls, request.runBudget().maxModelCalls())
                                 <= profile.modelCallsReservePercent()
@@ -79,7 +79,7 @@ public final class CodingDeliveryContextSource implements ContextSource {
                 : snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED) ? "false" : "unknown";
         boolean diffInspected = snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         boolean blockerConfirmed = snapshot.has(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED);
-        String missingEvidence = String.join("|", missingEvidence(contract.intent(), snapshot));
+        String missingEvidence = String.join("|", missingEvidence(taskMode, snapshot));
         if (missingEvidence.isEmpty()) missingEvidence = "NONE";
         String text = String.join(
                 "\n",

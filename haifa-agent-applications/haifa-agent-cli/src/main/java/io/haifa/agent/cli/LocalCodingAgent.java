@@ -14,7 +14,7 @@ import io.haifa.agent.application.project.product.coding.delivery.CodingCompleti
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryContextSource;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
-import io.haifa.agent.application.project.product.coding.delivery.CodingTaskContractResolver;
+import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
@@ -392,8 +392,7 @@ final class LocalCodingAgent implements AutoCloseable {
             var interactions = persistence.ports().interactions();
             ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
-            var taskContracts =
-                    new CodingTaskContractResolver(persistence.ports().state());
+            var taskModes = new CodingTaskModeResolver(persistence.ports().state());
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
@@ -405,10 +404,10 @@ final class LocalCodingAgent implements AutoCloseable {
                         traces.add(event);
                         traceObserver.accept(event);
                     })
-                    .completionPolicy(new CodingCompletionPolicy(taskContracts, deliveryEvidence, deliveryProfile))
+                    .completionPolicy(new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile))
                     .repairRetry(new RepairRetryPolicy(2))
                     .registerContextSource(new CodingDeliveryContextSource(
-                            persistence.ports().runs(), taskContracts, deliveryEvidence, deliveryProfile))
+                            persistence.ports().runs(), taskModes, deliveryEvidence, deliveryProfile))
                     .registerChatModel("openai-compatible", "1.0.0", model)
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())

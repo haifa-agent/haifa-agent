@@ -107,14 +107,7 @@ class ProjectApplicationTest {
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
         assertThat(properties)
-                .containsOnlyKeys(
-                        "command",
-                        "workdir",
-                        "timeoutMillis",
-                        "description",
-                        "operationFamily",
-                        "verificationPlanDigest",
-                        "verificationDimensions");
+                .containsOnlyKeys("command", "workdir", "timeoutMillis", "description", "operationFamily");
         assertThat(execution.definition().inputSchema().document())
                 .containsEntry("required", List.of("command", "operationFamily"))
                 .containsEntry("additionalProperties", false);
@@ -128,10 +121,6 @@ class ProjectApplicationTest {
         assertThat(execution.definition().provenance()).isEqualTo("haifa-coding-agent");
         assertThat(execution.definition().description())
                 .contains("inspection and verification", "operationFamily", "BUILD or TEST", "final diff inspection");
-        @SuppressWarnings("unchecked")
-        var verificationDimensions = (java.util.Map<String, Object>) properties.get("verificationDimensions");
-        assertThat(verificationDimensions.get("description").toString())
-                .contains("declared by the model", "not semantic completeness");
         @SuppressWarnings("unchecked")
         var fileProperties = (java.util.Map<String, Object>)
                 fileRead.definition().inputSchema().document().get("properties");

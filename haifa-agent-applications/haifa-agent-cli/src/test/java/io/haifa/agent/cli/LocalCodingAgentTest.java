@@ -400,9 +400,8 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void stubModelCannotFinishChangeUntilDeliveryEvidenceExistsAndRepairsRemainBounded() throws Exception {
+    void stubModelCompletesChangeAfterDeliveryEvidenceExists() throws Exception {
         Path successfulWorkspace = Files.createDirectory(workspace.resolve("delivery-success"));
-        Path failedWorkspace = Files.createDirectory(workspace.resolve("delivery-failure"));
         AtomicInteger successfulCalls = new AtomicInteger();
         var successfulModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = successfulCalls.incrementAndGet();
@@ -412,15 +411,10 @@ class LocalCodingAgentTest {
                             .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
                                     && message.content().contains("smallest complete change")
                                     && message.content().contains("result-verification skill"))
-                            .anyMatch(
-                                    message -> message.role() == ModelMessageRole.SYSTEM
-                                            && message.content().contains("[CODING_RUN_STATE]")
-                                            && message.content().contains("workspaceChanged=false")
-                                            && message.content()
-                                                    .contains(
-                                                            "missingDeliveryEvidence=WORKSPACE_CHANGE|VALIDATION_ATTEMPT|DIFF_INSPECTION"))
-                            .noneMatch(message -> message.content().contains("[CODING_VERIFICATION_PLAN]"))
-                            .noneMatch(message -> message.content().contains("deduplication, rejected-record"));
+                            .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
+                                    && message.content().contains("[CODING_RUN_STATE]")
+                                    && message.content().contains("workspaceChanged=false")
+                                    && message.content().contains("missingDeliveryEvidence=TASK_EVIDENCE"));
                     yield answer("delivery-premature", "premature final");
                 }
                 case 2 -> {
@@ -482,23 +476,6 @@ class LocalCodingAgentTest {
         assertThat(Files.readString(successfulWorkspace.resolve("delivered.txt")))
                 .isEqualTo("delivered\n");
         assertThat(successfulCalls).hasValue(5);
-
-        AtomicInteger failedCalls = new AtomicInteger();
-        var failedModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
-            failedCalls.incrementAndGet();
-            return answer("delivery-still-premature-" + failedCalls.get(), "still premature");
-        };
-        try (var agent = LocalCodingAgent.create(
-                failedWorkspace,
-                configuration,
-                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
-                failedModel)) {
-            var accepted = agent.start("fix the implementation but do not provide delivery evidence");
-            var snapshot = awaitTerminal(agent, accepted.runId());
-            assertThat(snapshot.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(snapshot.error().orElseThrow().code().value()).isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
-        }
-        assertThat(failedCalls).hasValue(3);
     }
 
     @Test

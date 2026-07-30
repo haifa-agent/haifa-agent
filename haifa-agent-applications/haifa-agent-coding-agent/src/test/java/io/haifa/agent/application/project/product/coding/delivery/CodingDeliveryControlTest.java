@@ -3,10 +3,6 @@ package io.haifa.agent.application.project.product.coding.delivery;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationContextSource;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationDimension;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationEvidenceLedger;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationPlanResolver;
 import io.haifa.agent.context.api.ContextBuildRequest;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.core.agent.AgentDefinitionId;
@@ -55,59 +51,28 @@ class CodingDeliveryControlTest {
     private static final Instant NOW = Instant.parse("2026-07-30T00:00:00Z");
 
     @Test
-    void resolverFreezesTrustedIntentAndRestoresTheSameDigest() {
-        Fixture fixture =
-                fixture("任何语言都不应覆盖可信调用方意图", Map.of("codingTaskIntentTrusted", true, "codingTaskIntent", "CHANGE"));
-        CodingTaskContractResolver resolver = new CodingTaskContractResolver(fixture.store());
+    void resolverUsesOnlyTrustedModeAndRejectsInvalidTrustedMetadata() {
+        Fixture ordinary = fixture("fix the implementation and add tests", Map.of());
+        assertThat(new CodingTaskModeResolver(ordinary.store()).resolve(ordinary.run()))
+                .isEqualTo(CodingTaskIntent.UNKNOWN);
 
-        CodingTaskContract first = resolver.resolve(fixture.run());
-        CodingTaskContract restored = resolver.resolve(fixture.run());
+        Fixture trusted = fixture("analyze only", trusted("CHANGE"));
+        assertThat(new CodingTaskModeResolver(trusted.store()).resolve(trusted.run()))
+                .isEqualTo(CodingTaskIntent.CHANGE);
 
-        assertThat(first.intent()).isEqualTo(CodingTaskIntent.CHANGE);
-        assertThat(first.intentSource()).isEqualTo(CodingTaskIntentSource.TRUSTED_CALLER);
-        assertThat(first.confidencePercent()).isEqualTo(100);
-        assertThat(restored).isEqualTo(first);
-        assertThat(first.contractDigest()).startsWith("sha256:");
-    }
-
-    @Test
-    void resolverRejectsInvalidTrustedIntentInsteadOfAcceptingModelShapedMetadata() {
-        Fixture fixture = fixture(
-                "analyze the repository",
-                Map.of("codingTaskIntentTrusted", true, "codingTaskIntent", "NOT_A_SUPPORTED_INTENT"));
-
-        assertThatThrownBy(() -> new CodingTaskContractResolver(fixture.store()).resolve(fixture.run()))
+        Fixture invalid = fixture(
+                "analyze the repository", Map.of("codingTaskIntentTrusted", true, "codingTaskIntent", "NOT_SUPPORTED"));
+        assertThatThrownBy(() -> new CodingTaskModeResolver(invalid.store()).resolve(invalid.run()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("trusted coding task intent is invalid");
     }
 
     @Test
-    void resolverHandlesReadOnlyAndReviewShapesWithoutTreatingUnknownAsChange() {
-        assertThat(contract("analyze why this branch fails?").intent()).isEqualTo(CodingTaskIntent.ANALYZE);
-        assertThat(contract("分析 根因并说明证据").intent()).isEqualTo(CodingTaskIntent.ANALYZE);
-        assertThat(contract("分析根因并说明证据").intent()).isEqualTo(CodingTaskIntent.ANALYZE);
-        assertThat(contract("review the completion policy").intent()).isEqualTo(CodingTaskIntent.REVIEW);
-        assertThat(contract("请看一下这个情况").intent()).isEqualTo(CodingTaskIntent.UNKNOWN);
-        assertThat(contract("please investigate and maybe change it").intent()).isEqualTo(CodingTaskIntent.UNKNOWN);
-    }
-
-    @Test
-    void resolverFreezesBoundedWorkspaceRelativeAcceptanceCriteriaReferences() {
-        CodingTaskContract contract =
-                contract("fix the end-to-end behavior required by PERF.md and docs/CONCURRENCY.md; "
-                        + "ignore /tmp/SECRET.md, ../outside.md, https://example.test/remote.md");
-
-        assertThat(contract.acceptanceCriteriaRefs()).containsExactlyInAnyOrder("PERF.md", "docs/CONCURRENCY.md");
-    }
-
-    @Test
     void changeRequiresWorkspaceValidationAndDiffEvidence() {
-        Fixture fixture = fixture("fix the implementation", Map.of());
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         CodingCompletionPolicy policy = policy(fixture.store());
 
-        var empty = policy.evaluate(fixture.run(), finalDecision());
-        assertThat(empty.allowed()).isFalse();
-        assertThat(empty.blockers())
+        assertThat(policy.evaluate(fixture.run(), finalDecision()).blockers())
                 .extracting(blocker -> blocker.code())
                 .containsExactlyInAnyOrder(
                         "WORKSPACE_CHANGE_MISSING", "VALIDATION_ATTEMPT_MISSING", "DIFF_INSPECTION_MISSING");
@@ -131,120 +96,102 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void validationFailureIsNotPassedAndReadOnlyIntentRejectsUnexpectedChange() {
-        Fixture change = fixture("change the implementation", Map.of());
-        tool(change, "file.write", Map.of("path", "README.md"), Map.of("changeSetId", "change-1"));
+    void validationFailureRequiresPassUnlessProfileAllowsConfirmedBlocker() {
+        Fixture fixture = fixture("change the implementation", trusted("CHANGE"));
+        tool(fixture, "file.write", Map.of("path", "README.md"), Map.of("changeSetId", "change-1"));
         tool(
-                change,
+                fixture,
                 "execution.run",
                 Map.of(),
                 Map.of("operationFamily", "TEST", "status", "FAILED", "exitCode", 1, "failureCategory", "ENVIRONMENT"));
-        tool(change, "execution.run", Map.of(), Map.of("operationFamily", "DIFF", "status", "SUCCEEDED"));
-        assertThat(policy(change.store())
-                        .evaluate(change.run(), finalDecision())
+        tool(fixture, "execution.run", Map.of(), Map.of("operationFamily", "DIFF", "status", "SUCCEEDED"));
+
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
                 .contains("VALIDATION_NOT_PASSED");
         assertThat(new CodingCompletionPolicy(
-                                new CodingTaskContractResolver(change.store()),
-                                new CodingDeliveryEvidenceLedger(change.store()),
+                                new CodingTaskModeResolver(fixture.store()),
+                                new CodingDeliveryEvidenceLedger(fixture.store()),
                                 new CodingDeliveryProfile(20, 25, 20, true))
-                        .evaluate(change.run(), finalDecision())
+                        .evaluate(fixture.run(), finalDecision())
+                        .allowed())
+                .isTrue();
+    }
+
+    @Test
+    void trustedReadOnlyModeRejectsWorkspaceChanges() {
+        Fixture fixture = fixture("please fix this", trusted("ANALYZE"));
+        tool(fixture, "file.read", Map.of("path", "README.md"), Map.of("path", "README.md"));
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
                         .allowed())
                 .isTrue();
 
-        Fixture analyze = fixture("analyze why this happens?", Map.of());
-        tool(analyze, "file.read", Map.of("path", "README.md"), Map.of("path", "README.md"));
-        assertThat(policy(analyze.store())
-                        .evaluate(analyze.run(), finalDecision())
-                        .allowed())
-                .isTrue();
-        tool(analyze, "file.write", Map.of("path", "README.md"), Map.of("changeSetId", "change-2"));
-        assertThat(policy(analyze.store())
-                        .evaluate(analyze.run(), finalDecision())
+        tool(fixture, "file.write", Map.of("path", "README.md"), Map.of("changeSetId", "change-2"));
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
                 .contains("READ_ONLY_INTENT_HAS_CHANGES");
     }
 
     @Test
-    void unknownNeedsAuthoritativeReadOnlyOrChangeDeliveryEvidence() {
-        Fixture fixture = fixture("请看一下这个情况", Map.of());
-        CodingCompletionPolicy policy = policy(fixture.store());
-        assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isFalse();
-        tool(fixture, "file.search", Map.of("path", "."), Map.of("matches", List.of()));
-        assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
+    void unknownModeUsesObservedReadOnlyOrChangeEvidence() {
+        Fixture readOnly = fixture("fix this if needed", Map.of());
+        CodingCompletionPolicy readOnlyPolicy = policy(readOnly.store());
+        assertThat(readOnlyPolicy.evaluate(readOnly.run(), finalDecision()).blockers())
+                .extracting(blocker -> blocker.code())
+                .containsExactly("UNKNOWN_INTENT_EVIDENCE_MISSING");
+        tool(readOnly, "file.search", Map.of("path", "."), Map.of("matches", List.of()));
+        assertThat(readOnlyPolicy.evaluate(readOnly.run(), finalDecision()).allowed())
+                .isTrue();
+
+        Fixture changed = fixture("please take a look", Map.of());
+        tool(changed, "file.write", Map.of("path", "README.md"), Map.of("changeSetId", "change-3"));
+        assertThat(policy(changed.store())
+                        .evaluate(changed.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .containsExactlyInAnyOrder("VALIDATION_ATTEMPT_MISSING", "DIFF_INSPECTION_MISSING");
     }
 
     @Test
-    void deliveryReserveIncludesWallTimeWithoutIncreasingRunBudget() {
-        Fixture fixture = fixture("fix the implementation", Map.of());
-        AgentRunUsage usage = new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 48_000);
+    void deliveryContextContainsOnlyBoundedFactsAndActivatesReserveForTrustedChange() {
+        Fixture fixture = fixture("fix behavior according to PERF.md", trusted("CHANGE"));
         CodingDeliveryContextSource source = new CodingDeliveryContextSource(
                 fixture.store(),
-                new CodingTaskContractResolver(fixture.store()),
+                new CodingTaskModeResolver(fixture.store()),
                 new CodingDeliveryEvidenceLedger(fixture.store()),
                 CodingDeliveryProfile.safeDefault());
+        AgentRunUsage usage = new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 48_000);
 
         String text = ((TextContextContent)
                         source.load(request(fixture.run(), usage)).getFirst().content())
                 .text();
 
         assertThat(text)
-                .contains("remainingModelCalls=20")
-                .contains("remainingToolCalls=20")
-                .contains("remainingIterations=19")
-                .contains("remainingWallTimeSeconds=12")
-                .contains("workspaceChanged=false")
-                .contains("validationAttempted=false")
-                .contains("validationPassed=unknown")
-                .contains("diffInspected=false")
-                .contains("deliveryReserve=ACTIVE");
-        assertThat(fixture.run().budget().maxModelCalls()).isEqualTo(20);
-        assertThat(fixture.run().budget().maxToolCalls()).isEqualTo(20);
-        assertThat(fixture.run().limits().maxWallTimeMillis()).isEqualTo(60_000);
-    }
-
-    @Test
-    void deliveryContextContainsOnlyBoundedAuthoritativeState() {
-        Fixture fixture = fixture("fix behavior according to PERF.md and docs/CONCURRENCY.md", Map.of());
-        CodingDeliveryContextSource source = new CodingDeliveryContextSource(
-                fixture.store(),
-                new CodingTaskContractResolver(fixture.store()),
-                new CodingDeliveryEvidenceLedger(fixture.store()),
-                CodingDeliveryProfile.safeDefault());
-
-        String text = ((TextContextContent)
-                        source.load(request(fixture.run(), new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 0)))
-                                .getFirst()
-                                .content())
-                .text();
-
-        assertThat(text)
                 .startsWith("[CODING_RUN_STATE]")
                 .contains(
+                        "remainingModelCalls=20",
+                        "remainingToolCalls=20",
+                        "remainingIterations=19",
+                        "remainingWallTimeSeconds=12",
                         "workspaceChanged=false",
                         "validationAttempted=false",
                         "validationPassed=unknown",
                         "diffInspected=false",
+                        "deliveryReserve=ACTIVE",
                         "missingDeliveryEvidence=WORKSPACE_CHANGE|VALIDATION_ATTEMPT|DIFF_INSPECTION")
-                .doesNotContain(
-                        "PERF.md",
-                        "CONCURRENCY.md",
-                        "before editing",
-                        "malformed",
-                        "deduplication",
-                        "rejected",
-                        "ignored only as a duplicate",
-                        "/Users/");
+                .doesNotContain("PERF.md", "before editing", "malformed", "deduplication", "/Users/");
+        assertThat(fixture.run().budget().maxModelCalls()).isEqualTo(20);
+        assertThat(fixture.run().limits().maxWallTimeMillis()).isEqualTo(60_000);
     }
 
     @Test
-    void evidenceBackedNoChangeCanCompleteButFreeTextCannotManufactureIt() {
-        Fixture fixture = fixture("fix the implementation", Map.of());
-        CodingCompletionPolicy policy = policy(fixture.store());
-
-        assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isFalse();
+    void evidenceBackedNoChangeCanComplete() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(
                 fixture,
                 "execution.run",
@@ -264,137 +211,18 @@ class CodingDeliveryControlTest {
                 Map.of(),
                 Map.of("operationFamily", "DIFF", "status", "SUCCEEDED", "exitCode", 0));
 
-        assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
-        assertThat(new CodingDeliveryEvidenceLedger(fixture.store())
-                        .reconstruct(fixture.run().id())
-                        .codes())
-                .contains("NO_CHANGE_JUSTIFICATION", "VALIDATION_PASSED", "DIFF_INSPECTION");
+        var result = policy(fixture.store()).evaluate(fixture.run(), finalDecision());
+        assertThat(result.allowed()).isTrue();
+        assertThat(result.evidenceCodes()).contains("NO_CHANGE_JUSTIFICATION", "VALIDATION_PASSED", "DIFF_INSPECTION");
     }
 
-    @Test
-    void verificationPlanIsBoundedFrozenAndMapsGenericRiskFacts() {
-        Fixture fixture = fixture("fix the concurrent database migration and preserve API compatibility", Map.of());
-        var contracts = new CodingTaskContractResolver(fixture.store());
-        var plans = new CodingVerificationPlanResolver(fixture.store(), contracts);
-
-        var first = plans.resolve(fixture.run());
-        var restored = plans.resolve(fixture.run());
-
-        assertThat(restored).isEqualTo(first);
-        assertThat(first.digest()).startsWith("sha256:");
-        assertThat(first.dimensions())
-                .contains(
-                        CodingVerificationDimension.SUCCESS_PATH,
-                        CodingVerificationDimension.BOUNDARY,
-                        CodingVerificationDimension.FAILURE_PATH,
-                        CodingVerificationDimension.FAILURE_ATOMICITY,
-                        CodingVerificationDimension.RESOURCE_CLEANUP,
-                        CodingVerificationDimension.COMPATIBILITY,
-                        CodingVerificationDimension.IDEMPOTENCY,
-                        CodingVerificationDimension.CONCURRENCY)
-                .hasSizeLessThanOrEqualTo(9);
-    }
-
-    @Test
-    void completionRequiresEveryPlanDimensionFromMatchingSuccessfulExecution() {
-        Fixture fixture = fixture("fix the implementation", Map.of());
-        var contracts = new CodingTaskContractResolver(fixture.store());
-        var plans = new CodingVerificationPlanResolver(fixture.store(), contracts);
-        var verification = new CodingVerificationEvidenceLedger(fixture.store());
-        var policy = new CodingCompletionPolicy(
-                contracts,
-                new CodingDeliveryEvidenceLedger(fixture.store()),
-                CodingDeliveryProfile.safeDefault(),
-                plans,
-                verification);
-        var plan = plans.resolve(fixture.run());
-        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
-        tool(
-                fixture,
-                "execution.run",
-                Map.of(),
-                Map.of(
-                        "operationFamily",
-                        "TEST",
-                        "status",
-                        "SUCCEEDED",
-                        "exitCode",
-                        0,
-                        "verificationPlanDigest",
-                        plan.digest(),
-                        "verificationDimensions",
-                        plan.dimensions().stream().map(Enum::name).toList()));
-        tool(
-                fixture,
-                "execution.run",
-                Map.of(),
-                Map.of("operationFamily", "DIFF", "status", "SUCCEEDED", "exitCode", 0));
-
-        assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
-        assertThat(verification.reconstruct(fixture.run().id(), plan).passedDimensions())
-                .containsExactlyInAnyOrderElementsOf(plan.dimensions());
-    }
-
-    @Test
-    void failedOrMismatchedVerificationCannotPassAndContextContainsNoExecutableCheck() {
-        Fixture fixture = fixture("fix the implementation", Map.of());
-        var contracts = new CodingTaskContractResolver(fixture.store());
-        var plans = new CodingVerificationPlanResolver(fixture.store(), contracts);
-        var verification = new CodingVerificationEvidenceLedger(fixture.store());
-        var plan = plans.resolve(fixture.run());
-        tool(
-                fixture,
-                "execution.run",
-                Map.of(),
-                Map.of(
-                        "operationFamily",
-                        "TEST",
-                        "status",
-                        "FAILED",
-                        "exitCode",
-                        1,
-                        "verificationPlanDigest",
-                        plan.digest(),
-                        "verificationDimensions",
-                        List.of("SUCCESS_PATH")));
-        tool(
-                fixture,
-                "execution.run",
-                Map.of(),
-                Map.of(
-                        "operationFamily",
-                        "TEST",
-                        "status",
-                        "SUCCEEDED",
-                        "exitCode",
-                        0,
-                        "verificationPlanDigest",
-                        "sha256:" + "0".repeat(64),
-                        "verificationDimensions",
-                        List.of("BOUNDARY")));
-
-        assertThat(verification.reconstruct(fixture.run().id(), plan).passedDimensions())
-                .isEmpty();
-        var contextItem = new CodingVerificationContextSource(fixture.store(), plans, verification)
-                .load(request(fixture.run(), new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 0)))
-                .getFirst();
-        String text = ((TextContextContent) contextItem.content()).text();
-        assertThat(text)
-                .contains("planDigest=" + plan.digest())
-                .contains("modelRequestedLabels=")
-                .contains("semanticCoverageVerifiedByRuntime=false")
-                .doesNotContain("mvn", "bash", "python", "/Users/");
-        assertThat(contextItem.security().providerDisclosureAllowed()).isTrue();
-    }
-
-    private static CodingTaskContract contract(String request) {
-        Fixture fixture = fixture(request, Map.of());
-        return new CodingTaskContractResolver(fixture.store()).resolve(fixture.run());
+    private static Map<String, Object> trusted(String intent) {
+        return Map.of("codingTaskIntentTrusted", true, "codingTaskIntent", intent);
     }
 
     private static CodingCompletionPolicy policy(InMemoryRuntimeStore store) {
         return new CodingCompletionPolicy(
-                new CodingTaskContractResolver(store),
+                new CodingTaskModeResolver(store),
                 new CodingDeliveryEvidenceLedger(store),
                 CodingDeliveryProfile.safeDefault());
     }

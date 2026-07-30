@@ -353,47 +353,6 @@ public final class ProjectToolCatalog {
                                 "Stable operation family for delivery and recovery control. Use DIFF only for "
                                         + "read-only diff inspection and UNKNOWN when the command cannot "
                                         + "be reliably classified; do not infer it from arbitrary shell syntax."));
-                properties.put(
-                        "verificationPlanDigest",
-                        Map.of(
-                                "type",
-                                "string",
-                                "minLength",
-                                71,
-                                "maxLength",
-                                71,
-                                "description",
-                                "Optional correlation digest for model-declared verification labels. It does not "
-                                        + "prove semantic coverage."));
-                properties.put(
-                        "verificationDimensions",
-                        Map.of(
-                                "type",
-                                "array",
-                                "minItems",
-                                1,
-                                "maxItems",
-                                9,
-                                "uniqueItems",
-                                true,
-                                "items",
-                                Map.of(
-                                        "type",
-                                        "string",
-                                        "enum",
-                                        List.of(
-                                                "SUCCESS_PATH",
-                                                "BOUNDARY",
-                                                "FAILURE_PATH",
-                                                "FAILURE_ATOMICITY",
-                                                "IDEMPOTENCY",
-                                                "COMPATIBILITY",
-                                                "CONCURRENCY",
-                                                "SECURITY_NORMALIZATION",
-                                                "RESOURCE_CLEANUP")),
-                                "description",
-                                "Optional labels declared by the model for checks exercised by this command. "
-                                        + "Successful execution proves command success, not semantic completeness."));
                 required.add("operationFamily");
             }
             default -> throw new IllegalArgumentException("unknown project tool " + name);
@@ -437,11 +396,7 @@ public final class ProjectToolCatalog {
                             Map.entry("sandboxProfileDigest", Map.of("type", "string")),
                             Map.entry("scratchSpecDigest", Map.of("type", "string")),
                             Map.entry("scratchProvisioned", Map.of("type", "boolean")),
-                            Map.entry("scratchCleanupFailed", Map.of("type", "boolean")),
-                            Map.entry("verificationPlanDigest", Map.of("type", "string")),
-                            Map.entry(
-                                    "verificationDimensions",
-                                    Map.of("type", "array", "items", Map.of("type", "string")))),
+                            Map.entry("scratchCleanupFailed", Map.of("type", "boolean"))),
                     "required",
                     List.of("executionId", "status", "output", "truncated", "durationMillis"),
                     "additionalProperties",

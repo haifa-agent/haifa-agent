@@ -1,9 +1,5 @@
 package io.haifa.agent.application.project.product.coding.delivery;
 
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationDimension;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationEvidenceLedger;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationPlan;
-import io.haifa.agent.application.project.product.coding.verification.CodingVerificationPlanResolver;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.runtime.core.completion.CompletionBlocker;
 import io.haifa.agent.runtime.core.completion.CompletionPolicy;
@@ -13,71 +9,32 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** Coding product completion gate over a frozen contract and reconstructed authoritative evidence. */
+/** Minimal Coding completion gate over trusted task mode and reconstructed authoritative evidence. */
 public final class CodingCompletionPolicy implements CompletionPolicy {
-    private final CodingTaskContractResolver contracts;
+    private final CodingTaskModeResolver taskModes;
     private final CodingDeliveryEvidenceLedger evidence;
     private final CodingDeliveryProfile profile;
-    private final CodingVerificationPlanResolver verificationPlans;
-    private final CodingVerificationEvidenceLedger verificationEvidence;
 
     public CodingCompletionPolicy(
-            CodingTaskContractResolver contracts,
-            CodingDeliveryEvidenceLedger evidence,
-            CodingDeliveryProfile profile) {
-        this(contracts, evidence, profile, null, null);
-    }
-
-    public CodingCompletionPolicy(
-            CodingTaskContractResolver contracts,
-            CodingDeliveryEvidenceLedger evidence,
-            CodingDeliveryProfile profile,
-            CodingVerificationPlanResolver verificationPlans,
-            CodingVerificationEvidenceLedger verificationEvidence) {
-        this.contracts = Objects.requireNonNull(contracts, "contracts must not be null");
+            CodingTaskModeResolver taskModes, CodingDeliveryEvidenceLedger evidence, CodingDeliveryProfile profile) {
+        this.taskModes = Objects.requireNonNull(taskModes, "taskModes must not be null");
         this.evidence = Objects.requireNonNull(evidence, "evidence must not be null");
         this.profile = Objects.requireNonNull(profile, "profile must not be null");
-        if ((verificationPlans == null) != (verificationEvidence == null)) {
-            throw new IllegalArgumentException("verification plan and evidence must be configured together");
-        }
-        this.verificationPlans = verificationPlans;
-        this.verificationEvidence = verificationEvidence;
     }
 
     @Override
     public CompletionPolicyResult evaluate(AgentRun run, FinalAnswerDecision decision) {
-        CodingTaskContract contract = contracts.resolve(run);
+        CodingTaskIntent taskMode = taskModes.resolve(run);
         CodingDeliveryEvidenceLedger.Snapshot snapshot = evidence.reconstruct(run.id());
         List<CompletionBlocker> blockers = new ArrayList<>();
-        switch (contract.intent()) {
+        switch (taskMode) {
             case CHANGE, CREATE -> changeBlockers(snapshot, blockers);
             case ANALYZE -> readOnlyBlockers(snapshot, blockers, "ANALYSIS_EVIDENCE_MISSING");
             case REVIEW -> readOnlyBlockers(snapshot, blockers, "REVIEW_EVIDENCE_MISSING");
             case UNKNOWN -> unknownBlockers(snapshot, blockers);
         }
-        if (verificationPlans != null
-                && (contract.intent() == CodingTaskIntent.CHANGE || contract.intent() == CodingTaskIntent.CREATE)) {
-            verificationBlockers(run, blockers);
-        }
         if (blockers.isEmpty()) return CompletionPolicyResult.accepted(snapshot.codes());
         return CompletionPolicyResult.blocked(blockers, snapshot.codes());
-    }
-
-    private void verificationBlockers(AgentRun run, List<CompletionBlocker> blockers) {
-        CodingVerificationPlan plan = verificationPlans.resolve(run);
-        var passed = verificationEvidence.reconstruct(run.id(), plan).passedDimensions();
-        plan.dimensions().stream()
-                .sorted(java.util.Comparator.comparing(Enum::name))
-                .filter(dimension -> !passed.contains(dimension))
-                .forEach(dimension -> blockers.add(CompletionBlocker.recoverable(
-                        "VERIFICATION_" + dimension.name() + "_MISSING",
-                        "The frozen verification plan has no matching successful terminal check for " + dimension.name()
-                                + ".",
-                        evidenceRequirement(dimension))));
-    }
-
-    private static String evidenceRequirement(CodingVerificationDimension dimension) {
-        return "VERIFICATION_CHECK_PASSED:" + dimension.name();
     }
 
     private void changeBlockers(CodingDeliveryEvidenceLedger.Snapshot snapshot, List<CompletionBlocker> blockers) {

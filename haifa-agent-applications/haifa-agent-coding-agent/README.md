@@ -12,16 +12,14 @@ Coding Agent 的基础工作方法由产品拥有的版本化资源
 结果、Diff 检查、结构化阻塞和缺失交付证据。它不注入业务分类教程、Case/Fixture 信息、宿主路径、
 原始 Tool 输出或模型自报的语义覆盖。
 
-## 自主交付契约与完成证据
+## 自主交付模式与完成证据
 
-Coding 产品在每个 Run 上从可信调用方元数据或首条权威用户消息确定
-`CHANGE/CREATE/ANALYZE/REVIEW/UNKNOWN`，并生成内容寻址的不可变
-`CodingTaskContract`。低置信度请求保持 `UNKNOWN`；模型消息不能改变 Intent，也不能制造交付证据。
-当前 Contract 由已有 Run/Session 事实确定性重建，因此不新增 SQLite 表或 Migration。
+Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持
+`UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
 
-`CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、ChangeSet、Execution 状态和 Artifact
-引用重建工作区修改、Diff、验证、只读检查、文档、阻塞和有证据的 No-change 事实。模型自由文本不构成
-修改、验证通过或 Artifact 证据。`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限
+`CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、ChangeSet 和 Execution 状态
+引用重建工作区修改、Diff、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
+修改或验证通过证据。`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限
 No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改；UNKNOWN 必须收敛到
 完整修改证据、确定性只读证据或结构化阻塞路径之一。
 
@@ -29,17 +27,9 @@ No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意
 不增加 Runtime 的总预算或时限。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
 从持久消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
 
-## Verification Plan 评测资产
-
-现有 Evaluation/Trace Replay 可以从冻结 `CodingTaskContract` 与首条权威用户消息确定性重建
-`CodingVerificationPlan`。Plan 只包含九种受限验证维度、风险级别和 Evidence 要求，不包含命令、
-Host Path、权限或可执行代码。该模型保留用于 Prompt-first 消融和既有确定性回归，但生产 CLI
-不再把关键词推导的 Plan 注入 Context，也不再要求这些标签才能完成交付。
-
-`verificationPlanDigest` 与 `verificationDimensions` 仍可作为可选的模型声明标签进入评测证据。
-终态成功只证明对应命令成功，不代表 Runtime 已证明语义覆盖。生产 Completion Gate 只使用实际修改、
-验证尝试/结果、Diff、只读检查和结构化阻塞等权威事实。外部 Gate 继续从隐藏验收、Workspace 快照与
-Scratch 清理事实生成独立证据。
+生产控制面不维护 Verification Plan/Dimension/Evidence，也不接受模型自报的验证标签。外部
+Evaluation/Trace Replay 继续独立使用隐藏验收、Workspace 快照与 Scratch 清理事实，不与生产完成门禁
+共享模型声明。
 
 ## Policy 持久化装配
 
@@ -128,9 +118,8 @@ Brave 或 Tavily，Fetch 当前只允许 Aliyun。具体 Provider、endpoint、�
 经审查启用的 MCP Tool 由 `McpToolCatalogContribution` 写入同一个 `ToolCatalogBuilder`，不会建立 MCP 专用 Registry。每个 MCP server 使用独立 `mcp.<serverId>` Provider；本地 definition hash 与远端 definition digest 分别冻结，Runtime 只通过 `FrozenToolBinding.providerBindingReference` 恢复精确 binding。
 
 `ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把
-`command/workdir/timeoutMillis/description/operationFamily/verificationPlanDigest/verificationDimensions`
-映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。可选 Verification 标签必须成对出现、严格
-匹配受限 Schema，且只回写到终态结果；它们不是生产语义验收证明。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
+`command/workdir/timeoutMillis/description/operationFamily`
+映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
 目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
 退出码、有界合并尾部、Output Ref、耗时、安全失败类别、Scratch 状态和 FileChangeSet 引用。
