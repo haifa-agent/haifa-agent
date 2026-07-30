@@ -339,8 +339,7 @@ final class AutonomousDeliveryPhaseOneGate {
                 && authoritative.terminalStateObserved()
                 && bounded;
         PhaseThreeVerification phaseThree = phaseNumber == 3
-                ? phaseThreeVerification(
-                        repeat, testCase, acceptance, before, after, authoritative, finished)
+                ? phaseThreeVerification(repeat, testCase, acceptance, before, after, authoritative, finished)
                 : PhaseThreeVerification.notRequired();
         gatePassed &= phaseThree.passed();
 
@@ -594,14 +593,9 @@ final class AutonomousDeliveryPhaseOneGate {
     }
 
     private static boolean highRisk(AutonomousDeliveryCase testCase) {
-        return testCase.riskDimensions().stream()
-                .anyMatch(value -> List.of(
-                                "FAILURE_ATOMICITY",
-                                "IDEMPOTENCY",
-                                "CONCURRENCY",
-                                "SECURITY",
-                                "RESOURCE_CLEANUP")
-                        .contains(value));
+        return testCase.riskDimensions().stream().anyMatch(value -> List.of(
+                        "FAILURE_ATOMICITY", "IDEMPOTENCY", "CONCURRENCY", "SECURITY", "RESOURCE_CLEANUP")
+                .contains(value));
     }
 
     private static Map<String, Object> capabilityMatrix(List<Map<String, Object>> results) {
@@ -619,9 +613,15 @@ final class AutonomousDeliveryPhaseOneGate {
     }
 
     private static Map<String, Object> phaseThreeMetrics(List<Map<String, Object>> results) {
-        long passed = results.stream().filter(value -> Boolean.TRUE.equals(value.get("gatePassed"))).count();
-        long acceptance = results.stream().filter(value -> Boolean.TRUE.equals(value.get("acceptancePassed"))).count();
-        long zeroChange = results.stream().filter(value -> !Boolean.TRUE.equals(value.get("workspaceChanged"))).count();
+        long passed = results.stream()
+                .filter(value -> Boolean.TRUE.equals(value.get("gatePassed")))
+                .count();
+        long acceptance = results.stream()
+                .filter(value -> Boolean.TRUE.equals(value.get("acceptancePassed")))
+                .count();
+        long zeroChange = results.stream()
+                .filter(value -> !Boolean.TRUE.equals(value.get("workspaceChanged")))
+                .count();
         return Map.of(
                 "runCount",
                 results.size(),
@@ -646,7 +646,11 @@ final class AutonomousDeliveryPhaseOneGate {
     }
 
     private static List<String> distinct(List<Map<String, Object>> results, String key) {
-        return results.stream().map(value -> String.valueOf(value.get(key))).distinct().sorted().toList();
+        return results.stream()
+                .map(value -> String.valueOf(value.get(key)))
+                .distinct()
+                .sorted()
+                .toList();
     }
 
     private static List<String> flattened(List<Map<String, Object>> results, String key) {
@@ -659,7 +663,9 @@ final class AutonomousDeliveryPhaseOneGate {
     }
 
     private static long sum(List<Map<String, Object>> results, String key) {
-        return results.stream().mapToLong(value -> ((Number) value.get(key)).longValue()).sum();
+        return results.stream()
+                .mapToLong(value -> ((Number) value.get(key)).longValue())
+                .sum();
     }
 
     private static double rate(long numerator, long denominator) {
@@ -953,10 +959,7 @@ final class AutonomousDeliveryPhaseOneGate {
     }
 
     private record Acceptance(
-            boolean passed,
-            Map<String, Object> artifact,
-            Map<String, Boolean> checks,
-            List<String> failures) {}
+            boolean passed, Map<String, Object> artifact, Map<String, Boolean> checks, List<String> failures) {}
 
     private record PhaseThreeVerification(boolean passed, String atomicity) {
         static PhaseThreeVerification notRequired() {

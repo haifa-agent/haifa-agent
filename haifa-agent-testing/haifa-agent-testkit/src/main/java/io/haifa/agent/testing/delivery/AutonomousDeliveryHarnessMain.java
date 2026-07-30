@@ -80,8 +80,7 @@ public final class AutonomousDeliveryHarnessMain {
             toolchains.put("go", options.goHome());
             Path gate = new AutonomousDeliveryPhaseOneGate(clock)
                     .run(campaign, build, suite, catalog, options.cliJar(), toolchains, options.projectRoot());
-            System.out.println(
-                    "Phase " + options.command().charAt("phase-".length()) + " gate PASS: " + gate);
+            System.out.println("Phase " + options.command().charAt("phase-".length()) + " gate PASS: " + gate);
             return;
         }
         throw new IllegalArgumentException("unknown command");
@@ -259,8 +258,7 @@ public final class AutonomousDeliveryHarnessMain {
                             "phase-0-gate",
                             "phase-1-gate",
                             "phase-2-gate",
-                            "phase-3-gate" ->
-                        command = arguments[index];
+                            "phase-3-gate" -> command = arguments[index];
                     case "--project-root" -> projectRoot = Path.of(value(arguments, ++index));
                     case "--config-root" -> configRoot = Path.of(value(arguments, ++index));
                     case "--run-parent" -> runParent = Path.of(value(arguments, ++index));
