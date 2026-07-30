@@ -80,7 +80,7 @@ public final class CodingVerificationContextSource implements ContextSource {
                 Math.max(1, text.length() / 4),
                 ContextPriority.CRITICAL,
                 ContextRetention.MUST_KEEP,
-                new ContextSecurity(Set.of("product-control", "safe-evidence"), false),
+                new ContextSecurity(Set.of("product-control", "safe-evidence"), true),
                 new ContextProvenance("coding-product", run.id().value(), version(), plan.digest()),
                 Map.of("verificationPlanDigest", plan.digest())));
     }

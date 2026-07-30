@@ -360,15 +360,15 @@ class CodingDeliveryControlTest {
 
         assertThat(verification.reconstruct(fixture.run().id(), plan).passedDimensions())
                 .isEmpty();
-        String text = ((TextContextContent) new CodingVerificationContextSource(fixture.store(), plans, verification)
-                        .load(request(fixture.run(), new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 0)))
-                        .getFirst()
-                        .content())
-                .text();
+        var contextItem = new CodingVerificationContextSource(fixture.store(), plans, verification)
+                .load(request(fixture.run(), new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 0)))
+                .getFirst();
+        String text = ((TextContextContent) contextItem.content()).text();
         assertThat(text)
                 .contains("planDigest=" + plan.digest())
                 .contains("requiredDimensions=")
                 .doesNotContain("mvn", "bash", "python", "/Users/");
+        assertThat(contextItem.security().providerDisclosureAllowed()).isTrue();
     }
 
     private static CodingTaskContract contract(String request) {
