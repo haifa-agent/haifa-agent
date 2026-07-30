@@ -205,10 +205,10 @@ class CodingDeliveryControlTest {
                 new CodingDeliveryEvidenceLedger(fixture.store()),
                 CodingDeliveryProfile.safeDefault());
 
-        String text = ((TextContextContent) source.load(
-                                request(fixture.run(), new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 0)))
-                        .getFirst()
-                        .content())
+        String text = ((TextContextContent)
+                        source.load(request(fixture.run(), new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 0)))
+                                .getFirst()
+                                .content())
                 .text();
 
         assertThat(text)
