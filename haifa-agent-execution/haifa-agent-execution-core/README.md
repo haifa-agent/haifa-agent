@@ -37,8 +37,11 @@ The model-visible input schema exposes two mutually exclusive branches on every 
 The default trusted host shell is PowerShell on Windows and Bash or a POSIX shell on macOS/Linux. Script runtimes
 remain an explicit host allowlist (`powershell` on Windows, `bash` on macOS/Linux, plus configured optional
 runtimes). Runtime validation independently enforces the same contract before Policy or exact Approval. The
-PowerShell adapter fixes stdin, stdout, and native pipeline output to UTF-8 without a BOM so redirected output is
-decoded consistently by the bounded output store on Windows, macOS, and Linux.
+Python runs with `-X utf8` in isolated mode so piped stdout and stderr remain UTF-8 independently of the host code
+page. The PowerShell SCRIPT adapter fixes stdin, stdout, and native pipeline output to UTF-8 without a BOM. On
+Windows, the trusted PowerShell COMMAND shell uses a host-generated wrapper that restores the approved command from
+UTF-8 Base64 and fixes console output to UTF-8 before parsing it. Bash and POSIX COMMAND behavior on macOS and Linux
+is unchanged.
 
 `ExecutionToolDefinitionFactory` 和 `ExecutionToolProvider` 把一次性命令/脚本执行作为平台级
 Tool 暴露，稳定名称为 `execution.run`，产品可提供 `execution_run` 等别名。它不是 Personal

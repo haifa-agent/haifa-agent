@@ -16,8 +16,13 @@ import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class CheckpointSnapshotBuilder {
+    private static final Logger LOGGER = LoggerFactory.getLogger(CheckpointSnapshotBuilder.class);
+
     public record Snapshot(Checkpoint checkpoint, RuntimeCheckpointState state) {}
 
     private final IdentifierGenerator ids;
@@ -58,31 +63,49 @@ public final class CheckpointSnapshotBuilder {
             int forcedContextRebuildAttempts,
             CheckpointType type,
             long sequence) {
+        long started = System.nanoTime();
         String id = ids.nextValue();
+        long phaseStarted = System.nanoTime();
         var configuration = state.configuration(run.configurationSnapshot())
                 .orElseThrow(() -> new IllegalStateException("run configuration snapshot is unavailable"));
+        long configurationMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         var summary = summaries
                 .latestValid(run.sessionId())
                 .map(value -> new SummaryCheckpointRef(value.id(), value.version(), value.coveredThrough()));
+        long summaryMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         var toolReferences = state.toolCalls(run.id()).stream()
                 .map(call -> new ToolCheckpointRef(
                         call.id(), call.providerCorrelationId(), call.idempotencyKey(), call.status(), call.version()))
                 .toList();
+        long toolReferencesMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         var assets = state.toolCalls(run.id()).stream()
                 .flatMap(call -> call.result().stream())
                 .flatMap(result -> result.assets().stream())
                 .distinct()
                 .toList();
+        long assetsMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         var pendingInteraction = interactions
                 .pending(run.id())
                 .map(value -> new InteractionRequestRef(value.id().value(), value.type()));
+        long interactionMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         var memorySelection = state.memorySelection(run.id())
                 .orElse(io.haifa.agent.runtime.core.storage.RuntimeMemorySelection.EMPTY);
+        long memoryMillis = elapsedMillis(phaseStarted);
         var capturedAt = time.now();
+        phaseStarted = System.nanoTime();
         var capabilityReferences = capabilityCheckpoints.capture(run, configuration.capabilities(), id, capturedAt);
+        long capabilitiesMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         var modelContinuations = state.modelContinuations(run.id()).stream()
                 .map(value -> value.reference())
                 .toList();
+        long continuationsMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         var skillActivations = state.skillActivations(run.id()).stream()
                 .map(value -> new SkillCheckpointRef(
                         value.binding().alias(),
@@ -90,6 +113,11 @@ public final class CheckpointSnapshotBuilder {
                         value.binding().registrationDigest(),
                         value.activatedAt()))
                 .toList();
+        long skillsMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
+        var messageCursor = state.latestMessageCursor(run.sessionId()).orElse(MessageCursor.BEFORE_FIRST);
+        long cursorMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
         RuntimeCheckpointState checkpointState = new RuntimeCheckpointState(
                 run.id(),
                 run.sessionId(),
@@ -97,7 +125,7 @@ public final class CheckpointSnapshotBuilder {
                 run.principal(),
                 completedIteration + 1,
                 fingerprints,
-                state.latestMessageCursor(run.sessionId()).orElse(MessageCursor.BEFORE_FIRST),
+                messageCursor,
                 summary,
                 run.configurationSnapshot(),
                 configuration.model().configurationDigest(),
@@ -115,6 +143,10 @@ public final class CheckpointSnapshotBuilder {
                 skillActivations,
                 capabilityReferences,
                 capturedAt);
+        long assembleMillis = elapsedMillis(phaseStarted);
+        phaseStarted = System.nanoTime();
+        String stateHash = RuntimeCheckpointStateHasher.digest(checkpointState);
+        long hashMillis = elapsedMillis(phaseStarted);
         Checkpoint checkpoint = new Checkpoint(
                 new CheckpointId(id),
                 run.id(),
@@ -123,8 +155,36 @@ public final class CheckpointSnapshotBuilder {
                 CheckpointStatus.VERIFIED,
                 sequence,
                 new CheckpointPayloadRef("runtime-store", "checkpoint/" + id, "runtime-loop-state", "4.0"),
-                RuntimeCheckpointStateHasher.digest(checkpointState),
+                stateHash,
                 time.now());
+        LOGGER.info(
+                "event=checkpoint.snapshot runId={} checkpointId={} sequence={} type={} configurationMs={} summaryMs={} toolReferencesMs={} assetsMs={} interactionMs={} memoryMs={} capabilitiesMs={} continuationsMs={} skillsMs={} cursorMs={} assembleMs={} hashMs={} toolCallCount={} assetCount={} continuationCount={} skillCount={} capabilityCount={} totalMs={}",
+                run.id().value(),
+                id,
+                sequence,
+                type,
+                configurationMillis,
+                summaryMillis,
+                toolReferencesMillis,
+                assetsMillis,
+                interactionMillis,
+                memoryMillis,
+                capabilitiesMillis,
+                continuationsMillis,
+                skillsMillis,
+                cursorMillis,
+                assembleMillis,
+                hashMillis,
+                toolReferences.size(),
+                assets.size(),
+                modelContinuations.size(),
+                skillActivations.size(),
+                capabilityReferences.size(),
+                elapsedMillis(started));
         return new Snapshot(checkpoint, checkpointState);
+    }
+
+    private static long elapsedMillis(long started) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
     }
 }

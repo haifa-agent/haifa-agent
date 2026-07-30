@@ -16,8 +16,14 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class SqliteConnectionFactory implements AutoCloseable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(SqliteConnectionFactory.class);
+    private static final long SLOW_OPERATION_MILLIS = 50;
+
     private final SqliteStoreConfiguration configuration;
     private final Set<WeakReference<Connection>> openedConnections = ConcurrentHashMap.newKeySet();
     private volatile boolean initialized;
@@ -55,17 +61,26 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     }
 
     public synchronized Connection openConnection() {
+        long started = System.nanoTime();
         requireOpen();
         if (!initialized) {
             throw new SqliteStoreException(
                     SqliteStoreFailure.CONNECTION_FAILED, "SQLite connection factory is not initialized");
         }
         Connection connection = openRawConnection();
+        long rawMillis = elapsedMillis(started);
         try {
+            long phaseStarted = System.nanoTime();
             validateConnectionPragmas(connection, true);
+            long validateMillis = elapsedMillis(phaseStarted);
+            phaseStarted = System.nanoTime();
             secureDatabaseFiles();
+            long secureMillis = elapsedMillis(phaseStarted);
+            phaseStarted = System.nanoTime();
             pruneClosedConnections();
             openedConnections.add(new WeakReference<>(connection));
+            long bookkeepingMillis = elapsedMillis(phaseStarted);
+            logConnectionOpen(rawMillis, validateMillis, secureMillis, bookkeepingMillis, elapsedMillis(started));
             return connection;
         } catch (RuntimeException exception) {
             try {
@@ -119,15 +134,23 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     }
 
     private Connection openRawConnection() {
+        long started = System.nanoTime();
         requireOpen();
         Connection connection = null;
         try {
+            long phaseStarted = System.nanoTime();
             connection = DriverManager.getConnection("jdbc:sqlite:" + configuration.databasePath());
+            long driverMillis = elapsedMillis(phaseStarted);
+            phaseStarted = System.nanoTime();
             try (Statement statement = connection.createStatement()) {
                 statement.execute("PRAGMA foreign_keys=ON");
                 statement.execute("PRAGMA busy_timeout=" + configuration.busyTimeoutMillis());
             }
+            long pragmaMillis = elapsedMillis(phaseStarted);
+            phaseStarted = System.nanoTime();
             secureDatabaseFiles();
+            long secureMillis = elapsedMillis(phaseStarted);
+            logRawConnection(driverMillis, pragmaMillis, secureMillis, elapsedMillis(started));
             return connection;
         } catch (RuntimeException exception) {
             closeFailedConnection(connection, exception);
@@ -228,6 +251,49 @@ public final class SqliteConnectionFactory implements AutoCloseable {
 
     private static SqliteStoreException pragmaFailure(String message) {
         return new SqliteStoreException(SqliteStoreFailure.PRAGMA_VALIDATION_FAILED, message);
+    }
+
+    private static long elapsedMillis(long started) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+    }
+
+    private static void logRawConnection(long driverMillis, long pragmaMillis, long secureMillis, long totalMillis) {
+        if (totalMillis >= SLOW_OPERATION_MILLIS) {
+            LOGGER.info(
+                    "event=sqlite.connection.raw driverMs={} pragmaMs={} secureFilesMs={} totalMs={}",
+                    driverMillis,
+                    pragmaMillis,
+                    secureMillis,
+                    totalMillis);
+        } else {
+            LOGGER.debug(
+                    "event=sqlite.connection.raw driverMs={} pragmaMs={} secureFilesMs={} totalMs={}",
+                    driverMillis,
+                    pragmaMillis,
+                    secureMillis,
+                    totalMillis);
+        }
+    }
+
+    private static void logConnectionOpen(
+            long rawMillis, long validateMillis, long secureMillis, long bookkeepingMillis, long totalMillis) {
+        if (totalMillis >= SLOW_OPERATION_MILLIS) {
+            LOGGER.info(
+                    "event=sqlite.connection.open rawMs={} validateMs={} secureFilesMs={} bookkeepingMs={} totalMs={}",
+                    rawMillis,
+                    validateMillis,
+                    secureMillis,
+                    bookkeepingMillis,
+                    totalMillis);
+        } else {
+            LOGGER.debug(
+                    "event=sqlite.connection.open rawMs={} validateMs={} secureFilesMs={} bookkeepingMs={} totalMs={}",
+                    rawMillis,
+                    validateMillis,
+                    secureMillis,
+                    bookkeepingMillis,
+                    totalMillis);
+        }
     }
 
     private void requireOpen() {

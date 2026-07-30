@@ -60,8 +60,9 @@ npm run contract:check
 Run SSE 的 durable 与 transient 事件分别去重：`answer.delta` 实时追加当前 Generation 草稿，
 `answer.failed`/`answer.superseded`/新 `answer.started` 会清除旧草稿，避免重试拼接；完整回复提交后由
 Turns 中的权威 `session_message` 替换草稿。客户端重连发送复合 `Last-Event-ID`，服务重启时只重置
-transient cursor。收到 `run.status`、`interaction.status` 或 `activity.committed` 时仍会立即重取权威
-Snapshot，因此审批卡片、执行活动和终态不依赖手工刷新。
+transient cursor。`run.status` 只刷新 Run，`interaction.status` 只刷新 Interaction；带有安全 Activity
+投影的 `activity.committed` 直接合并到本地状态，缺少投影时才重取 Activities。Interaction 请求使用
+generation 门禁丢弃旧响应，审批卡片不会等待 Activities，也不会被较早返回的空响应覆盖。
 
 When a Run is waiting for approval or interaction and its interaction snapshot cannot be loaded, the page displays
 an explicit blocking error instead of silently hiding the approval controls.

@@ -19,11 +19,15 @@ import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.apache.ibatis.exceptions.PersistenceException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Atomic metadata/payload SQLite checkpoint repository. */
 public final class SqliteCheckpointRepository implements CheckpointRepository {
+    private static final Logger LOGGER = LoggerFactory.getLogger(SqliteCheckpointRepository.class);
 
     private final SqliteRuntimeUnitOfWork unitOfWork;
     private final VersionedPayloadCodecRegistry codecs;
@@ -40,20 +44,31 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
         if (!checkpoint.runId().equals(state.runId())) {
             throw new IllegalArgumentException("checkpoint and state must belong to the same run");
         }
+        long started = System.nanoTime();
+        long phaseStarted = started;
         String stateHash = RuntimeCheckpointStateHasher.digest(state);
+        long stateHashMillis = elapsedMillis(phaseStarted);
         if (!checkpoint.stateHash().equals(stateHash)) {
             throw new IllegalArgumentException("checkpoint state hash does not match runtime state");
         }
-        execute(() -> {
+        PersistTiming timing = execute(() -> {
+            long unitOfWorkId = unitOfWork.currentId();
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+            long latestStarted = System.nanoTime();
             CheckpointRow latest = mapper.latestCheckpoint(checkpoint.runId().value());
+            long latestMillis = elapsedMillis(latestStarted);
             long expected = latest == null ? 1 : Math.addExact(latest.sequence(), 1);
             if (checkpoint.sequence() != expected) {
                 throw new IllegalArgumentException("checkpoint sequence must be monotonic");
             }
+            long encodeStarted = System.nanoTime();
             EncodedPayload payload = codecs.encode(SqliteRuntimePayloadTypes.CHECKPOINT_STATE, state);
+            long encodeMillis = elapsedMillis(encodeStarted);
             try {
+                long metadataStarted = System.nanoTime();
                 mapper.insertCheckpoint(toRow(checkpoint));
+                long metadataInsertMillis = elapsedMillis(metadataStarted);
+                long payloadStarted = System.nanoTime();
                 mapper.insertCheckpointPayload(new CheckpointPayloadRow(
                         checkpoint.id().value(),
                         payload.schemaVersion(),
@@ -61,11 +76,30 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
                         stateHash,
                         payload.hash(),
                         checkpoint.createdAt()));
+                return new PersistTiming(
+                        unitOfWorkId,
+                        latestMillis,
+                        encodeMillis,
+                        metadataInsertMillis,
+                        elapsedMillis(payloadStarted),
+                        payload.bytes().length);
             } catch (PersistenceException exception) {
                 throw new IllegalStateException("checkpoint already exists or has invalid references", exception);
             }
-            return null;
         });
+        LOGGER.info(
+                "event=checkpoint.sqlite.persist runId={} checkpointId={} sequence={} uowId={} stateHashMs={} latestMs={} encodeMs={} metadataInsertMs={} payloadInsertMs={} payloadBytes={} totalMs={}",
+                checkpoint.runId().value(),
+                checkpoint.id().value(),
+                checkpoint.sequence(),
+                timing.unitOfWorkId(),
+                stateHashMillis,
+                timing.latestMillis(),
+                timing.encodeMillis(),
+                timing.metadataInsertMillis(),
+                timing.payloadInsertMillis(),
+                timing.payloadBytes(),
+                elapsedMillis(started));
     }
 
     @Override
@@ -153,4 +187,16 @@ public final class SqliteCheckpointRepository implements CheckpointRepository {
             throw exception;
         }
     }
+
+    private static long elapsedMillis(long started) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+    }
+
+    private record PersistTiming(
+            long unitOfWorkId,
+            long latestMillis,
+            long encodeMillis,
+            long metadataInsertMillis,
+            long payloadInsertMillis,
+            int payloadBytes) {}
 }

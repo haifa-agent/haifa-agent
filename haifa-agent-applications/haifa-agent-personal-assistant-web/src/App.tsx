@@ -614,6 +614,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     selectedConversationId: conversationIdFromUrl(),
   }));
   const previousFocus = useRef<HTMLElement | null>(null);
+  const interactionRequestGeneration = useRef(0);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
@@ -630,27 +631,61 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     return conversations;
   }, [client]);
 
-  const loadRunSnapshot = useCallback(async (runId: string, signal?: AbortSignal) => {
+  const loadRun = useCallback(async (runId: string, signal?: AbortSignal) => {
     const run = await client.run(runId, signal);
     dispatch({ type: "runLoaded", run });
-    const [activities, interaction] = await Promise.allSettled([
-      client.activities(runId, signal),
-      client.interaction(runId, signal),
-    ]);
-    if (activities.status === "fulfilled") {
-      dispatch({ type: "activitiesLoaded", activities: activities.value });
-    }
-    if (interaction.status === "fulfilled") {
-      dispatch({ type: "interactionLoaded", interaction: interaction.value });
-    } else if (["WAITING_APPROVAL", "WAITING_INTERACTION"].includes(run.status)) {
-      dispatch({
-        type: "interactionLoadFailed",
-        runId,
-        message: "审批或交互详情加载失败，请重试；任务尚未继续执行。",
-      });
-    }
     return run;
   }, [client]);
+
+  const loadActivities = useCallback(async (runId: string, signal?: AbortSignal) => {
+    const activities = await client.activities(runId, signal);
+    if (!signal?.aborted) dispatch({ type: "activitiesLoaded", activities });
+    return activities;
+  }, [client]);
+
+  const loadInteraction = useCallback(async (
+    runId: string,
+    required: boolean,
+    signal?: AbortSignal,
+  ) => {
+    const generation = ++interactionRequestGeneration.current;
+    try {
+      const interaction = await client.interaction(runId, signal);
+      if (signal?.aborted || generation !== interactionRequestGeneration.current) return interaction;
+      if (required && !interaction) {
+        dispatch({
+          type: "interactionLoadFailed",
+          runId,
+          message: "审批或交互详情尚未就绪，请重试；任务尚未继续执行。",
+        });
+        return interaction;
+      }
+      dispatch({ type: "interactionLoaded", interaction });
+      return interaction;
+    } catch (error) {
+      if (!signal?.aborted && generation === interactionRequestGeneration.current && required) {
+        dispatch({
+          type: "interactionLoadFailed",
+          runId,
+          message: "审批或交互详情加载失败，请重试；任务尚未继续执行。",
+        });
+      }
+      throw error;
+    }
+  }, [client]);
+
+  const loadRunSnapshot = useCallback(async (runId: string, signal?: AbortSignal) => {
+    const run = await loadRun(runId, signal);
+    await Promise.allSettled([
+      loadActivities(runId, signal),
+      loadInteraction(
+        runId,
+        ["WAITING_APPROVAL", "WAITING_INTERACTION"].includes(run.status),
+        signal,
+      ),
+    ]);
+    return run;
+  }, [loadActivities, loadInteraction, loadRun]);
 
   const selectConversation = useCallback(
     (conversationId: string | null, mode: "push" | "replace" = "push") => {
@@ -673,6 +708,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       null;
     if (latestRunId) await loadRunSnapshot(latestRunId, signal);
     else {
+      interactionRequestGeneration.current += 1;
       dispatch({ type: "runLoaded", run: null });
       dispatch({ type: "activitiesLoaded", activities: [] });
       dispatch({ type: "interactionLoaded", interaction: null });
@@ -741,12 +777,16 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             onOpen: () => dispatch({ type: "setConnection", connection: "connected" }),
             onEvent: (event) => {
               dispatch({ type: "streamEvent", event });
-              if (
-                event.type === "run.status" ||
-                event.type === "interaction.status" ||
-                event.type === "activity.committed"
-              ) {
-                void loadRunSnapshot(runId, controller.signal).catch(() => undefined);
+              if (event.type === "run.status") {
+                void loadRun(runId, controller.signal).catch(() => undefined);
+              } else if (event.type === "interaction.status") {
+                void loadInteraction(
+                  runId,
+                  event.value === "PENDING",
+                  controller.signal,
+                ).catch(() => undefined);
+              } else if (event.type === "activity.committed" && !event.activity) {
+                void loadActivities(runId, controller.signal).catch(() => undefined);
               }
             },
           }, controller.signal);
@@ -775,7 +815,17 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       }
     })();
     return () => controller.abort();
-  }, [client, loadConversation, loadConversations, loadRunSnapshot, state.run?.id, state.selectedConversationId]);
+  }, [
+    client,
+    loadActivities,
+    loadConversation,
+    loadConversations,
+    loadInteraction,
+    loadRun,
+    loadRunSnapshot,
+    state.run?.id,
+    state.selectedConversationId,
+  ]);
 
   const execute = useCallback(async (label: string, operation: () => Promise<void>) => {
     dispatch({ type: "commandStarted", command: { id: crypto.randomUUID(), label } });
