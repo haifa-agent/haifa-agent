@@ -107,7 +107,14 @@ class ProjectApplicationTest {
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
         assertThat(properties)
-                .containsOnlyKeys("command", "workdir", "timeoutMillis", "description", "operationFamily");
+                .containsOnlyKeys(
+                        "command",
+                        "workdir",
+                        "timeoutMillis",
+                        "description",
+                        "operationFamily",
+                        "verificationPlanDigest",
+                        "verificationDimensions");
         assertThat(execution.definition().inputSchema().document())
                 .containsEntry("required", List.of("command", "operationFamily"))
                 .containsEntry("additionalProperties", false);
