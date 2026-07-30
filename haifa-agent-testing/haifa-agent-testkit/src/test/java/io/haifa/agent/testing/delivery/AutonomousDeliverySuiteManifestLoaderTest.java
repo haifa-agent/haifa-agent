@@ -25,7 +25,7 @@ class AutonomousDeliverySuiteManifestLoaderTest {
 
     @Test
     void rejectsUnknownPublicCaseBeforeExecution() throws Exception {
-        writeSuite("11");
+        writeSuite("18");
 
         assertThrows(IllegalArgumentException.class, () -> new AutonomousDeliverySuiteManifestLoader()
                 .load(temporary, "phase-test-v1", AutonomousDeliveryCaseCatalog.loadVerified()));
