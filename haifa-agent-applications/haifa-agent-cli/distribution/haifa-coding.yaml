@@ -36,8 +36,8 @@ approval:
   mode: ask
 
 execution:
-  provider: local-native
-  network: deny
+  provider: host-guarded
+  network: allow
   shell: auto
   defaultTimeoutMillis: 120000
   maxTimeoutMillis: 1800000

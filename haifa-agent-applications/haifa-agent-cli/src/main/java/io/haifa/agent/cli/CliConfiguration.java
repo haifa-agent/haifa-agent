@@ -116,8 +116,8 @@ record CliConfiguration(
                 Web.defaults(),
                 Skills.defaults(),
                 new Execution(
-                        "local-native",
-                        "deny",
+                        "host-guarded",
+                        "allow",
                         "auto",
                         null,
                         Duration.ofMinutes(2),
