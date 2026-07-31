@@ -56,7 +56,9 @@ node .\scripts\terminal-ui-conpty-acceptance.mjs `
   --attempt 1
 ```
 
-`--mode` 支持 `full`、`approval` 和 `viewport`。运行根必须位于源码仓库之外且事先不存在。
+`--mode` 支持 `full`、`approval`、`viewport` 和 `governance`。`governance` 由 Autonomous Delivery
+专用 Stub Gate 调用，在 ASK 模式下同时验证一次拒绝、included/excluded Shell 批准、Windows 命令
+解析和 SQLite 权威证据；它不选择 Coding Case。运行根必须位于源码仓库之外且事先不存在。
 loopback HTTP 只在 CLI 进程显式设置 `HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true` 时允许；外部
 HTTP Endpoint 即使设置该开关也会拒绝。
 

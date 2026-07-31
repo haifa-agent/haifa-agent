@@ -77,8 +77,8 @@ public final class AutonomousDeliveryCampaign {
         Path campaign = parent.resolve(campaignId);
         Files.createDirectory(campaign);
         SecureFilePermissions.secureDirectory(campaign);
-        for (String directory :
-                List.of("immutable-input", "baseline", "phase-0", "phase-1", "phase-2", "phase-3", "comparison")) {
+        for (String directory : List.of(
+                "immutable-input", "baseline", "phase-0", "phase-1", "phase-2", "phase-3", "stub-gate", "comparison")) {
             Files.createDirectory(campaign.resolve(directory));
         }
         LinkedHashMap<String, Object> manifest = new LinkedHashMap<>();

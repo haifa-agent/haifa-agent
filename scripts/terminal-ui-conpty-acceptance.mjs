@@ -104,15 +104,15 @@ function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function runGit(workspace, args) {
-  return execFileSync("git.exe", args, {
+function runGit(workspace, args, executable = "git.exe") {
+  return execFileSync(executable, args, {
     cwd: workspace,
     encoding: "utf8",
     windowsHide: true,
   });
 }
 
-function createFixture(workspace) {
+function createFixture(workspace, gitExecutable) {
   fs.mkdirSync(path.join(workspace, "src", "main", "java", "sample"), { recursive: true });
   fs.mkdirSync(path.join(workspace, "src", "test", "java", "sample"), { recursive: true });
   fs.mkdirSync(path.join(workspace, "exports"), { recursive: true });
@@ -181,11 +181,11 @@ function createFixture(workspace) {
     ].join("\r\n"),
     "utf8",
   );
-  runGit(workspace, ["init", "--initial-branch=main"]);
-  runGit(workspace, ["config", "user.name", "Haifa ConPTY Test"]);
-  runGit(workspace, ["config", "user.email", "conpty-test@invalid.local"]);
-  runGit(workspace, ["add", "AGENTS.md", "src", "verify.ps1"]);
-  runGit(workspace, ["commit", "-m", "fixture: initialize conpty acceptance workspace"]);
+  runGit(workspace, ["init", "--initial-branch=main"], gitExecutable);
+  runGit(workspace, ["config", "user.name", "Haifa ConPTY Test"], gitExecutable);
+  runGit(workspace, ["config", "user.email", "conpty-test@invalid.local"], gitExecutable);
+  runGit(workspace, ["add", "AGENTS.md", "src", "verify.ps1"], gitExecutable);
+  runGit(workspace, ["commit", "-m", "fixture: initialize conpty acceptance workspace"], gitExecutable);
 }
 
 function writeConfiguration(file, databasePath, approvalMode, provider) {
@@ -271,6 +271,11 @@ async function startStubProvider() {
         .toReversed()
         .find((message) => message?.role === "user" && typeof message?.content === "string");
       const longOutput = latestUser?.content?.includes("GATE_B_LONG_OUTPUT") === true;
+      const governanceReadOnly = messages.some(
+        (message) => message?.role === "user" && message?.content?.includes("GOVERNANCE_READ_ONLY"),
+      );
+      const governanceToolObserved = messages.some((message) => message?.role === "tool");
+      const requestGovernanceTool = governanceReadOnly && !governanceToolObserved;
       const content = longOutput
         ? Array.from(
             { length: 40 },
@@ -283,13 +288,38 @@ async function startStubProvider() {
         stream: body.stream === true,
         messageCount: messages.length,
         longOutput,
+        requestGovernanceTool,
       });
       const events = [
-        {
-          id: `gate-b-stub-${requests.length}`,
-          model: "deepseek-chat",
-          choices: [{ index: 0, delta: { content }, finish_reason: "stop" }],
-        },
+        requestGovernanceTool
+          ? {
+              id: `gate-b-stub-${requests.length}`,
+              model: "deepseek-chat",
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "governance-read-only-1",
+                        type: "function",
+                        function: {
+                          name: "file_search",
+                          arguments: '{"path":".","query":"Clamp","maxResults":10}',
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: "tool_calls",
+                },
+              ],
+            }
+          : {
+              id: `gate-b-stub-${requests.length}`,
+              model: "deepseek-chat",
+              choices: [{ index: 0, delta: { content }, finish_reason: "stop" }],
+            },
         {
           id: `gate-b-stub-${requests.length}`,
           model: "deepseek-chat",
@@ -462,14 +492,14 @@ if (!Number.isInteger(attempt) || attempt < 1 || attempt > 3) {
   throw new Error("--attempt must be 1, 2, or 3");
 }
 const mode = argumentsByName.get("--mode") ?? "full";
-if (!["full", "approval", "viewport"].includes(mode)) {
-  throw new Error("--mode must be full, approval, or viewport");
+if (!["full", "approval", "viewport", "governance"].includes(mode)) {
+  throw new Error("--mode must be full, approval, viewport, or governance");
 }
 const providerMode = argumentsByName.get("--provider") ?? "deepseek";
 if (!["deepseek", "stub"].includes(providerMode)) {
   throw new Error("--provider must be deepseek or stub");
 }
-const approvalMode = mode === "approval" ? "ask" : "auto";
+const approvalMode = mode === "approval" || mode === "governance" ? "ask" : "auto";
 const jar = path.resolve(
   argumentsByName.get("--jar") ??
     path.join(
@@ -481,6 +511,8 @@ const jar = path.resolve(
     ),
 );
 const pty = loadPty(argumentsByName.get("--node-pty"));
+const javaExecutable = argumentsByName.get("--java") ?? "java.exe";
+const gitExecutable = argumentsByName.get("--git") ?? "git.exe";
 const provider = providerMode === "stub"
   ? await startStubProvider()
   : {
@@ -512,7 +544,7 @@ const gitDiffFile = path.join(artifacts, "git-diff.patch");
 fs.mkdirSync(workspace, { recursive: true });
 fs.mkdirSync(dataDirectory, { recursive: true });
 fs.mkdirSync(artifacts, { recursive: true });
-createFixture(workspace);
+createFixture(workspace, gitExecutable);
 writeConfiguration(configuration, database, approvalMode, provider);
 
 const startedAt = Date.now();
@@ -531,7 +563,7 @@ function hasTerminalText(marker) {
 const continuationKey =
   process.env.HAIFA_CONTINUATION_KEY?.trim() ?? crypto.randomBytes(32).toString("base64");
 const child = pty.module.spawn(
-  "java.exe",
+  javaExecutable,
   [
     "-Dfile.encoding=UTF-8",
     "-Dstdout.encoding=UTF-8",
@@ -637,7 +669,9 @@ try {
   await send("\u001b", "commands-close");
 
   await sendAndWaitForTraceStop(
-    "只回复 READY，不调用任何工具。\r",
+    mode === "governance"
+      ? "GOVERNANCE_READ_ONLY：使用 file_search 查找 Clamp，然后只回复 READY。\r"
+      : "只回复 READY，不调用任何工具。\r",
     "seed-session",
     120_000,
   );
@@ -653,7 +687,22 @@ try {
       );
     }
     observations.viewportBounded = true;
-  } else if (mode === "approval") {
+  } else if (mode === "approval" || mode === "governance") {
+    if (mode === "governance") {
+      await sendAndWait(
+        "!Write-Output APPROVAL-DENIED\r",
+        "shell-denied-approval",
+        "Run governed shell command?",
+        20_000,
+      );
+      await sendAndWait(
+        "\r",
+        "shell-denied-confirm",
+        "Shell command denied",
+        20_000,
+      );
+      observations.deniedShellRejected = true;
+    }
     await sendAndWait(
       "!Write-Output APPROVAL-INCLUDED\r",
       "shell-included-approval",
@@ -810,7 +859,7 @@ fs.writeFileSync(
       timestamp: Math.floor(startedAt / 1000),
       env: { SHELL: "powershell", TERM: "xterm-256color" },
     }),
-    ...outputEvents.map((event) => JSON.stringify(event)),
+    ...outputEvents.filter((event) => event[1] === "o").map((event) => JSON.stringify(event)),
     "",
   ].join("\n"),
   "utf8",
@@ -826,8 +875,8 @@ fs.writeFileSync(
   "utf8",
 );
 
-const gitStatus = runGit(workspace, ["status", "--short"]);
-const gitDiff = runGit(workspace, ["diff", "--no-ext-diff", "--", "AGENTS.md", "src"]);
+const gitStatus = runGit(workspace, ["status", "--short"], gitExecutable);
+const gitDiff = runGit(workspace, ["diff", "--no-ext-diff", "--", "AGENTS.md", "src"], gitExecutable);
 fs.writeFileSync(gitStatusFile, gitStatus, "utf8");
 fs.writeFileSync(gitDiffFile, gitDiff, "utf8");
 
@@ -854,8 +903,14 @@ const assertions = mode === "viewport" ? {
   viewportBounded: observations.viewportBounded === true,
   latestViewportLineVisible: terminalOutput.includes("VIEWPORT-LINE-12"),
   sqliteCreated: fs.existsSync(database) && fs.statSync(database).size > 0,
-} : mode === "approval" ? {
+} : mode === "approval" || mode === "governance" ? {
   ...commonAssertions,
+  ...(mode === "governance"
+    ? {
+        deniedShellRejected: observations.deniedShellRejected === true,
+        deniedShellNotExecuted: !terminalOutput.includes("APPROVAL-DENIED [succeeded]"),
+      }
+    : {}),
   approvalSelectorsCompleted: observations.approvalSelectorsCompleted === true,
   windowsCommandResolutionCompleted: observations.windowsCommandResolutionCompleted === true,
   includedShellCompleted: terminalOutput.includes("Shell result added to Session context"),
