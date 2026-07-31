@@ -52,6 +52,11 @@ Campaign Parent 必须已经存在；Critical Path 外层运行根可以是待�
 Autonomous Delivery Harness 同样强制显式 Matrix Combination，并从 Matrix 派生 Host Profile；
 Campaign、Phase Summary 和 Run Manifest 使用版本 3 Schema 冻结完整组合和两仓
 `RepositoryRevision`，后续 Gate 不能切换组合或 Commit。
+`delivery.AutonomousDeliveryStubGate` 是独立于 Phase 1～3 的 Windows 平台 Gate。它读取私有
+`PLATFORM_STUB/STUB` Suite，要求零外部调用/费用，使用生产 CLI、真实 ConPTY 与 loopback Stub，
+并生成 Schema 3 Summary。Gate 复用共享 Driver Result Contract、SQLite 有界 Evidence Reader、
+Secret Scanner、Process Tree Cleanup 和只读 Evidence Finalizer；临时 SQLite/Workspace 在形成关联
+证据后删除。Stub PASS 只证明 Harness 与 Windows Host Trusted 平台链路，不证明 Coding 能力。
 `delivery.AutonomousDeliveryGateResultAggregator` 已从 Phase Gate 单体中抽出，集中生成 Schema 3
 Phase Summary、Scratch 收敛、两仓稳定性、Phase 3 Capability Matrix 和指标。该拆分保留
 Autonomous Delivery 原生 Budget、`gatePassed` 和 Artifact Schema，不将其强行映射为 Critical Path

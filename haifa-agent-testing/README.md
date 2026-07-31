@@ -40,6 +40,11 @@ Integration 与 E2E 之间的层级：
 使用同一 Deterministic Probe Executor；平台入口和私有 Suite 不复制 Maven 命令、超时、Secret
 隔离或证据解析逻辑。
 
+Windows Autonomous Delivery 平台链路另有独立 `PLATFORM_STUB/STUB` Gate：通过生产 CLI、真实
+ConPTY 和进程内 loopback Model Stub 验证 Approval、Shell、SQLite、Secret Scan、只读 Evidence、
+进程树与清理，不执行或评分 Coding Case，也不产生外部 Provider 调用和费用。其隔离结论始终为
+`TRUSTED_HOST_ONLY`。
+
 Critical Path v1 使用稳定 `CP-01`～`CP-11`：
 
 | Case | 路径 | 当前实现 |

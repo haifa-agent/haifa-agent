@@ -52,8 +52,12 @@ public final class AutonomousDeliveryHarnessMain {
         new TestingAssetPreflight().validate(options.projectRoot(), options.configRoot());
         AutonomousDeliveryCaseCatalog catalog = AutonomousDeliveryCaseCatalog.loadVerified();
         AutonomousDeliverySuiteManifest suite = null;
+        AutonomousDeliveryStubGateManifest stubSuite = null;
         String matrixId = DEFAULT_MATRIX_ID;
-        if (options.suiteId() != null) {
+        if (List.of("stub-gate-plan", "stub-gate").contains(options.command())) {
+            stubSuite = new AutonomousDeliveryStubGateManifestLoader().load(options.configRoot(), options.suiteId());
+            matrixId = stubSuite.matrixRef();
+        } else if (options.suiteId() != null) {
             suite = new AutonomousDeliverySuiteManifestLoader().load(options.configRoot(), options.suiteId(), catalog);
             matrixId = suite.matrixRef();
         }
@@ -65,6 +69,10 @@ public final class AutonomousDeliveryHarnessMain {
         RepositoryRevision productRevision = RepositoryRevision.inspect(options.projectRoot());
         RepositoryRevision testConfigRevision = RepositoryRevision.inspect(options.configRoot());
         productRevision.requireCommit(matrix.compatibleAgentBaselineCommit(), "Autonomous Delivery matrix");
+        if (options.command().equals("stub-gate-plan")) {
+            printStubPlan(stubSuite, matrix, combination, productRevision, testConfigRevision);
+            return;
+        }
         if (options.command().equals("plan")) {
             printPlan(catalog, suite, matrix, combination, productRevision, testConfigRevision);
             return;
@@ -89,6 +97,37 @@ public final class AutonomousDeliveryHarnessMain {
         }
         if (options.command().equals("phase-0-gate")) {
             runPhaseZeroGate(options, catalog, repositories, matrix, combination, productRevision, testConfigRevision);
+            return;
+        }
+        if (options.command().equals("stub-gate")) {
+            if (!options.execute()) {
+                throw new IllegalArgumentException("stub-gate requires explicit --execute");
+            }
+            productRevision.requireClean("product repository");
+            testConfigRevision.requireClean("test-config repository");
+            Path campaign = requireCampaign(
+                    options.campaignRoot(), repositories, matrix, combination, productRevision, testConfigRevision);
+            String build = requireCommit(options.buildCommit());
+            productRevision.requireCommit(build, "product repository");
+            if (stubSuite == null) {
+                throw new IllegalArgumentException("--suite is required for the Stub Gate");
+            }
+            Path gate = new AutonomousDeliveryStubGate(clock)
+                    .run(
+                            campaign,
+                            build,
+                            stubSuite,
+                            options.projectRoot(),
+                            options.configRoot(),
+                            combination,
+                            productRevision,
+                            testConfigRevision,
+                            options.cliJar(),
+                            options.nodeExecutable(),
+                            options.javaExecutable(),
+                            options.gitExecutable(),
+                            options.nodePtyModule());
+            System.out.println("Autonomous Delivery Stub Gate PASS: " + gate);
             return;
         }
         if (List.of("phase-1-gate", "phase-2-gate", "phase-3-gate").contains(options.command())) {
@@ -247,6 +286,35 @@ public final class AutonomousDeliveryHarnessMain {
         System.out.println("Plan only. No campaign or external call was created.");
     }
 
+    private static void printStubPlan(
+            AutonomousDeliveryStubGateManifest suite,
+            AutonomousDeliveryMatrixManifest matrix,
+            AutonomousDeliveryMatrixManifest.Combination combination,
+            RepositoryRevision productRevision,
+            RepositoryRevision testConfigRevision) {
+        System.out.printf(
+                "Stub Gate Suite %s type=%s dependency=%s platform=%s matrix=%s combination=%s "
+                        + "pty=%s sandbox=%s shell=%s isolation=%s externalCalls=0 cost=0 execute=false%n",
+                suite.suiteId(),
+                suite.gateType(),
+                suite.dependencyMode(),
+                suite.platform(),
+                matrix.matrixId(),
+                combination.id(),
+                combination.terminalBackend(),
+                combination.sandboxProfile(),
+                combination.shell(),
+                combination.isolationAssurance());
+        System.out.printf(
+                "Revisions product=%s dirty=%s testConfig=%s dirty=%s%n",
+                productRevision.commit(),
+                productRevision.dirty(),
+                testConfigRevision.commit(),
+                testConfigRevision.dirty());
+        suite.requiredChecks().forEach(check -> System.out.println("  check=" + check));
+        System.out.println("Plan only. No Coding Case, campaign, external call, or cost was created.");
+    }
+
     private Path requireCampaign(
             Path value,
             List<Path> repositories,
@@ -317,7 +385,8 @@ public final class AutonomousDeliveryHarnessMain {
             Path pythonExecutable,
             Path nodeExecutable,
             Path goExecutable,
-            Path gitExecutable) {
+            Path gitExecutable,
+            Path nodePtyModule) {
         static Options parse(String[] arguments) {
             String command = "plan";
             Path projectRoot = Path.of(".").toAbsolutePath().normalize();
@@ -336,11 +405,14 @@ public final class AutonomousDeliveryHarnessMain {
             Path nodeExecutable = null;
             Path goExecutable = null;
             Path gitExecutable = null;
+            Path nodePtyModule = null;
             for (int index = 0; index < arguments.length; index++) {
                 switch (arguments[index]) {
                     case "plan",
+                            "stub-gate-plan",
                             "initialize-campaign",
                             "phase-0-gate",
+                            "stub-gate",
                             "phase-1-gate",
                             "phase-2-gate",
                             "phase-3-gate" -> command = arguments[index];
@@ -361,6 +433,7 @@ public final class AutonomousDeliveryHarnessMain {
                     case "--node-executable" -> nodeExecutable = Path.of(value(arguments, ++index));
                     case "--go-executable" -> goExecutable = Path.of(value(arguments, ++index));
                     case "--git-executable" -> gitExecutable = Path.of(value(arguments, ++index));
+                    case "--node-pty-module" -> nodePtyModule = Path.of(value(arguments, ++index));
                     default -> throw new IllegalArgumentException("unknown argument: " + arguments[index]);
                 }
             }
@@ -387,7 +460,8 @@ public final class AutonomousDeliveryHarnessMain {
                     pythonExecutable,
                     nodeExecutable,
                     goExecutable,
-                    gitExecutable);
+                    gitExecutable,
+                    nodePtyModule);
         }
 
         private static String value(String[] arguments, int index) {
