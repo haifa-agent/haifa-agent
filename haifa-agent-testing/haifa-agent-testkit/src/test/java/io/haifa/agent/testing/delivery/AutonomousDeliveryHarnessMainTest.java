@@ -13,22 +13,22 @@ class AutonomousDeliveryHarnessMainTest {
     Path temporaryDirectory;
 
     @Test
-    void rejectsInvalidTestingAssetInventoryBeforePlanning() throws Exception {
+    void rejectsUninventoriedAssetBeforePlanning() throws Exception {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("project"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("test-config"));
-        Path productInventory = projectRoot.resolve("haifa-agent-testing/testing-assets-v1.json");
+        Path productInventory = projectRoot.resolve("haifa-agent-testing/testing-assets-v2.json");
         Files.createDirectories(productInventory.getParent());
         Files.writeString(
                 productInventory,
                 """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "haifa-agent",
                   "coverageRoots": [],
                   "assets": [
                     {
                       "assetId": "inventory",
-                      "path": "haifa-agent-testing/testing-assets-v1.json",
+                      "path": "haifa-agent-testing/testing-assets-v2.json",
                       "kind": "MANIFEST",
                       "lifecycle": "ACTIVE",
                       "disposition": "KEEP",
@@ -40,26 +40,40 @@ class AutonomousDeliveryHarnessMainTest {
                   ]
                 }
                 """);
-        Path inventory = configRoot.resolve("assets/testing-assets-v1.json");
+        Path inventory = configRoot.resolve("assets/testing-assets-v2.json");
         Files.createDirectories(inventory.getParent());
+        Files.writeString(configRoot.resolve("assets/orphan.txt"), "orphan");
         Files.writeString(
                 inventory,
                 """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "haifa-agent-test-config",
-                  "coverageRoots": [],
+                  "coverageRoots": ["assets"],
                   "assets": [
                     {
-                      "assetId": "missing",
-                      "path": "missing.txt",
-                      "kind": "FIXTURE",
+                      "assetId": "inventory",
+                      "path": "assets/testing-assets-v2.json",
+                      "kind": "MANIFEST",
                       "lifecycle": "ACTIVE",
                       "disposition": "KEEP",
                       "owner": "testing-platform",
                       "referencedBy": [],
                       "replacement": "",
-                      "rationale": "must fail before suite loading"
+                      "rationale": "formal preflight inventory",
+                      "coverageMode": "EXACT"
+                    },
+                    {
+                      "assetId": "asset-root",
+                      "path": "assets",
+                      "kind": "DIRECTORY",
+                      "lifecycle": "ACTIVE",
+                      "disposition": "KEEP",
+                      "owner": "testing-platform",
+                      "referencedBy": ["assets/testing-assets-v2.json"],
+                      "replacement": "",
+                      "rationale": "directory lifecycle only",
+                      "coverageMode": "EXACT"
                     }
                   ]
                 }

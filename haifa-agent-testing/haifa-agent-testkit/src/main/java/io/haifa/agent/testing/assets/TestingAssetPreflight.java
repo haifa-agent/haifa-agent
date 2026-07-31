@@ -16,8 +16,8 @@ public final class TestingAssetPreflight {
         Path configuration = Objects.requireNonNull(configRoot, "configRoot must not be null")
                 .toAbsolutePath()
                 .normalize();
-        Path productInventory = product.resolve("haifa-agent-testing/testing-assets-v1.json");
-        Path configurationInventory = configuration.resolve("assets/testing-assets-v1.json");
+        Path productInventory = product.resolve("haifa-agent-testing/testing-assets-v2.json");
+        Path configurationInventory = configuration.resolve("assets/testing-assets-v2.json");
         requireInventory(productInventory, "product");
         requireInventory(configurationInventory, "test-config");
         inventoryValidator.validateIfPresent(product, productInventory);

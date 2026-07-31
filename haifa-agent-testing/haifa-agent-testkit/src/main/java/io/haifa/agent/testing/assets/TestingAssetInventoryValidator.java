@@ -4,15 +4,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Stream;
 
 /** Validates versioned testing asset inventories before suite planning or execution. */
 public final class TestingAssetInventoryValidator {
-    private static final int SCHEMA_VERSION = 1;
+    private static final int LEGACY_SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
 
     private final ObjectMapper json = new ObjectMapper();
 
@@ -35,7 +38,7 @@ public final class TestingAssetInventoryValidator {
     }
 
     private static void validateModel(Path repositoryRoot, Inventory inventory) throws IOException {
-        if (inventory.schemaVersion() != SCHEMA_VERSION) {
+        if (inventory.schemaVersion() != LEGACY_SCHEMA_VERSION && inventory.schemaVersion() != SCHEMA_VERSION) {
             throw new IllegalArgumentException(
                     "unsupported testing asset inventory schema: " + inventory.schemaVersion());
         }
@@ -47,6 +50,7 @@ public final class TestingAssetInventoryValidator {
 
         Set<String> assetIds = new HashSet<>();
         Set<Path> assetPaths = new HashSet<>();
+        Map<Path, CoverageMode> coverageModes = new HashMap<>();
         for (Asset asset : assets) {
             requireText(asset.assetId(), "assetId");
             if (!assetIds.add(asset.assetId())) {
@@ -62,6 +66,9 @@ public final class TestingAssetInventoryValidator {
             requireText(asset.owner(), "asset owner");
             requireText(asset.rationale(), "asset rationale");
             validateLifecycle(asset, assetPath);
+            CoverageMode coverageMode = coverageMode(inventory.schemaVersion(), assetPath, asset);
+            validateCoverageMode(inventory.schemaVersion(), asset, assetPath, coverageMode);
+            coverageModes.put(assetPath, coverageMode);
             for (String reference : safeList(asset.referencedBy())) {
                 Path referencePath =
                         resolveRepositoryPath(repositoryRoot, reference, "reference for " + asset.assetId());
@@ -83,7 +90,7 @@ public final class TestingAssetInventoryValidator {
                         .filter(path -> !containsSegment(root.relativize(path), ".git"))
                         .toList()) {
                     boolean covered =
-                            assetPaths.stream().anyMatch(asset -> file.equals(asset) || file.startsWith(asset));
+                            assetPaths.stream().anyMatch(asset -> covers(file, asset, coverageModes.get(asset)));
                     if (!covered) {
                         throw new IllegalArgumentException("testing asset is not inventoried: "
                                 + repositoryRoot.relativize(file).toString().replace('\\', '/'));
@@ -91,6 +98,32 @@ public final class TestingAssetInventoryValidator {
                 }
             }
         }
+    }
+
+    private static CoverageMode coverageMode(int schemaVersion, Path assetPath, Asset asset) {
+        if (schemaVersion == LEGACY_SCHEMA_VERSION) {
+            return Files.isDirectory(assetPath) ? CoverageMode.SUBTREE : CoverageMode.EXACT;
+        }
+        return asset.coverageMode() == null ? CoverageMode.EXACT : asset.coverageMode();
+    }
+
+    private static void validateCoverageMode(
+            int schemaVersion, Asset asset, Path assetPath, CoverageMode coverageMode) {
+        if (schemaVersion == LEGACY_SCHEMA_VERSION || coverageMode == CoverageMode.EXACT) {
+            return;
+        }
+        if (asset.lifecycle() == Lifecycle.REMOVED || !Files.isDirectory(assetPath)) {
+            throw new IllegalArgumentException(
+                    "SUBTREE testing asset must be an available directory: " + asset.assetId());
+        }
+        if (safeList(asset.referencedBy()).isEmpty()) {
+            throw new IllegalArgumentException(
+                    "SUBTREE testing asset must have at least one reference: " + asset.assetId());
+        }
+    }
+
+    private static boolean covers(Path file, Path asset, CoverageMode coverageMode) {
+        return file.equals(asset) || (coverageMode == CoverageMode.SUBTREE && file.startsWith(asset));
     }
 
     private static void validateLifecycle(Asset asset, Path assetPath) {
@@ -172,7 +205,13 @@ public final class TestingAssetInventoryValidator {
             String owner,
             List<String> referencedBy,
             String replacement,
-            String rationale) {}
+            String rationale,
+            CoverageMode coverageMode) {}
+
+    public enum CoverageMode {
+        EXACT,
+        SUBTREE
+    }
 
     public enum Kind {
         MODULE,

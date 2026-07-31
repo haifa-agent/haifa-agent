@@ -2,6 +2,7 @@ package io.haifa.agent.testing.suite;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -13,6 +14,69 @@ import org.junit.jupiter.api.io.TempDir;
 class SuiteRunnerMainTest {
     @TempDir
     Path temporaryDirectory;
+
+    @Test
+    void rejectsUninventoriedAssetBeforeLoadingSuite() throws Exception {
+        Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("orphan-project"));
+        Path configRoot = Files.createDirectory(temporaryDirectory.resolve("orphan-test-config"));
+        Path runRoot = temporaryDirectory.resolve("orphan-runs");
+        writeInventory(
+                projectRoot.resolve("haifa-agent-testing/testing-assets-v2.json"),
+                "haifa-agent",
+                "haifa-agent-testing/testing-assets-v2.json");
+        Path inventory = configRoot.resolve("assets/testing-assets-v2.json");
+        Files.createDirectories(inventory.getParent());
+        Files.writeString(configRoot.resolve("assets/orphan.txt"), "orphan");
+        Files.writeString(
+                inventory,
+                """
+                {
+                  "schemaVersion": 2,
+                  "repositoryId": "haifa-agent-test-config",
+                  "coverageRoots": ["assets"],
+                  "assets": [
+                    {
+                      "assetId": "inventory",
+                      "path": "assets/testing-assets-v2.json",
+                      "kind": "MANIFEST",
+                      "lifecycle": "ACTIVE",
+                      "disposition": "KEEP",
+                      "owner": "testing-platform",
+                      "referencedBy": [],
+                      "replacement": "",
+                      "rationale": "formal preflight inventory",
+                      "coverageMode": "EXACT"
+                    },
+                    {
+                      "assetId": "asset-root",
+                      "path": "assets",
+                      "kind": "DIRECTORY",
+                      "lifecycle": "ACTIVE",
+                      "disposition": "KEEP",
+                      "owner": "testing-platform",
+                      "referencedBy": ["assets/testing-assets-v2.json"],
+                      "replacement": "",
+                      "rationale": "directory lifecycle only",
+                      "coverageMode": "EXACT"
+                    }
+                  ]
+                }
+                """);
+        commitRepository(projectRoot);
+        commitRepository(configRoot);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
+                .run(
+                        new SuiteRunnerMain.Options(
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "missing-suite",
+                                currentPlatform() + "-primary",
+                                false),
+                        Map.of()));
+        assertTrue(exception.getMessage().contains("not inventoried"));
+    }
 
     @Test
     void plansKnownPrivateSuiteWithoutCreatingRunArtifacts() throws Exception {
@@ -213,13 +277,13 @@ class SuiteRunnerMainTest {
 
     private static void writeRequiredAssetInventories(Path projectRoot, Path configRoot) throws Exception {
         writeInventory(
-                projectRoot.resolve("haifa-agent-testing/testing-assets-v1.json"),
+                projectRoot.resolve("haifa-agent-testing/testing-assets-v2.json"),
                 "haifa-agent",
-                "haifa-agent-testing/testing-assets-v1.json");
+                "haifa-agent-testing/testing-assets-v2.json");
         writeInventory(
-                configRoot.resolve("assets/testing-assets-v1.json"),
+                configRoot.resolve("assets/testing-assets-v2.json"),
                 "haifa-agent-test-config",
-                "assets/testing-assets-v1.json");
+                "assets/testing-assets-v2.json");
     }
 
     private static void writeInventory(Path inventory, String repositoryId, String inventoryPath) throws Exception {
@@ -228,7 +292,7 @@ class SuiteRunnerMainTest {
                 inventory,
                 """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "%s",
                   "coverageRoots": [],
                   "assets": [

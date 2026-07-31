@@ -17,13 +17,13 @@ class TestingAssetPreflightTest {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("project"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("test-config"));
         writeInventory(
-                projectRoot.resolve("haifa-agent-testing/testing-assets-v1.json"),
+                projectRoot.resolve("haifa-agent-testing/testing-assets-v2.json"),
                 "haifa-agent",
-                "haifa-agent-testing/testing-assets-v1.json");
+                "haifa-agent-testing/testing-assets-v2.json");
         writeInventory(
-                configRoot.resolve("assets/testing-assets-v1.json"),
+                configRoot.resolve("assets/testing-assets-v2.json"),
                 "haifa-agent-test-config",
-                "assets/testing-assets-v1.json");
+                "assets/testing-assets-v2.json");
 
         assertDoesNotThrow(() -> new TestingAssetPreflight().validate(projectRoot, configRoot));
     }
@@ -33,9 +33,9 @@ class TestingAssetPreflightTest {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("project"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("test-config"));
         writeInventory(
-                projectRoot.resolve("haifa-agent-testing/testing-assets-v1.json"),
+                projectRoot.resolve("haifa-agent-testing/testing-assets-v2.json"),
                 "haifa-agent",
-                "haifa-agent-testing/testing-assets-v1.json");
+                "haifa-agent-testing/testing-assets-v2.json");
 
         assertThrows(
                 IllegalArgumentException.class, () -> new TestingAssetPreflight().validate(projectRoot, configRoot));
@@ -46,11 +46,11 @@ class TestingAssetPreflightTest {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("project"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("test-config"));
         writeInventory(
-                projectRoot.resolve("haifa-agent-testing/testing-assets-v1.json"),
+                projectRoot.resolve("haifa-agent-testing/testing-assets-v2.json"),
                 "haifa-agent",
-                "haifa-agent-testing/testing-assets-v1.json");
+                "haifa-agent-testing/testing-assets-v2.json");
         writeInventory(
-                configRoot.resolve("assets/testing-assets-v1.json"),
+                configRoot.resolve("assets/testing-assets-v2.json"),
                 "haifa-agent-test-config",
                 "missing-active-asset.txt");
 
@@ -64,7 +64,7 @@ class TestingAssetPreflightTest {
                 path,
                 """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "%s",
                   "coverageRoots": [],
                   "assets": [
