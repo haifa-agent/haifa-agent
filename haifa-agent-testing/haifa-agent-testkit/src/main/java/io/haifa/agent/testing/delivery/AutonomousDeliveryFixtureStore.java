@@ -1,5 +1,7 @@
 package io.haifa.agent.testing.delivery;
 
+import io.haifa.agent.common.io.SecureFilePermissions;
+import io.haifa.agent.testing.evidence.Sha256Digests;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.JarURLConnection;
@@ -10,7 +12,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.Comparator;
-import java.util.EnumSet;
 import java.util.Objects;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -45,7 +46,7 @@ public final class AutonomousDeliveryFixtureStore {
         Path temporary = Files.createTempDirectory("haifa-fixture-digest-");
         try {
             Path materialized = temporary.resolve("workspace");
-            materializeDirectory(resourceRoot, materialized);
+            materializeDirectory(resourceRoot, materialized, false);
             return Sha256Digests.directory(materialized);
         } finally {
             deleteRecursively(temporary);
@@ -65,8 +66,13 @@ public final class AutonomousDeliveryFixtureStore {
     }
 
     public void materializeDirectory(String resourceRoot, Path destination) throws IOException {
+        materializeDirectory(resourceRoot, destination, true);
+    }
+
+    private void materializeDirectory(String resourceRoot, Path destination, boolean secureDestination)
+            throws IOException {
         String prefix = normalizeResource(resourceRoot) + "/";
-        Path root = createExclusiveDirectory(destination);
+        Path root = createExclusiveDirectory(destination, secureDestination);
         URL resourceUrl = classLoader.getResource(resourceRoot);
         if (resourceUrl != null && resourceUrl.getProtocol().equals("file")) {
             materializeFileDirectory(resourceUrl, root);
@@ -163,6 +169,10 @@ public final class AutonomousDeliveryFixtureStore {
     }
 
     private static Path createExclusiveDirectory(Path value) throws IOException {
+        return createExclusiveDirectory(value, true);
+    }
+
+    private static Path createExclusiveDirectory(Path value, boolean secureDestination) throws IOException {
         Path destination = Objects.requireNonNull(value, "destination must not be null")
                 .toAbsolutePath()
                 .normalize();
@@ -172,21 +182,10 @@ public final class AutonomousDeliveryFixtureStore {
         }
         Files.createDirectories(parent);
         Files.createDirectory(destination);
-        setOwnerOnlyPermissions(destination);
-        return destination;
-    }
-
-    private static void setOwnerOnlyPermissions(Path directory) throws IOException {
-        try {
-            Files.setPosixFilePermissions(
-                    directory,
-                    EnumSet.of(
-                            PosixFilePermission.OWNER_READ,
-                            PosixFilePermission.OWNER_WRITE,
-                            PosixFilePermission.OWNER_EXECUTE));
-        } catch (UnsupportedOperationException ignored) {
-            // Windows ACL validation belongs to the Windows gate.
+        if (secureDestination) {
+            SecureFilePermissions.secureDirectory(destination);
         }
+        return destination;
     }
 
     private static void setOwnerExecutable(Path file) throws IOException {

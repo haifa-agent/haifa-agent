@@ -86,12 +86,12 @@ haifa-agent-applications/
   haifa-agent-cli/
   haifa-agent-personal-assistant-application/
   haifa-agent-personal-assistant-server/
+  haifa-agent-runtime-demo/
 haifa-agent-testing/
   haifa-agent-testkit/
   haifa-agent-test-fixtures/
   haifa-agent-transport-tck/
   haifa-agent-integration-tests/
-  haifa-agent-live-tests/
   haifa-agent-e2e-tests/
 ```
 
@@ -176,14 +176,16 @@ flowchart LR
   ITEST[integration-tests] --> TESTKIT
   ITEST --> FIXTURES
   ITEST --> OAI
-  LIVETEST[live-tests] --> OAI
+  RDEMO[runtime-demo] --> RCORE
+  RDEMO --> OAI
+  RDEMO --> MCP
   E2ETEST[e2e-tests] --> CLI
   E2ETEST --> SQLITE
 ```
 
 `haifa-agent-testing` 位于 Reactor 末端，只承载测试基础设施。Testkit 与 Test Fixtures 提供公共
-编排和安全输入；Integration、Live、E2E 模块分别承载确定性跨模块验证、真实 Provider 窄探针和完整
-产品路径。生产模块不得反向依赖测试模块。模块私有 Fixture 继续就近保存在各模块的
+编排和安全输入；Integration 与 E2E 模块分别承载确定性跨模块验证和完整产品路径，真实 Provider
+窄探针与对应 Adapter 相邻保存。生产模块不得反向依赖测试模块。模块私有 Fixture 继续就近保存在各模块的
 `src/test/resources`，只有跨模块共享且可安全进入源码仓库的小型 Fixture 才上移到共享模块。
 
 ## 关键边界

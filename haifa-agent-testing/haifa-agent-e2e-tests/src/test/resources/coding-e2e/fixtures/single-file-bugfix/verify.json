@@ -1,0 +1,7 @@
+{
+  "sources": [
+    "src/main/java/sample/Clamp.java",
+    "src/test/java/sample/ClampTest.java"
+  ],
+  "mainClass": "sample.ClampTest"
+}

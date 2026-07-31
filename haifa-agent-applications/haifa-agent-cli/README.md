@@ -395,9 +395,10 @@ Session，不包含动态发现或自动 fallback。Host Provider 不是容器�
 
 ## 真实模型 Coding E2E
 
-CLI 模块包含 9 个真实 DeepSeek/百炼模型驱动的编程 E2E，覆盖单文件修复、多文件功能、回归测试、Maven
-配置、等价重构、文件迁移、脏工作区保护、失败恢复和审批拒绝。用例清单及初始工程位于
-`src/test/resources/coding-e2e/`，每次执行都复制到新的隔离 Workspace；不会回放 Stub 或历史模型响应。
+统一 E2E 测试模块包含 9 个真实 DeepSeek/百炼模型驱动的 CLI 编程 E2E，覆盖单文件修复、多文件功能、
+回归测试、Maven 配置、等价重构、文件迁移、脏工作区保护、失败恢复和审批拒绝。用例清单及初始工程位于
+`haifa-agent-testing/haifa-agent-e2e-tests/src/test/resources/coding-e2e/`，每次执行都复制到新的隔离
+Workspace；产品 CLI 模块不再承载跨产品 E2E Harness，也不会回放 Stub 或历史模型响应。
 
 普通 `test` 和 `ci-fast` 不会访问真实模型。Live 批次必须显式提供以下环境：
 
@@ -434,7 +435,7 @@ DASHSCOPE_API_KEY=<secret-manager-injected-value>
 sentinel 外初始为空。测试不会永久删除批次目录；执行者应将其作为 CI Artifact 隔离并按 TTL 清理。
 
 ```bash
-./mvnw -pl :haifa-agent-cli -am -Pci-integration -DskipITs=false \
+./mvnw -pl :haifa-agent-e2e-tests -am -Pci-integration -DskipITs=false \
   -Dfailsafe.failIfNoSpecifiedTests=false -Dit.test=CodingAgentLiveE2E clean verify
 ```
 

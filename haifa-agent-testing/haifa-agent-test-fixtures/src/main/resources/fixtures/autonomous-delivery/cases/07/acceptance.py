@@ -25,10 +25,11 @@ def main():
     workspace = Path(sys.argv[1]).resolve()
     checks = {}
     failures = []
-    checks["testsUnchanged"] = digest(
-        CASE_ROOT / "base-workspace/test.sh"
-    ) == digest(workspace / "test.sh")
-    visible = run(["./test.sh"], workspace)
+    checks["testsUnchanged"] = all(
+        digest(CASE_ROOT / "base-workspace" / name) == digest(workspace / name)
+        for name in ("test.py", "test.sh", "test.ps1")
+    )
+    visible = run([sys.executable, "test.py"], workspace)
     checks["visibleRegression"] = visible.returncode == 0
     checks["diffCheck"] = run(["git", "diff", "--check"], workspace).returncode == 0
 

@@ -1,16 +1,18 @@
 package io.haifa.agent.testing.delivery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.common.io.SecureFilePermissions;
+import io.haifa.agent.testing.evidence.Sha256Digests;
+import io.haifa.agent.testing.repository.RepositoryRevision;
+import io.haifa.agent.testing.run.SafeRunRoot;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -35,18 +37,23 @@ public final class AutonomousDeliveryCampaign {
         this.random = Objects.requireNonNull(random, "random must not be null");
     }
 
-    public Path initialize(Path runParent, List<Path> repositoryRoots, AutonomousDeliveryCaseCatalog catalog)
-            throws IOException {
-        return initialize(runParent, repositoryRoots, catalog, List.of());
-    }
-
     public Path initialize(
             Path runParent,
             List<Path> repositoryRoots,
             AutonomousDeliveryCaseCatalog catalog,
-            List<Path> historicalBaselineRoots)
+            List<Path> historicalBaselineRoots,
+            AutonomousDeliveryMatrixManifest matrix,
+            AutonomousDeliveryMatrixManifest.Combination matrixCombination,
+            RepositoryRevision productRevision,
+            RepositoryRevision testConfigRevision)
             throws IOException {
-        Path parent = requireSafeParent(runParent, repositoryRoots);
+        Objects.requireNonNull(matrix, "matrix must not be null");
+        Objects.requireNonNull(matrixCombination, "matrixCombination must not be null");
+        Objects.requireNonNull(productRevision, "productRevision must not be null")
+                .requireClean("product repository");
+        Objects.requireNonNull(testConfigRevision, "testConfigRevision must not be null")
+                .requireClean("test-config repository");
+        Path parent = SafeRunRoot.requireExternalExistingParent(runParent, repositoryRoots, "run parent");
         List<LinkedHashMap<String, Object>> baselineEntries = new java.util.ArrayList<>();
         for (Path baselineRoot : historicalBaselineRoots) {
             Path baseline = baselineRoot.toAbsolutePath().normalize().toRealPath();
@@ -69,13 +76,13 @@ public final class AutonomousDeliveryCampaign {
         String campaignId = "autonomous-delivery-" + CAMPAIGN_TIME.format(now()) + "-" + randomSuffix();
         Path campaign = parent.resolve(campaignId);
         Files.createDirectory(campaign);
-        setOwnerOnly(campaign);
+        SecureFilePermissions.secureDirectory(campaign);
         for (String directory :
                 List.of("immutable-input", "baseline", "phase-0", "phase-1", "phase-2", "phase-3", "comparison")) {
             Files.createDirectory(campaign.resolve(directory));
         }
         LinkedHashMap<String, Object> manifest = new LinkedHashMap<>();
-        manifest.put("schemaVersion", 1);
+        manifest.put("schemaVersion", 3);
         manifest.put("campaignId", campaignId);
         manifest.put("createdAt", now().toString());
         manifest.put("catalogId", catalog.catalogId());
@@ -83,6 +90,11 @@ public final class AutonomousDeliveryCampaign {
         manifest.put("catalogSha256", catalog.catalogSha256());
         manifest.put("harnessProtocolVersion", catalog.harnessProtocol().version());
         manifest.put("harnessProtocolSha256", catalog.harnessProtocol().sha256());
+        manifest.put("matrixRef", matrix.matrixId());
+        manifest.put("matrixCompatibleAgentBaselineCommit", matrix.compatibleAgentBaselineCommit());
+        manifest.put("matrixCombination", matrixCombination);
+        manifest.put("productRevision", productRevision);
+        manifest.put("testConfigRevision", testConfigRevision);
         manifest.put("maxParallelExternalCalls", 1);
         manifest.put("historicalCampaignsAreReadOnly", true);
         json.writerWithDefaultPrettyPrinter()
@@ -106,45 +118,11 @@ public final class AutonomousDeliveryCampaign {
         return Instant.ofEpochMilli(clock.millis());
     }
 
-    static Path requireSafeParent(Path value, List<Path> repositoryRoots) throws IOException {
-        Path candidate = Objects.requireNonNull(value, "run parent must not be null")
-                .toAbsolutePath()
-                .normalize();
-        if (!Files.isDirectory(candidate)) {
-            throw new IllegalArgumentException("run parent must be an existing absolute directory");
-        }
-        Path parent = candidate.toRealPath();
-        Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
-        if (parent.getParent() == null || parent.equals(home)) {
-            throw new IllegalArgumentException("run parent must not be a filesystem root or user home");
-        }
-        for (Path repositoryRoot : repositoryRoots) {
-            Path repository = repositoryRoot.toAbsolutePath().normalize().toRealPath();
-            if (parent.startsWith(repository) || repository.startsWith(parent)) {
-                throw new IllegalArgumentException("run parent must not overlap a Git repository");
-            }
-        }
-        return parent;
-    }
-
     private String randomSuffix() {
         StringBuilder value = new StringBuilder(8);
         for (int index = 0; index < 8; index++) {
             value.append(SUFFIX_ALPHABET[random.nextInt(SUFFIX_ALPHABET.length)]);
         }
         return value.toString();
-    }
-
-    private static void setOwnerOnly(Path directory) throws IOException {
-        try {
-            Files.setPosixFilePermissions(
-                    directory,
-                    EnumSet.of(
-                            PosixFilePermission.OWNER_READ,
-                            PosixFilePermission.OWNER_WRITE,
-                            PosixFilePermission.OWNER_EXECUTE));
-        } catch (UnsupportedOperationException ignored) {
-            // Windows ACL isolation is verified in its platform gate.
-        }
     }
 }

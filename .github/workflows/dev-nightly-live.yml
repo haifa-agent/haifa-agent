@@ -13,18 +13,61 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
-    deepseek-live-smoke:
-        name: DeepSeek live smoke
+    suite-governance-plan:
+        name: Nightly Suite plan
         runs-on: ubuntu-latest
-        timeout-minutes: 20
-        environment: ai-live-test
-        env:
-            HAIFA_DEEPSEEK_LIVE_TEST: "true"
-            DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        timeout-minutes: 15
         steps:
             - uses: actions/checkout@v4
               with:
                   ref: dev
+            - name: Require private test-config token
+              env:
+                  TEST_CONFIG_TOKEN: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+              run: test -n "$TEST_CONFIG_TOKEN"
+            - uses: actions/checkout@v4
+              with:
+                  repository: haifa-agent/haifa-agent-test-config
+                  token: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+                  path: test-config
+            - uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: "21"
+                  cache: maven
+            - name: Prepare external run root
+              run: mkdir -p "$RUNNER_TEMP/haifa-test-runs"
+            - name: Plan Nightly Suite without external calls
+              env:
+                  HAIFA_TEST_RUN_ROOT: ${{ runner.temp }}/haifa-test-runs
+                  HAIFA_TEST_MATRIX_COMBINATION: linux-deepseek-primary
+              run: bash test-config/scripts/run-suite.sh nightly-v1
+
+    deepseek-live-smoke:
+        name: DeepSeek live smoke suite
+        needs: suite-governance-plan
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        environment: ai-live-test
+        env:
+            DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+            HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD: "3.0"
+            HAIFA_TEST_APPROVED_PLAN_SHA256: 4d13640977fdb973d0f21815788e716776de59df09d0db9f4a3535f7fe114761
+            HAIFA_TEST_MATRIX_COMBINATION: linux-deepseek-primary
+            HAIFA_TEST_RUN_ROOT: ${{ runner.temp }}/haifa-test-runs
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: dev
+            - name: Require private test-config token
+              env:
+                  TEST_CONFIG_TOKEN: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+              run: test -n "$TEST_CONFIG_TOKEN"
+            - uses: actions/checkout@v4
+              with:
+                  repository: haifa-agent/haifa-agent-test-config
+                  token: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+                  path: test-config
             - uses: actions/setup-java@v4
               with:
                   distribution: temurin
@@ -32,11 +75,15 @@ jobs:
                   cache: maven
             - name: Require DeepSeek test key
               run: test -n "$DEEPSEEK_API_KEY"
-            - name: Run DeepSeek LiveIT
-              run: >
-                  sh ./mvnw
-                  -pl :haifa-agent-model-openai-compatible
-                  -am
-                  -Pci-integration
-                  -DskipITs=false
-                  verify
+            - name: Prepare external run root
+              run: mkdir -p "$HAIFA_TEST_RUN_ROOT"
+            - name: Execute reviewed provider smoke suite
+              run: bash test-config/scripts/run-suite.sh nightly-provider-smoke-v1 --execute
+            - name: Upload redacted suite evidence
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: nightly-provider-smoke-evidence
+                  path: ${{ runner.temp }}/haifa-test-runs
+                  if-no-files-found: warn
+                  retention-days: 7

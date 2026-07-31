@@ -29,18 +29,22 @@ Integration 与 E2E 之间的层级：
 - `haifa-agent-testkit`：稳定 Case Catalog、Suite Runner、断言和跨模块测试辅助能力；
 - `haifa-agent-test-fixtures`：多个测试模块共享、可安全进入源码仓库的小型 Fixture；
 - `haifa-agent-integration-tests`：确定性的跨模块和测试编排契约验证；
-- `haifa-agent-live-tests`：真实外部 Provider 的窄范围连通性与兼容性验证；
 - `haifa-agent-e2e-tests`：完整 CLI/AgentRun 路径，包含 Simulated 与显式 opt-in Live E2E。
+
+真实外部 Provider 的窄 Probe 与对应 Adapter 相邻保存，例如 CP-01 的 `DeepSeekLiveIT`；需要完整
+产品入口的 Live 场景进入 E2E 模块。可执行 Runtime 示例已迁入 Applications，不再作为测试模块。
 
 自主交付泛化能力资产由 `haifa-agent-test-fixtures` 保存稳定输入和 Schema，
 `haifa-agent-testkit` 保存 Catalog 校验、Suite 解析、Campaign 隔离与 Harness 编排。真实运行
-产物始终写到主仓、`docs/` 和 `test-config/` 之外。
+产物始终写到主仓、`docs/` 和 `test-config/` 之外。Phase 前置的只读 Analyze 与 Trace Replay
+使用同一 Deterministic Probe Executor；平台入口和私有 Suite 不复制 Maven 命令、超时、Secret
+隔离或证据解析逻辑。
 
 Critical Path v1 使用稳定 `CP-01`～`CP-11`：
 
 | Case | 路径 | 当前实现 |
 | --- | --- | --- |
-| `CP-01` | 真实模型连通与响应 | `PrimaryModelLiveIT` |
+| `CP-01` | 真实模型连通与响应 | `DeepSeekLiveIT`（OpenAI-compatible 适配器相邻测试） |
 | `CP-02` | 单文件缺陷修复 | 复用 `CodingAgentLiveE2E#repairsSingleFileBoundaryDefect` |
 | `CP-03` | 多文件功能实现 | 复用 `CodingAgentLiveE2E#implementsMultiFileDiscountFeature` |
 | `CP-04` | 首次执行失败后诊断恢复 | 复用 `CodingAgentLiveE2E#diagnosesFailedExecutionAndRecovers` |
@@ -57,9 +61,17 @@ Suite、Matrix、Environment、Secret 引用和预算。Runner 通过 `HAIFA_TES
 仓，不建立 Maven 依赖，也不把私有内容打进制品。
 
 首版 Runner 一次执行当前主机上的一个 Suite/环境。Matrix 由 CI 或发布编排层展开为独立 Job，并在
-每个 Job 中注入对应 Provider、模型和平台环境后调用 Runner；Runner 当前只校验 Suite 引用的 Matrix
-文件存在并记录其版本，不在单个 JVM 内跨平台或自动遍历 Provider。Suite 的费用字段是执行批准上限，
-实际费用核算仍由 Provider usage 汇总和 CI 门禁负责。
+每个 Job 中显式选择一个 Combination；Runner 校验 Combination 存在且与 Host OS 一致，不在单个
+JVM 内跨平台或自动遍历 Provider。Execute 要求独立注入
+`HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD`，Suite 的费用估算上限不得超过获批额度；报告记录两者，
+实际费用核算仍由 Provider Usage 汇总和 CI 门禁负责。Runner 还为 Suite、预算、选中 Combination、
+Case 和解析后的公共 Selector 生成稳定计划 SHA-256；Execute 必须与外部批准的
+`HAIFA_TEST_APPROVED_PLAN_SHA256` 一致，避免配置仓或 Catalog 漂移被静默执行。
+
+Critical Path 与 Autonomous Delivery 的原生报告和 Budget 继续独立；两者额外生成版本 1
+`result-projection-v1.json`，用于跨 Suite 汇总 Case、平台、版本、共同状态、原生状态、Usage 摘要、
+失败分类和相对证据引用。Projection 不是新的 Gate 事实源，不得覆盖 Maven 状态或
+Autonomous Delivery `gatePassed`。
 
 边界约束：
 
@@ -69,7 +81,16 @@ Suite、Matrix、Environment、Secret 引用和预算。Runner 通过 `HAIFA_TES
 - API Key、Token、生产数据、真实 Host Path、原始 Prompt/Provider 响应和运行生成的数据库、Trace、
   Transcript、Workspace 不得进入本目录；
 - 真实模型、外部 MCP、Web Provider 和高成本 E2E 必须保持显式 opt-in，并使用独立测试凭据与预算。
-- Suite Runner 在执行前必须验证开关、Secret、运行根和预算；JUnit assumption skip 不能被报告为通过；
+- Suite Runner 在执行前必须一次性验证所选 Suite 的全部开关、Secret、运行根和预算，不能运行到
+  后续 Case 才发现缺少凭据；JUnit assumption skip 不能被报告为通过；
+- Suite Runner 与 Evaluation Harness 必须复用同一跨平台进程树 Tracker；超时或父进程先退出时仍需
+  收敛已观察后代，存在清理介入或残留进程不能成为 PASS；
+- Critical Path 与 Evaluation 必须复用同一证据 Manifest 和只读终结能力；每次执行使用唯一证据根，
+  禁止覆盖历史报告或把后续批次追加到已终结目录；
+- Critical Path 与 Evaluation 必须复用同一 `SafeRunRoot`，解析符号链接祖先并拒绝文件系统根、
+  用户 Home、代码仓内部及包含代码仓的上层目录；
+- Critical Path 与 Evaluation 必须复用同一流式 Secret Scanner；扫描只记录命中文件的逻辑路径，
+  不记录 Secret 值，任一命中必须让批次失败并在只读终结前写入报告；
 - 测试运行产物写入 `HAIFA_TEST_RUN_ROOT`，不得写入主仓或 `test-config`。
 
 11 号能力 Task 02 的 Journal Contract 测试与 SQLite Adapter 相邻放置，并以同一测试方法验证

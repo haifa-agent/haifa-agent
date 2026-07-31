@@ -18,6 +18,9 @@ class CriticalPathCatalogTest {
                         .map(CriticalPathCase::caseId)
                         .sorted()
                         .toList());
+        CriticalPathCase primaryModel = CriticalPathCatalog.require("CP-01");
+        assertEquals(":haifa-agent-model-openai-compatible", primaryModel.module());
+        assertEquals("DeepSeekLiveIT", primaryModel.testSelector());
     }
 
     @Test

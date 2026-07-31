@@ -14,6 +14,58 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    suite-governance-plan:
+        name: Suite governance plan (${{ matrix.os }})
+        if: github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/dev'
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: ubuntu-latest
+                      combination: linux-deepseek-primary
+                    - os: windows-latest
+                      combination: windows-deepseek-primary
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 15
+        env:
+            HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
+        steps:
+            - uses: actions/checkout@v4
+            - name: Require private test-config token
+              shell: bash
+              env:
+                  TEST_CONFIG_TOKEN: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+              run: test -n "$TEST_CONFIG_TOKEN"
+            - uses: actions/checkout@v4
+              with:
+                  repository: haifa-agent/haifa-agent-test-config
+                  token: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+                  path: test-config
+            - uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: "21"
+                  cache: maven
+            - name: Prepare external run root (Unix)
+              if: runner.os != 'Windows'
+              run: |
+                  mkdir -p "$RUNNER_TEMP/haifa-test-runs"
+                  echo "HAIFA_TEST_RUN_ROOT=$RUNNER_TEMP/haifa-test-runs" >> "$GITHUB_ENV"
+            - name: Prepare external run root (Windows)
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  $runRoot = Join-Path $env:RUNNER_TEMP 'haifa-test-runs'
+                  New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+                  "HAIFA_TEST_RUN_ROOT=$runRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            - name: Plan Nightly Suite (Unix)
+              if: runner.os != 'Windows'
+              run: bash test-config/scripts/run-suite.sh nightly-v1
+            - name: Plan Nightly Suite (Windows)
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: .\test-config\scripts\run-suite.ps1 nightly-v1
+
     fast-cross-platform:
         name: Fast verify (${{ matrix.os }})
         if: github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/dev'
