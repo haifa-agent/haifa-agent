@@ -75,7 +75,7 @@ public final class SqlitePolicySnapshotStore implements PolicySnapshotStore {
                         .map(ProjectTrustRef::value)
                         .equals(Optional.ofNullable(row.projectTrustRef()))
                 || !snapshot.contentDigest().equals(row.contentDigest())
-                || !snapshot.createdAt().equals(row.createdAt())) {
+                || snapshot.createdAt().toEpochMilli() != row.createdAt().toEpochMilli()) {
             throw new IllegalStateException("policy snapshot columns do not match payload");
         }
         return snapshot;

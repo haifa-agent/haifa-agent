@@ -12,6 +12,18 @@ import java.util.List;
 import java.util.Optional;
 
 public interface CodingSessionStore {
+    CodingModelPreference createModelPreference(CodingModelPreference preference);
+
+    Optional<CodingModelPreference> findModelPreference(AgentSessionId sessionId);
+
+    CodingModelPreference changeModel(
+            AgentSessionId sessionId,
+            long expectedRevision,
+            String modelId,
+            String idempotencyKeyDigest,
+            String requestDigest,
+            Instant updatedAt);
+
     CodingCommandBinding reserveCommand(CodingCommandBinding candidate);
 
     CodingCommandBinding completeCommand(String dispatchKey, AgentRunId runId);

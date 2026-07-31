@@ -12,10 +12,12 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 
 public final class InMemoryCodingSessionStore implements CodingSessionStore {
+    private final Map<AgentSessionId, CodingModelPreference> modelPreferences = new LinkedHashMap<>();
     private final Map<String, CodingCommandBinding> commands = new LinkedHashMap<>();
     private final Map<AgentSessionId, CodingSessionActivity> activities = new LinkedHashMap<>();
     private final Map<String, CodingFollowUp> followUps = new LinkedHashMap<>();
@@ -399,6 +401,50 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
         }
         eventCursors.put(sessionId, cursor);
         return cursor;
+    }
+
+    @Override
+    public synchronized CodingModelPreference createModelPreference(CodingModelPreference preference) {
+        Objects.requireNonNull(preference, "preference must not be null");
+        CodingModelPreference existing = modelPreferences.putIfAbsent(preference.sessionId(), preference);
+        if (existing != null && !existing.modelId().equals(preference.modelId())) {
+            throw conflict("coding session model preference already exists");
+        }
+        return existing == null ? preference : existing;
+    }
+
+    @Override
+    public synchronized Optional<CodingModelPreference> findModelPreference(AgentSessionId sessionId) {
+        return Optional.ofNullable(
+                modelPreferences.get(Objects.requireNonNull(sessionId, "sessionId must not be null")));
+    }
+
+    @Override
+    public synchronized CodingModelPreference changeModel(
+            AgentSessionId sessionId,
+            long expectedRevision,
+            String modelId,
+            String idempotencyKeyDigest,
+            String requestDigest,
+            Instant updatedAt) {
+        CodingModelPreference current = modelPreferences.get(Objects.requireNonNull(sessionId));
+        if (current == null) throw conflict("coding session model preference is unavailable");
+        if (current.idempotencyKeyDigest().filter(idempotencyKeyDigest::equals).isPresent()) {
+            if (current.requestDigest().filter(requestDigest::equals).isEmpty()) {
+                throw conflict("model selection idempotency key is bound to another request");
+            }
+            return current;
+        }
+        if (current.revision() != expectedRevision) throw conflict("coding model preference revision is stale");
+        CodingModelPreference updated = new CodingModelPreference(
+                sessionId,
+                modelId,
+                current.revision() + 1,
+                Optional.of(idempotencyKeyDigest),
+                Optional.of(requestDigest),
+                updatedAt);
+        modelPreferences.put(sessionId, updated);
+        return updated;
     }
 
     private CodingSessionActivity requireActivity(AgentSessionId sessionId) {

@@ -37,12 +37,21 @@ haifa:
       tenant: ${HAIFA_PERSONAL_TENANT:local}
       principal: ${HAIFA_PERSONAL_PRINCIPAL:public-user}
       reviewer: ${HAIFA_PERSONAL_REVIEWER:public-user}
-    model:
-      mode: ${HAIFA_PERSONAL_MODEL_MODE:remote}
-      allow-deterministic: ${HAIFA_PERSONAL_ALLOW_DETERMINISTIC:false}
-      endpoint: ${HAIFA_PERSONAL_MODEL_ENDPOINT:https://api.deepseek.com}
-      provider-model-id: ${HAIFA_PERSONAL_MODEL_ID:deepseek-v4-flash}
-      credential-reference: ${HAIFA_PERSONAL_MODEL_CREDENTIAL:env://DEEPSEEK_API_KEY}
+    model-providers:
+      - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ID:deepseek}
+        display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME:DeepSeek}
+        mode: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODE:remote}
+        allow-deterministic: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC:false}
+        endpoint: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT:https://api.deepseek.com}
+        credential-reference: ${HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE:env://DEEPSEEK_API_KEY}
+        models:
+          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID:deepseek-v4-pro}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME:DeepSeek V4 Pro}
+            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID:deepseek-v4-pro}
+          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID:deepseek-v4-flash}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME:DeepSeek V4 Flash}
+            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID:deepseek-v4-flash}
+    default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-v4-flash}
     web:
       enabled: ${HAIFA_PERSONAL_WEB_ENABLED:false}
       credential-reference: ${HAIFA_PERSONAL_WEB_CREDENTIAL:env://ALIYUN_IQS_API_KEY}

@@ -4,6 +4,7 @@ import {
   Brain,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   CircleAlert,
   Copy,
@@ -36,6 +37,7 @@ import type {
   Interaction,
   Memory,
   MemoryCandidate,
+  Model,
   Run,
 } from "./api/generated";
 import {
@@ -58,6 +60,43 @@ const dateTime = new Intl.DateTimeFormat("zh-CN", {
   hour: "2-digit",
   minute: "2-digit",
 });
+
+type SlashMenuState =
+  | { stage: "commands" }
+  | { stage: "providers" }
+  | { stage: "models"; providerId: string };
+
+interface ModelProviderGroup {
+  id: string;
+  displayName: string;
+  models: Model[];
+}
+
+const slashCommands = [
+  {
+    id: "model",
+    command: "/model",
+    label: "选择模型",
+    description: "按模型厂商和模型切换当前会话使用的 LLM",
+  },
+] as const;
+
+function groupModelsByProvider(models: Model[]): ModelProviderGroup[] {
+  const providers = new Map<string, ModelProviderGroup>();
+  models.forEach((model) => {
+    const existing = providers.get(model.providerId);
+    if (existing) {
+      existing.models.push(model);
+      return;
+    }
+    providers.set(model.providerId, {
+      id: model.providerId,
+      displayName: model.providerDisplayName,
+      models: [model],
+    });
+  });
+  return [...providers.values()];
+}
 
 interface RecommendedQuestionState {
   runId: string;
@@ -676,6 +715,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [recommendedQuestions, setRecommendedQuestions] =
     useState<RecommendedQuestionState | null>(null);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
+  const [newModelId, setNewModelId] = useState("");
+  const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
   >(null);
@@ -784,6 +826,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       client.memoryCandidates(controller.signal),
       client.memories(controller.signal),
     ]).then(([bootstrap, conversations, memoryCandidates, memories]) => {
+      setNewModelId(bootstrap.defaultModelId);
       dispatch({ type: "bootstrapLoaded", bootstrap, conversations, memoryCandidates, memories });
     }).catch((error) => {
       const message = safeError(error);
@@ -955,7 +998,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     void execute("提交消息", async () => {
       const conversation = state.selectedConversation
         ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key })
-        : await client.createConversation(message.slice(0, 32), message, { idempotencyKey: key });
+        : await client.createConversation(
+            message.slice(0, 32),
+            message,
+            { idempotencyKey: key },
+            newModelId || state.bootstrap?.defaultModelId,
+          );
       dispatch({ type: "setComposer", value: "" });
       if (state.selectedConversationId !== conversation.id) {
         selectConversation(conversation.id, "replace");
@@ -965,6 +1013,89 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       }
       await loadConversations();
     });
+  };
+
+  const selectModel = (modelId: string) => {
+    const conversation = state.selectedConversation;
+    if (!conversation) {
+      setNewModelId(modelId);
+      return;
+    }
+    if (conversation.activeRunId || !client.selectModel) return;
+    void execute("切换模型", async () => {
+      await client.selectModel!(conversation, modelId, { idempotencyKey: crypto.randomUUID() });
+      await loadConversation(conversation.id);
+      await loadConversations();
+    });
+  };
+
+  const configuredModels = state.bootstrap?.models ?? [];
+  const modelProviders = groupModelsByProvider(configuredModels);
+  const selectedModelId = state.selectedConversation?.model.model.id ?? newModelId;
+  const slashQuery = slashMenu?.stage === "commands"
+    ? state.composer.slice(1).trim().toLocaleLowerCase()
+    : "";
+  const visibleSlashCommands = slashCommands.filter((command) =>
+    !slashQuery
+    || command.command.slice(1).includes(slashQuery)
+    || command.label.toLocaleLowerCase().includes(slashQuery)
+  );
+  const selectedSlashProvider = slashMenu?.stage === "models"
+    ? modelProviders.find((provider) => provider.id === slashMenu.providerId) ?? null
+    : null;
+  const slashItemCount = slashMenu?.stage === "commands"
+    ? visibleSlashCommands.length
+    : slashMenu?.stage === "providers"
+      ? modelProviders.length
+      : selectedSlashProvider?.models.length ?? 0;
+
+  const updateComposer = (value: string) => {
+    dispatch({ type: "setComposer", value });
+    const slashInput = value.startsWith("/") && !value.includes("\n");
+    if (!slashInput) {
+      setSlashMenu(null);
+    } else if (!slashMenu || (slashMenu.stage !== "commands" && value !== "/model")) {
+      setSlashMenu({ stage: "commands" });
+    }
+    setSlashActiveIndex(0);
+  };
+
+  const activateSlashItem = (index: number) => {
+    if (!slashMenu) return;
+    if (slashMenu.stage === "commands") {
+      if (!visibleSlashCommands[index]) return;
+      dispatch({ type: "setComposer", value: "/model" });
+      setSlashMenu({ stage: "providers" });
+      const currentProviderIndex = modelProviders.findIndex((provider) =>
+        provider.models.some((model) => model.id === selectedModelId)
+      );
+      setSlashActiveIndex(Math.max(0, currentProviderIndex));
+      return;
+    }
+    if (slashMenu.stage === "providers") {
+      const provider = modelProviders[index];
+      if (!provider) return;
+      setSlashMenu({ stage: "models", providerId: provider.id });
+      const currentModelIndex = provider.models.findIndex((model) => model.id === selectedModelId);
+      setSlashActiveIndex(Math.max(0, currentModelIndex));
+      return;
+    }
+    const model = selectedSlashProvider?.models[index];
+    if (!model) return;
+    selectModel(model.id);
+    dispatch({ type: "setComposer", value: "" });
+    setSlashMenu(null);
+    setSlashActiveIndex(0);
+  };
+
+  const returnFromSlashMenu = () => {
+    if (slashMenu?.stage === "models") {
+      setSlashMenu({ stage: "providers" });
+    } else {
+      dispatch({ type: "setComposer", value: "/" });
+      setSlashMenu({ stage: "commands" });
+    }
+    setSlashActiveIndex(0);
   };
 
   const submit = (event: FormEvent) => {
@@ -1140,6 +1271,101 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             </div>
           )}
           <form className="composer" onSubmit={submit}>
+            {slashMenu && !composerDisabled && (
+              <section
+                className="slash-command-menu"
+                role="dialog"
+                aria-label={
+                  slashMenu.stage === "commands"
+                    ? "命令功能"
+                    : slashMenu.stage === "providers"
+                      ? "选择模型厂商"
+                      : `选择 ${selectedSlashProvider?.displayName ?? ""} 模型`
+                }
+              >
+                <header>
+                  {slashMenu.stage !== "commands" && (
+                    <button type="button" className="slash-back" onClick={returnFromSlashMenu}>
+                      返回
+                    </button>
+                  )}
+                  <div>
+                    <strong>
+                      {slashMenu.stage === "commands"
+                        ? "命令功能"
+                        : slashMenu.stage === "providers"
+                          ? "选择模型厂商"
+                          : selectedSlashProvider?.displayName}
+                    </strong>
+                    <span>
+                      {slashMenu.stage === "commands"
+                        ? "选择一个命令继续"
+                        : slashMenu.stage === "providers"
+                          ? "先选择提供模型服务的厂商"
+                          : "选择本会话后续消息使用的模型"}
+                    </span>
+                  </div>
+                  <kbd>Esc</kbd>
+                </header>
+                <div className="slash-command-options" role="listbox">
+                  {slashMenu.stage === "commands" && visibleSlashCommands.map((command, index) => (
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={index === slashActiveIndex}
+                      className={index === slashActiveIndex ? "active" : ""}
+                      key={command.id}
+                      onMouseEnter={() => setSlashActiveIndex(index)}
+                      onClick={() => activateSlashItem(index)}
+                    >
+                      <code>{command.command}</code>
+                      <span><strong>{command.label}</strong><small>{command.description}</small></span>
+                      <ChevronRight size={17} />
+                    </button>
+                  ))}
+                  {slashMenu.stage === "providers" && modelProviders.map((provider, index) => (
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={index === slashActiveIndex}
+                      className={index === slashActiveIndex ? "active" : ""}
+                      key={provider.id}
+                      onMouseEnter={() => setSlashActiveIndex(index)}
+                      onClick={() => activateSlashItem(index)}
+                    >
+                      <span className="slash-provider-mark">{provider.displayName.slice(0, 1)}</span>
+                      <span>
+                        <strong>{provider.displayName}</strong>
+                        <small>{provider.models.length} 个可用模型 · {provider.id}</small>
+                      </span>
+                      <ChevronRight size={17} />
+                    </button>
+                  ))}
+                  {slashMenu.stage === "models" && selectedSlashProvider?.models.map((model, index) => (
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={index === slashActiveIndex}
+                      className={index === slashActiveIndex ? "active" : ""}
+                      key={model.id}
+                      onMouseEnter={() => setSlashActiveIndex(index)}
+                      onClick={() => activateSlashItem(index)}
+                    >
+                      <Bot size={18} />
+                      <span>
+                        <strong>{model.displayName}</strong>
+                        <small>{model.id}</small>
+                      </span>
+                      {model.id === selectedModelId
+                        ? <span className="slash-current"><Check size={13} /> 当前</span>
+                        : <ChevronRight size={17} />}
+                    </button>
+                  ))}
+                  {slashItemCount === 0 && <p>没有匹配的命令或可用模型。</p>}
+                </div>
+                <footer><span>↑↓ 选择</span><span>Enter 确认</span></footer>
+              </section>
+            )}
             {runActive && (
               <div className="active-run-note">
                 <span><RefreshCw className="spin" size={15} /> 当前任务运行中，完成或停止后可继续输入。</span>
@@ -1150,14 +1376,37 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               <textarea
                 value={state.composer}
                 disabled={composerDisabled}
-                onChange={(event) => dispatch({ type: "setComposer", value: event.target.value })}
+                aria-expanded={Boolean(slashMenu)}
+                aria-haspopup="dialog"
+                onChange={(event) => updateComposer(event.target.value)}
                 onKeyDown={(event) => {
+                  if (slashMenu && event.key === "Escape") {
+                    event.preventDefault();
+                    setSlashMenu(null);
+                    return;
+                  }
+                  if (slashMenu && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+                    event.preventDefault();
+                    if (slashItemCount > 0) {
+                      setSlashActiveIndex((current) =>
+                        event.key === "ArrowDown"
+                          ? (current + 1) % slashItemCount
+                          : (current - 1 + slashItemCount) % slashItemCount
+                      );
+                    }
+                    return;
+                  }
+                  if (slashMenu && event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    activateSlashItem(slashActiveIndex);
+                    return;
+                  }
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={runActive ? "当前任务运行中" : "输入消息，Enter 发送，Shift+Enter 换行"}
+                placeholder={runActive ? "当前任务运行中" : "输入消息或 / 命令，Enter 发送"}
                 rows={2}
               />
             </label>

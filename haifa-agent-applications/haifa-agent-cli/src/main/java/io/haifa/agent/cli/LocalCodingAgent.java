@@ -199,14 +199,21 @@ final class LocalCodingAgent implements AutoCloseable {
         if (optIn == null || !Boolean.parseBoolean(optIn.trim())) {
             return false;
         }
-        URI endpoint = configuration.model().endpoint();
-        if ("https".equalsIgnoreCase(endpoint.getScheme())) {
+        List<URI> endpoints = configuration.availableModels().stream()
+                .map(CliConfiguration.Model::endpoint)
+                .toList();
+        if (endpoints.stream().allMatch(endpoint -> "https".equalsIgnoreCase(endpoint.getScheme()))) {
             return false;
         }
-        String host = endpoint.getHost();
-        boolean loopback = host != null
-                && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(host.toLowerCase(Locale.ROOT));
-        if (!"http".equalsIgnoreCase(endpoint.getScheme()) || !loopback) {
+        boolean safe = endpoints.stream().allMatch(endpoint -> {
+            if ("https".equalsIgnoreCase(endpoint.getScheme())) return true;
+            String host = endpoint.getHost();
+            return "http".equalsIgnoreCase(endpoint.getScheme())
+                    && host != null
+                    && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
+                            .contains(host.toLowerCase(Locale.ROOT));
+        });
+        if (!safe) {
             throw new IllegalArgumentException(
                     "HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL permits only an HTTP loopback model endpoint");
         }
@@ -390,7 +397,9 @@ final class LocalCodingAgent implements AutoCloseable {
                             executionPlatform == null ? null : executionPlatform.profile(),
                             CodingToolchainEnvironmentProfile.defaultScratchSpace());
             var interactions = persistence.ports().interactions();
-            ResolvedModelSnapshot modelSnapshot = modelSnapshot(configuration);
+            Map<String, ResolvedModelSnapshot> modelSnapshots = configuration.availableModels().stream()
+                    .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                            CliConfiguration.Model::id, LocalCodingAgent::modelSnapshot));
             List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
             var taskModes = new CodingTaskModeResolver(persistence.ports().state());
             var deliveryEvidence =
@@ -474,7 +483,13 @@ final class LocalCodingAgent implements AutoCloseable {
                                     1,
                                     configuration.timeout().toMillis(),
                                     configuration.timeout().toMillis()),
-                            modelSnapshot))
+                            Optional.ofNullable(modelSnapshots.get(profileId))
+                                    .or(() -> "cli-coding".equals(profileId)
+                                            ? Optional.of(modelSnapshots.get(
+                                                    configuration.model().id()))
+                                            : Optional.empty())
+                                    .orElseThrow(() -> new IllegalArgumentException(
+                                            "MODEL_SELECTION_REQUIRED: configured model is unavailable"))))
                     .build();
             persistence.attachProjection(runtime);
             TrustedProductCallerProvider callers = () -> new TrustedProductCaller(tenant, principal);
@@ -497,7 +512,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     callers,
                     runtime,
                     identifiers,
-                    clock);
+                    clock,
+                    new CliCodingModelCatalog(configuration));
             CodingShellService shell = executionPlatform == null
                     ? null
                     : new CliCodingShellService(
@@ -743,14 +759,17 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration configuration) {
-        CliConfiguration.Model model = configuration.model();
+        return modelSnapshot(configuration.model());
+    }
+
+    static ResolvedModelSnapshot modelSnapshot(CliConfiguration.Model model) {
         if (model.providerId().equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
             return bailianModelSnapshot(model);
         }
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
                 "cli-v1",
-                new ModelDefinitionId(model.modelId()),
+                new ModelDefinitionId(model.id()),
                 "cli-v1",
                 model.modelId(),
                 "openai-compatible",
@@ -776,9 +795,9 @@ final class LocalCodingAgent implements AutoCloseable {
                 new AliyunBailianProviderFactory.ProviderConfiguration(
                         "cli-v1", model.workspaceId(), model.region(), new CredentialRef(model.credentialRef())),
                 List.of(new AliyunBailianProviderFactory.ModelProfile(
-                        new ModelDefinitionId(model.modelId()),
+                        new ModelDefinitionId(model.id()),
                         "cli-v1",
-                        model.modelId(),
+                        model.displayName(),
                         model.modelId(),
                         EnumSet.of(
                                 ModelCapability.TEXT_CHAT,

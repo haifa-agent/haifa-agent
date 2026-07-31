@@ -14,15 +14,29 @@ public final class PersonalApiDtos {
             String connection,
             String caller,
             List<String> capabilities,
-            String assemblyDigest) {}
+            String assemblyDigest,
+            String defaultModelId,
+            List<Model> models) {}
 
-    public record CreateConversation(String displayName, String message) {}
+    public record CreateConversation(String displayName, String message, String modelId) {}
 
     public record SubmitMessage(String message) {}
 
     public record RecommendedQuestions(List<String> questions) {}
 
     public record UpdateConversation(String displayName, String status) {}
+
+    public record Model(
+            String id,
+            String displayName,
+            String providerId,
+            String providerDisplayName,
+            List<String> capabilities,
+            int contextWindow) {}
+
+    public record ModelSelection(Model model, long revision, boolean available) {}
+
+    public record SelectModel(String modelId) {}
 
     public record Conversation(
             String id,
@@ -31,7 +45,8 @@ public final class PersonalApiDtos {
             Optional<String> activeRunId,
             Instant createdAt,
             Instant lastActivityAt,
-            long revision) {}
+            long revision,
+            ModelSelection model) {}
 
     public record Turn(String id, String role, Optional<String> runId, long sequence, String text, Instant createdAt) {}
 

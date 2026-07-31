@@ -30,7 +30,7 @@ class TerminalCommandRouterTest {
 
     @Test
     void rejectsDeferredCapabilitiesWithoutPretendingTheyExist() {
-        assertThat(router.route("/model")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);
+        assertThat(router.route("/model")).isEqualTo(TerminalCommand.MODEL);
         assertThat(router.route("/login")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);
         assertThat(router.route("/tree")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);
         assertThat(router.route("/fork")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);

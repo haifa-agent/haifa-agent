@@ -3,6 +3,40 @@
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="io.haifa.agent.application.project.persistence.CodingSessionMapper">
+    <resultMap id="modelPreferenceRow" type="io.haifa.agent.application.project.persistence.CodingModelPreferenceRow">
+        <constructor>
+            <arg column="session_id" javaType="java.lang.String"/>
+            <arg column="schema_version" javaType="java.lang.String"/>
+            <arg column="model_id" javaType="java.lang.String"/>
+            <arg column="revision" javaType="_long"/>
+            <arg column="idempotency_key_digest" javaType="java.lang.String"/>
+            <arg column="request_digest" javaType="java.lang.String"/>
+            <arg column="updated_at_ms" javaType="java.time.Instant"
+                 typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findModelPreference" resultMap="modelPreferenceRow">
+        SELECT * FROM coding_session_model_preference WHERE session_id = #{sessionId}
+    </select>
+
+    <insert id="insertModelPreference">
+        INSERT INTO coding_session_model_preference(
+            session_id, schema_version, model_id, revision,
+            idempotency_key_digest, request_digest, updated_at_ms
+        ) VALUES (
+            #{row.sessionId}, #{row.schemaVersion}, #{row.modelId}, #{row.revision},
+            #{row.idempotencyKeyDigest}, #{row.requestDigest}, #{row.updatedAt}
+        )
+    </insert>
+
+    <update id="changeModel">
+        UPDATE coding_session_model_preference
+        SET model_id = #{modelId}, revision = revision + 1,
+            idempotency_key_digest = #{idempotencyKeyDigest},
+            request_digest = #{requestDigest}, updated_at_ms = #{updatedAt}
+        WHERE session_id = #{sessionId} AND revision = #{expectedRevision}
+    </update>
 
     <resultMap id="activityRow" type="io.haifa.agent.application.project.persistence.CodingSessionActivityRow">
         <constructor>

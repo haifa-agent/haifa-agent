@@ -57,11 +57,16 @@ class PersonalAssistantWebFluxTest {
         registry.add("haifa.personal.data-directory", DATA::toString);
         registry.add("haifa.personal.continuation-key-base64", () -> Base64.getEncoder()
                 .encodeToString(new byte[32]));
-        registry.add("haifa.personal.model.mode", () -> "deterministic");
-        registry.add("haifa.personal.model.allow-deterministic", () -> "true");
-        registry.add("haifa.personal.model.endpoint", () -> "http://127.0.0.1:20999");
-        registry.add("haifa.personal.model.provider-model-id", () -> "personal-test");
-        registry.add("haifa.personal.model.credential-reference", () -> "env://UNUSED");
+        registry.add("haifa.personal.model-providers[0].id", () -> "personal-local");
+        registry.add("haifa.personal.model-providers[0].display-name", () -> "Local acceptance");
+        registry.add("haifa.personal.model-providers[0].mode", () -> "deterministic");
+        registry.add("haifa.personal.model-providers[0].allow-deterministic", () -> "true");
+        registry.add("haifa.personal.model-providers[0].endpoint", () -> "http://127.0.0.1:20999");
+        registry.add("haifa.personal.model-providers[0].credential-reference", () -> "env://UNUSED");
+        registry.add("haifa.personal.model-providers[0].models[0].id", () -> "personal-test");
+        registry.add("haifa.personal.model-providers[0].models[0].display-name", () -> "Personal test");
+        registry.add("haifa.personal.model-providers[0].models[0].provider-model-id", () -> "personal-test");
+        registry.add("haifa.personal.default-model-id", () -> "personal-test");
         registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
         registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
     }

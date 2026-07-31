@@ -13,6 +13,12 @@
         "responses": {"200": {"description": "Product bootstrap", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Bootstrap"}}}}}
       }
     },
+    "/api/v1/models": {
+      "get": {
+        "operationId": "listModels",
+        "responses": {"200": {"description": "Available models", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Model"}}}}}}
+      }
+    },
     "/api/v1/conversations": {
       "get": {
         "operationId": "listConversations",
@@ -57,6 +63,21 @@
         "operationId": "listTurns",
         "parameters": [{"$ref": "#/components/parameters/ConversationId"}, {"$ref": "#/components/parameters/Limit"}],
         "responses": {"200": {"description": "Turns", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Turn"}}}}}}
+      }
+    },
+    "/api/v1/conversations/{conversationId}/model": {
+      "patch": {
+        "operationId": "selectConversationModel",
+        "parameters": [
+          {"$ref": "#/components/parameters/ConversationId"},
+          {"$ref": "#/components/parameters/IfMatch"},
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SelectModel"}}}},
+        "responses": {
+          "200": {"description": "Selected model", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ModelSelection"}}}},
+          "409": {"$ref": "#/components/responses/Error"}
+        }
       }
     },
     "/api/v1/conversations/{conversationId}/messages": {
@@ -212,20 +233,22 @@
     "schemas": {
       "Bootstrap": {
         "type": "object",
-        "required": ["product", "apiVersion", "connection", "caller", "capabilities", "assemblyDigest"],
+        "required": ["product", "apiVersion", "connection", "caller", "capabilities", "assemblyDigest", "defaultModelId", "models"],
         "properties": {
           "product": {"type": "string"},
           "apiVersion": {"type": "string"},
           "connection": {"type": "string"},
           "caller": {"type": "string"},
           "capabilities": {"type": "array", "items": {"type": "string"}},
-          "assemblyDigest": {"type": "string"}
+          "assemblyDigest": {"type": "string"},
+          "defaultModelId": {"type": "string"},
+          "models": {"type": "array", "items": {"$ref": "#/components/schemas/Model"}}
         }
       },
       "CreateConversation": {
         "type": "object",
         "required": ["displayName", "message"],
-        "properties": {"displayName": {"type": "string"}, "message": {"type": "string"}}
+        "properties": {"displayName": {"type": "string"}, "message": {"type": "string"}, "modelId": {"type": "string"}}
       },
       "SubmitMessage": {
         "type": "object",
@@ -248,9 +271,35 @@
         "type": "object",
         "properties": {"displayName": {"type": "string"}, "status": {"type": "string"}}
       },
+      "Model": {
+        "type": "object",
+        "required": ["id", "displayName", "providerId", "providerDisplayName", "capabilities", "contextWindow"],
+        "properties": {
+          "id": {"type": "string"},
+          "displayName": {"type": "string"},
+          "providerId": {"type": "string"},
+          "providerDisplayName": {"type": "string"},
+          "capabilities": {"type": "array", "items": {"type": "string"}},
+          "contextWindow": {"type": "integer"}
+        }
+      },
+      "ModelSelection": {
+        "type": "object",
+        "required": ["model", "revision", "available"],
+        "properties": {
+          "model": {"$ref": "#/components/schemas/Model"},
+          "revision": {"type": "integer", "format": "int64"},
+          "available": {"type": "boolean"}
+        }
+      },
+      "SelectModel": {
+        "type": "object",
+        "required": ["modelId"],
+        "properties": {"modelId": {"type": "string"}}
+      },
       "Conversation": {
         "type": "object",
-        "required": ["id", "displayName", "status", "createdAt", "lastActivityAt", "revision"],
+        "required": ["id", "displayName", "status", "createdAt", "lastActivityAt", "revision", "model"],
         "properties": {
           "id": {"type": "string"},
           "displayName": {"type": "string"},
@@ -258,7 +307,8 @@
           "activeRunId": {"type": ["string", "null"]},
           "createdAt": {"type": "string", "format": "date-time"},
           "lastActivityAt": {"type": "string", "format": "date-time"},
-          "revision": {"type": "integer", "format": "int64"}
+          "revision": {"type": "integer", "format": "int64"},
+          "model": {"$ref": "#/components/schemas/ModelSelection"}
         }
       },
       "Turn": {

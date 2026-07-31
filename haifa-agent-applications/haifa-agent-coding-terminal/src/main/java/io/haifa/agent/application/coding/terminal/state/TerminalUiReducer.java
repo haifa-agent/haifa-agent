@@ -35,8 +35,8 @@ public final class TerminalUiReducer {
                     "",
                     view.summary().displayName(),
                     "queue: " + view.summary().queuedCount(),
-                    "",
-                    "",
+                    view.model().model().providerDisplayName(),
+                    view.model().model().displayName(),
                     view.summary().activeRunStatus().map(Enum::name).orElse("IDLE"),
                     "");
             return copy(

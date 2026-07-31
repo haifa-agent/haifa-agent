@@ -27,7 +27,11 @@ final class ProjectApplicationMigrations {
             new ApplicationMigration(
                     1_003,
                     "coding_session_management",
-                    "/io/haifa/agent/application/project/persistence/V1003__coding_session_management.sql"));
+                    "/io/haifa/agent/application/project/persistence/V1003__coding_session_management.sql"),
+            new ApplicationMigration(
+                    1_004,
+                    "coding_session_model_preference",
+                    "/io/haifa/agent/application/project/persistence/V1004__coding_session_model_preference.sql"));
 
     private ProjectApplicationMigrations() {}
 

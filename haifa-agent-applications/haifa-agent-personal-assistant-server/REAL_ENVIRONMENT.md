@@ -114,11 +114,19 @@ Continuation Key 文件必须长期保留。删除或更换它会使旧的加密
 后端使用以下关键配置：
 
 ```text
-HAIFA_PERSONAL_MODEL_MODE=remote
-HAIFA_PERSONAL_ALLOW_DETERMINISTIC=false
-HAIFA_PERSONAL_MODEL_ENDPOINT=https://api.deepseek.com
-HAIFA_PERSONAL_MODEL_ID=deepseek-v4-flash
-HAIFA_PERSONAL_MODEL_CREDENTIAL=env://DEEPSEEK_API_KEY
+HAIFA_PERSONAL_DEFAULT_MODEL_ID=deepseek-v4-flash
+HAIFA_PERSONAL_MODELPROVIDERS_0_ID=deepseek
+HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME=DeepSeek
+HAIFA_PERSONAL_MODELPROVIDERS_0_MODE=remote
+HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC=false
+HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT=https://api.deepseek.com
+HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE=env://DEEPSEEK_API_KEY
+HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID=deepseek-v4-pro
+HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME=DeepSeek V4 Pro
+HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID=deepseek-v4-pro
+HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID=deepseek-v4-flash
+HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME=DeepSeek V4 Flash
+HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID=deepseek-v4-flash
 HAIFA_PERSONAL_WEB_ENABLED=true
 HAIFA_PERSONAL_WEB_CREDENTIAL=env://ALIYUN_IQS_API_KEY
 HAIFA_PERSONAL_SKILL_ROOT=D:\agents\hermes-agent\optional-skills\finance
@@ -191,3 +199,78 @@ Credential lease；没有隐式 Provider fallback。
 其中带脚本资源的 `dcf-model`、`excel-author` 和 `stocks` 按当前 Skill 安全基线标记为
 `REVIEW_REQUIRED`，不会进入模型可用 Catalog；其余五个 finance Skill 会直接启用。配置可信目录
 只表示允许发现和读取包，不等同于批准包内脚本。
+
+## 7. macOS 一键启动
+
+macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚本对齐：
+
+- 构建或复用 Personal Server JAR 和 Personal Web `dist`；
+- 启动或复用 Utility MCP、Personal Server 和 Personal Web；
+- 固定使用 `127.0.0.1:20002/20001/20000` 并等待 HTTP 健康检查；
+- 密钥只注入后端子进程，不写入状态文件或日志；
+- 未知进程占用端口时直接失败；
+- 停止前核对 `last-start.json`、监听 PID、进程名和命令行身份标识。
+
+要求 macOS 已安装 Java 21、Maven、Node.js 22.x、npm 10.x，以及系统命令
+`curl`、`lsof`、`openssl`。默认读取：
+
+```text
+~/workspace/ss-deepseek.txt
+~/workspace/ss-aliyun-iqs.txt
+~/workspace/ss-haifa-personal-continuation.txt
+~/workspace/haifa/haifa-ai/haifa-ai-utility-mcp-server
+~/agents/hermes-agent/optional-skills/finance
+```
+
+前三个分别是 DeepSeek Key、Aliyun IQS Key 和持久 Continuation Key。Continuation Key 不存在时，
+脚本会生成随机 32 字节 Key，并把文件权限设为 `0600`。
+
+从主仓根目录启动：
+
+```bash
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh
+```
+
+路径不同时显式覆盖：
+
+```bash
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh \
+  --deepseek-key-file /absolute/secure/deepseek.txt \
+  --aliyun-iqs-key-file /absolute/secure/aliyun-iqs.txt \
+  --continuation-key-file /absolute/secure/personal-continuation.txt \
+  --utility-mcp-directory /absolute/src/haifa-ai-utility-mcp-server \
+  --personal-skill-root /absolute/skills/finance
+```
+
+也可以使用对应环境变量：
+
+```text
+HAIFA_DEEPSEEK_KEY_FILE
+HAIFA_ALIYUN_IQS_KEY_FILE
+HAIFA_PERSONAL_CONTINUATION_KEY_FILE
+HAIFA_UTILITY_MCP_DIRECTORY
+HAIFA_PERSONAL_SKILL_ROOT
+HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST
+```
+
+停止、停止预检和重新构建：
+
+```bash
+# 只显示并验证目标，不停止进程
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh \
+  --stop --dry-run
+
+# 安全停止
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh --stop
+
+# 三个端口释放后执行后端 clean package、重新构建前端并启动
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh --rebuild
+```
+
+macOS 与 Windows 共用：
+
+```text
+local-tmp/personal-assistant-real/last-start.json
+local-tmp/personal-assistant-real/last-stop.json
+local-tmp/personal-assistant-real/logs/
+```

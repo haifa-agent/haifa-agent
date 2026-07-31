@@ -13,12 +13,70 @@ import org.junit.jupiter.api.Test;
 
 class CliConfigurationLoaderTest {
     @Test
+    void loadsTrustedMultiModelConfigurationAndSelectsByInternalId() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-models", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                models:
+                  default: deepseek-v4-pro
+                  providers:
+                    - id: deepseek
+                      displayName: DeepSeek
+                      endpoint: https://api.deepseek.com
+                      credentialRef: env://DEEPSEEK_API_KEY
+                      models:
+                        - id: deepseek-v4-pro
+                          displayName: DeepSeek V4 Pro
+                          providerModelId: deepseek-v4-pro
+                        - id: deepseek-v4-flash
+                          displayName: DeepSeek V4 Flash
+                          providerModelId: deepseek-v4-flash
+                    - id: aliyun-bailian
+                      displayName: Alibaba Cloud Bailian
+                      workspaceId: workspace-123
+                      region: cn-beijing
+                      credentialRef: env://DASHSCOPE_API_KEY
+                      models:
+                        - id: bailian-qwen-plus
+                          displayName: Qwen Plus
+                          providerModelId: qwen-plus
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(
+                                new String[] {"--config", configuration.toString(), "--model", "deepseek-v4-flash"}),
+                        Path.of("."));
+
+        assertThat(result.availableModels())
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly("deepseek-v4-pro", "deepseek-v4-flash", "bailian-qwen-plus");
+        assertThat(result.availableModels())
+                .filteredOn(model -> model.providerId().equals("deepseek"))
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly("deepseek-v4-pro", "deepseek-v4-flash");
+        assertThat(result.model().id()).isEqualTo("deepseek-v4-flash");
+        assertThat(result.model().modelId()).isEqualTo("deepseek-v4-flash");
+        assertThat(LocalCodingAgent.modelSnapshot(result).modelId().value()).isEqualTo("deepseek-v4-flash");
+        assertThat(new CliCodingModelCatalog(result)
+                        .available(
+                                new io.haifa.agent.core.reference.TenantRef("local"),
+                                new io.haifa.agent.core.reference.PrincipalRef("user", "user")))
+                .filteredOn(model -> model.providerId().equals("deepseek"))
+                .extracting(io.haifa.agent.application.project.product.coding.CodingModelOption::id)
+                .containsExactly("deepseek-v4-pro", "deepseek-v4-flash");
+    }
+
+    @Test
     void packagedDistributionConfigurationIsValidAndSecretFree() {
         Path configuration = Path.of("distribution", "haifa-coding.yaml").toAbsolutePath();
 
         CliConfiguration result = new CliConfigurationLoader()
                 .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
 
+        assertThat(result.model().providerId()).isEqualTo("deepseek");
+        assertThat(result.model().id()).isEqualTo("deepseek-v4-flash");
         assertThat(result.model().credentialRef()).isEqualTo("env://DEEPSEEK_API_KEY");
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.execution().provider()).isEqualTo("local-native");
@@ -29,8 +87,14 @@ class CliConfigurationLoaderTest {
 
     @Test
     void freezesDisabledDeepSeekThinkingForCliRuns() {
-        var snapshot = LocalCodingAgent.modelSnapshot(CliConfiguration.defaults());
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var snapshot = LocalCodingAgent.modelSnapshot(defaults);
 
+        assertThat(defaults.model().providerId()).isEqualTo("deepseek");
+        assertThat(defaults.model().id()).isEqualTo("deepseek-v4-flash");
+        assertThat(defaults.availableModels())
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly("deepseek-v4-flash", "deepseek-v4-pro");
         assertThat(snapshot.capabilities()).contains(ModelCapability.REASONING);
         assertThat(snapshot.providerOptions()).containsEntry("thinking", "disabled");
         assertThat(snapshot.providerOptions())
@@ -89,11 +153,17 @@ class CliConfigurationLoaderTest {
         Files.writeString(
                 configuration,
                 """
-                model:
-                  providerId: local
-                  modelId: test-model
-                  endpoint: http://localhost:8080
-                  credentialRef: env://TEST_KEY
+                models:
+                  default: test-model
+                  providers:
+                    - id: local
+                      displayName: Local
+                      endpoint: http://localhost:8080
+                      credentialRef: env://TEST_KEY
+                      models:
+                        - id: test-model
+                          displayName: Test model
+                          providerModelId: test-model
                 tools:
                   enabled: [file.read, file.write]
                 approval:
@@ -144,6 +214,23 @@ class CliConfigurationLoaderTest {
             assertThat(server.allowedTools()).containsExactlyInAnyOrder("time_now", "calculate");
             assertThat(server.policyProfile()).isEqualTo("utility");
         });
+    }
+
+    @Test
+    void rejectsLegacySingleModelConfiguration() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-legacy-model", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                model:
+                  providerId: deepseek
+                  modelId: deepseek-v4-flash
+                """);
+
+        assertThatThrownBy(() -> new CliConfigurationLoader()
+                        .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("models.providers");
     }
 
     @Test

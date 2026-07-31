@@ -12,7 +12,8 @@ public record CodingSessionView(
         Optional<InteractionView> pendingInteraction,
         Optional<RunEventCursor> eventCursor,
         String configurationDigest,
-        String productProfileRef) {
+        String productProfileRef,
+        CodingModelSelection model) {
     public CodingSessionView {
         summary = Objects.requireNonNull(summary, "summary must not be null");
         activeRun = Objects.requireNonNull(activeRun, "activeRun must not be null");
@@ -20,5 +21,32 @@ public record CodingSessionView(
         eventCursor = Objects.requireNonNull(eventCursor, "eventCursor must not be null");
         configurationDigest = CodingProductValues.requireText(configurationDigest, "configurationDigest", 256);
         productProfileRef = CodingProductValues.requireText(productProfileRef, "productProfileRef", 256);
+        model = Objects.requireNonNull(model, "model must not be null");
+    }
+
+    public CodingSessionView(
+            CodingSessionSummary summary,
+            Optional<AgentRunSnapshot> activeRun,
+            Optional<InteractionView> pendingInteraction,
+            Optional<RunEventCursor> eventCursor,
+            String configurationDigest,
+            String productProfileRef) {
+        this(
+                summary,
+                activeRun,
+                pendingInteraction,
+                eventCursor,
+                configurationDigest,
+                productProfileRef,
+                new CodingModelSelection(
+                        new CodingModelOption(
+                                productProfileRef,
+                                productProfileRef,
+                                "configured",
+                                "Configured",
+                                java.util.Set.of(),
+                                1),
+                        0,
+                        true));
     }
 }
