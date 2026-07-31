@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.DosFileAttributeView;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -501,11 +502,13 @@ final class AutonomousDeliveryStubGate {
                 .replace(slashPath, "<HOST_PATH>");
     }
 
-    private static void deleteTree(Path root) throws IOException {
+    static void deleteTree(Path root) throws IOException {
         if (!Files.exists(root)) return;
         Files.walkFileTree(root, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                DosFileAttributeView dos = Files.getFileAttributeView(file, DosFileAttributeView.class);
+                if (dos != null && dos.readAttributes().isReadOnly()) dos.setReadOnly(false);
                 Files.delete(file);
                 return FileVisitResult.CONTINUE;
             }
