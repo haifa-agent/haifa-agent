@@ -388,6 +388,45 @@ describe("Personal Assistant application", () => {
     ));
   });
 
+  it("defaults slash model selection to DeepSeek Flash", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: flashModel.id,
+      models: [proModel, flashModel, bailianModel],
+    });
+
+    render(<App client={api} />);
+
+    await screen.findByText("每日计划");
+    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    const composer = await screen.findByPlaceholderText("输入消息或 / 命令，Enter 发送");
+    fireEvent.change(composer, { target: { value: "/" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    const providerDialog = await screen.findByRole("dialog", { name: "选择模型厂商" });
+    expect(within(providerDialog)
+      .getByRole("option", { name: /DeepSeek.*2 个可用模型/ })
+      .getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
+    expect(within(modelDialog)
+      .getByRole("option", { name: /DeepSeek V4 Flash/ })
+      .getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    fireEvent.change(composer, { target: { value: "使用默认模型开始对话" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() => expect(api.createConversation).toHaveBeenCalledWith(
+      "使用默认模型开始对话",
+      "使用默认模型开始对话",
+      { idempotencyKey: expect.any(String) },
+      flashModel.id,
+    ));
+  });
+
   it("disables the composer while a run is active", async () => {
     const active = {
       ...conversation,

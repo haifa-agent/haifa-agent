@@ -88,17 +88,29 @@ record CliConfiguration(
     }
 
     static CliConfiguration defaults() {
+        Model flash = new Model(
+                "deepseek",
+                "DeepSeek",
+                "deepseek-v4-flash",
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                null,
+                null,
+                "deepseek-v4-flash",
+                "DeepSeek V4 Flash");
+        Model pro = new Model(
+                "deepseek",
+                "DeepSeek",
+                "deepseek-v4-pro",
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                null,
+                null,
+                "deepseek-v4-pro",
+                "DeepSeek V4 Pro");
         return new CliConfiguration(
-                new Model(
-                        "deepseek",
-                        "deepseek-v4-pro",
-                        URI.create("https://api.deepseek.com"),
-                        "env://DEEPSEEK_API_KEY"),
-                List.of(new Model(
-                        "deepseek",
-                        "deepseek-v4-pro",
-                        URI.create("https://api.deepseek.com"),
-                        "env://DEEPSEEK_API_KEY")),
+                flash,
+                List.of(flash, pro),
                 DEFAULT_TOOLS,
                 List.of(),
                 Web.defaults(),

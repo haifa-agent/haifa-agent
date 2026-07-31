@@ -958,14 +958,18 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       if (!visibleSlashCommands[index]) return;
       dispatch({ type: "setComposer", value: "/model" });
       setSlashMenu({ stage: "providers" });
-      setSlashActiveIndex(0);
+      const currentProviderIndex = modelProviders.findIndex((provider) =>
+        provider.models.some((model) => model.id === selectedModelId)
+      );
+      setSlashActiveIndex(Math.max(0, currentProviderIndex));
       return;
     }
     if (slashMenu.stage === "providers") {
       const provider = modelProviders[index];
       if (!provider) return;
       setSlashMenu({ stage: "models", providerId: provider.id });
-      setSlashActiveIndex(0);
+      const currentModelIndex = provider.models.findIndex((model) => model.id === selectedModelId);
+      setSlashActiveIndex(Math.max(0, currentModelIndex));
       return;
     }
     const model = selectedSlashProvider?.models[index];

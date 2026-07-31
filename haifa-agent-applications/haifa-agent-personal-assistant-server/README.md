@@ -12,7 +12,7 @@ Provider 是接入实例，持有 Endpoint、Credential 和运行模式；每个
 ```yaml
 haifa:
   personal:
-    default-model-id: deepseek-v4-pro
+    default-model-id: deepseek-v4-flash
     model-providers:
       - id: deepseek
         display-name: DeepSeek

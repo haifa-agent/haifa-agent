@@ -75,6 +75,8 @@ class CliConfigurationLoaderTest {
         CliConfiguration result = new CliConfigurationLoader()
                 .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
 
+        assertThat(result.model().providerId()).isEqualTo("deepseek");
+        assertThat(result.model().id()).isEqualTo("deepseek-v4-flash");
         assertThat(result.model().credentialRef()).isEqualTo("env://DEEPSEEK_API_KEY");
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.execution().provider()).isEqualTo("local-native");
@@ -85,8 +87,14 @@ class CliConfigurationLoaderTest {
 
     @Test
     void freezesDisabledDeepSeekThinkingForCliRuns() {
-        var snapshot = LocalCodingAgent.modelSnapshot(CliConfiguration.defaults());
+        CliConfiguration defaults = CliConfiguration.defaults();
+        var snapshot = LocalCodingAgent.modelSnapshot(defaults);
 
+        assertThat(defaults.model().providerId()).isEqualTo("deepseek");
+        assertThat(defaults.model().id()).isEqualTo("deepseek-v4-flash");
+        assertThat(defaults.availableModels())
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly("deepseek-v4-flash", "deepseek-v4-pro");
         assertThat(snapshot.capabilities()).contains(ModelCapability.REASONING);
         assertThat(snapshot.providerOptions()).containsEntry("thinking", "disabled");
         assertThat(snapshot.providerOptions())
@@ -145,11 +153,17 @@ class CliConfigurationLoaderTest {
         Files.writeString(
                 configuration,
                 """
-                model:
-                  providerId: local
-                  modelId: test-model
-                  endpoint: http://localhost:8080
-                  credentialRef: env://TEST_KEY
+                models:
+                  default: test-model
+                  providers:
+                    - id: local
+                      displayName: Local
+                      endpoint: http://localhost:8080
+                      credentialRef: env://TEST_KEY
+                      models:
+                        - id: test-model
+                          displayName: Test model
+                          providerModelId: test-model
                 tools:
                   enabled: [file.read, file.write]
                 approval:
@@ -200,6 +214,23 @@ class CliConfigurationLoaderTest {
             assertThat(server.allowedTools()).containsExactlyInAnyOrder("time_now", "calculate");
             assertThat(server.policyProfile()).isEqualTo("utility");
         });
+    }
+
+    @Test
+    void rejectsLegacySingleModelConfiguration() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-legacy-model", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                model:
+                  providerId: deepseek
+                  modelId: deepseek-v4-flash
+                """);
+
+        assertThatThrownBy(() -> new CliConfigurationLoader()
+                        .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("models.providers");
     }
 
     @Test

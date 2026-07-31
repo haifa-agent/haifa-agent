@@ -124,11 +124,20 @@ Host Guarded Scratch Root 负责物理路径、权限和清理；配置、Prompt
 无法安全创建 Scratch 时命令不会启动。
 
 ```yaml
-model:
-  providerId: deepseek
-  modelId: deepseek-chat
-  endpoint: https://api.deepseek.com
-  credentialRef: env://DEEPSEEK_API_KEY
+models:
+  default: deepseek-v4-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      models:
+        - id: deepseek-v4-flash
+          displayName: DeepSeek V4 Flash
+          providerModelId: deepseek-v4-flash
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
 tools:
   enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, execution.run, web.search, web.fetch]
 web:
@@ -156,7 +165,7 @@ persistence:
 
 ```yaml
 models:
-  default: deepseek-v4-pro
+  default: deepseek-v4-flash
   providers:
     - id: deepseek
       displayName: DeepSeek
@@ -234,11 +243,20 @@ $env:DEEPSEEK_API_KEY = "<secret>"
 ```
 
 ```yaml
-model:
-  providerId: deepseek
-  modelId: deepseek-v4-pro
-  endpoint: https://api.deepseek.com
-  credentialRef: env://DEEPSEEK_API_KEY
+models:
+  default: deepseek-v4-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      models:
+        - id: deepseek-v4-flash
+          displayName: DeepSeek V4 Flash
+          providerModelId: deepseek-v4-flash
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
 tools:
   enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.delete, file.move, execution.run]
 skills:
@@ -352,10 +370,10 @@ CLI 的 DeepSeek 和百炼冻结配置均强制关闭 thinking，并通过 Runti
 reasoning 原文不会进入终端。使用 `--verbose` 时只会打印供应商报告的 reasoning token 计数，不记录或展示
 reasoning 内容。
 
-百炼配置必须提供 `model.workspaceId`，`model.region` 缺省为 `cn-beijing`。CLI 不接受任意百炼主机，
-而是固定推导 `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`。也可分别通过
-`HAIFA_MODEL_PROVIDER_ID=aliyun-bailian`、`HAIFA_BAILIAN_WORKSPACE_ID`、`HAIFA_BAILIAN_REGION`、
-`HAIFA_MODEL_ID` 和 `HAIFA_CREDENTIAL_REF=env://DASHSCOPE_API_KEY` 覆盖本地配置。
+百炼 Provider 配置必须提供 `workspaceId`，`region` 缺省为 `cn-beijing`。CLI 不接受任意百炼主机，
+而是固定推导 `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`。Provider、
+Credential 和模型列表必须通过 `models.providers` 显式配置；`--model` 或 `HAIFA_MODEL_ID` 只负责
+从已配置列表中选择模型。
 
 `mcp.servers` 在 CLI 启动时连接并发现远端工具。每个 Server 必须使用稳定的小写 `id`、显式 `allowedTools` 和唯一 `aliasNamespace`；示例工具向模型披露为 `utility_time_now`、`utility_calculate`。发现不到、Schema 不兼容或不在本地审核策略中的配置工具会使启动失败，不会静默降级。
 

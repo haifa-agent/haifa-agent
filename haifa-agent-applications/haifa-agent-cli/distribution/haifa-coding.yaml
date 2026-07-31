@@ -1,7 +1,7 @@
 # Portable, secret-free defaults for the local Coding Agent distribution.
 # Secrets are injected through environment variables, never stored in this file.
 models:
-  default: deepseek-v4-pro
+  default: deepseek-v4-flash
   providers:
     - id: deepseek
       displayName: DeepSeek
