@@ -70,7 +70,8 @@ Maven 参数、10 分钟超时、进程树收敛、Provider Credential/Live 开�
 Failsafe XML 状态解析和原始 XML 清除。确定性 Probe 不继承真实 Provider 访问能力。
 `delivery.AutonomousDeliveryPhaseThreeVerificationCollector` 独立生成 Verification Plan/Evidence、
 Side Effect Evidence 和 Capability Matrix；Acceptance Checks 为空时 fail closed，高风险 Case 的
-原子性绑定 Acceptance 与 Process/Scratch Cleanup。
+原子性绑定 Acceptance 与 Process/Scratch Cleanup。所有风险等级都要求 Process/Scratch Evidence
+完整，缺失或清理失败时 Verification 与 Capability Matrix 均保留原生失败状态。
 `delivery.AutonomousDeliveryRepeatEvidenceCollector` 已接管每个 Repeat 的 Acceptance、Driver、
 Usage、Failure/Progress/Completion、Process、Secret Scan、`result.json`、Summary 和只读终结。
 执行侧只传入已计算的 Policy 结论；Collector 再叠加 Process Cleanup 与 Secret Scan，二者任一失败

@@ -23,12 +23,14 @@ class AutonomousDeliveryRepeatEvidenceCollectorTest {
 
         assertTrue(result.gatePassed());
         assertEquals(true, result.resultArtifact().get("successful"));
+        assertEquals("GATE_PASSED", result.resultArtifact().get("nativeStatus"));
         assertEquals("PASS", result.resultArtifact().get("hiddenAcceptance"));
         assertEquals(usage, result.resultArtifact().get("usage"));
         assertEquals("01", result.summary().get("caseId"));
         assertEquals(4L, result.summary().get("toolCalls"));
         assertEquals("PASS", result.summary().get("failureAtomicity"));
         assertEquals(true, result.summary().get("gatePassed"));
+        assertEquals("GATE_PASSED", result.summary().get("nativeStatus"));
     }
 
     @Test

@@ -34,6 +34,8 @@ final class AutonomousDeliveryResultProjection {
             RepositoryRevision testConfigRevision,
             Map<String, Object> result) {
         boolean passed = Boolean.TRUE.equals(result.get("gatePassed"));
+        String nativeStatus = String.valueOf(
+                java.util.Objects.requireNonNull(result.get("nativeStatus"), "native status is required"));
         int repetition = ((Number) result.get("repetition")).intValue();
         String caseId = String.valueOf(result.get("caseId"));
         return new TestResultProjection(
@@ -51,7 +53,7 @@ final class AutonomousDeliveryResultProjection {
                 productRevision.commit(),
                 testConfigRevision.commit(),
                 passed ? TestResultProjection.Status.PASS : TestResultProjection.Status.FAIL,
-                passed ? "GATE_PASSED" : "GATE_FAILED",
+                nativeStatus,
                 null,
                 Math.round(((Number) result.get("wallTimeSeconds")).doubleValue() * 1000.0),
                 providerUsage(result),

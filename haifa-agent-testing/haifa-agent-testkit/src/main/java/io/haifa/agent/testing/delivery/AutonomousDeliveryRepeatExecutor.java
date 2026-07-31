@@ -159,8 +159,8 @@ final class AutonomousDeliveryRepeatExecutor {
                                 acceptance.failures(),
                                 before,
                                 after,
-                                authoritative.scratchCleanupFailures(),
-                                finished))
+                                authoritative.scratchSatisfied(),
+                                processCleanup.passed()))
                 : AutonomousDeliveryPhaseThreeVerificationCollector.notRequired();
         preliminaryGatePassed &= phaseThree.passed();
 
