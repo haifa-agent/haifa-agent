@@ -20,7 +20,7 @@ class TestingAssetInventoryValidatorTest {
         Path inventory = writeInventory(
                 """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "fixture",
                   "coverageRoots": ["assets"],
                   "assets": [
@@ -91,7 +91,7 @@ class TestingAssetInventoryValidatorTest {
         Path inventory = writeInventory(
                 """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "fixture",
                   "coverageRoots": [],
                   "assets": [
@@ -131,7 +131,7 @@ class TestingAssetInventoryValidatorTest {
         Path inventory = writeInventory(
                 """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "fixture",
                   "coverageRoots": [],
                   "assets": [
@@ -169,7 +169,7 @@ class TestingAssetInventoryValidatorTest {
         Path inventory = writeInventory(
                 """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "fixture",
                   "coverageRoots": [],
                   "assets": [
@@ -192,6 +192,127 @@ class TestingAssetInventoryValidatorTest {
                 .validateIfPresent(temporaryDirectory, inventory));
     }
 
+    @Test
+    void rejectsAFileHiddenByAnExactDirectoryAsset() throws Exception {
+        Files.createDirectories(temporaryDirectory.resolve("assets"));
+        Files.writeString(temporaryDirectory.resolve("assets/orphan.txt"), "orphan");
+        Path inventory = writeInventory(
+                """
+                {
+                  "schemaVersion": 2,
+                  "repositoryId": "fixture",
+                  "coverageRoots": ["assets"],
+                  "assets": [
+                    {
+                      "assetId": "asset-root",
+                      "path": "assets",
+                      "kind": "DIRECTORY",
+                      "lifecycle": "ACTIVE",
+                      "disposition": "KEEP",
+                      "owner": "testing",
+                      "referencedBy": ["inventory.json"],
+                      "replacement": "",
+                      "rationale": "directory lifecycle only",
+                      "coverageMode": "EXACT"
+                    }
+                  ]
+                }
+                """);
+
+        assertThrows(IllegalArgumentException.class, () -> new TestingAssetInventoryValidator()
+                .validateIfPresent(temporaryDirectory, inventory));
+    }
+
+    @Test
+    void allowsFilesInsideAnExplicitControlledSubtree() throws Exception {
+        Files.createDirectories(temporaryDirectory.resolve("assets/reviewed"));
+        Files.writeString(temporaryDirectory.resolve("assets/reviewed/fixture.txt"), "fixture");
+        Path inventory = writeInventory(
+                """
+                {
+                  "schemaVersion": 2,
+                  "repositoryId": "fixture",
+                  "coverageRoots": ["assets"],
+                  "assets": [
+                    {
+                      "assetId": "reviewed-fixture",
+                      "path": "assets/reviewed",
+                      "kind": "FIXTURE",
+                      "lifecycle": "ACTIVE",
+                      "disposition": "KEEP",
+                      "owner": "testing",
+                      "referencedBy": ["inventory.json"],
+                      "replacement": "",
+                      "rationale": "reviewed fixture package",
+                      "coverageMode": "SUBTREE"
+                    }
+                  ]
+                }
+                """);
+
+        assertDoesNotThrow(() -> new TestingAssetInventoryValidator().validateIfPresent(temporaryDirectory, inventory));
+    }
+
+    @Test
+    void rejectsAnUnreferencedControlledSubtree() throws Exception {
+        Files.createDirectories(temporaryDirectory.resolve("assets/reviewed"));
+        Files.writeString(temporaryDirectory.resolve("assets/reviewed/fixture.txt"), "fixture");
+        Path inventory = writeInventory(
+                """
+                {
+                  "schemaVersion": 2,
+                  "repositoryId": "fixture",
+                  "coverageRoots": ["assets"],
+                  "assets": [
+                    {
+                      "assetId": "reviewed-fixture",
+                      "path": "assets/reviewed",
+                      "kind": "FIXTURE",
+                      "lifecycle": "ACTIVE",
+                      "disposition": "KEEP",
+                      "owner": "testing",
+                      "referencedBy": [],
+                      "replacement": "",
+                      "rationale": "reviewed fixture package",
+                      "coverageMode": "SUBTREE"
+                    }
+                  ]
+                }
+                """);
+
+        assertThrows(IllegalArgumentException.class, () -> new TestingAssetInventoryValidator()
+                .validateIfPresent(temporaryDirectory, inventory));
+    }
+
+    @Test
+    void preservesLegacyDirectoryCoverageDuringMigration() throws Exception {
+        Files.createDirectories(temporaryDirectory.resolve("assets"));
+        Files.writeString(temporaryDirectory.resolve("assets/legacy.txt"), "legacy");
+        Path inventory = writeInventory(
+                """
+                {
+                  "schemaVersion": 1,
+                  "repositoryId": "fixture",
+                  "coverageRoots": ["assets"],
+                  "assets": [
+                    {
+                      "assetId": "legacy-root",
+                      "path": "assets",
+                      "kind": "DIRECTORY",
+                      "lifecycle": "ACTIVE",
+                      "disposition": "KEEP",
+                      "owner": "testing",
+                      "referencedBy": [],
+                      "replacement": "",
+                      "rationale": "temporary migration compatibility"
+                    }
+                  ]
+                }
+                """);
+
+        assertDoesNotThrow(() -> new TestingAssetInventoryValidator().validateIfPresent(temporaryDirectory, inventory));
+    }
+
     private Path writeInventory(String value) throws Exception {
         Path inventory = temporaryDirectory.resolve("inventory.json");
         Files.writeString(inventory, value);
@@ -201,7 +322,7 @@ class TestingAssetInventoryValidatorTest {
     private static String singleInventoryAsset() {
         return """
                 {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "repositoryId": "fixture",
                   "coverageRoots": ["assets"],
                   "assets": [

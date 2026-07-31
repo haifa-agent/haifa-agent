@@ -73,6 +73,13 @@ Critical Path 与 Autonomous Delivery 的原生报告和 Budget 继续独立；�
 失败分类和相对证据引用。Projection 不是新的 Gate 事实源，不得覆盖 Maven 状态或
 Autonomous Delivery `gatePassed`。
 
+`testing-assets-v2.json` 是当前公共测试资产台账。主仓只对 Autonomous Delivery Fixture、Coding
+E2E Fixture 和 Testkit Schema 镜像等机器资产目录启用 Coverage Root，不机械枚举整个 Testing
+源码树。目录资产默认只登记自身生命周期；只有显式 `SUBTREE` 的完整 Case/Fixture 包可以覆盖后代。
+Critical Path Runner 与 Autonomous Delivery Harness 都在加载 Suite/Matrix 前要求主仓与
+`test-config` 的 v2 台账，任一 Coverage Root 下新增未登记文件都会 fail closed。v1 台账仅保留旧
+检出的迁移兼容，不是当前正式入口的事实源。
+
 边界约束：
 
 - 产品模块不得依赖本目录中的模块；

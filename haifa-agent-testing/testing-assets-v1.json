@@ -39,6 +39,17 @@
       "rationale": "Machine-readable lifecycle and ownership inventory for public testing assets."
     },
     {
+      "assetId": "testing-asset-inventory-v2",
+      "path": "haifa-agent-testing/testing-assets-v2.json",
+      "kind": "MANIFEST",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/main/java/io/haifa/agent/testing/assets/TestingAssetPreflight.java"],
+      "replacement": "",
+      "rationale": "Fine-grained inventory used by the current formal test entry points."
+    },
+    {
       "assetId": "coding-case-coverage",
       "path": "haifa-agent-testing/coding-case-coverage-v1.json",
       "kind": "MANIFEST",

@@ -9,7 +9,9 @@ Runner 默认只生成计划。附加的 `runner` JAR 由私有 `test-config/scr
 `--execute`、安全的仓库外运行根和所需 Secret 后，才会串行执行 Catalog 中的 Maven selector。
 `assets.TestingAssetPreflight` 是 Critical Path Suite Runner 与 Autonomous Delivery Harness
 共同的首个治理前置步骤；它在加载 Suite/Matrix 或创建任何运行产物前校验主仓和 `test-config`
-资产台账的生命周期、覆盖范围及引用，避免两个正式入口产生不同的 Orphan 判定。
+Schema 2 资产台账的生命周期、覆盖范围及引用，避免两个正式入口产生不同的 Orphan 判定。Schema 2
+的目录资产默认使用 `EXACT`，不再隐式覆盖后代；只有显式 `SUBTREE` 且具有引用的可用目录才能作为
+受控子树。Validator 在迁移窗口仍能解释 v1，但正式 Preflight 只接受两仓固定位置的 v2 台账。
 每次 Plan/Execute 还必须通过 `--matrix-combination` 或 `HAIFA_TEST_MATRIX_COMBINATION` 选择 Suite
 所引用 Matrix 中的一个组合；Runner 校验组合存在且平台与当前 Host OS 一致，并把完整组合写入
 版本 3 报告。公共 `RepositoryRevision` 要求主仓和 `test-config` 是独立 Git 根；Plan 显示两仓
