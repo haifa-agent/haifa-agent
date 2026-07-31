@@ -521,6 +521,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .activity-card p, .interaction-card p, .memory-card p { margin: 4px 0; color: #647086; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .activity-kind { gap: 5px; color: #50617b; font-size: 10px; font-weight: 800; }
 .activity-kind small { margin-left: auto; color: #818b9c; font-weight: 500; }
+.kind-model { color: #4668c8; }
 .kind-skill { color: #8d5ac8; }
 .kind-mcp { color: #0b8b7b; }
 .safe-result { padding: 6px 8px; color: #27764e !important; border-radius: 7px; background: #eff9f3; }

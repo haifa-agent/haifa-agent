@@ -4,6 +4,8 @@ param(
     [string] $AliyunIqsKeyFile = 'D:\workspace\ss-aliyun-iqs.txt',
     [string] $ContinuationKeyFile = 'D:\workspace\ss-haifa-personal-continuation.txt',
     [string] $UtilityMcpDirectory = 'D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server',
+    [string] $UtilityMcpProxyUrl = 'http://127.0.0.1:2081',
+    [string] $UtilityMcpProxyProviders = 'wikimedia',
     [string] $PersonalSkillRoot = 'D:\agents\hermes-agent\optional-skills\finance',
     [string] $TrustedScriptManifest = '',
     [switch] $Rebuild,
@@ -130,7 +132,17 @@ function Wait-ForHttpEndpoint {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         if ($Process.HasExited) {
-            throw "$Name exited with code $($Process.ExitCode). Logs: $StandardOutputLog ; $StandardErrorLog"
+            $exitCode = 'unknown'
+            try {
+                $Process.WaitForExit()
+                $Process.Refresh()
+                if ($null -ne $Process.ExitCode) {
+                    $exitCode = [string] $Process.ExitCode
+                }
+            } catch {
+                # Preserve the log paths even if the process handle cannot expose an exit code.
+            }
+            throw "$Name exited with code $exitCode. Logs: $StandardOutputLog ; $StandardErrorLog"
         }
         if (Test-HttpEndpoint -Uri $Uri) {
             return
@@ -546,7 +558,11 @@ if (Test-HttpEndpoint -Uri $mcpHealthUri) {
         -FilePath $maven `
         -ArgumentList @('spring-boot:run') `
         -WorkingDirectory $UtilityMcpDirectory `
-        -Environment @{ UTILITY_MCP_PORT = [string] $mcpPort } `
+        -Environment @{
+            UTILITY_MCP_PORT = [string] $mcpPort
+            UTILITY_MCP_PROXY_URL = $UtilityMcpProxyUrl
+            UTILITY_MCP_PROXY_PROVIDERS = $UtilityMcpProxyProviders
+        } `
         -StandardOutputLog $mcpStdout `
         -StandardErrorLog $mcpStderr
     Wait-ForHttpEndpoint `
@@ -699,6 +715,7 @@ Write-Host "  Repository:       $repositoryRoot"
 Write-Host "  Personal Web:     $webDirectory"
 Write-Host "  Personal Server:  $serverDirectory"
 Write-Host "  Utility MCP:      $UtilityMcpDirectory"
+Write-Host "  Utility Proxy:    $UtilityMcpProxyUrl ($UtilityMcpProxyProviders)"
 Write-Host "  Personal Skills:  $personalSkillRoot"
 if (-not [string]::IsNullOrWhiteSpace($trustedScriptManifestPath)) {
     Write-Host "  Trust Manifest:   $trustedScriptManifestPath"

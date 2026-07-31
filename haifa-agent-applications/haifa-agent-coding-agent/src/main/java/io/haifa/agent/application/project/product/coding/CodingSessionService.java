@@ -7,6 +7,7 @@ import io.haifa.agent.application.project.product.ProjectProductSessionStore;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
 import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.run.AgentRunId;
@@ -105,7 +106,7 @@ public final class CodingSessionService {
     public CodingSessionView createSession(
             ProjectId projectId, String firstTurn, List<AssetRef> attachments, String idempotencyKey) {
         TrustedProductCaller caller = callers.current();
-        Instant now = clock.instant();
+        Instant now = now();
         List<AssetRef> safeAttachments = attachments(attachments);
         String message = message(firstTurn);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
@@ -215,7 +216,7 @@ public final class CodingSessionService {
         String keyDigest = digest(idempotencyKey(idempotencyKey));
         String requestDigest = digest(sessionId.value() + "|" + selected.id());
         CodingModelPreference changed = codingSessions.changeModel(
-                sessionId, expectedRevision, selected.id(), keyDigest, requestDigest, clock.instant());
+                sessionId, expectedRevision, selected.id(), keyDigest, requestDigest, now());
         return new CodingModelSelection(selected, changed.revision(), true);
     }
 
@@ -226,8 +227,7 @@ public final class CodingSessionService {
         if (current.revision() != expectedRevision) {
             throw conflict("SESSION_REVISION_STALE", "Coding Session revision is stale");
         }
-        return summary(
-                codingSessions.rename(sessionId, expectedRevision, renameDisplayName(displayName), clock.instant()));
+        return summary(codingSessions.rename(sessionId, expectedRevision, renameDisplayName(displayName), now()));
     }
 
     public CodingSessionSummary archiveSession(AgentSessionId sessionId, long expectedRevision) {
@@ -235,7 +235,7 @@ public final class CodingSessionService {
         requireProductSession(sessionId, caller);
         CodingSessionActivity current = requireActivity(sessionId, caller);
         requireLifecycleChange(current, expectedRevision);
-        return summary(sessionLifecycle.archive(sessionId, expectedRevision, clock.instant()));
+        return summary(sessionLifecycle.archive(sessionId, expectedRevision, now()));
     }
 
     public void deleteSession(AgentSessionId sessionId, long expectedRevision) {
@@ -243,7 +243,7 @@ public final class CodingSessionService {
         requireProductSession(sessionId, caller);
         CodingSessionActivity current = requireActivity(sessionId, caller);
         requireLifecycleChange(current, expectedRevision);
-        sessionLifecycle.delete(sessionId, expectedRevision, clock.instant());
+        sessionLifecycle.delete(sessionId, expectedRevision, now());
     }
 
     public CodingCompactionResult compactSession(AgentSessionId sessionId, String safeInstruction) {
@@ -282,7 +282,7 @@ public final class CodingSessionService {
                 safeMessage,
                 safeAttachments,
                 Optional.empty(),
-                clock.instant()));
+                now()));
         if (existing.runId().isPresent()) {
             return new CodingSessionCommandReceipt(
                     SUBMIT, sessionId, existing.runId().orElseThrow(), true);
@@ -291,7 +291,7 @@ public final class CodingSessionService {
             throw conflict("CODING_SESSION_ACTIVE", "Coding Session already has an active Run");
         }
         String modelId = requireModelPreference(sessionId, caller).modelId();
-        codingSessions.reserveActive(sessionId, activity.revision(), existing.dispatchKey(), clock.instant());
+        codingSessions.reserveActive(sessionId, activity.revision(), existing.dispatchKey(), now());
         var started = projectProducts.continueSession(
                 sessionId, existing.message(), existing.attachments(), existing.dispatchKey(), modelId);
         codingSessions.completeCommand(existing.dispatchKey(), started.run().runId());
@@ -300,7 +300,7 @@ public final class CodingSessionService {
                 existing.dispatchKey(),
                 started.run().runId(),
                 started.run().version(),
-                clock.instant());
+                now());
         return new CodingSessionCommandReceipt(SUBMIT, sessionId, started.run().runId(), false);
     }
 
@@ -326,14 +326,14 @@ public final class CodingSessionService {
                 safeMessage,
                 List.of(),
                 Optional.empty(),
-                clock.instant()));
+                now()));
         RunInputReceipt receipt = runtime.submitInput(new RunInputSubmission(
                 new RunInputId(binding.dispatchKey()),
                 active.runId(),
                 OptionalLong.of(active.version()),
                 List.of(new TextPart(binding.message(), "text/plain")),
                 binding.dispatchKey(),
-                clock.instant()));
+                now()));
         codingSessions.completeCommand(binding.dispatchKey(), active.runId());
         return receipt;
     }
@@ -353,7 +353,7 @@ public final class CodingSessionService {
         List<AssetRef> safeAttachments = attachments(attachments);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
         String followUpId = identifiers.nextValue();
-        Instant now = clock.instant();
+        Instant now = now();
         CodingFollowUp stored = codingSessions.enqueue(new CodingFollowUp(
                 followUpId,
                 sessionId,
@@ -381,7 +381,7 @@ public final class CodingSessionService {
                 .findFollowUp(followUpId)
                 .filter(value -> value.sessionId().equals(sessionId))
                 .orElseThrow(() -> conflict("FOLLOW_UP_NOT_FOUND", "Follow-up is unavailable"));
-        CodingFollowUp restored = codingSessions.restore(existing.followUpId(), expectedRevision, clock.instant());
+        CodingFollowUp restored = codingSessions.restore(existing.followUpId(), expectedRevision, now());
         return new CodingRestoredMessage(
                 restored.followUpId(),
                 restored.sessionId(),
@@ -418,7 +418,7 @@ public final class CodingSessionService {
                 .isEmpty()) {
             throw conflict("EVENT_CURSOR_RUN_MISMATCH", "Event cursor is unavailable");
         }
-        return codingSessions.saveEventCursor(sessionId, cursor, clock.instant());
+        return codingSessions.saveEventCursor(sessionId, cursor, now());
     }
 
     public RuntimeCommandResult abortActiveRun(AgentSessionId sessionId, String idempotencyKey) {
@@ -439,7 +439,7 @@ public final class CodingSessionService {
                 ABORT,
                 List.of(),
                 Optional.empty(),
-                clock.instant()));
+                now()));
         RuntimeCommandResult result = runtime.command(new RuntimeCommand(
                 new RuntimeCommandId(binding.dispatchKey()),
                 active.runId(),
@@ -447,7 +447,7 @@ public final class CodingSessionService {
                 RuntimeCommandArguments.NONE,
                 OptionalLong.of(active.version()),
                 binding.dispatchKey(),
-                clock.instant()));
+                now()));
         codingSessions.completeCommand(binding.dispatchKey(), active.runId());
         return result;
     }
@@ -466,14 +466,14 @@ public final class CodingSessionService {
             AgentRunSnapshot snapshot = runtime.find(runId)
                     .orElseThrow(() -> conflict("ACTIVE_RUN_UNAVAILABLE", "Active Run is unavailable"));
             if (!snapshot.status().isTerminal()) return current;
-            current = codingSessions.clearActive(current.sessionId(), runId, current.revision(), clock.instant());
+            current = codingSessions.clearActive(current.sessionId(), runId, current.revision(), now());
         }
         if (current.activeDispatchKey().isPresent()) {
             return recoverReservedDispatch(current);
         }
         if (current.status() != AgentSessionStatus.ACTIVE) return current;
         Optional<CodingDispatchClaim> claimed =
-                codingSessions.claimNextForDispatch(current.sessionId(), current.revision(), clock.instant());
+                codingSessions.claimNextForDispatch(current.sessionId(), current.revision(), now());
         if (claimed.isEmpty()) return current;
         return dispatchFollowUp(claimed.orElseThrow());
     }
@@ -493,8 +493,7 @@ public final class CodingSessionService {
                                     .modelId())
                     .run());
             codingSessions.completeCommand(value.dispatchKey(), run.runId());
-            return codingSessions.activateRun(
-                    activity.sessionId(), dispatchKey, run.runId(), run.version(), clock.instant());
+            return codingSessions.activateRun(activity.sessionId(), dispatchKey, run.runId(), run.version(), now());
         }
         CodingFollowUp followUp = codingSessions
                 .findFollowUpByDispatchKey(dispatchKey)
@@ -515,9 +514,9 @@ public final class CodingSessionService {
                 .run());
         CodingFollowUp followUp = claimed.status() == CodingFollowUpStatus.DISPATCHED
                 ? claimed
-                : codingSessions.markDispatched(claimed.followUpId(), claimed.revision(), run.runId(), clock.instant());
+                : codingSessions.markDispatched(claimed.followUpId(), claimed.revision(), run.runId(), now());
         return codingSessions.activateRun(
-                followUp.sessionId(), followUp.dispatchKey(), run.runId(), run.version(), clock.instant());
+                followUp.sessionId(), followUp.dispatchKey(), run.runId(), run.version(), now());
     }
 
     private CodingSessionView view(CodingSessionActivity activity, ProjectProductSession product) {
@@ -541,7 +540,7 @@ public final class CodingSessionService {
     private CodingModelSelection modelSelection(AgentSessionId sessionId, TrustedProductCaller caller) {
         CodingModelPreference preference = codingSessions
                 .findModelPreference(sessionId)
-                .orElseGet(() -> CodingModelPreference.initial(sessionId, models.defaultModelId(), clock.instant()));
+                .orElseGet(() -> CodingModelPreference.initial(sessionId, models.defaultModelId(), now()));
         Optional<CodingModelOption> available = models.find(caller.tenant(), caller.principal(), preference.modelId());
         CodingModelOption option = available.orElseGet(() -> new CodingModelOption(
                 preference.modelId(), preference.modelId(), "unavailable", "Unavailable", java.util.Set.of(), 1));
@@ -636,6 +635,10 @@ public final class CodingSessionService {
             throw conflict("ACTIVE_RUN_SETTLED", "Active Run is already settled");
         }
         return snapshot;
+    }
+
+    private Instant now() {
+        return TimePrecision.now(clock);
     }
 
     private static List<AssetRef> attachments(List<AssetRef> values) {

@@ -1,5 +1,9 @@
 # Haifa Personal Assistant Server
 
+The public activities endpoint projects bounded durable Model, Tool, Skill, and MCP
+events. Model activities never include prompts, assistant text, endpoints, credentials,
+or raw provider failures.
+
 Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显式
 `default-model-id`，不支持旧的单模型 `haifa.personal.model` 配置。`/api/v1/models`、Bootstrap
 和 Conversation 只返回脱敏信息；Endpoint、

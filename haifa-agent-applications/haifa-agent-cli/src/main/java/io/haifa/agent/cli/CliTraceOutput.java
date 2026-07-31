@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -200,7 +201,7 @@ final class CliTraceOutput implements Consumer<RuntimeTraceEvent>, AutoCloseable
     private String jsonl(RuntimeTraceEvent event) {
         rememberTool(event);
         Map<String, Object> value = new LinkedHashMap<>();
-        value.put("timestamp", event.occurredAt().toString());
+        value.put("timestamp", TimePrecision.toMilliseconds(event.occurredAt()).toString());
         value.put("traceId", safeText(event.traceId()));
         value.put("runId", safeText(event.runId().value()));
         event.attemptId().ifPresent(id -> value.put("attemptId", safeText(id.value())));

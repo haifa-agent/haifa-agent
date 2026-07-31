@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.application;
 
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -88,7 +89,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         PersonalModelOption selected = requireModel(modelId);
         ConversationRecord started = agent.conversations()
                 .start(new StartConversationCommand(idempotencyKey, displayName, message, Optional.of(selected.id())));
-        modelPreferences.create(started.sessionId().value(), selected.id(), clock.instant());
+        modelPreferences.create(started.sessionId().value(), selected.id(), TimePrecision.now(clock));
         return conversation(started);
     }
 
@@ -177,7 +178,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 selected.id(),
                 digest(idempotencyKey),
                 digest(sessionId + "|" + selected.id()),
-                clock.instant());
+                TimePrecision.now(clock));
         return new ModelSelectionView(selected, changed.revision(), true);
     }
 
@@ -253,7 +254,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                         new InteractionAction(action),
                         inputs,
                         idempotencyKey,
-                        clock.instant()));
+                        TimePrecision.now(clock)));
         return new InteractionReceipt(
                 receipt.responseId().value(),
                 receipt.requestId().value(),
@@ -482,6 +483,20 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private Optional<ActivityView> activity(AgentRunEvent event) {
+        if (event.payload() instanceof RunEventPayloads.ModelLifecycle model) {
+            return Optional.of(new ActivityView(
+                    event.eventId(),
+                    event.runId().value(),
+                    ActivityKind.MODEL,
+                    model.modelId(),
+                    model.providerId() + " · iteration " + model.iteration() + " · attempt " + model.attempt(),
+                    model.status(),
+                    event.occurredAt(),
+                    terminal(model.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
+                    safeResult(model),
+                    Optional.empty(),
+                    event.sequence()));
+        }
         if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle execution) {
             return Optional.of(new ActivityView(
                     event.eventId(),
@@ -523,6 +538,14 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private static String safeResult(RunEventPayloads.ToolLifecycle tool) {
         if ("SUCCEEDED".equals(tool.status())) return "Completed";
         if ("FAILED".equals(tool.status()) || "CANCELLED".equals(tool.status())) return tool.reasonCode();
+        return "";
+    }
+
+    private static String safeResult(RunEventPayloads.ModelLifecycle model) {
+        if ("SUCCEEDED".equals(model.status())) {
+            return "Input " + model.inputTokens() + " · Output " + model.outputTokens();
+        }
+        if ("FAILED".equals(model.status())) return model.reasonCode();
         return "";
     }
 
@@ -660,6 +683,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             long runVersion) {}
 
     public enum ActivityKind {
+        MODEL,
         TOOL,
         SKILL,
         MCP

@@ -188,11 +188,35 @@ class RuntimeEventFeedTest {
     }
 
     @Test
-    void projectsToolExecutionAndResourceFactsFromTheAllowlist() {
+    void projectsModelToolExecutionAndResourceFactsFromTheAllowlist() {
         InMemoryRuntimeStore store = storeWithRun("run");
         AgentRunId runId = new AgentRunId("run");
         RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
 
+        var model = projector
+                .project(new RuntimeEvent(
+                        "model",
+                        runId,
+                        1,
+                        "model.call.succeeded",
+                        "1",
+                        Map.ofEntries(
+                                Map.entry("modelCallId", "model-call-1"),
+                                Map.entry("providerId", "deepseek"),
+                                Map.entry("modelId", "deepseek-chat"),
+                                Map.entry("status", "SUCCEEDED"),
+                                Map.entry("iteration", 1),
+                                Map.entry("attempt", 1),
+                                Map.entry("inputTokens", 20L),
+                                Map.entry("outputTokens", 5L),
+                                Map.entry("finishReason", "STOP"),
+                                Map.entry("reasonCode", "NONE"),
+                                Map.entry("fullPrompt", "must-not-project"),
+                                Map.entry("responseText", "must-not-project")),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
         var tool = projector
                 .project(new RuntimeEvent(
                         "tool",
@@ -248,6 +272,15 @@ class RuntimeEventFeedTest {
                         Optional.empty()))
                 .orElseThrow();
 
+        assertThat(model.eventType()).isEqualTo("model.call.succeeded");
+        assertThat(model.payload()).isInstanceOfSatisfying(RunEventPayloads.ModelLifecycle.class, payload -> {
+            assertThat(payload.modelCallId()).isEqualTo("model-call-1");
+            assertThat(payload.providerId()).isEqualTo("deepseek");
+            assertThat(payload.modelId()).isEqualTo("deepseek-chat");
+            assertThat(payload.inputTokens()).isEqualTo(20);
+            assertThat(payload.outputTokens()).isEqualTo(5);
+            assertThat(payload.toString()).doesNotContain("must-not-project");
+        });
         assertThat(tool.eventType()).isEqualTo("tool.call.succeeded");
         assertThat(tool.payload()).isInstanceOf(RunEventPayloads.ToolLifecycle.class);
         assertThat(execution.eventType()).isEqualTo("execution.completed");

@@ -111,6 +111,9 @@ testing 位于 Reactor 末端，可按测试需要依赖产品模块；产品模
 - Core 对象不是 JPA Entity，公共 API 不暴露框架或第三方 SDK 类型。
 - `AgentRun` 的生命周期合法性只由 Core 的受控行为决定；Runtime 不维护第二份状态转换表。
 - ID 和时间由调用方通过可注入边界生成；领域对象中不要直接调用随机生成器或 `Instant.now()`。
+- 所有持久化、事件、协议和对外输出时间统一使用 UTC epoch milliseconds 精度；通过
+  `TimePrecision` / `SystemTimeProvider` 生成或归一化，禁止把纳秒或微秒写入数据库、BLOB、JSON、
+  JSONL 或稳定哈希载荷。高精度时间只允许用于不落盘的进程内耗时测量。
 - Run 创建时冻结 Definition 版本和不可变配置快照引用；后续配置变化不得改变历史 Run 语义。
 - `AgentRunSnapshot` 是运行中视图，`AgentRunResult` 是最终结构化结果，`AgentRunHandle` 只是查询、等待和控制的便利层。
 - 公共 `AgentRunRequest` 不允许注入 Tenant、Principal 或配置快照引用；这些信息从可信 Caller Context 解析。

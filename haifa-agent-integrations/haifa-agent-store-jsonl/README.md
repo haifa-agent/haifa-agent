@@ -15,6 +15,8 @@ UTF-8 JSON Lines files.
   deduplication but never allocates, replaces, or interprets Run Feed cursors.
 - Only registered event types and explicitly selected payload fields are written. Unknown event
   types or schema versions fail closed.
+- Event timestamps are serialized as UTC ISO-8601 values at epoch-millisecond precision; readers
+  remain able to parse older lines that contain finer precision.
 - Credentials, tokens, reasoning, prompts, raw tool arguments/results, and provider responses are
   forbidden transcript content.
 - Files are resolved below one controlled root and guarded by an operating-system file lock. This

@@ -1,5 +1,13 @@
 # Haifa Agent Runtime Core
 
+## Model-call client events
+
+`FrozenModelInvoker` records each physical model attempt as durable
+`model.call.started` plus one terminal `model.call.succeeded` or `model.call.failed`
+event. `RuntimeClientEventProjector` exposes only the bounded provider-neutral
+`ModelLifecycle` fields; model text and provider payloads remain outside the durable
+client feed.
+
 ## 结构化完成纠偏
 
 `CompletionPolicy` 返回 Provider-neutral 的 `CompletionPolicyResult`：包括稳定

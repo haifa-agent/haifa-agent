@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportResult;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
@@ -73,7 +74,9 @@ final class CliCodingSessionExportService implements CodingSessionExportService 
             row.put("role", message.role().name());
             row.put("status", message.status().name());
             row.put("visibility", message.visibility().name());
-            row.put("createdAt", message.createdAt().toString());
+            row.put(
+                    "createdAt",
+                    TimePrecision.toMilliseconds(message.createdAt()).toString());
             row.put("content", safeContent(message.contents(), message.visibility() == MessageVisibility.USER_VISIBLE));
             lines.add(json(row));
         }

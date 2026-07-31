@@ -1,5 +1,6 @@
 package io.haifa.agent.skill.core;
 
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillAvailability;
@@ -63,7 +64,7 @@ public final class SkillCatalogBuilder {
     }
 
     public DefaultSkillCatalog build(SkillDiscoveryContext context) {
-        Instant now = clock.instant();
+        Instant now = TimePrecision.now(clock);
         List<SkillRegistration> registrations = new ArrayList<>();
         List<SkillDiagnostic> diagnostics = new ArrayList<>();
         sources.stream()

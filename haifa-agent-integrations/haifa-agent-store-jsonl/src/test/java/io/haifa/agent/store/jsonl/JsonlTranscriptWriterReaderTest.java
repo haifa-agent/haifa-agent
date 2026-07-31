@@ -38,6 +38,25 @@ class JsonlTranscriptWriterReaderTest {
     }
 
     @Test
+    void persistsTranscriptTimestampAtMillisecondPrecision() throws Exception {
+        JsonlTranscriptWriter writer = new JsonlTranscriptWriter(directory);
+        Instant precise = Instant.parse("2026-07-25T08:00:00.123456789Z");
+        SafeTranscriptEvent event = new SafeTranscriptEvent(
+                "1", "event-precise", "run-1", 1, precise, "run.completed", Map.of("status", "COMPLETED"));
+
+        writer.appendAndForce(event);
+
+        String line = Files.readString(writer.transcriptPath("run-1"), StandardCharsets.UTF_8);
+        assertThat(line).contains("2026-07-25T08:00:00.123Z").doesNotContain("456789");
+        assertThat(new JsonlTranscriptReader(directory)
+                        .read("run-1")
+                        .events()
+                        .getFirst()
+                        .occurredAt())
+                .isEqualTo(Instant.parse("2026-07-25T08:00:00.123Z"));
+    }
+
+    @Test
     void diagnosesAndRepairsOnlyATruncatedTail() throws Exception {
         JsonlTranscriptWriter writer = new JsonlTranscriptWriter(directory);
         writer.appendAndForce(event("event-1", 1));

@@ -41,6 +41,9 @@ class RichRunEventTransportTest {
                 .toList();
 
         assertThat(encoded.get(0)).contains("\"toolCallId\":\"call-1\"").doesNotContain("apiKey", "reasoning");
+        assertThat(encoded.get(0))
+                .contains("\"occurredAt\":\"2026-07-27T00:00:00.123Z\"")
+                .doesNotContain("456789");
         assertThat(encoded.get(1))
                 .contains("\"executionId\":\"execution-1\"", "\"truncated\":true")
                 .doesNotContain("apiKey", "reasoning");
@@ -59,7 +62,7 @@ class RichRunEventTransportTest {
                 new AgentSessionId("session-1"),
                 1,
                 new RunEventCursor(runId, "1", OptionalLong.of(1)),
-                Instant.parse("2026-07-27T00:00:00Z"),
+                Instant.parse("2026-07-27T00:00:00.123456789Z"),
                 Optional.empty(),
                 Optional.empty(),
                 payload);

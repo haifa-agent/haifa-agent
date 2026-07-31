@@ -1,9 +1,13 @@
 package io.haifa.agent.store.jsonl;
 
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.haifa.agent.common.io.SecureFilePermissions;
+import io.haifa.agent.common.time.TimePrecision;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -13,6 +17,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 
@@ -45,8 +50,20 @@ public final class JsonlTranscriptWriter {
         }
         this.maximumFileBytes = maximumFileBytes;
         this.objectMapper = new ObjectMapper()
-                .registerModule(new JavaTimeModule())
+                .registerModule(millisecondJavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+    }
+
+    private static JavaTimeModule millisecondJavaTimeModule() {
+        JavaTimeModule module = new JavaTimeModule();
+        module.addSerializer(Instant.class, new JsonSerializer<>() {
+            @Override
+            public void serialize(Instant value, JsonGenerator generator, SerializerProvider serializers)
+                    throws IOException {
+                generator.writeString(TimePrecision.toMilliseconds(value).toString());
+            }
+        });
+        return module;
     }
 
     public Path transcriptPath(String runId) {

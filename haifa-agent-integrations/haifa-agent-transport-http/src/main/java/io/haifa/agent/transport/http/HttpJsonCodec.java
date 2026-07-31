@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.contract.common.ContentPartDto;
 import io.haifa.agent.contract.common.IdempotencyKey;
 import io.haifa.agent.contract.common.ReferenceContentPartDto;
@@ -169,7 +170,7 @@ final class HttpJsonCodec {
         node.put("sessionId", view.sessionId());
         node.put("status", view.status());
         node.put("version", view.version());
-        node.put("updatedAt", view.updatedAt().toString());
+        node.put("updatedAt", TimePrecision.toMilliseconds(view.updatedAt()).toString());
         optional(node, "output", view.output());
         optional(node, "safeErrorCode", view.safeErrorCode());
         optional(node, "pendingInteractionId", view.pendingInteractionId());
@@ -213,8 +214,8 @@ final class HttpJsonCodec {
         ObjectNode requester = node.putObject("requester");
         requester.put("principalType", view.requester().principalType());
         requester.put("displayLabel", view.requester().displayLabel());
-        node.put("createdAt", view.createdAt().toString());
-        node.put("expiresAt", view.expiresAt().toString());
+        node.put("createdAt", TimePrecision.toMilliseconds(view.createdAt()).toString());
+        node.put("expiresAt", TimePrecision.toMilliseconds(view.expiresAt()).toString());
         ObjectNode consequences = node.putObject("consequences");
         consequences.put("accepted", view.consequences().accepted());
         consequences.put("rejected", view.consequences().rejected());
@@ -239,8 +240,11 @@ final class HttpJsonCodec {
         node.put("inputId", receipt.inputId());
         node.put("runId", receipt.runId());
         node.put("status", receipt.status());
-        node.put("acceptedAt", receipt.acceptedAt().toString());
-        receipt.appliedAt().ifPresent(value -> node.put("appliedAt", value.toString()));
+        node.put(
+                "acceptedAt", TimePrecision.toMilliseconds(receipt.acceptedAt()).toString());
+        receipt.appliedAt()
+                .ifPresent(value -> node.put(
+                        "appliedAt", TimePrecision.toMilliseconds(value).toString()));
         optional(node, "attemptId", receipt.attemptId());
         if (receipt.iteration().isPresent())
             node.put("iteration", receipt.iteration().getAsInt());
@@ -277,7 +281,7 @@ final class HttpJsonCodec {
         node.put("sessionId", event.sessionId());
         node.put("sequence", event.sequence());
         node.put("cursor", event.cursor().value());
-        node.put("occurredAt", event.occurredAt().toString());
+        node.put("occurredAt", TimePrecision.toMilliseconds(event.occurredAt()).toString());
         event.correlationId().ifPresent(value -> node.put("correlationId", value.value()));
         optional(node, "causationId", event.causationId());
         node.set("payload", payload(event.payload()));

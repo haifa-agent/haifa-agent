@@ -1,5 +1,9 @@
 # Haifa Personal Assistant Web
 
+The right-side activity panel renders safe durable Model, Tool, Skill, and MCP events.
+Model-call cards show the model, attempt coordinates, status, and terminal token or
+normalized failure summary without prompt or response text.
+
 会话标题区提供模型 Selector。新会话使用 Bootstrap 默认值或用户选择；已有会话仅在无活动 Run 时
 调用带 `If-Match` 与幂等键的切换 API。页面只提交内部 Model ID。
 消息输入框输入 `/` 会打开命令菜单；当前 `/model`“选择模型”命令按 Provider、Model 两级展示

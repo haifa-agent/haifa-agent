@@ -67,6 +67,36 @@ public final class RunEventPayloads {
         }
     }
 
+    /**
+     * Provider-neutral model-call lifecycle. Prompt, response content, endpoint and raw provider
+     * failures are intentionally excluded.
+     */
+    public record ModelLifecycle(
+            String modelCallId,
+            String providerId,
+            String modelId,
+            String status,
+            int iteration,
+            int attempt,
+            long inputTokens,
+            long outputTokens,
+            String finishReason,
+            String reasonCode)
+            implements AgentRunEvent.Payload {
+        public ModelLifecycle {
+            modelCallId = text(modelCallId, "modelCallId", 256);
+            providerId = text(providerId, "providerId", 128);
+            modelId = text(modelId, "modelId", 256);
+            status = text(status, "status", 64);
+            if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
+            if (attempt < 1) throw new IllegalArgumentException("attempt must be positive");
+            if (inputTokens < 0) throw new IllegalArgumentException("inputTokens must not be negative");
+            if (outputTokens < 0) throw new IllegalArgumentException("outputTokens must not be negative");
+            finishReason = optionalText(finishReason, "finishReason", 128);
+            reasonCode = text(reasonCode, "reasonCode", 128);
+        }
+    }
+
     public record ToolLifecycle(
             String toolCallId,
             String displayName,

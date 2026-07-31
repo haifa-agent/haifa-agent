@@ -1,5 +1,9 @@
 # Haifa Personal Assistant Application
 
+The safe Activity projection includes durable Model, Tool, Skill, and MCP lifecycle
+events. Model activities expose only model identity, physical attempt coordinates,
+status, token counts, finish reason, and normalized failure codes.
+
 Conversation 保存受信任的内部 Model ID 偏好。新 Conversation 可显式选择模型；空闲态切换使用独立
 revision 和幂等键，只影响下一 Turn 的新 Run。模型缺失时新 Run fail closed，历史 Run 仍使用原快照。
 

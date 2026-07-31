@@ -1,5 +1,6 @@
 package io.haifa.agent.store.sqlite;
 
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.PolicySnapshot;
 import io.haifa.agent.policy.api.PolicySnapshotRef;
@@ -75,7 +76,7 @@ public final class SqlitePolicySnapshotStore implements PolicySnapshotStore {
                         .map(ProjectTrustRef::value)
                         .equals(Optional.ofNullable(row.projectTrustRef()))
                 || !snapshot.contentDigest().equals(row.contentDigest())
-                || snapshot.createdAt().toEpochMilli() != row.createdAt().toEpochMilli()) {
+                || !TimePrecision.toMilliseconds(snapshot.createdAt()).equals(row.createdAt())) {
             throw new IllegalStateException("policy snapshot columns do not match payload");
         }
         return snapshot;

@@ -28,6 +28,8 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunRequest;
+import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
@@ -155,6 +157,18 @@ class ExternalModelRuntimeTest {
                 .singleElement()
                 .satisfies(event -> assertThat(event.textDelta()).isEqualTo("done"));
         assertThat(calls).hasValue(2);
+        assertThat(runtime.events(accepted.runId(), RunEventCursor.beforeFirst(accepted.runId()), 100).items().stream()
+                        .filter(event -> event.payload() instanceof RunEventPayloads.ModelLifecycle)
+                        .map(event -> (RunEventPayloads.ModelLifecycle) event.payload()))
+                .extracting(
+                        RunEventPayloads.ModelLifecycle::status,
+                        RunEventPayloads.ModelLifecycle::inputTokens,
+                        RunEventPayloads.ModelLifecycle::outputTokens)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("STARTED", 0L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("SUCCEEDED", 10L, 3L),
+                        org.assertj.core.groups.Tuple.tuple("STARTED", 0L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("SUCCEEDED", 15L, 4L));
         assertThat(store.modelContinuations(accepted.runId())).singleElement().satisfies(record -> {
             assertThat(record.reference().digest()).startsWith("sha256:");
             assertThat(record.toString()).doesNotContain("private tool reasoning");
@@ -254,6 +268,13 @@ class ExternalModelRuntimeTest {
         assertThat(outputEvents)
                 .extracting(event -> event.type())
                 .containsExactly(AgentRunOutputEventType.RUN_OUTPUT_STARTED, AgentRunOutputEventType.RUN_OUTPUT_FAILED);
+        assertThat(runtime.events(accepted.runId(), RunEventCursor.beforeFirst(accepted.runId()), 100).items().stream()
+                        .filter(event -> event.payload() instanceof RunEventPayloads.ModelLifecycle)
+                        .map(event -> (RunEventPayloads.ModelLifecycle) event.payload()))
+                .extracting(RunEventPayloads.ModelLifecycle::status, RunEventPayloads.ModelLifecycle::reasonCode)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("STARTED", "NONE"),
+                        org.assertj.core.groups.Tuple.tuple("FAILED", "MALFORMED_RESPONSE"));
         assertThat(store.messages(accepted.runId()))
                 .noneMatch(message -> message.role() == io.haifa.agent.core.message.MessageRole.ASSISTANT);
     }

@@ -404,6 +404,7 @@ function UsagePanel({ run }: { run: Run | null }) {
 }
 
 function ActivityIcon({ kind }: { kind: Activity["kind"] }) {
+  if (kind === "MODEL") return <Brain size={17} />;
   if (kind === "SKILL") return <Zap size={17} />;
   if (kind === "MCP") return <Database size={17} />;
   return <Cpu size={17} />;
@@ -581,7 +582,7 @@ function ActivityPanel({
                 <time>{formatTime(activity.startedAt)}</time>
               </article>
             ))}
-            {!activities.length && <p className="muted">当前运行尚无 Tool、Skill 或 MCP 活动。</p>}
+            {!activities.length && <p className="muted">当前运行尚无 Model、Tool、Skill 或 MCP 活动。</p>}
           </div>
         </section>
         <section className="panel-section"><h3>Token 使用</h3><UsagePanel run={run} /></section>
