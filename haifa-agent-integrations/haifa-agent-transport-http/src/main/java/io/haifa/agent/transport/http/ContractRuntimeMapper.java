@@ -113,7 +113,16 @@ public final class ContractRuntimeMapper {
                 snapshot.version(),
                 snapshot.updatedAt(),
                 snapshot.output(),
-                snapshot.error().map(error -> error.code().value()),
+                snapshot.error().map(error -> error.code().wireCode()),
+                snapshot.error()
+                        .map(error -> new io.haifa.agent.contract.run.AgentExecutionErrorView(
+                                error.code().wireCode(),
+                                error.message(),
+                                error.category().name(),
+                                error.retryability().name(),
+                                error.details(),
+                                error.optionalDiagnosticId(),
+                                error.occurredAt())),
                 pendingInteractionId,
                 baselineCursor,
                 headCursor);
@@ -218,7 +227,8 @@ public final class ContractRuntimeMapper {
 
     private static RunEventPayload payload(AgentRunEvent.Payload payload) {
         if (payload instanceof RunEventPayloads.RunLifecycle value) {
-            return new RunEventPayload.RunLifecycle(value.status(), value.version(), value.reasonCode());
+            return new RunEventPayload.RunLifecycle(
+                    value.status(), value.version(), value.reasonCode(), value.errorMessage(), value.diagnosticId());
         }
         if (payload instanceof RunEventPayloads.AssistantOutput value) {
             return new RunEventPayload.AssistantOutput(

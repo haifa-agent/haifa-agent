@@ -215,8 +215,8 @@ public final class CodingSessionService {
         CodingModelOption selected = requireAvailableModel(caller, modelId);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
         String requestDigest = digest(sessionId.value() + "|" + selected.id());
-        CodingModelPreference changed = codingSessions.changeModel(
-                sessionId, expectedRevision, selected.id(), keyDigest, requestDigest, now());
+        CodingModelPreference changed =
+                codingSessions.changeModel(sessionId, expectedRevision, selected.id(), keyDigest, requestDigest, now());
         return new CodingModelSelection(selected, changed.revision(), true);
     }
 

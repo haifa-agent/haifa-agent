@@ -4,10 +4,7 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.checkpoint.CheckpointType;
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
@@ -29,6 +26,7 @@ import io.haifa.agent.runtime.core.decision.AgentLoopDirective;
 import io.haifa.agent.runtime.core.decision.DecisionExecutor;
 import io.haifa.agent.runtime.core.decision.DecisionValidator;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
+import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
 import io.haifa.agent.runtime.core.guard.AgentLoopGuard;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.input.RunInputApplier;
@@ -208,7 +206,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.WAIT);
             }
             reconciler.reconcile(run, attempt);
-            trace.record(new RuntimeTraceEvent(
+            recordTrace(new RuntimeTraceEvent(
                     traceId,
                     run.id(),
                     java.util.Optional.of(attempt.attemptId()),
@@ -224,7 +222,7 @@ public final class DefaultAgentLoop implements AgentLoop {
 
             FrozenModelBinding model = models.bind(run);
             RuntimeContextBuildResult built = contextBuilder.build(run, progress, model);
-            trace.record(new RuntimeTraceEvent(
+            recordTrace(new RuntimeTraceEvent(
                     traceId,
                     run.id(),
                     java.util.Optional.of(attempt.attemptId()),
@@ -279,7 +277,9 @@ public final class DefaultAgentLoop implements AgentLoop {
                         () -> {
                             if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
                                 throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
-                                        "model call budget exhausted");
+                                        "modelCalls",
+                                        run.budget().maxModelCalls(),
+                                        run.usage().modelCalls());
                             }
                             transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
                             try {
@@ -293,7 +293,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         || progress.forcedContextRebuildAttempts() > 0) {
                                     throw contextTooLong;
                                 }
-                                trace.record(new RuntimeTraceEvent(
+                                recordTrace(new RuntimeTraceEvent(
                                         traceId,
                                         run.id(),
                                         java.util.Optional.of(attempt.attemptId()),
@@ -316,7 +316,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         CheckpointType.AUTOMATIC);
                                 builtRef[0] = contextBuilder.build(run, progress, model);
                                 middlewareContextRef[0] = builtRef[0].middlewareContext();
-                                trace.record(new RuntimeTraceEvent(
+                                recordTrace(new RuntimeTraceEvent(
                                         traceId,
                                         run.id(),
                                         java.util.Optional.of(attempt.attemptId()),
@@ -353,7 +353,9 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 modelStepRef[0] = recoveryStep;
                                 if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
                                     throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
-                                            "model call budget exhausted during context rebuild");
+                                            "modelCalls",
+                                            run.budget().maxModelCalls(),
+                                            run.usage().modelCalls());
                                 }
                                 transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 1, 0, 0, 0, 0));
                                 return models.invoke(
@@ -377,9 +379,9 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 response.costMinorUnits(),
                                 0));
                 if (run.budget().isExceededBy(run.usage())) {
-                    throw new RuntimeLimitExceededException("run budget exceeded by model usage");
+                    throw RuntimeLimitExceededException.forRunBudget(run);
                 }
-                trace.record(new RuntimeTraceEvent(
+                recordTrace(new RuntimeTraceEvent(
                         traceId,
                         run.id(),
                         java.util.Optional.of(attempt.attemptId()),
@@ -400,7 +402,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                         ? new ContextRebuildExhaustedException(
                                 "model context remained too long after the single forced rebuild")
                         : error;
-                trace.record(new RuntimeTraceEvent(
+                recordTrace(new RuntimeTraceEvent(
                         traceId,
                         run.id(),
                         java.util.Optional.of(attempt.attemptId()),
@@ -413,12 +415,12 @@ public final class DefaultAgentLoop implements AgentLoop {
                         "model.error",
                         modelErrorAttributes(run, error),
                         time.now()));
-                failModelStep(modelStepRef[0], terminal);
+                AgentError classified = failModelStep(modelStepRef[0], terminal);
                 if (invocationRef.get() != null) {
                     models.failed(run, invocationRef.get(), progress.iteration());
                 }
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
-                throw terminal;
+                throw classified == null ? terminal : new AgentExecutionFailureException(classified, terminal);
             }
             String fingerprint = decision.getClass().getSimpleName() + ":" + decision;
             progress.record(fingerprint);
@@ -585,26 +587,57 @@ public final class DefaultAgentLoop implements AgentLoop {
         return false;
     }
 
-    private void failModelStep(AgentStep step, RuntimeException error) {
-        if (step.status() != io.haifa.agent.core.step.AgentStepStatus.RUNNING) return;
-        boolean budgetExceeded = error instanceof RuntimeLimitExceededException;
-        step.fail(
-                new AgentStepError(new io.haifa.agent.core.error.AgentError(
-                        new io.haifa.agent.core.error.AgentErrorCode(
-                                budgetExceeded ? "RUN_BUDGET_EXCEEDED" : "MODEL_CALL_FAILED"),
-                        budgetExceeded
-                                ? io.haifa.agent.core.error.AgentErrorCategory.VALIDATION
-                                : io.haifa.agent.core.error.AgentErrorCategory.MODEL,
-                        io.haifa.agent.core.error.AgentErrorSeverity.ERROR,
-                        budgetExceeded
-                                ? io.haifa.agent.core.error.Retryability.NOT_RETRYABLE
-                                : io.haifa.agent.core.error.Retryability.UNKNOWN,
-                        budgetExceeded ? "Run budget exceeded" : "Model call or response validation failed",
-                        null,
-                        Map.of("exceptionType", error.getClass().getSimpleName()),
-                        time.now())),
-                time.now());
+    private AgentError failModelStep(AgentStep step, RuntimeException error) {
+        if (step.status() != io.haifa.agent.core.step.AgentStepStatus.RUNNING) return null;
+        AgentError classified =
+                new AgentError(modelErrorCode(error), modelErrorDetails(error), ids.nextValue(), time.now());
+        step.fail(new AgentStepError(classified), time.now());
         state.appendStep(step);
+        return classified;
+    }
+
+    private void recordTrace(RuntimeTraceEvent event) {
+        try {
+            trace.record(event);
+        } catch (RuntimeException ignored) {
+            // Trace is a best-effort projection and never changes Agent execution semantics.
+        }
+    }
+
+    private static AgentErrorCode modelErrorCode(RuntimeException error) {
+        if (error instanceof RuntimeLimitExceededException) return AgentErrorCode.RUN_BUDGET_EXCEEDED;
+        if (error instanceof ContextRebuildExhaustedException) return AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
+        if (!(error instanceof ModelInvocationException modelError)) return AgentErrorCode.MODEL_CALL_FAILED;
+        return switch (modelError.category()) {
+            case AUTHENTICATION_FAILED -> AgentErrorCode.MODEL_AUTHENTICATION_FAILED;
+            case PERMISSION_DENIED -> AgentErrorCode.MODEL_PERMISSION_DENIED;
+            case RATE_LIMITED -> AgentErrorCode.MODEL_RATE_LIMITED;
+            case TIMEOUT -> AgentErrorCode.MODEL_TIMEOUT;
+            case PROVIDER_UNAVAILABLE -> AgentErrorCode.MODEL_PROVIDER_UNAVAILABLE;
+            case INVALID_REQUEST -> AgentErrorCode.MODEL_REQUEST_INVALID;
+            case MODEL_NOT_FOUND -> AgentErrorCode.MODEL_NOT_FOUND;
+            case CONTEXT_TOO_LONG -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
+            case CONTENT_REJECTED -> AgentErrorCode.MODEL_CONTENT_REJECTED;
+            case MALFORMED_RESPONSE -> AgentErrorCode.MODEL_RESPONSE_INVALID;
+            case CANCELLED -> AgentErrorCode.MODEL_CANCELLED;
+            case UNKNOWN_PROVIDER_ERROR -> AgentErrorCode.MODEL_CALL_FAILED;
+        };
+    }
+
+    private static Map<String, Object> modelErrorDetails(RuntimeException error) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        if (error instanceof RuntimeLimitExceededException limit) {
+            details.put("resource", limit.resource());
+            details.put("limit", limit.limit());
+            details.put("used", limit.used());
+        }
+        if (error instanceof ModelInvocationException modelError) {
+            details.put("modelCallId", modelError.callId().value());
+            details.put("modelCategory", modelError.category().name());
+            if (modelError.httpStatus() > 0) details.put("httpStatus", modelError.httpStatus());
+            if (!modelError.providerCode().isBlank()) details.put("providerCode", modelError.providerCode());
+        }
+        return Map.copyOf(details);
     }
 
     private boolean isContextTooLong(RuntimeException error) {
@@ -668,20 +701,13 @@ public final class DefaultAgentLoop implements AgentLoop {
             transitions.cancelled(
                     run, new RunTerminationReason("TOOL_CANCELLED", "Tool cancellation ended the current run"));
         } else {
-            String code = directive == RecoveryDirective.TERMINATE_OUTCOME_UNKNOWN
-                    ? "TOOL_OUTCOME_UNKNOWN"
-                    : "REPEATED_TOOL_FAILURE";
+            AgentErrorCode code = directive == RecoveryDirective.TERMINATE_OUTCOME_UNKNOWN
+                    ? AgentErrorCode.TOOL_OUTCOME_UNKNOWN
+                    : AgentErrorCode.REPEATED_TOOL_FAILURE;
             transitions.failed(
                     run,
                     new AgentError(
-                            new AgentErrorCode(code),
-                            AgentErrorCategory.TOOL,
-                            AgentErrorSeverity.ERROR,
-                            Retryability.NOT_RETRYABLE,
-                            directive == RecoveryDirective.TERMINATE_OUTCOME_UNKNOWN
-                                    ? "Tool outcome is unknown; automatic replay is forbidden"
-                                    : "Repeated semantic Tool failure made no meaningful progress",
-                            null,
+                            code,
                             Map.of(
                                     "failureCategory",
                                     update.observation().category().name(),
@@ -689,6 +715,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                     update.observation().fingerprint().digest(),
                                     "attempts",
                                     update.attempts()),
+                            ids.nextValue(),
                             time.now()));
         }
         return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);

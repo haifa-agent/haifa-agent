@@ -202,6 +202,31 @@ describe("Personal Assistant application", () => {
     expect(screen.queryByText("运行诊断")).toBeNull();
   });
 
+  it("renders a typed safe execution error and diagnostic id", async () => {
+    const api = client();
+    vi.mocked(api.run).mockResolvedValue({
+      ...run,
+      status: "FAILED",
+      errorCode: "RUN_BUDGET_EXCEEDED",
+      error: {
+        code: "RUN_BUDGET_EXCEEDED",
+        message: "Run budget exceeded",
+        category: "RESOURCE_LIMIT",
+        retryability: "NOT_RETRYABLE",
+        details: { resource: "modelCalls", limit: 2, used: 2 },
+        diagnosticId: "diag-budget",
+        occurredAt: "2026-07-28T01:00:01Z",
+      },
+    });
+
+    render(<App client={api} />);
+
+    expect(await screen.findByText(/\[RUN_BUDGET_EXCEEDED\] Run budget exceeded/)).toBeTruthy();
+    expect(screen.getByText(/诊断编号：diag-budget/)).toBeTruthy();
+    expect(screen.getByText(/缩小任务范围后重新发起/)).toBeTruthy();
+    expect(screen.queryByText(/java\.|Exception|stack/i)).toBeNull();
+  });
+
   it("restores the conversation selected by the URL on refresh", async () => {
     const requested = {
       ...conversation,

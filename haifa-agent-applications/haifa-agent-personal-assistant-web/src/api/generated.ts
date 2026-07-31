@@ -78,6 +78,16 @@ export interface Usage {
   toolCalls: number;
 }
 
+export interface ExecutionError {
+  code: string;
+  message: string;
+  category: string;
+  retryability: string;
+  details: Record<string, unknown>;
+  diagnosticId?: string | null;
+  occurredAt: string;
+}
+
 export interface Run {
   id: string;
   conversationId: string;
@@ -87,6 +97,7 @@ export interface Run {
   output?: string | null;
   resultSummary?: string | null;
   errorCode?: string | null;
+  error?: ExecutionError | null;
   usage: Usage;
 }
 

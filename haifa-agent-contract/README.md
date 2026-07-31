@@ -19,3 +19,7 @@ Run、Steer、Runtime Command、Interaction 和 Run Event 的 transport-neutral 
   和 P0 typed payload 形状；Journal 投影、range read、订阅和 HTTP/SSE 映射由相邻模块实现。
 - `AUTHENTICATION_REQUIRED` 等错误码是跨 Transport 的稳定机器语义；HTTP 状态和安全 Problem
   Details 由 Transport Adapter 映射。
+
+`RunView.error` 使用 `AgentExecutionErrorView` 投影执行错误的 code、默认安全 message、
+category、retryability、安全 details、diagnosticId 和 occurredAt。既有 `safeErrorCode` 及旧
+构造器暂时保留为兼容层；请求/协议失败仍通过标准 Runtime API Problem 表达，两者不混用。

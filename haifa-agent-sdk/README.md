@@ -69,6 +69,11 @@ try (HaifaAgent agent = HaifaAgents.builder()
 
 ## 政策、扩展与错误
 
+SDK 的 Run Snapshot/Result 直接暴露 Core `AgentError` 的类型化 code、默认安全 message、
+category、retryability、details 和 diagnosticId；调用方无需解析字符串，也不会收到 Runtime
+Core 或 Provider 异常。同步请求失败属于 `RuntimeApiErrorCode`，异步 Run 失败属于
+`AgentErrorCode`。
+
 - `ProductPolicies` 将 Memory 人工审查与查询边界、Artifact 配额/Media Type/本地容量门禁及
   Execution 主机/网络/并发/超时政策冻结进 Profile canonical digest；本阶段不允许关闭
   Memory Candidate 人工审查。

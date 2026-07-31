@@ -5,10 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.plan.AgentPlan;
 import io.haifa.agent.core.plan.AgentPlanId;
 import io.haifa.agent.core.plan.TodoItem;
@@ -245,12 +242,7 @@ class AutonomousDeliveryRecoveryControlTest {
         call.start(NOW.plusSeconds(1));
         call.fail(
                 new ToolExecutionError(new AgentError(
-                        new AgentErrorCode(stableCode),
-                        AgentErrorCategory.TOOL,
-                        AgentErrorSeverity.WARNING,
-                        Retryability.NOT_RETRYABLE,
-                        message,
-                        null,
+                        AgentErrorCode.TOOL_INVOCATION_FAILED,
                         Map.of(
                                 "failureCategory",
                                 category,
@@ -262,6 +254,7 @@ class AutonomousDeliveryRecoveryControlTest {
                                 "TEST",
                                 "sandboxProfileDigest",
                                 sandboxDigest),
+                        "diag-" + id,
                         NOW.plusSeconds(2))),
                 NOW.plusSeconds(2));
         return call;

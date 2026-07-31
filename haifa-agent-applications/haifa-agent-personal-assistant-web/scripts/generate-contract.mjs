@@ -92,6 +92,7 @@ function typeOf(schema) {
   if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
   if (schema.type === "array") return `Array<${typeOf(schema.items)}>`;
   if (schema.type === "object") {
+    if (schema.additionalProperties) return "Record<string, unknown>";
     const required = new Set(schema.required ?? []);
     const entries = Object.entries(schema.properties ?? {}).map(
       ([name, value]) => `${JSON.stringify(name)}${required.has(name) ? "" : "?"}: ${typeOf(value)}`,

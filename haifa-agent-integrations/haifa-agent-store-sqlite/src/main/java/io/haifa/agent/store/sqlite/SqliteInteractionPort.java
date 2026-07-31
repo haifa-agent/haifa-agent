@@ -15,8 +15,8 @@ import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.InteractionState;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
 import io.haifa.agent.runtime.core.interaction.InteractionExpirationOutcome;
@@ -161,7 +161,7 @@ public final class SqliteInteractionPort implements InteractionPort {
             }
             if (mapper.markInteractionStateApplied(requestId.value(), current.revision(), appliedAt) != 1) {
                 throw new RuntimeContractException(
-                        RuntimeErrorCode.INTERACTION_REVISION_CONFLICT,
+                        RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT,
                         "The interaction revision is no longer current");
             }
             return null;
@@ -277,7 +277,7 @@ public final class SqliteInteractionPort implements InteractionPort {
             if (existing != null) {
                 if (!digest.equals(existing.canonicalDigest())) {
                     throw new RuntimeContractException(
-                            RuntimeErrorCode.IDEMPOTENCY_CONFLICT,
+                            RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
                             "The idempotency key is already bound to a different interaction response");
                 }
                 return new InteractionSubmissionResolution(requireRecord(mapper, response.requestId()), false);
@@ -286,7 +286,7 @@ public final class SqliteInteractionPort implements InteractionPort {
             if (existing != null) {
                 if (!digest.equals(existing.canonicalDigest())) {
                     throw new RuntimeContractException(
-                            RuntimeErrorCode.IDEMPOTENCY_CONFLICT,
+                            RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
                             "The response id is already bound to different content");
                 }
                 return new InteractionSubmissionResolution(requireRecord(mapper, response.requestId()), false);
@@ -299,12 +299,12 @@ public final class SqliteInteractionPort implements InteractionPort {
             InteractionRecord current = requireRecord(mapper, request.id());
             if (current.revision() != response.expectedRevision()) {
                 throw new RuntimeContractException(
-                        RuntimeErrorCode.INTERACTION_REVISION_CONFLICT,
+                        RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT,
                         "The interaction revision is no longer current");
             }
             if (current.state() != InteractionState.PENDING) {
                 throw new RuntimeContractException(
-                        RuntimeErrorCode.INTERACTION_ALREADY_RESOLVED, "The interaction is already resolved");
+                        RuntimeApiErrorCode.INTERACTION_ALREADY_RESOLVED, "The interaction is already resolved");
             }
             validateActionAndInput(request, response);
             EncodedPayload inputs =
@@ -330,7 +330,7 @@ public final class SqliteInteractionPort implements InteractionPort {
                     "ACCEPTED"));
             if (mapper.markInteractionResponded(request.id().value(), current.revision(), receivedAt) != 1) {
                 throw new RuntimeContractException(
-                        RuntimeErrorCode.INTERACTION_REVISION_CONFLICT,
+                        RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT,
                         "The interaction revision is no longer current");
             }
             if (request.approvalContext().isPresent()) {
@@ -480,7 +480,7 @@ public final class SqliteInteractionPort implements InteractionPort {
         InteractionRequestRow row = mapper.findInteractionRequest(requestId.value());
         if (row == null) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
+                    RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
         return fromRecordRow(row);
     }
@@ -665,7 +665,8 @@ public final class SqliteInteractionPort implements InteractionPort {
         if (!InteractionSemantics.allowedActions(InteractionSemantics.kind(request))
                 .contains(response.action())) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_ACTION_NOT_ALLOWED, "The action is not allowed for this interaction");
+                    RuntimeApiErrorCode.INTERACTION_ACTION_NOT_ALLOWED,
+                    "The action is not allowed for this interaction");
         }
         if (response.action().equals(InteractionAction.SUBMIT)
                 && response.inputs().isEmpty()) {
@@ -683,10 +684,10 @@ public final class SqliteInteractionPort implements InteractionPort {
                 || !request.tenant().equals(caller.tenant())
                 || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
+                    RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
         if (!receivedAt.isBefore(request.expiresAt())) {
-            throw new RuntimeContractException(RuntimeErrorCode.INTERACTION_EXPIRED, "The interaction has expired");
+            throw new RuntimeContractException(RuntimeApiErrorCode.INTERACTION_EXPIRED, "The interaction has expired");
         }
     }
 
@@ -722,7 +723,7 @@ public final class SqliteInteractionPort implements InteractionPort {
 
     private static void revisionConflict() {
         throw new RuntimeContractException(
-                RuntimeErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
+                RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
     }
 
     private <T> T execute(Supplier<T> work) {

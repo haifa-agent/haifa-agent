@@ -1,6 +1,7 @@
 package io.haifa.agent.runtime.api;
 
-public enum RuntimeErrorCode {
+/** Stable errors for Runtime API requests and control operations, not Agent execution failures. */
+public enum RuntimeApiErrorCode {
     RUN_NOT_FOUND,
     RUN_STATE_CONFLICT,
     RUN_VERSION_CONFLICT,

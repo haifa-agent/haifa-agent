@@ -1,5 +1,7 @@
 package io.haifa.agent.contract.event;
 
+import java.util.Optional;
+
 /** Typed payload family. Unknown event types are represented by unknown envelopes, not arbitrary maps. */
 public sealed interface RunEventPayload
         permits RunEventPayload.RunLifecycle,
@@ -12,11 +14,23 @@ public sealed interface RunEventPayload
                 RunEventPayload.ExecutionLifecycle,
                 RunEventPayload.ResourceAvailable {
 
-    record RunLifecycle(String status, long version, String reasonCode) implements RunEventPayload {
+    record RunLifecycle(
+            String status,
+            long version,
+            String reasonCode,
+            Optional<String> errorMessage,
+            Optional<String> diagnosticId)
+            implements RunEventPayload {
+        public RunLifecycle(String status, long version, String reasonCode) {
+            this(status, version, reasonCode, Optional.empty(), Optional.empty());
+        }
+
         public RunLifecycle {
             status = require(status, "status", 64);
             if (version < 0) throw new IllegalArgumentException("version must not be negative");
             reasonCode = require(reasonCode, "reasonCode", 128);
+            errorMessage = optional(errorMessage, "errorMessage", 2_048);
+            diagnosticId = optional(diagnosticId, "diagnosticId", 256);
         }
     }
 
@@ -131,5 +145,10 @@ public sealed interface RunEventPayload
             throw new IllegalArgumentException(field + " is too long");
         }
         return checked;
+    }
+
+    private static Optional<String> optional(Optional<String> value, String field, int maximumLength) {
+        return java.util.Objects.requireNonNull(value, field + " must not be null")
+                .map(item -> require(item, field, maximumLength));
     }
 }

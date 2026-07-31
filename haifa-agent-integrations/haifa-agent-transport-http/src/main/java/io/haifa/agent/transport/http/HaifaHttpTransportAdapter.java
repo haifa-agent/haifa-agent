@@ -8,7 +8,7 @@ import io.haifa.agent.runtime.api.AgentRunViewSnapshot;
 import io.haifa.agent.runtime.api.AgentRuntime;
 import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
 import io.haifa.agent.runtime.api.RunEventCursor;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
@@ -93,7 +93,7 @@ public final class HaifaHttpTransportAdapter {
             if (request.method().equals("GET") && (match = EVENTS.matcher(request.path())).matches()) {
                 return events(request, match.group(1), correlationId);
             }
-            throw new TransportFailure(RuntimeErrorCode.RUN_NOT_FOUND, 404, "No HTTP operation matches the request");
+            throw new TransportFailure(RuntimeApiErrorCode.RUN_NOT_FOUND, 404, "No HTTP operation matches the request");
         } catch (Throwable failure) {
             return problems.map(failure, correlationId);
         }
@@ -105,11 +105,12 @@ public final class HaifaHttpTransportAdapter {
             validateCommon(request);
             Matcher match = STREAM.matcher(request.path());
             if (!request.method().equals("GET") || !match.matches()) {
-                throw new TransportFailure(RuntimeErrorCode.RUN_NOT_FOUND, 404, "No SSE operation matches the request");
+                throw new TransportFailure(
+                        RuntimeApiErrorCode.RUN_NOT_FOUND, 404, "No SSE operation matches the request");
             }
             if (!request.header("Accept").orElse("").contains("text/event-stream")) {
                 throw new TransportFailure(
-                        RuntimeErrorCode.CONTRACT_VERSION_UNSUPPORTED, 406, "Accept must include text/event-stream");
+                        RuntimeApiErrorCode.CONTRACT_VERSION_UNSUPPORTED, 406, "Accept must include text/event-stream");
             }
             AgentRunId runId = new AgentRunId(match.group(1));
             TrustedCallerContext caller = authenticate(request);
@@ -147,7 +148,7 @@ public final class HaifaHttpTransportAdapter {
         TrustedCallerContext caller = authenticate(request);
         authorize(caller, RunOperation.RESUME, pathRunId, Optional.empty());
         var body = json.resume(request.body(), request.header("Idempotency-Key"), ifMatch(request.header("If-Match")));
-        requireIdentity(pathRunId, body.runId(), RuntimeErrorCode.RUN_STATE_CONFLICT);
+        requireIdentity(pathRunId, body.runId(), RuntimeApiErrorCode.RUN_STATE_CONFLICT);
         var snapshot = callerScope.call(
                 caller,
                 () -> runtime.resume(new ResumeAgentRunRequest(
@@ -171,7 +172,7 @@ public final class HaifaHttpTransportAdapter {
         authorize(caller, RunOperation.SUBMIT_INPUT, pathRunId, Optional.empty());
         var external =
                 json.input(request.body(), request.header("Idempotency-Key"), ifMatch(request.header("If-Match")));
-        requireIdentity(pathRunId, external.runId(), RuntimeErrorCode.RUN_STATE_CONFLICT);
+        requireIdentity(pathRunId, external.runId(), RuntimeApiErrorCode.RUN_STATE_CONFLICT);
         checkRunVersion(caller, new AgentRunId(pathRunId), external.expectedRunVersion());
         var receipt = callerScope.call(caller, () -> runtime.submitInput(mapper.input(external)));
         var contract = new io.haifa.agent.contract.run.RunInputReceipt(
@@ -193,7 +194,7 @@ public final class HaifaHttpTransportAdapter {
         authorize(caller, RunOperation.COMMAND, pathRunId, Optional.empty());
         var external =
                 json.command(request.body(), request.header("Idempotency-Key"), ifMatch(request.header("If-Match")));
-        requireIdentity(pathRunId, external.runId(), RuntimeErrorCode.RUN_STATE_CONFLICT);
+        requireIdentity(pathRunId, external.runId(), RuntimeApiErrorCode.RUN_STATE_CONFLICT);
         var result = callerScope.call(caller, () -> runtime.command(mapper.command(external)));
         var contract = new io.haifa.agent.contract.run.RuntimeCommandReceipt(
                 io.haifa.agent.contract.common.ApiVersion.CURRENT,
@@ -220,8 +221,8 @@ public final class HaifaHttpTransportAdapter {
         authorize(caller, RunOperation.RESPOND_INTERACTION, pathRunId, Optional.of(pathRequestId));
         InteractionResponseRequest external =
                 json.response(request.body(), request.header("Idempotency-Key"), ifMatch(request.header("If-Match")));
-        requireIdentity(pathRunId, external.runId(), RuntimeErrorCode.INTERACTION_NOT_FOUND);
-        requireIdentity(pathRequestId, external.requestId(), RuntimeErrorCode.INTERACTION_NOT_FOUND);
+        requireIdentity(pathRunId, external.runId(), RuntimeApiErrorCode.INTERACTION_NOT_FOUND);
+        requireIdentity(pathRequestId, external.requestId(), RuntimeApiErrorCode.INTERACTION_NOT_FOUND);
         var receipt = callerScope.call(caller, () -> runtime.respond(mapper.interaction(external)));
         var contract = new io.haifa.agent.contract.interaction.InteractionResponseReceipt(
                 io.haifa.agent.contract.common.ApiVersion.CURRENT,
@@ -269,14 +270,15 @@ public final class HaifaHttpTransportAdapter {
         return callerScope
                 .call(caller, () -> runtime.view(runId))
                 .orElseThrow(() -> new TransportFailure(
-                        RuntimeErrorCode.RUN_NOT_FOUND, 404, "The run does not exist or is not visible"));
+                        RuntimeApiErrorCode.RUN_NOT_FOUND, 404, "The run does not exist or is not visible"));
     }
 
     private void checkRunVersion(TrustedCallerContext caller, AgentRunId runId, OptionalLong expected) {
         if (expected.isEmpty()) return;
         long current = requireView(caller, runId).snapshot().version();
         if (current != expected.getAsLong()) {
-            throw new TransportFailure(RuntimeErrorCode.RUN_VERSION_CONFLICT, 412, "The expected Run version is stale");
+            throw new TransportFailure(
+                    RuntimeApiErrorCode.RUN_VERSION_CONFLICT, 412, "The expected Run version is stale");
         }
     }
 
@@ -284,7 +286,7 @@ public final class HaifaHttpTransportAdapter {
         Optional<String> query = request.query("cursor");
         Optional<String> header = request.header("Last-Event-ID");
         if (query.isPresent() && header.isPresent() && !query.equals(header)) {
-            throw new TransportFailure(RuntimeErrorCode.CURSOR_INVALID, 409, "Cursor sources differ");
+            throw new TransportFailure(RuntimeApiErrorCode.CURSOR_INVALID, 409, "Cursor sources differ");
         }
         return query.or(() -> header)
                 .map(value -> mapper.cursors().decode(runId, value))
@@ -302,12 +304,12 @@ public final class HaifaHttpTransportAdapter {
 
     private void validateCommon(HttpTransportRequest request) {
         if (request.body().length > configuration.maximumRequestBytes()) {
-            throw new TransportFailure(RuntimeErrorCode.PAYLOAD_TOO_LARGE, 413, "Request payload is too large");
+            throw new TransportFailure(RuntimeApiErrorCode.PAYLOAD_TOO_LARGE, 413, "Request payload is too large");
         }
         request.header("X-Haifa-Api-Version").ifPresent(version -> {
             if (!version.equals(configuration.apiVersion())) {
                 throw new TransportFailure(
-                        RuntimeErrorCode.CONTRACT_VERSION_UNSUPPORTED, 400, "API version is unsupported");
+                        RuntimeApiErrorCode.CONTRACT_VERSION_UNSUPPORTED, 400, "API version is unsupported");
             }
         });
     }
@@ -316,7 +318,7 @@ public final class HaifaHttpTransportAdapter {
         String contentType = request.header("Content-Type").orElse("");
         if (!contentType.toLowerCase(java.util.Locale.ROOT).startsWith("application/json")) {
             throw new TransportFailure(
-                    RuntimeErrorCode.CONTRACT_VERSION_UNSUPPORTED, 415, "Content-Type must be application/json");
+                    RuntimeApiErrorCode.CONTRACT_VERSION_UNSUPPORTED, 415, "Content-Type must be application/json");
         }
     }
 
@@ -367,7 +369,7 @@ public final class HaifaHttpTransportAdapter {
         }
     }
 
-    private static void requireIdentity(String path, String body, RuntimeErrorCode code) {
+    private static void requireIdentity(String path, String body, RuntimeApiErrorCode code) {
         if (!path.equals(body)) throw new TransportFailure(code, 409, "URL and body identity differ");
     }
 }

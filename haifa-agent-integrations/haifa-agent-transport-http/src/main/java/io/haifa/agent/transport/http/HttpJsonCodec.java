@@ -125,7 +125,7 @@ final class HttpJsonCodec {
         Optional<String> bodyKey = optionalText(node, "idempotencyKey");
         if (headerKey.isPresent() && bodyKey.isPresent() && !headerKey.equals(bodyKey)) {
             throw new TransportFailure(
-                    io.haifa.agent.runtime.api.RuntimeErrorCode.IDEMPOTENCY_CONFLICT,
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
                     409,
                     "Header and body idempotency keys differ");
         }
@@ -139,8 +139,8 @@ final class HttpJsonCodec {
         if (header.isPresent() && body.isPresent() && header.getAsLong() != body.getAsLong()) {
             throw new TransportFailure(
                     field.equals("expectedRevision")
-                            ? io.haifa.agent.runtime.api.RuntimeErrorCode.INTERACTION_REVISION_CONFLICT
-                            : io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_VERSION_CONFLICT,
+                            ? io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT
+                            : io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
                     412,
                     "If-Match and body version differ");
         }
@@ -173,6 +173,18 @@ final class HttpJsonCodec {
         node.put("updatedAt", TimePrecision.toMilliseconds(view.updatedAt()).toString());
         optional(node, "output", view.output());
         optional(node, "safeErrorCode", view.safeErrorCode());
+        view.error().ifPresent(error -> {
+            ObjectNode errorNode = node.putObject("error");
+            errorNode.put("code", error.code());
+            errorNode.put("message", error.message());
+            errorNode.put("category", error.category());
+            errorNode.put("retryability", error.retryability());
+            errorNode.set("details", json.valueToTree(error.details()));
+            optional(errorNode, "diagnosticId", error.diagnosticId());
+            errorNode.put(
+                    "occurredAt",
+                    TimePrecision.toMilliseconds(error.occurredAt()).toString());
+        });
         optional(node, "pendingInteractionId", view.pendingInteractionId());
         optional(node, "baselineCursor", view.baselineCursor());
         optional(node, "headCursor", view.headCursor());
@@ -294,6 +306,8 @@ final class HttpJsonCodec {
             node.put("status", value.status());
             node.put("version", value.version());
             node.put("reasonCode", value.reasonCode());
+            optional(node, "errorMessage", value.errorMessage());
+            optional(node, "diagnosticId", value.diagnosticId());
         } else if (payload instanceof RunEventPayload.AssistantOutput value) {
             node.put("generationId", value.generationId());
             node.put("status", value.status());

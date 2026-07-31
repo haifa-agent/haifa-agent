@@ -8,10 +8,7 @@ import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
@@ -43,6 +40,7 @@ import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
+import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter;
@@ -179,16 +177,12 @@ public final class DecisionExecutor {
                 transitions.failed(
                         run,
                         new AgentError(
-                                new AgentErrorCode("COMPLETION_REPAIR_EXHAUSTED"),
-                                AgentErrorCategory.POLICY,
-                                AgentErrorSeverity.ERROR,
-                                Retryability.NOT_RETRYABLE,
-                                "Required delivery evidence remained missing after bounded completion repair.",
-                                null,
+                                AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED,
                                 Map.of(
                                         "blockerCodes", blockerCodes,
                                         "missingEvidence", missingEvidence,
                                         "attempts", attempt - 1),
+                                ids.nextValue(),
                                 time.now()));
                 return AgentLoopDirective.STOP;
             }
@@ -310,21 +304,19 @@ public final class DecisionExecutor {
                         "Tool request rejected; repair the arguments or choose another capability.");
                 continue;
             } catch (RuntimeException failure) {
-                AgentError toolError = call.error()
-                        .map(io.haifa.agent.core.tool.ToolExecutionError::error)
-                        .orElseGet(() -> new AgentError(
-                                new AgentErrorCode("TOOL_INVOCATION_FAILED"),
-                                AgentErrorCategory.TOOL,
-                                AgentErrorSeverity.ERROR,
-                                Retryability.NOT_RETRYABLE,
-                                "Tool execution failed before a result was available.",
-                                null,
-                                Map.of("tool", call.toolName()),
-                                time.now()));
+                AgentError toolError = failure instanceof AgentExecutionFailureException classified
+                        ? classified.error()
+                        : call.error()
+                                .map(io.haifa.agent.core.tool.ToolExecutionError::error)
+                                .orElseGet(() -> new AgentError(
+                                        AgentErrorCode.TOOL_INVOCATION_FAILED,
+                                        Map.of("tool", call.toolName()),
+                                        ids.nextValue(),
+                                        time.now()));
                 step.fail(new AgentStepError(toolError), time.now());
                 state.appendStep(step);
                 appendToolResult(run, call, toolError.message());
-                throw failure;
+                throw new AgentExecutionFailureException(toolError, failure);
             }
             if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
                 step.waitForExternalInput();
@@ -363,20 +355,11 @@ public final class DecisionExecutor {
         cancelRejectedCall(call);
         state.appendToolCall(call);
         Map<String, Object> attributes = failure instanceof ToolInputValidationException validation
-                ? Map.of(
-                        "reason", validation.getClass().getSimpleName(),
-                        "repairHint", validation.repairHint())
-                : Map.of("reason", failure.getClass().getSimpleName());
+                ? Map.of("reason", "ARGUMENTS_INVALID", "repairHint", validation.repairHint())
+                : Map.of("reason", "TOOL_REQUEST_REJECTED");
         step.fail(
-                new AgentStepError(new AgentError(
-                        new AgentErrorCode("TOOL_REQUEST_REJECTED"),
-                        AgentErrorCategory.VALIDATION,
-                        AgentErrorSeverity.WARNING,
-                        Retryability.NOT_RETRYABLE,
-                        "Tool request validation failed",
-                        null,
-                        attributes,
-                        time.now())),
+                new AgentStepError(
+                        new AgentError(AgentErrorCode.TOOL_REQUEST_REJECTED, attributes, ids.nextValue(), time.now())),
                 time.now());
         state.appendStep(step);
         appendToolResult(run, call, modelSummary);
@@ -561,13 +544,9 @@ public final class DecisionExecutor {
         step.resume();
         step.fail(
                 new AgentStepError(new AgentError(
-                        new AgentErrorCode("TOOL_APPROVAL_REJECTED"),
-                        AgentErrorCategory.TOOL,
-                        AgentErrorSeverity.WARNING,
-                        Retryability.NOT_RETRYABLE,
-                        "Tool execution was rejected by the operator",
-                        null,
+                        AgentErrorCode.TOOL_APPROVAL_REJECTED,
                         Map.of("toolCallId", call.id().value()),
+                        ids.nextValue(),
                         time.now())),
                 time.now());
         state.appendStep(step);

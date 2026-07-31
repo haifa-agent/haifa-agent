@@ -5,6 +5,13 @@
 - 允许依赖：`haifa-agent-common` 和 JDK；测试范围内允许测试类库。
 - 禁止依赖：Spring、Spring AI、Provider、数据库、Sandbox、Product、Admin 和 Contract。
 - 公共 API 按 `agent`、`session`、`run`、`message`、`content`、`step`、`tool`、`plan`、`checkpoint`、`error`、`event` 与 `reference` 分包。
+
+## 执行错误
+
+`AgentErrorCode` 是唯一稳定的 Run 执行错误目录；wire code、默认安全英文文案、类别和重试语义
+由枚举统一定义。`AgentError` 只保存该 code、有界且深度不可变的安全 `details`、可选
+`diagnosticId` 和发生时间，不保存 Throwable、异常类、异常消息或堆栈。未知持久码通过
+`fromWireCode` 降级为 `UNKNOWN`，而不是动态创建公共错误码。
 - `AgentDefinition` 不可变且显式版本化；Run 同时保存 Definition ID/版本与不可变配置快照引用，保证历史运行可复现。
 - `AgentSession` 只组织多轮交互和多次 Run，不固定绑定任何 AgentDefinition，也不内嵌完整消息或 Run 集合。
 - `AgentRun` 统一表达根 Run 和子 Run，通过 `rootRunId`、`parentRunId`、`depth` 与 `invocationMode` 建模委派和 Fork/Join。

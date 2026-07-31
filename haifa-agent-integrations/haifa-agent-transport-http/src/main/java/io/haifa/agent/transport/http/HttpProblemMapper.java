@@ -2,8 +2,8 @@ package io.haifa.agent.transport.http;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Map;
@@ -19,7 +19,7 @@ final class HttpProblemMapper {
     }
 
     HttpTransportResponse map(Throwable failure, String correlationId) {
-        RuntimeErrorCode code;
+        RuntimeApiErrorCode code;
         int status;
         String detail;
         if (failure instanceof TransportFailure transport) {
@@ -31,19 +31,19 @@ final class HttpProblemMapper {
             status = status(contract.code());
             detail = contract.getMessage();
         } else if (failure instanceof HttpAuthenticationException) {
-            code = RuntimeErrorCode.AUTHENTICATION_REQUIRED;
+            code = RuntimeApiErrorCode.AUTHENTICATION_REQUIRED;
             status = 401;
             detail = "Authentication is required";
         } else if (failure instanceof HttpAuthorizationException || failure instanceof SecurityException) {
-            code = RuntimeErrorCode.RUN_NOT_FOUND;
+            code = RuntimeApiErrorCode.RUN_NOT_FOUND;
             status = 404;
             detail = "The resource does not exist or is not visible";
         } else if (failure instanceof IllegalArgumentException) {
-            code = RuntimeErrorCode.RUN_STATE_CONFLICT;
+            code = RuntimeApiErrorCode.RUN_STATE_CONFLICT;
             status = 400;
             detail = "The request is invalid";
         } else {
-            code = RuntimeErrorCode.INTERNAL_ERROR;
+            code = RuntimeApiErrorCode.INTERNAL_ERROR;
             status = 500;
             detail = "The request could not be completed";
         }
@@ -64,7 +64,7 @@ final class HttpProblemMapper {
                 problem.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static int status(RuntimeErrorCode code) {
+    private static int status(RuntimeApiErrorCode code) {
         return switch (code) {
             case RUN_NOT_FOUND, INTERACTION_NOT_FOUND -> 404;
             case CURSOR_EXPIRED -> 410;

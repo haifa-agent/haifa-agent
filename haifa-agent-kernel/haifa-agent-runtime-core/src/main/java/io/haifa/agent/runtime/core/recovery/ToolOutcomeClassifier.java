@@ -13,9 +13,9 @@ public final class ToolOutcomeClassifier {
         ToolCallStatus status = call.status();
         if (status == ToolCallStatus.COMPLETED || !terminal(status)) return Optional.empty();
         Map<String, Object> attributes =
-                call.error().map(value -> value.error().attributes()).orElse(Map.of());
+                call.error().map(value -> value.error().details()).orElse(Map.of());
         String errorCode =
-                call.error().map(value -> value.error().code().value()).orElse("UNCLASSIFIED_TERMINAL");
+                call.error().map(value -> value.error().code().wireCode()).orElse("UNCLASSIFIED_TERMINAL");
         ToolFailureCategory category = category(status, text(attributes, "failureCategory", errorCode));
         String stableCode = token(text(attributes, "stableFailureCode", text(attributes, "failureCode", errorCode)));
         String operationFamily = token(text(

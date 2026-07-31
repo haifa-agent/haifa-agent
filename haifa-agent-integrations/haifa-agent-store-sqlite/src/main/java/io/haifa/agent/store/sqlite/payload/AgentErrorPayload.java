@@ -1,11 +1,9 @@
 package io.haifa.agent.store.sqlite.payload;
 
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 public record AgentErrorPayload(
@@ -20,25 +18,24 @@ public record AgentErrorPayload(
 
     public static AgentErrorPayload from(AgentError error) {
         return new AgentErrorPayload(
-                error.code().value(),
+                error.code().wireCode(),
                 error.category().name(),
-                error.severity().name(),
+                "ERROR",
                 error.retryability().name(),
                 error.message(),
-                error.technicalDetailRef(),
-                error.attributes(),
+                error.diagnosticId(),
+                error.details(),
                 error.occurredAt().toEpochMilli());
     }
 
     public AgentError toDomain() {
-        return new AgentError(
-                new AgentErrorCode(code),
-                AgentErrorCategory.valueOf(category),
-                AgentErrorSeverity.valueOf(severity),
-                Retryability.valueOf(retryability),
-                message,
-                technicalDetailRef,
-                attributes,
-                Instant.ofEpochMilli(occurredAt));
+        AgentErrorCode knownCode = AgentErrorCode.fromWireCode(code);
+        Map<String, Object> details = attributes == null ? Map.of() : attributes;
+        if (knownCode == AgentErrorCode.UNKNOWN
+                && !AgentErrorCode.UNKNOWN.wireCode().equals(code)) {
+            details = new LinkedHashMap<>(details);
+            details.put("unrecognizedErrorCode", code);
+        }
+        return new AgentError(knownCode, details, technicalDetailRef, Instant.ofEpochMilli(occurredAt));
     }
 }

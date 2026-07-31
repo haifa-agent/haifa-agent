@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.api;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Typed, bounded client-event payloads. Internal maps and store rows never cross this boundary. */
 public final class RunEventPayloads {
@@ -9,11 +10,23 @@ public final class RunEventPayloads {
 
     private RunEventPayloads() {}
 
-    public record RunLifecycle(String status, long version, String reasonCode) implements AgentRunEvent.Payload {
+    public record RunLifecycle(
+            String status,
+            long version,
+            String reasonCode,
+            Optional<String> errorMessage,
+            Optional<String> diagnosticId)
+            implements AgentRunEvent.Payload {
+        public RunLifecycle(String status, long version, String reasonCode) {
+            this(status, version, reasonCode, Optional.empty(), Optional.empty());
+        }
+
         public RunLifecycle {
             status = InteractionOption.requireText(status, "status", 64);
             if (version < 0) throw new IllegalArgumentException("version must not be negative");
             reasonCode = InteractionOption.requireText(reasonCode, "reasonCode", 128);
+            errorMessage = optional(errorMessage, "errorMessage", 2_048);
+            diagnosticId = optional(diagnosticId, "diagnosticId", 256);
         }
     }
 
@@ -196,5 +209,9 @@ public final class RunEventPayloads {
         String checked = java.util.Objects.requireNonNull(value, field + " must not be null");
         if (checked.length() > maximumLength) throw new IllegalArgumentException(field + " is too long");
         return checked;
+    }
+
+    private static Optional<String> optional(Optional<String> value, String field, int maximumLength) {
+        return Objects.requireNonNull(value, field + " must not be null").map(item -> text(item, field, maximumLength));
     }
 }

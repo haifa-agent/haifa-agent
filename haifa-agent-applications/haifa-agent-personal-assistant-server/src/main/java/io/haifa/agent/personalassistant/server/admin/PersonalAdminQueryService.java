@@ -26,14 +26,46 @@ import org.springframework.stereotype.Service;
 /**
  * Read-only diagnostic projection over the Personal Assistant SQLite fact store.
  *
- * <p>This product adapter deliberately exposes complete persisted payloads to the separate loopback Admin API. It
- * never writes, migrates, logs, or copies those payloads into the ordinary Personal Assistant API.
+ * <p>This product adapter reads the persisted facts but projects only safe operational metadata to the separate
+ * loopback Admin API. Prompt/message bodies, Tool arguments/results, checkpoint state, interaction content, raw
+ * Provider data, and stack traces never leave this boundary.
  */
 @Service
 public final class PersonalAdminQueryService {
     private static final int MAXIMUM_TREE_ROWS_PER_KIND = 500;
     private static final Set<String> FAILURE_STATUSES =
             Set.of("FAILED", "TIMEOUT", "DENIED", "CANCELLED", "CORRUPTED", "ABANDONED");
+    private static final Set<String> SAFE_ERROR_DETAIL_KEYS = Set.of(
+            "resource",
+            "limit",
+            "used",
+            "phase",
+            "operation",
+            "provider",
+            "model",
+            "retryAfterMillis",
+            "modelCallId",
+            "modelCategory",
+            "httpStatus",
+            "providerCode",
+            "toolName",
+            "toolVersion",
+            "tool",
+            "toolCallId",
+            "journalState",
+            "sideEffecting",
+            "outcomeKnown",
+            "outcome",
+            "reasonCode",
+            "reason",
+            "repairHint",
+            "failureCategory",
+            "failureCode",
+            "fingerprint",
+            "attempts",
+            "blockerCodes",
+            "missingEvidence",
+            "unrecognizedErrorCode");
 
     private final Path database;
     private final ObjectMapper mapper;
@@ -101,7 +133,7 @@ public final class PersonalAdminQueryService {
                             rows.getString("run_id"),
                             rows.getString("session_id"),
                             rows.getString("status"),
-                            rows.getString("objective"),
+                            hiddenContentSummary("Objective", rows.getString("objective")),
                             instant(rows, "created_at").orElseThrow(),
                             instant(rows, "updated_at").orElseThrow(),
                             instant(rows, "completed_at"),
@@ -175,7 +207,7 @@ public final class PersonalAdminQueryService {
                 Object result = payload(row, "result_schema_version", "result_payload", "result_hash");
                 Object error = payload(row, "error_schema_version", "error_payload", "error_hash");
                 Map<String, Object> details = new LinkedHashMap<>();
-                details.put("objective", row.getString("objective"));
+                details.put("objectiveCharacterCount", characterCount(row.getString("objective")));
                 details.put("runType", row.getString("run_type"));
                 details.put("invocationMode", row.getString("invocation_mode"));
                 details.put("rootRunId", row.getString("root_run_id"));
@@ -202,8 +234,8 @@ public final class PersonalAdminQueryService {
                                 "maximumModelCalls", row.getLong("budget_max_model_calls"),
                                 "maximumIterations", row.getLong("limit_max_iterations"),
                                 "maximumWallTimeMillis", row.getLong("limit_max_wall_time_millis")));
-                put(details, "result", result);
-                put(details, "error", error);
+                put(details, "result", safePayloadReference(result));
+                put(details, "error", safeError(error));
                 Optional<Instant> startedAt = firstInstant(row, "started_at", "created_at");
                 Optional<Instant> completedAt = instant(row, "completed_at");
                 Node root = node(
@@ -245,59 +277,9 @@ public final class PersonalAdminQueryService {
                         createdAt,
                         null,
                         null,
-                        "Includes the complete agent instruction and frozen tool/model bindings",
-                        Map.of("configurationRef", configurationRef, "content", content)));
-                appendSkillTrustNodes(content, configurationNodeId, createdAt, nodes);
+                        "Sensitive configuration content hidden",
+                        Map.of("configurationRef", configurationRef, "content", safePayloadReference(content))));
             }
-        }
-    }
-
-    private static void appendSkillTrustNodes(Object content, String parentId, Instant createdAt, List<Node> nodes) {
-        if (!(content instanceof Map<?, ?> configuration)
-                || !(configuration.get("skillTrust") instanceof Map<?, ?> trust)) {
-            return;
-        }
-        appendGrantNodes(
-                trust.get("packageReviewGrants"),
-                parentId,
-                "skill_package_review_grant",
-                "Package Review Grant",
-                createdAt,
-                nodes);
-        appendGrantNodes(
-                trust.get("scriptExecutionGrants"),
-                parentId,
-                "skill_script_execution_grant",
-                "Script Execution Grant",
-                createdAt,
-                nodes);
-    }
-
-    private static void appendGrantNodes(
-            Object grants, String parentId, String kind, String title, Instant createdAt, List<Node> nodes) {
-        if (!(grants instanceof List<?> list)) return;
-        for (Object item : list) {
-            if (!(item instanceof Map<?, ?> raw)) continue;
-            Map<String, Object> details = new LinkedHashMap<>();
-            raw.forEach((key, value) -> {
-                String name = String.valueOf(key);
-                if (!name.toLowerCase(java.util.Locale.ROOT).contains("content")) {
-                    details.put(name, value);
-                }
-            });
-            String id = String.valueOf(raw.containsKey("id") ? raw.get("id") : "unknown");
-            String state = String.valueOf(raw.containsKey("state") ? raw.get("state") : "UNKNOWN");
-            nodes.add(node(
-                    kind + ":" + id,
-                    parentId,
-                    kind,
-                    title + " · " + id,
-                    state,
-                    createdAt,
-                    null,
-                    null,
-                    String.valueOf(raw.containsKey("reasonCode") ? raw.get("reasonCode") : ""),
-                    details));
         }
     }
 
@@ -319,8 +301,8 @@ public final class PersonalAdminQueryService {
                     Object content = payload(rows, "content_schema_version", "content_payload", "content_hash");
                     Object metadata = payload(rows, "metadata_schema_version", "metadata_payload", "metadata_hash");
                     Map<String, Object> details = new LinkedHashMap<>();
-                    details.put("content", content);
-                    details.put("metadata", metadata);
+                    details.put("content", safePayloadReference(content));
+                    details.put("metadata", safePayloadReference(metadata));
                     details.put("visibility", rows.getString("visibility"));
                     put(details, "parentMessageId", rows.getString("parent_message_id"));
                     nodes.add(node(
@@ -332,7 +314,7 @@ public final class PersonalAdminQueryService {
                             instant(rows, "created_at").orElse(null),
                             null,
                             rows.getLong("sequence"),
-                            contentSummary(content),
+                            "Sensitive message content hidden",
                             details));
                 }
             }
@@ -361,7 +343,7 @@ public final class PersonalAdminQueryService {
                     put(details, "workerId", rows.getString("worker_id"));
                     put(details, "resumedFromCheckpointId", rows.getString("resumed_from_checkpoint_id"));
                     instant(rows, "heartbeat_at").ifPresent(value -> details.put("heartbeatAt", value));
-                    put(details, "error", error);
+                    put(details, "error", safeError(error));
                     nodes.add(node(
                             "attempt:" + attemptId,
                             parentId,
@@ -399,8 +381,8 @@ public final class PersonalAdminQueryService {
                     details.put("type", rows.getString("type"));
                     details.put("version", rows.getLong("version"));
                     put(details, "branchId", rows.getString("branch_id"));
-                    put(details, "result", result);
-                    put(details, "error", error);
+                    put(details, "result", safePayloadReference(result));
+                    put(details, "error", safeError(error));
                     nodes.add(node(
                             "step:" + stepId,
                             parentStepId == null ? parentId : "step:" + parentStepId,
@@ -410,8 +392,7 @@ public final class PersonalAdminQueryService {
                             firstInstant(rows, "started_at", "created_at").orElse(null),
                             instant(rows, "completed_at").orElse(null),
                             rows.getLong("sequence"),
-                            errorCode(error)
-                                    .orElseGet(() -> resultSummary(result).orElse(null)),
+                            errorCode(error).orElseGet(() -> result == null ? null : "Result persisted"),
                             details));
                 }
             }
@@ -441,9 +422,9 @@ public final class PersonalAdminQueryService {
                     details.put("toolName", rows.getString("tool_name"));
                     details.put("toolVersion", rows.getString("tool_version"));
                     details.put("version", rows.getLong("version"));
-                    details.put("arguments", arguments);
-                    put(details, "result", result);
-                    put(details, "error", error);
+                    details.put("arguments", safePayloadReference(arguments));
+                    put(details, "result", safePayloadReference(result));
+                    put(details, "error", safeError(error));
                     put(details, "providerCorrelationId", rows.getString("provider_correlation_id"));
                     put(details, "idempotencyKey", rows.getString("idempotency_key"));
                     String stepId = rows.getString("step_id");
@@ -456,8 +437,7 @@ public final class PersonalAdminQueryService {
                             firstInstant(rows, "started_at", "requested_at").orElse(null),
                             instant(rows, "completed_at").orElse(null),
                             null,
-                            errorCode(error)
-                                    .orElseGet(() -> resultSummary(result).orElse(null)),
+                            errorCode(error).orElseGet(() -> result == null ? null : "Result persisted"),
                             details));
                 }
             }
@@ -485,11 +465,10 @@ public final class PersonalAdminQueryService {
                     Map<String, Object> details = new LinkedHashMap<>();
                     details.put("type", rows.getString("type"));
                     details.put("payloadStoreType", rows.getString("payload_store_type"));
-                    details.put("payloadLocation", rows.getString("payload_location"));
                     details.put("payloadSchemaId", rows.getString("payload_schema_id"));
                     details.put("payloadSchemaVersion", rows.getString("payload_schema_version"));
                     details.put("stateHash", rows.getString("state_hash"));
-                    put(details, "state", state);
+                    put(details, "state", safePayloadReference(state));
                     String stepId = rows.getString("step_id");
                     nodes.add(node(
                             "checkpoint:" + checkpointId,
@@ -525,13 +504,13 @@ public final class PersonalAdminQueryService {
                     String requestId = rows.getString("request_id");
                     Object target = payload(rows, "target_schema_version", "target_payload", "target_hash");
                     Map<String, Object> details = new LinkedHashMap<>();
-                    details.put("prompt", rows.getString("prompt"));
+                    details.put("promptCharacterCount", characterCount(rows.getString("prompt")));
                     details.put("type", rows.getString("type"));
                     details.put("kind", rows.getString("kind"));
                     details.put("approval", rows.getBoolean("approval"));
                     details.put("revision", rows.getLong("revision"));
                     details.put("expiresAt", instant(rows, "expires_at").orElse(null));
-                    details.put("target", target);
+                    details.put("target", safePayloadReference(target));
                     put(details, "stateReasonCode", rows.getString("state_reason_code"));
                     nodes.add(node(
                             "interaction:" + requestId,
@@ -542,7 +521,7 @@ public final class PersonalAdminQueryService {
                             instant(rows, "created_at").orElse(null),
                             instant(rows, "state_changed_at").orElse(null),
                             null,
-                            rows.getString("prompt"),
+                            rows.getString("state_reason_code"),
                             details));
                 }
             }
@@ -566,7 +545,7 @@ public final class PersonalAdminQueryService {
                     details.put("responseType", rows.getString("response_type"));
                     details.put("action", rows.getString("action"));
                     details.put("expectedRevision", rows.getLong("expected_revision"));
-                    details.put("inputs", inputs);
+                    details.put("inputs", safePayloadReference(inputs));
                     nodes.add(node(
                             "interaction-response:" + responseId,
                             "interaction:" + rows.getString("request_id"),
@@ -606,7 +585,7 @@ public final class PersonalAdminQueryService {
                     details.put("requestedBy", rows.getString("requested_by"));
                     details.put("instructionBytes", rows.getLong("instruction_bytes"));
                     details.put("estimatedTokens", rows.getLong("estimated_tokens"));
-                    details.put("activation", activation);
+                    details.put("activation", safePayloadReference(activation));
                     nodes.add(node(
                             "skill:" + alias,
                             parentId,
@@ -646,7 +625,7 @@ public final class PersonalAdminQueryService {
                     Map<String, Object> details = new LinkedHashMap<>();
                     details.put("type", type);
                     details.put("eventSchemaVersion", rows.getString("event_schema_version"));
-                    details.put("data", data);
+                    details.put("data", safeEventDetails(values));
                     put(details, "correlationId", rows.getString("correlation_id"));
                     put(details, "causationId", rows.getString("causation_id"));
                     nodes.add(node(
@@ -706,7 +685,6 @@ public final class PersonalAdminQueryService {
             details.put("generationId", aggregate.generationId);
             details.put("deltaCount", aggregate.deltaCount);
             details.put("characterCount", aggregate.characterCount);
-            details.put("aggregatedText", aggregate.text.toString());
             details.put("legacyPersistedData", true);
             nodes.add(node(
                     "legacy-streaming-output:" + aggregate.generationId,
@@ -817,11 +795,68 @@ public final class PersonalAdminQueryService {
         return code instanceof String text && !text.isBlank() ? Optional.of(text) : Optional.empty();
     }
 
-    private static Optional<String> resultSummary(Object payload) {
+    private static Map<String, Object> safeError(Object payload) {
         Object value = payloadValue(payload);
-        if (!(value instanceof Map<?, ?> map)) return Optional.empty();
-        Object summary = map.get("summary");
-        return summary instanceof String text && !text.isBlank() ? Optional.of(text) : Optional.empty();
+        if (!(value instanceof Map<?, ?> error)) return Map.of();
+        Map<String, Object> safe = new LinkedHashMap<>();
+        if (payload instanceof Map<?, ?> wrapper) {
+            putSafeScalar(safe, "schemaVersion", wrapper.get("schemaVersion"));
+        }
+        for (String key :
+                List.of("code", "category", "retryability", "diagnosticId", "technicalDetailRef", "occurredAt")) {
+            putSafeScalar(safe, key.equals("technicalDetailRef") ? "diagnosticId" : key, error.get(key));
+        }
+        Object rawDetails = error.containsKey("details") ? error.get("details") : error.get("attributes");
+        if (rawDetails instanceof Map<?, ?> details) {
+            Map<String, Object> filtered = new LinkedHashMap<>();
+            details.forEach((key, detail) -> {
+                String name = String.valueOf(key);
+                if (SAFE_ERROR_DETAIL_KEYS.contains(name)) {
+                    putSafeScalar(filtered, name, detail);
+                }
+            });
+            if (!filtered.isEmpty()) safe.put("details", Map.copyOf(filtered));
+        }
+        return Map.copyOf(safe);
+    }
+
+    private static Map<String, Object> safePayloadReference(Object payload) {
+        if (!(payload instanceof Map<?, ?> wrapper)) return Map.of();
+        Map<String, Object> safe = new LinkedHashMap<>();
+        putSafeScalar(safe, "schemaVersion", wrapper.get("schemaVersion"));
+        safe.put("contentHidden", true);
+        return Map.copyOf(safe);
+    }
+
+    private static Map<String, Object> safeEventDetails(Map<String, Object> values) {
+        Map<String, Object> safe = new LinkedHashMap<>();
+        for (String key : List.of(
+                "eventType",
+                "runId",
+                "attemptId",
+                "stepId",
+                "toolCallId",
+                "requestId",
+                "modelCallId",
+                "generationId",
+                "status",
+                "reasonCode",
+                "errorCode",
+                "diagnosticId",
+                "phase",
+                "operation",
+                "inputTokens",
+                "outputTokens",
+                "cachedInputTokens",
+                "modelCalls",
+                "toolCalls",
+                "childRuns",
+                "wallTimeMillis",
+                "retryability",
+                "category")) {
+            putSafeScalar(safe, key, values.get(key));
+        }
+        return Map.copyOf(safe);
     }
 
     private static Object payloadValue(Object payload) {
@@ -861,28 +896,31 @@ public final class PersonalAdminQueryService {
     }
 
     private static String eventSummary(Map<String, Object> values) {
-        for (String key : List.of("reasonCode", "message", "commandSummary", "targetSummary", "resultRef")) {
+        for (String key : List.of("reasonCode", "errorCode", "status")) {
             Object value = values.get(key);
             if (value instanceof String text && !text.isBlank()) return text;
         }
         return null;
     }
 
-    private static String contentSummary(Object payload) {
-        Object value = payloadValue(payload);
-        if (!(value instanceof Map<?, ?> wrapper)) return null;
-        Object parts = wrapper.get("parts");
-        if (!(parts instanceof List<?> list)) return null;
-        return list.stream()
-                .filter(Map.class::isInstance)
-                .map(Map.class::cast)
-                .map(part -> part.get("text"))
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
-                .filter(text -> !text.isBlank())
-                .findFirst()
-                .map(text -> text.length() > 160 ? text.substring(0, 160) + "…" : text)
-                .orElse(null);
+    private static String hiddenContentSummary(String label, String content) {
+        return label + " hidden · " + characterCount(content) + " characters";
+    }
+
+    private static int characterCount(String content) {
+        return content == null ? 0 : content.length();
+    }
+
+    private static void putSafeScalar(Map<String, Object> target, String key, Object value) {
+        if (value instanceof String text && !text.isBlank()) {
+            target.put(key, text.substring(0, Math.min(256, text.length())));
+        } else if (value instanceof Boolean
+                || value instanceof Byte
+                || value instanceof Short
+                || value instanceof Integer
+                || value instanceof Long) {
+            target.put(key, value);
+        }
     }
 
     private static String toolKind(String toolName) {
@@ -921,7 +959,6 @@ public final class PersonalAdminQueryService {
         private final String generationId;
         private final long firstSequence;
         private final Instant startedAt;
-        private final StringBuilder text = new StringBuilder();
         private Instant completedAt;
         private long deltaCount;
         private long characterCount;
@@ -933,7 +970,6 @@ public final class PersonalAdminQueryService {
         }
 
         private void append(String delta, Instant occurredAt) {
-            text.append(delta);
             deltaCount++;
             characterCount += delta.length();
             completedAt = occurredAt;

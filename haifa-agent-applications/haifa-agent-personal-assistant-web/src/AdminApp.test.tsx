@@ -22,7 +22,7 @@ const run: AdminRun = {
   id: "run-failed",
   sessionId: session.id,
   status: "FAILED",
-  objective: "diagnose the private prompt",
+  objective: "Objective hidden · 27 characters",
   createdAt: "2026-07-29T01:00:00Z",
   updatedAt: "2026-07-29T01:01:00Z",
   completedAt: "2026-07-29T01:01:00Z",
@@ -43,7 +43,7 @@ const trace: AdminTrace = {
     durationMillis: 60_000,
     sequence: null,
     summary: "TOOL_FAILED",
-    details: { objective: run.objective },
+    details: { objectiveCharacterCount: 27 },
   },
   nodes: [
     {
@@ -58,10 +58,12 @@ const trace: AdminTrace = {
       sequence: 3,
       summary: "TOOL_FAILED",
       details: {
-        arguments: {
-          value: { values: { secretPrompt: "完整敏感 Prompt", token: "tool-secret" } },
+        arguments: { schemaVersion: "v1", contentHidden: true },
+        error: {
+          schemaVersion: "v1",
+          code: "TOOL_FAILED",
+          diagnosticId: "diag-admin-safe",
         },
-        error: { value: { code: "TOOL_FAILED", message: "原始工具错误" } },
       },
     },
   ],
@@ -132,15 +134,15 @@ describe("Personal Assistant Admin application", () => {
     window.history.replaceState(null, "", "/admin/");
   });
 
-  it("loads one session run tree and focuses the failed node with complete raw content", async () => {
+  it("loads one session run tree and shows only safe diagnostic content", async () => {
     const api = client();
     render(<AdminApp client={api} />);
 
     expect(await screen.findByText("已定位到失败节点")).toBeTruthy();
     expect(screen.getAllByText("personal_checklist").length).toBeGreaterThan(0);
-    expect(screen.getByText(/完整敏感 Prompt/)).toBeTruthy();
-    expect(screen.getByText(/tool-secret/)).toBeTruthy();
-    expect(screen.getByText(/原始工具错误/)).toBeTruthy();
+    expect(screen.getByText(/contentHidden/)).toBeTruthy();
+    expect(screen.getByText(/diag-admin-safe/)).toBeTruthy();
+    expect(screen.queryByText(/完整敏感 Prompt|tool-secret|原始工具错误/)).toBeNull();
     expect(api.sessions).toHaveBeenCalled();
     expect(api.runs).toHaveBeenCalledWith(session.id, expect.any(AbortSignal));
     expect(api.trace).toHaveBeenCalledWith(session.id, run.id, expect.any(AbortSignal));

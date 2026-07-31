@@ -2,6 +2,7 @@ package io.haifa.agent.personalassistant.server.web.v1.dto;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /** Versioned wire DTOs. Domain and SDK types never cross the HTTP boundary. */
@@ -58,6 +59,15 @@ public final class PersonalApiDtos {
             long modelCalls,
             long toolCalls) {}
 
+    public record ExecutionError(
+            String code,
+            String message,
+            String category,
+            String retryability,
+            Map<String, Object> details,
+            Optional<String> diagnosticId,
+            Instant occurredAt) {}
+
     public record Run(
             String id,
             String conversationId,
@@ -67,6 +77,7 @@ public final class PersonalApiDtos {
             Optional<String> output,
             Optional<String> resultSummary,
             Optional<String> errorCode,
+            Optional<ExecutionError> error,
             Usage usage) {}
 
     public record Activity(

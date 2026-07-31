@@ -172,7 +172,9 @@ public final class RuntimeClientEventProjector {
                     new RunEventPayloads.RunLifecycle(
                             requiredText(event.data(), "status"),
                             number(event.data(), "version", 0),
-                            text(event.data(), "reasonCode", "NONE")));
+                            text(event.data(), "reasonCode", text(event.data(), "errorCode", "NONE")),
+                            optionalText(event.data(), "errorMessage"),
+                            optionalText(event.data(), "diagnosticId")));
         }
         return null;
     }
@@ -284,6 +286,11 @@ public final class RuntimeClientEventProjector {
     private static String text(Map<String, Object> data, String key, String fallback) {
         Object value = data.get(key);
         return value instanceof String text && !text.isBlank() ? text : fallback;
+    }
+
+    private static Optional<String> optionalText(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        return value instanceof String text && !text.isBlank() ? Optional.of(text) : Optional.empty();
     }
 
     private static long number(Map<String, Object> data, String key, long fallback) {

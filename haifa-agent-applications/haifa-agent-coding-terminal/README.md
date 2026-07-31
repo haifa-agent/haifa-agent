@@ -109,6 +109,10 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   合并展示且按稳定 ID 去重，Alt+Up 仍从产品队列恢复原文；
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
+
+失败 Run 的 Transcript 使用 `[AgentErrorCode] 安全文案`，并在存在时显示 Diagnostic ID。
+预算超限、模型限流/超时和 Tool Outcome Unknown 使用稳定 code 选择下一步；终端不解析英文
+message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随。
 

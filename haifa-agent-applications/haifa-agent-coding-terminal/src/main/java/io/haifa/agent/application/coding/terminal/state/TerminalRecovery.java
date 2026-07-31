@@ -47,6 +47,16 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(Category.TERMINAL_CAPABILITY, "TERMINAL_TOO_SMALL", "Resize the terminal to at least 60x16."),
             entry(Category.INTERRUPTED, "RUN_INTERRUPTED", "Edit the preserved draft, then submit again."),
             entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "RUN_BUDGET_EXCEEDED",
+                    "Start a new run with a smaller request or an explicitly larger budget."),
+            entry(Category.RETRYABLE, "MODEL_RATE_LIMITED", "Wait for backoff, then retry the request."),
+            entry(Category.RETRYABLE, "MODEL_TIMEOUT", "Retry the request after checking provider availability."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "TOOL_OUTCOME_UNKNOWN",
+                    "Inspect the tool outcome before retrying; do not blindly replay the action."),
+            entry(
                     Category.TERMINAL_FAILURE,
                     "TERMINAL_FAILURE",
                     "Restart the terminal; the session remains recoverable."));

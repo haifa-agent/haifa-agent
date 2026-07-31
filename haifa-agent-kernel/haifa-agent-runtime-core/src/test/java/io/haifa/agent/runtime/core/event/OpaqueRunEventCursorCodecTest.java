@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import java.nio.charset.StandardCharsets;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
@@ -33,12 +33,12 @@ class OpaqueRunEventCursorCodecTest {
         AgentRunId runId = new AgentRunId("run");
         String encoded = codec.encode(new RunEventCursor(runId, "1", OptionalLong.of(2)));
 
-        assertCode(() -> codec.decode(encoded + "a", runId, "1"), RuntimeErrorCode.CURSOR_INVALID);
-        assertCode(() -> codec.decode(encoded, new AgentRunId("another-run"), "1"), RuntimeErrorCode.CURSOR_INVALID);
-        assertCode(() -> codec.decode(encoded, runId, "2"), RuntimeErrorCode.CONTRACT_VERSION_UNSUPPORTED);
+        assertCode(() -> codec.decode(encoded + "a", runId, "1"), RuntimeApiErrorCode.CURSOR_INVALID);
+        assertCode(() -> codec.decode(encoded, new AgentRunId("another-run"), "1"), RuntimeApiErrorCode.CURSOR_INVALID);
+        assertCode(() -> codec.decode(encoded, runId, "2"), RuntimeApiErrorCode.CONTRACT_VERSION_UNSUPPORTED);
     }
 
-    private static void assertCode(Runnable action, RuntimeErrorCode expected) {
+    private static void assertCode(Runnable action, RuntimeApiErrorCode expected) {
         assertThatThrownBy(action::run)
                 .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
                         .isEqualTo(expected));

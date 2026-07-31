@@ -44,6 +44,7 @@ import io.haifa.agent.sdk.memory.ReviewMemoryCandidateCommand;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -210,7 +211,16 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                     snapshot.updatedAt(),
                     snapshot.output(),
                     snapshot.result().map(result -> result.summary()),
-                    snapshot.error().map(error -> error.code().value()),
+                    snapshot.error().map(error -> error.code().wireCode()),
+                    snapshot.error()
+                            .map(error -> new ExecutionErrorView(
+                                    error.code().wireCode(),
+                                    error.message(),
+                                    error.category().name(),
+                                    error.retryability().name(),
+                                    error.details(),
+                                    error.optionalDiagnosticId(),
+                                    error.occurredAt())),
                     new UsageView(
                             usage.inputTokens(),
                             usage.outputTokens(),
@@ -647,6 +657,15 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             long modelCalls,
             long toolCalls) {}
 
+    public record ExecutionErrorView(
+            String code,
+            String message,
+            String category,
+            String retryability,
+            Map<String, Object> details,
+            Optional<String> diagnosticId,
+            Instant occurredAt) {}
+
     public record RunView(
             String id,
             String conversationId,
@@ -656,6 +675,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Optional<String> output,
             Optional<String> resultSummary,
             Optional<String> errorCode,
+            Optional<ExecutionErrorView> error,
             UsageView usage) {}
 
     public record InteractionViewValue(

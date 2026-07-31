@@ -1,18 +1,18 @@
 package io.haifa.agent.transport.http;
 
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 
 final class TransportFailure extends RuntimeException {
-    private final RuntimeErrorCode code;
+    private final RuntimeApiErrorCode code;
     private final int status;
 
-    TransportFailure(RuntimeErrorCode code, int status, String safeMessage) {
+    TransportFailure(RuntimeApiErrorCode code, int status, String safeMessage) {
         super(safeMessage);
         this.code = java.util.Objects.requireNonNull(code);
         this.status = status;
     }
 
-    RuntimeErrorCode code() {
+    RuntimeApiErrorCode code() {
         return code;
     }
 

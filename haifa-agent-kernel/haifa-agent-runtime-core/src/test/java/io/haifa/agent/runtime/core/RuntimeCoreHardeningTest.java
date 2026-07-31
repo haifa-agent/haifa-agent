@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
@@ -102,6 +103,68 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void traceFailureCannotChangeSuccessfulCompletion() {
+        Fixture fixture = fixture(
+                model(finalDecision("committed")),
+                builder -> builder.trace(event -> {
+                    throw new IllegalStateException("trace unavailable");
+                }));
+
+        var accepted = fixture.runtime.start(request("trace-failure"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+    }
+
+    @Test
+    void unexpectedFailureKeepsThrowableInternalAndDiagnosticProjectionFailuresIsolated() {
+        AtomicReference<RuntimeTraceEvent> diagnosticContext = new AtomicReference<>();
+        AtomicReference<Throwable> diagnosticFailure = new AtomicReference<>();
+        Fixture fixture =
+                fixture(model(finalDecision("unused")), builder -> builder.middleware(new AgentRuntimeMiddleware() {
+                            @Override
+                            public RuntimePhase phase() {
+                                return RuntimePhase.BEFORE_RUN;
+                            }
+
+                            @Override
+                            public RuntimeMiddlewareOrder order() {
+                                return new RuntimeMiddlewareOrder(10_000);
+                            }
+
+                            @Override
+                            public void apply(RuntimeMiddlewareContext context) {
+                                throw new IllegalStateException("CANARY_SECRET_PROVIDER_RESPONSE_HOST_PATH");
+                            }
+                        })
+                        .trace(event -> {
+                            throw new IllegalStateException("trace unavailable");
+                        })
+                        .failureDiagnostics((context, failure) -> {
+                            diagnosticContext.set(context);
+                            diagnosticFailure.set(failure);
+                            throw new IllegalStateException("diagnostic sink unavailable");
+                        }));
+
+        var accepted = fixture.runtime.start(request("unexpected-failure"));
+        fixture.scheduler.runAll();
+
+        var failed = fixture.store.find(accepted.runId()).orElseThrow();
+        var error = failed.error().orElseThrow();
+        assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(error.code()).isEqualTo(AgentErrorCode.RUNTIME_EXECUTION_FAILED);
+        assertThat(error.message()).isEqualTo("Agent execution failed");
+        assertThat(error.details().toString()).doesNotContain("CANARY_SECRET", "HOST_PATH");
+        assertThat(diagnosticFailure.get())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("CANARY_SECRET_PROVIDER_RESPONSE_HOST_PATH");
+        assertThat(diagnosticContext.get().safeAttributes())
+                .containsEntry("errorCode", "RUNTIME_EXECUTION_FAILED")
+                .containsEntry("diagnosticId", error.diagnosticId());
+    }
+
+    @Test
     void concurrentDuplicateCommandReturnsOneStableResultAndOneAuditEvent() throws Exception {
         Fixture fixture = fixture(model(finalDecision("unused")));
         var accepted = fixture.runtime.start(request("command-race"));
@@ -164,7 +227,7 @@ class RuntimeCoreHardeningTest {
         blocked.scheduler.runAll();
         var failed = blocked.store.find(blockedRun.runId()).orElseThrow();
         assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
-        assertThat(failed.error().orElseThrow().code().value()).isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
+        assertThat(failed.error().orElseThrow().code()).isEqualTo(AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED);
         assertThat(blocked.store.messages(blockedRun.runId()))
                 .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .singleElement()
@@ -202,9 +265,8 @@ class RuntimeCoreHardeningTest {
                         .orElseThrow()
                         .error()
                         .orElseThrow()
-                        .code()
-                        .value())
-                .isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
+                        .code())
+                .isEqualTo(AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED);
         assertThat(fixture.store.messages(accepted.runId()))
                 .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .extracting(message -> message.metadata().get("completionRepairAttempt"))
@@ -546,23 +608,34 @@ class RuntimeCoreHardeningTest {
 
         var failed = fixture.store.find(accepted.runId()).orElseThrow();
         assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
-        assertThat(failed.error()).hasValueSatisfying(error -> {
-            assertThat(error.code().value()).isEqualTo("RUN_BUDGET_EXCEEDED");
-            assertThat(error.category().name()).isEqualTo("VALIDATION");
-            assertThat(error.retryability().name()).isEqualTo("NOT_RETRYABLE");
-            assertThat(error.message()).isEqualTo("Run budget exceeded");
+        var runError = failed.error().orElseThrow();
+        assertThat(runError.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
+        assertThat(runError.category().name()).isEqualTo("RESOURCE_LIMIT");
+        assertThat(runError.retryability().name()).isEqualTo("NOT_RETRYABLE");
+        assertThat(runError.message()).isEqualTo("Run budget exceeded");
+        assertThat(fixture.store.steps(accepted.runId())).singleElement().satisfies(step -> {
+            var stepError = step.error().orElseThrow().error();
+            assertThat(stepError.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
+            assertThat(stepError.diagnosticId()).isEqualTo(runError.diagnosticId());
         });
-        assertThat(fixture.store.steps(accepted.runId())).singleElement().satisfies(step -> assertThat(step.error())
-                .hasValueSatisfying(
-                        error -> assertThat(error.error().code().value()).isEqualTo("RUN_BUDGET_EXCEEDED")));
-        assertThat(fixture.store.attemptsFor(accepted.runId())).singleElement().satisfies(attempt -> assertThat(
-                        attempt.error())
-                .hasValueSatisfying(error -> assertThat(error.code().value()).isEqualTo("RUN_BUDGET_EXCEEDED")));
+        assertThat(fixture.store.attemptsFor(accepted.runId()))
+                .singleElement()
+                .satisfies(attempt -> assertThat(attempt.error()).hasValueSatisfying(error -> {
+                    assertThat(error.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
+                    assertThat(error.diagnosticId()).isEqualTo(runError.diagnosticId());
+                }));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("run.failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("errorCode", "RUN_BUDGET_EXCEEDED")
+                        .containsEntry("diagnosticId", runError.diagnosticId()));
         assertThat(traces)
                 .filteredOn(trace -> trace.operation().equals("runtime.error"))
                 .singleElement()
-                .satisfies(
-                        trace -> assertThat(trace.safeAttributes()).containsEntry("errorCode", "RUN_BUDGET_EXCEEDED"));
+                .satisfies(trace -> assertThat(trace.safeAttributes())
+                        .containsEntry("errorCode", "RUN_BUDGET_EXCEEDED")
+                        .containsEntry("diagnosticId", runError.diagnosticId()));
     }
 
     @Test

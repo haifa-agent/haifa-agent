@@ -38,16 +38,16 @@ Deep Research 界面。
 
 同一独立 Web 部署单元提供两个 Admin 只读视图：
 
-- `/admin/` 按 Session 选择一次 Run，并以可折叠树查看冻结配置、Prompt/Message、Attempt、Step、
-  Tool/MCP、Checkpoint、Interaction、Skill 和 Runtime Event。失败 Run 会自动聚焦到持久事实中
-  最后一个失败节点，右侧展示该节点的完整内容。
+- `/admin/` 按 Session 选择一次 Run，并以可折叠树查看冻结配置引用、Attempt、Step、Tool/MCP、
+  Checkpoint、Interaction、Skill、Runtime Event、安全错误详情和诊断编号。失败 Run 会自动聚焦
+  到持久事实中的最后一个失败节点；Prompt、Tool 参数/结果和其他敏感正文始终隐藏。
 - `/admin/capabilities` 按 Tool、MCP Server、Skill 浏览产品组装时冻结的注册清单，可搜索并查看定义、
   策略、Schema、资源、协议、导入关系和摘要；不展示凭据值或临时连接状态。
 
 Admin 是独立入口：普通 Personal Assistant 页面没有 Admin 链接、导航、按钮、capability 或 Client
 接口，两个页面按 URL 动态加载，普通页面不会加载 Admin 应用代码。Admin 只读调用
-`http://127.0.0.1:20001/v1/admin`，并明确展示完整 Prompt、Tool 参数、结果与错误，因此只能在受信
-本机环境中使用。需要覆盖地址时单独设置：
+`http://127.0.0.1:20001/v1/admin`，只展示安全执行元数据，不展示 Prompt、Tool 参数/结果、原始
+Provider 内容或 Stack Trace；该入口仍只允许在受信本机环境中使用。需要覆盖地址时单独设置：
 
 ```powershell
 $env:VITE_PERSONAL_ASSISTANT_ADMIN_API_BASE_URL='http://127.0.0.1:20001/v1/admin'
@@ -72,6 +72,10 @@ npm run contract:check
 ```
 
 `contract:check` 会拒绝过期 TypeScript DTO、错误端口、缺少幂等键的写接口和已延期操作。
+
+失败 Run 使用 OpenAPI 生成的 `ExecutionError` 渲染稳定 code、安全 message 和可复制的
+diagnosticId；重试或人工确认提示基于 code/retryability，不解析英文文案。普通聊天界面不显示
+Java 类型、堆栈、Provider Body 或内部路径。
 
 Run SSE 的 durable 与 transient 事件分别去重：`answer.delta` 实时追加当前 Generation 草稿，
 `answer.failed`/`answer.superseded`/新 `answer.started` 会清除旧草稿，避免重试拼接；完整回复提交后由

@@ -113,6 +113,14 @@ AgentLoop，Run 终态后清理。有效模型决策仍由 `DecisionExecutor` �
 纯 Java 的 Agent 执行内核，负责 Bootstrap、`AgentRunExecutionAttempt`、AgentLoop、工具管线、完成门禁、检查点、恢复、控制命令以及线程安全的内存存储实现。
 
 - 依赖方向：`runtime-core -> context/model-api/runtime-api/tool-api/skill-api/credential-api -> core -> common`；Runtime 不依赖 Tool Core、Skill Core 或 Provider Integration。
+
+## 错误分类与内部诊断
+
+Model、Tool、预算和完成门禁在拥有语义的边界映射到稳定 `AgentErrorCode`。分类后的
+`AgentError` 在 Step、Attempt、Run、Runtime Event 和 Trace 复用同一个 `diagnosticId`；
+`RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。可选 `FailureDiagnosticSink`
+仅接收这类意外故障的 Throwable；Trace 或诊断 Sink 失败属于观测投影失败，不会改变已经确定的
+Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOOL_OUTCOME_UNKNOWN` 并禁止盲目重放。
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
 - `start` 在 Run 持久化并提交执行后返回 `PENDING/QUEUED` 快照；等待完成由 `AgentRunHandle` 显式提供。
 - 每次 Start、Resume 或崩溃恢复都创建新的 `AgentRunExecutionAttempt`；它记录 Worker、Heartbeat、错误和恢复 Checkpoint，同一逻辑 Run 同时最多一个活动 Attempt。`ExecutionOwnershipPort` 为未来分布式 Lease 保留真实校验边界。

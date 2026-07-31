@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Read-only, loopback Admin wire contracts. These DTOs intentionally permit sensitive diagnostic content. */
+/** Read-only, loopback Admin wire contracts containing only safe operational diagnostics. */
 public final class PersonalAdminDtos {
     private PersonalAdminDtos() {}
 

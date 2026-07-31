@@ -15,9 +15,43 @@ public record RunView(
         Instant updatedAt,
         Optional<String> output,
         Optional<String> safeErrorCode,
+        Optional<AgentExecutionErrorView> error,
         Optional<String> pendingInteractionId,
         Optional<String> baselineCursor,
         Optional<String> headCursor) {
+    /**
+     * Source-compatible constructor for clients compiled against the original v1 Run view.
+     *
+     * @deprecated consume {@link #error()} for the complete typed execution failure.
+     */
+    @Deprecated(forRemoval = true)
+    public RunView(
+            ApiVersion apiVersion,
+            String runId,
+            String sessionId,
+            String status,
+            long version,
+            Instant updatedAt,
+            Optional<String> output,
+            Optional<String> safeErrorCode,
+            Optional<String> pendingInteractionId,
+            Optional<String> baselineCursor,
+            Optional<String> headCursor) {
+        this(
+                apiVersion,
+                runId,
+                sessionId,
+                status,
+                version,
+                updatedAt,
+                output,
+                safeErrorCode,
+                Optional.empty(),
+                pendingInteractionId,
+                baselineCursor,
+                headCursor);
+    }
+
     public RunView {
         apiVersion = Objects.requireNonNull(apiVersion, "apiVersion must not be null");
         runId = require(runId, "runId", 256);
@@ -27,6 +61,7 @@ public record RunView(
         updatedAt = Objects.requireNonNull(updatedAt, "updatedAt must not be null");
         output = bounded(output, "output", 65_536);
         safeErrorCode = bounded(safeErrorCode, "safeErrorCode", 128);
+        error = Objects.requireNonNull(error, "error must not be null");
         pendingInteractionId = bounded(pendingInteractionId, "pendingInteractionId", 256);
         baselineCursor = bounded(baselineCursor, "baselineCursor", 2_048);
         headCursor = bounded(headCursor, "headCursor", 2_048);

@@ -3,10 +3,7 @@ package io.haifa.agent.runtime.core.tool;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.step.AgentStepId;
@@ -25,6 +22,7 @@ import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
+import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
@@ -162,14 +160,32 @@ public final class ToolPipeline {
                 .filter(value -> value == ToolJournalState.DISPATCHED || value == ToolJournalState.ACKNOWLEDGED)
                 .isPresent()) {
             journal.recordUncertain(run.id(), request.idempotencyKey());
-            throw new IllegalStateException("tool outcome is unknown after dispatch; automatic replay is forbidden");
+            throw outcomeUnknown(call, journalState.orElseThrow());
         }
         if (journalState
                 .filter(value -> value == ToolJournalState.OUTCOME_UNKNOWN)
                 .isPresent()) {
-            throw new IllegalStateException("tool outcome is unknown; automatic replay is forbidden");
+            throw outcomeUnknown(call, ToolJournalState.OUTCOME_UNKNOWN);
         }
         return executeNew(run, call, request);
+    }
+
+    private AgentExecutionFailureException outcomeUnknown(ToolCall call, ToolJournalState journalState) {
+        AgentError error = new AgentError(
+                AgentErrorCode.TOOL_OUTCOME_UNKNOWN,
+                Map.of(
+                        "toolCallId", call.id().value(),
+                        "tool", call.toolName(),
+                        "journalState", journalState.name(),
+                        "outcomeKnown", false),
+                ids.nextValue(),
+                time.now());
+        if (call.status() == ToolCallStatus.RUNNING) {
+            call.fail(new ToolExecutionError(error), time.now());
+            state.appendToolCall(call);
+        }
+        return new AgentExecutionFailureException(
+                error, new IllegalStateException("tool outcome is unknown; automatic replay is forbidden"));
     }
 
     private ToolPipelineOutcome executeNew(AgentRun run, ToolCall call, ToolRequest request) {
@@ -234,7 +250,7 @@ public final class ToolPipeline {
         state.appendToolCall(call);
         appendToolEvent(run, call, "tool.started", "STARTED", "NONE", "");
         PolicyDecision dispatchDecision = effectiveDecision;
-        trace.record(new RuntimeTraceEvent(
+        recordTrace(new RuntimeTraceEvent(
                 ids.nextValue(),
                 run.id(),
                 java.util.Optional.empty(),
@@ -255,7 +271,10 @@ public final class ToolPipeline {
             ToolResult rawResult = retries.execute(
                     () -> {
                         if (run.usage().toolCalls() >= run.budget().maxToolCalls()) {
-                            throw new RuntimeLimitExceededException("tool call budget exhausted");
+                            throw new RuntimeLimitExceededException(
+                                    "toolCalls",
+                                    run.budget().maxToolCalls(),
+                                    run.usage().toolCalls());
                         }
                         transitions.usage(run, new AgentRunUsageDelta(0, 0, 0, 0, 1, 0, 0, 0));
                         return invokeProvider(run, call, request, binding, dispatchDecision);
@@ -292,32 +311,42 @@ public final class ToolPipeline {
                     journal.state(run.id(), request.idempotencyKey()).orElse(ToolJournalState.INTENT_RECORDED);
             boolean uncertain =
                     journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.DISPATCHED;
-            String failureCode;
-            String safeMessage;
-            if (uncertain) {
+            boolean limitExceeded = exception instanceof RuntimeLimitExceededException;
+            AgentErrorCode failureCode;
+            if (limitExceeded && !uncertain) {
+                journal.recordFailed(run.id(), request.idempotencyKey());
+                failureCode = AgentErrorCode.RUN_BUDGET_EXCEEDED;
+                appendToolEvent(run, call, "tool.failed", "FAILED", "RUN_BUDGET_EXCEEDED", "");
+            } else if (uncertain) {
                 journal.recordUncertain(run.id(), request.idempotencyKey());
-                failureCode = "TOOL_OUTCOME_UNKNOWN";
-                safeMessage = "Tool execution outcome is unknown; automatic replay is forbidden.";
+                failureCode = AgentErrorCode.TOOL_OUTCOME_UNKNOWN;
                 appendToolEvent(run, call, "tool.failed", "FAILED", "OUTCOME_UNKNOWN", "");
             } else {
                 journal.recordFailed(run.id(), request.idempotencyKey());
-                failureCode = "TOOL_INVOCATION_FAILED";
-                safeMessage = "Tool execution failed before a result was available.";
+                failureCode = AgentErrorCode.TOOL_INVOCATION_FAILED;
                 appendToolEvent(run, call, "tool.failed", "FAILED", "INVOCATION_FAILED", "");
             }
             if (call.status() == ToolCallStatus.RUNNING) {
+                Map<String, Object> errorDetails;
+                if (exception instanceof RuntimeLimitExceededException limitFailure) {
+                    errorDetails = Map.of(
+                            "tool", definition.name().value(),
+                            "toolCallId", call.id().value(),
+                            "resource", limitFailure.resource(),
+                            "limit", limitFailure.limit(),
+                            "used", limitFailure.used(),
+                            "journalState", journalState.name(),
+                            "outcomeKnown", !uncertain);
+                } else {
+                    errorDetails = Map.of(
+                            "tool", definition.name().value(),
+                            "toolCallId", call.id().value(),
+                            "journalState", journalState.name(),
+                            "sideEffecting", !definition.sideEffects().isEmpty(),
+                            "outcomeKnown", !uncertain);
+                }
                 call.fail(
-                        new ToolExecutionError(new AgentError(
-                                new AgentErrorCode(failureCode),
-                                AgentErrorCategory.TOOL,
-                                AgentErrorSeverity.ERROR,
-                                uncertain ? Retryability.UNKNOWN : Retryability.NOT_RETRYABLE,
-                                safeMessage,
-                                null,
-                                Map.of(
-                                        "tool", definition.name().value(),
-                                        "exceptionType", exception.getClass().getSimpleName()),
-                                time.now())),
+                        new ToolExecutionError(new AgentError(failureCode, errorDetails, ids.nextValue(), time.now())),
                         time.now());
                 state.appendToolCall(call);
             }
@@ -507,13 +536,9 @@ public final class ToolPipeline {
         } else {
             call.fail(
                     new ToolExecutionError(new AgentError(
-                            new AgentErrorCode("TOOL_BUSINESS_FAILURE"),
-                            AgentErrorCategory.TOOL,
-                            AgentErrorSeverity.WARNING,
-                            Retryability.NOT_RETRYABLE,
-                            result.summary(),
-                            null,
+                            AgentErrorCode.TOOL_BUSINESS_FAILURE,
                             failureAttributes(definition.name().value(), result),
+                            ids.nextValue(),
                             time.now())),
                     time.now());
         }
@@ -527,7 +552,7 @@ public final class ToolPipeline {
                 result.successful() ? "NONE" : "TOOL_BUSINESS_FAILURE",
                 result.assets().isEmpty() ? "" : result.assets().getFirst().assetId());
         appendExecutionAndResourceEvents(run, call, result);
-        trace.record(new RuntimeTraceEvent(
+        recordTrace(new RuntimeTraceEvent(
                 ids.nextValue(),
                 run.id(),
                 java.util.Optional.empty(),
@@ -663,6 +688,14 @@ public final class ToolPipeline {
             }
         }
         return Map.copyOf(attributes);
+    }
+
+    private void recordTrace(RuntimeTraceEvent event) {
+        try {
+            trace.record(event);
+        } catch (RuntimeException ignored) {
+            // Trace is a best-effort projection and never changes Tool execution semantics.
+        }
     }
 
     private static String executionOutput(Map<String, Object> data) {

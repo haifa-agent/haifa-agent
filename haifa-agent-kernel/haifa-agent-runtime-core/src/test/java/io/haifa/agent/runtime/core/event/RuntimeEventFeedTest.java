@@ -17,8 +17,8 @@ import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
 import java.time.Instant;
@@ -125,16 +125,16 @@ class RuntimeEventFeedTest {
 
         assertCode(
                 () -> feed.page(new AgentRunId("other"), RunEventCursor.beforeFirst(runId), 10),
-                RuntimeErrorCode.CURSOR_INVALID);
+                RuntimeApiErrorCode.CURSOR_INVALID);
         assertCode(
                 () -> feed.page(runId, new RunEventCursor(runId, "2", OptionalLong.empty()), 10),
-                RuntimeErrorCode.CONTRACT_VERSION_UNSUPPORTED);
+                RuntimeApiErrorCode.CONTRACT_VERSION_UNSUPPORTED);
         assertCode(
                 () -> feed.page(runId, new RunEventCursor(runId, "1", OptionalLong.of(4)), 10),
-                RuntimeErrorCode.CURSOR_INVALID);
+                RuntimeApiErrorCode.CURSOR_INVALID);
 
         assertThat(store.deleteBefore(runId, 3, NOW)).isEqualTo(2);
-        assertCode(() -> feed.page(runId, RunEventCursor.beforeFirst(runId), 10), RuntimeErrorCode.CURSOR_EXPIRED);
+        assertCode(() -> feed.page(runId, RunEventCursor.beforeFirst(runId), 10), RuntimeApiErrorCode.CURSOR_EXPIRED);
         var retained = feed.page(runId, new RunEventCursor(runId, "1", OptionalLong.of(2)), 10);
         assertThat(retained.items()).extracting(event -> event.sequence()).containsExactly(3L);
     }
@@ -149,7 +149,7 @@ class RuntimeEventFeedTest {
                 .isEmpty();
         assertCode(
                 () -> feed.page(runId, new RunEventCursor(runId, "1", OptionalLong.of(1)), 10),
-                RuntimeErrorCode.CURSOR_INVALID);
+                RuntimeApiErrorCode.CURSOR_INVALID);
     }
 
     @Test
@@ -415,7 +415,7 @@ class RuntimeEventFeedTest {
         return store;
     }
 
-    private static void assertCode(Runnable action, RuntimeErrorCode code) {
+    private static void assertCode(Runnable action, RuntimeApiErrorCode code) {
         assertThatThrownBy(action::run)
                 .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
                         .isEqualTo(code));

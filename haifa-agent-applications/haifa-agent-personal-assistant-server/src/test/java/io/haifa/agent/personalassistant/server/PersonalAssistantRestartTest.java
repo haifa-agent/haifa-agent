@@ -103,7 +103,7 @@ class PersonalAssistantRestartTest {
                     .satisfies(node -> {
                         assertThat(node.details()).containsEntry("deltaCount", 600L);
                         assertThat(node.details()).containsEntry("characterCount", 600L);
-                        assertThat(node.details().get("aggregatedText")).isEqualTo("x".repeat(600));
+                        assertThat(node.details()).doesNotContainKey("aggregatedText");
                     });
             assertThat(trace.nodes()).anySatisfy(node -> {
                 assertThat(node.label()).isEqualTo("tool.failed");

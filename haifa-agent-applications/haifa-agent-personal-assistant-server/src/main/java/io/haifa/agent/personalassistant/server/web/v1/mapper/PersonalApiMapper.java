@@ -48,6 +48,15 @@ public final class PersonalApiMapper {
                 value.output(),
                 value.resultSummary(),
                 value.errorCode(),
+                value.error()
+                        .map(error -> new PersonalApiDtos.ExecutionError(
+                                error.code(),
+                                error.message(),
+                                error.category(),
+                                error.retryability(),
+                                error.details(),
+                                error.diagnosticId(),
+                                error.occurredAt())),
                 new PersonalApiDtos.Usage(
                         usage.inputTokens(),
                         usage.outputTokens(),

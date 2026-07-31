@@ -45,6 +45,10 @@ Server 负责：
 - 按配置启用公共 `haifa-agent-web` 的 Aliyun IQS Search/Fetch，并把环境变量凭据绑定到
   Runtime `CredentialBroker`，不把 Key 放入 Profile、Tool Definition 或日志；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；
+
+普通 Run API 的 `error` 与 OpenAPI `ExecutionError` 对齐，包含稳定执行 code、安全 message、
+category、retryability、有界 details、diagnosticId 和 occurredAt；请求错误仍使用独立的安全
+API Error envelope。
 - 完成态 Run 的 `recommend-questions` 可选辅助推理接口；POST 绑定 Conversation/Run 和
   `Idempotency-Key`，模型判定为快问快答、简单计算等闭合问题时返回空数组；
 - Reactor Netty / Spring WebFlux HTTP；
@@ -68,9 +72,10 @@ GET /v1/admin/sessions/{sessionId}/runs/{runId}/tree
 摘要、风险和审批策略、Schema、资源声明、MCP 协议与导入工具、Skill 元数据与资源索引；不会返回
 凭据值、MCP Session ID 或运行时 Lease。
 
-诊断树直接读取同一 SQLite 事实源，并在解码前校验各 payload 的实际字节哈希。它展示冻结 Agent
-指令/模型配置、完整 Prompt/Message、Attempt、Step、Tool 参数与结果、Checkpoint、Interaction、
-Skill、Runtime Event 和错误原文，用于快速定位单次 Run 的失败节点。所有接口均为 GET、只读、
+诊断树直接读取同一 SQLite 事实源，并在解码前校验各 payload 的实际字节哈希。它展示冻结配置
+引用、Attempt、Step、Tool/Checkpoint/Interaction 关联、Skill、Runtime Event、安全错误详情和
+诊断编号，用于快速定位单次 Run 的失败节点；Prompt/Message 正文、Tool 参数与结果、Checkpoint
+状态、Interaction 内容、原始 Provider 数据和 Stack Trace 始终隐藏。所有接口均为 GET、只读、
 `no-store`，仍受 loopback Host/Origin 边界约束；该能力不会出现在 `/api/v1/bootstrap`，普通
 Personal Assistant 页面也没有入口或 Client 接口。
 
@@ -180,7 +185,7 @@ Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用
 
 ## Process logging
 
-The server uses Spring Boot's SLF4J/Logback logging stack. At `INFO`, it records safe operational milestones for Run acceptance and status changes, interaction/approval state, Tool and execution activity, and model call start/completion/failure with token counts and elapsed time. Normalized model failures additionally include their safe category, retryability, HTTP status, provider code, safe message, and stack trace. Logs intentionally exclude full prompts, assistant text, Tool arguments, command or script content, credentials, raw provider responses, result bodies, and messages from unclassified exceptions.
+The server uses Spring Boot's SLF4J/Logback logging stack. At `INFO`, it records safe operational milestones for Run acceptance and status changes, interaction/approval state, Tool and execution activity, and model call start/completion/failure with token counts and elapsed time. Known failures log stable codes and bounded safe attributes without a stack trace. Unexpected Throwables are available only to the explicitly configured internal diagnostic sink and are correlated by diagnostic ID. Logs intentionally exclude full prompts, assistant text, Tool arguments, command or script content, credentials, raw provider responses, result bodies, and messages from unclassified exceptions.
 Invalid server-side argument failures are logged with correlation ID, HTTP method/path, exception type, and bounded stack origin while omitting the exception message and request content.
 
 ## Trusted Skill script manifest

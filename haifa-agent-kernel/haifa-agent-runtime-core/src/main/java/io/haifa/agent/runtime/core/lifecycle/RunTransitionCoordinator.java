@@ -22,6 +22,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -170,24 +171,27 @@ public final class RunTransitionCoordinator {
                         AgentRunStatus previous = run.status();
                         mutation.accept(run);
                         runs.save(run, expectedVersion);
-                        RuntimeEvent event = events.append(
-                                run.id(),
-                                eventType,
-                                Map.of(
-                                        "previousStatus",
-                                        previous.name(),
-                                        "status",
-                                        run.status().name(),
-                                        "version",
-                                        run.version()),
-                                time.now());
+                        Map<String, Object> eventData = new LinkedHashMap<>();
+                        eventData.put("previousStatus", previous.name());
+                        eventData.put("status", run.status().name());
+                        eventData.put("version", run.version());
+                        run.error().ifPresent(error -> {
+                            eventData.put("errorCode", error.code().wireCode());
+                            eventData.put("errorMessage", error.message());
+                            eventData.put("errorCategory", error.category().name());
+                            eventData.put("retryability", error.retryability().name());
+                            error.optionalDiagnosticId()
+                                    .ifPresent(diagnosticId -> eventData.put("diagnosticId", diagnosticId));
+                        });
+                        Map<String, Object> safeEventData = Map.copyOf(eventData);
+                        RuntimeEvent event = events.append(run.id(), eventType, safeEventData, time.now());
                         outbox.append(new OutboxMessage(
                                 event.eventId(),
                                 event.runId(),
                                 event.sequence(),
                                 event.type(),
                                 OutboxMessage.CURRENT_SCHEMA_VERSION,
-                                Map.of("status", run.status().name(), "version", run.version()),
+                                safeEventData,
                                 event.occurredAt()));
                         AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                         unitOfWork.afterCommit(() -> notifyCommitted(committed));
