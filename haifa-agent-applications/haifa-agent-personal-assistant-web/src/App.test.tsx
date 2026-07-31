@@ -340,6 +340,7 @@ describe("Personal Assistant application", () => {
     render(<App client={api} />);
 
     const composer = await screen.findByPlaceholderText("输入消息或 / 命令，Enter 发送");
+    expect(screen.queryByRole("combobox", { name: "选择模型" })).toBeNull();
     fireEvent.change(composer, { target: { value: "/" } });
     expect(await screen.findByRole("dialog", { name: "命令功能" })).toBeTruthy();
 

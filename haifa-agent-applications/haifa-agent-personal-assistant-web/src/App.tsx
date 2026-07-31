@@ -1096,24 +1096,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         <main className="conversation">
           <div className="conversation-heading">
             <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>
-            <div className="conversation-model-controls">
-              <label>
-                <span className="sr-only">选择模型</span>
-                <select
-                  aria-label="选择模型"
-                  value={state.selectedConversation?.model.model.id ?? newModelId}
-                  disabled={composerDisabled}
-                  onChange={(event) => selectModel(event.target.value)}
-                >
-                  {(state.bootstrap?.models ?? []).map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.displayName} · {model.providerDisplayName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
-            </div>
+            {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
           </div>
           {state.error && (
             <div className="error-banner" role="alert">

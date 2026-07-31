@@ -180,8 +180,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   gap: 10px;
 }
 .conversation-heading { grid-area: heading; min-height: 48px; }
-.conversation-model-controls { display: flex; align-items: center; gap: 10px; }
-.conversation-model-controls select { max-width: 280px; border: 1px solid #d9deea; border-radius: 8px; background: #fff; color: #172033; padding: 7px 10px; }
 .conversation-heading h1, .panel-heading h2, .dialog-heading h2, .interaction-card h3 { margin: 0; }
 .conversation-heading h1 { max-width: 50vw; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 19px; }
 .run-state { padding: 6px 10px; color: #4260c8; font-size: 11px; font-weight: 700; border-radius: 999px; background: #eaf0ff; }
