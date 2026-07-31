@@ -92,6 +92,17 @@ class SqlitePolicyPersistenceTest {
     }
 
     @Test
+    void policySnapshotTimestampRoundTripsAcrossSqliteMillisecondColumns(@TempDir Path directory) {
+        PolicySnapshot snapshot = snapshot(NOW.plusNanos(456_789));
+        SqliteTestSupport.foundation(directory).policySnapshots().save(snapshot);
+
+        assertThat(SqliteTestSupport.foundation(directory).policySnapshots().find(snapshot.ref()))
+                .get()
+                .extracting(PolicySnapshot::createdAt)
+                .isEqualTo(NOW);
+    }
+
+    @Test
     void onceGrantHasOneDatabaseWinnerAcrossConnections(@TempDir Path directory) throws Exception {
         SqliteStoreFoundation setup = SqliteTestSupport.foundation(directory);
         ApprovalGrant grant = prepareGrantGraph(setup);
@@ -141,6 +152,10 @@ class SqlitePolicyPersistenceTest {
     }
 
     private static PolicySnapshot snapshot() {
+        return snapshot(NOW);
+    }
+
+    private static PolicySnapshot snapshot(Instant createdAt) {
         PolicyRule defaultRule = new PolicyRule(
                 new PolicyRuleRef("default", "1"),
                 PolicyRuleSource.SYSTEM,
@@ -158,7 +173,7 @@ class SqlitePolicyPersistenceTest {
                 "coding",
                 Optional.empty(),
                 "sha256:snapshot",
-                NOW);
+                createdAt);
     }
 
     private static PolicyRequest request(String runRef) {

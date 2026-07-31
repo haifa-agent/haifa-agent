@@ -59,7 +59,7 @@ final class AutonomousDeliveryPhaseOneGate {
         Map<String, Path> homes = validateToolchains(toolchainHomes);
         Path gate = campaign.resolve("phase-" + phaseNumber)
                 .resolve("build-" + buildCommit)
-                .resolve("gate-" + GATE_TIME.format(clock.instant()));
+                .resolve("gate-" + GATE_TIME.format(now()));
         Files.createDirectories(gate.getParent());
         Files.createDirectory(gate);
         Path driver = gate.resolve("terminal-driver.py");
@@ -101,7 +101,7 @@ final class AutonomousDeliveryPhaseOneGate {
         summary.put("phase", suite.phase());
         summary.put("suiteId", suite.suiteId());
         summary.put("buildCommit", buildCommit);
-        summary.put("finishedAt", Instant.now(clock).toString());
+        summary.put("finishedAt", now().toString());
         summary.put("successful", successful);
         summary.put("executionCalls", executionCalls);
         summary.put("scratchProvisionedCount", scratchProvisioned);
@@ -229,7 +229,7 @@ final class AutonomousDeliveryPhaseOneGate {
         comparison.put("comparisonType", "PHASE_" + phaseNumber + "_GATE_VS_READ_ONLY_HISTORICAL_EVIDENCE");
         comparison.put("buildCommit", buildCommit);
         comparison.put("gateEvidence", campaign.relativize(gate).toString().replace('\\', '/'));
-        comparison.put("generatedAt", Instant.now(clock).toString());
+        comparison.put("generatedAt", now().toString());
         comparison.put("historicalEvidence", baselines);
         comparison.put(
                 "interpretation",
@@ -783,7 +783,7 @@ final class AutonomousDeliveryPhaseOneGate {
         manifest.put("caseId", testCase.caseId());
         manifest.put("caseVersion", testCase.caseVersion());
         manifest.put("repetition", repetition);
-        manifest.put("startedAt", Instant.now(clock).toString());
+        manifest.put("startedAt", now().toString());
         manifest.put("modelProvider", "deepseek");
         manifest.put("modelId", "deepseek-chat");
         manifest.put("sandboxProfile", "local-native");
@@ -794,6 +794,10 @@ final class AutonomousDeliveryPhaseOneGate {
         manifest.put("toolchainPathDigests", toolchainDigests);
         manifest.put("budget", suite.budget());
         writeJson(repeat.resolve("run-manifest.json"), manifest);
+    }
+
+    private Instant now() {
+        return Instant.ofEpochMilli(clock.millis());
     }
 
     private static String configuration(AutonomousDeliverySuiteManifest suite, Map<String, Path> homes) {

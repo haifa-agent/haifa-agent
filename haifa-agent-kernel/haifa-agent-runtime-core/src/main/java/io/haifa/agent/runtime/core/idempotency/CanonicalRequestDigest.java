@@ -1,5 +1,6 @@
 package io.haifa.agent.runtime.core.idempotency;
 
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.ArtifactRefPart;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
@@ -23,7 +24,7 @@ public final class CanonicalRequestDigest {
         digest.add(Long.toString(submission.expectedRevision()));
         digest.add(submission.action().value());
         addContents(digest, submission.inputs());
-        digest.add(submission.respondedAt().toString());
+        digest.add(TimePrecision.toMilliseconds(submission.respondedAt()).toString());
         return digest.finish();
     }
 
@@ -37,7 +38,7 @@ public final class CanonicalRequestDigest {
                         ? Long.toString(submission.expectedRunVersion().getAsLong())
                         : "");
         addContents(digest, submission.contents());
-        digest.add(submission.submittedAt().toString());
+        digest.add(TimePrecision.toMilliseconds(submission.submittedAt()).toString());
         return digest.finish();
     }
 

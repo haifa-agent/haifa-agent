@@ -139,6 +139,8 @@ Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 - JSON 使用稳定属性/Map 顺序生成字节，再计算 SHA-256；
 - `InstantEpochMillisTypeHandler` 与 `BoundedBlobTypeHandler` 是基础 TypeHandler；
 - ID 和 Enum 通过显式 `StringIdentifierCodec`、`StableEnumCodec` 转换，未知值不回退；
+- `Instant` 固定列与 JSON/BLOB payload 都按 UTC epoch milliseconds 精度保存；读取历史上保留纳秒的
+  payload 并与固定列交叉校验时，先按毫秒精度归一化，亚毫秒差异不被误判为内容篡改；
 - Mapper 使用显式 constructor/resultMap 与 `#{}` 参数；禁止 `${}` 和任意类名反序列化。
 
 ## Port 覆盖矩阵

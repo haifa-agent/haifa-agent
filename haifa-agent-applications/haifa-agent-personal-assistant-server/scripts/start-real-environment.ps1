@@ -132,7 +132,17 @@ function Wait-ForHttpEndpoint {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         if ($Process.HasExited) {
-            throw "$Name exited with code $($Process.ExitCode). Logs: $StandardOutputLog ; $StandardErrorLog"
+            $exitCode = 'unknown'
+            try {
+                $Process.WaitForExit()
+                $Process.Refresh()
+                if ($null -ne $Process.ExitCode) {
+                    $exitCode = [string] $Process.ExitCode
+                }
+            } catch {
+                # Preserve the log paths even if the process handle cannot expose an exit code.
+            }
+            throw "$Name exited with code $exitCode. Logs: $StandardOutputLog ; $StandardErrorLog"
         }
         if (Test-HttpEndpoint -Uri $Uri) {
             return

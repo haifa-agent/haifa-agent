@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.application;
 
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -212,7 +213,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                         new InteractionAction(action),
                         inputs,
                         idempotencyKey,
-                        clock.instant()));
+                        TimePrecision.now(clock)));
         return new InteractionReceipt(
                 receipt.responseId().value(),
                 receipt.requestId().value(),

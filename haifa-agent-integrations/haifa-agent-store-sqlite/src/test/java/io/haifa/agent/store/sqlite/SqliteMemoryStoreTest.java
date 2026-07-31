@@ -33,6 +33,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -213,6 +214,28 @@ class SqliteMemoryStoreTest {
         }
     }
 
+    @Test
+    void memoryPayloadTimestampUsesMillisecondPrecision() {
+        MemoryScope scope = new MemoryScope(
+                new TenantRef("tenant-a"),
+                new PrincipalRef("user-a", "user"),
+                MemoryScopeType.USER,
+                "user-a",
+                MemoryVisibility.OWNER_ONLY,
+                Set.of());
+        Instant precise = SqliteTestSupport.NOW.plusNanos(456_789);
+        Memory memory = memory(scope, 1, "Java", Optional.empty(), precise);
+        SqliteMemoryPayloadCodec codec = new SqliteMemoryPayloadCodec();
+
+        byte[] encoded = codec.encodeMemory(memory);
+        Memory decoded =
+                codec.decodeMemory(memory.id().value(), memory.version().value(), encoded);
+
+        assertThat(new String(encoded, StandardCharsets.UTF_8)).doesNotContain("456789");
+        assertThat(decoded.createdAt()).isEqualTo(SqliteTestSupport.NOW);
+        assertThat(decoded.updatedAt()).isEqualTo(SqliteTestSupport.NOW);
+    }
+
     private byte[] readDatabase() {
         try {
             return Files.readAllBytes(SqliteTestSupport.configuration(directory).databasePath());
@@ -238,6 +261,11 @@ class SqliteMemoryStoreTest {
     }
 
     private static Memory memory(MemoryScope scope, long version, String text, Optional<MemoryRef> previous) {
+        return memory(scope, version, text, previous, SqliteTestSupport.NOW);
+    }
+
+    private static Memory memory(
+            MemoryScope scope, long version, String text, Optional<MemoryRef> previous, Instant timestamp) {
         MemorySourceRef source = new MemorySourceRef(MemorySourceType.MESSAGE, "message-a", Optional.empty());
         return new Memory(
                 new MemoryId("memory-a"),
@@ -255,7 +283,7 @@ class SqliteMemoryStoreTest {
                 Optional.empty(),
                 Optional.empty(),
                 MemoryRetentionPolicy.RETAIN,
-                SqliteTestSupport.NOW,
-                SqliteTestSupport.NOW);
+                timestamp,
+                timestamp);
     }
 }

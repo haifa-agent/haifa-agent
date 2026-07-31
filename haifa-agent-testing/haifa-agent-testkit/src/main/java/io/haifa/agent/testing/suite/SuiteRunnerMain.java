@@ -184,7 +184,8 @@ public final class SuiteRunnerMain {
         report.put("productCommit", gitCommit(projectRoot));
         report.put("testConfigCommit", gitCommit(configRoot));
         report.put("startedAt", startedAt.toString());
-        report.put("finishedAt", Instant.now().toString());
+        report.put(
+                "finishedAt", Instant.ofEpochMilli(System.currentTimeMillis()).toString());
         report.put("results", results);
         Path reportRoot = Files.createDirectories(runRoot.resolve("reports"));
         json.writerWithDefaultPrettyPrinter()

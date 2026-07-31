@@ -90,9 +90,7 @@ public final class AutonomousDeliveryHarnessMain {
             throws IOException {
         Path campaign = requireCampaign(options.campaignRoot(), repositories);
         String build = requireCommit(options.buildCommit());
-        Path gate = campaign.resolve("phase-0")
-                .resolve("build-" + build)
-                .resolve("gate-" + GATE_TIME.format(clock.instant()));
+        Path gate = campaign.resolve("phase-0").resolve("build-" + build).resolve("gate-" + GATE_TIME.format(now()));
         Files.createDirectories(gate.getParent());
         Files.createDirectory(gate);
         AutonomousDeliveryFixtureStore fixtures = new AutonomousDeliveryFixtureStore();
@@ -117,7 +115,7 @@ public final class AutonomousDeliveryHarnessMain {
         summary.put("schemaVersion", 1);
         summary.put("phase", "PHASE_0");
         summary.put("buildCommit", build);
-        summary.put("startedAndFinishedAt", Instant.now(clock).toString());
+        summary.put("startedAndFinishedAt", now().toString());
         summary.put("catalogSha256", catalog.catalogSha256());
         summary.put("caseCount", results.size());
         summary.put("successful", results.size() == catalog.cases().size());
@@ -127,6 +125,10 @@ public final class AutonomousDeliveryHarnessMain {
         writeManifest(gate);
         makeReadOnly(gate);
         System.out.println("Phase 0 gate PASS: " + gate);
+    }
+
+    private Instant now() {
+        return Instant.ofEpochMilli(clock.millis());
     }
 
     private static void printPlan(AutonomousDeliveryCaseCatalog catalog, Options options) throws IOException {

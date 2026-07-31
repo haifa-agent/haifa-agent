@@ -1,5 +1,6 @@
 package io.haifa.agent.contract.error;
 
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.contract.common.ApiVersion;
 import java.time.Instant;
 import java.util.List;
@@ -23,7 +24,7 @@ public record ErrorResponse(
         code = Objects.requireNonNull(code, "code must not be null");
         message = requireText(message, "message");
         correlationId = requireText(correlationId, "correlationId");
-        timestamp = Objects.requireNonNull(timestamp, "timestamp must not be null");
+        timestamp = TimePrecision.toMilliseconds(Objects.requireNonNull(timestamp, "timestamp must not be null"));
         violations = List.copyOf(Objects.requireNonNull(violations, "violations must not be null"));
         if (violations.size() > 100 || violations.stream().anyMatch(Objects::isNull)) {
             throw new IllegalArgumentException("violations must contain at most 100 non-null values");

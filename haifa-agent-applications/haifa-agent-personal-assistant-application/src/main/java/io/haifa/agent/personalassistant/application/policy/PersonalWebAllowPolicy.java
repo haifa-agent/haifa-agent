@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.application.policy;
 
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.PolicyDecision;
@@ -78,7 +79,7 @@ public final class PersonalWebAllowPolicy implements PublicToolPolicy {
         Objects.requireNonNull(clock, "clock must not be null");
 
         Set<ToolCoordinate> allowedCoordinates = resolveAllowedCoordinates(catalog, web);
-        PolicySnapshot snapshot = ensureSnapshot(catalog, allowedCoordinates, persistence, clock.instant());
+        PolicySnapshot snapshot = ensureSnapshot(catalog, allowedCoordinates, persistence, TimePrecision.now(clock));
         return delegate -> new PersonalWebAllowPolicy(delegate, allowedCoordinates, persistence, snapshot, clock);
     }
 

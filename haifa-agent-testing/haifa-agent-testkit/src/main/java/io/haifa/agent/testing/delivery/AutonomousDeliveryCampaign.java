@@ -66,7 +66,7 @@ public final class AutonomousDeliveryCampaign {
             entry.put("sourceType", "READ_ONLY_HISTORICAL_CAMPAIGN");
             baselineEntries.add(entry);
         }
-        String campaignId = "autonomous-delivery-" + CAMPAIGN_TIME.format(clock.instant()) + "-" + randomSuffix();
+        String campaignId = "autonomous-delivery-" + CAMPAIGN_TIME.format(now()) + "-" + randomSuffix();
         Path campaign = parent.resolve(campaignId);
         Files.createDirectory(campaign);
         setOwnerOnly(campaign);
@@ -77,7 +77,7 @@ public final class AutonomousDeliveryCampaign {
         LinkedHashMap<String, Object> manifest = new LinkedHashMap<>();
         manifest.put("schemaVersion", 1);
         manifest.put("campaignId", campaignId);
-        manifest.put("createdAt", Instant.now(clock).toString());
+        manifest.put("createdAt", now().toString());
         manifest.put("catalogId", catalog.catalogId());
         manifest.put("catalogVersion", catalog.catalogVersion());
         manifest.put("catalogSha256", catalog.catalogSha256());
@@ -100,6 +100,10 @@ public final class AutonomousDeliveryCampaign {
                                 .toFile(),
                         baselineEntries);
         return campaign;
+    }
+
+    private Instant now() {
+        return Instant.ofEpochMilli(clock.millis());
     }
 
     static Path requireSafeParent(Path value, List<Path> repositoryRoots) throws IOException {

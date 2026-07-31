@@ -1,8 +1,12 @@
 package io.haifa.agent.store.sqlite;
 
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -38,7 +42,19 @@ import java.util.Set;
 /** Explicit, version-one plaintext codec. No domain type metadata is accepted from persisted JSON. */
 final class SqliteMemoryPayloadCodec {
     private final ObjectMapper mapper =
-            new ObjectMapper().registerModule(new Jdk8Module()).registerModule(new JavaTimeModule());
+            new ObjectMapper().registerModule(new Jdk8Module()).registerModule(millisecondJavaTimeModule());
+
+    private static JavaTimeModule millisecondJavaTimeModule() {
+        JavaTimeModule module = new JavaTimeModule();
+        module.addSerializer(Instant.class, new JsonSerializer<>() {
+            @Override
+            public void serialize(Instant value, JsonGenerator generator, SerializerProvider serializers)
+                    throws IOException {
+                generator.writeString(TimePrecision.toMilliseconds(value).toString());
+            }
+        });
+        return module;
+    }
 
     byte[] encodeCandidate(MemoryCandidate value) {
         return write(new CandidatePayload(

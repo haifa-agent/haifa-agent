@@ -19,6 +19,6 @@ public final class SystemTimeProvider implements TimeProvider {
 
     @Override
     public Instant now() {
-        return Instant.ofEpochMilli(clock.millis());
+        return TimePrecision.now(clock);
     }
 }
