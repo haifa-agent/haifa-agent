@@ -145,6 +145,7 @@ function client(): PersonalAssistantClient {
     updateConversation: vi.fn(async () => conversation),
     turns: vi.fn(async () => turns),
     submitMessage: vi.fn(async () => conversation),
+    recommendedQuestions: vi.fn(async () => ({ questions: [] })),
     run: vi.fn(async () => run),
     cancelRun: vi.fn(async () => ({ ...run, status: "CANCELLED" })),
     activities: vi.fn(async () => [activity]),
@@ -281,6 +282,32 @@ describe("Personal Assistant application", () => {
 
     expect(await screen.findByRole("heading", { level: 2, name: "Summary" })).toBeTruthy();
     expect(container.querySelector(".message-content .katex")).toBeTruthy();
+  });
+
+  it("renders contextual questions below the completed answer and submits a clicked question", async () => {
+    const api = client();
+    vi.mocked(api.recommendedQuestions).mockResolvedValue({
+      questions: [
+        "哪些待办最适合安排在上午？",
+        "如何为这些待办设置提醒？",
+        "能否按预计耗时重新排序？",
+      ],
+    });
+    render(<App client={api} />);
+
+    const question = await screen.findByRole("button", { name: "哪些待办最适合安排在上午？" });
+    expect(question.closest(".message.assistant")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "推荐问题" })).toBeTruthy();
+
+    fireEvent.click(question);
+
+    await waitFor(() =>
+      expect(api.submitMessage).toHaveBeenCalledWith(
+        conversation,
+        "哪些待办最适合安排在上午？",
+        expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      ),
+    );
   });
 
   it("copies a complete assistant answer and an individual code block", async () => {
@@ -438,11 +465,15 @@ describe("Personal Assistant application", () => {
     vi.mocked(api.conversations).mockResolvedValue([active]);
     vi.mocked(api.conversation).mockResolvedValue(active);
     vi.mocked(api.run).mockResolvedValue(activeRun);
-    render(<App client={api} />);
+    const { container } = render(<App client={api} />);
 
     const composer = await screen.findByPlaceholderText("当前任务运行中");
     await waitFor(() => expect(composer.hasAttribute("disabled")).toBe(true));
     expect(screen.getByText(/当前任务运行中，完成或停止后可继续输入/)).toBeTruthy();
+    const cancelButton = screen.getByRole("button", { name: "停止当前任务" });
+    expect(cancelButton.closest(".run-heading-row")).toBeTruthy();
+    expect(cancelButton.querySelector("span")?.textContent).toBe("停止当前任务");
+    expect(container.querySelector(".active-run-note button")).toBeNull();
   });
 
   it("shows the exact high-risk execution approval content", async () => {

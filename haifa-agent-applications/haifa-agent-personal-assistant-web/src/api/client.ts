@@ -8,6 +8,7 @@ import type {
   Memory,
   MemoryCandidate,
   ModelSelection,
+  RecommendedQuestions,
   Run,
   StreamEvent,
   Turn,
@@ -67,6 +68,11 @@ export interface PersonalAssistantClient {
     message: string,
     options?: CommandOptions,
   ): Promise<Conversation>;
+  recommendedQuestions(
+    conversationId: string,
+    runId: string,
+    options?: CommandOptions,
+  ): Promise<RecommendedQuestions>;
   run(id: string, signal?: AbortSignal): Promise<Run>;
   cancelRun(id: string, options?: CommandOptions): Promise<Run>;
   activities(id: string, signal?: AbortSignal): Promise<Activity[]>;
@@ -234,6 +240,22 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
         method: "POST",
         headers: commandHeaders(conversation.revision, options.idempotencyKey),
         body: JSON.stringify({ message }),
+      },
+      options.signal,
+    );
+  }
+
+  recommendedQuestions(
+    conversationId: string,
+    runId: string,
+    options: CommandOptions = {},
+  ) {
+    return this.request<RecommendedQuestions>(
+      `/conversations/${encoded(conversationId)}/runs/${encoded(runId)}/recommend-questions`,
+      {
+        method: "POST",
+        headers: commandHeaders(undefined, options.idempotencyKey),
+        body: "{}",
       },
       options.signal,
     );

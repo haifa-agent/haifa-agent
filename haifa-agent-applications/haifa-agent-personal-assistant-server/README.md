@@ -41,6 +41,8 @@ Server 负责：
 - 按配置启用公共 `haifa-agent-web` 的 Aliyun IQS Search/Fetch，并把环境变量凭据绑定到
   Runtime `CredentialBroker`，不把 Key 放入 Profile、Tool Definition 或日志；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；
+- 完成态 Run 的 `recommend-questions` 可选辅助推理接口；POST 绑定 Conversation/Run 和
+  `Idempotency-Key`，模型判定为快问快答、简单计算等闭合问题时返回空数组；
 - Reactor Netty / Spring WebFlux HTTP；
 - `Flux<ServerSentEvent<?>>` Run 流合并 durable Run/Tool/Interaction Activity 与 transient Assistant
   output；SSE ID 同时携带两套 source-local cursor 和进程 epoch，避免 sequence 冲突，并保留

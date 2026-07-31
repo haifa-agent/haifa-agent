@@ -22,6 +22,8 @@ public final class PersonalApiDtos {
 
     public record SubmitMessage(String message) {}
 
+    public record RecommendedQuestions(List<String> questions) {}
+
     public record UpdateConversation(String displayName, String status) {}
 
     public record Model(

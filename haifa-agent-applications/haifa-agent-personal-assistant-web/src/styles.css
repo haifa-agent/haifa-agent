@@ -240,6 +240,52 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .message-copy-button { padding-left: 2px; color: #7b8496; }
 .message-copy-button:hover { color: #365fd3; background: #edf2ff; }
 .message-copy-button svg { flex: 0 0 auto; }
+.recommended-questions {
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid #e1e5ed;
+}
+.recommended-questions-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #7b8496;
+  font-size: 11px;
+  font-weight: 700;
+}
+.recommended-questions-heading svg { flex: none; color: #4c6fff; }
+.recommended-question-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 8px;
+}
+.recommended-question-list button {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 10px;
+  color: #3f506d;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: left;
+  border: 1px solid #d7def0;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease, transform .15s ease;
+}
+.recommended-question-list button:hover,
+.recommended-question-list button:focus-visible {
+  color: #365fd3;
+  border-color: #9fb2ed;
+  background: #f1f5ff;
+  transform: translateY(-1px);
+}
+.recommended-question-list button:disabled { opacity: .58; cursor: wait; transform: none; }
+.recommended-question-list svg { flex: none; margin-top: 2px; color: #607de0; }
 .markdown-table-wrapper { width: 100%; margin: 12px 0; overflow-x: auto; border: 1px solid #e1e5ed; border-radius: 10px; }
 .markdown-table { width: 100%; min-width: 420px; border-collapse: collapse; font-size: 12px; line-height: 1.55; }
 .markdown-table th, .markdown-table td { padding: 8px 10px; text-align: left; vertical-align: top; border-right: 1px solid #e1e5ed; border-bottom: 1px solid #e1e5ed; }
@@ -425,6 +471,48 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .memory-button b { min-width: 17px; height: 17px; display: grid; place-items: center; color: white; font-size: 10px; border-radius: 9px; background: #d94a5b; }
 
 .panel-heading h2 { font-size: 18px; }
+.run-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.run-cancel-button {
+  min-width: 28px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 7px 8px;
+  overflow: hidden;
+  color: #b83143;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition: gap .16s ease, border-color .16s ease, background .16s ease;
+}
+.run-cancel-button span {
+  max-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0;
+  transition: max-width .16s ease, opacity .12s ease;
+}
+.run-cancel-button:hover,
+.run-cancel-button:focus-visible {
+  gap: 6px;
+  border-color: #f0cbd1;
+  background: #fff8f9;
+}
+.run-cancel-button:hover span,
+.run-cancel-button:focus-visible span {
+  max-width: 88px;
+  opacity: 1;
+}
+.run-cancel-button:disabled { opacity: .58; cursor: wait; }
 .panel-section { padding-top: 2px; }
 .panel-section h3 { margin: 0 0 9px; font-size: 13px; }
 .activity-list { display: flex; flex-direction: column; gap: 8px; }

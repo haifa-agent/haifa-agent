@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -59,6 +61,7 @@ public final class PersonalAssistantController {
                         "approval",
                         "shell",
                         "execution",
+                        "recommended-questions",
                         "sse"),
                 application.productDigest(),
                 properties.defaultModelId(),
@@ -156,6 +159,17 @@ public final class PersonalAssistantController {
                 conversationId, revision(ifMatch), key(idempotencyKey), text(request.message(), "message")));
         body.activeRunId().ifPresent(runId -> runLogging.observe(body.id(), runId, "message-submitted"));
         return ResponseEntity.accepted().eTag(Long.toString(body.revision())).body(body);
+    }
+
+    @PostMapping("/conversations/{conversationId}/runs/{runId}/recommend-questions")
+    Mono<PersonalApiDtos.RecommendedQuestions> recommendQuestions(
+            @PathVariable String conversationId,
+            @PathVariable String runId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        key(idempotencyKey);
+        return Mono.fromCallable(() ->
+                        new PersonalApiDtos.RecommendedQuestions(application.recommendQuestions(conversationId, runId)))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     @GetMapping("/runs/{runId}")

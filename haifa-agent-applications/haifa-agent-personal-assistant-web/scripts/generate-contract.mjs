@@ -43,6 +43,7 @@ for (const required of [
   "selectConversationModel",
   "listTurns",
   "submitMessage",
+  "recommendQuestions",
   "getRun",
   "cancelRun",
   "listSafeActivities",

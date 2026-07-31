@@ -17,6 +17,7 @@ import {
   Search,
   Send,
   ShieldCheck,
+  Sparkles,
   Square,
   X,
   Zap,
@@ -95,6 +96,13 @@ function groupModelsByProvider(models: Model[]): ModelProviderGroup[] {
     });
   });
   return [...providers.values()];
+}
+
+interface RecommendedQuestionState {
+  runId: string;
+  turnId: string;
+  loading: boolean;
+  questions: string[];
 }
 
 function safeError(error: unknown): string {
@@ -195,6 +203,43 @@ function MessageCopyButton({ text }: { text: string }) {
       {copied ? <Check size={14} /> : <Copy size={14} />}
       <span>{copied ? "已复制" : "复制"}</span>
     </button>
+  );
+}
+
+function RecommendedQuestionList({
+  state,
+  disabled,
+  onSelect,
+}: {
+  state: RecommendedQuestionState;
+  disabled: boolean;
+  onSelect(question: string): void;
+}) {
+  if (!state.loading && !state.questions.length) return null;
+  return (
+    <section className="recommended-questions" aria-label="推荐问题">
+      <div className="recommended-questions-heading">
+        {state.loading
+          ? <RefreshCw className="spin" size={13} aria-hidden="true" />
+          : <Sparkles size={13} aria-hidden="true" />}
+        <span>{state.loading ? "正在生成可能的后续问题…" : "你还可以问"}</span>
+      </div>
+      {!state.loading && (
+        <div className="recommended-question-list">
+          {state.questions.map((question) => (
+            <button
+              type="button"
+              key={question}
+              disabled={disabled}
+              onClick={() => onSelect(question)}
+            >
+              <Sparkles size={11} aria-hidden="true" />
+              <span>{question}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -502,14 +547,26 @@ function ActivityPanel({
       {open && <button className="scrim right" aria-label="关闭运行详情" onClick={onClose} />}
       <aside className={`activity-panel ${open ? "drawer-open" : ""}`} aria-label="当前运行详情">
         <div className="panel-heading">
-          <div><span className="eyebrow">CURRENT RUN</span><h2>{run ? statusLabel(run.status) : "暂无运行"}</h2></div>
+          <div>
+            <span className="eyebrow">CURRENT RUN</span>
+            <div className="run-heading-row">
+              <h2>{run ? statusLabel(run.status) : "暂无运行"}</h2>
+              {run && !isTerminal(run) && (
+                <Button
+                  className="run-cancel-button"
+                  busy={pending}
+                  aria-label="停止当前任务"
+                  title="停止当前任务"
+                  onClick={onCancel}
+                >
+                  <Square size={11} fill="currentColor" aria-hidden="true" />
+                  <span>停止当前任务</span>
+                </Button>
+              )}
+            </div>
+          </div>
           <button className="icon mobile-only" aria-label="关闭运行详情" onClick={onClose}><X size={18} /></button>
         </div>
-        {run && !isTerminal(run) && (
-          <Button className="button danger" busy={pending} onClick={onCancel}>
-            <Square size={14} fill="currentColor" /> 停止当前任务
-          </Button>
-        )}
         <section className="panel-section">
           <h3>安全活动</h3>
           <div className="activity-list">
@@ -654,6 +711,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   }));
   const previousFocus = useRef<HTMLElement | null>(null);
   const interactionRequestGeneration = useRef(0);
+  const recommendationRequestGeneration = useRef(0);
+  const [recommendedQuestions, setRecommendedQuestions] =
+    useState<RecommendedQuestionState | null>(null);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
   const [newModelId, setNewModelId] = useState("");
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
@@ -870,6 +930,53 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     state.selectedConversationId,
   ]);
 
+  const completedAnswerTurn =
+    state.run?.status === "COMPLETED"
+      ? [...state.turns].reverse().find(
+          (turn) =>
+            turn.runId === state.run?.id &&
+            turn.role.toLowerCase() === "assistant",
+        ) ?? null
+      : null;
+  const recommendationTarget = completedAnswerTurn && state.run
+    ? `${state.run.id}:${completedAnswerTurn.id}`
+    : null;
+
+  useEffect(() => {
+    const conversationId = state.selectedConversationId;
+    const runId = state.run?.id;
+    const turnId = completedAnswerTurn?.id;
+    const generation = ++recommendationRequestGeneration.current;
+    if (!conversationId || !runId || !turnId || !recommendationTarget) {
+      setRecommendedQuestions(null);
+      return;
+    }
+    const controller = new AbortController();
+    setRecommendedQuestions({ runId, turnId, loading: true, questions: [] });
+    void client.recommendedQuestions(conversationId, runId, {
+      idempotencyKey: crypto.randomUUID(),
+      signal: controller.signal,
+    }).then((response) => {
+      if (generation !== recommendationRequestGeneration.current || controller.signal.aborted) return;
+      setRecommendedQuestions({
+        runId,
+        turnId,
+        loading: false,
+        questions: response.questions.slice(0, 3),
+      });
+    }).catch(() => {
+      if (generation !== recommendationRequestGeneration.current || controller.signal.aborted) return;
+      setRecommendedQuestions({ runId, turnId, loading: false, questions: [] });
+    });
+    return () => controller.abort();
+  }, [
+    client,
+    completedAnswerTurn?.id,
+    recommendationTarget,
+    state.run?.id,
+    state.selectedConversationId,
+  ]);
+
   const execute = useCallback(async (label: string, operation: () => Promise<void>) => {
     dispatch({ type: "commandStarted", command: { id: crypto.randomUUID(), label } });
     try {
@@ -882,11 +989,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     }
   }, []);
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const message = state.composer.trim();
+  const submitMessage = (value: string) => {
+    const message = value.trim();
     if (!message || state.pending || state.selectedConversation?.activeRunId) return;
     const key = crypto.randomUUID();
+    recommendationRequestGeneration.current += 1;
+    setRecommendedQuestions(null);
     void execute("提交消息", async () => {
       const conversation = state.selectedConversation
         ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key })
@@ -988,6 +1096,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       setSlashMenu({ stage: "commands" });
     }
     setSlashActiveIndex(0);
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    submitMessage(state.composer);
   };
 
   const rename = (conversation: Conversation, displayName: string) => {
@@ -1113,17 +1226,30 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               </div>
             ) : (
               <>
-                {state.turns.map((turn) => (
-                  <article className={`message ${turn.role.toLowerCase() === "user" ? "user" : "assistant"}`} key={turn.id}>
-                    <span className="message-role">{turn.role.toLowerCase() === "user" ? "你" : "Haifa"}</span>
-                    <MessageContent text={turn.text} /><time>{formatTime(turn.createdAt)}</time>
-                    {turn.role.toLowerCase() === "assistant" && (
-                      <div className="message-actions">
-                        <MessageCopyButton text={turn.text} />
-                      </div>
-                    )}
-                  </article>
-                ))}
+                {state.turns.map((turn) => {
+                  const assistant = turn.role.toLowerCase() === "assistant";
+                  const recommendation = recommendedQuestions?.turnId === turn.id
+                    ? recommendedQuestions
+                    : null;
+                  return (
+                    <article className={`message ${assistant ? "assistant" : "user"}`} key={turn.id}>
+                      <span className="message-role">{assistant ? "Haifa" : "你"}</span>
+                      <MessageContent text={turn.text} /><time>{formatTime(turn.createdAt)}</time>
+                      {assistant && (
+                        <div className="message-actions">
+                          <MessageCopyButton text={turn.text} />
+                        </div>
+                      )}
+                      {recommendation && (
+                        <RecommendedQuestionList
+                          state={recommendation}
+                          disabled={composerDisabled}
+                          onSelect={submitMessage}
+                        />
+                      )}
+                    </article>
+                  );
+                })}
                 {state.streamDraft && (
                   <article className="message assistant streaming" aria-live="polite">
                     <span className="message-role">Haifa</span><MessageContent text={state.streamDraft} /><i className="caret" />
@@ -1243,7 +1369,6 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             {runActive && (
               <div className="active-run-note">
                 <span><RefreshCw className="spin" size={15} /> 当前任务运行中，完成或停止后可继续输入。</span>
-                <Button type="button" className="text-button danger-text" busy={Boolean(state.pending)} onClick={cancel}>停止</Button>
               </div>
             )}
             <label>
