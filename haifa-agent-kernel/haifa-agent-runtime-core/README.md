@@ -135,6 +135,8 @@ AgentLoop，Run 终态后清理。有效模型决策仍由 `DecisionExecutor` �
 - Tool Journal 区分 intent、dispatched、acknowledged、pending-result、completed、failed 与 outcome-unknown；非幂等或未知副作用在 dispatch 后失联不会自动重放。
 - 模型调用与工具调用使用独立 Retry Policy；仅非副作用 Tool 允许有界自动重试，副作用 Tool 失败后进入不确定性处置而不自动重放。
 - Completion Guard 校验输出契约、Artifact、Todo、Pending Tool/Child/Interaction、Policy 和 Budget，并强制 `RUNNING -> COMPLETING -> COMPLETED`。
+- Runtime 硬预算在模型、工具或迭代执行期间耗尽时，Run、Attempt 与相关失败 Step 使用稳定的
+  `RUN_BUDGET_EXCEEDED` 安全错误，不再降级为通用 `RUNTIME_EXECUTION_FAILED`。
 - `RunTransitionCoordinator` 在 Unit of Work 内提交 Run、Runtime Event 和 Outbox；线程安全内存实现提供乐观锁、Run 内事件序号、稳定命令幂等结果、Outbox 发布/消费幂等和单活动 Attempt 约束。Listener 在提交后通知，异常不影响已提交状态。
 - `RuntimePersistencePorts` 显式组合 Session、Run、Attempt、Checkpoint、Runtime State、Event、Outbox、
   Idempotency、Unit of Work、Tool Journal、Interaction、Run Input、Summary、Tool Result Asset 与消息脱敏监听注册边界；

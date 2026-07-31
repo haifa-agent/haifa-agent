@@ -527,6 +527,45 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void modelUsageBudgetOverrunUsesStableRunBudgetError() {
+        List<RuntimeTraceEvent> traces = new ArrayList<>();
+        Fixture fixture = fixture(
+                request -> new AgentChatResponse(
+                        "over-budget-response",
+                        "deepseek-v4-pro",
+                        "must not complete",
+                        List.of(),
+                        ModelFinishReason.STOP,
+                        ModelUsage.unpriced(1_000_001, 1),
+                        "",
+                        Map.of()),
+                builder -> builder.trace(traces::add));
+
+        var accepted = fixture.runtime.start(request("model-usage-budget"));
+        fixture.scheduler.runAll();
+
+        var failed = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(failed.error()).hasValueSatisfying(error -> {
+            assertThat(error.code().value()).isEqualTo("RUN_BUDGET_EXCEEDED");
+            assertThat(error.category().name()).isEqualTo("VALIDATION");
+            assertThat(error.retryability().name()).isEqualTo("NOT_RETRYABLE");
+            assertThat(error.message()).isEqualTo("Run budget exceeded");
+        });
+        assertThat(fixture.store.steps(accepted.runId())).singleElement().satisfies(step -> assertThat(step.error())
+                .hasValueSatisfying(
+                        error -> assertThat(error.error().code().value()).isEqualTo("RUN_BUDGET_EXCEEDED")));
+        assertThat(fixture.store.attemptsFor(accepted.runId())).singleElement().satisfies(attempt -> assertThat(
+                        attempt.error())
+                .hasValueSatisfying(error -> assertThat(error.code().value()).isEqualTo("RUN_BUDGET_EXCEEDED")));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("runtime.error"))
+                .singleElement()
+                .satisfies(
+                        trace -> assertThat(trace.safeAttributes()).containsEntry("errorCode", "RUN_BUDGET_EXCEEDED"));
+    }
+
+    @Test
     void recoveryNeverBlindlyReplaysAnUncertainSideEffectingTool() {
         AtomicInteger calls = new AtomicInteger();
         AtomicBoolean owned = new AtomicBoolean(true);

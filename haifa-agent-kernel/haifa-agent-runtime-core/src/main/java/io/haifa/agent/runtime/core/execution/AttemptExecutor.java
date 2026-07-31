@@ -11,6 +11,7 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
@@ -105,17 +106,29 @@ public final class AttemptExecutor {
 
     private AgentError safeError(RuntimeException error) {
         List<String> failureTypes = failureTypes(error);
+        boolean budgetExceeded = containsFailure(error, RuntimeLimitExceededException.class);
         return new AgentError(
-                new AgentErrorCode("RUNTIME_EXECUTION_FAILED"),
-                AgentErrorCategory.INTERNAL,
+                new AgentErrorCode(budgetExceeded ? "RUN_BUDGET_EXCEEDED" : "RUNTIME_EXECUTION_FAILED"),
+                budgetExceeded ? AgentErrorCategory.VALIDATION : AgentErrorCategory.INTERNAL,
                 AgentErrorSeverity.ERROR,
-                Retryability.UNKNOWN,
-                "Agent execution failed",
+                budgetExceeded ? Retryability.NOT_RETRYABLE : Retryability.UNKNOWN,
+                budgetExceeded ? "Run budget exceeded" : "Agent execution failed",
                 null,
                 Map.of(
                         "exceptionType", failureTypes.getFirst(),
                         "rootExceptionType", failureTypes.getLast()),
                 time.now());
+    }
+
+    private static boolean containsFailure(Throwable error, Class<? extends Throwable> failureType) {
+        Throwable current = error;
+        int depth = 0;
+        while (current != null && depth < 8) {
+            if (failureType.isInstance(current)) return true;
+            current = current.getCause();
+            depth++;
+        }
+        return false;
     }
 
     private void recordFailure(

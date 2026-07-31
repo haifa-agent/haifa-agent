@@ -30,6 +30,7 @@ import io.haifa.agent.runtime.core.decision.DecisionExecutor;
 import io.haifa.agent.runtime.core.decision.DecisionValidator;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.guard.AgentLoopGuard;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.input.RunInputApplier;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
@@ -376,7 +377,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 response.costMinorUnits(),
                                 0));
                 if (run.budget().isExceededBy(run.usage())) {
-                    throw new IllegalStateException("run budget exceeded by model usage");
+                    throw new RuntimeLimitExceededException("run budget exceeded by model usage");
                 }
                 trace.record(new RuntimeTraceEvent(
                         traceId,
@@ -586,13 +587,19 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     private void failModelStep(AgentStep step, RuntimeException error) {
         if (step.status() != io.haifa.agent.core.step.AgentStepStatus.RUNNING) return;
+        boolean budgetExceeded = error instanceof RuntimeLimitExceededException;
         step.fail(
                 new AgentStepError(new io.haifa.agent.core.error.AgentError(
-                        new io.haifa.agent.core.error.AgentErrorCode("MODEL_CALL_FAILED"),
-                        io.haifa.agent.core.error.AgentErrorCategory.MODEL,
+                        new io.haifa.agent.core.error.AgentErrorCode(
+                                budgetExceeded ? "RUN_BUDGET_EXCEEDED" : "MODEL_CALL_FAILED"),
+                        budgetExceeded
+                                ? io.haifa.agent.core.error.AgentErrorCategory.VALIDATION
+                                : io.haifa.agent.core.error.AgentErrorCategory.MODEL,
                         io.haifa.agent.core.error.AgentErrorSeverity.ERROR,
-                        io.haifa.agent.core.error.Retryability.UNKNOWN,
-                        "Model call or response validation failed",
+                        budgetExceeded
+                                ? io.haifa.agent.core.error.Retryability.NOT_RETRYABLE
+                                : io.haifa.agent.core.error.Retryability.UNKNOWN,
+                        budgetExceeded ? "Run budget exceeded" : "Model call or response validation failed",
                         null,
                         Map.of("exceptionType", error.getClass().getSimpleName()),
                         time.now())),
