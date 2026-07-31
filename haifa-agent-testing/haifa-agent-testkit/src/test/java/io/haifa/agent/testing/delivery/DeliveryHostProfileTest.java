@@ -64,16 +64,39 @@ class DeliveryHostProfileTest {
                 new AutonomousDeliverySuiteManifest.Budget(1000, 2, 3, 4, 1),
                 List.of(new AutonomousDeliverySuiteManifest.CaseSelection("01", 1, true)));
         String posix = DeliveryCliConfigurationFactory.render(
-                suite, toolchains, DeliveryHostProfile.require("posix-local-native-v1", "Linux"));
+                suite,
+                toolchains,
+                DeliveryHostProfile.require("posix-local-native-v1", "Linux"),
+                combination("linux-deepseek-local-native", "linux"));
         String windows = DeliveryCliConfigurationFactory.render(
-                suite, toolchains, DeliveryHostProfile.require("windows-host-trusted-v1", "Windows 11"));
+                suite,
+                toolchains,
+                DeliveryHostProfile.require("windows-host-trusted-v1", "Windows 11"),
+                combination("windows-deepseek-host-trusted", "windows"));
 
         assertTrue(posix.contains("provider: local-native"));
         assertTrue(posix.contains("network: deny"));
         assertTrue(windows.contains("provider: host-guarded"));
         assertTrue(windows.contains("network: allow"));
         assertTrue(windows.contains("shell: powershell"));
+        assertTrue(windows.contains("default: deepseek-v4-flash"));
         assertFalse(posix.contains("/usr/bin"));
         assertFalse(windows.contains("/usr/bin"));
+    }
+
+    private static AutonomousDeliveryMatrixManifest.Combination combination(String id, String platform) {
+        boolean windows = platform.equals("windows");
+        return new AutonomousDeliveryMatrixManifest.Combination(
+                id,
+                platform,
+                "deepseek",
+                "deepseek-v4-flash",
+                windows ? "conpty" : "unix-pty",
+                windows ? "host-guarded" : "local-native",
+                windows ? "allow" : "deny",
+                windows ? "powershell" : "auto",
+                windows ? "TRUSTED_HOST_ONLY" : "LOCAL_NATIVE",
+                windows ? "windows-host-trusted-v1" : "posix-local-native-v1",
+                1);
     }
 }

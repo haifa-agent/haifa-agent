@@ -36,7 +36,9 @@ class AutonomousDeliveryGateResultAggregatorTest {
                         true,
                         Map.of("required", false),
                         Map.of("required", true, "passed", true),
-                        results);
+                        results,
+                        executionPlan(),
+                        liveBudget(true));
 
         assertTrue(aggregation.successful());
         assertEquals(
@@ -59,6 +61,8 @@ class AutonomousDeliveryGateResultAggregatorTest {
                         "scratchExercised",
                         "deterministicReadOnlyAnalyzeStub",
                         "deterministicTraceReplay",
+                        "executionPlanSha256",
+                        "liveBudget",
                         "results",
                         "capabilityMatrix",
                         "metrics"),
@@ -89,7 +93,9 @@ class AutonomousDeliveryGateResultAggregatorTest {
                         true,
                         Map.of("required", false),
                         Map.of("required", false),
-                        List.of(result));
+                        List.of(result),
+                        executionPlan(),
+                        liveBudget(true));
 
         assertFalse(aggregation.successful());
         assertEquals(false, aggregation.summary().get("repositoryStateStable"));
@@ -123,6 +129,14 @@ class AutonomousDeliveryGateResultAggregatorTest {
                 "LOCAL_NATIVE",
                 "posix-local-native-v1",
                 1);
+    }
+
+    private static AutonomousDeliveryExecutionPlan.Frozen executionPlan() {
+        return new AutonomousDeliveryExecutionPlan.Frozen(Map.of("schemaVersion", 1), "a".repeat(64));
+    }
+
+    private static AutonomousDeliveryLiveBudget.Evidence liveBudget(boolean passed) {
+        return new AutonomousDeliveryLiveBudget.Evidence("CNY", 1000, 1000, 600, 1, 100, 20, 500, 60_000, passed);
     }
 
     private static Map<String, Object> result(

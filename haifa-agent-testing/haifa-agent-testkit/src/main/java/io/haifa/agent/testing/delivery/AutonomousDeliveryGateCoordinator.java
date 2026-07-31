@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 /** Coordinates serial, repository-external Autonomous Delivery Phase 1/2/3 gates. */
 final class AutonomousDeliveryGateCoordinator {
@@ -49,13 +50,18 @@ final class AutonomousDeliveryGateCoordinator {
             Path configRoot,
             AutonomousDeliveryMatrixManifest.Combination matrixCombination,
             RepositoryRevision productRevision,
-            RepositoryRevision testConfigRevision)
+            RepositoryRevision testConfigRevision,
+            AutonomousDeliveryExecutionPlan.Frozen executionPlan,
+            long approvedMaxCostMinorUnits)
             throws Exception {
+        Objects.requireNonNull(executionPlan, "executionPlan must not be null");
         AutonomousDeliveryPhasePolicy phasePolicy = AutonomousDeliveryPhasePolicy.resolve(suite);
         int phaseNumber = phasePolicy.phaseNumber();
         Path jar = requireFile(cliJar, "CLI JAR");
         DeliveryToolchainSet toolchains = DeliveryToolchainSet.validate(executablePaths);
         validateHostProfile(hostProfile, matrixCombination);
+        AutonomousDeliveryLiveBudget.Authorization liveBudget =
+                AutonomousDeliveryLiveBudget.authorize(suite, approvedMaxCostMinorUnits);
         SecretPreflight.ResolvedSecrets selectedSecrets =
                 SecretPreflight.require(System.getenv(), List.of("DEEPSEEK_API_KEY", "HAIFA_CONTINUATION_KEY"));
 
@@ -64,6 +70,9 @@ final class AutonomousDeliveryGateCoordinator {
                 .resolve("gate-" + GATE_TIME.format(now()));
         Files.createDirectories(gate.getParent());
         Files.createDirectory(gate);
+        writeJson(gate.resolve("execution-plan.json"), executionPlan.artifact());
+        writeJson(gate.resolve("live-budget-authorization.json"), liveBudget.artifact());
+        long batchStartedNanos = System.nanoTime();
         boolean nodeDriver = hostProfile.platform().equals("windows");
         Path driver = gate.resolve(nodeDriver ? "terminal-driver.mjs" : "terminal-driver.py");
         copyResource(nodeDriver ? WINDOWS_DRIVER_RESOURCE : POSIX_DRIVER_RESOURCE, driver);
@@ -101,6 +110,7 @@ final class AutonomousDeliveryGateCoordinator {
                         matrixCombination,
                         productRevision,
                         testConfigRevision,
+                        executionPlan.sha256(),
                         driver,
                         nodeDriver,
                         phasePolicy,
@@ -115,6 +125,10 @@ final class AutonomousDeliveryGateCoordinator {
 
         RepositoryRevision productRevisionAfter = RepositoryRevision.inspect(projectRoot);
         RepositoryRevision testConfigRevisionAfter = RepositoryRevision.inspect(configRoot);
+        long batchElapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStartedNanos);
+        AutonomousDeliveryLiveBudget.Evidence liveBudgetEvidence =
+                AutonomousDeliveryLiveBudget.evidence(suite, liveBudget, results, batchElapsedMillis);
+        writeJson(gate.resolve("live-budget-evidence.json"), liveBudgetEvidence.artifact());
         AutonomousDeliveryGateResultAggregator.Aggregation aggregation =
                 AutonomousDeliveryGateResultAggregator.aggregate(
                         suite,
@@ -128,7 +142,9 @@ final class AutonomousDeliveryGateCoordinator {
                         successful,
                         deterministicAnalyze,
                         deterministicReplay,
-                        results);
+                        results,
+                        executionPlan,
+                        liveBudgetEvidence);
         Map<String, Object> summary = aggregation.summary();
         writeJson(gate.resolve("phase-summary.json"), summary);
         writeJson(

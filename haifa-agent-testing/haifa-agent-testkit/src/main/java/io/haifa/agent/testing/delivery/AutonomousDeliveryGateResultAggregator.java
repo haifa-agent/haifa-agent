@@ -24,12 +24,16 @@ final class AutonomousDeliveryGateResultAggregator {
             boolean prerequisiteGatesPassed,
             Map<String, Object> deterministicAnalyze,
             Map<String, Object> deterministicReplay,
-            List<Map<String, Object>> results) {
+            List<Map<String, Object>> results,
+            AutonomousDeliveryExecutionPlan.Frozen executionPlan,
+            AutonomousDeliveryLiveBudget.Evidence liveBudgetEvidence) {
         Objects.requireNonNull(suite, "suite must not be null");
         Objects.requireNonNull(matrixCombination, "matrixCombination must not be null");
         Objects.requireNonNull(finishedAt, "finishedAt must not be null");
         Objects.requireNonNull(deterministicAnalyze, "deterministicAnalyze must not be null");
         Objects.requireNonNull(deterministicReplay, "deterministicReplay must not be null");
+        Objects.requireNonNull(executionPlan, "executionPlan must not be null");
+        Objects.requireNonNull(liveBudgetEvidence, "liveBudgetEvidence must not be null");
         results = List.copyOf(Objects.requireNonNull(results, "results must not be null"));
 
         int executionCalls = results.stream()
@@ -41,7 +45,8 @@ final class AutonomousDeliveryGateResultAggregator {
         boolean scratchExercised = executionCalls > 0 && executionCalls == scratchProvisioned;
         boolean repositoryStateStable =
                 productRevision.equals(productRevisionAfter) && testConfigRevision.equals(testConfigRevisionAfter);
-        boolean successful = prerequisiteGatesPassed && scratchExercised && repositoryStateStable;
+        boolean successful =
+                prerequisiteGatesPassed && scratchExercised && repositoryStateStable && liveBudgetEvidence.passed();
 
         LinkedHashMap<String, Object> summary = new LinkedHashMap<>();
         summary.put("schemaVersion", 3);
@@ -62,6 +67,8 @@ final class AutonomousDeliveryGateResultAggregator {
         summary.put("scratchExercised", scratchExercised);
         summary.put("deterministicReadOnlyAnalyzeStub", deterministicAnalyze);
         summary.put("deterministicTraceReplay", deterministicReplay);
+        summary.put("executionPlanSha256", executionPlan.sha256());
+        summary.put("liveBudget", liveBudgetEvidence.artifact());
         summary.put("results", results);
         if ("PHASE_3".equals(suite.phase())) {
             summary.put("capabilityMatrix", capabilityMatrix(results));

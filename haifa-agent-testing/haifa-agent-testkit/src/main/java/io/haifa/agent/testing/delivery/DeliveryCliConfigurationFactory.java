@@ -8,20 +8,23 @@ final class DeliveryCliConfigurationFactory {
     private DeliveryCliConfigurationFactory() {}
 
     static String render(
-            AutonomousDeliverySuiteManifest suite, DeliveryToolchainSet toolchains, DeliveryHostProfile profile) {
+            AutonomousDeliverySuiteManifest suite,
+            DeliveryToolchainSet toolchains,
+            DeliveryHostProfile profile,
+            AutonomousDeliveryMatrixManifest.Combination matrixCombination) {
         Map<String, Path> roots = toolchains.pathRoots();
         return """
                 models:
-                  default: deepseek-chat
+                  default: %s
                   providers:
                     - id: deepseek
                       displayName: DeepSeek
                       endpoint: https://api.deepseek.com
                       credentialRef: env://DEEPSEEK_API_KEY
                       models:
-                        - id: deepseek-chat
-                          displayName: DeepSeek Chat
-                          providerModelId: deepseek-chat
+                        - id: %s
+                          displayName: %s
+                          providerModelId: %s
                 tools:
                   enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.delete, file.move, execution.run]
                 skills:
@@ -55,6 +58,10 @@ final class DeliveryCliConfigurationFactory {
                   maximumPayloadBytes: 1048576
                 """
                 .formatted(
+                        matrixCombination.modelId(),
+                        matrixCombination.modelId(),
+                        matrixCombination.modelId(),
+                        matrixCombination.modelId(),
                         profile.executionProvider(),
                         profile.networkPolicy(),
                         profile.shell(),

@@ -36,7 +36,35 @@ public record AutonomousDeliverySuiteManifest(
             int maxIterations,
             int maxToolCalls,
             int maxModelCalls,
-            int maxParallelExternalCalls) {
+            int maxParallelExternalCalls,
+            long maxBatchWallTimeMillis,
+            String costCurrency,
+            long maxEstimatedCostMinorUnits,
+            long inputCacheMissCostMinorUnitsPerMillionTokens,
+            long outputCostMinorUnitsPerMillionTokens,
+            long maxInputTokensPerRepeat,
+            long maxOutputTokensPerRepeat) {
+        public Budget(
+                long maxWallTimeMillis,
+                int maxIterations,
+                int maxToolCalls,
+                int maxModelCalls,
+                int maxParallelExternalCalls) {
+            this(
+                    maxWallTimeMillis,
+                    maxIterations,
+                    maxToolCalls,
+                    maxModelCalls,
+                    maxParallelExternalCalls,
+                    0,
+                    null,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0);
+        }
+
         public Budget {
             if (maxWallTimeMillis <= 0
                     || maxIterations <= 0
@@ -45,6 +73,28 @@ public record AutonomousDeliverySuiteManifest(
                     || maxParallelExternalCalls != 1) {
                 throw new IllegalArgumentException("suite budget is invalid");
             }
+            boolean liveBudgetConfigured = costCurrency != null
+                    || maxBatchWallTimeMillis != 0
+                    || maxEstimatedCostMinorUnits != 0
+                    || inputCacheMissCostMinorUnitsPerMillionTokens != 0
+                    || outputCostMinorUnitsPerMillionTokens != 0
+                    || maxInputTokensPerRepeat != 0
+                    || maxOutputTokensPerRepeat != 0;
+            if (liveBudgetConfigured
+                    && (maxBatchWallTimeMillis <= 0
+                            || costCurrency == null
+                            || !costCurrency.matches("[A-Z]{3}")
+                            || maxEstimatedCostMinorUnits <= 0
+                            || inputCacheMissCostMinorUnitsPerMillionTokens <= 0
+                            || outputCostMinorUnitsPerMillionTokens <= 0
+                            || maxInputTokensPerRepeat <= 0
+                            || maxOutputTokensPerRepeat <= 0)) {
+                throw new IllegalArgumentException("live provider budget must be complete");
+            }
+        }
+
+        boolean hasLiveProviderBudget() {
+            return maxBatchWallTimeMillis > 0;
         }
     }
 
