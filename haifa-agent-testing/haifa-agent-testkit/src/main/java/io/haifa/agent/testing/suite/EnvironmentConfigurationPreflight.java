@@ -30,6 +30,8 @@ final class EnvironmentConfigurationPreflight {
 
     private void validateFile(Path configRoot, Path path) throws IOException {
         JsonNode root = yaml.readTree(path.toFile());
+        String relative = configRoot.relativize(path).toString().replace('\\', '/');
+        validateModels(root, relative);
         JsonNode maximumPayloadBytes = root.path("persistence").path("maximumPayloadBytes");
         if (maximumPayloadBytes.isMissingNode()) return;
         if (!maximumPayloadBytes.isIntegralNumber()
@@ -39,12 +41,55 @@ final class EnvironmentConfigurationPreflight {
             throw new IllegalArgumentException("persistence.maximumPayloadBytes must be between 1 and "
                     + MAX_PROTECTED_PAYLOAD_BYTES
                     + ": "
-                    + configRoot.relativize(path).toString().replace('\\', '/'));
+                    + relative);
         }
+    }
+
+    private static void validateModels(JsonNode root, String relative) {
+        if (root.has("model")) {
+            throw new IllegalArgumentException(
+                    "legacy model configuration is unsupported; use models.providers and models.default: " + relative);
+        }
+        JsonNode models = root.path("models");
+        if (models.isMissingNode()) return;
+        String selected = requiredText(models, "default", relative);
+        JsonNode providers = models.path("providers");
+        if (!providers.isArray() || providers.isEmpty()) {
+            throw new IllegalArgumentException("models.providers must be a non-empty array: " + relative);
+        }
+        boolean selectedFound = false;
+        for (JsonNode provider : providers) {
+            requiredText(provider, "id", relative);
+            requiredText(provider, "endpoint", relative);
+            String credential = requiredText(provider, "credentialRef", relative);
+            if (!credential.startsWith("env://") || credential.length() == "env://".length()) {
+                throw new IllegalArgumentException("models provider credentialRef must use env://NAME: " + relative);
+            }
+            JsonNode providerModels = provider.path("models");
+            if (!providerModels.isArray() || providerModels.isEmpty()) {
+                throw new IllegalArgumentException("models provider must declare models: " + relative);
+            }
+            for (JsonNode model : providerModels) {
+                String modelId = requiredText(model, "id", relative);
+                requiredText(model, "providerModelId", relative);
+                selectedFound |= selected.equals(modelId);
+            }
+        }
+        if (!selectedFound) {
+            throw new IllegalArgumentException("models.default must reference a declared model id: " + relative);
+        }
+    }
+
+    private static String requiredText(JsonNode parent, String field, String relative) {
+        JsonNode value = parent.path(field);
+        if (!value.isTextual() || value.asText().isBlank()) {
+            throw new IllegalArgumentException(field + " must be a non-blank string: " + relative);
+        }
+        return value.asText();
     }
 
     private static boolean isYaml(Path path) {
         String name = path.getFileName().toString();
-        return name.endsWith(".yaml") || name.endsWith(".yml");
+        return name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".yaml.template");
     }
 }

@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "catalogId": "generalized-coding-v1",
-  "catalogVersion": "2.0.0",
+  "catalogVersion": "2.4.0",
   "harnessProtocol": {
-    "version": "1.0.0",
+    "version": "1.3.0",
     "resource": "fixtures/autonomous-delivery/harness-protocol-v1.json",
-    "sha256": "3a9cf3b582fffd3d8efce481562ba8e89503b2ed19e931d9db50eb789f1581ea"
+    "sha256": "ab59ce3154d4402dcc819a7ada1160679f698228360b9a68f1b486a3cba5bd4c"
   },
   "cases": [
     {
@@ -30,7 +30,7 @@
     },
     {
       "caseId": "02",
-      "caseVersion": "1.0.0",
+      "caseVersion": "2.0.0",
       "title": "Java task board product extension",
       "language": "JAVA",
       "taskType": "FEATURE",
@@ -39,14 +39,15 @@
       "promptResource": "fixtures/autonomous-delivery/cases/02/prompt.txt",
       "promptSha256": "f274421411e65373d8eb78e7f56c26f6f66e4fdf0e6e642026cab267df2572db",
       "workspaceResource": "fixtures/autonomous-delivery/cases/02/base-workspace",
-      "workspaceSha256": "43fbb8b3c5d72846272f36b9e0fa0304ff2f4587a500e7ff5e65554f2b3c3205",
+      "workspaceSha256": "e9af5c3b31494038b7db9c9000944bec0cd21f4b0ca482ece1c4674a1886d461",
       "executableWorkspacePaths": ["task-board", "test.sh"],
       "acceptanceResource": "fixtures/autonomous-delivery/cases/02/acceptance.py",
-      "acceptanceSha256": "0348caacf07bf9b44f0905f8762ba3d4b54623b5a3c9284a66b08aeef19532f8",
+      "acceptanceSha256": "89c4fa45aceeaea9b6a71ec5dc08989f698c5af31357693be1f4671c9f54076b",
       "oracleId": "python-hidden-acceptance-v1",
       "graderId": "process-json-grader-v1",
       "source": "HAIFA_SYNTHETIC",
-      "license": "PROJECT_INTERNAL_SYNTHETIC"
+      "license": "PROJECT_INTERNAL_SYNTHETIC",
+      "changeNote": "Version 2 moves the visible regression logic to cross-platform Python with thin POSIX and PowerShell launchers."
     },
     {
       "caseId": "03",
@@ -132,7 +133,7 @@
     },
     {
       "caseId": "07",
-      "caseVersion": "1.0.0",
+      "caseVersion": "2.0.0",
       "title": "Java timezone and DST diagnosis",
       "language": "JAVA",
       "taskType": "BUGFIX",
@@ -141,14 +142,15 @@
       "promptResource": "fixtures/autonomous-delivery/cases/07/prompt.txt",
       "promptSha256": "b8218ad219943899003271bfb7b14726d4dfd146d3c214202546f13dae60c789",
       "workspaceResource": "fixtures/autonomous-delivery/cases/07/base-workspace",
-      "workspaceSha256": "74070e5d2ab4bd84cfac7f490373cc11530feb3dc335f9c38931e434f810780d",
+      "workspaceSha256": "2bd3e8c54fcb15c5feaee86f6cf2848ff251b1b40415a9b586bddd01fad21628",
       "executableWorkspacePaths": ["test.sh"],
       "acceptanceResource": "fixtures/autonomous-delivery/cases/07/acceptance.py",
-      "acceptanceSha256": "55a7ef70d76bfa2f57ff3d66477bfb49f6aa33aca3a76fe83db58e184e105212",
+      "acceptanceSha256": "e09e86d03ce7139e2a4a19d524e347c816211360445dae995904f6ec597ccf96",
       "oracleId": "python-hidden-acceptance-v1",
       "graderId": "process-json-grader-v1",
       "source": "HAIFA_SYNTHETIC",
-      "license": "PROJECT_INTERNAL_SYNTHETIC"
+      "license": "PROJECT_INTERNAL_SYNTHETIC",
+      "changeNote": "Version 2 moves the visible regression logic to cross-platform Python with thin POSIX and PowerShell launchers."
     },
     {
       "caseId": "08",

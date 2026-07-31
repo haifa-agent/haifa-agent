@@ -17,9 +17,64 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
+    suite-governance-plan:
+        name: Release Suite plan (${{ matrix.combination }})
+        if: github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/main'
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: ubuntu-latest
+                      combination: linux-deepseek
+                    - os: macos-latest
+                      combination: macos-deepseek
+                    - os: windows-latest
+                      combination: windows-deepseek
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 15
+        env:
+            HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
+        steps:
+            - uses: actions/checkout@v4
+            - name: Require private test-config token
+              shell: bash
+              env:
+                  TEST_CONFIG_TOKEN: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+              run: test -n "$TEST_CONFIG_TOKEN"
+            - uses: actions/checkout@v4
+              with:
+                  repository: haifa-agent/haifa-agent-test-config
+                  token: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+                  path: test-config
+            - uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: "21"
+                  cache: maven
+            - name: Prepare external run root (Unix)
+              if: runner.os != 'Windows'
+              run: |
+                  mkdir -p "$RUNNER_TEMP/haifa-test-runs"
+                  echo "HAIFA_TEST_RUN_ROOT=$RUNNER_TEMP/haifa-test-runs" >> "$GITHUB_ENV"
+            - name: Prepare external run root (Windows)
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  $runRoot = Join-Path $env:RUNNER_TEMP 'haifa-test-runs'
+                  New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+                  "HAIFA_TEST_RUN_ROOT=$runRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            - name: Plan Release Suite (Unix)
+              if: runner.os != 'Windows'
+              run: bash test-config/scripts/run-suite.sh release-v1
+            - name: Plan Release Suite (Windows)
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: .\test-config\scripts\run-suite.ps1 release-v1
+
     release-gate:
         name: Release gate
         if: github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/main'
+        needs: suite-governance-plan
         runs-on: ubuntu-latest
         timeout-minutes: 60
         steps:
@@ -39,7 +94,7 @@ jobs:
             - name: Integration release verification
               run: sh ./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-integration -DskipITs=false clean verify
             - name: Maven release profile verification
-              run: sh ./mvnw -Prelease verify
+              run: sh ./mvnw -pl :haifa-agent-cli -am -Prelease verify
             - name: Package CLI
               run: sh ./mvnw -pl :haifa-agent-cli -am package
             - name: CLI entrypoint smoke

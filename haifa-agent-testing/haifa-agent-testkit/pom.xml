@@ -20,6 +20,10 @@
     <dependencies>
         <dependency>
             <groupId>io.haifa</groupId>
+            <artifactId>haifa-agent-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-test-fixtures</artifactId>
         </dependency>
         <dependency>

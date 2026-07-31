@@ -1,25 +1,27 @@
 package io.haifa.agent.testing.delivery;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.testing.assets.TestingAssetPreflight;
+import io.haifa.agent.testing.evidence.EvidenceFinalizer;
+import io.haifa.agent.testing.repository.RepositoryRevision;
+import io.haifa.agent.testing.run.SafeRunRoot;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /** Parameterized, plan-first entry point for the autonomous-delivery evidence campaign. */
 public final class AutonomousDeliveryHarnessMain {
+    private static final String DEFAULT_MATRIX_ID = "autonomous-delivery-v1";
     private static final DateTimeFormatter GATE_TIME =
             DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
     private final ObjectMapper json = new ObjectMapper();
@@ -47,49 +49,103 @@ public final class AutonomousDeliveryHarnessMain {
     }
 
     void run(Options options) throws Exception {
+        new TestingAssetPreflight().validate(options.projectRoot(), options.configRoot());
         AutonomousDeliveryCaseCatalog catalog = AutonomousDeliveryCaseCatalog.loadVerified();
+        AutonomousDeliverySuiteManifest suite = null;
+        String matrixId = DEFAULT_MATRIX_ID;
+        if (options.suiteId() != null) {
+            suite = new AutonomousDeliverySuiteManifestLoader().load(options.configRoot(), options.suiteId(), catalog);
+            matrixId = suite.matrixRef();
+        }
+        AutonomousDeliveryMatrixManifest matrix =
+                new AutonomousDeliveryMatrixManifestLoader().load(options.configRoot(), matrixId);
+        AutonomousDeliveryMatrixManifest.Combination combination =
+                matrix.requireCombination(options.matrixCombination());
+        DeliveryHostProfile hostProfile = combination.requireCurrentHost();
+        RepositoryRevision productRevision = RepositoryRevision.inspect(options.projectRoot());
+        RepositoryRevision testConfigRevision = RepositoryRevision.inspect(options.configRoot());
+        productRevision.requireCommit(matrix.compatibleAgentBaselineCommit(), "Autonomous Delivery matrix");
         if (options.command().equals("plan")) {
-            printPlan(catalog, options);
+            printPlan(catalog, suite, matrix, combination, productRevision, testConfigRevision);
             return;
         }
         List<Path> repositories =
                 List.of(options.projectRoot(), options.projectRoot().resolve("docs"), options.configRoot());
         if (options.command().equals("initialize-campaign")) {
+            productRevision.requireClean("product repository");
+            testConfigRevision.requireClean("test-config repository");
             Path campaign = new AutonomousDeliveryCampaign()
-                    .initialize(options.runParent(), repositories, catalog, options.historicalBaselineRoots());
+                    .initialize(
+                            options.runParent(),
+                            repositories,
+                            catalog,
+                            options.historicalBaselineRoots(),
+                            matrix,
+                            combination,
+                            productRevision,
+                            testConfigRevision);
             System.out.println("Created campaign: " + campaign);
             return;
         }
         if (options.command().equals("phase-0-gate")) {
-            runPhaseZeroGate(options, catalog, repositories);
+            runPhaseZeroGate(options, catalog, repositories, matrix, combination, productRevision, testConfigRevision);
             return;
         }
         if (List.of("phase-1-gate", "phase-2-gate", "phase-3-gate").contains(options.command())) {
             if (!options.execute()) {
                 throw new IllegalArgumentException(options.command() + " requires explicit --execute");
             }
-            Path campaign = requireCampaign(options.campaignRoot(), repositories);
+            productRevision.requireClean("product repository");
+            testConfigRevision.requireClean("test-config repository");
+            Path campaign = requireCampaign(
+                    options.campaignRoot(), repositories, matrix, combination, productRevision, testConfigRevision);
             String build = requireCommit(options.buildCommit());
-            requireBuildCheckout(options.projectRoot(), build);
-            AutonomousDeliverySuiteManifest suite =
-                    new AutonomousDeliverySuiteManifestLoader().load(options.configRoot(), options.suiteId(), catalog);
+            productRevision.requireCommit(build, "product repository");
+            if (suite == null) {
+                throw new IllegalArgumentException("--suite is required for production Phase Gates");
+            }
             Map<String, Path> toolchains = new LinkedHashMap<>();
-            toolchains.put("java", options.javaHome());
-            toolchains.put("python", options.pythonHome());
-            toolchains.put("node", options.nodeHome());
-            toolchains.put("go", options.goHome());
-            Path gate = new AutonomousDeliveryPhaseOneGate(clock)
-                    .run(campaign, build, suite, catalog, options.cliJar(), toolchains, options.projectRoot());
+            toolchains.put("java", options.javaExecutable());
+            toolchains.put("javac", options.javacExecutable());
+            toolchains.put("python", options.pythonExecutable());
+            toolchains.put("node", options.nodeExecutable());
+            toolchains.put("go", options.goExecutable());
+            toolchains.put("git", options.gitExecutable());
+            Path gate = new AutonomousDeliveryGateCoordinator(clock)
+                    .run(
+                            campaign,
+                            build,
+                            suite,
+                            catalog,
+                            options.cliJar(),
+                            toolchains,
+                            hostProfile,
+                            options.projectRoot(),
+                            options.configRoot(),
+                            combination,
+                            productRevision,
+                            testConfigRevision);
             System.out.println("Phase " + options.command().charAt("phase-".length()) + " gate PASS: " + gate);
             return;
         }
         throw new IllegalArgumentException("unknown command");
     }
 
-    private void runPhaseZeroGate(Options options, AutonomousDeliveryCaseCatalog catalog, List<Path> repositories)
-            throws IOException {
-        Path campaign = requireCampaign(options.campaignRoot(), repositories);
+    private void runPhaseZeroGate(
+            Options options,
+            AutonomousDeliveryCaseCatalog catalog,
+            List<Path> repositories,
+            AutonomousDeliveryMatrixManifest matrix,
+            AutonomousDeliveryMatrixManifest.Combination combination,
+            RepositoryRevision productRevision,
+            RepositoryRevision testConfigRevision)
+            throws IOException, InterruptedException {
+        productRevision.requireClean("product repository");
+        testConfigRevision.requireClean("test-config repository");
+        Path campaign = requireCampaign(
+                options.campaignRoot(), repositories, matrix, combination, productRevision, testConfigRevision);
         String build = requireCommit(options.buildCommit());
+        productRevision.requireCommit(build, "product repository");
         Path gate = campaign.resolve("phase-0").resolve("build-" + build).resolve("gate-" + GATE_TIME.format(now()));
         Files.createDirectories(gate.getParent());
         Files.createDirectory(gate);
@@ -111,19 +167,31 @@ public final class AutonomousDeliveryHarnessMain {
             json.writerWithDefaultPrettyPrinter()
                     .writeValue(repeat.resolve("result.json").toFile(), result);
         }
+        RepositoryRevision productRevisionAfter = RepositoryRevision.inspect(options.projectRoot());
+        RepositoryRevision testConfigRevisionAfter = RepositoryRevision.inspect(options.configRoot());
+        boolean repositoryStateStable =
+                productRevision.equals(productRevisionAfter) && testConfigRevision.equals(testConfigRevisionAfter);
         LinkedHashMap<String, Object> summary = new LinkedHashMap<>();
-        summary.put("schemaVersion", 1);
+        summary.put("schemaVersion", 3);
         summary.put("phase", "PHASE_0");
         summary.put("buildCommit", build);
+        summary.put("productRevision", productRevision);
+        summary.put("testConfigRevision", testConfigRevision);
+        summary.put("productRevisionAfter", productRevisionAfter);
+        summary.put("testConfigRevisionAfter", testConfigRevisionAfter);
+        summary.put("repositoryStateStable", repositoryStateStable);
         summary.put("startedAndFinishedAt", now().toString());
         summary.put("catalogSha256", catalog.catalogSha256());
+        summary.put("matrixRef", matrix.matrixId());
+        summary.put("matrixCombination", combination);
         summary.put("caseCount", results.size());
-        summary.put("successful", results.size() == catalog.cases().size());
+        summary.put("successful", results.size() == catalog.cases().size() && repositoryStateStable);
         summary.put("results", results);
         json.writerWithDefaultPrettyPrinter()
                 .writeValue(gate.resolve("phase-summary.json").toFile(), summary);
-        writeManifest(gate);
-        makeReadOnly(gate);
+        EvidenceFinalizer.finalizeEvidence(gate);
+        productRevision.requireUnchanged(productRevisionAfter, "product repository");
+        testConfigRevision.requireUnchanged(testConfigRevisionAfter, "test-config repository");
         System.out.println("Phase 0 gate PASS: " + gate);
     }
 
@@ -131,20 +199,40 @@ public final class AutonomousDeliveryHarnessMain {
         return Instant.ofEpochMilli(clock.millis());
     }
 
-    private static void printPlan(AutonomousDeliveryCaseCatalog catalog, Options options) throws IOException {
+    private static void printPlan(
+            AutonomousDeliveryCaseCatalog catalog,
+            AutonomousDeliverySuiteManifest suite,
+            AutonomousDeliveryMatrixManifest matrix,
+            AutonomousDeliveryMatrixManifest.Combination combination,
+            RepositoryRevision productRevision,
+            RepositoryRevision testConfigRevision) {
         System.out.printf(
-                "Catalog %s version=%s digest=%s cases=%d execute=false%n",
+                "Catalog %s version=%s digest=%s cases=%d matrix=%s baseline=%s "
+                        + "combination=%s platform=%s "
+                        + "pty=%s sandbox=%s shell=%s isolation=%s execute=false%n",
                 catalog.catalogId(),
                 catalog.catalogVersion(),
                 catalog.catalogSha256(),
-                catalog.cases().size());
+                catalog.cases().size(),
+                matrix.matrixId(),
+                matrix.compatibleAgentBaselineCommit(),
+                combination.id(),
+                combination.platform(),
+                combination.terminalBackend(),
+                combination.sandboxProfile(),
+                combination.shell(),
+                combination.isolationAssurance());
+        System.out.printf(
+                "Revisions product=%s dirty=%s testConfig=%s dirty=%s%n",
+                productRevision.commit(),
+                productRevision.dirty(),
+                testConfigRevision.commit(),
+                testConfigRevision.dirty());
         catalog.cases()
                 .forEach(testCase -> System.out.printf(
                         "  case-%s version=%s language=%s task=%s%n",
                         testCase.caseId(), testCase.caseVersion(), testCase.language(), testCase.taskType()));
-        if (options.suiteId() != null) {
-            AutonomousDeliverySuiteManifest suite =
-                    new AutonomousDeliverySuiteManifestLoader().load(options.configRoot(), options.suiteId(), catalog);
+        if (suite != null) {
             System.out.printf(
                     "Suite %s phase=%s matrix=%s selections=%d%n",
                     suite.suiteId(),
@@ -159,68 +247,57 @@ public final class AutonomousDeliveryHarnessMain {
         System.out.println("Plan only. No campaign or external call was created.");
     }
 
-    private static Path requireCampaign(Path value, List<Path> repositories) throws IOException {
+    private Path requireCampaign(
+            Path value,
+            List<Path> repositories,
+            AutonomousDeliveryMatrixManifest matrix,
+            AutonomousDeliveryMatrixManifest.Combination combination,
+            RepositoryRevision productRevision,
+            RepositoryRevision testConfigRevision)
+            throws IOException {
         if (value == null) {
             throw new IllegalArgumentException("--campaign-root is required");
         }
-        Path campaign = value.toAbsolutePath().normalize().toRealPath();
-        AutonomousDeliveryCampaign.requireSafeParent(campaign.getParent(), repositories);
-        if (!Files.isRegularFile(campaign.resolve("campaign.json"))) {
+        Path campaign = SafeRunRoot.requireExternalExistingParent(value, repositories, "campaign root");
+        Path manifest = campaign.resolve("campaign.json");
+        if (!Files.isRegularFile(manifest)) {
             throw new IllegalArgumentException("campaign root is missing campaign.json");
+        }
+        JsonNode campaignManifest = json.readTree(manifest.toFile());
+        if (campaignManifest.path("schemaVersion").asInt(-1) != 3
+                || !campaignManifest.path("matrixRef").asText("").equals(matrix.matrixId())
+                || !campaignManifest
+                        .path("matrixCombination")
+                        .path("id")
+                        .asText("")
+                        .equals(combination.id())
+                || !campaignManifest
+                        .path("productRevision")
+                        .path("commit")
+                        .asText("")
+                        .equals(productRevision.commit())
+                || campaignManifest.path("productRevision").path("dirty").asBoolean(true)
+                || !campaignManifest
+                        .path("testConfigRevision")
+                        .path("commit")
+                        .asText("")
+                        .equals(testConfigRevision.commit())
+                || campaignManifest.path("testConfigRevision").path("dirty").asBoolean(true)) {
+            throw new IllegalArgumentException(
+                    "campaign matrix or repository revisions do not match the selected execution state");
         }
         return campaign;
     }
 
     private static String requireCommit(String value) {
-        if (value == null || !value.matches("[0-9a-f]{7,40}")) {
-            throw new IllegalArgumentException("--build-commit must be a lowercase Git commit");
+        if (value == null || !value.matches("[0-9a-f]{40}")) {
+            throw new IllegalArgumentException("--build-commit must be a full lowercase Git commit");
         }
         return value;
     }
 
-    private static void requireBuildCheckout(Path projectRoot, String buildCommit)
-            throws IOException, InterruptedException {
-        Path repository = projectRoot.toAbsolutePath().normalize().toRealPath();
-        ProcessBuilder builder = new ProcessBuilder("git", "rev-parse", "HEAD").directory(repository.toFile());
-        builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-        Process process = builder.start();
-        String head = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-        if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0 || !head.equals(buildCommit)) {
-            process.destroyForcibly();
-            throw new IllegalArgumentException("--build-commit must exactly match the checked-out root HEAD");
-        }
-        ProcessBuilder statusBuilder = new ProcessBuilder("git", "status", "--porcelain", "--untracked-files=no")
-                .directory(repository.toFile());
-        statusBuilder.redirectError(ProcessBuilder.Redirect.DISCARD);
-        Process status = statusBuilder.start();
-        String trackedChanges = new String(status.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-        if (!status.waitFor(30, TimeUnit.SECONDS) || status.exitValue() != 0 || !trackedChanges.isEmpty()) {
-            status.destroyForcibly();
-            throw new IllegalArgumentException("root checkout must have no tracked changes before production Gate");
-        }
-    }
-
     static void writeManifest(Path gate) throws IOException {
-        List<String> lines = new ArrayList<>();
-        try (var paths = Files.walk(gate)) {
-            for (Path file : paths.filter(Files::isRegularFile)
-                    .filter(path -> !path.getFileName().toString().equals("manifest.sha256"))
-                    .filter(path -> !path.getFileName().toString().equals(".DS_Store"))
-                    .sorted(Comparator.comparing(path -> gate.relativize(path).toString()))
-                    .toList()) {
-                lines.add(Sha256Digests.file(file) + "  "
-                        + gate.relativize(file).toString().replace('\\', '/'));
-            }
-        }
-        Files.write(gate.resolve("manifest.sha256"), lines, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
-    }
-
-    static void makeReadOnly(Path root) throws IOException {
-        try (var paths = Files.walk(root)) {
-            for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                path.toFile().setWritable(false, false);
-            }
-        }
+        EvidenceFinalizer.writeManifest(gate);
     }
 
     record Options(
@@ -231,13 +308,16 @@ public final class AutonomousDeliveryHarnessMain {
             Path campaignRoot,
             String buildCommit,
             String suiteId,
+            String matrixCombination,
             List<Path> historicalBaselineRoots,
             boolean execute,
             Path cliJar,
-            Path javaHome,
-            Path pythonHome,
-            Path nodeHome,
-            Path goHome) {
+            Path javaExecutable,
+            Path javacExecutable,
+            Path pythonExecutable,
+            Path nodeExecutable,
+            Path goExecutable,
+            Path gitExecutable) {
         static Options parse(String[] arguments) {
             String command = "plan";
             Path projectRoot = Path.of(".").toAbsolutePath().normalize();
@@ -246,13 +326,16 @@ public final class AutonomousDeliveryHarnessMain {
             Path campaignRoot = null;
             String buildCommit = null;
             String suiteId = null;
+            String matrixCombination = null;
             List<Path> historicalBaselineRoots = new ArrayList<>();
             boolean execute = false;
             Path cliJar = null;
-            Path javaHome = null;
-            Path pythonHome = null;
-            Path nodeHome = null;
-            Path goHome = null;
+            Path javaExecutable = null;
+            Path javacExecutable = null;
+            Path pythonExecutable = null;
+            Path nodeExecutable = null;
+            Path goExecutable = null;
+            Path gitExecutable = null;
             for (int index = 0; index < arguments.length; index++) {
                 switch (arguments[index]) {
                     case "plan",
@@ -268,18 +351,24 @@ public final class AutonomousDeliveryHarnessMain {
                     case "--build-commit" ->
                         buildCommit = value(arguments, ++index).toLowerCase(Locale.ROOT);
                     case "--suite" -> suiteId = value(arguments, ++index);
+                    case "--matrix-combination" -> matrixCombination = value(arguments, ++index);
                     case "--baseline-root" -> historicalBaselineRoots.add(Path.of(value(arguments, ++index)));
                     case "--execute" -> execute = true;
                     case "--cli-jar" -> cliJar = Path.of(value(arguments, ++index));
-                    case "--java-home" -> javaHome = Path.of(value(arguments, ++index));
-                    case "--python-home" -> pythonHome = Path.of(value(arguments, ++index));
-                    case "--node-home" -> nodeHome = Path.of(value(arguments, ++index));
-                    case "--go-home" -> goHome = Path.of(value(arguments, ++index));
+                    case "--java-executable" -> javaExecutable = Path.of(value(arguments, ++index));
+                    case "--javac-executable" -> javacExecutable = Path.of(value(arguments, ++index));
+                    case "--python-executable" -> pythonExecutable = Path.of(value(arguments, ++index));
+                    case "--node-executable" -> nodeExecutable = Path.of(value(arguments, ++index));
+                    case "--go-executable" -> goExecutable = Path.of(value(arguments, ++index));
+                    case "--git-executable" -> gitExecutable = Path.of(value(arguments, ++index));
                     default -> throw new IllegalArgumentException("unknown argument: " + arguments[index]);
                 }
             }
             if (command.equals("initialize-campaign") && runParent == null) {
                 throw new IllegalArgumentException("--run-parent is required");
+            }
+            if (matrixCombination == null || matrixCombination.isBlank()) {
+                throw new IllegalArgumentException("--matrix-combination is required");
             }
             return new Options(
                     command,
@@ -289,13 +378,16 @@ public final class AutonomousDeliveryHarnessMain {
                     campaignRoot,
                     buildCommit,
                     suiteId,
+                    matrixCombination,
                     List.copyOf(historicalBaselineRoots),
                     execute,
                     cliJar,
-                    javaHome,
-                    pythonHome,
-                    nodeHome,
-                    goHome);
+                    javaExecutable,
+                    javacExecutable,
+                    pythonExecutable,
+                    nodeExecutable,
+                    goExecutable,
+                    gitExecutable);
         }
 
         private static String value(String[] arguments, int index) {

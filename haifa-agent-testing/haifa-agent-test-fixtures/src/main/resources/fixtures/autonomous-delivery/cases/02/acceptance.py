@@ -30,14 +30,14 @@ def main() -> int:
     checks = {}
     failures = []
 
-    checks["testsUnchanged"] = (
-        digest(CASE_ROOT / "base-workspace" / "test.sh")
-        == digest(workspace / "test.sh")
+    checks["testsUnchanged"] = all(
+        digest(CASE_ROOT / "base-workspace" / name) == digest(workspace / name)
+        for name in ("test.py", "test.sh", "test.ps1")
     )
     if not checks["testsUnchanged"]:
         failures.append("test.sh was modified")
 
-    regression = run(["./test.sh"], workspace)
+    regression = run([sys.executable, "test.py"], workspace)
     checks["visibleTests"] = regression.returncode == 0
     if regression.returncode != 0:
         failures.append("repository regression failed")

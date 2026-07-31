@@ -1,7 +1,39 @@
 {
   "schemaVersion": 1,
   "protocolId": "haifa-autonomous-delivery-harness",
-  "protocolVersion": "1.0.0",
+  "protocolVersion": "1.3.0",
+  "matrixBinding": {
+    "explicitCombinationRequired": true,
+    "campaignSchemaVersion": 3,
+    "phaseSummarySchemaVersion": 3,
+    "runManifestSchemaVersion": 3,
+    "matrixRefRequired": true,
+    "compatibleAgentBaselineCommitRequired": true,
+    "requiredFields": [
+      "id",
+      "platform",
+      "modelProvider",
+      "modelId",
+      "terminalBackend",
+      "sandboxProfile",
+      "networkPolicy",
+      "shell",
+      "isolationAssurance",
+      "hostProfile",
+      "maxParallelExternalCalls"
+    ],
+    "campaignAndGateCombinationMustMatch": true,
+    "hostProfileFallbackAllowed": false,
+    "rawMavenXmlRetained": false,
+    "mavenLogHostPathsRedacted": true
+  },
+  "repositoryBinding": {
+    "productCommitRequired": true,
+    "testConfigCommitRequired": true,
+    "cleanWorktreesRequiredForCampaignAndExecute": true,
+    "untrackedFilesCountAsDirty": true,
+    "revisionStabilityCheckedAfterExecute": true
+  },
   "caseIsolation": {
     "freshWorkspace": true,
     "freshRuntimeDatabase": true,
@@ -42,6 +74,7 @@
     "trace-detail.jsonl",
     "transcripts",
     "session.cast",
+    "driver.log",
     "secret-scan.json",
     "process-cleanup.json",
     "manifest.sha256"

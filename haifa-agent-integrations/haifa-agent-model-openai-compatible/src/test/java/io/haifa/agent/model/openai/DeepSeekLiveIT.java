@@ -15,14 +15,20 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("live")
 class DeepSeekLiveIT {
     @Test
-    void invokesDeepSeekWhenExplicitlyEnabled() {
-        boolean enabled = "true".equalsIgnoreCase(System.getenv("HAIFA_DEEPSEEK_LIVE_TEST"));
+    void validatesPrimaryModelConnectivityWhenExplicitlyEnabled() {
+        boolean enabled = "true".equalsIgnoreCase(System.getenv("HAIFA_DEEPSEEK_LIVE_TEST"))
+                || "true".equalsIgnoreCase(System.getenv("HAIFA_SUITE_EXECUTION"));
+        Assumptions.assumeTrue(enabled);
         String apiKey = System.getenv("DEEPSEEK_API_KEY");
-        Assumptions.assumeTrue(enabled && apiKey != null && !apiKey.isBlank());
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException("DEEPSEEK_API_KEY is required for explicit live execution");
+        }
         var provider = DeepSeekDefaults.provider();
         var model = new OpenAiCompatibleChatModel(
                 provider,
@@ -54,12 +60,14 @@ class DeepSeekLiveIT {
                 1,
                 1,
                 snapshot,
-                List.of(ModelMessage.text(ModelMessageRole.USER, "Reply with the single word OK.")),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "Reply with exactly CP01_OK.")),
                 List.of(),
                 64,
                 Duration.ofSeconds(60),
                 Map.of()));
 
-        assertThat(response.content()).isNotBlank();
+        assertThat(response.content()).contains("CP01_OK");
+        assertThat(response.usage().inputTokens() + response.usage().outputTokens())
+                .isGreaterThan(0);
     }
 }

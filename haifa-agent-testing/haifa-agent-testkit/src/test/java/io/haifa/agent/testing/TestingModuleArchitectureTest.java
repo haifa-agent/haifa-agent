@@ -72,7 +72,6 @@ class TestingModuleArchitectureTest {
         return artifactId.equals("haifa-agent-testkit")
                 || artifactId.equals("haifa-agent-test-fixtures")
                 || artifactId.equals("haifa-agent-integration-tests")
-                || artifactId.equals("haifa-agent-live-tests")
                 || artifactId.equals("haifa-agent-e2e-tests");
     }
 

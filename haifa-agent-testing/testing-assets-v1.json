@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "repositoryId": "haifa-agent",
+  "coverageRoots": [
+    "haifa-agent-testing"
+  ],
+  "assets": [
+    {
+      "assetId": "testing-root-pom",
+      "path": "haifa-agent-testing/pom.xml",
+      "kind": "MANIFEST",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["pom.xml"],
+      "replacement": "",
+      "rationale": "Testing reactor aggregator remains the production-independent test boundary."
+    },
+    {
+      "assetId": "testing-root-readme",
+      "path": "haifa-agent-testing/README.md",
+      "kind": "README",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["README.md"],
+      "replacement": "",
+      "rationale": "Current testing module responsibilities and boundaries."
+    },
+    {
+      "assetId": "testing-asset-inventory",
+      "path": "haifa-agent-testing/testing-assets-v1.json",
+      "kind": "MANIFEST",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/main/java/io/haifa/agent/testing/suite/SuiteRunnerMain.java"],
+      "replacement": "",
+      "rationale": "Machine-readable lifecycle and ownership inventory for public testing assets."
+    },
+    {
+      "assetId": "coding-case-coverage",
+      "path": "haifa-agent-testing/coding-case-coverage-v1.json",
+      "kind": "MANIFEST",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "coding-evaluation",
+      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/test/java/io/haifa/agent/testing/assets/CodingCaseCoverageManifestTest.java"],
+      "replacement": "",
+      "rationale": "Crosswalk prevents capability-title similarity from being treated as proof of equivalent coverage."
+    },
+    {
+      "assetId": "testkit-module",
+      "path": "haifa-agent-testing/haifa-agent-testkit",
+      "kind": "MODULE",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/pom.xml"],
+      "replacement": "",
+      "rationale": "Shared suite, campaign, evidence, and safety infrastructure."
+    },
+    {
+      "assetId": "test-fixtures-module",
+      "path": "haifa-agent-testing/haifa-agent-test-fixtures",
+      "kind": "MODULE",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/pom.xml"],
+      "replacement": "",
+      "rationale": "Public deterministic fixtures and Autonomous Delivery catalog remain active."
+    },
+    {
+      "assetId": "transport-tck-module",
+      "path": "haifa-agent-testing/haifa-agent-transport-tck",
+      "kind": "MODULE",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "transport",
+      "referencedBy": ["haifa-agent-testing/pom.xml"],
+      "replacement": "",
+      "rationale": "Cross-product transport and reconnect contract coverage is not replaced by product E2E."
+    },
+    {
+      "assetId": "integration-tests-module",
+      "path": "haifa-agent-testing/haifa-agent-integration-tests",
+      "kind": "MODULE",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/pom.xml"],
+      "replacement": "",
+      "rationale": "Retained as the deterministic cross-module integration boundary."
+    },
+    {
+      "assetId": "suite-planning-integration",
+      "path": "haifa-agent-testing/haifa-agent-integration-tests/src/test/java/io/haifa/agent/testing/suite/SuitePlanningIntegrationIT.java",
+      "kind": "TEST_CODE",
+      "lifecycle": "REMOVED",
+      "disposition": "DELETE",
+      "owner": "testing-platform",
+      "referencedBy": [],
+      "replacement": "haifa-agent-testing/haifa-agent-testkit/src/test/java/io/haifa/agent/testing/suite/SuiteRunnerMainTest.java",
+      "rationale": "Temporary-YAML plan coverage belongs in the Testkit runner tests and is not a real cross-module integration."
+    },
+    {
+      "assetId": "openai-stub-integration",
+      "path": "haifa-agent-testing/haifa-agent-integration-tests/src/test/java/io/haifa/agent/testing/model/OpenAiCompatibleStubIntegrationIT.java",
+      "kind": "TEST_CODE",
+      "lifecycle": "REMOVED",
+      "disposition": "DELETE",
+      "owner": "model-openai-compatible",
+      "referencedBy": [],
+      "replacement": "haifa-agent-integrations/haifa-agent-model-openai-compatible/src/test/java/io/haifa/agent/model/openai/OpenAiCompatibleChatModelTest.java",
+      "rationale": "The adjacent adapter test already covers loopback protocol mapping, authorization, thinking, and usage."
+    },
+    {
+      "assetId": "openai-final-answer-fixture",
+      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/http/openai-compatible/final-answer.json",
+      "kind": "FIXTURE",
+      "lifecycle": "REMOVED",
+      "disposition": "DELETE",
+      "owner": "model-openai-compatible",
+      "referencedBy": [],
+      "replacement": "haifa-agent-integrations/haifa-agent-model-openai-compatible/src/test/java/io/haifa/agent/model/openai/OpenAiCompatibleChatModelTest.java",
+      "rationale": "Shared fixture has no remaining consumer after removing the duplicate integration test."
+    },
+    {
+      "assetId": "openai-http-fixture-readme",
+      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/http/openai-compatible/README.md",
+      "kind": "README",
+      "lifecycle": "REMOVED",
+      "disposition": "DELETE",
+      "owner": "model-openai-compatible",
+      "referencedBy": [],
+      "replacement": "haifa-agent-integrations/haifa-agent-model-openai-compatible/src/test/java/io/haifa/agent/model/openai/OpenAiCompatibleChatModelTest.java",
+      "rationale": "The directory documentation had no remaining asset after removing the duplicate shared fixture."
+    },
+    {
+      "assetId": "live-tests-module",
+      "path": "haifa-agent-testing/haifa-agent-live-tests",
+      "kind": "MODULE",
+      "lifecycle": "REMOVED",
+      "disposition": "DELETE",
+      "owner": "testing-platform",
+      "referencedBy": [],
+      "replacement": "haifa-agent-applications/haifa-agent-runtime-demo",
+      "rationale": "The sole live probe moved adjacent to its adapter and the supported executable demo moved to Applications."
+    },
+    {
+      "assetId": "primary-model-live-probe",
+      "path": "haifa-agent-testing/haifa-agent-live-tests/src/test/java/io/haifa/agent/testing/live/PrimaryModelLiveIT.java",
+      "kind": "TEST_CODE",
+      "lifecycle": "REMOVED",
+      "disposition": "DELETE",
+      "owner": "model-openai-compatible",
+      "referencedBy": [],
+      "replacement": "haifa-agent-integrations/haifa-agent-model-openai-compatible/src/test/java/io/haifa/agent/model/openai/DeepSeekLiveIT.java",
+      "rationale": "CP-01 and nightly now use one strengthened adjacent live probe and one opt-in contract."
+    },
+    {
+      "assetId": "deepseek-runtime-demo",
+      "path": "haifa-agent-applications/haifa-agent-runtime-demo/src/main",
+      "kind": "TEST_CODE",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "examples",
+      "referencedBy": [
+        "haifa-agent-applications/haifa-agent-runtime-demo/pom.xml",
+        "haifa-agent-applications/haifa-agent-runtime-demo/README.md"
+      ],
+      "replacement": "",
+      "rationale": "Supported Runtime, Tool, MCP, and Skill example is isolated from all test catalogs."
+    },
+    {
+      "assetId": "deepseek-runtime-demo-tests",
+      "path": "haifa-agent-applications/haifa-agent-runtime-demo/src/test/java/io/haifa/agent/examples/runtime/DeepSeekRuntimeMainTest.java",
+      "kind": "TEST_CODE",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "examples",
+      "referencedBy": ["haifa-agent-applications/haifa-agent-runtime-demo/README.md"],
+      "replacement": "",
+      "rationale": "Deterministic unit tests remain adjacent to the supported example."
+    },
+    {
+      "assetId": "e2e-tests-module",
+      "path": "haifa-agent-testing/haifa-agent-e2e-tests",
+      "kind": "MODULE",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/pom.xml"],
+      "replacement": "",
+      "rationale": "Target home for all product-entry E2E, whether Stub or Live."
+    }
+  ]
+}

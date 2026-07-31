@@ -17,5 +17,6 @@
         <module>haifa-agent-cli</module>
         <module>haifa-agent-personal-assistant-application</module>
         <module>haifa-agent-personal-assistant-server</module>
+        <module>haifa-agent-runtime-demo</module>
     </modules>
 </project>

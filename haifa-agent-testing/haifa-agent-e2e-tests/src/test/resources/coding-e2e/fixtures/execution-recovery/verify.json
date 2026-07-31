@@ -1,0 +1,7 @@
+{
+  "sources": [
+    "src/main/java/sample/Range.java",
+    "src/test/java/sample/RangeTest.java"
+  ],
+  "mainClass": "sample.RangeTest"
+}

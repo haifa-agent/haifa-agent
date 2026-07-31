@@ -126,12 +126,16 @@ var runtime = new RuntimeCoreBuilder()
 mvn -pl :haifa-agent-model-openai-compatible -am test
 ```
 
-真实冒烟测试默认跳过。显式设置以下变量并执行 Failsafe 才会访问 DeepSeek：
+真实冒烟测试默认跳过。`DeepSeekLiveIT` 是 nightly 与 Suite Runner 的唯一 CP-01 实现；显式设置
+以下变量并执行 Failsafe 才会访问 DeepSeek：
 
 ```text
 HAIFA_DEEPSEEK_LIVE_TEST=true
 DEEPSEEK_API_KEY=<secret>
 ```
+
+Suite Runner 的 `--execute` 路径会设置 `HAIFA_SUITE_EXECUTION=true`。任一显式开关启用后，
+缺少 `DEEPSEEK_API_KEY` 都会失败，而不是静默跳过。
 
 百炼 Live IT 还要求显式设置（会产生真实费用）：
 

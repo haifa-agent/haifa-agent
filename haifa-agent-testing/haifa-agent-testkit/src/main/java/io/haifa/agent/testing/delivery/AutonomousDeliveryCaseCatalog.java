@@ -1,6 +1,7 @@
 package io.haifa.agent.testing.delivery;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.testing.evidence.Sha256Digests;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -11,7 +12,7 @@ import java.util.Objects;
 /** Loads and verifies the versioned public catalog and all immutable fixture digests. */
 public final class AutonomousDeliveryCaseCatalog {
     public static final String EXPECTED_CATALOG_ID = "generalized-coding-v1";
-    public static final String EXPECTED_PROTOCOL_VERSION = "1.0.0";
+    public static final String EXPECTED_PROTOCOL_VERSION = "1.3.0";
 
     private final String catalogId;
     private final String catalogVersion;
