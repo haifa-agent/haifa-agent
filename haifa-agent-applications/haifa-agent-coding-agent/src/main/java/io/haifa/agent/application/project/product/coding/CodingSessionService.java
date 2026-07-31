@@ -55,6 +55,7 @@ public final class CodingSessionService {
     private final AgentRuntime runtime;
     private final IdentifierGenerator identifiers;
     private final Clock clock;
+    private final CodingModelCatalog models;
 
     public CodingSessionService(
             ProjectProductService projectProducts,
@@ -66,6 +67,30 @@ public final class CodingSessionService {
             AgentRuntime runtime,
             IdentifierGenerator identifiers,
             Clock clock) {
+        this(
+                projectProducts,
+                productSessions,
+                codingSessions,
+                sessionLifecycle,
+                sessionCompactor,
+                callers,
+                runtime,
+                identifiers,
+                clock,
+                CodingModelCatalog.fixed("coding-default", "Configured model"));
+    }
+
+    public CodingSessionService(
+            ProjectProductService projectProducts,
+            ProjectProductSessionStore productSessions,
+            CodingSessionStore codingSessions,
+            CodingSessionLifecycle sessionLifecycle,
+            CodingSessionCompactor sessionCompactor,
+            TrustedProductCallerProvider callers,
+            AgentRuntime runtime,
+            IdentifierGenerator identifiers,
+            Clock clock,
+            CodingModelCatalog models) {
         this.projectProducts = Objects.requireNonNull(projectProducts, "projectProducts must not be null");
         this.productSessions = Objects.requireNonNull(productSessions, "productSessions must not be null");
         this.codingSessions = Objects.requireNonNull(codingSessions, "codingSessions must not be null");
@@ -75,6 +100,7 @@ public final class CodingSessionService {
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
+        this.models = Objects.requireNonNull(models, "models must not be null");
     }
 
     public CodingSessionView createSession(
@@ -99,15 +125,22 @@ public final class CodingSessionService {
                 safeAttachments,
                 Optional.empty(),
                 now));
+        String modelId = codingSessions
+                .findModelPreference(binding.sessionId())
+                .map(CodingModelPreference::modelId)
+                .orElse(models.defaultModelId());
+        requireAvailableModel(caller, modelId);
 
         ProjectProductService.ProjectProductRun started = projectProducts.startWithSessionId(
                 binding.projectId(),
                 binding.sessionId(),
                 binding.message(),
                 binding.attachments(),
-                binding.dispatchKey());
+                binding.dispatchKey(),
+                modelId);
         codingSessions.completeCommand(binding.dispatchKey(), started.run().runId());
         ProjectProductSession product = requireProductSession(binding.sessionId(), caller);
+        codingSessions.createModelPreference(CodingModelPreference.initial(binding.sessionId(), modelId, now));
         CodingSessionActivity activity = codingSessions
                 .findActivity(binding.sessionId())
                 .orElseGet(() -> codingSessions.createActivity(new CodingSessionActivity(
@@ -163,6 +196,28 @@ public final class CodingSessionService {
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = requireActivity(sessionId, caller);
         return view(reconcile(activity, caller), product);
+    }
+
+    public List<CodingModelOption> availableModels() {
+        TrustedProductCaller caller = callers.current();
+        return models.available(caller.tenant(), caller.principal());
+    }
+
+    public CodingModelSelection selectModel(
+            AgentSessionId sessionId, String modelId, long expectedRevision, String idempotencyKey) {
+        TrustedProductCaller caller = callers.current();
+        requireProductSession(sessionId, caller);
+        CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
+        requireActiveSession(activity);
+        if (activity.activeRunId().isPresent() || activity.activeDispatchKey().isPresent()) {
+            throw conflict("CODING_SESSION_ACTIVE", "Model can only be changed while the Coding Session is idle");
+        }
+        CodingModelOption selected = requireAvailableModel(caller, modelId);
+        String keyDigest = digest(idempotencyKey(idempotencyKey));
+        String requestDigest = digest(sessionId.value() + "|" + selected.id());
+        CodingModelPreference changed = codingSessions.changeModel(
+                sessionId, expectedRevision, selected.id(), keyDigest, requestDigest, now());
+        return new CodingModelSelection(selected, changed.revision(), true);
     }
 
     public CodingSessionSummary renameSession(AgentSessionId sessionId, String displayName, long expectedRevision) {
@@ -235,9 +290,10 @@ public final class CodingSessionService {
         if (activity.activeRunId().isPresent()) {
             throw conflict("CODING_SESSION_ACTIVE", "Coding Session already has an active Run");
         }
+        String modelId = requireModelPreference(sessionId, caller).modelId();
         codingSessions.reserveActive(sessionId, activity.revision(), existing.dispatchKey(), now());
         var started = projectProducts.continueSession(
-                sessionId, existing.message(), existing.attachments(), existing.dispatchKey());
+                sessionId, existing.message(), existing.attachments(), existing.dispatchKey(), modelId);
         codingSessions.completeCommand(existing.dispatchKey(), started.run().runId());
         codingSessions.activateRun(
                 sessionId,
@@ -428,7 +484,13 @@ public final class CodingSessionService {
         if (command.isPresent()) {
             CodingCommandBinding value = command.orElseThrow();
             AgentRunSnapshot run = value.runId().flatMap(runtime::find).orElseGet(() -> projectProducts
-                    .continueSession(activity.sessionId(), value.message(), value.attachments(), value.dispatchKey())
+                    .continueSession(
+                            activity.sessionId(),
+                            value.message(),
+                            value.attachments(),
+                            value.dispatchKey(),
+                            requireModelPreference(activity.sessionId(), callers.current())
+                                    .modelId())
                     .run());
             codingSessions.completeCommand(value.dispatchKey(), run.runId());
             return codingSessions.activateRun(activity.sessionId(), dispatchKey, run.runId(), run.version(), now());
@@ -442,7 +504,13 @@ public final class CodingSessionService {
     private CodingSessionActivity dispatchFollowUp(CodingDispatchClaim claim) {
         CodingFollowUp claimed = claim.followUp();
         AgentRunSnapshot run = claimed.dispatchedRunId().flatMap(runtime::find).orElseGet(() -> projectProducts
-                .continueSession(claimed.sessionId(), claimed.message(), claimed.attachments(), claimed.dispatchKey())
+                .continueSession(
+                        claimed.sessionId(),
+                        claimed.message(),
+                        claimed.attachments(),
+                        claimed.dispatchKey(),
+                        requireModelPreference(claimed.sessionId(), callers.current())
+                                .modelId())
                 .run());
         CodingFollowUp followUp = claimed.status() == CodingFollowUpStatus.DISPATCHED
                 ? claimed
@@ -460,7 +528,37 @@ public final class CodingSessionService {
                 value -> codingSessions.findEventCursor(activity.sessionId()).filter(stored -> stored.runId()
                         .equals(value.runId())));
         return new CodingSessionView(
-                summary, active, interaction, cursor, product.configurationDigest(), product.productProfileRef());
+                summary,
+                active,
+                interaction,
+                cursor,
+                product.configurationDigest(),
+                product.productProfileRef(),
+                modelSelection(activity.sessionId(), callers.current()));
+    }
+
+    private CodingModelSelection modelSelection(AgentSessionId sessionId, TrustedProductCaller caller) {
+        CodingModelPreference preference = codingSessions
+                .findModelPreference(sessionId)
+                .orElseGet(() -> CodingModelPreference.initial(sessionId, models.defaultModelId(), now()));
+        Optional<CodingModelOption> available = models.find(caller.tenant(), caller.principal(), preference.modelId());
+        CodingModelOption option = available.orElseGet(() -> new CodingModelOption(
+                preference.modelId(), preference.modelId(), "unavailable", "Unavailable", java.util.Set.of(), 1));
+        return new CodingModelSelection(option, preference.revision(), available.isPresent());
+    }
+
+    private CodingModelPreference requireModelPreference(AgentSessionId sessionId, TrustedProductCaller caller) {
+        CodingModelPreference preference = codingSessions
+                .findModelPreference(sessionId)
+                .orElseThrow(
+                        () -> conflict("MODEL_SELECTION_REQUIRED", "Coding Session model selection is unavailable"));
+        requireAvailableModel(caller, preference.modelId());
+        return preference;
+    }
+
+    private CodingModelOption requireAvailableModel(TrustedProductCaller caller, String modelId) {
+        return models.find(caller.tenant(), caller.principal(), modelId)
+                .orElseThrow(() -> conflict("MODEL_SELECTION_REQUIRED", "Selected model is unavailable"));
     }
 
     private CodingSessionSummary summary(CodingSessionActivity activity) {

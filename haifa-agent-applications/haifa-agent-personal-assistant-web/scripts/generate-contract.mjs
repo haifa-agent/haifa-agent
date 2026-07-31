@@ -35,10 +35,12 @@ for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
 const operationIds = operations.map(({ operation }) => operation.operationId);
 for (const required of [
   "bootstrap",
+  "listModels",
   "listConversations",
   "createConversation",
   "getConversation",
   "updateConversation",
+  "selectConversationModel",
   "listTurns",
   "submitMessage",
   "recommendQuestions",

@@ -4,6 +4,9 @@ The safe Activity projection includes durable Model, Tool, Skill, and MCP lifecy
 events. Model activities expose only model identity, physical attempt coordinates,
 status, token counts, finish reason, and normalized failure codes.
 
+Conversation 保存受信任的内部 Model ID 偏好。新 Conversation 可显式选择模型；空闲态切换使用独立
+revision 和幂等键，只影响下一 Turn 的新 Run。模型缺失时新 Run fail closed，历史 Run 仍使用原快照。
+
 Run streaming use case 合并两条明确分离的来源：durable Run Event Feed 提供状态、Tool、Interaction 和
 Activity；`subscribeOutput` 提供当前进程活动 Run 的 transient Assistant Delta/lifecycle。两者使用独立
 sequence，订阅统一可关闭。进程重启后不恢复未完成 Delta；终态正文从 Conversation Turns 的权威

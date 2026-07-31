@@ -1,20 +1,34 @@
 package io.haifa.agent.personalassistant.server.configuration.model;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.core.reference.PrincipalRef;
+import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelStatus;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.ProviderStatus;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.core.ImmutableModelCatalog;
+import io.haifa.agent.model.core.InMemoryProviderHealthRegistry;
+import io.haifa.agent.model.core.ModelAccessPolicy;
+import io.haifa.agent.model.core.ModelAvailabilityRequest;
+import io.haifa.agent.model.core.ModelSelectionRequest;
+import io.haifa.agent.model.core.StaticModelPlatform;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
+import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
+import io.haifa.agent.personalassistant.application.PersonalModelOption;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.observability.LoggingAgentChatModel;
@@ -35,27 +49,39 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class PersonalModelFactory {
     private PersonalModelFactory() {}
 
-    public static ModelContribution create(
-            PersonalAssistantProperties.Model properties, ObjectMapper mapper, ShellPlatformContribution shell) {
-        boolean deterministic = "deterministic".equals(properties.mode());
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            ObjectMapper mapper,
+            ShellPlatformContribution shell) {
+        List<PersonalAssistantProperties.ModelProvider> providers = List.copyOf(configured);
+        if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
+        boolean deterministic = providers.stream().anyMatch(value -> "deterministic".equals(value.mode()));
+        if (deterministic
+                && (providers.size() != 1
+                        || providers.getFirst().models().size() != 1
+                        || !"deterministic".equals(providers.getFirst().mode()))) {
+            throw new IllegalArgumentException("deterministic acceptance model cannot enter the production model list");
+        }
+        List<ConfiguredModel> models = providers.stream()
+                .flatMap(provider -> provider.models().stream().map(model -> new ConfiguredModel(provider, model)))
+                .toList();
+        ConfiguredModel selected = models.stream()
+                .filter(value -> value.model().id().equals(defaultModelId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("default Personal model is unavailable"));
         String adapter = deterministic ? "personal-deterministic" : "openai-compatible";
-        ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
-                new ModelProviderId(deterministic ? "personal-local" : "deepseek"),
-                "1.0.0",
-                new ModelDefinitionId("personal-chat"),
-                "1.0.0",
-                properties.providerModelId(),
-                adapter,
-                "1.0.0",
-                properties.endpoint(),
-                new CredentialRef(properties.credentialReference()),
-                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
-                64_000,
-                8_192,
-                Map.of(),
-                Map.of());
+        Map<String, ResolvedModelSnapshot> snapshots = models.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        value -> value.model().id(),
+                        value -> snapshot(value.provider(), value.model(), adapter),
+                        (left, right) -> {
+                            throw new IllegalArgumentException("duplicate Personal model id");
+                        },
+                        java.util.LinkedHashMap::new));
+        ResolvedModelSnapshot snapshot = snapshots.get(selected.model().id());
         AgentChatModel model = deterministic
-                ? new DeterministicAcceptanceModel(properties.providerModelId(), shell)
+                ? new DeterministicAcceptanceModel(selected.model().providerModelId(), shell)
                 : new OpenAiCompatibleChatModel(
                         adapter,
                         "1.0.0",
@@ -67,7 +93,7 @@ public final class PersonalModelFactory {
                         false,
                         4 * 1024 * 1024);
         model = new LoggingAgentChatModel(model);
-        return new ModelContribution(
+        ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
                         ProductCapabilities.MODEL,
@@ -75,8 +101,116 @@ public final class PersonalModelFactory {
                         deterministic ? ProductProviderSuitability.DEVELOPMENT : ProductProviderSuitability.PRODUCTION,
                         deterministic ? "Explicit offline acceptance model" : "OpenAI-compatible Personal model"),
                 model,
-                snapshot);
+                snapshot,
+                snapshots);
+        StaticModelPlatform modelPlatform = modelPlatform(providers, adapter);
+        TenantRef tenant = new TenantRef("personal-product");
+        PrincipalRef principal = new PrincipalRef("personal-user", "user");
+        PersonalModelCatalog catalog = new PersonalModelCatalog() {
+            @Override
+            public String defaultModelId() {
+                return selected.model().id();
+            }
+
+            @Override
+            public List<PersonalModelOption> available() {
+                return modelPlatform
+                        .listAvailable(new ModelAvailabilityRequest(
+                                tenant, principal, Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING)))
+                        .stream()
+                        .flatMap(provider -> provider.models().stream()
+                                .map(value -> new PersonalModelOption(
+                                        value.id().value(),
+                                        value.displayName(),
+                                        provider.id().value(),
+                                        provider.displayName(),
+                                        value.capabilities().stream()
+                                                .map(Enum::name)
+                                                .collect(java.util.stream.Collectors.toSet()),
+                                        value.contextWindow())))
+                        .toList();
+            }
+
+            @Override
+            public java.util.Optional<PersonalModelOption> find(String modelId) {
+                java.util.Optional<PersonalModelOption> value = available().stream()
+                        .filter(model -> model.id().equals(modelId))
+                        .findFirst();
+                value.ifPresent(ignored -> modelPlatform.select(new ModelSelectionRequest(
+                        tenant,
+                        principal,
+                        new ModelDefinitionId(modelId),
+                        Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING))));
+                return value;
+            }
+        };
+        return new Platform(contribution, catalog);
     }
+
+    private static ResolvedModelSnapshot snapshot(
+            PersonalAssistantProperties.ModelProvider provider,
+            PersonalAssistantProperties.ProviderModel model,
+            String adapter) {
+        return ResolvedModelSnapshot.create(
+                new ModelProviderId(provider.id()),
+                "1.0.0",
+                new ModelDefinitionId(model.id()),
+                "1.0.0",
+                model.providerModelId(),
+                adapter,
+                "1.0.0",
+                provider.endpoint(),
+                new CredentialRef(provider.credentialReference()),
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                64_000,
+                8_192,
+                Map.of("thinking", "disabled"),
+                Map.of("thinking", "disabled"));
+    }
+
+    private static StaticModelPlatform modelPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured, String adapter) {
+        List<ModelProviderDefinition> providers = configured.stream()
+                .map(provider -> {
+                    ModelProviderId providerId = new ModelProviderId(provider.id());
+                    List<ModelDefinition> models = provider.models().stream()
+                            .map(model -> new ModelDefinition(
+                                    new ModelDefinitionId(model.id()),
+                                    "1.0.0",
+                                    providerId,
+                                    model.providerModelId(),
+                                    model.displayName(),
+                                    ModelStatus.ACTIVE,
+                                    Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                                    64_000,
+                                    8_192,
+                                    Map.of("thinking", "disabled"),
+                                    Map.of()))
+                            .toList();
+                    return new ModelProviderDefinition(
+                            providerId,
+                            "1.0.0",
+                            provider.displayName(),
+                            adapter,
+                            provider.endpoint(),
+                            new CredentialRef(provider.credentialReference()),
+                            ProviderStatus.ACTIVE,
+                            models,
+                            Map.of(),
+                            Map.of());
+                })
+                .toList();
+        return new StaticModelPlatform(
+                new ImmutableModelCatalog(providers),
+                ModelAccessPolicy.allowAll(),
+                Map.of(adapter, "1.0.0"),
+                new InMemoryProviderHealthRegistry());
+    }
+
+    private record ConfiguredModel(
+            PersonalAssistantProperties.ModelProvider provider, PersonalAssistantProperties.ProviderModel model) {}
+
+    public record Platform(ModelContribution contribution, PersonalModelCatalog catalog) {}
 
     /**
      * Test-only-by-configuration model. Markers select one public tool alias, and a following TOOL message

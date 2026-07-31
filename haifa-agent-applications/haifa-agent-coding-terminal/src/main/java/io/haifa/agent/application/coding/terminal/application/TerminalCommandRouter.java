@@ -7,7 +7,7 @@ import java.util.Set;
 public final class TerminalCommandRouter {
     public static final String CAPABILITY_NOT_IMPLEMENTED = "CAPABILITY_NOT_IMPLEMENTED";
     public static final String COMMAND_UNKNOWN = "COMMAND_UNKNOWN";
-    private static final Set<String> DEFERRED = Set.of("/model", "/login", "/tree", "/fork", "/clone");
+    private static final Set<String> DEFERRED = Set.of("/login", "/tree", "/fork", "/clone");
 
     public TerminalCommand route(String input) {
         String value = input.strip().toLowerCase(Locale.ROOT);
@@ -24,6 +24,7 @@ public final class TerminalCommandRouter {
             case "/reload" -> TerminalCommand.RELOAD;
             case "/compact" -> TerminalCommand.COMPACT;
             case "/export" -> TerminalCommand.EXPORT;
+            case "/model" -> TerminalCommand.MODEL;
             case "/settings" -> TerminalCommand.SETTINGS;
             case "/trust" -> TerminalCommand.TRUST;
             case "/session" -> TerminalCommand.SESSION;

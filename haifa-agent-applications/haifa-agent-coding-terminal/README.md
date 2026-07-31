@@ -74,8 +74,9 @@ Footer
 ```
 
 不再常驻渲染 Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。Footer 只显示
-已有真实来源的 Project、Git（存在安全 Read Model 时）、Session、Context/Queue 和 Run 状态；
-`git: via safe read model`、`provider/model: frozen`、`sandbox: frozen profile` 等实现占位字段不进入
+已有真实来源的 Project、Git（存在安全 Read Model 时）、Session、Context/Queue、Provider/Model 和 Run 状态；
+Provider/Model 来自 Coding Product Facade 的脱敏投影，Terminal 不读取 Model Core、Provider 配置或
+SQLite。`git: via safe read model`、`sandbox: frozen profile` 等实现占位字段不进入
 产品界面。
 
 Theme 使用 tui4j Lip Gloss 的 Adaptive Color 表达 Accent、Muted、User、Success、Pending、
@@ -152,7 +153,9 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - `/command` 与 `/commands` 打开同一命令选择器；`@file` 候选来自受限 Workspace 文件目录，
   不列出敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；
-- `/settings`、`/trust`、`/model`、`/login`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
+- `/model` 打开安全 Selector，也支持 `/model <internal-id>`；活动 Run 期间拒绝切换，成功后只影响
+  下一新 Run；
+- `/settings`、`/trust`、`/login`、`/tree`、`/fork`、`/clone` 在没有真实 API 时返回
   `CAPABILITY_NOT_IMPLEMENTED`，不显示装饰性选择器；
 - `/quit` 退出；活动 Run 下 EOF 显示明确的退出选择。
 

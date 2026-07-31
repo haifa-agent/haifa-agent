@@ -93,6 +93,8 @@ public final class PersonalAssistantAssembler {
                     mcp,
                     dependencies.clock(),
                     PersonalCapabilityRegistry.create(tools, mcp),
+                    dependencies.modelCatalog(),
+                    dependencies.modelPreferences(),
                     new PersonalQuestionRecommender(dependencies.model()));
         } catch (RuntimeException | Error exception) {
             mcp.close();
@@ -105,6 +107,8 @@ public final class PersonalAssistantAssembler {
             PrincipalRef principal,
             SdkCallerProvider callers,
             ModelContribution model,
+            PersonalModelCatalog modelCatalog,
+            PersonalModelPreferenceStore modelPreferences,
             SdkPersistenceContribution persistence,
             SdkConversationContribution conversation,
             MemoryPlatformContribution memory,
@@ -136,6 +140,8 @@ public final class PersonalAssistantAssembler {
                     principal,
                     callers,
                     model,
+                    defaultCatalog(model),
+                    new InMemoryPersonalModelPreferenceStore(),
                     persistence,
                     conversation,
                     memory,
@@ -149,11 +155,49 @@ public final class PersonalAssistantAssembler {
                     clock);
         }
 
+        public Dependencies(
+                TenantRef tenant,
+                PrincipalRef principal,
+                SdkCallerProvider callers,
+                ModelContribution model,
+                SdkPersistenceContribution persistence,
+                SdkConversationContribution conversation,
+                MemoryPlatformContribution memory,
+                PolicyPlatformContribution policy,
+                PersonalExecutionPlatform execution,
+                PersonalWebPlatform web,
+                PersonalMcpConfiguration mcp,
+                Optional<Path> localSkillRoot,
+                Optional<Path> trustedScriptManifest,
+                List<Path> protectedPaths,
+                Clock clock) {
+            this(
+                    tenant,
+                    principal,
+                    callers,
+                    model,
+                    defaultCatalog(model),
+                    new InMemoryPersonalModelPreferenceStore(),
+                    persistence,
+                    conversation,
+                    memory,
+                    policy,
+                    execution,
+                    web,
+                    mcp,
+                    localSkillRoot,
+                    trustedScriptManifest,
+                    protectedPaths,
+                    clock);
+        }
+
         public Dependencies {
             Objects.requireNonNull(tenant);
             Objects.requireNonNull(principal);
             Objects.requireNonNull(callers);
             Objects.requireNonNull(model);
+            Objects.requireNonNull(modelCatalog);
+            Objects.requireNonNull(modelPreferences);
             Objects.requireNonNull(persistence);
             Objects.requireNonNull(conversation);
             Objects.requireNonNull(memory);
@@ -165,6 +209,28 @@ public final class PersonalAssistantAssembler {
             trustedScriptManifest = Objects.requireNonNull(trustedScriptManifest);
             protectedPaths = List.copyOf(protectedPaths);
             Objects.requireNonNull(clock);
+        }
+
+        private static PersonalModelCatalog defaultCatalog(ModelContribution model) {
+            var snapshot = model.snapshot();
+            var option = new PersonalModelOption(
+                    snapshot.modelId().value(),
+                    snapshot.modelId().value(),
+                    snapshot.providerId().value(),
+                    snapshot.providerId().value(),
+                    snapshot.capabilities().stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()),
+                    snapshot.contextWindow());
+            return new PersonalModelCatalog() {
+                @Override
+                public String defaultModelId() {
+                    return option.id();
+                }
+
+                @Override
+                public List<PersonalModelOption> available() {
+                    return List.of(option);
+                }
+            };
         }
     }
 }

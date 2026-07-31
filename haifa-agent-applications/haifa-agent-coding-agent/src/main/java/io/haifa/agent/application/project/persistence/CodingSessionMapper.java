@@ -5,6 +5,18 @@ import java.util.List;
 import org.apache.ibatis.annotations.Param;
 
 public interface CodingSessionMapper {
+    CodingModelPreferenceRow findModelPreference(@Param("sessionId") String sessionId);
+
+    int insertModelPreference(@Param("row") CodingModelPreferenceRow row);
+
+    int changeModel(
+            @Param("sessionId") String sessionId,
+            @Param("expectedRevision") long expectedRevision,
+            @Param("modelId") String modelId,
+            @Param("idempotencyKeyDigest") String idempotencyKeyDigest,
+            @Param("requestDigest") String requestDigest,
+            @Param("updatedAt") Instant updatedAt);
+
     CodingSessionCommandRow findCommand(
             @Param("callerScopeDigest") String callerScopeDigest,
             @Param("operation") String operation,

@@ -71,6 +71,32 @@ public final class ProjectProductService {
             String message,
             List<AssetRef> attachments,
             String idempotencyKey) {
+        return startWithSessionId(projectId, sessionId, message, attachments, idempotencyKey, Optional.empty());
+    }
+
+    public ProjectProductRun startWithSessionId(
+            ProjectId projectId,
+            AgentSessionId sessionId,
+            String message,
+            List<AssetRef> attachments,
+            String idempotencyKey,
+            String runProfileId) {
+        return startWithSessionId(
+                projectId,
+                sessionId,
+                message,
+                attachments,
+                idempotencyKey,
+                Optional.of(requireText(runProfileId, "runProfileId")));
+    }
+
+    private ProjectProductRun startWithSessionId(
+            ProjectId projectId,
+            AgentSessionId sessionId,
+            String message,
+            List<AssetRef> attachments,
+            String idempotencyKey,
+            Optional<String> runProfileId) {
         var caller = callers.current();
         var project = projects.find(projectId)
                 .orElseThrow(() -> new ProjectProductException("PROJECT_NOT_FOUND", "Project not found"));
@@ -86,7 +112,12 @@ public final class ProjectProductService {
                 throw new ProjectProductException("SESSION_DENIED", "Session is unavailable");
             }
             AgentRunSnapshot snapshot = runtime.start(request(
-                    project.reference(), sessionId, stored.productProfileRef(), message, attachments, idempotencyKey));
+                    project.reference(),
+                    sessionId,
+                    runProfileId.orElse(stored.productProfileRef()),
+                    message,
+                    attachments,
+                    idempotencyKey));
             return new ProjectProductRun(sessionId, snapshot, stored.configurationDigest());
         }
         var reference = project.configurationReference()
@@ -118,7 +149,7 @@ public final class ProjectProductService {
         AgentRunSnapshot snapshot = runtime.start(request(
                 project.reference(),
                 sessionId,
-                configuration.runtimeProfileRef(),
+                runProfileId.orElse(configuration.runtimeProfileRef()),
                 message,
                 attachments,
                 idempotencyKey));
@@ -131,6 +162,29 @@ public final class ProjectProductService {
 
     public ProjectProductRun continueSession(
             AgentSessionId sessionId, String message, List<AssetRef> attachments, String idempotencyKey) {
+        return continueSession(sessionId, message, attachments, idempotencyKey, Optional.empty());
+    }
+
+    public ProjectProductRun continueSession(
+            AgentSessionId sessionId,
+            String message,
+            List<AssetRef> attachments,
+            String idempotencyKey,
+            String runProfileId) {
+        return continueSession(
+                sessionId,
+                message,
+                attachments,
+                idempotencyKey,
+                Optional.of(requireText(runProfileId, "runProfileId")));
+    }
+
+    private ProjectProductRun continueSession(
+            AgentSessionId sessionId,
+            String message,
+            List<AssetRef> attachments,
+            String idempotencyKey,
+            Optional<String> runProfileId) {
         var caller = callers.current();
         var session = sessions.find(sessionId)
                 .orElseThrow(() -> new ProjectProductException("SESSION_NOT_FOUND", "Session not found"));
@@ -140,7 +194,7 @@ public final class ProjectProductService {
         AgentRunSnapshot snapshot = runtime.start(request(
                 new ProjectRef(session.projectId().value()),
                 sessionId,
-                session.productProfileRef(),
+                runProfileId.orElse(session.productProfileRef()),
                 message,
                 attachments,
                 idempotencyKey));

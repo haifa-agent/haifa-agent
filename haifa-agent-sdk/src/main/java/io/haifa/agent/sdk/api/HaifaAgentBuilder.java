@@ -172,7 +172,7 @@ public final class HaifaAgentBuilder {
                             AgentRunType.CHAT,
                             profile.budget(),
                             profile.limits(),
-                            model.snapshot(),
+                            resolveModelSnapshot(model, profile, id),
                             resolvedCapabilities(resolution)))
                     .registerChatModel(
                             model.snapshot().adapterType(), model.snapshot().adapterVersion(), model.model());
@@ -250,6 +250,16 @@ public final class HaifaAgentBuilder {
             closeAfterFailedBuild(initialized, exception);
             throw exception;
         }
+    }
+
+    private static io.haifa.agent.model.api.ResolvedModelSnapshot resolveModelSnapshot(
+            ModelContribution model, ProductProfile profile, String profileId) {
+        String modelId = profileId.equals(profile.runProfileId())
+                ? model.snapshot().modelId().value()
+                : profileId;
+        return java.util.Optional.ofNullable(model.snapshots().get(modelId))
+                .orElseThrow(() ->
+                        new IllegalArgumentException("MODEL_SELECTION_REQUIRED: configured model is unavailable"));
     }
 
     private Map<String, ResolvedCapability> resolvedCapabilities(ProductAssemblyResolver.Resolution resolution) {

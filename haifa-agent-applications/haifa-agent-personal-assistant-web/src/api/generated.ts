@@ -7,11 +7,14 @@ export interface Bootstrap {
   caller: string;
   capabilities: Array<string>;
   assemblyDigest: string;
+  defaultModelId: string;
+  models: Array<Model>;
 }
 
 export interface CreateConversation {
   displayName: string;
   message: string;
+  modelId?: string;
 }
 
 export interface SubmitMessage {
@@ -27,6 +30,25 @@ export interface UpdateConversation {
   status?: string;
 }
 
+export interface Model {
+  id: string;
+  displayName: string;
+  providerId: string;
+  providerDisplayName: string;
+  capabilities: Array<string>;
+  contextWindow: number;
+}
+
+export interface ModelSelection {
+  model: Model;
+  revision: number;
+  available: boolean;
+}
+
+export interface SelectModel {
+  modelId: string;
+}
+
 export interface Conversation {
   id: string;
   displayName: string;
@@ -35,6 +57,7 @@ export interface Conversation {
   createdAt: string;
   lastActivityAt: string;
   revision: number;
+  model: ModelSelection;
 }
 
 export interface Turn {
@@ -158,4 +181,4 @@ export interface ApiError {
   correlationId: string;
 }
 
-export type OperationId = "bootstrap" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory";
+export type OperationId = "bootstrap" | "listModels" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory";

@@ -4,6 +4,7 @@ import io.haifa.agent.application.project.product.coding.CodingCommandBinding;
 import io.haifa.agent.application.project.product.coding.CodingDispatchClaim;
 import io.haifa.agent.application.project.product.coding.CodingFollowUp;
 import io.haifa.agent.application.project.product.coding.CodingFollowUpStatus;
+import io.haifa.agent.application.project.product.coding.CodingModelPreference;
 import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionStore;
@@ -33,6 +34,65 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
             SqliteRuntimeUnitOfWork unitOfWork, ModelContinuationProtector protector, int maximumPayloadBytes) {
         this.unitOfWork = Objects.requireNonNull(unitOfWork, "unitOfWork must not be null");
         this.content = new CodingContentPayloadCodec(protector, maximumPayloadBytes);
+    }
+
+    @Override
+    public CodingModelPreference createModelPreference(CodingModelPreference preference) {
+        Objects.requireNonNull(preference, "preference must not be null");
+        return unitOfWork.execute(() -> {
+            CodingSessionMapper mapper = mapper();
+            CodingModelPreferenceRow existing =
+                    mapper.findModelPreference(preference.sessionId().value());
+            if (existing != null) {
+                CodingModelPreference value = modelPreference(existing);
+                if (!value.modelId().equals(preference.modelId())) {
+                    throw conflict("coding session model preference already exists");
+                }
+                return value;
+            }
+            requireOne(mapper.insertModelPreference(modelPreferenceRow(preference)), "coding model preference insert");
+            return preference;
+        });
+    }
+
+    @Override
+    public Optional<CodingModelPreference> findModelPreference(AgentSessionId sessionId) {
+        return unitOfWork.execute(() -> Optional.ofNullable(mapper().findModelPreference(sessionId.value()))
+                .map(SqliteCodingSessionStore::modelPreference));
+    }
+
+    @Override
+    public CodingModelPreference changeModel(
+            AgentSessionId sessionId,
+            long expectedRevision,
+            String modelId,
+            String idempotencyKeyDigest,
+            String requestDigest,
+            Instant updatedAt) {
+        return unitOfWork.execute(() -> {
+            CodingSessionMapper mapper = mapper();
+            CodingModelPreference current = Optional.ofNullable(mapper.findModelPreference(sessionId.value()))
+                    .map(SqliteCodingSessionStore::modelPreference)
+                    .orElseThrow(() -> conflict("coding session model preference is unavailable"));
+            if (current.idempotencyKeyDigest()
+                    .filter(idempotencyKeyDigest::equals)
+                    .isPresent()) {
+                if (current.requestDigest().filter(requestDigest::equals).isEmpty()) {
+                    throw conflict("model selection idempotency key is bound to another request");
+                }
+                return current;
+            }
+            requireOne(
+                    mapper.changeModel(
+                            sessionId.value(),
+                            expectedRevision,
+                            modelId,
+                            idempotencyKeyDigest,
+                            requestDigest,
+                            updatedAt),
+                    "coding model preference update");
+            return modelPreference(mapper.findModelPreference(sessionId.value()));
+        });
     }
 
     @Override
@@ -441,6 +501,28 @@ public final class SqliteCodingSessionStore implements CodingSessionStore {
     private static RunEventCursor eventCursor(CodingSessionEventCursorRow row) {
         return new RunEventCursor(
                 new AgentRunId(row.runId()), row.feedVersion(), OptionalLong.of(row.exclusiveSequence()));
+    }
+
+    private static CodingModelPreference modelPreference(CodingModelPreferenceRow row) {
+        requireSchema(row.schemaVersion());
+        return new CodingModelPreference(
+                new AgentSessionId(row.sessionId()),
+                row.modelId(),
+                row.revision(),
+                Optional.ofNullable(row.idempotencyKeyDigest()),
+                Optional.ofNullable(row.requestDigest()),
+                row.updatedAt());
+    }
+
+    private static CodingModelPreferenceRow modelPreferenceRow(CodingModelPreference value) {
+        return new CodingModelPreferenceRow(
+                value.sessionId().value(),
+                SCHEMA_VERSION,
+                value.modelId(),
+                value.revision(),
+                value.idempotencyKeyDigest().orElse(null),
+                value.requestDigest().orElse(null),
+                value.updatedAt());
     }
 
     private static CodingSessionActivityRow activityRow(CodingSessionActivity value) {

@@ -1,0 +1,65 @@
+# Portable, secret-free defaults for the local Coding Agent distribution.
+# Secrets are injected through environment variables, never stored in this file.
+models:
+  default: deepseek-v4-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      models:
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
+        - id: deepseek-v4-flash
+          displayName: DeepSeek V4 Flash
+          providerModelId: deepseek-v4-flash
+
+tools:
+  enabled:
+    - file.list
+    - file.stat
+    - file.read
+    - file.search
+    - file.create
+    - file.write
+    - file.delete
+    - file.move
+    - execution.run
+
+skills:
+  allowed:
+    - task-planning
+    - result-verification
+
+approval:
+  mode: ask
+
+execution:
+  provider: local-native
+  network: deny
+  shell: auto
+  defaultTimeoutMillis: 120000
+  maxTimeoutMillis: 1800000
+  maxOutputLines: 2000
+  maxOutputBytes: 51200
+  maxProcesses: 8
+  inheritEnvironment:
+    - PATH
+    - HOME
+    - USERPROFILE
+    - TMP
+    - TEMP
+    - SystemRoot
+    - JAVA_HOME
+    - MAVEN_OPTS
+    - GRADLE_USER_HOME
+  extraPathPolicies: []
+
+runtime:
+  maxIterations: 50
+  maxToolCalls: 32
+  maxWallTimeMillis: 300000
+
+persistence:
+  mode: MEMORY

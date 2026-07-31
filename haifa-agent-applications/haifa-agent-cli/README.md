@@ -124,11 +124,20 @@ Host Guarded Scratch Root 负责物理路径、权限和清理；配置、Prompt
 无法安全创建 Scratch 时命令不会启动。
 
 ```yaml
-model:
-  providerId: deepseek
-  modelId: deepseek-chat
-  endpoint: https://api.deepseek.com
-  credentialRef: env://DEEPSEEK_API_KEY
+models:
+  default: deepseek-v4-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      models:
+        - id: deepseek-v4-flash
+          displayName: DeepSeek V4 Flash
+          providerModelId: deepseek-v4-flash
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
 tools:
   enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, execution.run, web.search, web.fetch]
 web:
@@ -151,6 +160,41 @@ persistence:
   databasePath: D:\haifa-agent-config\data\coding-terminal.db
   protectorRef: env://HAIFA_CONTINUATION_KEY
 ```
+
+也可使用可信多模型配置；内部 `id` 与供应商 `providerModelId` 分离：
+
+```yaml
+models:
+  default: deepseek-v4-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      models:
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
+        - id: deepseek-v4-flash
+          displayName: DeepSeek V4 Flash
+          providerModelId: deepseek-v4-flash
+    - id: aliyun-bailian
+      displayName: Alibaba Cloud Bailian
+      workspaceId: workspace-id
+      region: cn-beijing
+      credentialRef: env://DASHSCOPE_API_KEY
+      models:
+        - id: bailian-qwen-plus
+          displayName: Qwen Plus
+          providerModelId: qwen-plus
+```
+
+旧 `model` 配置仍按单模型读取。`--model`/`HAIFA_MODEL_ID` 只能选择已注册的内部 ID，不能临时
+注入 Endpoint 或 Credential；未知 ID 会 fail closed。
+
+Provider 是一级接入实例：Endpoint、Credential、百炼 Workspace/Region 只配置一次；其 `models`
+是该 Provider 可用的模型列表。模型 `id` 是产品内全局唯一选择 ID，`providerModelId` 是供应商实际
+模型或部署名称。
 
 `host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；
 只应对自己检查并信任的测试 Workspace 使用。模型与 Web Provider 调用可能计费。密钥只通过
@@ -199,11 +243,20 @@ $env:DEEPSEEK_API_KEY = "<secret>"
 ```
 
 ```yaml
-model:
-  providerId: deepseek
-  modelId: deepseek-v4-pro
-  endpoint: https://api.deepseek.com
-  credentialRef: env://DEEPSEEK_API_KEY
+models:
+  default: deepseek-v4-flash
+  providers:
+    - id: deepseek
+      displayName: DeepSeek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      models:
+        - id: deepseek-v4-flash
+          displayName: DeepSeek V4 Flash
+          providerModelId: deepseek-v4-flash
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
 tools:
   enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.delete, file.move, execution.run]
 skills:
@@ -317,10 +370,10 @@ CLI 的 DeepSeek 和百炼冻结配置均强制关闭 thinking，并通过 Runti
 reasoning 原文不会进入终端。使用 `--verbose` 时只会打印供应商报告的 reasoning token 计数，不记录或展示
 reasoning 内容。
 
-百炼配置必须提供 `model.workspaceId`，`model.region` 缺省为 `cn-beijing`。CLI 不接受任意百炼主机，
-而是固定推导 `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`。也可分别通过
-`HAIFA_MODEL_PROVIDER_ID=aliyun-bailian`、`HAIFA_BAILIAN_WORKSPACE_ID`、`HAIFA_BAILIAN_REGION`、
-`HAIFA_MODEL_ID` 和 `HAIFA_CREDENTIAL_REF=env://DASHSCOPE_API_KEY` 覆盖本地配置。
+百炼 Provider 配置必须提供 `workspaceId`，`region` 缺省为 `cn-beijing`。CLI 不接受任意百炼主机，
+而是固定推导 `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1`。Provider、
+Credential 和模型列表必须通过 `models.providers` 显式配置；`--model` 或 `HAIFA_MODEL_ID` 只负责
+从已配置列表中选择模型。
 
 `mcp.servers` 在 CLI 启动时连接并发现远端工具。每个 Server 必须使用稳定的小写 `id`、显式 `allowedTools` 和唯一 `aliasNamespace`；示例工具向模型披露为 `utility_time_now`、`utility_calculate`。发现不到、Schema 不兼容或不在本地审核策略中的配置工具会使启动失败，不会静默降级。
 
@@ -333,7 +386,8 @@ reasoning 内容。
 当前已包含 tui4j Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
 `/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久
 Follow-up、Cancel、Approval selector 和 SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护
-进程、Session Tree/Fork/Clone、模型登录/切换或 Workflow Graph。Host Provider 不是容器或虚拟机，
+进程、Session Tree/Fork/Clone、模型登录或 Workflow Graph。模型切换只覆盖可信静态目录内的空闲
+Session，不包含动态发现或自动 fallback。Host Provider 不是容器或虚拟机，
 不能阻止当前 OS 用户本来可访问的 Workspace 外文件、网络或系统资源。
 
 ## 真实模型 Coding E2E

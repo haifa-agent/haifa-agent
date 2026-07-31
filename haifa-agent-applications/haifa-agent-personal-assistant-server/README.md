@@ -4,6 +4,37 @@ The public activities endpoint projects bounded durable Model, Tool, Skill, and 
 events. Model activities never include prompts, assistant text, endpoints, credentials,
 or raw provider failures.
 
+Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显式
+`default-model-id`，不支持旧的单模型 `haifa.personal.model` 配置。`/api/v1/models`、Bootstrap
+和 Conversation 只返回脱敏信息；Endpoint、
+Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
+SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
+
+Provider 是接入实例，持有 Endpoint、Credential 和运行模式；每个 Provider 再声明自己的可用模型
+列表。例如同一 DeepSeek Provider 可以同时提供两个模型：
+
+```yaml
+haifa:
+  personal:
+    default-model-id: deepseek-v4-flash
+    model-providers:
+      - id: deepseek
+        display-name: DeepSeek
+        mode: remote
+        endpoint: https://api.deepseek.com
+        credential-reference: env://DEEPSEEK_API_KEY
+        models:
+          - id: deepseek-v4-pro
+            display-name: DeepSeek V4 Pro
+            provider-model-id: deepseek-v4-pro
+          - id: deepseek-v4-flash
+            display-name: DeepSeek V4 Flash
+            provider-model-id: deepseek-v4-flash
+```
+
+模型 `id` 是产品内全局唯一的选择与偏好 ID；`provider-model-id` 是发送给对应 Provider 的实际模型
+或部署名称。
+
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
 端口冲突会使启动失败，不会自动换端口。
@@ -48,11 +79,24 @@ Server 不构建、不复制也不托管 React Web；`/` 和前端 history 路�
 Server。CORS 只允许 loopback `20000` Origin，且不启用浏览器凭据；Host/Origin/CSRF、
 幂等键和版本校验仍然生效。
 
-生产默认使用远程 OpenAI-compatible Model。离线确定性 Model 必须同时显式设置：
+生产默认使用远程 OpenAI-compatible Model。离线确定性 Model 也必须按 Provider 及其模型列表
+注册，并显式允许 deterministic 模式：
 
-```powershell
-$env:HAIFA_PERSONAL_MODEL_MODE='deterministic'
-$env:HAIFA_PERSONAL_ALLOW_DETERMINISTIC='true'
+```yaml
+haifa:
+  personal:
+    default-model-id: personal-test
+    model-providers:
+      - id: personal-local
+        display-name: Local acceptance
+        mode: deterministic
+        allow-deterministic: true
+        endpoint: http://127.0.0.1:20999
+        credential-reference: env://UNUSED
+        models:
+          - id: personal-test
+            display-name: Personal test
+            provider-model-id: personal-test
 ```
 
 Phase 3 的本机命令/脚本能力复用平台 Execution Broker 和 Host Guarded Sandbox。因为当前
@@ -116,6 +160,23 @@ Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相�
 
 真实 DeepSeek、外部 Utility MCP 和独立 Web 的可重复环境搭建方法见
 [`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。
+
+macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
+
+```bash
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh
+
+# 只校验将要停止的 PID、端口和进程身份
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh \
+  --stop --dry-run
+
+# 停止后重新构建并启动
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh --stop
+./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh --rebuild
+```
+
+Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据
+写入参数、状态文件或日志。
 
 ## Process logging
 
