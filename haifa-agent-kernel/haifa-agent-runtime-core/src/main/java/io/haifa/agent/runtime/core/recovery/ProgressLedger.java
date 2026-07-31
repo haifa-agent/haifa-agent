@@ -35,7 +35,7 @@ public final class ProgressLedger {
             }
         } else if (call.status() == ToolCallStatus.FAILED) {
             Map<String, Object> attributes =
-                    call.error().map(value -> value.error().attributes()).orElse(Map.of());
+                    call.error().map(value -> value.error().details()).orElse(Map.of());
             changed |= addReference(
                     ProgressEvidence.Type.WORKSPACE_CHANGE, firstText(attributes, "changeSetId", "fileChangeSetId"));
         }

@@ -8,8 +8,8 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.RunInputId;
 import io.haifa.agent.runtime.api.RunInputReceiptStatus;
 import io.haifa.agent.runtime.api.RunInputSubmission;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import java.time.Instant;
 import java.util.List;
 import java.util.OptionalLong;
@@ -39,7 +39,7 @@ class InMemoryRunInputPortTest {
                         port.accept(input("input-2", "key-1", "changed"), "tenant|user|owner", NOW.plusSeconds(4)))
                 .isInstanceOf(RuntimeContractException.class)
                 .extracting("code")
-                .isEqualTo(RuntimeErrorCode.IDEMPOTENCY_CONFLICT);
+                .isEqualTo(RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT);
     }
 
     private static RunInputSubmission input(String inputId, String key, String text) {

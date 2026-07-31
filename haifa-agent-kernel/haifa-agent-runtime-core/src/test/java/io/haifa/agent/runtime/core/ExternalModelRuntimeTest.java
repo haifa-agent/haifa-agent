@@ -263,7 +263,7 @@ class ExternalModelRuntimeTest {
                 .filteredOn(trace -> trace.operation().equals("runtime.error"))
                 .singleElement()
                 .satisfies(trace -> assertThat(trace.safeAttributes())
-                        .containsEntry("errorCode", "RUNTIME_EXECUTION_FAILED")
+                        .containsEntry("errorCode", "MODEL_RESPONSE_INVALID")
                         .containsKeys("exceptionType", "rootExceptionType", "failureTypes"));
         assertThat(outputEvents)
                 .extracting(event -> event.type())

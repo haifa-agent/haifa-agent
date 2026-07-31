@@ -146,6 +146,30 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void rendersTypedExecutionFailureWithDiagnosticAndRecoveryAction() {
+        TerminalUiState failed = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-failed",
+                        new RunEventPayloads.RunLifecycle(
+                                "FAILED",
+                                2,
+                                "RUN_BUDGET_EXCEEDED",
+                                Optional.of("Run budget exceeded"),
+                                Optional.of("diag-budget")))));
+
+        assertThat(failed.recoverableError()).contains("RUN_BUDGET_EXCEEDED");
+        assertThat(failed.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.kind()).isEqualTo(TranscriptItem.Kind.ERROR);
+            assertThat(item.title()).isEqualTo("[RUN_BUDGET_EXCEEDED] Run budget exceeded");
+            assertThat(item.body()).isEqualTo("Diagnostic ID: diag-budget");
+        });
+        assertThat(TerminalRecovery.fromCode("RUN_BUDGET_EXCEEDED").action())
+                .contains("smaller request", "larger budget");
+    }
+
+    @Test
     void upsertsToolAndExecutionLifecycleByStableIdentityWithoutDuplicateCards() {
         TerminalUiState toolRequested = reducer.reduce(
                 TerminalUiState.initial(120, 40),

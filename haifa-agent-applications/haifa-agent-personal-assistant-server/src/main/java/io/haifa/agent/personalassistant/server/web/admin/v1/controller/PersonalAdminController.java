@@ -30,7 +30,7 @@ public final class PersonalAdminController {
                 "Haifa Personal Assistant Admin",
                 "v1",
                 true,
-                "This local diagnostic API contains complete prompts, tool arguments, results, and errors.");
+                "This diagnostic API exposes safe execution metadata and hides sensitive content.");
     }
 
     @GetMapping("/sessions")

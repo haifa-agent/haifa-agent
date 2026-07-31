@@ -328,7 +328,7 @@ class SqliteOperationalAdaptersTest {
                 .isInstanceOf(io.haifa.agent.runtime.api.RuntimeContractException.class)
                 .satisfies(exception -> assertThat(
                                 ((io.haifa.agent.runtime.api.RuntimeContractException) exception).code())
-                        .isEqualTo(io.haifa.agent.runtime.api.RuntimeErrorCode.IDEMPOTENCY_CONFLICT));
+                        .isEqualTo(io.haifa.agent.runtime.api.RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT));
 
         var attempt = new AgentRunExecutionAttempt(
                 new ExecutionAttemptId("input-attempt"), run.id(), 1, NOW.plusSeconds(4), Optional.empty());

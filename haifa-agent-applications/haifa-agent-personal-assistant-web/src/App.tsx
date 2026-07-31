@@ -34,6 +34,7 @@ import {
 import type {
   Activity,
   Conversation,
+  ExecutionError,
   Interaction,
   Memory,
   MemoryCandidate,
@@ -115,6 +116,13 @@ function safeError(error: unknown): string {
 
 function isTerminal(run: Run | null): boolean {
   return Boolean(run && terminalStatuses.has(run.status));
+}
+
+function executionErrorGuidance(error: ExecutionError): string {
+  if (error.code === "TOOL_OUTCOME_UNKNOWN") return "请先确认工具是否已经生效，不要直接重复执行。";
+  if (error.code === "RUN_BUDGET_EXCEEDED") return "可缩小任务范围后重新发起。";
+  if (error.retryability.startsWith("RETRYABLE")) return "可以稍后重试本次请求。";
+  return "如需协助，请提供诊断编号。";
 }
 
 function conversationIdFromUrl(): string | null {
@@ -586,7 +594,17 @@ function ActivityPanel({
           </div>
         </section>
         <section className="panel-section"><h3>Token 使用</h3><UsagePanel run={run} /></section>
-        {run?.errorCode && <div className="safe-error"><CircleAlert size={16} /><span>任务未完成：{run.errorCode}</span></div>}
+        {run?.error && (
+          <div className="safe-error">
+            <CircleAlert size={16} />
+            <span>
+              任务未完成：[{run.error.code}] {run.error.message}
+              {run.error.diagnosticId && <> · 诊断编号：{run.error.diagnosticId}</>}
+              <> · {executionErrorGuidance(run.error)}</>
+            </span>
+          </div>
+        )}
+        {!run?.error && run?.errorCode && <div className="safe-error"><CircleAlert size={16} /><span>任务未完成：{run.errorCode}</span></div>}
       </aside>
     </>
   );

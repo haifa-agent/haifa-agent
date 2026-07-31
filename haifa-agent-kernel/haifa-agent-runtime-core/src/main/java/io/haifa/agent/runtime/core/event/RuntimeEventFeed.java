@@ -3,8 +3,8 @@ package io.haifa.agent.runtime.core.event;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,11 +28,11 @@ public final class RuntimeEventFeed {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(after, "after must not be null");
         if (!runId.equals(after.runId())) {
-            throw new RuntimeContractException(RuntimeErrorCode.CURSOR_INVALID, "The cursor belongs to another Run");
+            throw new RuntimeContractException(RuntimeApiErrorCode.CURSOR_INVALID, "The cursor belongs to another Run");
         }
         if (!"1".equals(after.feedVersion())) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.CONTRACT_VERSION_UNSUPPORTED, "The Run Event Feed version is unsupported");
+                    RuntimeApiErrorCode.CONTRACT_VERSION_UNSUPPORTED, "The Run Event Feed version is unsupported");
         }
         if (limit < 1 || limit > MAXIMUM_PAGE_SIZE) {
             throw new IllegalArgumentException("limit must be in 1.." + MAXIMUM_PAGE_SIZE);
@@ -43,14 +43,15 @@ public final class RuntimeEventFeed {
         OptionalLong headValue = slice.headSequence();
         if (headValue.isEmpty()) {
             if (requested > 0) {
-                throw new RuntimeContractException(RuntimeErrorCode.CURSOR_INVALID, "The cursor is ahead of the Feed");
+                throw new RuntimeContractException(
+                        RuntimeApiErrorCode.CURSOR_INVALID, "The cursor is ahead of the Feed");
             }
             RunEventCursor empty = RunEventCursor.beforeFirst(runId);
             return new RunEventPage(List.of(), empty, empty, false);
         }
         long head = headValue.getAsLong();
         if (requested > head) {
-            throw new RuntimeContractException(RuntimeErrorCode.CURSOR_INVALID, "The cursor is ahead of the Feed");
+            throw new RuntimeContractException(RuntimeApiErrorCode.CURSOR_INVALID, "The cursor is ahead of the Feed");
         }
         requireRetained(requested, slice.earliestSequence());
 
@@ -81,7 +82,7 @@ public final class RuntimeEventFeed {
 
     private static void requireRetained(long exclusiveSequence, OptionalLong earliestSequence) {
         if (earliestSequence.isPresent() && exclusiveSequence < earliestSequence.getAsLong() - 1L) {
-            throw new RuntimeContractException(RuntimeErrorCode.CURSOR_EXPIRED, "The cursor is outside retention");
+            throw new RuntimeContractException(RuntimeApiErrorCode.CURSOR_EXPIRED, "The cursor is outside retention");
         }
     }
 

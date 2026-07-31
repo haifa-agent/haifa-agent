@@ -4,8 +4,8 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.RunInputId;
 import io.haifa.agent.runtime.api.RunInputReceiptStatus;
 import io.haifa.agent.runtime.api.RunInputSubmission;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
 import io.haifa.agent.runtime.core.input.RunInputAcceptance;
 import io.haifa.agent.runtime.core.input.RunInputPort;
@@ -131,7 +131,7 @@ public final class SqliteRunInputPort implements RunInputPort {
     private RunInputAcceptance duplicate(RunInputRow existing, String digest) {
         if (!existing.canonicalDigest().equals(digest)) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.IDEMPOTENCY_CONFLICT,
+                    RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
                     "The idempotency key or input id is already bound to different content");
         }
         return new RunInputAcceptance(fromRow(existing), false);

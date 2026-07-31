@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
@@ -260,7 +261,7 @@ class LocalCodingAgentTest {
                 completed = agent.runtime().find(accepted.runId()).orElseThrow();
             }
             assertThat(completed.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(completed.error().orElseThrow().code().value()).isEqualTo("COMPLETION_REPAIR_EXHAUSTED");
+            assertThat(completed.error().orElseThrow().code()).isEqualTo(AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED);
         }
 
         assertThat(workspace.resolve("must-not-exist.txt")).doesNotExist();

@@ -278,7 +278,7 @@ export default function AdminApp({
         </div>
         <div className="admin-sensitive-warning">
           <AlertTriangle size={16} />
-          <span>本机敏感视图 · 包含完整 Prompt、Tool 参数与结果</span>
+          <span>本机诊断视图 · 敏感执行内容已隐藏</span>
         </div>
         <button
           className="admin-refresh"

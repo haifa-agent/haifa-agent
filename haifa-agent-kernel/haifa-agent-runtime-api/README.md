@@ -50,3 +50,9 @@ Listener 失败不会中断 AgentLoop。
   但 Feed Cursor 会继续推进；`model.output.*` 不属于 durable Run Event Feed。
 - `AgentRunViewSnapshot` 组合可信 Session ID 与 Run Snapshot，供 Adapter 显式投影外部
   `RunView`；它不改变 Core Run 状态机。
+
+## 两个错误平面
+
+`RuntimeApiErrorCode` 只表达提交、查询、命令、Interaction、Cursor 和协议失败；异步执行中的
+Run/Attempt/Step 失败继续使用 Core `AgentErrorCode`。失败 Run 的生命周期事件携带稳定执行
+错误码、安全默认文案和同一个可选 `diagnosticId`，调用方不需要解析异常消息。

@@ -7,8 +7,8 @@ import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionResponseType;
 import io.haifa.agent.runtime.api.InteractionState;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
 import java.time.Instant;
@@ -140,7 +140,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
         if (existingDigest != null) {
             if (!existingDigest.equals(requestDigest)) {
                 throw new RuntimeContractException(
-                        RuntimeErrorCode.IDEMPOTENCY_CONFLICT,
+                        RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
                         "The idempotency key is already bound to a different interaction response");
             }
             return new InteractionSubmissionResolution(requireRecord(response.requestId()), false);
@@ -150,11 +150,11 @@ public final class InMemoryInteractionPort implements InteractionPort {
         InteractionRecord current = requireRecord(request.id());
         if (current.revision() != response.expectedRevision()) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
+                    RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
         }
         if (current.state() != InteractionState.PENDING) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_ALREADY_RESOLVED, "The interaction is already resolved");
+                    RuntimeApiErrorCode.INTERACTION_ALREADY_RESOLVED, "The interaction is already resolved");
         }
         validateActionAndInput(request, response);
         InteractionResponse legacy = new InteractionResponse(
@@ -197,7 +197,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
         InteractionRecord current = requireRecord(requestId);
         if (current.revision() != expectedRevision) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
+                    RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
         }
         if (current.state() != InteractionState.PENDING) return current;
         if (at.isBefore(current.request().expiresAt())) {
@@ -218,7 +218,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
         InteractionRecord current = requireRecord(requestId);
         if (current.revision() != expectedRevision) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
+                    RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
         }
         if (current.state() != InteractionState.PENDING && current.state() != InteractionState.RESPONDED) {
             return current;
@@ -235,7 +235,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
         InteractionRecord current = requireRecord(requestId);
         if (current.revision() != expectedRevision) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
+                    RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT, "The interaction revision is no longer current");
         }
         if (current.state() != InteractionState.PENDING) return current;
         return replaceState(current, target, requireReason(reasonCode), at);
@@ -260,7 +260,8 @@ public final class InMemoryInteractionPort implements InteractionPort {
         if (!InteractionSemantics.allowedActions(InteractionSemantics.kind(request))
                 .contains(action)) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_ACTION_NOT_ALLOWED, "The action is not allowed for this interaction");
+                    RuntimeApiErrorCode.INTERACTION_ACTION_NOT_ALLOWED,
+                    "The action is not allowed for this interaction");
         }
         if (action.equals(InteractionAction.SUBMIT) && response.inputs().isEmpty()) {
             throw new IllegalArgumentException("the selected action requires bounded response content");
@@ -304,15 +305,15 @@ public final class InMemoryInteractionPort implements InteractionPort {
             InteractionRequest request, AgentRunId responseRunId, RuntimeCallerContext caller, Instant receivedAt) {
         if (!request.runId().equals(responseRunId)) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
+                    RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
         if (!request.tenant().equals(caller.tenant())
                 || (request.approvalContext().isEmpty() && !request.requester().equals(caller.principal()))) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
+                    RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
         if (!receivedAt.isBefore(request.expiresAt())) {
-            throw new RuntimeContractException(RuntimeErrorCode.INTERACTION_EXPIRED, "The interaction has expired");
+            throw new RuntimeContractException(RuntimeApiErrorCode.INTERACTION_EXPIRED, "The interaction has expired");
         }
     }
 
@@ -334,7 +335,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
         InteractionRecord record = records.get(id);
         if (record == null) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
+                    RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
         return record;
     }
@@ -343,7 +344,7 @@ public final class InMemoryInteractionPort implements InteractionPort {
         InteractionRequest request = requests.get(id);
         if (request == null) {
             throw new RuntimeContractException(
-                    RuntimeErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
+                    RuntimeApiErrorCode.INTERACTION_NOT_FOUND, "The interaction does not exist or is not visible");
         }
         return request;
     }

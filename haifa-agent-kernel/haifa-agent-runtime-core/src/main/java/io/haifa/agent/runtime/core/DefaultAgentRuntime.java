@@ -254,7 +254,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
             if (request.expectedRunVersion().isPresent()
                     && request.expectedRunVersion().getAsLong() != resumable.version()) {
                 throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                        io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_VERSION_CONFLICT,
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
                         "The expected Run version is stale");
             }
             if (resumable.status() != AgentRunStatus.SUSPENDED
@@ -395,11 +395,11 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         var request = interactions
                 .find(response.requestId())
                 .orElseThrow(() -> new io.haifa.agent.runtime.api.RuntimeContractException(
-                        io.haifa.agent.runtime.api.RuntimeErrorCode.INTERACTION_NOT_FOUND,
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERACTION_NOT_FOUND,
                         "The interaction does not exist or is not visible"));
         if (!request.tenant().equals(caller.tenant())) {
             throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeErrorCode.INTERACTION_NOT_FOUND,
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.INTERACTION_NOT_FOUND,
                     "The interaction does not exist or is not visible");
         }
         var approvalResult = verifyApprovalForContract(request, caller);
@@ -442,10 +442,10 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         try {
             return verifyApproval(request, caller);
         } catch (SecurityException exception) {
-            io.haifa.agent.runtime.api.RuntimeErrorCode code =
+            io.haifa.agent.runtime.api.RuntimeApiErrorCode code =
                     exception.getMessage() != null && exception.getMessage().contains("TARGET")
-                            ? io.haifa.agent.runtime.api.RuntimeErrorCode.APPROVAL_TARGET_STALE
-                            : io.haifa.agent.runtime.api.RuntimeErrorCode.APPROVAL_AUTHORITY_DENIED;
+                            ? io.haifa.agent.runtime.api.RuntimeApiErrorCode.APPROVAL_TARGET_STALE
+                            : io.haifa.agent.runtime.api.RuntimeApiErrorCode.APPROVAL_AUTHORITY_DENIED;
             throw new io.haifa.agent.runtime.api.RuntimeContractException(
                     code, "The approval is no longer authorized for the current target");
         }
@@ -565,12 +565,12 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         requireContractCaller(run);
         if (run.status().isTerminal() || run.status() == AgentRunStatus.COMPLETING) {
             throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_STATE_CONFLICT,
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_STATE_CONFLICT,
                     "The run cannot accept steer input in its current state");
         }
         if (input.expectedRunVersion().isPresent() && input.expectedRunVersion().getAsLong() != run.version()) {
             throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_VERSION_CONFLICT,
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
                     "The run version is no longer current");
         }
         var caller = callers.current();
@@ -681,7 +681,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         if (command.expectedRunVersion().isPresent()
                 && command.expectedRunVersion().getAsLong() != run.version()) {
             throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_VERSION_CONFLICT,
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_VERSION_CONFLICT,
                     "The expected Run version is stale");
         }
         if (!idempotency.markCommandApplied(scope, idempotencyKey)) {
@@ -922,7 +922,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     private AgentRun requireRunForContract(AgentRunId runId) {
         return runs.find(runId)
                 .orElseThrow(() -> new io.haifa.agent.runtime.api.RuntimeContractException(
-                        io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_NOT_FOUND,
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_NOT_FOUND,
                         "The run does not exist or is not visible"));
     }
 
@@ -943,7 +943,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         var caller = callers.current();
         if (!caller.tenant().equals(run.tenant()) || !caller.principal().equals(run.principal())) {
             throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                    io.haifa.agent.runtime.api.RuntimeErrorCode.RUN_NOT_FOUND,
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.RUN_NOT_FOUND,
                     "The run does not exist or is not visible");
         }
     }

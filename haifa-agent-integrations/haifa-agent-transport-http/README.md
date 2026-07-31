@@ -29,6 +29,10 @@ HTTP 框架接入的请求、响应和 SSE 会话对象。
 - Problem Details 只返回稳定错误码、服务端 correlation ID 和安全详情，不返回堆栈、SQL、
   主机路径、授权规则或敏感输入。
 
+Run 查询 JSON 中的 `error` 是 `AgentExecutionErrorView`；它与 HTTP Problem 的
+`RuntimeApiErrorCode` 分离。HTTP 状态只表达本次请求结果，不会把已持久化的 Model、Tool 或预算
+执行错误重写成 `INTERNAL_ERROR`。
+
 本模块不拥有 Socket、端口、TLS、Cookie/Bearer 解析、IAM、生产 Server、UI 或产品审批流程。
 宿主应用负责把真实 HTTP 框架请求映射为 `HttpTransportRequest`，并只在 SSE 帧成功写出后调用
 `acknowledgeWritten`。

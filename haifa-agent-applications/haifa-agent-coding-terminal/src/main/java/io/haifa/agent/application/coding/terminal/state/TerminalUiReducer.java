@@ -339,6 +339,10 @@ public final class TerminalUiReducer {
         var seen = new HashSet<>(state.seenEventIds());
         seen.add(event.eventId());
         TerminalFooter footer = footer(state.footer(), event);
+        Optional<String> executionFailure = event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle
+                        && "FAILED".equals(lifecycle.status())
+                ? Optional.of(lifecycle.reasonCode())
+                : Optional.empty();
         return copy(
                 state,
                 state.loadedResources(),
@@ -355,7 +359,7 @@ public final class TerminalUiReducer {
                 currentRunAfter(state, event, runSettled),
                 Optional.of(event.cursor()),
                 seen,
-                Optional.empty(),
+                executionFailure,
                 state.exitRequested());
     }
 
@@ -421,6 +425,21 @@ public final class TerminalUiReducer {
                             payload.state(),
                             true,
                             details));
+        } else if (event.payload() instanceof RunEventPayloads.RunLifecycle payload
+                && "FAILED".equals(payload.status())) {
+            String message = payload.errorMessage().orElse("Agent execution failed");
+            String body = payload.diagnosticId()
+                    .map(diagnosticId -> "Diagnostic ID: " + diagnosticId)
+                    .orElse("No diagnostic ID was provided.");
+            upsert(
+                    items,
+                    new TranscriptItem(
+                            "run-error-" + event.runId().value(),
+                            TranscriptItem.Kind.ERROR,
+                            "[" + payload.reasonCode() + "] " + message,
+                            body,
+                            payload.status(),
+                            false));
         } else if (event.payload() instanceof RunEventPayloads.DeliveryLifecycle payload) {
             upsert(
                     items,

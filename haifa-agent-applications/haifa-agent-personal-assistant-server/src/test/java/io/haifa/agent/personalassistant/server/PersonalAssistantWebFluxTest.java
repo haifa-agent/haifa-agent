@@ -310,7 +310,7 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
-    void adminBuildsOneRunTreeWithCompletePromptAndToolPayloads() throws Exception {
+    void adminBuildsOneRunTreeWithoutExposingPromptOrToolPayloads() throws Exception {
         String sensitivePrompt = "[tool] private-admin-prompt-7f29";
         JsonNode conversation = post(
                 "/api/v1/conversations",
@@ -325,17 +325,13 @@ class PersonalAssistantWebFluxTest {
         JsonNode sessions = get("/v1/admin/sessions");
         assertThat(sessions.toString()).contains(sessionId);
         JsonNode runs = get("/v1/admin/sessions/" + sessionId + "/runs");
-        assertThat(runs.toString()).contains(runId, sensitivePrompt);
+        assertThat(runs.toString()).contains(runId, "Objective hidden").doesNotContain(sensitivePrompt);
 
         JsonNode tree = get("/v1/admin/sessions/" + sessionId + "/runs/" + runId + "/tree");
         assertThat(tree.path("root").path("id").asText()).isEqualTo("run:" + runId);
         assertThat(tree.toString())
-                .contains(
-                        "Frozen agent and model configuration",
-                        sensitivePrompt,
-                        "personal_checklist",
-                        "review the plan",
-                        "confirm completion");
+                .contains("Frozen agent and model configuration", "personal_checklist", "contentHidden")
+                .doesNotContain(sensitivePrompt, "review the plan", "confirm completion");
         assertThat(java.util.stream.StreamSupport.stream(tree.path("nodes").spliterator(), false)
                         .map(node -> node.path("kind").asText())
                         .toList())

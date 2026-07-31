@@ -5,10 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.plan.AgentPlan;
 import io.haifa.agent.core.plan.AgentPlanId;
 import io.haifa.agent.core.plan.TodoItem;
@@ -16,7 +13,10 @@ import io.haifa.agent.core.plan.TodoItemId;
 import io.haifa.agent.core.plan.TodoPriority;
 import io.haifa.agent.core.reference.ArtifactRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.step.AgentStep;
+import io.haifa.agent.core.step.AgentStepError;
 import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
@@ -85,6 +85,61 @@ class AutonomousDeliveryRecoveryControlTest {
 
         controller.meaningfulProgress();
         assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.CONTINUE_WITH_DIAGNOSTIC);
+    }
+
+    @Test
+    void terminalFailureSummaryReportsCompletedWorkAndManualNextStepWithoutRawArguments() {
+        ToolCall compiled = requested(
+                "compiled", Map.of("purpose", "生成并编译静态文件服务器", "content", "CANARY_RAW_SCRIPT_MUST_NOT_APPEAR"));
+        compiled.beginValidation();
+        compiled.beginPolicyCheck();
+        compiled.start(NOW.plusSeconds(1));
+        compiled.complete(
+                new ToolResult(true, "compiled", Map.of("status", "SUCCEEDED"), List.of(), List.of(), false),
+                NOW.plusSeconds(2));
+
+        ToolCall blocked =
+                requested("blocked", Map.of("purpose", "后台启动服务器", "content", "CANARY_BLOCKED_COMMAND_MUST_NOT_APPEAR"));
+        blocked.beginValidation();
+        blocked.cancel(NOW.plusSeconds(3));
+
+        AgentStep failedStep = new AgentStep(
+                new AgentStepId("failed-step"),
+                new AgentRunId("run-1"),
+                null,
+                null,
+                AgentStepType.TOOL_EXECUTION,
+                2,
+                NOW);
+        failedStep.start(NOW.plusSeconds(1));
+        failedStep.fail(
+                new AgentStepError(new AgentError(
+                        AgentErrorCode.TOOL_REQUEST_REJECTED,
+                        Map.of(
+                                "reason",
+                                "ARGUMENTS_INVALID",
+                                "repairHint",
+                                "Repair the tool arguments: $.content is blocked by the execution safety policy."),
+                        "step-diagnostic",
+                        NOW.plusSeconds(2))),
+                NOW.plusSeconds(2));
+        AgentError runError = new AgentError(
+                AgentErrorCode.REPEATED_TOOL_FAILURE, Map.of("attempts", 4), "run-diagnostic", NOW.plusSeconds(3));
+
+        String summary = TerminalFailureSummary.create(runError, List.of(compiled, blocked), List.of(failedStep));
+
+        assertThat(summary)
+                .contains(
+                        "任务未完全完成",
+                        "已完成：",
+                        "生成并编译静态文件服务器",
+                        "未完成：",
+                        "后台启动服务器",
+                        "工具请求被执行安全策略拒绝",
+                        "请在确认安全后手动完成",
+                        "REPEATED_TOOL_FAILURE",
+                        "run-diagnostic")
+                .doesNotContain("CANARY_RAW_SCRIPT", "CANARY_BLOCKED_COMMAND");
     }
 
     @Test
@@ -245,12 +300,7 @@ class AutonomousDeliveryRecoveryControlTest {
         call.start(NOW.plusSeconds(1));
         call.fail(
                 new ToolExecutionError(new AgentError(
-                        new AgentErrorCode(stableCode),
-                        AgentErrorCategory.TOOL,
-                        AgentErrorSeverity.WARNING,
-                        Retryability.NOT_RETRYABLE,
-                        message,
-                        null,
+                        AgentErrorCode.TOOL_INVOCATION_FAILED,
                         Map.of(
                                 "failureCategory",
                                 category,
@@ -262,6 +312,7 @@ class AutonomousDeliveryRecoveryControlTest {
                                 "TEST",
                                 "sandboxProfileDigest",
                                 sandboxDigest),
+                        "diag-" + id,
                         NOW.plusSeconds(2))),
                 NOW.plusSeconds(2));
         return call;
@@ -285,6 +336,10 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     private static ToolCall requested(String id) {
+        return requested(id, Map.of("operationFamily", "TEST", "command", "omitted"));
+    }
+
+    private static ToolCall requested(String id, Map<String, Object> arguments) {
         return new ToolCall(
                 new ToolCallId(id),
                 new AgentRunId("run-1"),
@@ -293,7 +348,7 @@ class AutonomousDeliveryRecoveryControlTest {
                 new RuntimeIdempotencyKey("key-" + id),
                 "execution.run",
                 "1.0.0",
-                new ToolArguments("execution.input", "1", Map.of("operationFamily", "TEST", "command", "omitted")),
+                new ToolArguments("execution.input", "1", arguments),
                 NOW);
     }
 }

@@ -437,7 +437,7 @@ class HaifaHttpTransportAdapterTest {
             RunEventCursor cursor = cursors.get(token);
             if (cursor == null || !cursor.runId().equals(expectedRunId)) {
                 throw new io.haifa.agent.runtime.api.RuntimeContractException(
-                        io.haifa.agent.runtime.api.RuntimeErrorCode.CURSOR_INVALID, "The cursor is invalid");
+                        io.haifa.agent.runtime.api.RuntimeApiErrorCode.CURSOR_INVALID, "The cursor is invalid");
             }
             return cursor;
         }

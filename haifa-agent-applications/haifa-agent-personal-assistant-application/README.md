@@ -15,6 +15,10 @@ sequence，订阅统一可关闭。进程重启后不恢复未完成 Delta；终
 Personal Assistant 的纯 Java 产品应用层。它只通过 Phase 20 SDK、Conversation Service 和公共
 Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Controller。
 
+Personal Run View 在兼容 `errorCode` 之外提供类型化执行错误：code、默认安全 message、
+category、retryability、安全 details、diagnosticId 和 occurredAt。应用层只投影 Runtime
+权威事实，不创建产品私有错误码。
+
 本模块负责：
 
 - Conversation start/list/search/get/turns/submit/rename/archive/unarchive；

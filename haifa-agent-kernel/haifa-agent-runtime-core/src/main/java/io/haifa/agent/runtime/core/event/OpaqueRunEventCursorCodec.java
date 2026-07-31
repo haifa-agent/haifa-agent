@@ -2,8 +2,8 @@ package io.haifa.agent.runtime.core.event;
 
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -67,7 +67,7 @@ public final class OpaqueRunEventCursorCodec {
             if (!expectedRunId.equals(runId)) throw invalid();
             if (!expectedFeedVersion.equals(fields[3])) {
                 throw new RuntimeContractException(
-                        RuntimeErrorCode.CONTRACT_VERSION_UNSUPPORTED, "The Run Event Feed version is unsupported");
+                        RuntimeApiErrorCode.CONTRACT_VERSION_UNSUPPORTED, "The Run Event Feed version is unsupported");
             }
             OptionalLong sequence =
                     BEFORE_FIRST.equals(fields[4]) ? OptionalLong.empty() : OptionalLong.of(Long.parseLong(fields[4]));
@@ -90,6 +90,6 @@ public final class OpaqueRunEventCursorCodec {
     }
 
     private static RuntimeContractException invalid() {
-        return new RuntimeContractException(RuntimeErrorCode.CURSOR_INVALID, "The Run Event cursor is invalid");
+        return new RuntimeContractException(RuntimeApiErrorCode.CURSOR_INVALID, "The Run Event cursor is invalid");
     }
 }

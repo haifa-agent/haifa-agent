@@ -4,8 +4,8 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.RunInputId;
 import io.haifa.agent.runtime.api.RunInputReceiptStatus;
 import io.haifa.agent.runtime.api.RunInputSubmission;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
 import java.time.Instant;
 import java.util.Comparator;
@@ -30,7 +30,7 @@ public final class InMemoryRunInputPort implements RunInputPort {
         if (existingBinding != null) {
             if (!existingBinding.requestDigest().equals(requestDigest)) {
                 throw new RuntimeContractException(
-                        RuntimeErrorCode.IDEMPOTENCY_CONFLICT,
+                        RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
                         "The idempotency key is already bound to a different run input");
             }
             return new RunInputAcceptance(inputs.get(existingBinding.inputId()), false);
@@ -39,7 +39,7 @@ public final class InMemoryRunInputPort implements RunInputPort {
         if (existingInput != null) {
             if (!CanonicalRequestDigest.runInput(existingInput.submission()).equals(requestDigest)) {
                 throw new RuntimeContractException(
-                        RuntimeErrorCode.IDEMPOTENCY_CONFLICT, "The input id is already bound to different content");
+                        RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT, "The input id is already bound to different content");
             }
             return new RunInputAcceptance(existingInput, false);
         }

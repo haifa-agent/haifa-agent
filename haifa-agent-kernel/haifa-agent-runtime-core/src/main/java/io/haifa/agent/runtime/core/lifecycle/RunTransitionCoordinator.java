@@ -22,6 +22,7 @@ import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -146,6 +147,36 @@ public final class RunTransitionCoordinator {
         return mutate(run, "run.failed", value -> value.fail(error, time.now()));
     }
 
+    /** Commits a partial assistant summary, public output and failed Run state in one Unit of Work. */
+    public AgentRunSnapshot failedWithOutput(
+            AgentRun run, AgentError error, String output, SessionMessageDraft finalMessage) {
+        synchronized (locks.computeIfAbsent(run.id(), ignored -> new Object())) {
+            AgentRunSnapshot snapshot = retries.execute(
+                    () -> unitOfWork.execute(() -> {
+                        long expectedVersion = run.version();
+                        AgentRunStatus previous = run.status();
+                        state.saveFinalOutputAndMessage(run.id(), output, finalMessage);
+                        run.fail(error, time.now());
+                        runs.save(run, expectedVersion);
+                        Map<String, Object> eventData = terminalEventData(run, previous);
+                        RuntimeEvent event = events.append(run.id(), "run.failed", eventData, time.now());
+                        outbox.append(new OutboxMessage(
+                                event.eventId(),
+                                event.runId(),
+                                event.sequence(),
+                                event.type(),
+                                OutboxMessage.CURRENT_SCHEMA_VERSION,
+                                eventData,
+                                event.occurredAt()));
+                        AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
+                        unitOfWork.afterCommit(() -> notifyCommitted(committed));
+                        return committed;
+                    }),
+                    persistenceRetry.policy());
+            return snapshot;
+        }
+    }
+
     public AgentRunSnapshot cancelled(AgentRun run, RunTerminationReason reason) {
         return mutate(run, "run.cancelled", value -> value.cancel(reason, time.now()));
     }
@@ -170,24 +201,15 @@ public final class RunTransitionCoordinator {
                         AgentRunStatus previous = run.status();
                         mutation.accept(run);
                         runs.save(run, expectedVersion);
-                        RuntimeEvent event = events.append(
-                                run.id(),
-                                eventType,
-                                Map.of(
-                                        "previousStatus",
-                                        previous.name(),
-                                        "status",
-                                        run.status().name(),
-                                        "version",
-                                        run.version()),
-                                time.now());
+                        Map<String, Object> safeEventData = terminalEventData(run, previous);
+                        RuntimeEvent event = events.append(run.id(), eventType, safeEventData, time.now());
                         outbox.append(new OutboxMessage(
                                 event.eventId(),
                                 event.runId(),
                                 event.sequence(),
                                 event.type(),
                                 OutboxMessage.CURRENT_SCHEMA_VERSION,
-                                Map.of("status", run.status().name(), "version", run.version()),
+                                safeEventData,
                                 event.occurredAt()));
                         AgentRunSnapshot committed = AgentRunSnapshot.from(run, state.output(run.id()));
                         unitOfWork.afterCommit(() -> notifyCommitted(committed));
@@ -196,6 +218,21 @@ public final class RunTransitionCoordinator {
                     persistenceRetry.policy());
             return snapshot;
         }
+    }
+
+    private static Map<String, Object> terminalEventData(AgentRun run, AgentRunStatus previous) {
+        Map<String, Object> eventData = new LinkedHashMap<>();
+        eventData.put("previousStatus", previous.name());
+        eventData.put("status", run.status().name());
+        eventData.put("version", run.version());
+        run.error().ifPresent(error -> {
+            eventData.put("errorCode", error.code().wireCode());
+            eventData.put("errorMessage", error.message());
+            eventData.put("errorCategory", error.category().name());
+            eventData.put("retryability", error.retryability().name());
+            error.optionalDiagnosticId().ifPresent(diagnosticId -> eventData.put("diagnosticId", diagnosticId));
+        });
+        return Map.copyOf(eventData);
     }
 
     private void notifyCommitted(AgentRunSnapshot snapshot) {

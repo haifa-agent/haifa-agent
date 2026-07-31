@@ -12,8 +12,8 @@ import io.haifa.agent.runtime.api.InteractionRequestId;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.InteractionState;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import java.time.Instant;
 import java.util.List;
@@ -55,7 +55,7 @@ class InMemoryInteractionPortTest {
                         NOW.plusSeconds(2)))
                 .isInstanceOf(RuntimeContractException.class)
                 .extracting("code")
-                .isEqualTo(RuntimeErrorCode.INTERACTION_REVISION_CONFLICT);
+                .isEqualTo(RuntimeApiErrorCode.INTERACTION_REVISION_CONFLICT);
 
         port.markResolutionApplied(request.id());
         port.markResolutionApplied(request.id());
@@ -78,7 +78,7 @@ class InMemoryInteractionPortTest {
                         NOW.plusSeconds(2)))
                 .isInstanceOf(RuntimeContractException.class)
                 .extracting("code")
-                .isEqualTo(RuntimeErrorCode.IDEMPOTENCY_CONFLICT);
+                .isEqualTo(RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT);
     }
 
     @Test
@@ -96,7 +96,7 @@ class InMemoryInteractionPortTest {
                         request.expiresAt()))
                 .isInstanceOf(RuntimeContractException.class)
                 .extracting("code")
-                .isEqualTo(RuntimeErrorCode.INTERACTION_EXPIRED);
+                .isEqualTo(RuntimeApiErrorCode.INTERACTION_EXPIRED);
         InteractionRecord expired = port.expire(request.id(), 0, request.expiresAt());
 
         assertThat(expired.state()).isEqualTo(InteractionState.EXPIRED);
@@ -130,7 +130,7 @@ class InMemoryInteractionPortTest {
                         NOW.plusSeconds(1)))
                 .isInstanceOf(RuntimeContractException.class)
                 .extracting("code")
-                .isEqualTo(RuntimeErrorCode.INTERACTION_ACTION_NOT_ALLOWED);
+                .isEqualTo(RuntimeApiErrorCode.INTERACTION_ACTION_NOT_ALLOWED);
         assertThat(confirmationPort
                         .respond(
                                 new InteractionResponseSubmission(

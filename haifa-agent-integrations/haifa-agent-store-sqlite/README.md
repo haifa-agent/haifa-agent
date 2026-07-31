@@ -33,6 +33,11 @@ Runtime Migration V4 在不修改 V1～V3 的前提下完成 11 号能力 Task 0
   未发布消息会阻止删除。
 
 SQLite 仍是 Client Event Page、Interaction、Run Input、Checkpoint 和 Runtime 恢复的唯一持久事实源。
+
+`AgentErrorPayload` 保持既有 v1 外壳以兼容 Run、Attempt、Step、Tool 和嵌套 Command Result
+历史数据；当前写入值由 `AgentErrorCode` 派生，读取时不信任旧 message/category/retryability。
+未知 wire code 安全映射为 `UNKNOWN`，原码以有界 `unrecognizedErrorCode` detail 保留；旧
+`technicalDetailRef` 迁移为 `diagnosticId`。本次不修改既有 Migration。
 进程内 Subscription 只接收提交后唤醒，并始终返回 SQLite 范围读取。
 
 ## V3 Policy / Approval / Security

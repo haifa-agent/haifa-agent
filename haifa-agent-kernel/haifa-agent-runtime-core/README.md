@@ -33,6 +33,12 @@ SHA-256 Failure Fingerprint；随机路径、命令文本和原始 stderr 不进
 “诊断、改变策略、收敛、第 4 次结构化终止”推进；`OUTCOME_UNKNOWN`、取消和 Policy 拒绝继续服从
 各自更严格的既有边界。完全重复 Decision、A-B Loop 和单批重复调用仍由原 Guard 独立处理。
 
+重复 Tool 失败或 Outcome Unknown 触发结构化终止时，Run 仍保持 `FAILED`，但 Runtime 会在同一
+Unit of Work 中持久化一条用户可见的部分完成总结和 Run output。总结只使用已持久化的安全事实：
+成功 Tool 的有界 `purpose`、最后未完成的有界 `purpose`、稳定错误码和安全 Step 错误；不读取或
+回显 Tool 参数正文、Prompt、stderr、Provider 原始响应或凭据。Conversation 刷新或进程重启后仍可
+看到已完成事项、未完成事项和需要人工处理的下一步，且不会把部分结果伪装成成功。
+
 有效进展只来自 Workspace/Artifact 变化、Todo 状态推进、成功的 Build/Test 验证、Blocker 移除、
 Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进展。最近 32 条安全摘要组成
 有界 Ledger。通用无进展窗口在首次权威有效进展后才开始计数；初始只读侦察仍受完全重复 Decision、
@@ -113,6 +119,14 @@ AgentLoop，Run 终态后清理。有效模型决策仍由 `DecisionExecutor` �
 纯 Java 的 Agent 执行内核，负责 Bootstrap、`AgentRunExecutionAttempt`、AgentLoop、工具管线、完成门禁、检查点、恢复、控制命令以及线程安全的内存存储实现。
 
 - 依赖方向：`runtime-core -> context/model-api/runtime-api/tool-api/skill-api/credential-api -> core -> common`；Runtime 不依赖 Tool Core、Skill Core 或 Provider Integration。
+
+## 错误分类与内部诊断
+
+Model、Tool、预算和完成门禁在拥有语义的边界映射到稳定 `AgentErrorCode`。分类后的
+`AgentError` 在 Step、Attempt、Run、Runtime Event 和 Trace 复用同一个 `diagnosticId`；
+`RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。可选 `FailureDiagnosticSink`
+仅接收这类意外故障的 Throwable；Trace 或诊断 Sink 失败属于观测投影失败，不会改变已经确定的
+Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOOL_OUTCOME_UNKNOWN` 并禁止盲目重放。
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
 - `start` 在 Run 持久化并提交执行后返回 `PENDING/QUEUED` 快照；等待完成由 `AgentRunHandle` 显式提供。
 - 每次 Start、Resume 或崩溃恢复都创建新的 `AgentRunExecutionAttempt`；它记录 Worker、Heartbeat、错误和恢复 Checkpoint，同一逻辑 Run 同时最多一个活动 Attempt。`ExecutionOwnershipPort` 为未来分布式 Lease 保留真实校验边界。
@@ -135,6 +149,8 @@ AgentLoop，Run 终态后清理。有效模型决策仍由 `DecisionExecutor` �
 - Tool Journal 区分 intent、dispatched、acknowledged、pending-result、completed、failed 与 outcome-unknown；非幂等或未知副作用在 dispatch 后失联不会自动重放。
 - 模型调用与工具调用使用独立 Retry Policy；仅非副作用 Tool 允许有界自动重试，副作用 Tool 失败后进入不确定性处置而不自动重放。
 - Completion Guard 校验输出契约、Artifact、Todo、Pending Tool/Child/Interaction、Policy 和 Budget，并强制 `RUNNING -> COMPLETING -> COMPLETED`。
+- Runtime 硬预算在模型、工具或迭代执行期间耗尽时，Run、Attempt 与相关失败 Step 使用稳定的
+  `RUN_BUDGET_EXCEEDED` 安全错误，不再降级为通用 `RUNTIME_EXECUTION_FAILED`。
 - `RunTransitionCoordinator` 在 Unit of Work 内提交 Run、Runtime Event 和 Outbox；线程安全内存实现提供乐观锁、Run 内事件序号、稳定命令幂等结果、Outbox 发布/消费幂等和单活动 Attempt 约束。Listener 在提交后通知，异常不影响已提交状态。
 - `RuntimePersistencePorts` 显式组合 Session、Run、Attempt、Checkpoint、Runtime State、Event、Outbox、
   Idempotency、Unit of Work、Tool Journal、Interaction、Run Input、Summary、Tool Result Asset 与消息脱敏监听注册边界；

@@ -89,10 +89,11 @@ public final class HaifaCliMain {
                             && completed.status() == io.haifa.agent.core.run.AgentRunStatus.COMPLETED) {
                         return 0;
                     }
-                    completed
-                            .error()
-                            .ifPresent(value ->
-                                    error.println("Task failed: " + value.code().value()));
+                    completed.error().ifPresent(value -> {
+                        error.println("[" + value.code().wireCode() + "] " + value.message());
+                        value.optionalDiagnosticId()
+                                .ifPresent(diagnosticId -> error.println("Diagnostic ID: " + diagnosticId));
+                    });
                     if (!completed.status().isTerminal())
                         error.println("Task did not complete before the CLI timeout.");
                     return 2;

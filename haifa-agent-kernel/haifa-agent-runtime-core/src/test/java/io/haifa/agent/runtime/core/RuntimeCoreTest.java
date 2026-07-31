@@ -7,6 +7,7 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.plan.AgentPlan;
 import io.haifa.agent.core.plan.AgentPlanId;
@@ -37,13 +38,13 @@ import io.haifa.agent.runtime.api.ResumeAgentRunRequest;
 import io.haifa.agent.runtime.api.RunInputId;
 import io.haifa.agent.runtime.api.RunInputReceiptStatus;
 import io.haifa.agent.runtime.api.RunInputSubmission;
+import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeCommand;
 import io.haifa.agent.runtime.api.RuntimeCommandArguments;
 import io.haifa.agent.runtime.api.RuntimeCommandId;
 import io.haifa.agent.runtime.api.RuntimeCommandStatus;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
 import io.haifa.agent.runtime.api.RuntimeContractException;
-import io.haifa.agent.runtime.api.RuntimeErrorCode;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
@@ -301,7 +302,7 @@ class RuntimeCoreTest {
                 "resume-stale", accepted.runId(), Optional.empty(), OptionalLong.of(999), List.of());
         assertThatThrownBy(() -> fixture.runtime.resume(staleResume))
                 .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(RuntimeErrorCode.RUN_VERSION_CONFLICT));
+                        .isEqualTo(RuntimeApiErrorCode.RUN_VERSION_CONFLICT));
 
         decisions.add(response(finalDecision("resumed")));
         var resumeRequest = new ResumeAgentRunRequest("resume-1", accepted.runId(), List.of());
@@ -349,7 +350,7 @@ class RuntimeCoreTest {
                 Instant.parse("2026-07-21T00:00:00Z"));
         assertThatThrownBy(() -> fixture.runtime.command(staleCommand))
                 .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
-                        .isEqualTo(RuntimeErrorCode.RUN_VERSION_CONFLICT));
+                        .isEqualTo(RuntimeApiErrorCode.RUN_VERSION_CONFLICT));
 
         RuntimeCommand command = command(accepted.runId().value(), RuntimeCommandType.CANCEL, "cancel-1");
         assertThat(fixture.runtime.command(command).status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
@@ -484,7 +485,7 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.find(failed.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
         assertThat(fixture.store.toolCalls(failed.runId())).singleElement().satisfies(call -> {
             assertThat(call.status().name()).isEqualTo("FAILED");
-            assertThat(call.error().orElseThrow().error().code().value()).isEqualTo("TOOL_OUTCOME_UNKNOWN");
+            assertThat(call.error().orElseThrow().error().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
         });
         assertThat(fixture.journal.state(
                         failed.runId(),
@@ -502,8 +503,7 @@ class RuntimeCoreTest {
                                         call.providerCorrelationId().value().equals("provider-uncertain")))
                 .anyMatch(message -> message.role() == ModelMessageRole.TOOL
                         && message.providerCorrelationId().orElseThrow().value().equals("provider-uncertain")
-                        && message.content()
-                                .equals("Tool execution outcome is unknown; automatic replay is forbidden."));
+                        && message.content().equals("Tool outcome could not be determined"));
     }
 
     @Test

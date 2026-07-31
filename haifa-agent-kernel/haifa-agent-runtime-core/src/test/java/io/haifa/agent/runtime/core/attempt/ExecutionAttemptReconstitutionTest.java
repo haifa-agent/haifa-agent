@@ -5,10 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.checkpoint.CheckpointId;
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.persistence.DomainReconstitutionException;
 import io.haifa.agent.core.persistence.DomainReconstitutionFailure;
 import io.haifa.agent.core.run.AgentRunId;
@@ -96,14 +93,7 @@ class ExecutionAttemptReconstitutionTest {
 
     private static AgentError error() {
         return new AgentError(
-                new AgentErrorCode("ATTEMPT_FAILED"),
-                AgentErrorCategory.INTERNAL,
-                AgentErrorSeverity.ERROR,
-                Retryability.NOT_RETRYABLE,
-                "attempt failed",
-                null,
-                Map.of(),
-                NOW.plusSeconds(2));
+                AgentErrorCode.RUNTIME_EXECUTION_FAILED, Map.of(), "diag-attempt-failed", NOW.plusSeconds(2));
     }
 
     private static ExecutionAttemptPersistenceSnapshot copy(

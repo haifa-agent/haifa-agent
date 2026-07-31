@@ -335,6 +335,19 @@
           "toolCalls": {"type": "integer", "format": "int64"}
         }
       },
+      "ExecutionError": {
+        "type": "object",
+        "required": ["code", "message", "category", "retryability", "details", "occurredAt"],
+        "properties": {
+          "code": {"type": "string"},
+          "message": {"type": "string"},
+          "category": {"type": "string"},
+          "retryability": {"type": "string"},
+          "details": {"type": "object", "additionalProperties": true},
+          "diagnosticId": {"type": ["string", "null"]},
+          "occurredAt": {"type": "string", "format": "date-time"}
+        }
+      },
       "Run": {
         "type": "object",
         "required": ["id", "conversationId", "status", "version", "updatedAt", "usage"],
@@ -347,6 +360,12 @@
           "output": {"type": ["string", "null"]},
           "resultSummary": {"type": ["string", "null"]},
           "errorCode": {"type": ["string", "null"]},
+          "error": {
+            "oneOf": [
+              {"$ref": "#/components/schemas/ExecutionError"},
+              {"type": "null"}
+            ]
+          },
           "usage": {"$ref": "#/components/schemas/Usage"}
         }
       },

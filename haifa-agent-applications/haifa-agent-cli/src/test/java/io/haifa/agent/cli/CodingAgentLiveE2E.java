@@ -443,8 +443,8 @@ class CodingAgentLiveE2E {
     private static String safeFailureSummary(
             io.haifa.agent.runtime.api.AgentRunSnapshot snapshot, List<RuntimeTraceEvent> traces) {
         String error = snapshot.error()
-                .map(value -> value.code().value() + "/" + value.category().name() + "/"
-                        + value.attributes().entrySet().stream()
+                .map(value -> value.code().wireCode() + "/" + value.category().name() + "/"
+                        + value.details().entrySet().stream()
                                 .sorted(Map.Entry.comparingByKey())
                                 .map(entry -> entry.getKey() + "=" + String.valueOf(entry.getValue()))
                                 .collect(Collectors.joining(",")))

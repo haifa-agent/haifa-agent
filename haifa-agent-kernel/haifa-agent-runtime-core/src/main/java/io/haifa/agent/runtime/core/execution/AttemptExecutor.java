@@ -1,22 +1,22 @@
 package io.haifa.agent.runtime.core.execution;
 
+import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.error.AgentError;
-import io.haifa.agent.core.error.AgentErrorCategory;
 import io.haifa.agent.core.error.AgentErrorCode;
-import io.haifa.agent.core.error.AgentErrorSeverity;
-import io.haifa.agent.core.error.Retryability;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.retry.PersistenceRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
+import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import java.util.ArrayList;
@@ -34,6 +34,8 @@ public final class AttemptExecutor {
     private final RetryExecutor persistenceRetries;
     private final PersistenceRetryPolicy persistenceRetry;
     private final TracePort trace;
+    private final IdentifierGenerator ids;
+    private final FailureDiagnosticSink diagnostics;
 
     public AttemptExecutor(
             ExecutionAttemptRepository attempts,
@@ -43,7 +45,9 @@ public final class AttemptExecutor {
             String owner,
             RetryExecutor persistenceRetries,
             PersistenceRetryPolicy persistenceRetry,
-            TracePort trace) {
+            TracePort trace,
+            IdentifierGenerator ids,
+            FailureDiagnosticSink diagnostics) {
         this.attempts = Objects.requireNonNull(attempts);
         this.loop = Objects.requireNonNull(loop);
         this.transitions = Objects.requireNonNull(transitions);
@@ -52,6 +56,8 @@ public final class AttemptExecutor {
         this.persistenceRetries = Objects.requireNonNull(persistenceRetries);
         this.persistenceRetry = Objects.requireNonNull(persistenceRetry);
         this.trace = Objects.requireNonNull(trace);
+        this.ids = Objects.requireNonNull(ids);
+        this.diagnostics = Objects.requireNonNull(diagnostics);
     }
 
     public void execute(AgentRun run, AgentRunExecutionAttempt attempt) {
@@ -62,7 +68,10 @@ public final class AttemptExecutor {
             if (run.status() == AgentRunStatus.QUEUED || run.status() == AgentRunStatus.PENDING)
                 transitions.started(run);
             loop.run(run, attempt);
-            finish(attempt, statusFor(run.status()), null);
+            AgentError terminalError =
+                    run.status() == AgentRunStatus.FAILED ? run.error().orElse(null) : null;
+            if (terminalError != null) recordTerminalFailure(run, attempt, terminalError);
+            finish(attempt, statusFor(run.status()), terminalError);
         } catch (CancellationObservedException cancelled) {
             if (!run.status().isTerminal()) {
                 transitions.cancelled(
@@ -104,24 +113,36 @@ public final class AttemptExecutor {
     }
 
     private AgentError safeError(RuntimeException error) {
-        List<String> failureTypes = failureTypes(error);
+        if (error instanceof AgentExecutionFailureException classified) return classified.error();
+        RuntimeLimitExceededException budgetExceeded = findFailure(error, RuntimeLimitExceededException.class);
+        Map<String, Object> details = budgetExceeded == null
+                ? Map.of()
+                : Map.of(
+                        "resource", budgetExceeded.resource(),
+                        "limit", budgetExceeded.limit(),
+                        "used", budgetExceeded.used());
         return new AgentError(
-                new AgentErrorCode("RUNTIME_EXECUTION_FAILED"),
-                AgentErrorCategory.INTERNAL,
-                AgentErrorSeverity.ERROR,
-                Retryability.UNKNOWN,
-                "Agent execution failed",
-                null,
-                Map.of(
-                        "exceptionType", failureTypes.getFirst(),
-                        "rootExceptionType", failureTypes.getLast()),
+                budgetExceeded == null ? AgentErrorCode.RUNTIME_EXECUTION_FAILED : AgentErrorCode.RUN_BUDGET_EXCEEDED,
+                details,
+                ids.nextValue(),
                 time.now());
+    }
+
+    private static <T extends Throwable> T findFailure(Throwable error, Class<T> failureType) {
+        Throwable current = error;
+        int depth = 0;
+        while (current != null && depth < 8) {
+            if (failureType.isInstance(current)) return failureType.cast(current);
+            current = current.getCause();
+            depth++;
+        }
+        return null;
     }
 
     private void recordFailure(
             AgentRun run, AgentRunExecutionAttempt attempt, AgentError attemptError, RuntimeException error) {
         List<String> failureTypes = failureTypes(error);
-        trace.record(new RuntimeTraceEvent(
+        RuntimeTraceEvent context = new RuntimeTraceEvent(
                 attempt.attemptId().value(),
                 run.id(),
                 Optional.of(attempt.attemptId()),
@@ -133,11 +154,48 @@ public final class AttemptExecutor {
                 RuntimePhase.ON_ERROR,
                 "runtime.error",
                 Map.of(
-                        "errorCode", attemptError.code().value(),
+                        "errorCode", attemptError.code().wireCode(),
+                        "diagnosticId", attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId(),
                         "exceptionType", failureTypes.getFirst(),
                         "rootExceptionType", failureTypes.getLast(),
                         "failureTypes", failureTypes),
+                time.now());
+        recordTrace(context);
+        if (attemptError.code() == AgentErrorCode.RUNTIME_EXECUTION_FAILED) {
+            try {
+                diagnostics.record(context, error);
+            } catch (RuntimeException ignored) {
+                // Diagnostics are a best-effort projection and never alter authoritative Run state.
+            }
+        }
+    }
+
+    private void recordTerminalFailure(AgentRun run, AgentRunExecutionAttempt attempt, AgentError error) {
+        recordTrace(new RuntimeTraceEvent(
+                attempt.attemptId().value(),
+                run.id(),
+                Optional.of(attempt.attemptId()),
+                run.sessionId(),
+                Optional.empty(),
+                Optional.empty(),
+                attempt.workerId(),
+                0,
+                RuntimePhase.ON_ERROR,
+                "runtime.terminal-error",
+                Map.of(
+                        "errorCode",
+                        error.code().wireCode(),
+                        "diagnosticId",
+                        error.diagnosticId() == null ? "" : error.diagnosticId()),
                 time.now()));
+    }
+
+    private void recordTrace(RuntimeTraceEvent event) {
+        try {
+            trace.record(event);
+        } catch (RuntimeException ignored) {
+            // Trace delivery is observational and never alters authoritative Run state.
+        }
     }
 
     private static List<String> failureTypes(Throwable error) {

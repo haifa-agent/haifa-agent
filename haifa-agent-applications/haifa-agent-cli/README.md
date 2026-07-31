@@ -208,6 +208,9 @@ Provider。普通运行不应设置该变量。
 
 CLI 可实时订阅现有 `RuntimeTraceEvent`，不需要启用 `--verbose`：
 
+最终失败输出使用 `[AgentErrorCode] 安全默认文案`，下一行显示可选 Diagnostic ID；非 Trace
+输出不包含 Java 异常、Provider 原文或 Stack Trace。
+
 ```powershell
 $jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
 
