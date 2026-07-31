@@ -17,8 +17,9 @@ record DeliveryToolchainSet(
         Path pythonExecutable,
         Path nodeExecutable,
         Path goExecutable,
-        Path gitExecutable) {
-    private static final List<String> NAMES = List.of("java", "javac", "python", "node", "go", "git");
+        Path gitExecutable,
+        Path shellExecutable) {
+    private static final List<String> NAMES = List.of("java", "javac", "python", "node", "go", "git", "shell");
 
     static DeliveryToolchainSet validate(Map<String, Path> values) throws IOException {
         LinkedHashMap<String, Path> executables = new LinkedHashMap<>();
@@ -41,7 +42,8 @@ record DeliveryToolchainSet(
                 executables.get("python"),
                 executables.get("node"),
                 executables.get("go"),
-                executables.get("git"));
+                executables.get("git"),
+                executables.get("shell"));
     }
 
     Path javaHome() {
@@ -56,6 +58,7 @@ record DeliveryToolchainSet(
         paths.put("node", nodeExecutable);
         paths.put("go", goExecutable);
         paths.put("git", gitExecutable);
+        paths.put("shell", shellExecutable);
         return Collections.unmodifiableMap(paths);
     }
 
