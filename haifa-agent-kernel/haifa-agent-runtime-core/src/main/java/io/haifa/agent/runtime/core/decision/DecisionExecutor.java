@@ -142,6 +142,27 @@ public final class DecisionExecutor {
         return execute(run, decision, loopContext);
     }
 
+    public void failWithSummary(AgentRun run, AgentError error, String summary) {
+        transitions.failedWithOutput(
+                run,
+                error,
+                summary,
+                messageDraft(
+                        run,
+                        MessageRole.ASSISTANT,
+                        List.of(new TextPart(summary, "plain")),
+                        MessageVisibility.USER_VISIBLE,
+                        Map.of(
+                                "final",
+                                true,
+                                "partial",
+                                true,
+                                "terminalErrorCode",
+                                error.code().wireCode(),
+                                "terminalSummaryVersion",
+                                "1")));
+    }
+
     private AgentLoopDirective executeFinal(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
         var readiness = completionGuard.evaluate(run, decision);
         if (!readiness.ready()) {

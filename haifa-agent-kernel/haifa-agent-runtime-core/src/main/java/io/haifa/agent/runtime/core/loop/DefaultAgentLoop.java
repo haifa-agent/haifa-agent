@@ -40,6 +40,7 @@ import io.haifa.agent.runtime.core.model.ModelInvocationResult;
 import io.haifa.agent.runtime.core.recovery.RecoveryController;
 import io.haifa.agent.runtime.core.recovery.RecoveryDirective;
 import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
+import io.haifa.agent.runtime.core.recovery.TerminalFailureSummary;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -704,19 +705,19 @@ public final class DefaultAgentLoop implements AgentLoop {
             AgentErrorCode code = directive == RecoveryDirective.TERMINATE_OUTCOME_UNKNOWN
                     ? AgentErrorCode.TOOL_OUTCOME_UNKNOWN
                     : AgentErrorCode.REPEATED_TOOL_FAILURE;
-            transitions.failed(
-                    run,
-                    new AgentError(
-                            code,
-                            Map.of(
-                                    "failureCategory",
-                                    update.observation().category().name(),
-                                    "fingerprintDigest",
-                                    update.observation().fingerprint().digest(),
-                                    "attempts",
-                                    update.attempts()),
-                            ids.nextValue(),
-                            time.now()));
+            AgentError error = new AgentError(
+                    code,
+                    Map.of(
+                            "failureCategory",
+                            update.observation().category().name(),
+                            "fingerprintDigest",
+                            update.observation().fingerprint().digest(),
+                            "attempts",
+                            update.attempts()),
+                    ids.nextValue(),
+                    time.now());
+            String summary = TerminalFailureSummary.create(error, state.toolCalls(run.id()), state.steps(run.id()));
+            decisionExecutor.failWithSummary(run, error, summary);
         }
         return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
     }

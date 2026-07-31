@@ -510,6 +510,17 @@ class RuntimeCoreHardeningTest {
         assertThat(toolCalls).hasValue(4);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.FAILED);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().output())
+                .hasValueSatisfying(summary -> assertThat(summary)
+                        .contains("The task did not fully complete", "final-probe", "REPEATED_TOOL_FAILURE")
+                        .doesNotContain("/private/random"));
+        assertThat(fixture.store.messages(accepted.runId())).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo(io.haifa.agent.core.message.MessageRole.ASSISTANT);
+            assertThat(message.visibility()).isEqualTo(io.haifa.agent.core.message.MessageVisibility.USER_VISIBLE);
+            assertThat(message.metadata())
+                    .containsEntry("partial", true)
+                    .containsEntry("terminalErrorCode", "REPEATED_TOOL_FAILURE");
+        });
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
                 .contains("loop.stall-detected", "tool.recovery-strategy-required", "run.structured-termination");
@@ -844,7 +855,15 @@ class RuntimeCoreHardeningTest {
                 new ToolArguments(
                         "environment-probe.input",
                         "1",
-                        Map.of("operationFamily", "TEST", "randomPath", randomPath, "commandForm", commandForm)))));
+                        Map.of(
+                                "operationFamily",
+                                "TEST",
+                                "randomPath",
+                                randomPath,
+                                "commandForm",
+                                commandForm,
+                                "purpose",
+                                commandForm)))));
     }
 
     private static ModelToolSpecification toolSpecification(String name, String version, String schemaId) {
