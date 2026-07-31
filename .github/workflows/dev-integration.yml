@@ -33,15 +33,15 @@ jobs:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
         steps:
             - uses: actions/checkout@v4
-            - name: Require private test-config token
+            - name: Require private test-config deploy key
               shell: bash
               env:
-                  TEST_CONFIG_TOKEN: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
-              run: test -n "$TEST_CONFIG_TOKEN"
+                  TEST_CONFIG_SSH_KEY: ${{ secrets.HAIFA_TEST_CONFIG_SSH_KEY }}
+              run: test -n "$TEST_CONFIG_SSH_KEY"
             - uses: actions/checkout@v4
               with:
                   repository: haifa-agent/haifa-agent-test-config
-                  token: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+                  ssh-key: ${{ secrets.HAIFA_TEST_CONFIG_SSH_KEY }}
                   path: test-config
             - uses: actions/setup-java@v4
               with:
@@ -93,15 +93,15 @@ jobs:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
         steps:
             - uses: actions/checkout@v4
-            - name: Require private test-config token
+            - name: Require private test-config deploy key
               shell: bash
               env:
-                  TEST_CONFIG_TOKEN: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
-              run: test -n "$TEST_CONFIG_TOKEN"
+                  TEST_CONFIG_SSH_KEY: ${{ secrets.HAIFA_TEST_CONFIG_SSH_KEY }}
+              run: test -n "$TEST_CONFIG_SSH_KEY"
             - uses: actions/checkout@v4
               with:
                   repository: haifa-agent/haifa-agent-test-config
-                  token: ${{ secrets.HAIFA_TEST_CONFIG_TOKEN }}
+                  ssh-key: ${{ secrets.HAIFA_TEST_CONFIG_SSH_KEY }}
                   path: test-config
             - uses: actions/setup-java@v4
               with:

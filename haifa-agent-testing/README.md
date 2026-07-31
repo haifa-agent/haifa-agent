@@ -76,8 +76,11 @@ Case 和解析后的公共 Selector 生成稳定计划 SHA-256；Execute 必须�
 `Dev Integration` 的手动 `workflow_dispatch` 是远端治理 Plan 入口，只展开 Nightly/Release 在
 Ubuntu/Windows 上的四个 Suite/Matrix Combination，并调用私有 `test-config` wrapper 的默认 Plan
 模式。该入口不传 `--execute`、Provider Secret、执行预算或批准后的 Plan SHA-256，也不会运行同一
-workflow 中的 Fast/Integration/Local Native Job。Job 中的非空检查和私有仓 checkout 只能证明
-`HAIFA_TEST_CONFIG_TOKEN` 在 Actions 中可用；Token 是否满足最小只读权限仍需由组织管理员人工审计。
+workflow 中的 Fast/Integration/Local Native Job。私有配置仓通过仅登记在
+`haifa-agent-test-config` 的只读 Deploy Key 检出；主仓 Repository Secret
+`HAIFA_TEST_CONFIG_SSH_KEY` 只保存私钥，不依赖组织级 Secret 或用户 PAT。Job 中的非空检查和
+私有仓 checkout 共同证明该 Key 在 Actions 中可用，Deploy Key 的 `read_only` 状态仍需从目标仓库
+设置或 API 审计，不能从掩码日志推断。
 
 Critical Path 与 Autonomous Delivery 的原生报告和 Budget 继续独立；两者额外生成版本 1
 `result-projection-v1.json`，用于跨 Suite 汇总 Case、平台、版本、共同状态、原生状态、Usage 摘要、
