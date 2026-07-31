@@ -112,6 +112,15 @@ class PersonalAssistantWebFluxTest {
                         assertThat(activity.path("kind").asText()).isEqualTo(vertical.kind());
                         assertThat(activity.path("safeResultSummary").asText()).isNotBlank();
                     });
+            assertThat(java.util.stream.StreamSupport.stream(activities.spliterator(), false)
+                            .toList())
+                    .anySatisfy(activity -> {
+                        assertThat(activity.path("kind").asText()).isEqualTo("MODEL");
+                        assertThat(activity.path("displayName").asText()).isNotBlank();
+                        assertThat(activity.path("safeTargetSummary").asText()).contains("iteration", "attempt");
+                        assertThat(activity.path("status").asText()).isEqualTo("SUCCEEDED");
+                        assertThat(activity.path("safeResultSummary").asText()).contains("Input", "Output");
+                    });
             activities.forEach(
                     activity -> observedKinds.add(activity.path("kind").asText()));
 
@@ -127,7 +136,7 @@ class PersonalAssistantWebFluxTest {
                     .block(Duration.ofSeconds(5));
             assertThat(sse).isNotEmpty();
         }
-        assertThat(observedKinds).containsExactlyInAnyOrder("TOOL", "SKILL", "MCP");
+        assertThat(observedKinds).containsExactlyInAnyOrder("MODEL", "TOOL", "SKILL", "MCP");
     }
 
     @Test

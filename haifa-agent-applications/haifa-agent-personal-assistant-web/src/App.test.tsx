@@ -74,6 +74,19 @@ const activity: Activity = {
   interactionRef: null,
   version: 5,
 };
+const modelActivity: Activity = {
+  activityId: "model-activity-1",
+  runId: run.id,
+  kind: "MODEL",
+  displayName: "deepseek-chat",
+  safeTargetSummary: "deepseek · iteration 1 · attempt 1",
+  status: "SUCCEEDED",
+  startedAt: "2026-07-28T00:59:59Z",
+  completedAt: "2026-07-28T01:00:00Z",
+  safeResultSummary: "Input 39,934 · Output 1,409",
+  interactionRef: null,
+  version: 3,
+};
 const candidate: MemoryCandidate = {
   id: "candidate-1",
   kind: "PREFERENCE",
@@ -114,7 +127,7 @@ function client(): PersonalAssistantClient {
     recommendedQuestions: vi.fn(async () => ({ questions: [] })),
     run: vi.fn(async () => run),
     cancelRun: vi.fn(async () => ({ ...run, status: "CANCELLED" })),
-    activities: vi.fn(async () => [activity]),
+    activities: vi.fn(async () => [modelActivity, activity]),
     interaction: vi.fn(async () => null),
     respondToInteraction: vi.fn(async () => ({
       responseId: "response-1",
@@ -142,6 +155,8 @@ describe("Personal Assistant application", () => {
   it("renders authoritative run usage and safe activity", async () => {
     render(<App client={client()} />);
     expect(await screen.findByText("每日计划")).toBeTruthy();
+    expect(await screen.findByText("deepseek-chat")).toBeTruthy();
+    expect(screen.getByText("Input 39,934 · Output 1,409")).toBeTruthy();
     expect(await screen.findByText("checklist.verify")).toBeTruthy();
     const usage = screen.getByLabelText("本次运行 Token 消耗");
     expect(usage.textContent).toContain("39,934");

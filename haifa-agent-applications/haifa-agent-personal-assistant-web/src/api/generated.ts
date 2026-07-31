@@ -70,7 +70,7 @@ export interface Run {
 export interface Activity {
   activityId: string;
   runId: string;
-  kind: "TOOL" | "SKILL" | "MCP";
+  kind: "MODEL" | "TOOL" | "SKILL" | "MCP";
   displayName: string;
   safeTargetSummary: string;
   status: string;

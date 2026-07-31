@@ -1,5 +1,9 @@
 # Haifa Personal Assistant Server
 
+The public activities endpoint projects bounded durable Model, Tool, Skill, and MCP
+events. Model activities never include prompts, assistant text, endpoints, credentials,
+or raw provider failures.
+
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
 端口冲突会使启动失败，不会自动换端口。

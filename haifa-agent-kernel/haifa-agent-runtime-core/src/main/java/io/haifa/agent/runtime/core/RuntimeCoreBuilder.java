@@ -479,7 +479,7 @@ public final class RuntimeCoreBuilder {
         ExecutionOwnershipPort configuredOwnership =
                 ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
-        FrozenModelInvoker models = new FrozenModelInvoker(state, chatModels, ids, modelOutput, controls);
+        FrozenModelInvoker models = new FrozenModelInvoker(state, chatModels, ids, modelOutput, controls, events, time);
         InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
         var defaultMemoryPolicy = new DefaultMemoryPolicy();
         MemoryRetriever configuredMemoryRetriever = memoryRetriever != null

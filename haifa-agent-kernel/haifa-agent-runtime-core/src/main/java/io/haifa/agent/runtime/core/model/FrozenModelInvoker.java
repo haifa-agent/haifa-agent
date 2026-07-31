@@ -1,18 +1,21 @@
 package io.haifa.agent.runtime.core.model;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.api.AgentContext;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelCallId;
+import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
+import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.time.Duration;
@@ -29,13 +32,17 @@ public final class FrozenModelInvoker {
     private final AgentChatResponseMapper responses;
     private final RuntimeModelOutputPublisher output;
     private final RunControlRegistry controls;
+    private final RuntimeEventAppender events;
+    private final TimeProvider time;
 
     public FrozenModelInvoker(
             RuntimeStateRepository state,
             Map<ModelAdapterKey, AgentChatModel> adapters,
             IdentifierGenerator ids,
             RuntimeModelOutputPublisher output,
-            RunControlRegistry controls) {
+            RunControlRegistry controls,
+            RuntimeEventAppender events,
+            TimeProvider time) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
@@ -43,6 +50,8 @@ public final class FrozenModelInvoker {
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");
+        this.events = Objects.requireNonNull(events, "events must not be null");
+        this.time = Objects.requireNonNull(time, "time must not be null");
     }
 
     public FrozenModelBinding bind(AgentRun run) {
@@ -93,6 +102,7 @@ public final class FrozenModelInvoker {
                 Math.toIntExact(context.budget().outputReserve()),
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
                 Map.of());
+        appendLifecycle(binding, run, callId, iteration, attempt, "model.call.started", "STARTED", 0, 0, "", "NONE");
         output.started(run.id(), callId.value(), attempt, iteration);
         AgentChatResponse response;
         try {
@@ -104,7 +114,7 @@ public final class FrozenModelInvoker {
                 return ModelStreamControl.CONTINUE;
             });
             var decision = responses.map(request, response, binding.tools());
-            return new ModelInvocationResult(
+            var invocation = new ModelInvocationResult(
                     decision,
                     response.usage().inputTokens(),
                     response.usage().outputTokens(),
@@ -136,10 +146,67 @@ public final class FrozenModelInvoker {
                     attempt,
                     binding.configuration().model(),
                     response.reasoning());
+            appendLifecycle(
+                    binding,
+                    run,
+                    callId,
+                    iteration,
+                    attempt,
+                    "model.call.succeeded",
+                    "SUCCEEDED",
+                    response.usage().inputTokens(),
+                    response.usage().outputTokens(),
+                    response.finishReason().name(),
+                    "NONE");
+            return invocation;
         } catch (RuntimeException exception) {
             output.failed(run.id(), callId.value(), attempt, iteration);
+            appendLifecycle(
+                    binding,
+                    run,
+                    callId,
+                    iteration,
+                    attempt,
+                    "model.call.failed",
+                    "FAILED",
+                    0,
+                    0,
+                    "",
+                    exception instanceof ModelInvocationException modelFailure
+                            ? modelFailure.category().name()
+                            : "MODEL_CALL_FAILED");
             throw exception;
         }
+    }
+
+    private void appendLifecycle(
+            FrozenModelBinding binding,
+            AgentRun run,
+            ModelCallId callId,
+            int iteration,
+            int attempt,
+            String type,
+            String status,
+            long inputTokens,
+            long outputTokens,
+            String finishReason,
+            String reasonCode) {
+        var model = binding.configuration().model();
+        events.append(
+                run.id(),
+                type,
+                Map.of(
+                        "modelCallId", callId.value(),
+                        "providerId", model.providerId().value(),
+                        "modelId", model.providerModelId(),
+                        "status", status,
+                        "iteration", iteration,
+                        "attempt", attempt,
+                        "inputTokens", inputTokens,
+                        "outputTokens", outputTokens,
+                        "finishReason", finishReason,
+                        "reasonCode", reasonCode),
+                time.now());
     }
 
     public void committed(AgentRun run, ModelInvocationResult invocation, int iteration) {

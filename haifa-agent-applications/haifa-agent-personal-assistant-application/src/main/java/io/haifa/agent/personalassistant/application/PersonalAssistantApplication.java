@@ -407,6 +407,20 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     private Optional<ActivityView> activity(AgentRunEvent event) {
+        if (event.payload() instanceof RunEventPayloads.ModelLifecycle model) {
+            return Optional.of(new ActivityView(
+                    event.eventId(),
+                    event.runId().value(),
+                    ActivityKind.MODEL,
+                    model.modelId(),
+                    model.providerId() + " · iteration " + model.iteration() + " · attempt " + model.attempt(),
+                    model.status(),
+                    event.occurredAt(),
+                    terminal(model.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
+                    safeResult(model),
+                    Optional.empty(),
+                    event.sequence()));
+        }
         if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle execution) {
             return Optional.of(new ActivityView(
                     event.eventId(),
@@ -448,6 +462,14 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private static String safeResult(RunEventPayloads.ToolLifecycle tool) {
         if ("SUCCEEDED".equals(tool.status())) return "Completed";
         if ("FAILED".equals(tool.status()) || "CANCELLED".equals(tool.status())) return tool.reasonCode();
+        return "";
+    }
+
+    private static String safeResult(RunEventPayloads.ModelLifecycle model) {
+        if ("SUCCEEDED".equals(model.status())) {
+            return "Input " + model.inputTokens() + " · Output " + model.outputTokens();
+        }
+        if ("FAILED".equals(model.status())) return model.reasonCode();
         return "";
     }
 
@@ -582,6 +604,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             long runVersion) {}
 
     public enum ActivityKind {
+        MODEL,
         TOOL,
         SKILL,
         MCP

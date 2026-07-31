@@ -109,7 +109,7 @@
       "get": {
         "operationId": "listSafeActivities",
         "parameters": [{"$ref": "#/components/parameters/RunId"}, {"$ref": "#/components/parameters/Limit"}],
-        "responses": {"200": {"description": "Bounded Tool, Skill, and MCP activity projection", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Activity"}}}}}}
+        "responses": {"200": {"description": "Bounded Model, Tool, Skill, and MCP activity projection", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Activity"}}}}}}
       }
     },
     "/api/v1/runs/{runId}/interaction": {
@@ -306,7 +306,7 @@
         "properties": {
           "activityId": {"type": "string"},
           "runId": {"type": "string"},
-          "kind": {"type": "string", "enum": ["TOOL", "SKILL", "MCP"]},
+          "kind": {"type": "string", "enum": ["MODEL", "TOOL", "SKILL", "MCP"]},
           "displayName": {"type": "string"},
           "safeTargetSummary": {"type": "string"},
           "status": {"type": "string"},

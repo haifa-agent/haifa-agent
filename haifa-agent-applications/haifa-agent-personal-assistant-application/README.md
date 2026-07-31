@@ -1,5 +1,9 @@
 # Haifa Personal Assistant Application
 
+The safe Activity projection includes durable Model, Tool, Skill, and MCP lifecycle
+events. Model activities expose only model identity, physical attempt coordinates,
+status, token counts, finish reason, and normalized failure codes.
+
 Run streaming use case 合并两条明确分离的来源：durable Run Event Feed 提供状态、Tool、Interaction 和
 Activity；`subscribeOutput` 提供当前进程活动 Run 的 transient Assistant Delta/lifecycle。两者使用独立
 sequence，订阅统一可关闭。进程重启后不恢复未完成 Delta；终态正文从 Conversation Turns 的权威

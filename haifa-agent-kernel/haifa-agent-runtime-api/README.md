@@ -1,5 +1,13 @@
 # Haifa Agent Runtime API
 
+## Durable model-call lifecycle
+
+The provider-neutral Run Event Feed includes bounded `model.call.started`,
+`model.call.succeeded`, and `model.call.failed` lifecycle facts. Their typed
+`ModelLifecycle` payload contains only the call identifier, provider/model identifiers,
+iteration/attempt, safe status or reason codes, token counts, and finish reason. Prompt
+content, assistant output, endpoints, credentials, and raw provider failures are excluded.
+
 ## Transient model output
 
 `subscribeOutput(runId, cursor, listener)` 和 `outputEvents` 暴露 provider-neutral 的进程内模型输出通道。

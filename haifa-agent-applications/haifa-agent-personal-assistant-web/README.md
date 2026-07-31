@@ -1,5 +1,9 @@
 # Haifa Personal Assistant Web
 
+The right-side activity panel renders safe durable Model, Tool, Skill, and MCP events.
+Model-call cards show the model, attempt coordinates, status, and terminal token or
+normalized failure summary without prompt or response text.
+
 Personal Assistant 的独立 React Web 部署单元。它只消费
 `haifa-agent-personal-assistant-server` 发布的 `/api/v1` HTTP/WebFlux SSE 契约，不参与 Server
 JAR 的构建或静态资源打包。

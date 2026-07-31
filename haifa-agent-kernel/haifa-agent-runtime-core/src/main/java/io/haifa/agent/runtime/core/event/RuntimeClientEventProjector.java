@@ -64,6 +64,9 @@ public final class RuntimeClientEventProjector {
                                         requiredText(event.data(), "inputId"),
                                         "APPLIED",
                                         text(event.data(), "applicationPoint", "BEFORE_ITERATION")));
+                    case "model.call.started" -> model("model.call.started", event, "STARTED");
+                    case "model.call.succeeded" -> model("model.call.succeeded", event, "SUCCEEDED");
+                    case "model.call.failed" -> model("model.call.failed", event, "FAILED");
                     case "tool.requested" -> tool("tool.call.requested", event, "REQUESTED", "NONE");
                     case "tool.started" -> tool("tool.call.started", event, "STARTED", "NONE");
                     case "tool.succeeded", "tool.completed" -> tool("tool.call.succeeded", event, "SUCCEEDED", "NONE");
@@ -126,6 +129,9 @@ public final class RuntimeClientEventProjector {
                                 "tool.failed",
                                 "tool.business-failed",
                                 "tool.cancelled",
+                                "model.call.started",
+                                "model.call.succeeded",
+                                "model.call.failed",
                                 "execution.completed",
                                 "execution.failed",
                                 "execution.cancelled",
@@ -176,6 +182,22 @@ public final class RuntimeClientEventProjector {
                 eventType,
                 new RunEventPayloads.InteractionLifecycle(
                         requiredText(event.data(), "requestId"), inferredKind(event), state, actionOrReason));
+    }
+
+    private static Projection model(String eventType, RuntimeEvent event, String status) {
+        return new Projection(
+                eventType,
+                new RunEventPayloads.ModelLifecycle(
+                        requiredText(event.data(), "modelCallId"),
+                        requiredText(event.data(), "providerId"),
+                        requiredText(event.data(), "modelId"),
+                        text(event.data(), "status", status),
+                        requiredPositiveInteger(event.data(), "iteration"),
+                        requiredPositiveInteger(event.data(), "attempt"),
+                        requiredNonNegativeNumber(event.data(), "inputTokens"),
+                        requiredNonNegativeNumber(event.data(), "outputTokens"),
+                        text(event.data(), "finishReason", ""),
+                        requiredText(event.data(), "reasonCode")));
     }
 
     private static Projection tool(String eventType, RuntimeEvent event, String status, String reasonCode) {
@@ -267,6 +289,22 @@ public final class RuntimeClientEventProjector {
     private static long number(Map<String, Object> data, String key, long fallback) {
         Object value = data.get(key);
         return value instanceof Number number ? number.longValue() : fallback;
+    }
+
+    private static int requiredPositiveInteger(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        if (!(value instanceof Number number) || number.intValue() < 1) {
+            throw new IllegalStateException("known client event is missing a required positive field: " + key);
+        }
+        return number.intValue();
+    }
+
+    private static long requiredNonNegativeNumber(Map<String, Object> data, String key) {
+        Object value = data.get(key);
+        if (!(value instanceof Number number) || number.longValue() < 0) {
+            throw new IllegalStateException("known client event is missing a required non-negative field: " + key);
+        }
+        return number.longValue();
     }
 
     private static Integer integer(Map<String, Object> data, String key) {
