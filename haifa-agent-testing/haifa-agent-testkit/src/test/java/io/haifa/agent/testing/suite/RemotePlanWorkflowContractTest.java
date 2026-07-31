@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -37,7 +38,8 @@ class RemotePlanWorkflowContractTest {
                 matrixEntries(remotePlan));
 
         String remotePlanDefinition = remotePlan.toString();
-        assertTrue(remotePlanDefinition.contains("HAIFA_TEST_CONFIG_TOKEN"));
+        assertTrue(remotePlanDefinition.contains("HAIFA_TEST_CONFIG_SSH_KEY"));
+        assertFalse(remotePlanDefinition.contains("HAIFA_TEST_CONFIG_TOKEN"));
         assertFalse(remotePlanDefinition.contains("--execute"));
         assertFalse(remotePlanDefinition.contains("DEEPSEEK_API_KEY"));
         assertFalse(remotePlanDefinition.contains("HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD"));
@@ -51,6 +53,18 @@ class RemotePlanWorkflowContractTest {
                 .path("if")
                 .asText()
                 .contains("github.event_name != 'workflow_dispatch'"));
+    }
+
+    @Test
+    void privateTestConfigCheckoutsUseOnlyTheReadOnlyDeployKey() throws Exception {
+        Path repositoryRoot = findRepositoryRoot();
+        for (String workflow : List.of("dev-integration.yml", "dev-nightly-live.yml", "main-release.yml")) {
+            Path workflowPath = repositoryRoot.resolve(".github/workflows").resolve(workflow);
+            assertTrue(yaml.readTree(workflowPath.toFile()).has("jobs"));
+            String definition = Files.readString(workflowPath);
+            assertTrue(definition.contains("ssh-key: ${{ secrets.HAIFA_TEST_CONFIG_SSH_KEY }}"));
+            assertFalse(definition.contains("HAIFA_TEST_CONFIG_TOKEN"));
+        }
     }
 
     private static Set<String> matrixEntries(JsonNode remotePlan) {
