@@ -89,6 +89,7 @@ class AutonomousDeliveryHarnessMainTest {
                 "unused-combination",
                 List.of(),
                 false,
+                0,
                 null,
                 null,
                 null,

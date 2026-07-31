@@ -31,6 +31,34 @@ class AutonomousDeliverySuiteManifestLoaderTest {
                 .load(temporary, "phase-test-v1", AutonomousDeliveryCaseCatalog.loadVerified()));
     }
 
+    @Test
+    void rejectsPartiallyConfiguredLiveProviderBudget() throws Exception {
+        Path suites = Files.createDirectory(temporary.resolve("suites"));
+        Files.writeString(
+                suites.resolve("phase-test-v1.yaml"),
+                """
+                schemaVersion: 1
+                suiteId: phase-test-v1
+                catalogRef: generalized-coding-v1
+                phase: PHASE_1
+                matrixRef: matrix-v1
+                budget:
+                  maxWallTimeMillis: 1800000
+                  maxIterations: 80
+                  maxToolCalls: 96
+                  maxModelCalls: 64
+                  maxParallelExternalCalls: 1
+                  maxBatchWallTimeMillis: 3600000
+                cases:
+                  - { caseId: "04", repetitions: 1, blocking: true }
+                """);
+
+        assertThrows(
+                com.fasterxml.jackson.databind.exc.ValueInstantiationException.class,
+                () -> new AutonomousDeliverySuiteManifestLoader()
+                        .load(temporary, "phase-test-v1", AutonomousDeliveryCaseCatalog.loadVerified()));
+    }
+
     private void writeSuite(String caseId) throws Exception {
         Path suites = Files.createDirectory(temporary.resolve("suites"));
         Files.writeString(

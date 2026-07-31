@@ -51,6 +51,7 @@ final class AutonomousDeliveryRepeatExecutor {
             AutonomousDeliveryMatrixManifest.Combination matrixCombination,
             RepositoryRevision productRevision,
             RepositoryRevision testConfigRevision,
+            String executionPlanSha256,
             Path driver,
             boolean nodeDriver,
             AutonomousDeliveryPhasePolicy phasePolicy,
@@ -69,7 +70,7 @@ final class AutonomousDeliveryRepeatExecutor {
         Path configuration = repeat.resolve("terminal.yaml");
         Files.writeString(
                 configuration,
-                DeliveryCliConfigurationFactory.render(suite, toolchains, hostProfile),
+                DeliveryCliConfigurationFactory.render(suite, toolchains, hostProfile, matrixCombination),
                 StandardCharsets.UTF_8,
                 StandardOpenOption.CREATE_NEW);
         Path driverResult = repeat.resolve("driver-result.json");
@@ -85,7 +86,8 @@ final class AutonomousDeliveryRepeatExecutor {
                 hostProfile,
                 matrixCombination,
                 productRevision,
-                testConfigRevision);
+                testConfigRevision,
+                executionPlanSha256);
 
         long startedNanos = System.nanoTime();
         List<String> driverCommand = new ArrayList<>();
@@ -259,7 +261,8 @@ final class AutonomousDeliveryRepeatExecutor {
             DeliveryHostProfile hostProfile,
             AutonomousDeliveryMatrixManifest.Combination matrixCombination,
             RepositoryRevision productRevision,
-            RepositoryRevision testConfigRevision)
+            RepositoryRevision testConfigRevision,
+            String executionPlanSha256)
             throws IOException {
         LinkedHashMap<String, Object> manifest = new LinkedHashMap<>();
         manifest.put("schemaVersion", 3);
@@ -270,6 +273,7 @@ final class AutonomousDeliveryRepeatExecutor {
         manifest.put("buildCommit", buildCommit);
         manifest.put("productRevision", productRevision);
         manifest.put("testConfigRevision", testConfigRevision);
+        manifest.put("executionPlanSha256", executionPlanSha256);
         manifest.put("caseId", testCase.caseId());
         manifest.put("caseVersion", testCase.caseVersion());
         manifest.put("repetition", repetition);

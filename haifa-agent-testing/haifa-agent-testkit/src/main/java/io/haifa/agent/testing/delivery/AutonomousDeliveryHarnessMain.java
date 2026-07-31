@@ -69,12 +69,16 @@ public final class AutonomousDeliveryHarnessMain {
         RepositoryRevision productRevision = RepositoryRevision.inspect(options.projectRoot());
         RepositoryRevision testConfigRevision = RepositoryRevision.inspect(options.configRoot());
         productRevision.requireCommit(matrix.compatibleAgentBaselineCommit(), "Autonomous Delivery matrix");
+        AutonomousDeliveryExecutionPlan.Frozen executionPlan = suite == null
+                ? null
+                : AutonomousDeliveryExecutionPlan.freeze(
+                        catalog, suite, matrix, combination, productRevision, testConfigRevision);
         if (options.command().equals("stub-gate-plan")) {
             printStubPlan(stubSuite, matrix, combination, productRevision, testConfigRevision);
             return;
         }
         if (options.command().equals("plan")) {
-            printPlan(catalog, suite, matrix, combination, productRevision, testConfigRevision);
+            printPlan(catalog, suite, matrix, combination, productRevision, testConfigRevision, executionPlan);
             return;
         }
         List<Path> repositories =
@@ -163,7 +167,9 @@ public final class AutonomousDeliveryHarnessMain {
                             options.configRoot(),
                             combination,
                             productRevision,
-                            testConfigRevision);
+                            testConfigRevision,
+                            executionPlan,
+                            options.approvedMaxCostMinorUnits());
             System.out.println("Phase " + options.command().charAt("phase-".length()) + " gate PASS: " + gate);
             return;
         }
@@ -244,7 +250,8 @@ public final class AutonomousDeliveryHarnessMain {
             AutonomousDeliveryMatrixManifest matrix,
             AutonomousDeliveryMatrixManifest.Combination combination,
             RepositoryRevision productRevision,
-            RepositoryRevision testConfigRevision) {
+            RepositoryRevision testConfigRevision,
+            AutonomousDeliveryExecutionPlan.Frozen executionPlan) {
         System.out.printf(
                 "Catalog %s version=%s digest=%s cases=%d matrix=%s baseline=%s "
                         + "combination=%s platform=%s "
@@ -273,11 +280,18 @@ public final class AutonomousDeliveryHarnessMain {
                         testCase.caseId(), testCase.caseVersion(), testCase.language(), testCase.taskType()));
         if (suite != null) {
             System.out.printf(
-                    "Suite %s phase=%s matrix=%s selections=%d%n",
+                    "Suite %s phase=%s matrix=%s selections=%d planSha256=%s%n",
                     suite.suiteId(),
                     suite.phase(),
                     suite.matrixRef(),
-                    suite.cases().size());
+                    suite.cases().size(),
+                    executionPlan.sha256());
+            System.out.printf(
+                    "  budget maxRepeatMillis=%d maxBatchMillis=%d cost=%s%d minorUnits%n",
+                    suite.budget().maxWallTimeMillis(),
+                    suite.budget().maxBatchWallTimeMillis(),
+                    suite.budget().costCurrency(),
+                    suite.budget().maxEstimatedCostMinorUnits());
             suite.cases()
                     .forEach(selection -> System.out.printf(
                             "  case-%s repetitions=%d blocking=%s%n",
@@ -379,6 +393,7 @@ public final class AutonomousDeliveryHarnessMain {
             String matrixCombination,
             List<Path> historicalBaselineRoots,
             boolean execute,
+            long approvedMaxCostMinorUnits,
             Path cliJar,
             Path javaExecutable,
             Path javacExecutable,
@@ -398,6 +413,7 @@ public final class AutonomousDeliveryHarnessMain {
             String matrixCombination = null;
             List<Path> historicalBaselineRoots = new ArrayList<>();
             boolean execute = false;
+            long approvedMaxCostMinorUnits = 0;
             Path cliJar = null;
             Path javaExecutable = null;
             Path javacExecutable = null;
@@ -426,6 +442,8 @@ public final class AutonomousDeliveryHarnessMain {
                     case "--matrix-combination" -> matrixCombination = value(arguments, ++index);
                     case "--baseline-root" -> historicalBaselineRoots.add(Path.of(value(arguments, ++index)));
                     case "--execute" -> execute = true;
+                    case "--approved-max-cost-minor-units" ->
+                        approvedMaxCostMinorUnits = positiveLong(value(arguments, ++index), "approved max cost");
                     case "--cli-jar" -> cliJar = Path.of(value(arguments, ++index));
                     case "--java-executable" -> javaExecutable = Path.of(value(arguments, ++index));
                     case "--javac-executable" -> javacExecutable = Path.of(value(arguments, ++index));
@@ -454,6 +472,7 @@ public final class AutonomousDeliveryHarnessMain {
                     matrixCombination,
                     List.copyOf(historicalBaselineRoots),
                     execute,
+                    approvedMaxCostMinorUnits,
                     cliJar,
                     javaExecutable,
                     javacExecutable,
@@ -469,6 +488,16 @@ public final class AutonomousDeliveryHarnessMain {
                 throw new IllegalArgumentException("missing argument value");
             }
             return arguments[index];
+        }
+
+        private static long positiveLong(String value, String label) {
+            try {
+                long parsed = Long.parseLong(value);
+                if (parsed > 0) return parsed;
+            } catch (NumberFormatException ignored) {
+                // Replaced by the stable validation message below.
+            }
+            throw new IllegalArgumentException(label + " must be a positive integer");
         }
     }
 }

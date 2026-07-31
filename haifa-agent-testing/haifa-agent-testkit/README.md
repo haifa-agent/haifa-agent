@@ -101,6 +101,11 @@ Scratch、Scratch 清理失败或 Secret 命中均失败。每个 Repeat 和 Gat
 设为只读。Manifest 只排除可被 Finder 异步改写、且不承载交付事实的 `.DS_Store`；Workspace、
 Runtime 与其余 Gate 证据文件全部纳入摘要。
 
+真实 Gate 还要求 Revision 绑定的 `execution-plan.json` 与显式批准的最小费用单位。Suite 可冻结整批
+时长、币种、价格和每 Repeat Token 上界；Harness 在读取 Secret 前用缓存未命中价格计算保守费用
+上界，并拒绝超出 Suite 或人工批准金额的执行。Provider 未返回金额时仍保留 `costKnown=false`，
+另行输出 `FROZEN_CACHE_MISS_UPPER_BOUND` 估算证据，不把估算冒充 Provider 账单。
+
 `phase-3-gate --execute` 在新的 `phase-3/build-<commit>/gate-<timestamp>/` 下复用同一隔离协议，并
 为每次运行额外生成冻结 `verification-plan.json`、逐维度
 `verification-evidence.json`、Workspace 前后摘要与 Scratch 清理绑定的
