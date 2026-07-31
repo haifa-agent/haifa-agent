@@ -12,7 +12,6 @@ public record PersonalAssistantProperties(
         Path dataDirectory,
         String continuationKeyBase64,
         Caller caller,
-        Model model,
         List<ModelProvider> modelProviders,
         String defaultModelId,
         Web web,
@@ -26,13 +25,13 @@ public record PersonalAssistantProperties(
         if (continuationKeyBase64 == null || continuationKeyBase64.isBlank()) {
             throw new IllegalArgumentException("HAIFA_PERSONAL_CONTINUATION_KEY is required");
         }
-        if (caller == null || model == null || web == null || mcp == null || execution == null) {
-            throw new IllegalArgumentException("caller, model, web, mcp, and execution configuration are required");
+        if (caller == null || web == null || mcp == null || execution == null) {
+            throw new IllegalArgumentException("caller, web, mcp, and execution configuration are required");
         }
-        modelProviders = List.copyOf(
-                modelProviders == null || modelProviders.isEmpty()
-                        ? List.of(ModelProvider.fromLegacy(model))
-                        : modelProviders);
+        if (modelProviders == null || modelProviders.isEmpty()) {
+            throw new IllegalArgumentException("modelProviders must not be empty");
+        }
+        modelProviders = List.copyOf(modelProviders);
         if (modelProviders.stream().map(ModelProvider::id).distinct().count() != modelProviders.size()) {
             throw new IllegalArgumentException("model provider ids must be unique");
         }
@@ -42,39 +41,13 @@ public record PersonalAssistantProperties(
         if (configuredModels.stream().map(ProviderModel::id).distinct().count() != configuredModels.size()) {
             throw new IllegalArgumentException("model ids must be globally unique");
         }
-        defaultModelId = defaultModelId == null || defaultModelId.isBlank()
-                ? model.id()
-                : text(defaultModelId, "defaultModelId");
+        defaultModelId = text(defaultModelId, "defaultModelId");
         String selectedDefaultModelId = defaultModelId;
         if (configuredModels.stream().noneMatch(value -> value.id().equals(selectedDefaultModelId))) {
             throw new IllegalArgumentException("defaultModelId must identify a configured model");
         }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
         trustedScriptManifest = trustedScriptManifest == null ? "" : trustedScriptManifest.trim();
-    }
-
-    public PersonalAssistantProperties(
-            Path dataDirectory,
-            String continuationKeyBase64,
-            Caller caller,
-            Model model,
-            Web web,
-            Mcp mcp,
-            Execution execution,
-            String localSkillRoot,
-            String trustedScriptManifest) {
-        this(
-                dataDirectory,
-                continuationKeyBase64,
-                caller,
-                model,
-                List.of(ModelProvider.fromLegacy(model)),
-                model.id(),
-                web,
-                mcp,
-                execution,
-                localSkillRoot,
-                trustedScriptManifest);
     }
 
     public record Web(
@@ -141,60 +114,6 @@ public record PersonalAssistantProperties(
         }
     }
 
-    public record Model(
-            String mode,
-            boolean allowDeterministic,
-            URI endpoint,
-            String providerModelId,
-            String credentialReference,
-            String id,
-            String displayName,
-            String providerId,
-            String providerDisplayName) {
-        public Model(
-                String mode,
-                boolean allowDeterministic,
-                URI endpoint,
-                String providerModelId,
-                String credentialReference) {
-            this(
-                    mode,
-                    allowDeterministic,
-                    endpoint,
-                    providerModelId,
-                    credentialReference,
-                    "personal-chat",
-                    providerModelId,
-                    "deepseek",
-                    "DeepSeek");
-        }
-
-        @ConstructorBinding
-        public Model {
-            mode = text(mode, "model.mode").toLowerCase(java.util.Locale.ROOT);
-            if (!mode.equals("remote") && !mode.equals("deterministic")) {
-                throw new IllegalArgumentException("model.mode must be remote or deterministic");
-            }
-            if (mode.equals("deterministic") && !allowDeterministic) {
-                throw new IllegalArgumentException("deterministic model requires explicit allow-deterministic=true");
-            }
-            if (endpoint == null || !endpoint.isAbsolute()) {
-                throw new IllegalArgumentException("model.endpoint must be absolute");
-            }
-            providerModelId = text(providerModelId, "model.providerModelId");
-            credentialReference = text(credentialReference, "model.credentialReference");
-            id = text(id == null ? "personal-chat" : id, "model.id");
-            displayName = text(displayName == null ? providerModelId : displayName, "model.displayName");
-            providerId = text(providerId == null ? "deepseek" : providerId, "model.providerId");
-            providerDisplayName =
-                    text(providerDisplayName == null ? providerId : providerDisplayName, "model.providerDisplayName");
-            if (mode.equals("deterministic")) {
-                providerId = "personal-local";
-                providerDisplayName = "Local acceptance";
-            }
-        }
-    }
-
     public record ModelProvider(
             String id,
             String displayName,
@@ -226,17 +145,6 @@ public record PersonalAssistantProperties(
             if (models.stream().map(ProviderModel::id).distinct().count() != models.size()) {
                 throw new IllegalArgumentException("model ids within a provider must be unique");
             }
-        }
-
-        public static ModelProvider fromLegacy(Model model) {
-            return new ModelProvider(
-                    model.providerId(),
-                    model.providerDisplayName(),
-                    model.mode(),
-                    model.allowDeterministic(),
-                    model.endpoint(),
-                    model.credentialReference(),
-                    List.of(new ProviderModel(model.id(), model.displayName(), model.providerModelId())));
         }
     }
 

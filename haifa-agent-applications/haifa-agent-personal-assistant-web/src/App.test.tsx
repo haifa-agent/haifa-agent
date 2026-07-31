@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Activity,
@@ -23,6 +23,23 @@ const model = {
   providerDisplayName: "DeepSeek",
   capabilities: ["TEXT_CHAT", "TOOL_CALLING"],
   contextWindow: 64000,
+};
+const proModel = {
+  ...model,
+  id: "deepseek-v4-pro",
+  displayName: "DeepSeek V4 Pro",
+};
+const flashModel = {
+  ...model,
+  id: "deepseek-v4-flash",
+  displayName: "DeepSeek V4 Flash",
+};
+const bailianModel = {
+  ...model,
+  id: "qwen-plus",
+  displayName: "Qwen Plus",
+  providerId: "bailian",
+  providerDisplayName: "阿里云百炼",
 };
 const conversation: Conversation = {
   id: "conversation-1",
@@ -118,6 +135,12 @@ function client(): PersonalAssistantClient {
     bootstrap: vi.fn(async () => bootstrap),
     conversations: vi.fn(async () => [conversation]),
     createConversation: vi.fn(async () => conversation),
+    selectModel: vi.fn(async (_conversation, modelId) => ({
+      model: [model, proModel, flashModel, bailianModel]
+        .find((candidate) => candidate.id === modelId) ?? model,
+      revision: 1,
+      available: true,
+    })),
     conversation: vi.fn(async () => conversation),
     updateConversation: vi.fn(async () => conversation),
     turns: vi.fn(async () => turns),
@@ -304,6 +327,65 @@ describe("Personal Assistant application", () => {
     expect(await screen.findByRole("dialog", { name: "记忆管理" })).toBeTruthy();
     expect(screen.getByText("国内出行优先选择高铁。")).toBeTruthy();
     expect(api.approveMemory).not.toHaveBeenCalled();
+  });
+
+  it("opens slash commands and selects a model by provider then model", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: flashModel.id,
+      models: [proModel, flashModel, bailianModel],
+    });
+
+    render(<App client={api} />);
+
+    const composer = await screen.findByPlaceholderText("输入消息或 / 命令，Enter 发送");
+    fireEvent.change(composer, { target: { value: "/" } });
+    expect(await screen.findByRole("dialog", { name: "命令功能" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("option", { name: /选择模型/ }));
+    expect(await screen.findByRole("dialog", { name: "选择模型厂商" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
+    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
+    fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
+
+    await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
+      conversation,
+      proModel.id,
+      { idempotencyKey: expect.any(String) },
+    ));
+    expect((composer as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("uses the slash-selected model when creating a new conversation", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: flashModel.id,
+      models: [proModel, flashModel],
+    });
+
+    render(<App client={api} />);
+
+    await screen.findByText("每日计划");
+    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+    const composer = await screen.findByPlaceholderText("输入消息或 / 命令，Enter 发送");
+    fireEvent.change(composer, { target: { value: "/" } });
+    fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
+    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
+    fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
+
+    fireEvent.change(composer, { target: { value: "使用所选模型开始对话" } });
+    fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() => expect(api.createConversation).toHaveBeenCalledWith(
+      "使用所选模型开始对话",
+      "使用所选模型开始对话",
+      { idempotencyKey: expect.any(String) },
+      proModel.id,
+    ));
   });
 
   it("disables the composer while a run is active", async () => {

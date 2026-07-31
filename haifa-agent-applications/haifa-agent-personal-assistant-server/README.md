@@ -1,7 +1,8 @@
 # Haifa Personal Assistant Server
 
-Server 兼容旧 `haifa.personal.model`，并支持 `haifa.personal.model-providers` 受信 Provider 列表和
-`default-model-id`。`/api/v1/models`、Bootstrap 和 Conversation 只返回脱敏信息；Endpoint、
+Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显式
+`default-model-id`，不支持旧的单模型 `haifa.personal.model` 配置。`/api/v1/models`、Bootstrap
+和 Conversation 只返回脱敏信息；Endpoint、
 Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
 
@@ -72,11 +73,24 @@ Server 不构建、不复制也不托管 React Web；`/` 和前端 history 路�
 Server。CORS 只允许 loopback `20000` Origin，且不启用浏览器凭据；Host/Origin/CSRF、
 幂等键和版本校验仍然生效。
 
-生产默认使用远程 OpenAI-compatible Model。离线确定性 Model 必须同时显式设置：
+生产默认使用远程 OpenAI-compatible Model。离线确定性 Model 也必须按 Provider 及其模型列表
+注册，并显式允许 deterministic 模式：
 
-```powershell
-$env:HAIFA_PERSONAL_MODEL_MODE='deterministic'
-$env:HAIFA_PERSONAL_ALLOW_DETERMINISTIC='true'
+```yaml
+haifa:
+  personal:
+    default-model-id: personal-test
+    model-providers:
+      - id: personal-local
+        display-name: Local acceptance
+        mode: deterministic
+        allow-deterministic: true
+        endpoint: http://127.0.0.1:20999
+        credential-reference: env://UNUSED
+        models:
+          - id: personal-test
+            display-name: Personal test
+            provider-model-id: personal-test
 ```
 
 Phase 3 的本机命令/脚本能力复用平台 Execution Broker 和 Host Guarded Sandbox。因为当前

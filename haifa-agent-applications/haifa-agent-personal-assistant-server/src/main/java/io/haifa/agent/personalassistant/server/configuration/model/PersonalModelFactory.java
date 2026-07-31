@@ -49,16 +49,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class PersonalModelFactory {
     private PersonalModelFactory() {}
 
-    public static ModelContribution create(
-            PersonalAssistantProperties.Model properties, ObjectMapper mapper, ShellPlatformContribution shell) {
-        return createPlatform(
-                        List.of(PersonalAssistantProperties.ModelProvider.fromLegacy(properties)),
-                        properties.id(),
-                        mapper,
-                        shell)
-                .contribution();
-    }
-
     public static Platform createPlatform(
             List<PersonalAssistantProperties.ModelProvider> configured,
             String defaultModelId,

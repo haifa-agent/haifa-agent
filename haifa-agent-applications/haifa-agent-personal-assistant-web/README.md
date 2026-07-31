@@ -2,6 +2,8 @@
 
 会话标题区提供模型 Selector。新会话使用 Bootstrap 默认值或用户选择；已有会话仅在无活动 Run 时
 调用带 `If-Match` 与幂等键的切换 API。页面只提交内部 Model ID。
+消息输入框输入 `/` 会打开命令菜单；当前 `/model`“选择模型”命令按 Provider、Model 两级展示
+Bootstrap 返回的可用模型，并复用同一模型切换 API。
 
 Personal Assistant 的独立 React Web 部署单元。它只消费
 `haifa-agent-personal-assistant-server` 发布的 `/api/v1` HTTP/WebFlux SSE 契约，不参与 Server
@@ -12,6 +14,7 @@ JAR 的构建或静态资源打包。
 - 新建、搜索、选择、重命名、归档和恢复 Conversation；
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
+- 输入框 `/` 命令菜单，以及按模型厂商、模型两级完成的新会话选择或已有会话切换；
 - 对话正文的 Markdown、代码块、表格和 KaTeX/LaTeX 公式渲染；
 - 助手完整 Markdown 回答和独立代码块的复制按钮，复制成功后显示图标反馈；
 - Clarification/Approval 的显式结构化回复；审批只在主对话区展示，长文本或代码默认预览并支持展开全文；

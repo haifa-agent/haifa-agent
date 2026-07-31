@@ -509,7 +509,11 @@ find_server_jar() {
 SERVER_JAR="$(find_server_jar)"
 if [[ "$REBUILD" == true || -z "$SERVER_JAR" ]]; then
     printf 'Building the Personal Assistant backend...\n'
-    "$MAVEN_WRAPPER" -pl :haifa-agent-personal-assistant-server -am -DskipTests package
+    if [[ "$REBUILD" == true ]]; then
+        "$MAVEN_WRAPPER" -pl :haifa-agent-personal-assistant-server -am -DskipTests clean package
+    else
+        "$MAVEN_WRAPPER" -pl :haifa-agent-personal-assistant-server -am -DskipTests package
+    fi
     SERVER_JAR="$(find_server_jar)"
     [[ -n "$SERVER_JAR" ]] || die "Backend build completed without producing an executable server JAR."
 fi
@@ -578,11 +582,19 @@ else
         export ALIYUN_IQS_API_KEY="$ALIYUN_IQS_API_KEY_VALUE"
         export HAIFA_PERSONAL_CONTINUATION_KEY="$CONTINUATION_KEY_VALUE"
         export HAIFA_PERSONAL_DATA_DIR="$DATA_DIRECTORY"
-        export HAIFA_PERSONAL_MODEL_MODE="remote"
-        export HAIFA_PERSONAL_ALLOW_DETERMINISTIC="false"
-        export HAIFA_PERSONAL_MODEL_ENDPOINT="https://api.deepseek.com"
-        export HAIFA_PERSONAL_MODEL_ID="deepseek-v4-flash"
-        export HAIFA_PERSONAL_MODEL_CREDENTIAL="env://DEEPSEEK_API_KEY"
+        export HAIFA_PERSONAL_DEFAULT_MODEL_ID="deepseek-v4-flash"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_ID="deepseek"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME="DeepSeek"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_MODE="remote"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC="false"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT="https://api.deepseek.com"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE="env://DEEPSEEK_API_KEY"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID="deepseek-v4-pro"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME="DeepSeek V4 Pro"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID="deepseek-v4-pro"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID="deepseek-v4-flash"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME="DeepSeek V4 Flash"
+        export HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID="deepseek-v4-flash"
         export HAIFA_PERSONAL_WEB_ENABLED="true"
         export HAIFA_PERSONAL_WEB_CREDENTIAL="env://ALIYUN_IQS_API_KEY"
         export HAIFA_PERSONAL_SKILL_ROOT="$PERSONAL_SKILL_ROOT"
