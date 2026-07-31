@@ -73,6 +73,12 @@ JVM 内跨平台或自动遍历 Provider。Execute 要求独立注入
 Case 和解析后的公共 Selector 生成稳定计划 SHA-256；Execute 必须与外部批准的
 `HAIFA_TEST_APPROVED_PLAN_SHA256` 一致，避免配置仓或 Catalog 漂移被静默执行。
 
+`Dev Integration` 的手动 `workflow_dispatch` 是远端治理 Plan 入口，只展开 Nightly/Release 在
+Ubuntu/Windows 上的四个 Suite/Matrix Combination，并调用私有 `test-config` wrapper 的默认 Plan
+模式。该入口不传 `--execute`、Provider Secret、执行预算或批准后的 Plan SHA-256，也不会运行同一
+workflow 中的 Fast/Integration/Local Native Job。Job 中的非空检查和私有仓 checkout 只能证明
+`HAIFA_TEST_CONFIG_TOKEN` 在 Actions 中可用；Token 是否满足最小只读权限仍需由组织管理员人工审计。
+
 Critical Path 与 Autonomous Delivery 的原生报告和 Budget 继续独立；两者额外生成版本 1
 `result-projection-v1.json`，用于跨 Suite 汇总 Case、平台、版本、共同状态、原生状态、Usage 摘要、
 失败分类和相对证据引用。Projection 不是新的 Gate 事实源，不得覆盖 Maven 状态或
