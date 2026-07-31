@@ -6,10 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.InputStream;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -20,9 +20,7 @@ class TestResultProjectionSchemaTest {
 
     @Test
     void schemaTracksEveryBatchAndResultFieldAndCommonStatus() throws Exception {
-        JsonNode schema = json.readTree(findRepositoryRoot()
-                .resolve("docs/testing/schemas/test-result-projection.schema.json")
-                .toFile());
+        JsonNode schema = readSchema("test-result-projection.schema.json");
 
         assertEquals(
                 1, schema.path("properties").path("schemaVersion").path("const").asInt());
@@ -55,9 +53,7 @@ class TestResultProjectionSchemaTest {
 
     @Test
     void legacyFunctionalResultSchemaIncludesDocumentedNotRunAndTimeoutStates() throws Exception {
-        JsonNode schema = json.readTree(findRepositoryRoot()
-                .resolve("docs/testing/schemas/test-result.schema.json")
-                .toFile());
+        JsonNode schema = readSchema("test-result.schema.json");
 
         Set<String> statuses = values(schema.path("properties").path("status").path("enum"));
         assertTrue(statuses.containsAll(List.of("NOT_RUN", "TIMEOUT")));
@@ -72,15 +68,10 @@ class TestResultProjectionSchemaTest {
                 .collect(Collectors.toSet());
     }
 
-    private static Path findRepositoryRoot() {
-        Path current =
-                Path.of(System.getProperty("basedir", ".")).toAbsolutePath().normalize();
-        while (current != null) {
-            if (Files.isDirectory(current.resolve(".mvn")) && Files.isRegularFile(current.resolve("pom.xml"))) {
-                return current;
-            }
-            current = current.getParent();
+    private JsonNode readSchema(String name) throws Exception {
+        String resource = "/io/haifa/agent/testing/result/" + name;
+        try (InputStream input = Objects.requireNonNull(getClass().getResourceAsStream(resource), resource)) {
+            return json.readTree(input);
         }
-        throw new IllegalStateException("cannot locate repository root from Maven basedir");
     }
 }
