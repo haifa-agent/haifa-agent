@@ -97,6 +97,7 @@ class AutonomousDeliveryHarnessMainTest {
                 null,
                 null,
                 null,
+                null,
                 null);
 
         assertThrows(IllegalArgumentException.class, () -> new AutonomousDeliveryHarnessMain().run(options));

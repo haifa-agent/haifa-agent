@@ -35,6 +35,7 @@ final class DeliveryCliConfigurationFactory {
                   provider: %s
                   network: %s
                   shell: %s
+                %s
                   defaultTimeoutMillis: 120000
                   maxTimeoutMillis: 600000
                   maxOutputLines: 2000
@@ -60,10 +61,18 @@ final class DeliveryCliConfigurationFactory {
                         profile.executionProvider(),
                         profile.networkPolicy(),
                         profile.shell(),
+                        shellPath(profile, toolchains),
                         extraPathPolicies(profile, roots),
                         suite.budget().maxIterations(),
                         suite.budget().maxToolCalls(),
                         suite.budget().maxWallTimeMillis());
+    }
+
+    private static String shellPath(DeliveryHostProfile profile, DeliveryToolchainSet toolchains) {
+        if (profile.shell().equals("auto")) {
+            return "";
+        }
+        return "  shellPath: " + yamlPath(toolchains.shellExecutable());
     }
 
     private static String extraPathPolicies(DeliveryHostProfile profile, Map<String, Path> roots) {

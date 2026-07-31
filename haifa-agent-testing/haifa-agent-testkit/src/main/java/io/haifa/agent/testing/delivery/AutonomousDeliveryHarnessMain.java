@@ -154,6 +154,7 @@ public final class AutonomousDeliveryHarnessMain {
             toolchains.put("node", options.nodeExecutable());
             toolchains.put("go", options.goExecutable());
             toolchains.put("git", options.gitExecutable());
+            toolchains.put("shell", options.shellExecutable());
             Path gate = new AutonomousDeliveryGateCoordinator(clock)
                     .run(
                             campaign,
@@ -401,6 +402,7 @@ public final class AutonomousDeliveryHarnessMain {
             Path nodeExecutable,
             Path goExecutable,
             Path gitExecutable,
+            Path shellExecutable,
             Path nodePtyModule) {
         static Options parse(String[] arguments) {
             String command = "plan";
@@ -421,6 +423,7 @@ public final class AutonomousDeliveryHarnessMain {
             Path nodeExecutable = null;
             Path goExecutable = null;
             Path gitExecutable = null;
+            Path shellExecutable = null;
             Path nodePtyModule = null;
             for (int index = 0; index < arguments.length; index++) {
                 switch (arguments[index]) {
@@ -451,6 +454,7 @@ public final class AutonomousDeliveryHarnessMain {
                     case "--node-executable" -> nodeExecutable = Path.of(value(arguments, ++index));
                     case "--go-executable" -> goExecutable = Path.of(value(arguments, ++index));
                     case "--git-executable" -> gitExecutable = Path.of(value(arguments, ++index));
+                    case "--shell-executable" -> shellExecutable = Path.of(value(arguments, ++index));
                     case "--node-pty-module" -> nodePtyModule = Path.of(value(arguments, ++index));
                     default -> throw new IllegalArgumentException("unknown argument: " + arguments[index]);
                 }
@@ -480,6 +484,7 @@ public final class AutonomousDeliveryHarnessMain {
                     nodeExecutable,
                     goExecutable,
                     gitExecutable,
+                    shellExecutable,
                     nodePtyModule);
         }
 

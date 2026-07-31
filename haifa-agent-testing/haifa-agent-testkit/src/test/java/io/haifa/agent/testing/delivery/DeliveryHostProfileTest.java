@@ -45,13 +45,13 @@ class DeliveryHostProfileTest {
         LinkedHashMap<String, Path> paths = new LinkedHashMap<>();
         paths.put("java", Files.createFile(jdkBin.resolve("java")));
         paths.put("javac", Files.createFile(jdkBin.resolve("javac")));
-        for (String name : List.of("python", "node", "go", "git")) {
+        for (String name : List.of("python", "node", "go", "git", "shell")) {
             Path bin = Files.createDirectories(temporary.resolve(name).resolve("bin"));
             paths.put(name, Files.createFile(bin.resolve(name)));
         }
         DeliveryToolchainSet toolchains = DeliveryToolchainSet.validate(paths);
 
-        assertEquals(5, toolchains.minimalPath().split(java.util.regex.Pattern.quote(File.pathSeparator)).length);
+        assertEquals(6, toolchains.minimalPath().split(java.util.regex.Pattern.quote(File.pathSeparator)).length);
         assertFalse(toolchains.minimalPath().contains("/usr/bin"));
         AutonomousDeliverySuiteManifest suite = new AutonomousDeliverySuiteManifest(
                 1,
@@ -79,6 +79,7 @@ class DeliveryHostProfileTest {
         assertTrue(windows.contains("provider: host-guarded"));
         assertTrue(windows.contains("network: allow"));
         assertTrue(windows.contains("shell: powershell"));
+        assertTrue(windows.contains("shellPath: '" + paths.get("shell") + "'"));
         assertTrue(windows.contains("default: deepseek-v4-flash"));
         assertTrue(posix.contains("java-toolchain"));
         assertTrue(windows.contains("extraPathPolicies: []"));
