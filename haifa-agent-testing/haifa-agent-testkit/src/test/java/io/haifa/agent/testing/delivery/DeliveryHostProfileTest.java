@@ -80,6 +80,9 @@ class DeliveryHostProfileTest {
         assertTrue(windows.contains("network: allow"));
         assertTrue(windows.contains("shell: powershell"));
         assertTrue(windows.contains("default: deepseek-v4-flash"));
+        assertTrue(posix.contains("java-toolchain"));
+        assertTrue(windows.contains("extraPathPolicies: []"));
+        assertFalse(windows.contains("java-toolchain"));
         assertFalse(posix.contains("/usr/bin"));
         assertFalse(windows.contains("/usr/bin"));
     }

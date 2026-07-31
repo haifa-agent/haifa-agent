@@ -41,12 +41,7 @@ final class DeliveryCliConfigurationFactory {
                   maxOutputBytes: 102400
                   maxProcesses: 32
                   inheritEnvironment: [PATH, JAVA_HOME]
-                  extraPathPolicies:
-                    - { id: java-toolchain, path: %s, readOnly: true }
-                    - { id: python-toolchain, path: %s, readOnly: true }
-                    - { id: node-toolchain, path: %s, readOnly: true }
-                    - { id: go-toolchain, path: %s, readOnly: true }
-                    - { id: git-toolchain, path: %s, readOnly: true }
+                  extraPathPolicies: %s
                 runtime:
                   maxIterations: %d
                   maxToolCalls: %d
@@ -65,14 +60,33 @@ final class DeliveryCliConfigurationFactory {
                         profile.executionProvider(),
                         profile.networkPolicy(),
                         profile.shell(),
-                        yamlPath(roots.get("java")),
-                        yamlPath(roots.get("python")),
-                        yamlPath(roots.get("node")),
-                        yamlPath(roots.get("go")),
-                        yamlPath(roots.get("git")),
+                        extraPathPolicies(profile, roots),
                         suite.budget().maxIterations(),
                         suite.budget().maxToolCalls(),
                         suite.budget().maxWallTimeMillis());
+    }
+
+    private static String extraPathPolicies(DeliveryHostProfile profile, Map<String, Path> roots) {
+        if (profile.executionProvider().equals("host-guarded")) {
+            return "[]";
+        }
+        return "[\n"
+                + "                    { id: java-toolchain, path: "
+                + yamlPath(roots.get("java"))
+                + ", readOnly: true },\n"
+                + "                    { id: python-toolchain, path: "
+                + yamlPath(roots.get("python"))
+                + ", readOnly: true },\n"
+                + "                    { id: node-toolchain, path: "
+                + yamlPath(roots.get("node"))
+                + ", readOnly: true },\n"
+                + "                    { id: go-toolchain, path: "
+                + yamlPath(roots.get("go"))
+                + ", readOnly: true },\n"
+                + "                    { id: git-toolchain, path: "
+                + yamlPath(roots.get("git"))
+                + ", readOnly: true }\n"
+                + "                  ]";
     }
 
     private static String yamlPath(Path path) {
