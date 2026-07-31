@@ -41,7 +41,7 @@ class AutonomousDeliveryResultProjectionTest {
     }
 
     @Test
-    void projectionRejectsAbsoluteEvidenceReferences() {
+    void projectionRejectsAbsoluteUriAndTraversalEvidenceReferences() {
         TestResultProjection projection = AutonomousDeliveryResultProjection.batch(
                         suite(),
                         combination(),
@@ -52,29 +52,52 @@ class AutonomousDeliveryResultProjectionTest {
                 .results()
                 .getFirst();
 
+        for (String unsafe : List.of(
+                "D:/host/evidence",
+                "/var/evidence",
+                "\\\\server\\share\\evidence",
+                "file:///var/evidence",
+                "case-01/..")) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> new TestResultProjection(
+                            projection.schemaVersion(),
+                            projection.suiteSystem(),
+                            projection.suiteId(),
+                            projection.caseId(),
+                            projection.caseVersion(),
+                            projection.repetition(),
+                            projection.scope(),
+                            projection.dependencyMode(),
+                            projection.productEntry(),
+                            projection.platform(),
+                            projection.matrixCombination(),
+                            projection.productCommit(),
+                            projection.testConfigCommit(),
+                            projection.status(),
+                            projection.nativeStatus(),
+                            projection.startedAt(),
+                            projection.durationMillis(),
+                            projection.providerUsage(),
+                            unsafe,
+                            projection.failureCategory()));
+        }
+    }
+
+    @Test
+    void projectionRequiresTheNativeGateStatusInsteadOfSynthesizingIt() {
+        Map<String, Object> missingNativeStatus = result(true, true, true, true, true);
+        missingNativeStatus.remove("nativeStatus");
+
         assertThrows(
-                IllegalArgumentException.class,
-                () -> new TestResultProjection(
-                        projection.schemaVersion(),
-                        projection.suiteSystem(),
-                        projection.suiteId(),
-                        projection.caseId(),
-                        projection.caseVersion(),
-                        projection.repetition(),
-                        projection.scope(),
-                        projection.dependencyMode(),
-                        projection.productEntry(),
-                        projection.platform(),
-                        projection.matrixCombination(),
-                        projection.productCommit(),
-                        projection.testConfigCommit(),
-                        projection.status(),
-                        projection.nativeStatus(),
-                        projection.startedAt(),
-                        projection.durationMillis(),
-                        projection.providerUsage(),
-                        "D:/host/evidence",
-                        projection.failureCategory()));
+                NullPointerException.class,
+                () -> AutonomousDeliveryResultProjection.batch(
+                        suite(),
+                        combination(),
+                        PRODUCT,
+                        CONFIG,
+                        Instant.parse("2026-07-31T08:00:00Z"),
+                        List.of(missingNativeStatus)));
     }
 
     private static AutonomousDeliverySuiteManifest suite() {
@@ -116,6 +139,7 @@ class AutonomousDeliveryResultProjectionTest {
         result.put("caseVersion", "2.4.0");
         result.put("repetition", gatePassed ? 1 : 2);
         result.put("gatePassed", gatePassed);
+        result.put("nativeStatus", gatePassed ? "GATE_PASSED" : "GATE_FAILED");
         result.put("driverContractPassed", driverPassed);
         result.put("boundedConvergence", bounded);
         result.put("acceptancePassed", acceptancePassed);

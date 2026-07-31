@@ -38,9 +38,11 @@ final class AutonomousDeliveryPhaseThreeVerificationCollector {
         writeJson(repeat.resolve("verification-plan.json"), plan);
 
         List<Map<String, Object>> evidence = verificationEvidence(input.acceptanceChecks(), dimensions, planDigest);
+        boolean cleanupEvidencePassed = input.scratchEvidenceSatisfied() && input.processEvidenceSatisfied();
         boolean verificationPassed = input.acceptancePassed()
                 && !evidence.isEmpty()
-                && evidence.stream().allMatch(value -> "VERIFICATION_CHECK_PASSED".equals(value.get("kind")));
+                && evidence.stream().allMatch(value -> "VERIFICATION_CHECK_PASSED".equals(value.get("kind")))
+                && cleanupEvidencePassed;
         writeJson(
                 repeat.resolve("verification-evidence.json"),
                 Map.of(
@@ -53,8 +55,7 @@ final class AutonomousDeliveryPhaseThreeVerificationCollector {
                         "evidence",
                         evidence));
 
-        boolean cleanup = input.scratchCleanupFailures() == 0 && input.processFinished();
-        boolean atomicityPassed = !highRisk || (input.acceptancePassed() && cleanup);
+        boolean atomicityPassed = !highRisk || (input.acceptancePassed() && cleanupEvidencePassed);
         List<String> unexpected = input.acceptancePassed() ? List.of() : input.acceptanceFailures();
         writeJson(
                 repeat.resolve("side-effect-evidence.json"),
@@ -74,31 +75,25 @@ final class AutonomousDeliveryPhaseThreeVerificationCollector {
                         "unexpectedChanges",
                         unexpected,
                         "cleanupEvidence",
-                        cleanup ? "PROCESS_AND_SCRATCH_CLEAN" : "CLEANUP_NOT_CONFIRMED",
+                        cleanupEvidencePassed ? "PROCESS_AND_SCRATCH_CLEAN" : "CLEANUP_NOT_CONFIRMED",
                         "atomicityRequired",
                         highRisk,
                         "passed",
                         atomicityPassed));
-        writeJson(
-                repeat.resolve("capability-matrix.json"),
-                Map.of(
-                        "schemaVersion",
-                        1,
-                        "language",
-                        input.testCase().language(),
-                        "taskType",
-                        input.testCase().taskType(),
-                        "capabilities",
-                        input.testCase().capabilities(),
-                        "riskDimensions",
-                        input.testCase().riskDimensions(),
-                        "acceptanceType",
-                        "HIDDEN_BLACK_BOX",
-                        "sideEffect",
-                        highRisk ? "CONTROLLED" : "NONE_OR_LOW"));
-        return new Result(
-                verificationPassed && atomicityPassed,
-                highRisk ? (atomicityPassed ? "PASS" : "FAIL") : "NOT_APPLICABLE");
+        boolean passed = verificationPassed && atomicityPassed;
+        LinkedHashMap<String, Object> capabilityMatrix = new LinkedHashMap<>();
+        capabilityMatrix.put("schemaVersion", 1);
+        capabilityMatrix.put("nativeStatus", passed ? "VERIFICATION_PASSED" : "VERIFICATION_FAILED");
+        capabilityMatrix.put("acceptanceEvidencePresent", !evidence.isEmpty());
+        capabilityMatrix.put("processAndScratchEvidenceComplete", cleanupEvidencePassed);
+        capabilityMatrix.put("language", input.testCase().language());
+        capabilityMatrix.put("taskType", input.testCase().taskType());
+        capabilityMatrix.put("capabilities", input.testCase().capabilities());
+        capabilityMatrix.put("riskDimensions", input.testCase().riskDimensions());
+        capabilityMatrix.put("acceptanceType", "HIDDEN_BLACK_BOX");
+        capabilityMatrix.put("sideEffect", highRisk ? "CONTROLLED" : "NONE_OR_LOW");
+        writeJson(repeat.resolve("capability-matrix.json"), capabilityMatrix);
+        return new Result(passed, highRisk ? (atomicityPassed ? "PASS" : "FAIL") : "NOT_APPLICABLE");
     }
 
     static Result notRequired() {
@@ -186,8 +181,8 @@ final class AutonomousDeliveryPhaseThreeVerificationCollector {
             List<String> acceptanceFailures,
             String beforeStateDigest,
             String afterStateDigest,
-            long scratchCleanupFailures,
-            boolean processFinished) {
+            boolean scratchEvidenceSatisfied,
+            boolean processEvidenceSatisfied) {
         Input {
             Objects.requireNonNull(testCase, "testCase must not be null");
             acceptanceChecks =
@@ -196,9 +191,6 @@ final class AutonomousDeliveryPhaseThreeVerificationCollector {
                     List.copyOf(Objects.requireNonNull(acceptanceFailures, "acceptanceFailures must not be null"));
             Objects.requireNonNull(beforeStateDigest, "beforeStateDigest must not be null");
             Objects.requireNonNull(afterStateDigest, "afterStateDigest must not be null");
-            if (scratchCleanupFailures < 0) {
-                throw new IllegalArgumentException("scratchCleanupFailures must not be negative");
-            }
         }
     }
 

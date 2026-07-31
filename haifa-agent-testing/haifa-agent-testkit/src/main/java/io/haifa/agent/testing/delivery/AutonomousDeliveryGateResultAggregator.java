@@ -71,17 +71,18 @@ final class AutonomousDeliveryGateResultAggregator {
     }
 
     private static Map<String, Object> capabilityMatrix(List<Map<String, Object>> results) {
-        return Map.of(
-                "schemaVersion",
-                1,
-                "languages",
-                distinct(results, "language"),
-                "taskTypes",
-                distinct(results, "taskType"),
-                "capabilities",
-                flattened(results, "capabilities"),
-                "riskDimensions",
-                flattened(results, "riskDimensions"));
+        LinkedHashMap<String, Object> matrix = new LinkedHashMap<>();
+        matrix.put("schemaVersion", 1);
+        matrix.put(
+                "nativeStatus",
+                results.stream().allMatch(value -> "GATE_PASSED".equals(value.get("nativeStatus")))
+                        ? "GATE_PASSED"
+                        : "GATE_FAILED");
+        matrix.put("languages", distinct(results, "language"));
+        matrix.put("taskTypes", distinct(results, "taskType"));
+        matrix.put("capabilities", flattened(results, "capabilities"));
+        matrix.put("riskDimensions", flattened(results, "riskDimensions"));
+        return Map.copyOf(matrix);
     }
 
     private static Map<String, Object> phaseThreeMetrics(List<Map<String, Object>> results) {

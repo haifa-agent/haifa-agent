@@ -69,6 +69,7 @@ class AutonomousDeliveryGateResultAggregatorTest {
         assertEquals(5L, metrics.get("toolCalls"));
         Map<?, ?> capabilityMatrix = (Map<?, ?>) aggregation.summary().get("capabilityMatrix");
         assertEquals(List.of("Java", "Python"), capabilityMatrix.get("languages"));
+        assertEquals("GATE_FAILED", capabilityMatrix.get("nativeStatus"));
     }
 
     @Test
@@ -143,6 +144,7 @@ class AutonomousDeliveryGateResultAggregatorTest {
         result.put("capabilities", List.of("EDIT", "VERIFY"));
         result.put("riskDimensions", List.of("FAILURE_ATOMICITY"));
         result.put("gatePassed", gatePassed);
+        result.put("nativeStatus", gatePassed ? "GATE_PASSED" : "GATE_FAILED");
         result.put("acceptancePassed", acceptancePassed);
         result.put("workspaceChanged", workspaceChanged);
         result.put("executionCalls", executionCalls);

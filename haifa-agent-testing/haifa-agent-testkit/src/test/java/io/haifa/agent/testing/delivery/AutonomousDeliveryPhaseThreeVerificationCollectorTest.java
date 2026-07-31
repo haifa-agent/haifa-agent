@@ -31,7 +31,7 @@ class AutonomousDeliveryPhaseThreeVerificationCollectorTest {
                         true,
                         Map.of("z-last", true, "a-first", true),
                         List.of(),
-                        0,
+                        true,
                         true));
 
         assertTrue(result.passed());
@@ -54,6 +54,11 @@ class AutonomousDeliveryPhaseThreeVerificationCollectorTest {
         assertEquals(
                 "PROCESS_AND_SCRATCH_CLEAN", sideEffect.path("cleanupEvidence").asText());
         assertTrue(Files.isRegularFile(temp.resolve("capability-matrix.json")));
+        JsonNode capability =
+                json.readTree(temp.resolve("capability-matrix.json").toFile());
+        assertEquals("VERIFICATION_PASSED", capability.path("nativeStatus").asText());
+        assertTrue(capability.path("acceptanceEvidencePresent").asBoolean());
+        assertTrue(capability.path("processAndScratchEvidenceComplete").asBoolean());
     }
 
     @Test
@@ -62,7 +67,7 @@ class AutonomousDeliveryPhaseThreeVerificationCollectorTest {
                 new AutonomousDeliveryPhaseThreeVerificationCollector(json);
 
         AutonomousDeliveryPhaseThreeVerificationCollector.Result result =
-                collector.collect(temp, input(metadata(List.of()), true, Map.of(), List.of(), 0, true));
+                collector.collect(temp, input(metadata(List.of()), true, Map.of(), List.of(), true, true));
 
         assertFalse(result.passed());
         assertEquals("NOT_APPLICABLE", result.atomicity());
@@ -84,7 +89,7 @@ class AutonomousDeliveryPhaseThreeVerificationCollectorTest {
                         false,
                         Map.of("hidden-check", false),
                         List.of("hidden-check"),
-                        1,
+                        false,
                         false));
 
         assertFalse(result.passed());
@@ -97,13 +102,38 @@ class AutonomousDeliveryPhaseThreeVerificationCollectorTest {
                 "hidden-check", sideEffect.path("unexpectedChanges").path(0).asText());
     }
 
+    @Test
+    void lowRiskVerificationFailsClosedWhenProcessOrScratchEvidenceIsMissing() throws Exception {
+        AutonomousDeliveryPhaseThreeVerificationCollector collector =
+                new AutonomousDeliveryPhaseThreeVerificationCollector(json);
+        Path missingScratchDirectory = temp.resolve("missing-scratch");
+        Path missingProcessDirectory = temp.resolve("missing-process");
+        Files.createDirectories(missingScratchDirectory);
+        Files.createDirectories(missingProcessDirectory);
+
+        AutonomousDeliveryPhaseThreeVerificationCollector.Result missingScratch = collector.collect(
+                missingScratchDirectory,
+                input(metadata(List.of()), true, Map.of("hidden-check", true), List.of(), false, true));
+        AutonomousDeliveryPhaseThreeVerificationCollector.Result missingProcess = collector.collect(
+                missingProcessDirectory,
+                input(metadata(List.of()), true, Map.of("hidden-check", true), List.of(), true, false));
+
+        assertFalse(missingScratch.passed());
+        assertFalse(missingProcess.passed());
+        JsonNode scratchMatrix = json.readTree(
+                temp.resolve("missing-scratch/capability-matrix.json").toFile());
+        assertEquals("VERIFICATION_FAILED", scratchMatrix.path("nativeStatus").asText());
+        assertTrue(scratchMatrix.path("acceptanceEvidencePresent").asBoolean());
+        assertFalse(scratchMatrix.path("processAndScratchEvidenceComplete").asBoolean());
+    }
+
     private static AutonomousDeliveryPhaseThreeVerificationCollector.Input input(
             AutonomousDeliveryRepeatEvidenceCollector.CaseMetadata metadata,
             boolean acceptancePassed,
             Map<String, Boolean> checks,
             List<String> failures,
-            long scratchCleanupFailures,
-            boolean processFinished) {
+            boolean scratchEvidenceSatisfied,
+            boolean processEvidenceSatisfied) {
         return new AutonomousDeliveryPhaseThreeVerificationCollector.Input(
                 metadata,
                 acceptancePassed,
@@ -111,8 +141,8 @@ class AutonomousDeliveryPhaseThreeVerificationCollectorTest {
                 failures,
                 "before",
                 "after",
-                scratchCleanupFailures,
-                processFinished);
+                scratchEvidenceSatisfied,
+                processEvidenceSatisfied);
     }
 
     private static AutonomousDeliveryRepeatEvidenceCollector.CaseMetadata metadata(List<String> risks) {

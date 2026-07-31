@@ -59,7 +59,11 @@ public record TestResultProjection(
 
     private static String requireSafeRelativeRef(String value) {
         String ref = requireText(value, "evidenceRef").replace('\\', '/');
-        if (ref.startsWith("/") || ref.matches("^[A-Za-z]:.*") || ref.contains("../") || ref.equals("..")) {
+        boolean parentTraversal = java.util.Arrays.stream(ref.split("/", -1)).anyMatch(".."::equals);
+        if (ref.startsWith("/")
+                || ref.matches("^[A-Za-z]:.*")
+                || ref.matches("^[A-Za-z][A-Za-z0-9+.-]*:.*")
+                || parentTraversal) {
             throw new IllegalArgumentException("evidenceRef must be a safe relative reference");
         }
         return ref;

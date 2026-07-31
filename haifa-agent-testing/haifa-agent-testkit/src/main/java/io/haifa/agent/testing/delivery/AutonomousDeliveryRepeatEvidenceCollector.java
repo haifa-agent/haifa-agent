@@ -72,6 +72,7 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
         Objects.requireNonNull(resultUsage, "resultUsage must not be null");
         boolean gatePassed =
                 input.preliminaryGatePassed() && input.processCleanup().passed() && secretScan.passed();
+        String nativeStatus = gatePassed ? "GATE_PASSED" : "GATE_FAILED";
         CaseMetadata testCase = input.testCase();
         Map<String, Object> resultArtifact = Map.of(
                 "schemaVersion",
@@ -84,6 +85,8 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
                 input.repetition(),
                 "termination",
                 input.runtime().termination(),
+                "nativeStatus",
+                nativeStatus,
                 "successful",
                 gatePassed,
                 "hiddenAcceptance",
@@ -127,6 +130,7 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
         summary.put("taskType", testCase.taskType());
         summary.put("capabilities", testCase.capabilities());
         summary.put("riskDimensions", testCase.riskDimensions());
+        summary.put("nativeStatus", nativeStatus);
         summary.put("gatePassed", gatePassed);
         return new Result(Map.copyOf(summary), resultArtifact, gatePassed);
     }
