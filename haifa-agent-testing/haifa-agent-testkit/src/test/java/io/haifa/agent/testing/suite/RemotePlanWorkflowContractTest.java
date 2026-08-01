@@ -67,6 +67,27 @@ class RemotePlanWorkflowContractTest {
         }
     }
 
+    @Test
+    void featurePullRequestsRunTheFastBaselineOnAllThreePlatforms() throws Exception {
+        JsonNode workflow = yaml.readTree(findRepositoryRoot()
+                .resolve(".github/workflows/feature-pr-fast.yml")
+                .toFile());
+        JsonNode verify = workflow.path("jobs").path("verify");
+
+        assertEquals(
+                Set.of("ubuntu-latest", "windows-latest", "macos-latest"),
+                StreamSupport.stream(
+                                verify.path("strategy")
+                                        .path("matrix")
+                                        .path("os")
+                                        .spliterator(),
+                                false)
+                        .map(JsonNode::asText)
+                        .collect(Collectors.toSet()));
+        assertTrue(verify.path("name").asText().contains("matrix.os"));
+        assertTrue(verify.toString().contains("-Pci-fast clean verify"));
+    }
+
     private static Set<String> matrixEntries(JsonNode remotePlan) {
         return StreamSupport.stream(
                         remotePlan

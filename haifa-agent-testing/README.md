@@ -45,6 +45,11 @@ ConPTY 和进程内 loopback Model Stub 验证 Approval、Shell、SQLite、Secre
 进程树与清理，不执行或评分 Coding Case，也不产生外部 Provider 调用和费用。其隔离结论始终为
 `TRUSTED_HOST_ONLY`。
 
+Coding Live E2E 与 Autonomous Delivery 的三端默认 Profile 统一为
+`host-guarded + allow + shell auto + TRUSTED_HOST_ONLY`。macOS/Linux 的 Local Native 隔离 Gate 与
+Windows unsupported Gate 继续独立统计，不与默认可信 Host 能力混算；真实 Provider 执行仍保持显式
+授权、Secret 与预算门禁。
+
 Critical Path v1 使用稳定 `CP-01`～`CP-11`：
 
 | Case | 路径 | 当前实现 |
@@ -73,8 +78,8 @@ JVM 内跨平台或自动遍历 Provider。Execute 要求独立注入
 Case 和解析后的公共 Selector 生成稳定计划 SHA-256；Execute 必须与外部批准的
 `HAIFA_TEST_APPROVED_PLAN_SHA256` 一致，避免配置仓或 Catalog 漂移被静默执行。
 
-`Dev Integration` 的手动 `workflow_dispatch` 是远端治理 Plan 入口，只展开 Nightly/Release 在
-Ubuntu/Windows 上的四个 Suite/Matrix Combination，并调用私有 `test-config` wrapper 的默认 Plan
+`Dev Integration` 的手动 `workflow_dispatch` 是远端治理 Plan 入口，按其冻结的 Suite/Matrix
+Combination 调用私有 `test-config` wrapper 的默认 Plan
 模式。该入口不传 `--execute`、Provider Secret、执行预算或批准后的 Plan SHA-256，也不会运行同一
 workflow 中的 Fast/Integration/Local Native Job。私有配置仓通过仅登记在
 `haifa-agent-test-config` 的只读 Deploy Key 检出；主仓 Repository Secret

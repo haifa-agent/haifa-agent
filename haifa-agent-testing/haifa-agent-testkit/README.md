@@ -55,6 +55,9 @@ Campaign Parent 必须已经存在；Critical Path 外层运行根可以是待�
 Autonomous Delivery Harness 同样强制显式 Matrix Combination，并从 Matrix 派生 Host Profile；
 Campaign、Phase Summary 和 Run Manifest 使用版本 3 Schema 冻结完整组合和两仓
 `RepositoryRevision`，后续 Gate 不能切换组合或 Commit。
+`trusted-host-default-v1` 是 macOS、Linux、Windows 对齐的默认交付 Profile，固定
+`host-guarded + allow + shell auto + TRUSTED_HOST_ONLY`；`posix-local-native-v1` 继续作为
+macOS/Linux 显式严格 Profile，`windows-host-trusted-v1` 只服务既有 Windows 专用 PowerShell Gate。
 `delivery.AutonomousDeliveryStubGate` 是独立于 Phase 1～3 的 Windows 平台 Gate。它读取私有
 `PLATFORM_STUB/STUB` Suite，要求零外部调用/费用，使用生产 CLI、真实 ConPTY 与 loopback Stub，
 并生成 Schema 3 Summary。Gate 复用共享 Driver Result Contract、SQLite 有界 Evidence Reader、
@@ -120,7 +123,7 @@ Trace Replay；隐藏 Acceptance 只在 Run 终态后运行，结果不反馈给
 01～17，其中新增七个跨语言、失败原子性、数据库、只读、合理重试、outcome unknown 和 UNKNOWN
 Intent 场景；Suite 决定实际重复次数和显式 Skip，Harness 不把 Skip 记成通过。
 
-自主交付 Harness 的隔离 Local Native 配置保持网络禁用，并允许最多 32 个进程，以容纳
+自主交付 Harness 的可选严格 Local Native 配置保持网络禁用，并允许最多 32 个进程，以容纳
 `go test -race` 等会并行启动编译器子进程的受控 Toolchain 验证；该上限不授予额外路径或网络能力。
 Catalog 显式声明的 Workspace 脚本在 Fixture 物化时恢复可执行位。Scratch Gate 只统计已进入
 Sandbox 的执行；参数或路径预检阶段拒绝、从未启动进程的请求仍记录为 Tool Failure，但不伪报为

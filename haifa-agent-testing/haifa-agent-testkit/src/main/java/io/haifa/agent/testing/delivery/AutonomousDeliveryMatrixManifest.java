@@ -114,24 +114,39 @@ public record AutonomousDeliveryMatrixManifest(
                 String shell,
                 String isolationAssurance,
                 String hostProfile) {
-            switch (platform) {
-                case "windows" -> {
+            switch (hostProfile) {
+                case "trusted-host-default-v1" -> {
+                    switch (platform) {
+                        case "windows" -> requireEquals(terminalBackend, "conpty", "Windows terminalBackend");
+                        case "macos", "linux" -> requireEquals(terminalBackend, "unix-pty", "POSIX terminalBackend");
+                        default ->
+                            throw new IllegalArgumentException("unsupported Autonomous Delivery platform: " + platform);
+                    }
+                    requireEquals(sandboxProfile, "host-guarded", "trusted Host sandboxProfile");
+                    requireEquals(networkPolicy, "allow", "trusted Host networkPolicy");
+                    requireEquals(shell, "auto", "trusted Host shell");
+                    requireEquals(isolationAssurance, "TRUSTED_HOST_ONLY", "trusted Host isolationAssurance");
+                }
+                case "windows-host-trusted-v1" -> {
+                    requireEquals(platform, "windows", "Windows Host profile platform");
                     requireEquals(terminalBackend, "conpty", "Windows terminalBackend");
                     requireEquals(sandboxProfile, "host-guarded", "Windows sandboxProfile");
                     requireEquals(networkPolicy, "allow", "Windows networkPolicy");
                     requireEquals(shell, "powershell", "Windows shell");
                     requireEquals(isolationAssurance, "TRUSTED_HOST_ONLY", "Windows isolationAssurance");
-                    requireEquals(hostProfile, "windows-host-trusted-v1", "Windows hostProfile");
                 }
-                case "macos", "linux" -> {
+                case "posix-local-native-v1" -> {
+                    if (!(platform.equals("macos") || platform.equals("linux"))) {
+                        throw new IllegalArgumentException("POSIX Local Native profile requires macOS or Linux");
+                    }
                     requireEquals(terminalBackend, "unix-pty", "POSIX terminalBackend");
                     requireEquals(sandboxProfile, "local-native", "POSIX sandboxProfile");
                     requireEquals(networkPolicy, "deny", "POSIX networkPolicy");
                     requireEquals(shell, "auto", "POSIX shell");
                     requireEquals(isolationAssurance, "LOCAL_NATIVE", "POSIX isolationAssurance");
-                    requireEquals(hostProfile, "posix-local-native-v1", "POSIX hostProfile");
                 }
-                default -> throw new IllegalArgumentException("unsupported Autonomous Delivery platform: " + platform);
+                default ->
+                    throw new IllegalArgumentException("unsupported Autonomous Delivery hostProfile: " + hostProfile);
             }
         }
     }

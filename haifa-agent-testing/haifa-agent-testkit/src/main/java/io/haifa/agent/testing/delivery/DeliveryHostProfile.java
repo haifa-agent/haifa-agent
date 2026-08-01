@@ -27,6 +27,20 @@ record DeliveryHostProfile(
         }
         String normalizedOs = osName.toLowerCase(Locale.ROOT);
         return switch (id) {
+            case "trusted-host-default-v1" -> {
+                String platform = platform(normalizedOs);
+                boolean windows = platform.equals("windows");
+                yield new DeliveryHostProfile(
+                        id,
+                        platform,
+                        windows ? "conpty" : "unix-pty",
+                        "host-guarded",
+                        "allow",
+                        "auto",
+                        "TRUSTED_HOST_ONLY",
+                        windows ? "mvnw.cmd" : "mvnw",
+                        true);
+            }
             case "posix-local-native-v1" -> {
                 if (!(normalizedOs.contains("mac")
                         || normalizedOs.contains("linux")
@@ -61,6 +75,13 @@ record DeliveryHostProfile(
             }
             default -> throw new IllegalArgumentException("unknown Autonomous Delivery host profile: " + id);
         };
+    }
+
+    private static String platform(String normalizedOs) {
+        if (normalizedOs.contains("windows")) return "windows";
+        if (normalizedOs.contains("mac") || normalizedOs.contains("darwin")) return "macos";
+        if (normalizedOs.contains("linux") || normalizedOs.contains("unix")) return "linux";
+        throw new IllegalArgumentException("trusted-host-default-v1 requires macOS, Linux, or Windows");
     }
 
     Path requireMavenWrapper(Path projectRoot) throws IOException {

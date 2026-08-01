@@ -50,7 +50,7 @@ haifa-coding
 把 `PATH` 配置写入 `~/.zshrc` 或 `~/.bashrc` 后可长期使用。`haifa-coding` 不切换目录，且 Java
 入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
 发行配置只使用 `env://DEEPSEEK_API_KEY`，不包含密钥，默认保持
-`approval=ask`、`local-native + network deny` 和内存存储。可通过
+`approval=ask`、`host-guarded + network allow + shell auto` 和内存存储。可通过
 `haifa-coding --config /absolute/path/to/config.yaml` 使用自定义配置，也可显式传
 `--workspace /absolute/path/to/project`；调用方参数位于默认参数之后，因此优先级更高。
 
@@ -291,8 +291,8 @@ mcp:
 approval:
   mode: ask
 execution:
-  provider: local-native
-  network: deny
+  provider: host-guarded
+  network: allow
   shell: auto
   defaultTimeoutMillis: 120000
   maxTimeoutMillis: 1800000
@@ -332,14 +332,18 @@ AES key，且必须由用户的 Secret Manager 或环境注入并在重启间保
 `tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_write`、`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作目录和 timeout；任何本机已安装且可由配置 Shell 解析的普通 CLI 都走同一生产路径，文档中的具体命令仅是非穷举示例。
 
 `execution.provider` 只接受 `local-native` 或 `host-guarded`，`execution.network` 只接受 `deny`
-或 `allow`。缺省值是 `local-native + deny`；macOS/Linux 分别由 Seatbelt/bubblewrap Adapter
-在启动期预检并兑现文件、网络和子进程边界。Windows 当前不会自动选择 Host，而是以
-`SANDBOX_ADAPTER_UNAVAILABLE` 拒绝启动；只有用户明确信任当前 Workspace 时，才可配置
-`host-guarded + allow`。
+或 `allow`。macOS、Linux、Windows 缺省值统一为 `host-guarded + allow + shell auto`，面向用户已经
+检查并信任的本地 Workspace；命令输出保留进程产生的真实可用路径，并可在同一命令生命周期内启动、
+访问和清理临时 loopback Server。普通宿主网络能力可用，因此不能把该默认值描述成外部网络隔离。
+
+macOS/Linux 可显式配置 `local-native + deny`，分别由 Seatbelt/bubblewrap Adapter 在启动期预检并
+兑现文件、网络和子进程边界。Windows 对 Local Native 返回 `SANDBOX_ADAPTER_UNAVAILABLE`，当前
+不提供或伪装成同等级严格模式。
 
 Local Native 的安全摘要会显示 Adapter、Workspace 模式、网络策略、无 Credential 注入，以及
 CPU/内存/Kernel 未强制隔离。Host Guarded 以当前 OS 用户身份运行，不能阻止 Workspace 外文件、
-普通网络或系统资源访问，Approval 也不等于隔离，因此不适合陌生仓库无人值守执行。
+普通网络或系统资源访问，Approval 也不等于隔离，因此不适合陌生仓库无人值守执行。长期 Server、
+后台任务和 PTY 当前均不作为产品入口支持。
 `extraPathPolicies` 只来自本地可信配置，包含稳定 `id`、绝对 `path` 和 `readOnly`；路径不会进入
 模型 Schema。敏感目录、代理/Socket/Credential 环境、Host + DENY、未知 Provider/网络模式和
 无法兑现的 Adapter 配置都在进程启动前 fail closed。
@@ -411,15 +415,17 @@ HAIFA_FT_ROOT=<new-empty-absolute-directory>
 DEEPSEEK_API_KEY=<secret-manager-injected-value>
 ```
 
-Windows 没有 Local Native Adapter。只有对仓库外、已人工检查并明确可信的合成 Fixture，才可同时设置：
+Live E2E 默认直接使用三端统一的 `host-guarded + allow + shell auto`，不再要求 Windows 专属覆盖。
+只有为兼容外部编排而显式重复声明可信 Host 时，才可同时设置：
 
 ```text
 HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER=host-guarded
 HAIFA_CLI_LIVE_E2E_EXECUTION_NETWORK=allow
 ```
 
-两个变量必须成对出现；否则 Live E2E 保持默认 `local-native + deny` 并 fail closed。Host Guarded 不能提供
-容器级文件、网络或系统资源隔离。
+两个变量必须成对出现且只能是上述值；缺少一项或声明其他组合都会 fail closed。Host Guarded 不能
+提供容器级文件、网络或系统资源隔离。macOS/Linux Local Native 严格验证由独立 Gate 负责，不与
+默认 Coding Live E2E 混算；Windows 没有 Local Native Adapter。
 
 百炼批次将最后一项替换为：
 

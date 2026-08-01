@@ -288,6 +288,80 @@ class HostSandboxTest {
     }
 
     @Test
+    void compilesAndRunsWorkspaceProgramWithTheHostToolchain() throws Exception {
+        Fixture fixture = fixture(root, "workspace-build", "binding-build", "location-build");
+        Files.writeString(
+                root.resolve("Baseline.java"),
+                "public class Baseline { public static void main(String[] args) { "
+                        + "System.out.print(\"compile-test-ok\"); } }");
+        String executableSuffix = isWindows() ? ".exe" : "";
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java" + executableSuffix)
+                .toString();
+        String javacExecutable = Path.of(System.getProperty("java.home"), "bin", "javac" + executableSuffix)
+                .toString();
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, () -> "build-session", Instant::now);
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("build-test", "1"),
+                provider.configurationDigest(),
+                Set.of(javaExecutable, javacExecutable),
+                Set.of(),
+                false);
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var compilation = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of(javacExecutable, "Baseline.java")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+            assertThat(compilation.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(compilation.exitCode()).isZero();
+
+            var testRun = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", "Baseline")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+            assertThat(testRun.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(testRun.exitCode()).isZero();
+            assertThat(new String(testRun.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                    .isEqualTo("compile-test-ok");
+        }
+    }
+
+    @Test
+    void reportsReusableRealWorkspaceAndParentPaths() throws Exception {
+        Path workspaceRoot = Files.createDirectories(root.resolve("workspace path 空格"));
+        Fixture fixture = fixture(workspaceRoot, "workspace-path", "binding-path", "location-path");
+        HostShell shell = HostShell.auto();
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, () -> "path-session", Instant::now, shell);
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("path-test", "1"), provider.configurationDigest(), Set.of(), Set.of(), true);
+        String command =
+                isWindows() ? "(Get-Location).Path; Set-Location ..; (Get-Location).Path" : "pwd -P; cd ..; pwd -P";
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.shell(command),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isZero();
+            List<String> paths = new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8)
+                    .lines()
+                    .filter(line -> !line.isBlank())
+                    .toList();
+            assertThat(paths).hasSize(2).noneMatch(path -> path.contains("<workspace>"));
+            assertThat(Path.of(paths.get(0)).toRealPath()).isEqualTo(workspaceRoot.toRealPath());
+            assertThat(Path.of(paths.get(1)).toRealPath())
+                    .isEqualTo(workspaceRoot.getParent().toRealPath());
+        }
+    }
+
+    @Test
     void injectsPrivateWritableScratchAndCleansItWithoutClaimingIsolation() throws Exception {
         Fixture fixture = fixture(root, "workspace-scratch", "binding-scratch", "location-scratch");
         Path scratchRoot = isolatedBase.resolve("host-scratch");

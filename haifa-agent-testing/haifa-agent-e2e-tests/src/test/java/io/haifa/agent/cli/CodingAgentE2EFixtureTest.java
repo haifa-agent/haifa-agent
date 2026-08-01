@@ -53,10 +53,10 @@ class CodingAgentE2EFixtureTest {
     }
 
     @Test
-    void liveExecutionRequiresAnExplicitTrustedWindowsHostPair() {
+    void liveExecutionDefaultsToTrustedHostAndRequiresACompleteExplicitPair() {
         assertThat(CodingAgentLiveE2E.liveExecution(Map.of()))
                 .extracting(CliConfiguration.Execution::provider, CliConfiguration.Execution::network)
-                .containsExactly("local-native", "deny");
+                .containsExactly("host-guarded", "allow");
 
         assertThat(CodingAgentLiveE2E.liveExecution(Map.of(
                         "HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER",

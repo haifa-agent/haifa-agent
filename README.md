@@ -204,12 +204,15 @@ flowchart LR
 - Definition/Profile 允许的 Skill 在 Run 创建时冻结为精确内容摘要；模型先看到元数据摘要，只有通过统一 Tool Pipeline 激活后才注入 `SKILL` 层内容；
 - Skill 是不可信的方法与资源包，不扩大冻结 Tool 集，不直接执行脚本、读取凭据或访问网络；
 - CLI 可从可信配置装配绝对路径的本地用户 Skill 目录，但目录内容仍须经过解析门禁和显式 alias allowlist；
-- CLI 的 Terminal 与 one-shot 命令复用同一生产装配；默认冻结为 `local-native + network deny`。Provider 或平台 Adapter
-  不可用时 fail closed，不会回退 Host。Windows 当前需要用户对可信 Workspace 显式选择
-  `host-guarded + network allow`。
+- CLI 的 Terminal 与 one-shot 命令复用同一生产装配；macOS、Linux、Windows 默认均冻结为
+  `host-guarded + network allow + shell auto` 的可信本地开发基线，保留命令产生的真实可用路径，并
+  支持编译、测试和同一命令内的临时 loopback Server。它使用普通宿主网络能力，不宣称外部网络隔离。
+- macOS/Linux 可显式选择 `local-native + network deny` 严格模式；Windows 当前不提供同等级严格隔离，
+  也不会伪装成 Local Native。
 - Local Native 只声明已预检的 Workspace 文件策略、网络关闭和进程树收敛；它仍共享宿主
   Kernel，不声明 CPU、内存、磁盘、PID、Container、VM 或多租户强隔离。
-- Host Sandbox 是用户显式选择的受控兼容执行，不等同于网络、CPU、内存或文件系统强隔离。
+- Host Sandbox 是默认的可信本地受控执行，不等同于网络、CPU、内存或文件系统强隔离。长期 Server、
+  后台任务和 PTY 仍未作为三端产品入口提供。
 
 ## 构建与验证
 

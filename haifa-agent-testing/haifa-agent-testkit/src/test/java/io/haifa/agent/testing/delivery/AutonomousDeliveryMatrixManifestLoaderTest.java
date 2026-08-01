@@ -17,7 +17,14 @@ class AutonomousDeliveryMatrixManifestLoaderTest {
         Files.createDirectories(temporaryDirectory.resolve("matrices"));
         Files.writeString(
                 temporaryDirectory.resolve("matrices/autonomous-delivery-v1.yaml"),
-                matrix("conpty", "host-guarded", "allow", "powershell", "TRUSTED_HOST_ONLY"));
+                matrix(
+                        "windows",
+                        "conpty",
+                        "host-guarded",
+                        "allow",
+                        "powershell",
+                        "TRUSTED_HOST_ONLY",
+                        "windows-host-trusted-v1"));
 
         AutonomousDeliveryMatrixManifest manifest =
                 new AutonomousDeliveryMatrixManifestLoader().load(temporaryDirectory, "autonomous-delivery-v1");
@@ -30,30 +37,64 @@ class AutonomousDeliveryMatrixManifestLoaderTest {
     }
 
     @Test
+    void bindsPosixTrustedHostDefaultWithoutClaimingLocalNativeIsolation() throws Exception {
+        Files.createDirectories(temporaryDirectory.resolve("matrices"));
+        Files.writeString(
+                temporaryDirectory.resolve("matrices/autonomous-delivery-v1.yaml"),
+                matrix(
+                        "linux",
+                        "unix-pty",
+                        "host-guarded",
+                        "allow",
+                        "auto",
+                        "TRUSTED_HOST_ONLY",
+                        "trusted-host-default-v1"));
+
+        AutonomousDeliveryMatrixManifest manifest =
+                new AutonomousDeliveryMatrixManifestLoader().load(temporaryDirectory, "autonomous-delivery-v1");
+        AutonomousDeliveryMatrixManifest.Combination combination =
+                manifest.requireCombination("linux-deepseek-host-default");
+
+        assertEquals("trusted-host-default-v1", combination.requireHost("Linux").id());
+        assertThrows(IllegalArgumentException.class, () -> combination.requireHost("Windows 11"));
+    }
+
+    @Test
     void rejectsAWindowsCombinationThatClaimsLocalNativeIsolation() throws Exception {
         Files.createDirectories(temporaryDirectory.resolve("matrices"));
         Files.writeString(
                 temporaryDirectory.resolve("matrices/autonomous-delivery-v1.yaml"),
-                matrix("conpty", "local-native", "deny", "powershell", "LOCAL_NATIVE"));
+                matrix(
+                        "windows",
+                        "conpty",
+                        "local-native",
+                        "deny",
+                        "powershell",
+                        "LOCAL_NATIVE",
+                        "windows-host-trusted-v1"));
 
         assertThrows(IllegalArgumentException.class, () -> new AutonomousDeliveryMatrixManifestLoader()
                 .load(temporaryDirectory, "autonomous-delivery-v1"));
     }
 
     private static String matrix(
+            String platform,
             String terminalBackend,
             String sandboxProfile,
             String networkPolicy,
             String shell,
-            String isolationAssurance) {
+            String isolationAssurance,
+            String hostProfile) {
+        String combinationId =
+                platform.equals("windows") ? "windows-deepseek-host-trusted" : platform + "-deepseek-host-default";
         return """
                 schemaVersion: 1
                 matrixId: autonomous-delivery-v1
                 compatibleAgentBaselineCommit: cc9ddb902b0db0e8e85b81bb7418eff9fd66f6ed
                 strategy: explicit
                 combinations:
-                  - id: windows-deepseek-host-trusted
-                    platform: windows
+                  - id: %s
+                    platform: %s
                     modelProvider: deepseek
                     modelId: deepseek-chat
                     terminalBackend: %s
@@ -61,9 +102,17 @@ class AutonomousDeliveryMatrixManifestLoaderTest {
                     networkPolicy: %s
                     shell: %s
                     isolationAssurance: %s
-                    hostProfile: windows-host-trusted-v1
+                    hostProfile: %s
                     maxParallelExternalCalls: 1
                 """
-                .formatted(terminalBackend, sandboxProfile, networkPolicy, shell, isolationAssurance);
+                .formatted(
+                        combinationId,
+                        platform,
+                        terminalBackend,
+                        sandboxProfile,
+                        networkPolicy,
+                        shell,
+                        isolationAssurance,
+                        hostProfile);
     }
 }
