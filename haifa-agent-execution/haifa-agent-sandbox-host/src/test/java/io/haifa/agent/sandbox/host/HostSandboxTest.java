@@ -258,6 +258,36 @@ class HostSandboxTest {
     }
 
     @Test
+    void supportsTemporaryLoopbackServerRoundTripWithinOneCommand() throws Exception {
+        Fixture fixture = fixture(root, "workspace-loopback", "binding-loopback", "location-loopback");
+        copyProcessClass(root, LoopbackRoundTripProcess.class);
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, () -> "loopback-session", Instant::now);
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java")
+                .toString();
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("loopback-test", "1"),
+                provider.configurationDigest(),
+                Set.of(javaExecutable),
+                Set.of(),
+                false);
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(
+                            List.of(javaExecutable, "-cp", ".", LoopbackRoundTripProcess.class.getName())),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isZero();
+            assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                    .isEqualTo("loopback-round-trip-ok");
+        }
+    }
+
+    @Test
     void injectsPrivateWritableScratchAndCleansItWithoutClaimingIsolation() throws Exception {
         Fixture fixture = fixture(root, "workspace-scratch", "binding-scratch", "location-scratch");
         Path scratchRoot = isolatedBase.resolve("host-scratch");

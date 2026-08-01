@@ -61,15 +61,29 @@ class LocalCodingAgentTest {
     }
 
     @Test
-    void windowsDefaultLocalNativeFailsClosedBeforeModelInvocation() {
+    void windowsExplicitLocalNativeFailsClosedBeforeModelInvocation() {
         org.junit.jupiter.api.Assumptions.assumeTrue(isWindows());
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             throw new AssertionError("unsupported provider must fail before model invocation");
         };
+        CliConfiguration defaults = CliConfiguration.defaults();
+        CliConfiguration strict = new CliConfiguration(
+                defaults.model(),
+                defaults.availableModels(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                localNativeExecution(defaults.execution()),
+                defaults.approval(),
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxToolCalls(),
+                defaults.persistence());
 
         assertThatThrownBy(() -> LocalCodingAgent.create(
                         workspace,
-                        CliConfiguration.defaults(),
+                        strict,
                         new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                         model))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -930,6 +944,21 @@ class LocalCodingAgentTest {
         return new CliConfiguration.Execution(
                 "host-guarded",
                 "allow",
+                execution.shell(),
+                execution.shellPath(),
+                execution.defaultTimeout(),
+                execution.maximumTimeout(),
+                execution.maxOutputBytes(),
+                execution.maxOutputLines(),
+                execution.maxProcesses(),
+                execution.inheritEnvironment(),
+                List.of());
+    }
+
+    private static CliConfiguration.Execution localNativeExecution(CliConfiguration.Execution execution) {
+        return new CliConfiguration.Execution(
+                "local-native",
+                "deny",
                 execution.shell(),
                 execution.shellPath(),
                 execution.defaultTimeout(),

@@ -47,7 +47,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 /** Owns the CLI's trusted local execution assembly without exposing provider controls to the model. */
 final class CliExecutionPlatform {
@@ -79,10 +78,8 @@ final class CliExecutionPlatform {
             TimeProvider time,
             Clock clock,
             CodingAgentPolicyAssembly policy,
-            Path workspaceRoot,
             PrintStream output) {
         Objects.requireNonNull(configuration, "configuration must not be null");
-        var workspaceRedactor = new WorkspacePathRedactor(workspaceRoot);
         HostShell shell = shell(configuration);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
         var host = new HostGuardedSandboxProvider(
@@ -132,7 +129,7 @@ final class CliExecutionPlatform {
                 manifests,
                 new ManifestDiffService(),
                 observedChanges);
-        ExecutionOutputObserver observer = new CliOutputObserver(output, workspaceRedactor);
+        ExecutionOutputObserver observer = new CliOutputObserver(output);
         var operations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -145,7 +142,7 @@ final class CliExecutionPlatform {
                 configuration.maxOutputLines(),
                 configuration.maxProcesses(),
                 observer,
-                workspaceRedactor::redact,
+                java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace());
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
@@ -294,13 +291,14 @@ final class CliExecutionPlatform {
         return new IllegalArgumentException(exception.code() + ": " + exception.getMessage());
     }
 
-    private static String securitySummary(SandboxProfile profile, SandboxPreflight preflight) {
+    static String securitySummary(SandboxProfile profile, SandboxPreflight preflight) {
         String digest = profile.contentDigest().value().substring(0, 12);
         if (profile.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
-            return "provider=host-guarded (explicit trusted compatibility), adapter="
+            return "provider=host-guarded (trusted local development), adapter="
                     + preflight.adapterId()
-                    + ", network=ALLOW, current OS user, workspace/outside files/network/CPU/memory/kernel "
-                    + "are not strongly isolated, approval is not isolation, profile="
+                    + ", network=ALLOW (ordinary local network: host loopback/LAN/internet may be reachable), "
+                    + "current OS user, workspace/outside files/network/CPU/memory/kernel are not strongly isolated, "
+                    + "approval is not isolation, profile="
                     + digest;
         }
         return "provider=local-native, adapter="
@@ -313,14 +311,12 @@ final class CliExecutionPlatform {
                 + digest;
     }
 
-    private static final class CliOutputObserver implements ExecutionOutputObserver {
+    static final class CliOutputObserver implements ExecutionOutputObserver {
         private final PrintStream output;
-        private final WorkspacePathRedactor workspaceRedactor;
         private final StringBuilder pending = new StringBuilder();
 
-        private CliOutputObserver(PrintStream output, WorkspacePathRedactor workspaceRedactor) {
+        CliOutputObserver(PrintStream output) {
             this.output = Objects.requireNonNull(output, "output must not be null");
-            this.workspaceRedactor = Objects.requireNonNull(workspaceRedactor, "workspaceRedactor must not be null");
         }
 
         @Override
@@ -346,48 +342,9 @@ final class CliExecutionPlatform {
             if (length > 0) {
                 String value = pending.substring(0, length);
                 pending.delete(0, length);
-                output.print(workspaceRedactor.redact(value));
+                output.print(value);
             }
             output.flush();
-        }
-    }
-
-    static final class WorkspacePathRedactor {
-        private static final String REPLACEMENT = "<workspace>";
-        private final List<Pattern> paths;
-
-        WorkspacePathRedactor(Path workspaceRoot) {
-            Path requiredWorkspaceRoot = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null");
-            Path normalized = requiredWorkspaceRoot.toAbsolutePath().normalize();
-            String nativePath = normalized.toString();
-            var candidates = new java.util.LinkedHashSet<String>();
-            addPathForms(candidates, nativePath);
-            addPathForms(candidates, requiredWorkspaceRoot.toString());
-            paths = candidates.stream()
-                    .filter(value -> !value.isBlank())
-                    .sorted(java.util.Comparator.comparingInt(String::length).reversed())
-                    .map(value -> Pattern.compile(Pattern.quote(value), Pattern.CASE_INSENSITIVE))
-                    .toList();
-        }
-
-        private static void addPathForms(java.util.Set<String> candidates, String path) {
-            candidates.add(path);
-            candidates.add(path.replace('\\', '/'));
-            if (path.matches("^[A-Za-z]:[\\\\/].*")) {
-                String windowsPath = path.replace('/', '\\');
-                candidates.add("/"
-                        + Character.toLowerCase(windowsPath.charAt(0))
-                        + windowsPath.substring(2).replace('\\', '/'));
-                candidates.add("\\\\?\\" + windowsPath);
-            }
-        }
-
-        String redact(String value) {
-            String result = Objects.requireNonNull(value, "value must not be null");
-            for (Pattern path : paths) {
-                result = path.matcher(result).replaceAll(REPLACEMENT);
-            }
-            return result;
         }
     }
 }

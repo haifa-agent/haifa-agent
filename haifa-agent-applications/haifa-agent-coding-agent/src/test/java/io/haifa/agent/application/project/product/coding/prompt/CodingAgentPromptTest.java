@@ -11,13 +11,15 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.0.0");
+        assertThat(first.version()).isEqualTo("1.0.1");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.0.0#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.0.1#sha256:");
         assertThat(first.text())
                 .contains(
                         "Read applicable repository instructions",
                         "smallest complete change",
+                        "report it as blocked or not run",
+                        "do not infer that the code is correct or claim the check passed",
                         "result-verification skill",
                         "checks, skipped checks, and remaining risks")
                 .doesNotContain(

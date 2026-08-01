@@ -371,7 +371,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             time,
                             clock,
                             policy,
-                            workspaceRoot,
                             output)
                     : null;
             var provider = new ProjectToolExecutor(

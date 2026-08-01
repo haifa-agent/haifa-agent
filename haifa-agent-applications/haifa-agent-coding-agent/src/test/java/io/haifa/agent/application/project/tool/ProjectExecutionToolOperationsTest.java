@@ -28,6 +28,7 @@ import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -244,7 +245,29 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void sanitizesExecutionOutputBeforeReturningItToTheModel() {
+    void preservesRealExecutionPathInSummaryAndStructuredOutputByDefault() {
+        String realPath = Path.of(System.getProperty("java.io.tmpdir"), "haifa 空格", "workspace", "src", "Main.java")
+                .toAbsolutePath()
+                .toString();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                observer.onOutput(chunk("built " + realPath + "\n"));
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        var result = operations(broker, 4096, 2000)
+                .execute(invocation(Map.of("command", "representative build command"), () -> false), access());
+
+        assertThat(result.summary()).contains(realPath).doesNotContain("<workspace>");
+        assertThat(result.structuredData().get("output").toString())
+                .contains(realPath)
+                .doesNotContain("<workspace>");
+    }
+
+    @Test
+    void supportsAnExplicitGenericOutputSanitizer() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {

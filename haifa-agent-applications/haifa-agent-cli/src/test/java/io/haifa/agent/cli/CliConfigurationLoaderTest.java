@@ -79,8 +79,8 @@ class CliConfigurationLoaderTest {
         assertThat(result.model().id()).isEqualTo("deepseek-v4-flash");
         assertThat(result.model().credentialRef()).isEqualTo("env://DEEPSEEK_API_KEY");
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
-        assertThat(result.execution().provider()).isEqualTo("local-native");
-        assertThat(result.execution().network()).isEqualTo("deny");
+        assertThat(result.execution().provider()).isEqualTo("host-guarded");
+        assertThat(result.execution().network()).isEqualTo("allow");
         assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.MEMORY);
         assertThat(result.enabledTools()).contains("file.read", "file.write", "execution.run");
     }
@@ -201,8 +201,8 @@ class CliConfigurationLoaderTest {
         assertThat(result.approval()).isEqualTo(ApprovalMode.DENY);
         assertThat(result.timeout()).isEqualTo(java.time.Duration.ofMillis(120000));
         assertThat(result.execution().defaultTimeout()).isEqualTo(java.time.Duration.ofMillis(45000));
-        assertThat(result.execution().provider()).isEqualTo("local-native");
-        assertThat(result.execution().network()).isEqualTo("deny");
+        assertThat(result.execution().provider()).isEqualTo("host-guarded");
+        assertThat(result.execution().network()).isEqualTo("allow");
         assertThat(result.execution().maximumTimeout()).isEqualTo(java.time.Duration.ofMillis(600000));
         assertThat(result.execution().maxOutputBytes()).isEqualTo(32768);
         assertThat(result.execution().maxOutputLines()).isEqualTo(900);
