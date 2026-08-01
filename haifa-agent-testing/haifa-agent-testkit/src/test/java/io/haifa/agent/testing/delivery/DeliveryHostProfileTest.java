@@ -79,7 +79,7 @@ class DeliveryHostProfileTest {
         assertTrue(windows.contains("provider: host-guarded"));
         assertTrue(windows.contains("network: allow"));
         assertTrue(windows.contains("shell: powershell"));
-        assertTrue(windows.contains("shellPath: '" + paths.get("shell") + "'"));
+        assertTrue(windows.contains("shellPath: '" + toolchains.shellExecutable() + "'"));
         assertTrue(windows.contains("default: deepseek-v4-flash"));
         assertTrue(posix.contains("java-toolchain"));
         assertTrue(windows.contains("extraPathPolicies: []"));
