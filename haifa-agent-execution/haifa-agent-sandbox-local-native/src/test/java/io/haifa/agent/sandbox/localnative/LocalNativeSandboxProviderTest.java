@@ -317,29 +317,37 @@ class LocalNativeSandboxProviderTest {
                 List<LocalNativePathGrant> additionalPaths,
                 ExecutionScratchSpaceSpec scratchSpace,
                 ExecutionCommand command) {
-            if (isWindows()) {
-                String systemRoot = System.getenv("SystemRoot");
-                if (systemRoot == null || systemRoot.isBlank()) {
-                    throw new IllegalStateException("SystemRoot is required for the Windows scratch probe");
-                }
-                return new LocalNativeLaunchPlan(List.of(
-                        Path.of(systemRoot, "System32", "cmd.exe").toString(),
-                        "/d",
-                        "/c",
-                        "if not \"%TMPDIR%\"==\"%TMP%\" exit /b 21 & "
-                                + "if not \"%TMP%\"==\"%TEMP%\" exit /b 22 & "
-                                + "if not \"%GOTMPDIR%\"==\"%TMPDIR%\" exit /b 23 & "
-                                + "> \"%TMPDIR%\\root-probe\" echo probe & "
-                                + "> \"%GOCACHE%\\probe\" echo probe & "
-                                + "echo root-consistent & echo root-writable & echo go-writable"));
-            }
+            String javaExecutable = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java")
+                    .toAbsolutePath()
+                    .normalize()
+                    .toString();
             return new LocalNativeLaunchPlan(List.of(
-                    "/bin/sh",
-                    "-c",
-                    "test \"$TMPDIR\" = \"$TMP\" && test \"$TMP\" = \"$TEMP\" && echo root-consistent; "
-                            + "test -w \"$TMPDIR\" && echo root-writable; "
-                            + "test \"$GOTMPDIR\" = \"$TMPDIR\" && test -w \"$GOCACHE\" && "
-                            + "touch \"$GOCACHE/probe\" && echo go-writable"));
+                    javaExecutable,
+                    "-cp",
+                    System.getProperty("java.class.path"),
+                    LocalNativeScratchProbeProcess.class.getName()));
         }
+    }
+}
+
+final class LocalNativeScratchProbeProcess {
+    private LocalNativeScratchProbeProcess() {}
+
+    public static void main(String[] arguments) throws Exception {
+        String scratch = requireEnvironment("TMPDIR");
+        if (!scratch.equals(requireEnvironment("TMP"))
+                || !scratch.equals(requireEnvironment("TEMP"))
+                || !scratch.equals(requireEnvironment("GOTMPDIR"))) {
+            throw new IllegalStateException("scratch root environment is inconsistent");
+        }
+        java.nio.file.Files.writeString(Path.of(scratch, "root-probe"), "probe");
+        java.nio.file.Files.writeString(Path.of(requireEnvironment("GOCACHE"), "probe"), "probe");
+        System.out.print("root-consistent\nroot-writable\ngo-writable\n");
+    }
+
+    private static String requireEnvironment(String name) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required");
+        return value;
     }
 }
