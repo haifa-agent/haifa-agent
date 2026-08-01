@@ -440,6 +440,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     new java.util.concurrent.atomic.AtomicBoolean();
             private final java.util.concurrent.atomic.AtomicBoolean scratchCleanupFailed =
                     new java.util.concurrent.atomic.AtomicBoolean();
+            private final Object scratchCleanupLock = new Object();
+            private boolean scratchCleanupAttempted;
+            private boolean scratchCleanupSuccessful;
 
             private Managed(Process process, SandboxExecution execution, Instant startedAt, Path scratch) {
                 this.process = process;
@@ -470,9 +473,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                                             : io.haifa.agent.execution.api.ExecutionStatus.FAILED;
                     cancelRequested = false;
                     current = null;
-                    boolean cleaned = cleanupScratchDirectory(scratch);
+                    boolean cleaned = cleanupScratchOnce();
                     if (!cleaned) {
-                        scratchCleanupFailed.set(true);
                         status = io.haifa.agent.execution.api.ExecutionStatus.UNKNOWN;
                     }
                     return new io.haifa.agent.execution.api.ProcessExit(status, process.exitValue(), true, time.now());
@@ -548,7 +550,18 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             public void close() {
                 if (managedClosed.compareAndSet(false, true)) {
                     if (process.isAlive()) cancel();
-                    if (!process.isAlive()) cleanupScratchDirectory(scratch);
+                    if (!process.isAlive()) cleanupScratchOnce();
+                }
+            }
+
+            private boolean cleanupScratchOnce() {
+                synchronized (scratchCleanupLock) {
+                    if (!scratchCleanupAttempted) {
+                        scratchCleanupSuccessful = cleanupScratchDirectory(scratch);
+                        scratchCleanupAttempted = true;
+                        scratchCleanupFailed.set(!scratchCleanupSuccessful);
+                    }
+                    return scratchCleanupSuccessful;
                 }
             }
 
