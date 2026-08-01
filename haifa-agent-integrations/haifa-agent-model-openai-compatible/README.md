@@ -7,6 +7,7 @@ transport 实现；厂商请求扩展、Endpoint policy 与错误分类由冻结
 
 | Provider | dialect id | 同步 | SSE | Tool Call | Thinking |
 | --- | --- | --- | --- | --- | --- |
+| OpenAI Chat Completions | `openai-chat-completions` | 是 | 是 | 是 | 不发送厂商扩展 |
 | DeepSeek | `deepseek-openai-chat` | 是 | 是 | 是 | enabled/high，安全 continuation |
 | 阿里云百炼 | `aliyun-bailian-openai-chat` | 是 | 是 | 是 | 由受治理 Qwen profile 决定 |
 | 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
@@ -41,18 +42,19 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 
 ### 当前兼容矩阵
 
-| 能力 | DeepSeek | Bailian | Ark |
-| --- | --- | --- | --- |
-| Sync Chat | 是 | 是 | 是 |
-| SSE Content | 是 | 是 | 是 |
-| final usage chunk | 是 | 是 | 是 |
-| Tool Calls | 是 | 是 | 是 |
-| Thinking | enabled/high | profile-gated | profile-gated |
-| Tool reasoning continuation | 必须 | profile-gated | profile-gated |
-| Live IT | opt-in | opt-in | opt-in |
+| 能力 | OpenAI Chat Completions | DeepSeek | Bailian | Ark |
+| --- | --- | --- | --- | --- |
+| Sync Chat | 是 | 是 | 是 | 是 |
+| SSE Content | 是 | 是 | 是 | 是 |
+| final usage chunk | 是 | 是 | 是 | 是 |
+| Tool Calls | 是 | 是 | 是 | 是 |
+| Thinking | 无厂商扩展 | enabled/high | profile-gated | profile-gated |
+| Tool reasoning continuation | 否 | 必须 | profile-gated | profile-gated |
+| Live IT | 未提供 | opt-in | opt-in | opt-in |
 
 | Provider | Endpoint 示例 | Credential 示例 | 模型引用 | 厂商扩展 |
 | --- | --- | --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` 或显式允许的 loopback `/v1` | `env://OPENAI_API_KEY` | model id | 无 |
 | DeepSeek | `https://api.deepseek.com` | `env://DEEPSEEK_API_KEY` | model id | thinking object |
 | Bailian | `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1` | `env://DASHSCOPE_API_KEY` | Qwen model id/alias | enable_thinking/tool_stream |
 | Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |

@@ -27,6 +27,7 @@ import io.haifa.agent.model.core.ModelSelectionRequest;
 import io.haifa.agent.model.core.StaticModelPlatform;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
 import io.haifa.agent.personalassistant.application.PersonalModelOption;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
@@ -38,6 +39,7 @@ import io.haifa.agent.sdk.contribution.ShellPlatformContribution;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
 import io.haifa.agent.sdk.product.ProductProviderSuitability;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.List;
@@ -54,8 +56,18 @@ public final class PersonalModelFactory {
             String defaultModelId,
             ObjectMapper mapper,
             ShellPlatformContribution shell) {
+        return createPlatform(configured, defaultModelId, false, mapper, shell);
+    }
+
+    public static Platform createPlatform(
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            String defaultModelId,
+            boolean allowInsecureLoopbackModel,
+            ObjectMapper mapper,
+            ShellPlatformContribution shell) {
         List<PersonalAssistantProperties.ModelProvider> providers = List.copyOf(configured);
         if (providers.isEmpty()) throw new IllegalArgumentException("at least one Personal model provider is required");
+        validateEndpoints(providers, allowInsecureLoopbackModel);
         boolean deterministic = providers.stream().anyMatch(value -> "deterministic".equals(value.mode()));
         if (deterministic
                 && (providers.size() != 1
@@ -90,7 +102,7 @@ public final class PersonalModelFactory {
                                 .build(),
                         mapper,
                         new EnvironmentCredentialResolver(),
-                        false,
+                        allowInsecureLoopbackModel,
                         4 * 1024 * 1024);
         model = new LoggingAgentChatModel(model);
         ModelContribution contribution = new ModelContribution(
@@ -151,6 +163,7 @@ public final class PersonalModelFactory {
             PersonalAssistantProperties.ModelProvider provider,
             PersonalAssistantProperties.ProviderModel model,
             String adapter) {
+        boolean standardOpenAi = provider.id().equals("openai");
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(provider.id()),
                 "1.0.0",
@@ -164,8 +177,13 @@ public final class PersonalModelFactory {
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                 64_000,
                 8_192,
-                Map.of("thinking", "disabled"),
-                Map.of("thinking", "disabled"));
+                standardOpenAi
+                        ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions()
+                        : Map.of(
+                                "dialect_id", "deepseek-openai-chat",
+                                "dialect_version", "1.0",
+                                "thinking", "disabled"),
+                standardOpenAi ? Map.of() : Map.of("thinking", "disabled"));
     }
 
     private static StaticModelPlatform modelPlatform(
@@ -184,7 +202,7 @@ public final class PersonalModelFactory {
                                     Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                                     64_000,
                                     8_192,
-                                    Map.of("thinking", "disabled"),
+                                    provider.id().equals("openai") ? Map.of() : Map.of("thinking", "disabled"),
                                     Map.of()))
                             .toList();
                     return new ModelProviderDefinition(
@@ -196,7 +214,12 @@ public final class PersonalModelFactory {
                             new CredentialRef(provider.credentialReference()),
                             ProviderStatus.ACTIVE,
                             models,
-                            Map.of(),
+                            provider.id().equals("openai")
+                                    ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions()
+                                    : Map.of(
+                                            "dialect_id", "deepseek-openai-chat",
+                                            "dialect_version", "1.0",
+                                            "thinking", "disabled"),
                             Map.of());
                 })
                 .toList();
@@ -205,6 +228,22 @@ public final class PersonalModelFactory {
                 ModelAccessPolicy.allowAll(),
                 Map.of(adapter, "1.0.0"),
                 new InMemoryProviderHealthRegistry());
+    }
+
+    private static void validateEndpoints(
+            List<PersonalAssistantProperties.ModelProvider> providers, boolean allowInsecureLoopbackModel) {
+        for (PersonalAssistantProperties.ModelProvider provider : providers) {
+            URI endpoint = provider.endpoint();
+            if ("https".equalsIgnoreCase(endpoint.getScheme())) continue;
+            String host = endpoint.getHost();
+            boolean loopback = host != null
+                    && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
+                            .contains(host.toLowerCase(java.util.Locale.ROOT));
+            if (!allowInsecureLoopbackModel || !"http".equalsIgnoreCase(endpoint.getScheme()) || !loopback) {
+                throw new IllegalArgumentException(
+                        "Personal model HTTP endpoint requires explicit loopback-only opt-in");
+            }
+        }
     }
 
     private record ConfiguredModel(

@@ -14,6 +14,7 @@ public record PersonalAssistantProperties(
         Caller caller,
         List<ModelProvider> modelProviders,
         String defaultModelId,
+        boolean allowInsecureLoopbackModel,
         Web web,
         Mcp mcp,
         Execution execution,

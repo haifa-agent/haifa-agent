@@ -2,6 +2,10 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 新增标准 OpenAI Chat Completions dialect，并通过仅限 loopback 的 Endpoint 与
+  `env://OPENAI_API_KEY`，为 Coding Agent 和 Personal Assistant 配置第二个可信 Provider
+  `gpt-5.6-luna`。
+
 - Coding Agent 改用产品拥有的版本化短 Prompt，移除 CLI 中按 Case 累积的方法论字符串；动态 Context
   只披露预算、实际修改、验证、Diff 和缺失证据等事实，生产完成门禁不再依赖关键词验证计划或模型
   自报的语义覆盖标签。

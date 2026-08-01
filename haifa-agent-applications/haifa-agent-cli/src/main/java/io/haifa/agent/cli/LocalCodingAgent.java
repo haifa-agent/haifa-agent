@@ -42,6 +42,7 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
@@ -765,6 +766,7 @@ final class LocalCodingAgent implements AutoCloseable {
         if (model.providerId().equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
             return bailianModelSnapshot(model);
         }
+        boolean standardOpenAi = model.providerId().equals("openai");
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
                 "cli-v1",
@@ -775,18 +777,25 @@ final class LocalCodingAgent implements AutoCloseable {
                 "1.0.0",
                 model.endpoint(),
                 new CredentialRef(model.credentialRef()),
-                EnumSet.of(
-                        ModelCapability.TEXT_CHAT,
-                        ModelCapability.TOOL_CALLING,
-                        ModelCapability.STRUCTURED_OUTPUT,
-                        ModelCapability.REASONING),
+                standardOpenAi
+                        ? EnumSet.of(
+                                ModelCapability.TEXT_CHAT,
+                                ModelCapability.TOOL_CALLING,
+                                ModelCapability.STRUCTURED_OUTPUT)
+                        : EnumSet.of(
+                                ModelCapability.TEXT_CHAT,
+                                ModelCapability.TOOL_CALLING,
+                                ModelCapability.STRUCTURED_OUTPUT,
+                                ModelCapability.REASONING),
                 131_072,
                 8_192,
-                Map.of(
-                        "dialect_id", "deepseek-openai-chat",
-                        "dialect_version", "1.0",
-                        "thinking", "disabled"),
-                Map.of("thinking", "disabled"));
+                standardOpenAi
+                        ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions()
+                        : Map.of(
+                                "dialect_id", "deepseek-openai-chat",
+                                "dialect_version", "1.0",
+                                "thinking", "disabled"),
+                standardOpenAi ? Map.of() : Map.of("thinking", "disabled"));
     }
 
     private static ResolvedModelSnapshot bailianModelSnapshot(CliConfiguration.Model model) {

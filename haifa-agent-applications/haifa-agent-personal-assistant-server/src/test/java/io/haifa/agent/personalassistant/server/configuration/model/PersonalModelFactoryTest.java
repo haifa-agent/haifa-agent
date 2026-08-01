@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.server.configuration.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
@@ -68,6 +69,72 @@ class PersonalModelFactoryTest {
                 .containsExactly("deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash");
         assertThat(platform.contribution().snapshots()).containsOnlyKeys("deepseek-v4-pro", "deepseek-v4-flash");
         assertThat(platform.contribution().snapshot().modelId().value()).isEqualTo("deepseek-v4-pro");
+    }
+
+    @Test
+    void freezesOpenAiAsASecondProviderWithoutDeepSeekOptions() {
+        var deepSeek = new PersonalAssistantProperties.ModelProvider(
+                "deepseek",
+                "DeepSeek",
+                "remote",
+                false,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ProviderModel(
+                        "deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek-v4-flash")));
+        var openAi = new PersonalAssistantProperties.ModelProvider(
+                "openai",
+                "OpenAI",
+                "remote",
+                false,
+                URI.create("http://localhost:30000/v1"),
+                "env://OPENAI_API_KEY",
+                List.of(new PersonalAssistantProperties.ProviderModel(
+                        "openai-gpt-5.6-luna", "GPT-5.6 Luna", "gpt-5.6-luna")));
+
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(deepSeek, openAi), "deepseek-v4-flash", true, new ObjectMapper(), shell());
+
+        assertThat(platform.catalog().available())
+                .extracting(model -> model.providerId() + "/" + model.id())
+                .containsExactly("deepseek/deepseek-v4-flash", "openai/openai-gpt-5.6-luna");
+        assertThat(platform.contribution()
+                        .snapshots()
+                        .get("openai-gpt-5.6-luna")
+                        .providerOptions())
+                .containsEntry("dialect_id", "openai-chat-completions")
+                .containsEntry("dialect_version", "1.0")
+                .doesNotContainKeys("thinking", "reasoning_effort");
+    }
+
+    @Test
+    void permitsInsecureHttpOnlyForExplicitLoopbackModelEndpoints() {
+        var loopback = new PersonalAssistantProperties.ModelProvider(
+                "openai",
+                "OpenAI",
+                "remote",
+                false,
+                URI.create("http://localhost:30000/v1"),
+                "env://OPENAI_API_KEY",
+                List.of(new PersonalAssistantProperties.ProviderModel(
+                        "openai-gpt-5.6-luna", "GPT-5.6 Luna", "gpt-5.6-luna")));
+        var external = new PersonalAssistantProperties.ModelProvider(
+                "openai",
+                "OpenAI",
+                "remote",
+                false,
+                URI.create("http://example.com/v1"),
+                "env://OPENAI_API_KEY",
+                loopback.models());
+
+        assertThatThrownBy(() -> PersonalModelFactory.createPlatform(
+                        List.of(loopback), "openai-gpt-5.6-luna", false, new ObjectMapper(), shell()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loopback-only opt-in");
+        assertThatThrownBy(() -> PersonalModelFactory.createPlatform(
+                        List.of(external), "openai-gpt-5.6-luna", true, new ObjectMapper(), shell()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loopback-only opt-in");
     }
 
     private static ShellPlatformContribution shell() {

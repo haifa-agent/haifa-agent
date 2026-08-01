@@ -9,6 +9,7 @@ import java.util.Map;
 public final class OpenAiCompatibleDialects {
     public static final String DIALECT_ID = "dialect_id";
     public static final String DIALECT_VERSION = "dialect_version";
+    public static final String OPENAI_CHAT_COMPLETIONS = "openai-chat-completions";
     public static final String DEEPSEEK = "deepseek-openai-chat";
     public static final String ALIYUN_BAILIAN = "aliyun-bailian-openai-chat";
     public static final String VOLCENGINE_ARK = "volcengine-ark-openai-chat";
@@ -18,6 +19,10 @@ public final class OpenAiCompatibleDialects {
 
     public static Map<String, Object> deepSeekOptions() {
         return Map.of(DIALECT_ID, DEEPSEEK, DIALECT_VERSION, VERSION_1);
+    }
+
+    public static Map<String, Object> standardOpenAiChatCompletionsOptions() {
+        return Map.of(DIALECT_ID, OPENAI_CHAT_COMPLETIONS, DIALECT_VERSION, VERSION_1);
     }
 
     public static OpenAiCompatibleDialect resolve(ModelProviderDefinition provider) {
@@ -36,6 +41,7 @@ public final class OpenAiCompatibleDialects {
             throw new IllegalArgumentException("unsupported OpenAI-compatible dialect version: " + dialectVersion);
         }
         return switch (dialectId) {
+            case OPENAI_CHAT_COMPLETIONS -> StandardOpenAiChatCompletionsDialect.INSTANCE;
             case DEEPSEEK -> DeepSeekOpenAiChatDialect.INSTANCE;
             case ALIYUN_BAILIAN -> AliyunBailianOpenAiChatDialect.INSTANCE;
             case VOLCENGINE_ARK -> VolcengineArkOpenAiChatDialect.INSTANCE;

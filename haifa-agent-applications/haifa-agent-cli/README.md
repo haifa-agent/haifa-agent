@@ -187,6 +187,14 @@ models:
         - id: bailian-qwen-plus
           displayName: Qwen Plus
           providerModelId: qwen-plus
+    - id: openai
+      displayName: OpenAI
+      endpoint: http://localhost:30000/v1
+      credentialRef: env://OPENAI_API_KEY
+      models:
+        - id: openai-gpt-5.6-luna
+          displayName: GPT-5.6 Luna
+          providerModelId: gpt-5.6-luna
 ```
 
 旧 `model` 配置仍按单模型读取。`--model`/`HAIFA_MODEL_ID` 只能选择已注册的内部 ID，不能临时
@@ -203,6 +211,11 @@ Provider 是一级接入实例：Endpoint、Credential、百炼 Workspace/Region
 ConPTY 离线验收可在 CLI 子进程中显式设置 `HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true`，此开关
 只允许 `http://localhost`、`http://127.0.0.1` 或 IPv6 loopback Endpoint，不能放宽外部 HTTP
 Provider。普通运行不应设置该变量。
+
+发行配置中的 OpenAI 第二 Provider 使用 `http://localhost:30000/v1`，因此启动 Coding Agent 前需
+设置 `OPENAI_API_KEY`，并仅为该本机 loopback 端点设置
+`HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true`。默认模型仍是 `deepseek-v4-flash`；使用
+`--model openai-gpt-5.6-luna`、`HAIFA_MODEL_ID=openai-gpt-5.6-luna` 或空闲 Session 的模型选择入口切换。
 
 ## 安全 Trace
 

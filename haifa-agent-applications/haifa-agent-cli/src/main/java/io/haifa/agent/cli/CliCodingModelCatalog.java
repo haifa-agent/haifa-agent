@@ -82,6 +82,7 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
 
     private static ModelProviderDefinition provider(String providerId, List<CliConfiguration.Model> models) {
         CliConfiguration.Model first = models.getFirst();
+        var providerSnapshot = LocalCodingAgent.modelSnapshot(first);
         if (models.stream()
                 .anyMatch(model -> !model.endpoint().equals(first.endpoint())
                         || !model.credentialRef().equals(first.credentialRef()))) {
@@ -99,7 +100,7 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
                         capabilities(model),
                         131_072,
                         8_192,
-                        Map.of("thinking", "disabled"),
+                        LocalCodingAgent.modelSnapshot(model).invocationOptions(),
                         Map.of()))
                 .toList();
         return new ModelProviderDefinition(
@@ -111,14 +112,14 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
                 new io.haifa.agent.model.api.CredentialRef(first.credentialRef()),
                 ProviderStatus.ACTIVE,
                 definitions,
-                Map.of(),
+                providerSnapshot.providerOptions(),
                 Map.of());
     }
 
     private static Set<ModelCapability> capabilities(CliConfiguration.Model model) {
         EnumSet<ModelCapability> capabilities =
                 EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT);
-        if (!model.providerId().equals("aliyun-bailian")) capabilities.add(ModelCapability.REASONING);
+        if (model.providerId().equals("deepseek")) capabilities.add(ModelCapability.REASONING);
         return capabilities;
     }
 }

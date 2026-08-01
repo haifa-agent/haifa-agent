@@ -78,11 +78,66 @@ class CliConfigurationLoaderTest {
         assertThat(result.model().providerId()).isEqualTo("deepseek");
         assertThat(result.model().id()).isEqualTo("deepseek-v4-flash");
         assertThat(result.model().credentialRef()).isEqualTo("env://DEEPSEEK_API_KEY");
+        assertThat(result.availableModels())
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly("deepseek-v4-flash", "deepseek-v4-pro", "openai-gpt-5.6-luna");
+        assertThat(result.availableModels())
+                .filteredOn(model -> model.id().equals("openai-gpt-5.6-luna"))
+                .singleElement()
+                .satisfies(model -> {
+                    assertThat(model.providerId()).isEqualTo("openai");
+                    assertThat(model.modelId()).isEqualTo("gpt-5.6-luna");
+                    assertThat(model.endpoint()).hasToString("http://localhost:30000/v1");
+                    assertThat(model.credentialRef()).isEqualTo("env://OPENAI_API_KEY");
+                });
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
         assertThat(result.execution().network()).isEqualTo("allow");
         assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.MEMORY);
         assertThat(result.enabledTools()).contains("file.read", "file.write", "execution.run");
+    }
+
+    @Test
+    void freezesOpenAiSecondProviderWithTheStandardChatCompletionsDialect() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-openai", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                models:
+                  default: deepseek-v4-flash
+                  providers:
+                    - id: deepseek
+                      endpoint: https://api.deepseek.com
+                      credentialRef: env://DEEPSEEK_API_KEY
+                      models:
+                        - id: deepseek-v4-flash
+                          providerModelId: deepseek-v4-flash
+                    - id: openai
+                      displayName: OpenAI
+                      endpoint: http://localhost:30000/v1
+                      credentialRef: env://OPENAI_API_KEY
+                      models:
+                        - id: openai-gpt-5.6-luna
+                          displayName: GPT-5.6 Luna
+                          providerModelId: gpt-5.6-luna
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(
+                                new String[] {"--config", configuration.toString(), "--model", "openai-gpt-5.6-luna"}),
+                        Path.of("."));
+        var snapshot = LocalCodingAgent.modelSnapshot(result);
+
+        assertThat(result.availableModels())
+                .extracting(CliConfiguration.Model::id)
+                .containsExactly("deepseek-v4-flash", "openai-gpt-5.6-luna");
+        assertThat(snapshot.providerId().value()).isEqualTo("openai");
+        assertThat(snapshot.providerModelId()).isEqualTo("gpt-5.6-luna");
+        assertThat(snapshot.providerOptions())
+                .containsEntry("dialect_id", "openai-chat-completions")
+                .containsEntry("dialect_version", "1.0")
+                .doesNotContainKeys("thinking", "reasoning_effort");
     }
 
     @Test

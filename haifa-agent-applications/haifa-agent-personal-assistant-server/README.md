@@ -11,7 +11,7 @@ Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器�
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
 
 Provider 是接入实例，持有 Endpoint、Credential 和运行模式；每个 Provider 再声明自己的可用模型
-列表。例如同一 DeepSeek Provider 可以同时提供两个模型：
+列表。例如 DeepSeek 与本机 OpenAI-compatible 端点可以同时注册：
 
 ```yaml
 haifa:
@@ -30,10 +30,25 @@ haifa:
           - id: deepseek-v4-flash
             display-name: DeepSeek V4 Flash
             provider-model-id: deepseek-v4-flash
+      - id: openai
+        display-name: OpenAI
+        mode: remote
+        endpoint: http://localhost:30000/v1
+        credential-reference: env://OPENAI_API_KEY
+        models:
+          - id: openai-gpt-5.6-luna
+            display-name: GPT-5.6 Luna
+            provider-model-id: gpt-5.6-luna
+    allow-insecure-loopback-model: true
 ```
 
 模型 `id` 是产品内全局唯一的选择与偏好 ID；`provider-model-id` 是发送给对应 Provider 的实际模型
 或部署名称。
+
+`allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
+Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型
+仍是 `deepseek-v4-flash`，Personal 的模型 API/Selector 可把空闲 Conversation 切换到
+`openai-gpt-5.6-luna`，只影响后续新 Run。
 
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
