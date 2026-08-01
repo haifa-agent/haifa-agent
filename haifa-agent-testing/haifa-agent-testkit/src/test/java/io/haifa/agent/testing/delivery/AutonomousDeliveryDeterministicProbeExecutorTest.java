@@ -33,7 +33,7 @@ class AutonomousDeliveryDeterministicProbeExecutorTest {
                         "-am",
                         "-Dtest=LocalCodingAgentTest#stubAnalyzeRunUsesReadOnlyEvidenceWithoutRequiringWorkspaceChange",
                         "-Dsurefire.failIfNoSpecifiedTests=false",
-                        "-Dsurefire.reportsDirectory=" + reports,
+                        "-Dhaifa.surefire.reportsDirectory=" + reports,
                         "test"),
                 AutonomousDeliveryDeterministicProbeExecutor.command(
                         wrapper,
@@ -49,6 +49,12 @@ class AutonomousDeliveryDeterministicProbeExecutorTest {
         assertTrue(AutonomousDeliveryDeterministicProbeExecutor.command(
                         wrapper, AutonomousDeliveryDeterministicProbeExecutor.ProbeDefinition.TRACE_REPLAY, reports)
                 .contains("-Dtest=RuntimeControlTraceReplayTest"));
+        assertTrue(AutonomousDeliveryDeterministicProbeExecutor.command(
+                        wrapper,
+                        AutonomousDeliveryDeterministicProbeExecutor.ProbeDefinition.READ_ONLY_ANALYZE,
+                        reports)
+                .stream()
+                .noneMatch(value -> value.startsWith("-Dsurefire.reportsDirectory=")));
     }
 
     @Test
