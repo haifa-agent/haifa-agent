@@ -317,6 +317,22 @@ class LocalNativeSandboxProviderTest {
                 List<LocalNativePathGrant> additionalPaths,
                 ExecutionScratchSpaceSpec scratchSpace,
                 ExecutionCommand command) {
+            if (isWindows()) {
+                String systemRoot = System.getenv("SystemRoot");
+                if (systemRoot == null || systemRoot.isBlank()) {
+                    throw new IllegalStateException("SystemRoot is required for the Windows scratch probe");
+                }
+                return new LocalNativeLaunchPlan(List.of(
+                        Path.of(systemRoot, "System32", "cmd.exe").toString(),
+                        "/d",
+                        "/c",
+                        "if not \"%TMPDIR%\"==\"%TMP%\" exit /b 21 & "
+                                + "if not \"%TMP%\"==\"%TEMP%\" exit /b 22 & "
+                                + "if not \"%GOTMPDIR%\"==\"%TMPDIR%\" exit /b 23 & "
+                                + "> \"%TMPDIR%\\root-probe\" echo probe & "
+                                + "> \"%GOCACHE%\\probe\" echo probe & "
+                                + "echo root-consistent & echo root-writable & echo go-writable"));
+            }
             return new LocalNativeLaunchPlan(List.of(
                     "/bin/sh",
                     "-c",

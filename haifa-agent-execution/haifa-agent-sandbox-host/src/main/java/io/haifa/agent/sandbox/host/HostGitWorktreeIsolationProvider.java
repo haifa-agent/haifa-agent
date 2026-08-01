@@ -211,7 +211,12 @@ public final class HostGitWorktreeIsolationProvider implements GitWorktreeIsolat
     }
 
     private void safeDeleteIfPresent(Path target) {
-        Path base = controlledBase.toAbsolutePath().normalize();
+        Path base;
+        try {
+            base = controlledBase.toRealPath(LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException exception) {
+            throw failure("worktree cleanup base is unavailable");
+        }
         Path normalized = target.toAbsolutePath().normalize();
         if (!normalized.startsWith(base) || normalized.equals(base)) throw failure("worktree cleanup target is unsafe");
         if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) return;

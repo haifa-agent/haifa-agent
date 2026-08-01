@@ -43,6 +43,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -156,7 +157,11 @@ class HostSandboxTest {
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces, fixture.bindings, fixture.locations, () -> "shell-session", Instant::now, shell);
         SandboxProfile profile = SandboxProfile.hostGuarded(
-                new SandboxProfileRef("shell-test", "1"), provider.configurationDigest(), Set.of(), Set.of(), true);
+                new SandboxProfileRef("shell-test", "1"),
+                provider.configurationDigest(),
+                Set.of(),
+                hostBaselineEnvironment().keySet(),
+                true);
         String command = isWindows()
                 ? "$value = 'shell-ok'; $value | Set-Content result.txt; Get-Content result.txt"
                 : "printf 'shell-ok\\n' | tr a-z A-Z > result.txt; cat result.txt";
@@ -167,7 +172,7 @@ class HostSandboxTest {
                     new SandboxExecution(
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
-                            Map.of(),
+                            hostBaselineEnvironment(),
                             new ExecutionLimits(Duration.ofSeconds(10), 8, 4096, 4)),
                     chunk -> streamed.writeBytes(chunk.bytes()));
 
@@ -337,7 +342,11 @@ class HostSandboxTest {
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces, fixture.bindings, fixture.locations, () -> "path-session", Instant::now, shell);
         SandboxProfile profile = SandboxProfile.hostGuarded(
-                new SandboxProfileRef("path-test", "1"), provider.configurationDigest(), Set.of(), Set.of(), true);
+                new SandboxProfileRef("path-test", "1"),
+                provider.configurationDigest(),
+                Set.of(),
+                hostBaselineEnvironment().keySet(),
+                true);
         String command =
                 isWindows() ? "(Get-Location).Path; Set-Location ..; (Get-Location).Path" : "pwd -P; cd ..; pwd -P";
 
@@ -345,7 +354,7 @@ class HostSandboxTest {
             var result = session.execute(new SandboxExecution(
                     ExecutionCommand.shell(command),
                     WorkspacePath.root(fixture.workspaceId),
-                    Map.of(),
+                    hostBaselineEnvironment(),
                     new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
 
             assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
@@ -376,9 +385,9 @@ class HostSandboxTest {
         var profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("scratch-test", "1"),
                 provider.configurationDigest(),
-                Set.of("/bin/sh"),
                 Set.of(),
-                false);
+                hostBaselineEnvironment().keySet(),
+                true);
         var scratch = new ExecutionScratchSpaceSpec(
                 true,
                 Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
@@ -386,15 +395,9 @@ class HostSandboxTest {
 
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
             var result = session.execute(new SandboxExecution(
-                    ExecutionCommand.direct(List.of(
-                            "/bin/sh",
-                            "-c",
-                            "test \"$TMPDIR\" = \"$TMP\" && test \"$TMP\" = \"$TEMP\"; "
-                                    + "test \"$GOTMPDIR\" = \"$TMPDIR\"; "
-                                    + "test -w \"$TMPDIR\" && test -w \"$GOCACHE\"; "
-                                    + "touch \"$GOCACHE/probe\"; printf scratch-ok")),
+                    ExecutionCommand.shell(scratchProbeCommand()),
                     WorkspacePath.root(fixture.workspaceId),
-                    Map.of(),
+                    hostBaselineEnvironment(),
                     new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2),
                     ExecutionInput.none(),
                     scratch));
@@ -661,6 +664,28 @@ class HostSandboxTest {
         return System.getProperty("os.name", "")
                 .toLowerCase(java.util.Locale.ROOT)
                 .contains("win");
+    }
+
+    private static Map<String, String> hostBaselineEnvironment() {
+        var environment = new LinkedHashMap<String, String>();
+        for (String name : List.of("PATH", "HOME", "USERPROFILE", "TMP", "TEMP", "SystemRoot", "JAVA_HOME")) {
+            String value = System.getenv(name);
+            if (value != null && !value.isBlank()) environment.put(name, value);
+        }
+        return Map.copyOf(environment);
+    }
+
+    private static String scratchProbeCommand() {
+        if (isWindows()) {
+            return "if ($env:TMPDIR -ne $env:TMP -or $env:TMP -ne $env:TEMP) { exit 21 }; "
+                    + "if ($env:GOTMPDIR -ne $env:TMPDIR) { exit 22 }; "
+                    + "[IO.File]::WriteAllText((Join-Path $env:GOCACHE 'probe'), 'probe'); "
+                    + "[Console]::Out.Write('scratch-ok')";
+        }
+        return "test \"$TMPDIR\" = \"$TMP\" && test \"$TMP\" = \"$TEMP\"; "
+                + "test \"$GOTMPDIR\" = \"$TMPDIR\"; "
+                + "test -w \"$TMPDIR\" && test -w \"$GOCACHE\"; "
+                + "touch \"$GOCACHE/probe\"; printf scratch-ok";
     }
 
     private record Fixture(

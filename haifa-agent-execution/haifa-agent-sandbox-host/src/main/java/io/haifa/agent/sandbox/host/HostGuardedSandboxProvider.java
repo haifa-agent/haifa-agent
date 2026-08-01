@@ -648,7 +648,11 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         private boolean cleanupScratchDirectory(Path directory) {
             if (directory == null) return true;
             Path target = directory.toAbsolutePath().normalize();
-            if (!target.startsWith(scratchRoot) || target.equals(scratchRoot)) return false;
+            Path canonicalTarget = canonicalizeForComparison(target);
+            Path canonicalScratchRoot = canonicalizeForComparison(scratchRoot);
+            if (!canonicalTarget.startsWith(canonicalScratchRoot) || canonicalTarget.equals(canonicalScratchRoot)) {
+                return false;
+            }
             try (var paths = Files.walk(target)) {
                 for (Path path :
                         paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
@@ -761,16 +765,31 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 .toAbsolutePath()
                 .normalize();
         Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
-        if (root.getParent() == null || root.equals(home)) {
+        if (root.getParent() == null || canonicalizeForComparison(root).equals(canonicalizeForComparison(home))) {
             throw new IllegalArgumentException("scratchRoot must be private and outside the user home");
         }
         return root;
     }
 
     private static boolean overlaps(Path first, Path second) {
-        Path left = first.toAbsolutePath().normalize();
-        Path right = second.toAbsolutePath().normalize();
+        Path left = canonicalizeForComparison(first);
+        Path right = canonicalizeForComparison(second);
         return left.startsWith(right) || right.startsWith(left);
+    }
+
+    private static Path canonicalizeForComparison(Path value) {
+        Path absolute = value.toAbsolutePath().normalize();
+        Path existing = absolute;
+        while (existing != null && Files.notExists(existing, LinkOption.NOFOLLOW_LINKS)) {
+            existing = existing.getParent();
+        }
+        if (existing == null) return absolute;
+        try {
+            Path canonicalBase = existing.toRealPath(LinkOption.NOFOLLOW_LINKS);
+            return canonicalBase.resolve(existing.relativize(absolute)).normalize();
+        } catch (IOException exception) {
+            return absolute;
+        }
     }
 
     private static HostSandboxException failure(String code, String message) {
