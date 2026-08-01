@@ -81,7 +81,7 @@ final class AutonomousDeliveryDeterministicProbeExecutor {
         command.add("-am");
         command.add("-Dtest=" + probe.testSelector());
         command.add("-Dsurefire.failIfNoSpecifiedTests=false");
-        command.add("-Dsurefire.reportsDirectory=" + reports);
+        command.add("-Dhaifa.surefire.reportsDirectory=" + reports);
         command.add("test");
         return List.copyOf(command);
     }

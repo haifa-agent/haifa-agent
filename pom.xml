@@ -57,6 +57,7 @@
         <flatten.version>1.7.1</flatten.version>
 
         <skipITs>true</skipITs>
+        <haifa.surefire.reportsDirectory>${project.build.directory}/surefire-reports</haifa.surefire.reportsDirectory>
         <haifa.failsafe.reportsDirectory>${project.build.directory}/failsafe-reports</haifa.failsafe.reportsDirectory>
     </properties>
 
@@ -359,6 +360,7 @@
                     <version>${maven.surefire.plugin.version}</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
+                        <reportsDirectory>${haifa.surefire.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*Test.java</include>
                             <include>**/*ContractTest.java</include>
