@@ -124,6 +124,35 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void bridgesStandardOpenAiSynchronousTransportIntoModelStreamEvents() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"),
+                Map.of("dialect_id", "openai-chat-completions", "dialect_version", "1.0", "native_streaming", false));
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-openai-sync","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ready"}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var actual = model().invokeStreaming(openAiRequest(), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(actual.content()).isEqualTo("ready");
+        assertThat(events)
+                .extracting(event -> event.getClass().getSimpleName())
+                .containsExactly("Started", "ContentDelta", "UsageReported");
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("stream").asBoolean()).isFalse();
+        assertThat(sent.has("stream_options")).isFalse();
+    }
+
+    @Test
     void refusesInsecureNonLoopbackOpenAiEndpointEvenWhenLocalHttpIsEnabled() {
         provider = openAiProvider(URI.create("http://example.com/v1"));
 
@@ -709,6 +738,10 @@ class OpenAiCompatibleChatModelTest {
     }
 
     private ModelProviderDefinition openAiProvider(URI endpoint) {
+        return openAiProvider(endpoint, Map.of("dialect_id", "openai-chat-completions", "dialect_version", "1.0"));
+    }
+
+    private ModelProviderDefinition openAiProvider(URI endpoint, Map<String, Object> providerOptions) {
         ModelProviderId providerId = new ModelProviderId("openai");
         ModelDefinition model = new ModelDefinition(
                 new ModelDefinitionId("openai-gpt-5.6-luna"),
@@ -731,7 +764,7 @@ class OpenAiCompatibleChatModelTest {
                 new CredentialRef("env://OPENAI_API_KEY"),
                 ProviderStatus.ACTIVE,
                 List.of(model),
-                Map.of("dialect_id", "openai-chat-completions", "dialect_version", "1.0"),
+                providerOptions,
                 Map.of());
     }
 

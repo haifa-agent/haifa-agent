@@ -9,6 +9,7 @@ import java.util.Map;
 public final class OpenAiCompatibleDialects {
     public static final String DIALECT_ID = "dialect_id";
     public static final String DIALECT_VERSION = "dialect_version";
+    public static final String NATIVE_STREAMING = "native_streaming";
     public static final String OPENAI_CHAT_COMPLETIONS = "openai-chat-completions";
     public static final String DEEPSEEK = "deepseek-openai-chat";
     public static final String ALIYUN_BAILIAN = "aliyun-bailian-openai-chat";
@@ -23,6 +24,11 @@ public final class OpenAiCompatibleDialects {
 
     public static Map<String, Object> standardOpenAiChatCompletionsOptions() {
         return Map.of(DIALECT_ID, OPENAI_CHAT_COMPLETIONS, DIALECT_VERSION, VERSION_1);
+    }
+
+    public static Map<String, Object> standardOpenAiChatCompletionsOptions(boolean nativeStreaming) {
+        return Map.of(
+                DIALECT_ID, OPENAI_CHAT_COMPLETIONS, DIALECT_VERSION, VERSION_1, NATIVE_STREAMING, nativeStreaming);
     }
 
     public static OpenAiCompatibleDialect resolve(ModelProviderDefinition provider) {

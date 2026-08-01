@@ -178,7 +178,7 @@ public final class PersonalModelFactory {
                 64_000,
                 8_192,
                 standardOpenAi
-                        ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions()
+                        ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions(false)
                         : Map.of(
                                 "dialect_id", "deepseek-openai-chat",
                                 "dialect_version", "1.0",
@@ -215,7 +215,7 @@ public final class PersonalModelFactory {
                             ProviderStatus.ACTIVE,
                             models,
                             provider.id().equals("openai")
-                                    ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions()
+                                    ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions(false)
                                     : Map.of(
                                             "dialect_id", "deepseek-openai-chat",
                                             "dialect_version", "1.0",

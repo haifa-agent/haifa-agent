@@ -198,6 +198,11 @@ macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据
 写入参数、状态文件或日志。
 
+Windows 启动脚本从当前进程环境读取 `OPENAI_API_KEY`，缺失时再读取 Windows 用户环境，并将
+OpenAI 第二 Provider 显式装配为 `openai-gpt-5.6-luna`。该本机中转冻结
+`native_streaming=false`，上游使用同步 Chat Completions 返回权威 usage，产品侧仍通过模型契约桥接
+有界 Content/Usage 事件。
+
 ## Process logging
 
 The server uses Spring Boot's SLF4J/Logback logging stack. At `INFO`, it records safe operational milestones for Run acceptance and status changes, interaction/approval state, Tool and execution activity, and model call start/completion/failure with token counts and elapsed time. Known failures log stable codes and bounded safe attributes without a stack trace. Unexpected Throwables are available only to the explicitly configured internal diagnostic sink and are correlated by diagnostic ID. Logs intentionally exclude full prompts, assistant text, Tool arguments, command or script content, credentials, raw provider responses, result bodies, and messages from unclassified exceptions.

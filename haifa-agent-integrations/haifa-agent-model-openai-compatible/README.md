@@ -59,6 +59,9 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | Bailian | `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1` | `env://DASHSCOPE_API_KEY` | Qwen model id/alias | enable_thinking/tool_stream |
 | Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |
 
+标准 OpenAI dialect 可冻结 `native_streaming=false`。此时 Adapter 使用同步 Chat Completions 获取权威
+`usage`，再通过 provider-neutral 默认桥接发出有界 Content/Usage 事件，适用于不实现 SSE usage 的本机中转。
+
 ## DeepSeek thinking
 
 The governed DeepSeek default is `thinking=enabled` with `reasoning_effort=high`; explicit disabled snapshots

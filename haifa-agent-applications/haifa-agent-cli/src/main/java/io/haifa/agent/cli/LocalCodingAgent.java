@@ -790,7 +790,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 131_072,
                 8_192,
                 standardOpenAi
-                        ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions()
+                        ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions(false)
                         : Map.of(
                                 "dialect_id", "deepseek-openai-chat",
                                 "dialect_version", "1.0",

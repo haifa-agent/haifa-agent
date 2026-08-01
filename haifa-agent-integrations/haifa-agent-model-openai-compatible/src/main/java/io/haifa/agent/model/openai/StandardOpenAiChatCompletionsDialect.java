@@ -26,16 +26,27 @@ final class StandardOpenAiChatCompletionsDialect implements OpenAiCompatibleDial
     public void validateProvider(ModelProviderDefinition provider, boolean allowInsecureHttp) {
         OpenAiCompatibleEndpointPolicy.validate(
                 provider.endpoint(), allowInsecureHttp, Set.of("api.openai.com"), "/v1");
+        validateOptions(provider.options());
+        provider.models().forEach(model -> validateOptions(model.options()));
     }
 
     @Override
     public void validateSnapshot(ResolvedModelSnapshot snapshot, boolean allowInsecureHttp) {
         OpenAiCompatibleEndpointPolicy.validate(
                 snapshot.endpoint(), allowInsecureHttp, Set.of("api.openai.com"), "/v1");
+        validateOptions(snapshot.providerOptions());
+        validateOptions(snapshot.invocationOptions());
     }
 
     @Override
     public void applyRequest(AgentChatRequest request, Map<String, Object> body) {
         // The shared transport already emits the standard Chat Completions fields.
+    }
+
+    private static void validateOptions(Map<String, Object> options) {
+        Object nativeStreaming = options.get(OpenAiCompatibleDialects.NATIVE_STREAMING);
+        if (nativeStreaming != null && !(nativeStreaming instanceof Boolean)) {
+            throw new IllegalArgumentException("native_streaming must be boolean");
+        }
     }
 }
