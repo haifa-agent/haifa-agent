@@ -51,6 +51,16 @@ final class AutonomousDeliveryExecutionPlan {
         }
     }
 
+    static void requireApproved(Frozen plan, String approvedSha256) {
+        Objects.requireNonNull(plan, "execution plan must not be null");
+        if (approvedSha256 == null || !approvedSha256.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("approved execution plan SHA-256 is required");
+        }
+        if (!plan.sha256().equals(approvedSha256)) {
+            throw new IllegalArgumentException("approved execution plan SHA-256 does not match the current plan");
+        }
+    }
+
     private static Map<String, Object> caseEntry(
             AutonomousDeliveryCaseCatalog catalog, AutonomousDeliverySuiteManifest.CaseSelection selection) {
         LinkedHashMap<String, Object> entry = new LinkedHashMap<>();
