@@ -16,6 +16,19 @@ class SuiteRunnerMainTest {
     Path temporaryDirectory;
 
     @Test
+    void routesFailsafeReportsIntoTheCaseEvidenceDirectory() throws Exception {
+        Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("reports-project"));
+        Files.writeString(projectRoot.resolve(currentPlatform().equals("windows") ? "mvnw.cmd" : "mvnw"), "");
+        Path reportsRoot = temporaryDirectory.resolve("case-evidence/failsafe-reports");
+
+        var command =
+                new SuiteRunnerMain().mavenCommand(projectRoot, CriticalPathCatalog.require("CP-01"), reportsRoot);
+
+        assertTrue(command.contains("-Dhaifa.failsafe.reportsDirectory=" + reportsRoot));
+        assertTrue(command.stream().noneMatch(value -> value.startsWith("-Dfailsafe.reportsDirectory=")));
+    }
+
+    @Test
     void rejectsUninventoriedAssetBeforeLoadingSuite() throws Exception {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("orphan-project"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("orphan-test-config"));

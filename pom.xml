@@ -57,6 +57,7 @@
         <flatten.version>1.7.1</flatten.version>
 
         <skipITs>true</skipITs>
+        <haifa.failsafe.reportsDirectory>${project.build.directory}/failsafe-reports</haifa.failsafe.reportsDirectory>
     </properties>
 
     <dependencyManagement>
@@ -370,6 +371,7 @@
                     <version>${maven.failsafe.plugin.version}</version>
                     <configuration>
                         <skipITs>${skipITs}</skipITs>
+                        <reportsDirectory>${haifa.failsafe.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*IT.java</include>
                             <include>**/*LiveIT.java</include>
