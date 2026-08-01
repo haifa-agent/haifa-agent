@@ -37,7 +37,17 @@ class CliExecutionPlatformTest {
         assertThat(profile.networkPolicy()).isEqualTo(NetworkPolicy.ALLOW);
         assertThat(profile.requiredCapabilities().networkIsolation()).isFalse();
         assertThat(preflight.managedProcessSupported()).isTrue();
-        assertThat(configuration.inheritEnvironment()).contains("PATHEXT", "SystemDrive", "ProgramData");
+        assertThat(configuration.inheritEnvironment())
+                .contains(
+                        "PATHEXT",
+                        "SystemDrive",
+                        "WINDIR",
+                        "ComSpec",
+                        "APPDATA",
+                        "LOCALAPPDATA",
+                        "ProgramData",
+                        "ProgramFiles",
+                        "PSModulePath");
         assertThat(CliExecutionPlatform.securitySummary(profile, preflight))
                 .contains(
                         "provider=host-guarded (trusted local development)",

@@ -299,7 +299,7 @@ execution:
   maxOutputLines: 2000
   maxOutputBytes: 51200
   maxProcesses: 8
-  inheritEnvironment: [PATH, HOME, USERPROFILE, TMP, TEMP, SystemRoot, JAVA_HOME, MAVEN_OPTS, GRADLE_USER_HOME]
+  inheritEnvironment: [PATH, PATHEXT, HOME, USERPROFILE, TMP, TEMP, SystemRoot, SystemDrive, WINDIR, ComSpec, HOMEDRIVE, HOMEPATH, APPDATA, LOCALAPPDATA, ProgramData, ProgramFiles, ProgramW6432, PUBLIC, PSModulePath, JAVA_HOME, MAVEN_OPTS, GRADLE_USER_HOME]
   extraPathPolicies: []
 runtime:
   maxIterations: 50

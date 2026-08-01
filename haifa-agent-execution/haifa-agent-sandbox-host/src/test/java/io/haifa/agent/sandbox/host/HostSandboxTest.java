@@ -667,8 +667,28 @@ class HostSandboxTest {
     }
 
     private static Map<String, String> hostBaselineEnvironment() {
+        if (!isWindows()) return Map.of();
         var environment = new LinkedHashMap<String, String>();
-        for (String name : List.of("PATH", "HOME", "USERPROFILE", "TMP", "TEMP", "SystemRoot", "JAVA_HOME")) {
+        for (String name : List.of(
+                "PATH",
+                "PATHEXT",
+                "SystemRoot",
+                "SystemDrive",
+                "WINDIR",
+                "ComSpec",
+                "USERPROFILE",
+                "HOMEDRIVE",
+                "HOMEPATH",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "ProgramData",
+                "ProgramFiles",
+                "ProgramW6432",
+                "PUBLIC",
+                "PSModulePath",
+                "TMP",
+                "TEMP",
+                "JAVA_HOME")) {
             String value = System.getenv(name);
             if (value != null && !value.isBlank()) environment.put(name, value);
         }
