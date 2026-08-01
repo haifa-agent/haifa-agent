@@ -2,6 +2,7 @@ package io.haifa.agent.testing.delivery;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.haifa.agent.testing.repository.RepositoryRevision;
 import java.util.List;
@@ -24,6 +25,18 @@ class AutonomousDeliveryExecutionPlanTest {
         assertEquals(first.sha256(), second.sha256());
         assertEquals(64, first.sha256().length());
         assertNotEquals(first.sha256(), changed.sha256());
+    }
+
+    @Test
+    void liveExecutionRequiresTheExactApprovedFingerprint() {
+        AutonomousDeliveryExecutionPlan.Frozen plan = AutonomousDeliveryExecutionPlan.freeze(
+                AutonomousDeliveryCaseCatalog.loadVerified(), suite(), matrix(), combination(), PRODUCT, CONFIG);
+
+        AutonomousDeliveryExecutionPlan.requireApproved(plan, plan.sha256());
+        assertThrows(IllegalArgumentException.class, () -> AutonomousDeliveryExecutionPlan.requireApproved(plan, null));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AutonomousDeliveryExecutionPlan.requireApproved(plan, "f".repeat(64)));
     }
 
     private static AutonomousDeliverySuiteManifest suite() {

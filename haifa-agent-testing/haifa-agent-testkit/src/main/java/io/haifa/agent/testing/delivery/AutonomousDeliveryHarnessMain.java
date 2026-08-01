@@ -147,6 +147,7 @@ public final class AutonomousDeliveryHarnessMain {
             if (suite == null) {
                 throw new IllegalArgumentException("--suite is required for production Phase Gates");
             }
+            AutonomousDeliveryExecutionPlan.requireApproved(executionPlan, options.approvedExecutionPlanSha256());
             Map<String, Path> toolchains = new LinkedHashMap<>();
             toolchains.put("java", options.javaExecutable());
             toolchains.put("javac", options.javacExecutable());
@@ -394,6 +395,7 @@ public final class AutonomousDeliveryHarnessMain {
             String matrixCombination,
             List<Path> historicalBaselineRoots,
             boolean execute,
+            String approvedExecutionPlanSha256,
             long approvedMaxCostMinorUnits,
             Path cliJar,
             Path javaExecutable,
@@ -415,6 +417,7 @@ public final class AutonomousDeliveryHarnessMain {
             String matrixCombination = null;
             List<Path> historicalBaselineRoots = new ArrayList<>();
             boolean execute = false;
+            String approvedExecutionPlanSha256 = null;
             long approvedMaxCostMinorUnits = 0;
             Path cliJar = null;
             Path javaExecutable = null;
@@ -445,6 +448,8 @@ public final class AutonomousDeliveryHarnessMain {
                     case "--matrix-combination" -> matrixCombination = value(arguments, ++index);
                     case "--baseline-root" -> historicalBaselineRoots.add(Path.of(value(arguments, ++index)));
                     case "--execute" -> execute = true;
+                    case "--approved-plan-sha256" ->
+                        approvedExecutionPlanSha256 = value(arguments, ++index).toLowerCase(Locale.ROOT);
                     case "--approved-max-cost-minor-units" ->
                         approvedMaxCostMinorUnits = positiveLong(value(arguments, ++index), "approved max cost");
                     case "--cli-jar" -> cliJar = Path.of(value(arguments, ++index));
@@ -476,6 +481,7 @@ public final class AutonomousDeliveryHarnessMain {
                     matrixCombination,
                     List.copyOf(historicalBaselineRoots),
                     execute,
+                    approvedExecutionPlanSha256,
                     approvedMaxCostMinorUnits,
                     cliJar,
                     javaExecutable,

@@ -105,6 +105,9 @@ Runtime 与其余 Gate 证据文件全部纳入摘要。
 时长、币种、价格和每 Repeat Token 上界；Harness 在读取 Secret 前用缓存未命中价格计算保守费用
 上界，并拒绝超出 Suite 或人工批准金额的执行。Provider 未返回金额时仍保留 `costKnown=false`，
 另行输出 `FROZEN_CACHE_MISS_UPPER_BOUND` 估算证据，不把估算冒充 Provider 账单。
+调用方还必须通过 `--approved-plan-sha256` 回传当前 Plan 输出的 SHA-256；缺失、格式错误或与当前
+Suite、Case、Budget、Matrix、Catalog、产品/配置 Revision 计算结果不一致时，Harness 会在创建 Gate
+目录和读取 Secret 前拒绝执行。
 
 `phase-3-gate --execute` 在新的 `phase-3/build-<commit>/gate-<timestamp>/` 下复用同一隔离协议，并
 为每次运行额外生成冻结 `verification-plan.json`、逐维度
