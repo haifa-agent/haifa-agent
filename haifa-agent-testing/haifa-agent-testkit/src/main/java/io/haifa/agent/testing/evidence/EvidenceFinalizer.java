@@ -1,5 +1,6 @@
 package io.haifa.agent.testing.evidence;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -8,10 +9,13 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 /** Publishes one immutable evidence tree by hashing content and then verifying host read-only controls. */
 public final class EvidenceFinalizer {
+    private static final String SYMLINK_METADATA = ".evidence-symlinks-v1.json";
+
     private EvidenceFinalizer() {}
 
     public static void finalizeEvidence(Path root) throws IOException {
@@ -24,6 +28,7 @@ public final class EvidenceFinalizer {
         if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(target)) {
             throw new IOException("evidence root must be a real directory");
         }
+        writeSymlinkMetadata(target);
         List<String> lines = new ArrayList<>();
         List<Path> entries;
         try (var paths = Files.walk(target)) {
@@ -33,7 +38,8 @@ public final class EvidenceFinalizer {
         }
         for (Path entry : entries) {
             if (Files.isSymbolicLink(entry)) {
-                throw new IOException("evidence tree must not contain symbolic links");
+                EvidenceSymlinkTarget.requireInternal(target, entry);
+                continue;
             }
             if (!Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)
                     && !Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
@@ -48,5 +54,32 @@ public final class EvidenceFinalizer {
             }
         }
         Files.write(target.resolve("manifest.sha256"), lines, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
+    }
+
+    private static void writeSymlinkMetadata(Path root) throws IOException {
+        List<Path> links;
+        try (var paths = Files.walk(root)) {
+            links = paths.filter(Files::isSymbolicLink)
+                    .sorted(Comparator.comparing(path -> root.relativize(path).toString()))
+                    .toList();
+        }
+        if (links.isEmpty()) {
+            return;
+        }
+        List<LinkedHashMap<String, Object>> entries = new ArrayList<>();
+        for (Path link : links) {
+            EvidenceSymlinkTarget.requireInternal(root, link);
+            LinkedHashMap<String, Object> entry = new LinkedHashMap<>();
+            entry.put("path", root.relativize(link).toString().replace('\\', '/'));
+            entry.put("target", Files.readSymbolicLink(link).toString().replace('\\', '/'));
+            entries.add(entry);
+        }
+        LinkedHashMap<String, Object> artifact = new LinkedHashMap<>();
+        artifact.put("schemaVersion", 1);
+        artifact.put("links", entries);
+        try (var output = Files.newOutputStream(
+                root.resolve(SYMLINK_METADATA), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+            new ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(output, artifact);
+        }
     }
 }

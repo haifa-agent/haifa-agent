@@ -41,7 +41,8 @@ public final class EvidenceReadOnlyTree {
         }
         for (Path path : paths) {
             if (Files.isSymbolicLink(path)) {
-                throw new IOException("evidence tree must not contain symbolic links");
+                EvidenceSymlinkTarget.requireInternal(target, path);
+                continue;
             }
             if (isReadOnly(path)) {
                 continue;

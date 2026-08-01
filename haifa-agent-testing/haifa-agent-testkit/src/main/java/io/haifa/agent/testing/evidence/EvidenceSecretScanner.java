@@ -45,7 +45,15 @@ public final class EvidenceSecretScanner {
         List<String> findingPaths = new ArrayList<>();
         for (Path entry : entries) {
             if (Files.isSymbolicLink(entry)) {
-                throw new IOException("evidence tree must not contain symbolic links");
+                EvidenceSymlinkTarget.requireInternal(target, entry);
+                byte[] declaredTarget = Files.readSymbolicLink(entry).toString().getBytes(StandardCharsets.UTF_8);
+                for (byte[] needle : needles) {
+                    if (contains(declaredTarget, needle)) {
+                        findingPaths.add(target.relativize(entry).toString().replace('\\', '/'));
+                        break;
+                    }
+                }
+                continue;
             }
             if (!Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)
                     && !Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
@@ -82,6 +90,21 @@ public final class EvidenceSecretScanner {
                         if (matched == needle.length) return true;
                     }
                 }
+            }
+        }
+        return false;
+    }
+
+    private static boolean contains(byte[] content, byte[] needle) {
+        if (needle.length == 0) return false;
+        int[] failure = failureTable(needle);
+        int matched = 0;
+        for (byte value : content) {
+            while (matched > 0 && value != needle[matched]) {
+                matched = failure[matched - 1];
+            }
+            if (value == needle[matched] && ++matched == needle.length) {
+                return true;
             }
         }
         return false;
