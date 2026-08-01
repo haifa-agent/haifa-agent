@@ -44,6 +44,32 @@ class RepositoryRevisionTest {
         assertThrows(IllegalArgumentException.class, () -> RepositoryRevision.inspect(nested));
     }
 
+    @Test
+    void acceptsAncestorBaselineAndRejectsDivergentCommit() throws Exception {
+        Path repository = committedRepository(temporaryDirectory.resolve("repository"));
+        RepositoryRevision baseline = RepositoryRevision.inspect(repository);
+
+        Files.writeString(repository.resolve("compatible.txt"), "compatible");
+        runGit(repository, "add", "compatible.txt");
+        runGit(repository, "commit", "--quiet", "-m", "compatible");
+        RepositoryRevision compatibleHead = RepositoryRevision.inspect(repository);
+
+        compatibleHead.requireCompatibleBaseline(repository, baseline.commit(), "test matrix");
+        compatibleHead.requireCompatibleBaseline(repository, compatibleHead.commit(), "test matrix");
+
+        runGit(repository, "checkout", "--quiet", "--detach", baseline.commit());
+        Files.writeString(repository.resolve("divergent.txt"), "divergent");
+        runGit(repository, "add", "divergent.txt");
+        runGit(repository, "commit", "--quiet", "-m", "divergent");
+        String divergentCommit = RepositoryRevision.inspect(repository).commit();
+        runGit(repository, "checkout", "--quiet", "--detach", compatibleHead.commit());
+
+        RepositoryRevision restoredHead = RepositoryRevision.inspect(repository);
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> restoredHead.requireCompatibleBaseline(repository, divergentCommit, "test matrix"));
+    }
+
     private static Path committedRepository(Path repository) throws Exception {
         Files.createDirectories(repository);
         runGit(repository, "init", "--quiet");

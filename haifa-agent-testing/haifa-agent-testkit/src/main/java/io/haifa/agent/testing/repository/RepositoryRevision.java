@@ -23,6 +23,17 @@ public record RepositoryRevision(String commit, boolean dirty) {
     }
 
     public static RepositoryRevision inspect(Path repository) throws IOException, InterruptedException {
+        Path root = requireRepositoryRoot(repository);
+        return inspectRoot(root);
+    }
+
+    private static RepositoryRevision inspectRoot(Path root) throws IOException, InterruptedException {
+        String commit = runGit(root, "rev-parse", "HEAD").toLowerCase(Locale.ROOT);
+        boolean dirty = gitHasOutput(root, "status", "--porcelain=v1", "--untracked-files=all");
+        return new RepositoryRevision(commit, dirty);
+    }
+
+    private static Path requireRepositoryRoot(Path repository) throws IOException, InterruptedException {
         Path root = Objects.requireNonNull(repository, "repository must not be null")
                 .toAbsolutePath()
                 .normalize()
@@ -37,9 +48,7 @@ public record RepositoryRevision(String commit, boolean dirty) {
         if (!discoveredRoot.equals(root)) {
             throw new IllegalArgumentException("path must be the root of an independent Git repository");
         }
-        String commit = runGit(root, "rev-parse", "HEAD").toLowerCase(Locale.ROOT);
-        boolean dirty = gitHasOutput(root, "status", "--porcelain=v1", "--untracked-files=all");
-        return new RepositoryRevision(commit, dirty);
+        return root;
     }
 
     public void requireClean(String label) {
@@ -51,6 +60,24 @@ public record RepositoryRevision(String commit, boolean dirty) {
     public void requireCommit(String expected, String label) {
         if (expected == null || !expected.matches("[0-9a-f]{40}") || !commit.equals(expected)) {
             throw new IllegalArgumentException(label + " commit must exactly match the checked-out HEAD");
+        }
+    }
+
+    public void requireCompatibleBaseline(Path repository, String baseline, String label)
+            throws IOException, InterruptedException {
+        if (baseline == null || !baseline.matches("[0-9a-f]{40}")) {
+            throw new IllegalArgumentException(label + " baseline must be a full lowercase Git commit");
+        }
+        Path root = requireRepositoryRoot(repository);
+        if (!equals(inspectRoot(root))) {
+            throw new IllegalArgumentException(label + " revision no longer matches the checked-out repository");
+        }
+        int exitCode = runGitExitCode(root, "merge-base", "--is-ancestor", baseline, commit);
+        if (exitCode == 1) {
+            throw new IllegalArgumentException(label + " baseline must be an ancestor of the checked-out HEAD");
+        }
+        if (exitCode != 0) {
+            throw new IOException("Git repository compatibility inspection failed");
         }
     }
 
@@ -107,6 +134,22 @@ public record RepositoryRevision(String commit, boolean dirty) {
             throw new IOException("Git repository inspection failed");
         }
         return hasOutput;
+    }
+
+    private static int runGitExitCode(Path root, String... arguments) throws IOException, InterruptedException {
+        Process process = startGit(root, arguments);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var outputReader = executor.submit(() -> process.getInputStream().readAllBytes());
+            if (!process.waitFor(GIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new IOException("Git repository inspection timed out");
+            }
+            outputReader.get(5, TimeUnit.SECONDS);
+        } catch (ExecutionException | TimeoutException exception) {
+            process.destroyForcibly();
+            throw new IOException("Git repository output could not be read", exception);
+        }
+        return process.exitValue();
     }
 
     private static Process startGit(Path root, String... arguments) throws IOException {

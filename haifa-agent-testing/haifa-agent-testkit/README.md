@@ -16,6 +16,9 @@ Schema 2 资产台账的生命周期、覆盖范围及引用，避免两个正�
 所引用 Matrix 中的一个组合；Runner 校验组合存在且平台与当前 Host OS 一致，并把完整组合写入
 版本 3 报告。公共 `RepositoryRevision` 要求主仓和 `test-config` 是独立 Git 根；Plan 显示两仓
 Commit/dirty 状态，Execute 拒绝 tracked/untracked change，并在结束后复核两仓版本未变化。
+Autonomous Delivery Matrix 中的 `compatibleAgentBaselineCommit` 表示最低兼容基线：当前主仓
+HEAD 必须等于该 Commit 或以其为祖先。显式 `--build-commit`、Campaign 和 Evidence 仍绑定本次
+实际精确 Commit，Execute 的仓库干净与运行前后 Revision 不变门禁不变。
 Execute 还要求外部注入 `HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD`，Suite 声明的费用估算上限
 不得超过该独立批准额度；报告同时记录 Suite Budget 和批准额度。该门禁不等于实际计费，真实费用
 仍必须根据 Provider Usage 另行汇总。
