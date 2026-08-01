@@ -28,6 +28,9 @@ Execute 结果不能只依赖 Maven 退出码：Runner 把每个 Case 的 Failsa
 证据和超时分别记录为 `NOT_RUN`、`SKIPPED`、`ERROR` 和 `TIMEOUT`，均不得成为 PASS。原始 XML
 解析后只保留安全文件名、SHA-256 和计数，并立即删除，避免把 `user.dir`/classpath Host Path 带入
 可发布证据。
+报告目录通过项目属性 `haifa.failsafe.reportsDirectory` 显式绑定到 Failsafe `reportsDirectory` 参数；
+Runner 不使用未被插件声明为用户属性的 `failsafe.reportsDirectory`，避免真实 IT 已执行但 Evidence
+目录仍为空而被错误归类为 `NOT_RUN`。
 Critical Path 和 Autonomous Delivery 现在共用 `process.ProcessTreeCleanup`。Tracker 从子进程启动
 时持续记录后代，即使父进程先退出也能在预算结束后收敛已观察到的 Java/CLI/Tool 子进程；需要清理
 介入的“成功”Maven 运行会降级为 `ERROR`，只有自然退出且最终无存活后代才能 PASS。

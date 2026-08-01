@@ -257,7 +257,7 @@ public final class SuiteRunnerMain {
         return result;
     }
 
-    private List<String> mavenCommand(Path projectRoot, CriticalPathCase testCase, Path reportsRoot) {
+    List<String> mavenCommand(Path projectRoot, CriticalPathCase testCase, Path reportsRoot) {
         Path wrapper = projectRoot.resolve(isWindows() ? "mvnw.cmd" : "mvnw");
         if (!Files.isRegularFile(wrapper)) throw new IllegalArgumentException("Maven wrapper is unavailable");
         return List.of(
@@ -270,7 +270,7 @@ public final class SuiteRunnerMain {
                 "-Pci-integration",
                 "-DskipITs=false",
                 "-Dfailsafe.failIfNoSpecifiedTests=false",
-                "-Dfailsafe.reportsDirectory=" + reportsRoot,
+                "-Dhaifa.failsafe.reportsDirectory=" + reportsRoot,
                 "-Dit.test=" + testCase.testSelector(),
                 "verify");
     }
