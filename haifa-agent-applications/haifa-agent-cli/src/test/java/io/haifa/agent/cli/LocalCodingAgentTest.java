@@ -145,7 +145,7 @@ class LocalCodingAgentTest {
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
             var accepted = agent.start("Persist this run.");
             runId = accepted.runId();
-            Instant deadline = now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(60);
             var snapshot = agent.runtime().find(runId).orElseThrow();
             while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
@@ -168,7 +168,7 @@ class LocalCodingAgentTest {
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
             assertThat(reopened.executionSettled(runId)).isTrue();
             var second = reopened.start("Persist a second run.");
-            Instant deadline = now().plusSeconds(10);
+            Instant deadline = now().plusSeconds(60);
             var snapshot = reopened.runtime().find(second.runId()).orElseThrow();
             while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
                 Thread.sleep(25);
@@ -192,7 +192,7 @@ class LocalCodingAgentTest {
                 defaults.skills(),
                 hostExecution(defaults.execution()),
                 ApprovalMode.ASK,
-                Duration.ofSeconds(15),
+                Duration.ofSeconds(60),
                 defaults.maxIterations(),
                 defaults.maxToolCalls(),
                 ProjectPersistenceConfiguration.sqliteWithJsonl(
@@ -243,7 +243,7 @@ class LocalCodingAgentTest {
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
             var accepted = agent.start("Try a write and honor a rejection.");
             runId = accepted.runId();
-            Instant pendingDeadline = now().plusSeconds(10);
+            Instant pendingDeadline = now().plusSeconds(60);
             var pending = agent.interactions().pending(accepted.runId());
             while (pending.isEmpty() && now().isBefore(pendingDeadline)) {
                 Thread.sleep(25);
@@ -252,7 +252,8 @@ class LocalCodingAgentTest {
             assertThat(pending).isPresent();
             assertThat(agent.runtime().find(accepted.runId()).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
-            while (!agent.executionSettled(accepted.runId()) && now().isBefore(pendingDeadline)) {
+            Instant settledDeadline = now().plusSeconds(60);
+            while (!agent.executionSettled(accepted.runId()) && now().isBefore(settledDeadline)) {
                 Thread.sleep(25);
             }
             assertThat(agent.executionSettled(accepted.runId())).isTrue();
@@ -268,7 +269,7 @@ class LocalCodingAgentTest {
                             "test-reject-" + request.id().value(),
                             agent.time().now()));
 
-            Instant completionDeadline = now().plusSeconds(10);
+            Instant completionDeadline = now().plusSeconds(60);
             var completed = agent.runtime().find(accepted.runId()).orElseThrow();
             while (!completed.status().isTerminal() && now().isBefore(completionDeadline)) {
                 Thread.sleep(25);

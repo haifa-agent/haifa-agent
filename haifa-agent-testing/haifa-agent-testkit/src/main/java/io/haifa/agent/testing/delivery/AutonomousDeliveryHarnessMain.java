@@ -68,7 +68,8 @@ public final class AutonomousDeliveryHarnessMain {
         DeliveryHostProfile hostProfile = combination.requireCurrentHost();
         RepositoryRevision productRevision = RepositoryRevision.inspect(options.projectRoot());
         RepositoryRevision testConfigRevision = RepositoryRevision.inspect(options.configRoot());
-        productRevision.requireCommit(matrix.compatibleAgentBaselineCommit(), "Autonomous Delivery matrix");
+        productRevision.requireCompatibleBaseline(
+                options.projectRoot(), matrix.compatibleAgentBaselineCommit(), "Autonomous Delivery matrix");
         AutonomousDeliveryExecutionPlan.Frozen executionPlan = suite == null
                 ? null
                 : AutonomousDeliveryExecutionPlan.freeze(

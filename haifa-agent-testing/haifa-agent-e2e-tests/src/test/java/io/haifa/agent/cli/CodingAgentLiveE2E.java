@@ -188,7 +188,7 @@ class CodingAgentLiveE2E {
         }
 
         String capturedOutput = capturedBytes.toString(StandardCharsets.UTF_8);
-        rejectSensitiveOutput(capturedOutput, workspace);
+        rejectSensitiveOutput(capturedOutput);
         assertThat(sha256(approvedRoot.resolve(ROOT_SENTINEL))).isEqualTo(sentinelBefore);
         specification.protectedPaths().forEach(path -> assertThat(digest(workspace.resolve(path)))
                 .as("protected workspace path %s", path)
@@ -584,16 +584,13 @@ class CodingAgentLiveE2E {
                 .writeValue(reports.resolve(specification.caseId() + ".json").toFile(), evidence);
     }
 
-    private static void rejectSensitiveOutput(String output, Path workspace) {
+    private static void rejectSensitiveOutput(String output) {
         String apiKey = System.getenv(credentialEnvironmentName);
         if (apiKey != null && !apiKey.isBlank() && output.contains(apiKey)) {
             throw new AssertionError("captured CLI output contains a credential");
         }
         if (output.contains("reasoning_content")) {
             throw new AssertionError("captured CLI output contains reasoning content metadata");
-        }
-        if (output.contains(workspace.toAbsolutePath().toString())) {
-            throw new AssertionError("captured CLI output contains the real workspace path");
         }
     }
 

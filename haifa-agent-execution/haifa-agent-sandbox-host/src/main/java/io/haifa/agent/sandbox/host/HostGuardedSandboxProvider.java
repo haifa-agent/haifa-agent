@@ -440,6 +440,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     new java.util.concurrent.atomic.AtomicBoolean();
             private final java.util.concurrent.atomic.AtomicBoolean scratchCleanupFailed =
                     new java.util.concurrent.atomic.AtomicBoolean();
+            private final Object scratchCleanupLock = new Object();
+            private boolean scratchCleanupAttempted;
+            private boolean scratchCleanupSuccessful;
 
             private Managed(Process process, SandboxExecution execution, Instant startedAt, Path scratch) {
                 this.process = process;
@@ -470,9 +473,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                                             : io.haifa.agent.execution.api.ExecutionStatus.FAILED;
                     cancelRequested = false;
                     current = null;
-                    boolean cleaned = cleanupScratchDirectory(scratch);
+                    boolean cleaned = cleanupScratchOnce();
                     if (!cleaned) {
-                        scratchCleanupFailed.set(true);
                         status = io.haifa.agent.execution.api.ExecutionStatus.UNKNOWN;
                     }
                     return new io.haifa.agent.execution.api.ProcessExit(status, process.exitValue(), true, time.now());
@@ -548,7 +550,18 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             public void close() {
                 if (managedClosed.compareAndSet(false, true)) {
                     if (process.isAlive()) cancel();
-                    if (!process.isAlive()) cleanupScratchDirectory(scratch);
+                    if (!process.isAlive()) cleanupScratchOnce();
+                }
+            }
+
+            private boolean cleanupScratchOnce() {
+                synchronized (scratchCleanupLock) {
+                    if (!scratchCleanupAttempted) {
+                        scratchCleanupSuccessful = cleanupScratchDirectory(scratch);
+                        scratchCleanupAttempted = true;
+                        scratchCleanupFailed.set(!scratchCleanupSuccessful);
+                    }
+                    return scratchCleanupSuccessful;
                 }
             }
 
@@ -648,7 +661,11 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         private boolean cleanupScratchDirectory(Path directory) {
             if (directory == null) return true;
             Path target = directory.toAbsolutePath().normalize();
-            if (!target.startsWith(scratchRoot) || target.equals(scratchRoot)) return false;
+            Path canonicalTarget = canonicalizeForComparison(target);
+            Path canonicalScratchRoot = canonicalizeForComparison(scratchRoot);
+            if (!canonicalTarget.startsWith(canonicalScratchRoot) || canonicalTarget.equals(canonicalScratchRoot)) {
+                return false;
+            }
             try (var paths = Files.walk(target)) {
                 for (Path path :
                         paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
@@ -761,16 +778,31 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 .toAbsolutePath()
                 .normalize();
         Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
-        if (root.getParent() == null || root.equals(home)) {
+        if (root.getParent() == null || canonicalizeForComparison(root).equals(canonicalizeForComparison(home))) {
             throw new IllegalArgumentException("scratchRoot must be private and outside the user home");
         }
         return root;
     }
 
     private static boolean overlaps(Path first, Path second) {
-        Path left = first.toAbsolutePath().normalize();
-        Path right = second.toAbsolutePath().normalize();
+        Path left = canonicalizeForComparison(first);
+        Path right = canonicalizeForComparison(second);
         return left.startsWith(right) || right.startsWith(left);
+    }
+
+    private static Path canonicalizeForComparison(Path value) {
+        Path absolute = value.toAbsolutePath().normalize();
+        Path existing = absolute;
+        while (existing != null && Files.notExists(existing, LinkOption.NOFOLLOW_LINKS)) {
+            existing = existing.getParent();
+        }
+        if (existing == null) return absolute;
+        try {
+            Path canonicalBase = existing.toRealPath(LinkOption.NOFOLLOW_LINKS);
+            return canonicalBase.resolve(existing.relativize(absolute)).normalize();
+        } catch (IOException exception) {
+            return absolute;
+        }
     }
 
     private static HostSandboxException failure(String code, String message) {

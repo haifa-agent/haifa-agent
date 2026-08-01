@@ -15,7 +15,9 @@
   不泄露。
 
 这些都是显式 opt-in Live E2E。普通构建和 `ci-fast` 跳过；Suite Runner 会验证 Secret、预算和安全
-运行根后串行执行。
+运行根后串行执行。三端默认执行配置与产品一致，为
+`host-guarded + allow + shell auto + TRUSTED_HOST_ONLY`，不再要求 Windows 专属覆盖；macOS/Linux
+Local Native 严格验证由独立 Gate 负责，真实 Provider 仍不会由普通测试自动调用。
 
 Coding CLI Case 001～008 的可见验证已统一为共享 `verify_java.py` 内核与 Fixture 本地
 `verify.json`，`verify.sh` 和 `verify.ps1` 只负责选择平台入口；Case 版本统一提升为 `2.0`。

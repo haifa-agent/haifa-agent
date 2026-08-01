@@ -43,6 +43,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -156,7 +157,11 @@ class HostSandboxTest {
         var provider = new HostGuardedSandboxProvider(
                 fixture.workspaces, fixture.bindings, fixture.locations, () -> "shell-session", Instant::now, shell);
         SandboxProfile profile = SandboxProfile.hostGuarded(
-                new SandboxProfileRef("shell-test", "1"), provider.configurationDigest(), Set.of(), Set.of(), true);
+                new SandboxProfileRef("shell-test", "1"),
+                provider.configurationDigest(),
+                Set.of(),
+                hostBaselineEnvironment().keySet(),
+                true);
         String command = isWindows()
                 ? "$value = 'shell-ok'; $value | Set-Content result.txt; Get-Content result.txt"
                 : "printf 'shell-ok\\n' | tr a-z A-Z > result.txt; cat result.txt";
@@ -167,7 +172,7 @@ class HostSandboxTest {
                     new SandboxExecution(
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
-                            Map.of(),
+                            hostBaselineEnvironment(),
                             new ExecutionLimits(Duration.ofSeconds(10), 8, 4096, 4)),
                     chunk -> streamed.writeBytes(chunk.bytes()));
 
@@ -288,6 +293,84 @@ class HostSandboxTest {
     }
 
     @Test
+    void compilesAndRunsWorkspaceProgramWithTheHostToolchain() throws Exception {
+        Fixture fixture = fixture(root, "workspace-build", "binding-build", "location-build");
+        Files.writeString(
+                root.resolve("Baseline.java"),
+                "public class Baseline { public static void main(String[] args) { "
+                        + "System.out.print(\"compile-test-ok\"); } }");
+        String executableSuffix = isWindows() ? ".exe" : "";
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java" + executableSuffix)
+                .toString();
+        String javacExecutable = Path.of(System.getProperty("java.home"), "bin", "javac" + executableSuffix)
+                .toString();
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, () -> "build-session", Instant::now);
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("build-test", "1"),
+                provider.configurationDigest(),
+                Set.of(javaExecutable, javacExecutable),
+                Set.of(),
+                false);
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var compilation = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of(javacExecutable, "Baseline.java")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+            assertThat(compilation.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(compilation.exitCode()).isZero();
+
+            var testRun = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", "Baseline")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+            assertThat(testRun.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(testRun.exitCode()).isZero();
+            assertThat(new String(testRun.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                    .isEqualTo("compile-test-ok");
+        }
+    }
+
+    @Test
+    void reportsReusableRealWorkspaceAndParentPaths() throws Exception {
+        Path workspaceRoot = Files.createDirectories(root.resolve("workspace path 空格"));
+        Fixture fixture = fixture(workspaceRoot, "workspace-path", "binding-path", "location-path");
+        HostShell shell = HostShell.auto();
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces, fixture.bindings, fixture.locations, () -> "path-session", Instant::now, shell);
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("path-test", "1"),
+                provider.configurationDigest(),
+                Set.of(),
+                hostBaselineEnvironment().keySet(),
+                true);
+        String command =
+                isWindows() ? "(Get-Location).Path; Set-Location ..; (Get-Location).Path" : "pwd -P; cd ..; pwd -P";
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.shell(command),
+                    WorkspacePath.root(fixture.workspaceId),
+                    hostBaselineEnvironment(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode()).isZero();
+            List<String> paths = new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8)
+                    .lines()
+                    .filter(line -> !line.isBlank())
+                    .toList();
+            assertThat(paths).hasSize(2).noneMatch(path -> path.contains("<workspace>"));
+            assertThat(Path.of(paths.get(0)).toRealPath()).isEqualTo(workspaceRoot.toRealPath());
+            assertThat(Path.of(paths.get(1)).toRealPath())
+                    .isEqualTo(workspaceRoot.getParent().toRealPath());
+        }
+    }
+
+    @Test
     void injectsPrivateWritableScratchAndCleansItWithoutClaimingIsolation() throws Exception {
         Fixture fixture = fixture(root, "workspace-scratch", "binding-scratch", "location-scratch");
         Path scratchRoot = isolatedBase.resolve("host-scratch");
@@ -302,9 +385,9 @@ class HostSandboxTest {
         var profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("scratch-test", "1"),
                 provider.configurationDigest(),
-                Set.of("/bin/sh"),
                 Set.of(),
-                false);
+                hostBaselineEnvironment().keySet(),
+                true);
         var scratch = new ExecutionScratchSpaceSpec(
                 true,
                 Set.of("TMPDIR", "TMP", "TEMP", "GOTMPDIR"),
@@ -312,15 +395,9 @@ class HostSandboxTest {
 
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
             var result = session.execute(new SandboxExecution(
-                    ExecutionCommand.direct(List.of(
-                            "/bin/sh",
-                            "-c",
-                            "test \"$TMPDIR\" = \"$TMP\" && test \"$TMP\" = \"$TEMP\"; "
-                                    + "test \"$GOTMPDIR\" = \"$TMPDIR\"; "
-                                    + "test -w \"$TMPDIR\" && test -w \"$GOCACHE\"; "
-                                    + "touch \"$GOCACHE/probe\"; printf scratch-ok")),
+                    ExecutionCommand.shell(scratchProbeCommand()),
                     WorkspacePath.root(fixture.workspaceId),
-                    Map.of(),
+                    hostBaselineEnvironment(),
                     new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2),
                     ExecutionInput.none(),
                     scratch));
@@ -587,6 +664,48 @@ class HostSandboxTest {
         return System.getProperty("os.name", "")
                 .toLowerCase(java.util.Locale.ROOT)
                 .contains("win");
+    }
+
+    private static Map<String, String> hostBaselineEnvironment() {
+        if (!isWindows()) return Map.of();
+        var environment = new LinkedHashMap<String, String>();
+        for (String name : List.of(
+                "PATH",
+                "PATHEXT",
+                "SystemRoot",
+                "SystemDrive",
+                "WINDIR",
+                "ComSpec",
+                "USERPROFILE",
+                "HOMEDRIVE",
+                "HOMEPATH",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "ProgramData",
+                "ProgramFiles",
+                "ProgramW6432",
+                "PUBLIC",
+                "PSModulePath",
+                "TMP",
+                "TEMP",
+                "JAVA_HOME")) {
+            String value = System.getenv(name);
+            if (value != null && !value.isBlank()) environment.put(name, value);
+        }
+        return Map.copyOf(environment);
+    }
+
+    private static String scratchProbeCommand() {
+        if (isWindows()) {
+            return "if ($env:TMPDIR -ne $env:TMP -or $env:TMP -ne $env:TEMP) { exit 21 }; "
+                    + "if ($env:GOTMPDIR -ne $env:TMPDIR) { exit 22 }; "
+                    + "[IO.File]::WriteAllText((Join-Path $env:GOCACHE 'probe'), 'probe'); "
+                    + "[Console]::Out.Write('scratch-ok')";
+        }
+        return "test \"$TMPDIR\" = \"$TMP\" && test \"$TMP\" = \"$TEMP\"; "
+                + "test \"$GOTMPDIR\" = \"$TMPDIR\"; "
+                + "test -w \"$TMPDIR\" && test -w \"$GOCACHE\"; "
+                + "touch \"$GOCACHE/probe\"; printf scratch-ok";
     }
 
     private record Fixture(

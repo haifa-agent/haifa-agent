@@ -15,3 +15,5 @@ local-tmp/
 .run/
 third-agent/
 coding-terminal-tui4j-demo/
+/deer-flow/
+/haifa-agent-applications/haifa-agent-cli/distribution/

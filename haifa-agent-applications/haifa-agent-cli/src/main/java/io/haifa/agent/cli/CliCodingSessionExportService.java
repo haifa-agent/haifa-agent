@@ -98,20 +98,22 @@ final class CliCodingSessionExportService implements CodingSessionExportService 
         if (logical == null || logical.isBlank()) {
             throw new IllegalArgumentException("EXPORT_PATH_REQUIRED");
         }
+        Path normalizedRoot = root.toAbsolutePath().normalize();
         Path relative = Path.of(logical);
         if (relative.isAbsolute() || relative.normalize().startsWith("..")) {
             throw new IllegalArgumentException("EXPORT_PATH_OUTSIDE_WORKSPACE");
         }
-        Path target = root.resolve(relative).normalize();
-        if (!target.startsWith(root) || Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+        Path target = normalizedRoot.resolve(relative).normalize();
+        if (!target.startsWith(normalizedRoot) || Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("EXPORT_DESTINATION_UNAVAILABLE");
         }
         Path parent = target.getParent();
         try {
+            Path trustedRoot = normalizedRoot.toRealPath(LinkOption.NOFOLLOW_LINKS);
             if (parent == null
                     || !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)
                     || Files.isSymbolicLink(parent)
-                    || !parent.toRealPath(LinkOption.NOFOLLOW_LINKS).startsWith(root)) {
+                    || !parent.toRealPath(LinkOption.NOFOLLOW_LINKS).startsWith(trustedRoot)) {
                 throw new IllegalArgumentException("EXPORT_PARENT_UNTRUSTED");
             }
         } catch (IOException exception) {

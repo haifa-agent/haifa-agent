@@ -51,6 +51,18 @@ execution:
     - TMP
     - TEMP
     - SystemRoot
+    - SystemDrive
+    - WINDIR
+    - ComSpec
+    - HOMEDRIVE
+    - HOMEPATH
+    - APPDATA
+    - LOCALAPPDATA
+    - ProgramData
+    - ProgramFiles
+    - ProgramW6432
+    - PUBLIC
+    - PSModulePath
     - JAVA_HOME
     - MAVEN_OPTS
     - GRADLE_USER_HOME

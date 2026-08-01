@@ -14,9 +14,13 @@ concurrency:
 
 jobs:
     verify:
-        name: Fast verify
-        runs-on: ubuntu-latest
-        timeout-minutes: 20
+        name: Fast verify (${{ matrix.os }})
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest, macos-latest]
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 25
         steps:
             - uses: actions/checkout@v4
             - uses: actions/setup-java@v4
@@ -24,5 +28,9 @@ jobs:
                   distribution: temurin
                   java-version: "21"
                   cache: maven
-            - name: Verify architecture and tests
+            - name: Verify architecture and tests (Unix)
+              if: runner.os != 'Windows'
               run: sh ./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+            - name: Verify architecture and tests (Windows)
+              if: runner.os == 'Windows'
+              run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify

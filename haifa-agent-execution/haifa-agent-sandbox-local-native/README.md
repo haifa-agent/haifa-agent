@@ -1,6 +1,7 @@
 # Haifa Agent Local Native Sandbox
 
-`local-native` 是本地一次性命令的具体 Sandbox Provider。公共 Provider 身份不包含 OS 品牌；模块内部
+`local-native` 是 macOS/Linux 显式可选严格模式的一次性命令 Sandbox Provider，不是 Coding Agent
+三端默认配置。公共 Provider 身份不包含 OS 品牌；模块内部
 在 macOS 使用 Seatbelt，在 Linux 使用 bubblewrap。Windows 当前明确返回
 `SANDBOX_ADAPTER_UNAVAILABLE`，不会回退 `host-guarded`。
 
