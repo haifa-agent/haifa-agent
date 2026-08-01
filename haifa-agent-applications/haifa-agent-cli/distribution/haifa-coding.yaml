@@ -8,12 +8,12 @@ models:
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
       models:
-        - id: deepseek-v4-pro
-          displayName: DeepSeek V4 Pro
-          providerModelId: deepseek-v4-pro
         - id: deepseek-v4-flash
           displayName: DeepSeek V4 Flash
           providerModelId: deepseek-v4-flash
+        - id: deepseek-v4-pro
+          displayName: DeepSeek V4 Pro
+          providerModelId: deepseek-v4-pro
 
 tools:
   enabled:

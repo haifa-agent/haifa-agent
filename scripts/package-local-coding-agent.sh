@@ -6,6 +6,8 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 repo_dir=$(CDPATH= cd -- "${script_dir}/.." && pwd -P)
 cli_dir="${repo_dir}/haifa-agent-applications/haifa-agent-cli"
 target_dir="${cli_dir}/target"
+launcher_file="${cli_dir}/distribution/haifa-coding"
+config_file="${cli_dir}/distribution/haifa-coding.yaml"
 
 if [ "$#" -eq 0 ]; then
     if [ -z "${HOME:-}" ]; then
@@ -31,6 +33,16 @@ esac
 
 if [ "$#" -gt 1 ]; then
     printf '%s\n' "Usage: ./scripts/package-local-coding-agent.sh [output-directory]" >&2
+    exit 1
+fi
+
+if [ ! -f "$launcher_file" ]; then
+    printf '%s\n' "Coding Agent launcher is missing: ${launcher_file}" >&2
+    exit 1
+fi
+
+if [ ! -f "$config_file" ]; then
+    printf '%s\n' "Coding Agent default configuration is missing: ${config_file}" >&2
     exit 1
 fi
 
@@ -66,8 +78,8 @@ fi
 mkdir -p "$output_dir"
 
 cp "$jar_file" "${output_dir}/haifa-agent.jar"
-cp "${cli_dir}/distribution/haifa-coding" "${output_dir}/haifa-coding"
-cp "${cli_dir}/distribution/haifa-coding.yaml" "${output_dir}/haifa-coding.yaml"
+cp "$launcher_file" "${output_dir}/haifa-coding"
+cp "$config_file" "${output_dir}/haifa-coding.yaml"
 chmod 755 "${output_dir}/haifa-coding"
 chmod 644 "${output_dir}/haifa-agent.jar" "${output_dir}/haifa-coding.yaml"
 
