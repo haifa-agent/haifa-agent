@@ -231,9 +231,13 @@ class RuntimeCoreHardeningTest {
         assertThat(blocked.store.messages(blockedRun.runId()))
                 .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .singleElement()
-                .satisfies(message -> assertThat(message.metadata())
-                        .containsEntry("completionRepairAttempt", 1)
-                        .containsKey("completionBlockerCodes"));
+                .satisfies(message -> {
+                    assertThat(message.visibility())
+                            .isEqualTo(io.haifa.agent.core.message.MessageVisibility.AGENT_VISIBLE);
+                    assertThat(message.metadata())
+                            .containsEntry("completionRepairAttempt", 1)
+                            .containsKey("completionBlockerCodes");
+                });
         assertThat(blocked.store.eventsFor(blockedRun.runId()))
                 .filteredOn(event -> event.type().equals("completion.deferred"))
                 .singleElement()
@@ -597,8 +601,18 @@ class RuntimeCoreHardeningTest {
         nearBudget.store.save(run, expected);
         nearBudget.scheduler.runAll();
         assertThat(messages.get())
-                .anyMatch(value -> value.contains("50% threshold") && value.contains("25% threshold"))
+                .anyMatch(value -> value.contains("type=BUDGET_THRESHOLD") && value.contains("thresholds=50%|25%"))
                 .noneMatch(value -> value.startsWith("Remaining resource budget:"));
+        assertThat(nearBudget.store.messages(accepted.runId()))
+                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("runtimeControl")))
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message.visibility())
+                            .isEqualTo(io.haifa.agent.core.message.MessageVisibility.AGENT_VISIBLE);
+                    assertThat(message.metadata())
+                            .containsEntry("runtimeControlType", "BUDGET_THRESHOLD")
+                            .containsEntry("budgetThresholds", List.of(50, 25));
+                });
     }
 
     @Test

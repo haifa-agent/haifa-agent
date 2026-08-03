@@ -11,7 +11,6 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportServ
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
-import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryContextSource;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
@@ -415,8 +414,6 @@ final class LocalCodingAgent implements AutoCloseable {
                     })
                     .completionPolicy(new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile))
                     .repairRetry(new RepairRetryPolicy(2))
-                    .registerContextSource(new CodingDeliveryContextSource(
-                            persistence.ports().runs(), taskModes, deliveryEvidence, deliveryProfile))
                     .registerChatModel("openai-compatible", "1.0.0", model)
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
