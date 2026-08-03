@@ -61,6 +61,37 @@ haifa-coding
 该发行入口用于日常本地项目。仓库根目录的 `scripts/run-haifa-coding-terminal.command` 继续保留，
 作为会创建隔离 Fixture、Trace、SQLite 和人工验收证据的 macOS 测试入口；两者用途不同。
 
+### 本地发行目录（Windows）
+
+Windows PowerShell 使用 `scripts/package-local-coding-agent.ps1`，生成 shaded JAR、安全默认配置和
+`haifa-coding.cmd`：
+
+```text
+coding\
+  haifa-coding.cmd
+  haifa-agent.jar
+  haifa-coding.yaml
+```
+
+默认输出到当前用户的 `%USERPROFILE%\.haifa-agent\coding`，也可以指定绝对路径或相对仓库根目录的
+路径：
+
+```powershell
+.\scripts\package-local-coding-agent.ps1
+.\scripts\package-local-coding-agent.ps1 D:\tools\haifa-coding-agent
+$env:Path = 'D:\tools\haifa-coding-agent;' + $env:Path
+
+$env:DEEPSEEK_API_KEY = '<secret>'
+Set-Location D:\path\to\any\project
+haifa-coding
+```
+
+启动器优先使用 `%JAVA_HOME%\bin\java.exe`，否则从 `PATH` 查找 `java.exe`；必须使用 Java 21。
+启动器不切换当前目录，调用方参数位于默认 `--config` 参数之后，因此仍可覆盖配置或显式指定
+Workspace。发行目录和 YAML 不包含模型凭据。打包入口使用 `-DskipTests`；它只生成发行制品，不替代
+模块测试或 CI 验证。macOS/Linux 与 Windows 入口复用同一个 Python 3 打包核心；可通过
+`HAIFA_PYTHON_EXECUTABLE` 固定解释器路径。
+
 ### macOS 全工具人工测试入口
 
 仓库根目录的 `scripts/run-haifa-coding-terminal.command` 是可版本控制的 macOS 人工测试启动器。
