@@ -22,6 +22,7 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
@@ -60,9 +61,11 @@ class ExternalModelRuntimeTest {
         AtomicInteger ids = new AtomicInteger();
         AtomicInteger calls = new AtomicInteger();
         List<RuntimeTraceEvent> traces = new CopyOnWriteArrayList<>();
+        List<List<ModelMessage>> modelRequests = new CopyOnWriteArrayList<>();
         IdentifierGenerator identifierGenerator = () -> "external-id-" + ids.incrementAndGet();
         TimeProvider time = () -> Instant.parse("2026-07-21T00:00:00Z");
         var chatModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            modelRequests.add(request.messages());
             int call = calls.incrementAndGet();
             assertThat(request.model().providerId().value()).isEqualTo("deepseek");
             assertThat(request.model().providerModelId()).isEqualTo("deepseek-v4-pro");
@@ -205,6 +208,23 @@ class ExternalModelRuntimeTest {
                 .allSatisfy(trace -> assertThat(trace.safeAttributes())
                         .containsEntry("providerId", "deepseek")
                         .containsKeys("modelCallId", "responseId", "finishReason"));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("tool.execute")
+                        || trace.operation().equals("tool.persisted"))
+                .extracting(RuntimeTraceEvent::iteration)
+                .containsExactly(1, 1);
+        assertThat(modelRequests).hasSize(2);
+        List<ModelMessage> firstRequest = modelRequests.getFirst();
+        List<ModelMessage> secondRequest = modelRequests.getLast();
+        assertThat(firstRequest.getLast()).satisfies(message -> {
+            assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+        });
+        assertThat(secondRequest.getLast()).satisfies(message -> {
+            assertThat(message.role()).isEqualTo(ModelMessageRole.TOOL);
+        });
+        assertThat(secondRequest.subList(0, firstRequest.size())).containsExactlyElementsOf(firstRequest);
+        assertThat(secondRequest)
+                .noneSatisfy(message -> assertThat(message.content()).startsWith("Remaining resource budget:"));
         assertThat(store.configuration(
                                 store.find(accepted.runId()).orElseThrow().configurationSnapshot())
                         .orElseThrow()

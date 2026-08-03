@@ -110,9 +110,9 @@ public final class ToolPipeline {
         this.largeResultPolicy = Objects.requireNonNull(largeResultPolicy);
     }
 
-    public ToolPipelineOutcome execute(AgentRun run, AgentStepId stepId, ToolRequest request) {
+    public ToolPipelineOutcome execute(AgentRun run, AgentStepId stepId, ToolRequest request, int iteration) {
         ToolCall call = prepare(run, stepId, request);
-        return execute(run, call, request);
+        return execute(run, call, request, iteration);
     }
 
     public ToolCall prepare(AgentRun run, AgentStepId stepId, ToolRequest request) {
@@ -144,16 +144,19 @@ public final class ToolPipeline {
         return call;
     }
 
-    public ToolPipelineOutcome execute(AgentRun run, ToolCall call, ToolRequest request) {
+    public ToolPipelineOutcome execute(AgentRun run, ToolCall call, ToolRequest request, int iteration) {
+        if (iteration < 1) throw new IllegalArgumentException("iteration must be positive");
         if (call.result().isPresent())
             return new ToolPipelineOutcome.Completed(call.result().orElseThrow());
         var completed = journal.completed(run.id(), request.idempotencyKey());
         if (completed.isPresent()) {
-            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, completed.orElseThrow()));
+            return new ToolPipelineOutcome.Completed(
+                    persistResult(run, call, request, completed.orElseThrow(), iteration));
         }
         var pending = journal.pendingResult(run.id(), request.idempotencyKey());
         if (pending.isPresent()) {
-            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, pending.orElseThrow()));
+            return new ToolPipelineOutcome.Completed(
+                    persistResult(run, call, request, pending.orElseThrow(), iteration));
         }
         var journalState = journal.state(run.id(), request.idempotencyKey());
         if (journalState
@@ -167,7 +170,7 @@ public final class ToolPipeline {
                 .isPresent()) {
             throw outcomeUnknown(call, ToolJournalState.OUTCOME_UNKNOWN);
         }
-        return executeNew(run, call, request);
+        return executeNew(run, call, request, iteration);
     }
 
     private AgentExecutionFailureException outcomeUnknown(ToolCall call, ToolJournalState journalState) {
@@ -188,7 +191,7 @@ public final class ToolPipeline {
                 error, new IllegalStateException("tool outcome is unknown; automatic replay is forbidden"));
     }
 
-    private ToolPipelineOutcome executeNew(AgentRun run, ToolCall call, ToolRequest request) {
+    private ToolPipelineOutcome executeNew(AgentRun run, ToolCall call, ToolRequest request, int iteration) {
         checkCancellation(run);
         FrozenToolBinding binding = binding(run, request);
         var definition = binding.definition();
@@ -258,7 +261,7 @@ public final class ToolPipeline {
                 java.util.Optional.of(call.stepId()),
                 java.util.Optional.of(call.id()),
                 java.util.Optional.empty(),
-                0,
+                iteration,
                 RuntimePhase.BEFORE_DECISION_EXECUTION,
                 "tool.execute",
                 java.util.Map.of(
@@ -291,7 +294,7 @@ public final class ToolPipeline {
                 validateFailureEnvelope(rawResult);
             }
             journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
-            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, rawResult));
+            return new ToolPipelineOutcome.Completed(persistResult(run, call, request, rawResult, iteration));
         } catch (CancellationObservedException cancelled) {
             appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "RUN_CANCELLED", "");
             throw cancelled;
@@ -517,7 +520,8 @@ public final class ToolPipeline {
         approvedDecisions.put(call.id(), decision);
     }
 
-    private ToolResult persistResult(AgentRun run, ToolCall call, ToolRequest request, ToolResult rawResult) {
+    private ToolResult persistResult(
+            AgentRun run, ToolCall call, ToolRequest request, ToolResult rawResult, int iteration) {
         FrozenToolBinding binding = binding(run, request);
         var definition = binding.definition();
         ToolResult result = resultNormalizer.normalize(binding, rawResult);
@@ -560,7 +564,7 @@ public final class ToolPipeline {
                 java.util.Optional.of(call.stepId()),
                 java.util.Optional.of(call.id()),
                 java.util.Optional.empty(),
-                0,
+                iteration,
                 RuntimePhase.AFTER_DECISION_EXECUTION,
                 "tool.persisted",
                 java.util.Map.of(

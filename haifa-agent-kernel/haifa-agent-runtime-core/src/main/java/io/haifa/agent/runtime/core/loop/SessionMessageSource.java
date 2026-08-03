@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.core.loop;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.CompressionRequest;
 import io.haifa.agent.context.compression.ContextCompressor;
@@ -27,13 +28,16 @@ import io.haifa.agent.core.message.MessageCursor;
 import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
@@ -108,9 +112,10 @@ public final class SessionMessageSource {
             items.add(summaryItem(summary.orElseThrow()));
         }
         List<List<AgentMessage>> recent = groups.subList(split, groups.size());
+        Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
         for (int index = 0; index < recent.size(); index++) {
             boolean current = index == recent.size() - 1;
-            items.add(groupItem(recent.get(index), current));
+            items.add(groupItem(recent.get(index), current, toolCallsByRun));
         }
         return new Selection(items, visible.getLast().cursor(), summary, policy.version(), compressor.version());
     }
@@ -175,7 +180,8 @@ public final class SessionMessageSource {
                         "coveredThrough", summary.coveredThrough().serialize()));
     }
 
-    private ContextItem groupItem(List<AgentMessage> group, boolean current) {
+    private ContextItem groupItem(
+            List<AgentMessage> group, boolean current, Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun) {
         AgentMessage first = group.getFirst();
         AgentMessage last = group.getLast();
         String groupHash = hash(group.stream()
@@ -186,7 +192,7 @@ public final class SessionMessageSource {
                 new ContextItemId("message-group-" + first.sequence() + "-" + last.sequence()),
                 ContextItemType.MESSAGE,
                 new MessageGroupContextContent(group),
-                estimate(group),
+                estimate(group, toolCallsByRun),
                 current ? ContextPriority.CRITICAL : ContextPriority.NORMAL,
                 current ? ContextRetention.MUST_KEEP : ContextRetention.COMPRESSIBLE,
                 new ContextSecurity(Set.of("session-visible"), true),
@@ -243,19 +249,65 @@ public final class SessionMessageSource {
                         || message.visibility() == MessageVisibility.AGENT_VISIBLE);
     }
 
-    private int estimate(List<AgentMessage> group) {
-        long characters = 0L;
+    private int estimate(List<AgentMessage> group, Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun) {
+        long estimatedTokens = 4L;
         for (AgentMessage message : group) {
+            estimatedTokens = saturatedAdd(estimatedTokens, 6L);
+            Map<ToolCallId, ToolCall> authoritativeCalls = message.runId()
+                    .map(runId -> toolCallsByRun.computeIfAbsent(runId, this::toolCallsById))
+                    .orElseGet(Map::of);
             for (ContentPart part : message.contents()) {
-                if (part instanceof TextPart text)
-                    characters = Math.addExact(characters, text.text().length());
-                else if (part instanceof ToolCallPart call)
-                    characters = Math.addExact(characters, call.toolName().length() + 32L);
-                else if (part instanceof ToolResultPart result)
-                    characters = Math.addExact(characters, result.summary().length() + 16L);
+                if (part instanceof TextPart text) {
+                    estimatedTokens = saturatedAdd(estimatedTokens, HeuristicTokenEstimator.tokens(text.text()));
+                } else if (part instanceof ToolCallPart call) {
+                    estimatedTokens = saturatedAdd(
+                            estimatedTokens,
+                            sumTokens(
+                                    HeuristicTokenEstimator.tokens(call.toolName()),
+                                    HeuristicTokenEstimator.tokens(
+                                            call.providerCorrelationId().value()),
+                                    authoritativeCalls.containsKey(call.toolCallId())
+                                            ? HeuristicTokenEstimator.tokens(authoritativeCalls
+                                                    .get(call.toolCallId())
+                                                    .arguments()
+                                                    .values())
+                                            : 0,
+                                    12));
+                } else if (part instanceof ToolResultPart result) {
+                    ToolCall authoritative = authoritativeCalls.get(result.toolCallId());
+                    estimatedTokens = saturatedAdd(
+                            estimatedTokens,
+                            sumTokens(
+                                    HeuristicTokenEstimator.tokens(result.summary()),
+                                    HeuristicTokenEstimator.tokens(
+                                            result.providerCorrelationId().value()),
+                                    authoritative == null
+                                            ? 0
+                                            : authoritative
+                                                    .result()
+                                                    .map(value ->
+                                                            HeuristicTokenEstimator.tokens(value.structuredData()))
+                                                    .orElse(0),
+                                    12));
+                }
             }
         }
-        return Math.toIntExact(Math.max(1L, Math.min(Integer.MAX_VALUE, (characters + 3L) / 4L + 4L)));
+        return Math.toIntExact(Math.max(1L, Math.min(Integer.MAX_VALUE, estimatedTokens)));
+    }
+
+    private Map<ToolCallId, ToolCall> toolCallsById(AgentRunId runId) {
+        return messages.toolCalls(runId).stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(ToolCall::id, call -> call));
+    }
+
+    private long saturatedAdd(long left, long right) {
+        return Math.min(Integer.MAX_VALUE, left + right);
+    }
+
+    private int sumTokens(int... values) {
+        long estimated = 0L;
+        for (int value : values) estimated = saturatedAdd(estimated, value);
+        return (int) estimated;
     }
 
     private String hash(String value) {

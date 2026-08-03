@@ -44,8 +44,9 @@ Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进
 有界 Ledger。通用无进展窗口在首次权威有效进展后才开始计数；初始只读侦察仍受完全重复 Decision、
 A-B Loop、失败簇和硬预算约束，不会被误当成已停滞的交付。恢复时从权威 ToolCall、Plan、Child Run、
 Interaction 与 Usage 重建控制状态；旧
-Checkpoint 无需 Schema 升级。模型 Context 只获得安全恢复指导与剩余模型、工具、迭代、时间和 Token
-预算；50%、25%、10% 阈值各触发一次收敛信号。
+Checkpoint 无需 Schema 升级。精确剩余模型、工具、迭代、时间和 Token 预算只写入安全 Trace，不再逐轮
+改变模型请求；模型仅在失败恢复或 50%、25%、10% 阈值首次跨越时收到控制指导。动态指导位于最新原子
+Session 消息组之前，正常请求可复用稳定 Prompt 与完整历史前缀，同时保持 Tool Result 为末条消息。
 
 ## Safe Tool argument repair
 
@@ -137,6 +138,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - 模型初始上下文只披露冻结 Skill 的有界元数据。`skill.load` 与 `skill.resource.read` 作为普通 Tool 经统一冻结、Policy、Schema、Journal 和调用管线执行；激活后的指令进入最弱 `PromptLayer.SKILL`，资源只可从当前 Run 已冻结、已激活且索引为可读文本的包中按需读取。
 - Skill 激活是 Run-scope、幂等且可检查点的状态。Checkpoint 保存精确 coordinate、registration digest 与激活时间；Resume 重新校验调用者和冻结内容摘要，缺失或漂移时 fail closed。
 - `ToolCall` 是工具调用的权威记录。`ToolCallPart`/`ToolResultPart` 只保存领域 `ToolCallId`、Provider correlation 等协议引用和有界摘要；组装下一轮模型请求时，从权威 `ToolCall.result()` 重建已归一化的 `structuredData` 与 `truncated`，Runtime idempotency key 不发送给模型。
+- Session Context 的 Token 估算同样从权威 `ToolCall` 读取完整 arguments 与 structured result；Tool 执行和持久化 Trace 记录实际 AgentLoop iteration，不使用占位值。
 - Provider 在 Tool dispatch 后抛出异常时，Runtime 会先把权威 `ToolCall` 和 Step 收敛为失败并追加
   使用同一 Provider correlation 的安全 `ToolResultPart`，再终止当前 Run。后续 Run 因此仍能组装
   完整的 Assistant Tool Call / Tool Result 协议；`OUTCOME_UNKNOWN` 只用于告知状态，不允许自动重放。

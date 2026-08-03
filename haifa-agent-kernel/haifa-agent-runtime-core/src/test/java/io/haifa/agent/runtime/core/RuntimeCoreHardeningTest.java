@@ -596,7 +596,9 @@ class RuntimeCoreHardeningTest {
         run.recordUsage(new AgentRunUsageDelta(0, 0, 0, 52, 0, 0, 0, 0));
         nearBudget.store.save(run, expected);
         nearBudget.scheduler.runAll();
-        assertThat(messages.get()).anyMatch(value -> value.contains("resource budget"));
+        assertThat(messages.get())
+                .anyMatch(value -> value.contains("50% threshold") && value.contains("25% threshold"))
+                .noneMatch(value -> value.startsWith("Remaining resource budget:"));
     }
 
     @Test
