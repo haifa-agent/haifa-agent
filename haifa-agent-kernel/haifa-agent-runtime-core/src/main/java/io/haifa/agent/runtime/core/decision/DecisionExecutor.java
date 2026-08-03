@@ -310,7 +310,7 @@ public final class DecisionExecutor {
             state.appendStep(step);
             ToolPipelineOutcome outcome;
             try {
-                outcome = tools.execute(run, call, request);
+                outcome = tools.execute(run, call, request, loopContext.iteration());
             } catch (ToolInputValidationException validation) {
                 rejectToolRequest(
                         run, call, step, loopContext, validation, "Tool request rejected. " + validation.repairHint());
@@ -507,7 +507,7 @@ public final class DecisionExecutor {
             else if (call.status() == ToolCallStatus.REQUESTED) step.start(time.now());
             state.appendStep(step);
             ToolRequest request = requestFrom(call);
-            ToolPipelineOutcome outcome = tools.execute(run, call, request);
+            ToolPipelineOutcome outcome = tools.execute(run, call, request, loopContext.iteration());
             if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
                 step.waitForExternalInput();
                 state.appendStep(step);

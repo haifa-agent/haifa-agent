@@ -186,6 +186,13 @@ public final class AgentLoopContext {
     public String controlPrompt() {
         StringBuilder text = new StringBuilder();
         if (budgetSnapshot != null) text.append(budgetSnapshot.promptText());
+        text.append(modelControlPrompt());
+        return text.toString();
+    }
+
+    /** Provider-visible recovery guidance; exact remaining budgets stay in trace events. */
+    public String modelControlPrompt() {
+        StringBuilder text = new StringBuilder();
         recovery.activeCategory().ifPresent(category -> text.append(" Active failure cluster: category=")
                 .append(category.name())
                 .append(", attempts=")

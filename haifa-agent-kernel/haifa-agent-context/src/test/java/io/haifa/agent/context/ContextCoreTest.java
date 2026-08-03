@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.api.ContextBuildRequest;
+import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.budget.TokenEstimator;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
 import io.haifa.agent.context.item.AssetDerivedTextContent;
@@ -46,6 +47,17 @@ import org.junit.jupiter.api.Test;
 
 class ContextCoreTest {
     private static final String SECRET_BODY = "secret-body-must-not-enter-trace";
+
+    @Test
+    void heuristicEstimatorAccountsForWireWrappersStructuredValuesAndMixedScripts() {
+        HeuristicTokenEstimator estimator = new HeuristicTokenEstimator();
+
+        assertThat(estimator.estimate(prompt())).isGreaterThan(HeuristicTokenEstimator.tokens(prompt().text()));
+        assertThat(HeuristicTokenEstimator.tokens(Map.of("content", "x".repeat(900))))
+                .isGreaterThan(300);
+        assertThat(HeuristicTokenEstimator.tokens("测试估算")).isEqualTo(4);
+        assertThat(estimator.version()).isEqualTo("heuristic-structured-v2");
+    }
 
     @Test
     void deterministicallySelectsDerivedTextAndTracesDropsWithoutBodies() {

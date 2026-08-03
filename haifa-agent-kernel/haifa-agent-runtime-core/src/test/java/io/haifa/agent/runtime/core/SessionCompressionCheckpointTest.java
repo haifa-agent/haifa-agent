@@ -20,7 +20,11 @@ import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
+import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatModel;
@@ -182,6 +186,65 @@ class SessionCompressionCheckpointTest {
                 .flatExtracting(item -> ((MessageGroupContextContent) item.content()).messages())
                 .extracting(AgentMessage::id)
                 .containsExactly(new AgentMessageId("m-user-before"), new AgentMessageId("m-user-after"));
+    }
+
+    @Test
+    void sessionEstimateIncludesAuthoritativeToolArgumentsAndStructuredResults() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId session = new AgentSessionId("estimated-tool-session");
+        AgentRunId runId = new AgentRunId("estimated-tool-run");
+        ToolCallId callId = new ToolCallId("estimated-tool-call");
+        ProviderToolCallCorrelationId correlation = new ProviderToolCallCorrelationId("estimated-provider-call");
+        ToolCall call = new ToolCall(
+                callId,
+                runId,
+                new AgentStepId("estimated-step"),
+                correlation,
+                new RuntimeIdempotencyKey("estimated-idempotency"),
+                "file.read",
+                "1.0",
+                new ToolArguments("file.read.input", "1.0", Map.of("content", "a".repeat(1_200))),
+                NOW);
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW);
+        call.complete(
+                new ToolResult(true, "read result", Map.of("content", "b".repeat(1_200)), List.of(), List.of(), false),
+                NOW);
+        store.appendToolCall(call);
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("estimated-call-message"),
+                session,
+                Optional.of(runId),
+                Optional.empty(),
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolCallPart(callId, correlation, "file.read", "1.0")),
+                Map.of(),
+                NOW));
+        store.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId("estimated-result-message"),
+                session,
+                Optional.of(runId),
+                Optional.empty(),
+                MessageRole.TOOL,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new ToolResultPart(callId, correlation, "read result")),
+                Map.of(),
+                NOW));
+
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(10, 10, 10),
+                () -> "unused-summary",
+                () -> NOW);
+
+        assertThat(source.compact(session).items()).singleElement().satisfies(item -> assertThat(item.estimatedTokens())
+                .isGreaterThan(800));
     }
 
     @Test
