@@ -24,6 +24,10 @@ final class OpenAiCompatibleEndpointPolicy {
             throw new IllegalArgumentException("provider endpoint path must be " + requiredPath);
         }
         String host = endpoint.getHost().toLowerCase(Locale.ROOT);
+        if (localTest
+                && !Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1").contains(host)) {
+            throw new IllegalArgumentException("insecure provider endpoint must use a loopback host");
+        }
         if (!localTest && !allowedHosts.contains(host)) {
             throw new IllegalArgumentException("provider endpoint host is not allowed for this dialect");
         }

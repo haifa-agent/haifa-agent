@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -104,6 +105,9 @@ record CliConfiguration(
                 "deepseek-v4-flash",
                 URI.create("https://api.deepseek.com"),
                 "env://DEEPSEEK_API_KEY",
+                OpenAiCompatibleDialects.DEEPSEEK,
+                OpenAiCompatibleDialects.VERSION_1,
+                true,
                 null,
                 null,
                 "deepseek-v4-flash",
@@ -114,6 +118,9 @@ record CliConfiguration(
                 "deepseek-v4-pro",
                 URI.create("https://api.deepseek.com"),
                 "env://DEEPSEEK_API_KEY",
+                OpenAiCompatibleDialects.DEEPSEEK,
+                OpenAiCompatibleDialects.VERSION_1,
+                true,
                 null,
                 null,
                 "deepseek-v4-pro",
@@ -247,24 +254,13 @@ record CliConfiguration(
             String modelId,
             URI endpoint,
             String credentialRef,
+            String dialectId,
+            String dialectVersion,
+            boolean nativeStreaming,
             String workspaceId,
             String region,
             String id,
             String displayName) {
-        Model(String providerId, String modelId, URI endpoint, String credentialRef) {
-            this(providerId, providerId, modelId, endpoint, credentialRef, null, null, modelId, modelId);
-        }
-
-        Model(
-                String providerId,
-                String modelId,
-                URI endpoint,
-                String credentialRef,
-                String workspaceId,
-                String region) {
-            this(providerId, providerId, modelId, endpoint, credentialRef, workspaceId, region, modelId, modelId);
-        }
-
         Model {
             providerId = text(providerId, "model.providerId");
             providerDisplayName = text(providerDisplayName, "model.providerDisplayName");
@@ -272,10 +268,16 @@ record CliConfiguration(
             id = text(id, "model.id");
             displayName = text(displayName, "model.displayName");
             credentialRef = text(credentialRef, "model.credentialRef");
+            dialectId = text(dialectId, "model.dialectId");
+            dialectVersion = text(dialectVersion, "model.dialectVersion");
             if (!credentialRef.startsWith("env://")) {
                 throw new IllegalArgumentException("model.credentialRef must use env://");
             }
-            if (providerId.equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
+            if (dialectId.equals(OpenAiCompatibleDialects.ALIYUN_BAILIAN)) {
+                if (!providerId.equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
+                    throw new IllegalArgumentException("aliyun-bailian-openai-chat requires providerId="
+                            + AliyunBailianProviderFactory.PROVIDER_ID.value());
+                }
                 var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
                         "cli-v1", workspaceId, region, new CredentialRef(credentialRef));
                 URI derivedEndpoint = configuration.endpoint();

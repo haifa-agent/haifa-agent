@@ -129,6 +129,9 @@ models:
   providers:
     - id: deepseek
       displayName: DeepSeek
+      dialectId: deepseek-openai-chat
+      dialectVersion: "1.0"
+      nativeStreaming: true
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
       models:
@@ -169,6 +172,9 @@ models:
   providers:
     - id: deepseek
       displayName: DeepSeek
+      dialectId: deepseek-openai-chat
+      dialectVersion: "1.0"
+      nativeStreaming: true
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
       models:
@@ -180,6 +186,9 @@ models:
           providerModelId: deepseek-v4-flash
     - id: aliyun-bailian
       displayName: Alibaba Cloud Bailian
+      dialectId: aliyun-bailian-openai-chat
+      dialectVersion: "1.0"
+      nativeStreaming: true
       workspaceId: workspace-id
       region: cn-beijing
       credentialRef: env://DASHSCOPE_API_KEY
@@ -187,6 +196,17 @@ models:
         - id: bailian-qwen-plus
           displayName: Qwen Plus
           providerModelId: qwen-plus
+    - id: openai
+      displayName: OpenAI
+      dialectId: openai-chat-completions
+      dialectVersion: "1.0"
+      nativeStreaming: false
+      endpoint: http://localhost:30000/v1
+      credentialRef: env://OPENAI_API_KEY
+      models:
+        - id: openai-gpt-5.6-luna
+          displayName: GPT-5.6 Luna
+          providerModelId: gpt-5.6-luna
 ```
 
 旧 `model` 配置仍按单模型读取。`--model`/`HAIFA_MODEL_ID` 只能选择已注册的内部 ID，不能临时
@@ -194,7 +214,9 @@ models:
 
 Provider 是一级接入实例：Endpoint、Credential、百炼 Workspace/Region 只配置一次；其 `models`
 是该 Provider 可用的模型列表。模型 `id` 是产品内全局唯一选择 ID，`providerModelId` 是供应商实际
-模型或部署名称。
+模型或部署名称。每个 Provider 必须显式配置 `dialectId`、`dialectVersion` 和 `nativeStreaming`；
+Coding Agent 不根据 Provider ID 推断协议。严格兼容 OpenAI Chat Completions 的第三方 HTTPS
+Provider 可使用任意内部 ID，并复用 `openai-chat-completions`，无需修改 transport。
 
 `host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；
 只应对自己检查并信任的测试 Workspace 使用。模型与 Web Provider 调用可能计费。密钥只通过
@@ -203,6 +225,11 @@ Provider 是一级接入实例：Endpoint、Credential、百炼 Workspace/Region
 ConPTY 离线验收可在 CLI 子进程中显式设置 `HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true`，此开关
 只允许 `http://localhost`、`http://127.0.0.1` 或 IPv6 loopback Endpoint，不能放宽外部 HTTP
 Provider。普通运行不应设置该变量。
+
+发行配置中的 OpenAI 第二 Provider 使用 `http://localhost:30000/v1`，因此启动 Coding Agent 前需
+设置 `OPENAI_API_KEY`，并仅为该本机 loopback 端点设置
+`HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true`。默认模型仍是 `deepseek-v4-flash`；使用
+`--model openai-gpt-5.6-luna`、`HAIFA_MODEL_ID=openai-gpt-5.6-luna` 或空闲 Session 的模型选择入口切换。
 
 ## 安全 Trace
 
@@ -251,6 +278,9 @@ models:
   providers:
     - id: deepseek
       displayName: DeepSeek
+      dialectId: deepseek-openai-chat
+      dialectVersion: "1.0"
+      nativeStreaming: true
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
       models:

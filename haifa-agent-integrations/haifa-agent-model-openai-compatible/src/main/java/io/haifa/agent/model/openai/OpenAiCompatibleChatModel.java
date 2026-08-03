@@ -185,6 +185,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(sink, "sink must not be null");
         validateSelection(request);
+        if (Boolean.FALSE.equals(request.model().providerOptions().get(OpenAiCompatibleDialects.NATIVE_STREAMING))) {
+            return AgentChatModel.super.invokeStreaming(request, sink);
+        }
         ResolvedCredential credential;
         try {
             credential = credentials.resolve(request.model().credentialRef());

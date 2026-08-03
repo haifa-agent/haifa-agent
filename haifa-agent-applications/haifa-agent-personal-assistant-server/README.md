@@ -11,7 +11,7 @@ Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器�
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
 
 Provider 是接入实例，持有 Endpoint、Credential 和运行模式；每个 Provider 再声明自己的可用模型
-列表。例如同一 DeepSeek Provider 可以同时提供两个模型：
+列表。例如 DeepSeek 与本机 OpenAI-compatible 端点可以同时注册：
 
 ```yaml
 haifa:
@@ -21,6 +21,9 @@ haifa:
       - id: deepseek
         display-name: DeepSeek
         mode: remote
+        dialect-id: deepseek-openai-chat
+        dialect-version: "1.0"
+        native-streaming: true
         endpoint: https://api.deepseek.com
         credential-reference: env://DEEPSEEK_API_KEY
         models:
@@ -30,10 +33,30 @@ haifa:
           - id: deepseek-v4-flash
             display-name: DeepSeek V4 Flash
             provider-model-id: deepseek-v4-flash
+      - id: openai
+        display-name: OpenAI
+        mode: remote
+        dialect-id: openai-chat-completions
+        dialect-version: "1.0"
+        native-streaming: false
+        endpoint: http://localhost:30000/v1
+        credential-reference: env://OPENAI_API_KEY
+        models:
+          - id: openai-gpt-5.6-luna
+            display-name: GPT-5.6 Luna
+            provider-model-id: gpt-5.6-luna
+    allow-insecure-loopback-model: true
 ```
 
 模型 `id` 是产品内全局唯一的选择与偏好 ID；`provider-model-id` 是发送给对应 Provider 的实际模型
-或部署名称。
+或部署名称。远程 Provider 必须显式配置 `dialect-id`、`dialect-version` 和 `native-streaming`；
+Personal Assistant 不根据 Provider ID 推断协议。严格兼容 OpenAI Chat Completions 的第三方 HTTPS
+Provider 可使用任意内部 ID，并复用 `openai-chat-completions`，无需修改 transport。
+
+`allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
+Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型
+仍是 `deepseek-v4-flash`，Personal 的模型 API/Selector 可把空闲 Conversation 切换到
+`openai-gpt-5.6-luna`，只影响后续新 Run。
 
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
@@ -182,6 +205,11 @@ macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 
 Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据
 写入参数、状态文件或日志。
+
+Windows 启动脚本从当前进程环境读取 `OPENAI_API_KEY`，缺失时再读取 Windows 用户环境，并将
+OpenAI 第二 Provider 显式装配为 `openai-gpt-5.6-luna`。该本机中转冻结
+`native_streaming=false`，上游使用同步 Chat Completions 返回权威 usage，产品侧仍通过模型契约桥接
+有界 Content/Usage 事件。
 
 ## Process logging
 

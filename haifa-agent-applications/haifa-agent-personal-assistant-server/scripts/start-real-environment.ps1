@@ -437,6 +437,13 @@ $aliyunIqsApiKey = (Get-Content -LiteralPath $AliyunIqsKeyFile -Raw).Trim()
 if ([string]::IsNullOrWhiteSpace($aliyunIqsApiKey)) {
     throw "Aliyun IQS key file is empty: $AliyunIqsKeyFile"
 }
+$openAiApiKey = [Environment]::GetEnvironmentVariable('OPENAI_API_KEY', 'Process')
+if ([string]::IsNullOrWhiteSpace($openAiApiKey)) {
+    $openAiApiKey = [Environment]::GetEnvironmentVariable('OPENAI_API_KEY', 'User')
+}
+if ([string]::IsNullOrWhiteSpace($openAiApiKey)) {
+    throw 'OPENAI_API_KEY is required in the process or Windows user environment.'
+}
 $personalSkillRoot = (Resolve-Path -LiteralPath $PersonalSkillRoot).Path
 $trustedScriptManifestPath = ''
 if (-not [string]::IsNullOrWhiteSpace($TrustedScriptManifest)) {
@@ -601,6 +608,7 @@ if (Test-HttpEndpoint -Uri $backendHealthUri) {
     $backendStderr = Join-Path $logDirectory "personal-backend-$timestamp.err.log"
     $backendEnvironment = @{
         DEEPSEEK_API_KEY = $deepSeekApiKey
+        OPENAI_API_KEY = $openAiApiKey
         ALIYUN_IQS_API_KEY = $aliyunIqsApiKey
         HAIFA_PERSONAL_CONTINUATION_KEY = $continuationKey
         HAIFA_PERSONAL_DATA_DIR = $dataDirectory
@@ -609,6 +617,9 @@ if (Test-HttpEndpoint -Uri $backendHealthUri) {
         HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME = 'DeepSeek'
         HAIFA_PERSONAL_MODELPROVIDERS_0_MODE = 'remote'
         HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC = 'false'
+        HAIFA_PERSONAL_MODELPROVIDERS_0_DIALECTID = 'deepseek-openai-chat'
+        HAIFA_PERSONAL_MODELPROVIDERS_0_DIALECTVERSION = '1.0'
+        HAIFA_PERSONAL_MODELPROVIDERS_0_NATIVESTREAMING = 'true'
         HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT = 'https://api.deepseek.com'
         HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE = 'env://DEEPSEEK_API_KEY'
         HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID = 'deepseek-v4-pro'
@@ -617,6 +628,19 @@ if (Test-HttpEndpoint -Uri $backendHealthUri) {
         HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID = 'deepseek-v4-flash'
         HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME = 'DeepSeek V4 Flash'
         HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID = 'deepseek-v4-flash'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_ID = 'openai'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_DISPLAYNAME = 'OpenAI'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_MODE = 'remote'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_ALLOWDETERMINISTIC = 'false'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTID = 'openai-chat-completions'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTVERSION = '1.0'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_NATIVESTREAMING = 'false'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT = 'http://localhost:30000/v1'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE = 'env://OPENAI_API_KEY'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_ID = 'openai-gpt-5.6-luna'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_DISPLAYNAME = 'GPT-5.6 Luna'
+        HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID = 'gpt-5.6-luna'
+        HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL = 'true'
         HAIFA_PERSONAL_WEB_ENABLED = 'true'
         HAIFA_PERSONAL_WEB_CREDENTIAL = 'env://ALIYUN_IQS_API_KEY'
         HAIFA_PERSONAL_SKILL_ROOT = $personalSkillRoot

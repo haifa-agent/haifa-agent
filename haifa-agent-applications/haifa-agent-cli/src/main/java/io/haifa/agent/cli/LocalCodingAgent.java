@@ -42,6 +42,7 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
@@ -762,9 +763,13 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration.Model model) {
-        if (model.providerId().equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
+        if (OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(model.dialectId())) {
             return bailianModelSnapshot(model);
         }
+        Map<String, Object> providerOptions = new java.util.LinkedHashMap<>(OpenAiCompatibleDialects.configuredOptions(
+                model.dialectId(), model.dialectVersion(), model.nativeStreaming(), model.endpoint()));
+        boolean deepSeek = OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialectId());
+        if (deepSeek) providerOptions.put("thinking", "disabled");
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
                 "cli-v1",
@@ -775,21 +780,26 @@ final class LocalCodingAgent implements AutoCloseable {
                 "1.0.0",
                 model.endpoint(),
                 new CredentialRef(model.credentialRef()),
-                EnumSet.of(
-                        ModelCapability.TEXT_CHAT,
-                        ModelCapability.TOOL_CALLING,
-                        ModelCapability.STRUCTURED_OUTPUT,
-                        ModelCapability.REASONING),
+                deepSeek
+                        ? EnumSet.of(
+                                ModelCapability.TEXT_CHAT,
+                                ModelCapability.TOOL_CALLING,
+                                ModelCapability.STRUCTURED_OUTPUT,
+                                ModelCapability.REASONING)
+                        : EnumSet.of(
+                                ModelCapability.TEXT_CHAT,
+                                ModelCapability.TOOL_CALLING,
+                                ModelCapability.STRUCTURED_OUTPUT),
                 131_072,
                 8_192,
-                Map.of(
-                        "dialect_id", "deepseek-openai-chat",
-                        "dialect_version", "1.0",
-                        "thinking", "disabled"),
-                Map.of("thinking", "disabled"));
+                Map.copyOf(providerOptions),
+                deepSeek ? Map.of("thinking", "disabled") : Map.of());
     }
 
     private static ResolvedModelSnapshot bailianModelSnapshot(CliConfiguration.Model model) {
+        if (!OpenAiCompatibleDialects.VERSION_1.equals(model.dialectVersion())) {
+            throw new IllegalArgumentException("unsupported aliyun-bailian-openai-chat dialect version");
+        }
         var provider = AliyunBailianProviderFactory.provider(
                 new AliyunBailianProviderFactory.ProviderConfiguration(
                         "cli-v1", model.workspaceId(), model.region(), new CredentialRef(model.credentialRef())),
@@ -810,6 +820,8 @@ final class LocalCodingAgent implements AutoCloseable {
                                 "supports_tool_stream", false,
                                 "tool_stream", false))));
         var definition = provider.models().getFirst();
+        Map<String, Object> providerOptions = new java.util.LinkedHashMap<>(provider.options());
+        providerOptions.put(OpenAiCompatibleDialects.NATIVE_STREAMING, model.nativeStreaming());
         return ResolvedModelSnapshot.create(
                 provider.id(),
                 provider.version(),
@@ -823,7 +835,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 definition.capabilities(),
                 definition.contextWindow(),
                 definition.maxOutputTokens(),
-                provider.options(),
+                Map.copyOf(providerOptions),
                 definition.options());
     }
 }

@@ -61,6 +61,7 @@ class OpenAiCompatibleChatModelTest {
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/chat/completions", this::handle);
+        server.createContext("/v1/chat/completions", this::handle);
         server.createContext("/models", this::handle);
         server.start();
         provider = provider(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
@@ -100,6 +101,95 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void sendsStandardOpenAiChatCompletionsRequestWithoutVendorExtensions() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-openai","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ready"}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """));
+
+        var actual = model().invoke(openAiRequest());
+
+        assertThat(actual.content()).isEqualTo("ready");
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("model").asText()).isEqualTo("gpt-5.6-luna");
+        assertThat(sent.has("thinking")).isFalse();
+        assertThat(sent.has("reasoning_effort")).isFalse();
+        assertThat(authorization.get()).isEqualTo("Bearer test-secret");
+    }
+
+    @Test
+    void bridgesStandardOpenAiSynchronousTransportIntoModelStreamEvents() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"),
+                Map.of("dialect_id", "openai-chat-completions", "dialect_version", "1.0", "native_streaming", false));
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-openai-sync","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ready"}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var actual = model().invokeStreaming(openAiRequest(), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(actual.content()).isEqualTo("ready");
+        assertThat(events)
+                .extracting(event -> event.getClass().getSimpleName())
+                .containsExactly("Started", "ContentDelta", "UsageReported");
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("stream").asBoolean()).isFalse();
+        assertThat(sent.has("stream_options")).isFalse();
+    }
+
+    @Test
+    void refusesInsecureNonLoopbackOpenAiEndpointEvenWhenLocalHttpIsEnabled() {
+        provider = openAiProvider(URI.create("http://example.com/v1"));
+
+        assertThatThrownBy(this::model)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("loopback host");
+    }
+
+    @Test
+    void acceptsTrustedThirdPartyHttpsHostForStandardChatCompletions() {
+        provider = openAiProvider(
+                URI.create("https://gateway.example.com/v1"),
+                Map.of(
+                        "dialect_id", "openai-chat-completions",
+                        "dialect_version", "1.0",
+                        "native_streaming", true,
+                        "endpoint_host", "gateway.example.com"));
+
+        model();
+    }
+
+    @Test
+    void rejectsThirdPartyHttpsHostThatDoesNotMatchFrozenTrustedHost() {
+        provider = openAiProvider(
+                URI.create("https://gateway.example.com/v1"),
+                Map.of(
+                        "dialect_id", "openai-chat-completions",
+                        "dialect_version", "1.0",
+                        "native_streaming", true,
+                        "endpoint_host", "other.example.com"));
+
+        assertThatThrownBy(this::model)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("provider endpoint host is not allowed");
+    }
+
+    @Test
     void streamsReasoningContentAndUsageWithoutReturningRawReasoning() throws Exception {
         response.set(
                 Response.sse(
@@ -126,13 +216,8 @@ class OpenAiCompatibleChatModelTest {
         assertThat(result.metadata()).containsEntry("reasoningCharacters", 14);
         assertThat(result.toString()).doesNotContain("secret thought");
         assertThat(events)
-                .extracting(Object::getClass)
-                .containsExactly(
-                        ModelStreamEvent.Started.class,
-                        ModelStreamEvent.ReasoningDelta.class,
-                        ModelStreamEvent.ContentDelta.class,
-                        ModelStreamEvent.ContentDelta.class,
-                        ModelStreamEvent.UsageReported.class);
+                .extracting(event -> event.getClass().getSimpleName())
+                .containsExactly("Started", "ReasoningDelta", "ContentDelta", "ContentDelta", "UsageReported");
         assertThat(events.get(1).toString()).doesNotContain("secret thought");
         JsonNode sent = json.readTree(requestBody.get());
         assertThat(sent.path("stream").asBoolean()).isTrue();
@@ -551,6 +636,20 @@ class OpenAiCompatibleChatModelTest {
         return request(List.of(ModelMessage.text(ModelMessageRole.USER, "hello")), List.of());
     }
 
+    private AgentChatRequest openAiRequest() {
+        return new AgentChatRequest(
+                new ModelCallId("call-openai"),
+                new AgentRunId("run-openai"),
+                1,
+                1,
+                openAiSnapshot(),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of());
+    }
+
     private AgentChatRequest request(List<ModelMessage> messages, List<ModelToolSpecification> tools) {
         return request(messages, tools, Duration.ofSeconds(5));
     }
@@ -621,6 +720,24 @@ class OpenAiCompatibleChatModelTest {
                 Map.of("thinking", "enabled", "reasoning_effort", "high"));
     }
 
+    private ResolvedModelSnapshot openAiSnapshot() {
+        return ResolvedModelSnapshot.create(
+                provider.id(),
+                provider.version(),
+                new ModelDefinitionId("openai-gpt-5.6-luna"),
+                "model-v1",
+                "gpt-5.6-luna",
+                "openai-compatible",
+                "1.0.0",
+                provider.endpoint(),
+                provider.credentialRef(),
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                8_192,
+                provider.options(),
+                Map.of());
+    }
+
     private ModelProviderDefinition provider(URI endpoint) {
         ModelProviderId providerId = new ModelProviderId("deepseek");
         ModelDefinition model = new ModelDefinition(
@@ -645,6 +762,37 @@ class OpenAiCompatibleChatModelTest {
                 ProviderStatus.ACTIVE,
                 List.of(model),
                 Map.of("thinking", "disabled"),
+                Map.of());
+    }
+
+    private ModelProviderDefinition openAiProvider(URI endpoint) {
+        return openAiProvider(endpoint, Map.of("dialect_id", "openai-chat-completions", "dialect_version", "1.0"));
+    }
+
+    private ModelProviderDefinition openAiProvider(URI endpoint, Map<String, Object> providerOptions) {
+        ModelProviderId providerId = new ModelProviderId("openai");
+        ModelDefinition model = new ModelDefinition(
+                new ModelDefinitionId("openai-gpt-5.6-luna"),
+                "model-v1",
+                providerId,
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                ModelStatus.ACTIVE,
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                128_000,
+                8_192,
+                Map.of(),
+                Map.of());
+        return new ModelProviderDefinition(
+                providerId,
+                "provider-v1",
+                "OpenAI",
+                "openai-compatible",
+                endpoint,
+                new CredentialRef("env://OPENAI_API_KEY"),
+                ProviderStatus.ACTIVE,
+                List.of(model),
+                providerOptions,
                 Map.of());
     }
 

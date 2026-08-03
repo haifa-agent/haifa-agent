@@ -924,11 +924,17 @@ class LocalCodingAgentTest {
         return new CliConfiguration(
                 new CliConfiguration.Model(
                         model.providerId(),
+                        model.providerDisplayName(),
                         model.modelId(),
                         endpoint,
                         model.credentialRef(),
+                        model.dialectId(),
+                        model.dialectVersion(),
+                        model.nativeStreaming(),
                         model.workspaceId(),
-                        model.region()),
+                        model.region(),
+                        model.id(),
+                        model.displayName()),
                 configuration.enabledTools(),
                 configuration.mcpServers(),
                 configuration.web(),

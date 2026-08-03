@@ -5,6 +5,9 @@ models:
   providers:
     - id: deepseek
       displayName: DeepSeek
+      dialectId: deepseek-openai-chat
+      dialectVersion: "1.0"
+      nativeStreaming: true
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
       models:
@@ -14,6 +17,17 @@ models:
         - id: deepseek-v4-pro
           displayName: DeepSeek V4 Pro
           providerModelId: deepseek-v4-pro
+    - id: openai
+      displayName: OpenAI
+      dialectId: openai-chat-completions
+      dialectVersion: "1.0"
+      nativeStreaming: false
+      endpoint: http://localhost:30000/v1
+      credentialRef: env://OPENAI_API_KEY
+      models:
+        - id: openai-gpt-5.6-luna
+          displayName: GPT-5.6 Luna
+          providerModelId: gpt-5.6-luna
 
 tools:
   enabled:
