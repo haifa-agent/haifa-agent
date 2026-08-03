@@ -59,6 +59,28 @@ class HostShellTest {
         assertThat(decodeStrictUtf8(errorText)).isNotBlank();
     }
 
+    @Test
+    void windowsPowerShellLaunchFailsClosedForCommandAndNativeFailures() throws Exception {
+        assumeTrue(isWindows());
+        HostShell shell = HostShell.auto();
+
+        assertThat(exitValue(shell, "haifa-command-that-does-not-exist")).isNotZero();
+        assertThat(exitValue(shell, "Write-Error 'expected failure'")).isNotZero();
+        assertThat(exitValue(shell, "& $env:ComSpec /d /c 'exit 23'")).isEqualTo(23);
+        assertThat(exitValue(shell, "& $env:ComSpec /d /c 'exit 17'; Write-Output 'continued'"))
+                .isEqualTo(17);
+    }
+
+    private static int exitValue(HostShell shell, String command) throws Exception {
+        Process process = new ProcessBuilder(shell.launch(command))
+                .redirectErrorStream(true)
+                .start();
+        process.getInputStream().readAllBytes();
+        assertThat(process.waitFor(Duration.ofSeconds(10).toMillis(), TimeUnit.MILLISECONDS))
+                .isTrue();
+        return process.exitValue();
+    }
+
     private static String decodeStrictUtf8(byte[] bytes) throws java.nio.charset.CharacterCodingException {
         return StandardCharsets.UTF_8
                 .newDecoder()

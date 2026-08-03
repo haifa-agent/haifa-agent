@@ -58,10 +58,23 @@ public record HostShell(String displayName, List<String> invocationPrefix) {
                 + "[Console]::InputEncoding = $__haifaUtf8\n"
                 + "[Console]::OutputEncoding = $__haifaUtf8\n"
                 + "$OutputEncoding = $__haifaUtf8\n"
+                + "$ErrorActionPreference = 'Stop'\n"
+                + "$global:LASTEXITCODE = $null\n"
                 + "$__haifaCommandSource = [Text.Encoding]::UTF8.GetString("
                 + "[Convert]::FromBase64String('" + encodedCommand + "'))\n"
-                + "& ([ScriptBlock]::Create($__haifaCommandSource))\n"
-                + "if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }\n";
+                + "try {\n"
+                + "  & ([ScriptBlock]::Create($__haifaCommandSource))\n"
+                + "  $__haifaPowerShellSucceeded = $?\n"
+                + "  $__haifaNativeExitCode = $LASTEXITCODE\n"
+                + "  if ($null -ne $__haifaNativeExitCode -and $__haifaNativeExitCode -ne 0) {\n"
+                + "    exit $__haifaNativeExitCode\n"
+                + "  }\n"
+                + "  if (-not $__haifaPowerShellSucceeded) { exit 1 }\n"
+                + "  exit 0\n"
+                + "} catch {\n"
+                + "  [Console]::Error.WriteLine($_.Exception.Message)\n"
+                + "  exit 1\n"
+                + "}\n";
     }
 
     private static HostShell configured(String displayName, Path executable, List<String> arguments) {

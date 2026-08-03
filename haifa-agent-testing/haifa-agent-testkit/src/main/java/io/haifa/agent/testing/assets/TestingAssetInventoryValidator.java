@@ -14,7 +14,6 @@ import java.util.stream.Stream;
 
 /** Validates versioned testing asset inventories before suite planning or execution. */
 public final class TestingAssetInventoryValidator {
-    private static final int LEGACY_SCHEMA_VERSION = 1;
     private static final int SCHEMA_VERSION = 2;
 
     private final ObjectMapper json = new ObjectMapper();
@@ -38,7 +37,7 @@ public final class TestingAssetInventoryValidator {
     }
 
     private static void validateModel(Path repositoryRoot, Inventory inventory) throws IOException {
-        if (inventory.schemaVersion() != LEGACY_SCHEMA_VERSION && inventory.schemaVersion() != SCHEMA_VERSION) {
+        if (inventory.schemaVersion() != SCHEMA_VERSION) {
             throw new IllegalArgumentException(
                     "unsupported testing asset inventory schema: " + inventory.schemaVersion());
         }
@@ -66,8 +65,8 @@ public final class TestingAssetInventoryValidator {
             requireText(asset.owner(), "asset owner");
             requireText(asset.rationale(), "asset rationale");
             validateLifecycle(asset, assetPath);
-            CoverageMode coverageMode = coverageMode(inventory.schemaVersion(), assetPath, asset);
-            validateCoverageMode(inventory.schemaVersion(), asset, assetPath, coverageMode);
+            CoverageMode coverageMode = coverageMode(asset);
+            validateCoverageMode(asset, assetPath, coverageMode);
             coverageModes.put(assetPath, coverageMode);
             for (String reference : safeList(asset.referencedBy())) {
                 Path referencePath =
@@ -100,16 +99,12 @@ public final class TestingAssetInventoryValidator {
         }
     }
 
-    private static CoverageMode coverageMode(int schemaVersion, Path assetPath, Asset asset) {
-        if (schemaVersion == LEGACY_SCHEMA_VERSION) {
-            return Files.isDirectory(assetPath) ? CoverageMode.SUBTREE : CoverageMode.EXACT;
-        }
+    private static CoverageMode coverageMode(Asset asset) {
         return asset.coverageMode() == null ? CoverageMode.EXACT : asset.coverageMode();
     }
 
-    private static void validateCoverageMode(
-            int schemaVersion, Asset asset, Path assetPath, CoverageMode coverageMode) {
-        if (schemaVersion == LEGACY_SCHEMA_VERSION || coverageMode == CoverageMode.EXACT) {
+    private static void validateCoverageMode(Asset asset, Path assetPath, CoverageMode coverageMode) {
+        if (coverageMode == CoverageMode.EXACT) {
             return;
         }
         if (asset.lifecycle() == Lifecycle.REMOVED || !Files.isDirectory(assetPath)) {
