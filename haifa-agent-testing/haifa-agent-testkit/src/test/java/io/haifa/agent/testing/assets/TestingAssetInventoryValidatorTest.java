@@ -285,32 +285,19 @@ class TestingAssetInventoryValidatorTest {
     }
 
     @Test
-    void preservesLegacyDirectoryCoverageDuringMigration() throws Exception {
-        Files.createDirectories(temporaryDirectory.resolve("assets"));
-        Files.writeString(temporaryDirectory.resolve("assets/legacy.txt"), "legacy");
+    void rejectsLegacySchemaAfterTheMigrationWindowCloses() throws Exception {
         Path inventory = writeInventory(
                 """
                 {
                   "schemaVersion": 1,
                   "repositoryId": "fixture",
-                  "coverageRoots": ["assets"],
-                  "assets": [
-                    {
-                      "assetId": "legacy-root",
-                      "path": "assets",
-                      "kind": "DIRECTORY",
-                      "lifecycle": "ACTIVE",
-                      "disposition": "KEEP",
-                      "owner": "testing",
-                      "referencedBy": [],
-                      "replacement": "",
-                      "rationale": "temporary migration compatibility"
-                    }
-                  ]
+                  "coverageRoots": [],
+                  "assets": []
                 }
                 """);
 
-        assertDoesNotThrow(() -> new TestingAssetInventoryValidator().validateIfPresent(temporaryDirectory, inventory));
+        assertThrows(IllegalArgumentException.class, () -> new TestingAssetInventoryValidator()
+                .validateIfPresent(temporaryDirectory, inventory));
     }
 
     private Path writeInventory(String value) throws Exception {

@@ -12,6 +12,10 @@ final class DeliveryCliConfigurationFactory {
             DeliveryToolchainSet toolchains,
             DeliveryHostProfile profile,
             AutonomousDeliveryMatrixManifest.Combination matrixCombination) {
+        if (!"deepseek".equals(matrixCombination.modelProvider())) {
+            throw new IllegalArgumentException(
+                    "unsupported Autonomous Delivery model provider: " + matrixCombination.modelProvider());
+        }
         Map<String, Path> roots = toolchains.pathRoots();
         return """
                 models:
@@ -19,6 +23,9 @@ final class DeliveryCliConfigurationFactory {
                   providers:
                     - id: deepseek
                       displayName: DeepSeek
+                      dialectId: deepseek-openai-chat
+                      dialectVersion: "1.0"
+                      nativeStreaming: true
                       endpoint: https://api.deepseek.com
                       credentialRef: env://DEEPSEEK_API_KEY
                       models:

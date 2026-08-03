@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 修复 Windows Host Guarded PowerShell 将命令不存在或复合原生命令失败误报为成功的问题；Autonomous
+  Delivery 生成配置同步显式声明当前 CLI 所需的 DeepSeek dialect/version/streaming 字段，并在迁移
+  窗口关闭后统一拒绝测试资产 Schema 1 台账。
 - 新增标准 OpenAI Chat Completions dialect，并通过显式 dialect/version/streaming 配置与受信
   Endpoint 治理，为 Coding Agent 和 Personal Assistant 配置第二个 Provider `gpt-5.6-luna`；
   严格兼容该协议的 HTTPS 厂商可使用任意 Provider ID，仅通过配置接入，HTTP 仍只允许显式启用的

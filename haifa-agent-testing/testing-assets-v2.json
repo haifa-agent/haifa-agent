@@ -56,18 +56,6 @@
       "coverageMode": "EXACT"
     },
     {
-      "assetId": "testing-asset-inventory-v1",
-      "path": "haifa-agent-testing/testing-assets-v1.json",
-      "kind": "MANIFEST",
-      "lifecycle": "DEPRECATED",
-      "disposition": "MIGRATE",
-      "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/testing-assets-v2.json"],
-      "replacement": "haifa-agent-testing/testing-assets-v2.json",
-      "rationale": "Temporary compatibility inventory for checkouts that predate the fine-grained validator.",
-      "coverageMode": "EXACT"
-    },
-    {
       "assetId": "testing-asset-inventory-v2",
       "path": "haifa-agent-testing/testing-assets-v2.json",
       "kind": "MANIFEST",

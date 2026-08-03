@@ -2,6 +2,9 @@
 
 首个本地主机 Provider，支持两种执行形式：DIRECT 继续执行显式白名单 argv；SHELL 要求 Profile 明确允许，并把完整命令文本交给可信配置的 Shell。macOS/Linux 默认优先 `/bin/bash -lc`，不可用时回退 `/bin/sh -c`；Windows 默认使用非交互 PowerShell，本地配置也可指定绝对 Git Bash/PowerShell 路径。模型不能选择 Shell 或宿主路径。
 
+Windows PowerShell 包装器对命令不存在、PowerShell 错误和原生命令非零退出统一 fail closed；失败输出
+不能与零退出状态共存，复合命令也保留其中的原生命令失败状态。
+
 Provider 约束 Workspace cwd、允许继承的非 secret 环境名称、超时、有界 stdout/stderr 和进程树。它并发排空输出、关闭 stdin、保留截断尾部，并在 timeout/cancel/close 时终止子进程树。它会诚实拒绝无法保证的只读挂载与网络关闭策略，不承诺 CPU、内存、网络或文件系统挂载强隔离。
 
 Host Guarded 在 Coding Agent 三端默认的可信本地开发模式中，从装配提供的私有、Workspace/用户目录之外 Scratch Root
