@@ -726,11 +726,17 @@ class CodingAgentLiveE2E {
                 String region = System.getenv().getOrDefault("HAIFA_BAILIAN_REGION", "cn-beijing");
                 yield new CliConfiguration.Model(
                         provider,
+                        "Alibaba Cloud Bailian",
                         modelId,
                         null,
                         "env://" + credentialEnvironmentName,
+                        "aliyun-bailian-openai-chat",
+                        "1.0",
+                        true,
                         requiredEnvironment("HAIFA_BAILIAN_WORKSPACE_ID"),
-                        region);
+                        region,
+                        modelId,
+                        modelId);
             }
             default ->
                 throw new IllegalStateException("HAIFA_CLI_LIVE_E2E_PROVIDER must be deepseek or aliyun-bailian");
