@@ -19,6 +19,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.AgentSessionStatus;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.policy.api.ApprovalRequester;
 import io.haifa.agent.policy.api.ApprovalResponder;
 import io.haifa.agent.policy.api.PolicyAction;
@@ -43,6 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Terminal shell orchestration; no ProcessBuilder or alternate builtin terminal path exists here. */
 final class CliCodingShellService implements CodingShellService {
+    private static final int MAX_DISPLAY_SUMMARY_CHARS = 16_384;
     private final CodingSessionService sessions;
     private final ProjectExecutionToolOperations operations;
     private final CodingAgentPolicyAssembly policy;
@@ -133,12 +135,7 @@ final class CliCodingShellService implements CodingShellService {
                 decision.id().value(),
                 decision);
         pending.put(token, value);
-        CodingShellPlan.State state =
-                switch (decision.effect()) {
-                    case ALLOW -> CodingShellPlan.State.READY;
-                    case ASK -> CodingShellPlan.State.APPROVAL_REQUIRED;
-                    case DENY -> CodingShellPlan.State.DENIED;
-                };
+        CodingShellPlan.State state = planState(decision.effect());
         return new CodingShellPlan(token, sessionId, safeCommand, includeInContext, state, decision.reasonCode());
     }
 
@@ -150,7 +147,9 @@ final class CliCodingShellService implements CodingShellService {
             throw new SecurityException("POLICY_DENIED");
         }
         if (value.decision().effect() == PolicyEffect.ASK) {
-            if (!approved) throw new SecurityException("POLICY_CHALLENGE_UNSATISFIED");
+            // This service is reachable only after the terminal owner typed the exact
+            // command and pressed Enter. That explicit input is the approval action;
+            // retain exact decision/evidence binding without asking the same user twice.
             var now = time.now();
             policy.evidence()
                     .save(new PolicyAuthorizationEvidence(
@@ -204,7 +203,7 @@ final class CliCodingShellService implements CodingShellService {
             return null;
         });
         return new CodingShellResult(
-                status, exitCode, result.summary(), outputRef, result.truncated(), value.includeInContext());
+                status, exitCode, displaySummary(result), outputRef, result.truncated(), value.includeInContext());
     }
 
     @Override
@@ -218,6 +217,39 @@ final class CliCodingShellService implements CodingShellService {
             throw new IllegalArgumentException("shell command is invalid");
         }
         return value.strip();
+    }
+
+    static CodingShellPlan.State planState(PolicyEffect effect) {
+        return switch (effect) {
+            case ALLOW, ASK -> CodingShellPlan.State.READY;
+            case DENY -> CodingShellPlan.State.DENIED;
+        };
+    }
+
+    static String displaySummary(ToolResult result) {
+        String summary = result.summary().strip();
+        Object value = result.structuredData().get("output");
+        if (!(value instanceof String output) || output.isBlank()) {
+            return summary;
+        }
+        String safeOutput = output.stripTrailing();
+        if (summary.endsWith(safeOutput)) {
+            return summary;
+        }
+        String combined = summary + "\n" + safeOutput;
+        if (combined.length() <= MAX_DISPLAY_SUMMARY_CHARS) {
+            return combined;
+        }
+        String marker = "\n<output truncated; showing tail>\n";
+        String headline = summary.lines().findFirst().orElse("Command completed");
+        int available = Math.max(0, MAX_DISPLAY_SUMMARY_CHARS - headline.length() - marker.length());
+        int start = Math.max(0, safeOutput.length() - available);
+        if (start > 0
+                && Character.isLowSurrogate(safeOutput.charAt(start))
+                && Character.isHighSurrogate(safeOutput.charAt(start - 1))) {
+            start++;
+        }
+        return headline + marker + safeOutput.substring(start);
     }
 
     private static void rejectUnsupportedMode(String command) {

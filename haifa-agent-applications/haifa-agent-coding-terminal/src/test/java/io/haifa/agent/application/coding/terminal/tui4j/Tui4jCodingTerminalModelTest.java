@@ -90,6 +90,60 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void opensCommandAndWorkspacePathCompletionAsSoonAsTheTriggerIsTyped() {
+        var command = fixture();
+
+        command.model.update(runes('/'));
+
+        assertThat(command.controller.state().selector())
+                .get()
+                .extracting(TerminalSelector::title)
+                .isEqualTo("Commands");
+        assertThat(command.controller.state().editorBuffer()).isEqualTo("/");
+
+        var path = fixture();
+        path.model.update(runes('@'));
+
+        assertThat(path.controller.state().selector())
+                .get()
+                .extracting(TerminalSelector::title)
+                .isEqualTo("Workspace paths");
+        assertThat(path.controller.state().selector().orElseThrow().options()).contains("@README.md", "@src/");
+
+        path.model.update(runes('s'));
+        assertThat(path.controller.state().editorBuffer()).isEqualTo("@s");
+        assertThat(path.controller.state().selector().orElseThrow().options()).containsExactly("@src/");
+    }
+
+    @Test
+    void keepsFilteringAnOpenCompletionAndSubmitsAnExactSlashCommandWithOneEnter() {
+        var fixture = fixture();
+
+        "/quit".chars().forEach(value -> fixture.model.update(runes((char) value)));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("/quit");
+        assertThat(fixture.controller.state().selector().orElseThrow().options())
+                .containsExactly("/quit");
+
+        fixture.model.update(key(KeyType.keyCR));
+
+        assertThat(fixture.controller.state().exitRequested()).isTrue();
+    }
+
+    @Test
+    void mapsTraditionalCtrlOToExpansionWithoutEditingTheDraft() {
+        var fixture = fixture();
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "Command succeeded\nD:/workspace", "SUCCEEDED"));
+        fixture.model.update(new WindowSizeMessage(100, 30));
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isTrue();
+
+        fixture.model.update(key(KeyType.keySI));
+
+        assertThat(fixture.controller.state().transcript().getLast().expanded()).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+    }
+
+    @Test
     void keepsFollowingNewOutputWhenActiveRunLayoutShrinksALongTranscriptViewport() {
         var fixture = fixture();
         fixture.model.init();
@@ -204,6 +258,10 @@ class Tui4jCodingTerminalModelTest {
         return new KeyPressMessage(new Key(type));
     }
 
+    private KeyPressMessage runes(char value) {
+        return new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {value}));
+    }
+
     private AgentRunEvent event(long sequence, AgentRunEvent.Payload payload) {
         AgentRunId runId = new AgentRunId("run-1");
         return new AgentRunEvent(
@@ -294,6 +352,11 @@ class Tui4jCodingTerminalModelTest {
         @Override
         public RunEventSubscription subscribe(AgentRunId runId, RunEventCursor after, AgentRunEventListener listener) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<String> logicalPaths() {
+            return List.of("README.md", "src/");
         }
     }
 }

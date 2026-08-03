@@ -93,7 +93,8 @@ final class Tui4jTerminalView {
         if (compact) {
             lines.add(theme.muted("tab complete · " + submitHint(state) + " · esc interrupt"));
         } else {
-            lines.add(theme.muted("esc interrupt · ctrl+c clear · ctrl+o tools · tab complete · " + submitHint(state)));
+            lines.add(theme.muted(
+                    "esc interrupt · ctrl+c clear · ctrl+o expand/collapse · tab complete · " + submitHint(state)));
             if (state.currentRunId().isPresent()) {
                 lines.add(theme.muted("alt/option+enter follow-up · alt/option+up restore queued message"));
             }

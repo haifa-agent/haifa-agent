@@ -4,6 +4,7 @@ import io.haifa.agent.application.coding.terminal.application.CodingTerminalAppl
 import io.haifa.agent.application.coding.terminal.session.LocalCodingSessionClient;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.Objects;
@@ -33,7 +34,10 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
             Consumer<RuntimeTraceEvent> traceObserver) {
         Tui4jTerminalIo terminalIo = Objects.requireNonNull(terminalIoFactory.get(), "terminal IO must not be null");
         terminalIo.requireInteractive();
-        try (LocalCodingAgent agent = agentFactory.create(workspace, configuration, output, traceObserver)) {
+        // The tui4j event loop is the only terminal renderer. Execution output is projected
+        // through safe product results instead of being written concurrently to the alt screen.
+        try (PrintStream executionSink = new PrintStream(OutputStream.nullOutputStream());
+                LocalCodingAgent agent = agentFactory.create(workspace, configuration, executionSink, traceObserver)) {
             var client = new LocalCodingSessionClient(
                     agent.projectId(),
                     agent.codingSessions(),

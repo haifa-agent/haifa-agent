@@ -135,7 +135,7 @@ public final class TerminalUiReducer {
                     shell.command(),
                     shell.summary(),
                     shell.status(),
-                    false));
+                    true));
             return copyWithTranscript(state, List.copyOf(items));
         }
         if (action instanceof TerminalUiAction.ExportCompleted exported) {

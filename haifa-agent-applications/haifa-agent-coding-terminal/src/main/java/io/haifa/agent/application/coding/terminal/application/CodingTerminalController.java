@@ -481,10 +481,16 @@ public final class CodingTerminalController implements AutoCloseable {
         String word = buffer.substring(start, cursor);
         List<String> options = completions.suggestions(word);
         if (options.isEmpty()) {
+            if (state.selector()
+                    .filter(value -> "completion".equals(value.kind()))
+                    .isPresent()) {
+                apply(new TerminalUiAction.SelectorClosed());
+                completionContext = null;
+            }
             return;
         }
         completionContext = new CompletionContext(buffer, start, end);
-        String title = word.startsWith("@") ? "Workspace files" : "Commands";
+        String title = word.startsWith("@") ? "Workspace paths" : "Commands";
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("completion", title, options, 0)));
     }
 
@@ -517,6 +523,9 @@ public final class CodingTerminalController implements AutoCloseable {
             case "completion" -> {
                 CompletionContext context = Objects.requireNonNull(completionContext, "completion context is required");
                 String replacement = selector.options().get(selected);
+                boolean exactWord = context.buffer()
+                        .substring(context.start(), context.end())
+                        .equals(replacement);
                 String completed = context.buffer().substring(0, context.start())
                         + replacement
                         + context.buffer().substring(context.end());
@@ -524,6 +533,11 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.SelectorClosed());
                 apply(new TerminalUiAction.EditorChanged(completed, cursor));
                 completionContext = null;
+                if (exactWord
+                        && replacement.startsWith("/")
+                        && completed.strip().equals(replacement)) {
+                    submitText(completed, false);
+                }
             }
             case "resume" -> {
                 AgentSessionId sessionId = resumeOptions.get(selected).sessionId();
