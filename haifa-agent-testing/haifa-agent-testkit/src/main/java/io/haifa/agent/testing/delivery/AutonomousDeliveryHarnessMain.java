@@ -136,6 +136,10 @@ public final class AutonomousDeliveryHarnessMain {
             return;
         }
         if (List.of("phase-1-gate", "phase-2-gate", "phase-3-gate").contains(options.command())) {
+            if (suite == null) {
+                throw new IllegalArgumentException("--suite is required for production Phase Gates");
+            }
+            requireCommandMatchesSuitePhase(options.command(), suite);
             if (!options.execute()) {
                 throw new IllegalArgumentException(options.command() + " requires explicit --execute");
             }
@@ -145,9 +149,6 @@ public final class AutonomousDeliveryHarnessMain {
                     options.campaignRoot(), repositories, matrix, combination, productRevision, testConfigRevision);
             String build = requireCommit(options.buildCommit());
             productRevision.requireCommit(build, "product repository");
-            if (suite == null) {
-                throw new IllegalArgumentException("--suite is required for production Phase Gates");
-            }
             AutonomousDeliveryExecutionPlan.requireApproved(executionPlan, options.approvedExecutionPlanSha256());
             Map<String, Path> toolchains = new LinkedHashMap<>();
             toolchains.put("java", options.javaExecutable());
@@ -177,6 +178,19 @@ public final class AutonomousDeliveryHarnessMain {
             return;
         }
         throw new IllegalArgumentException("unknown command");
+    }
+
+    static void requireCommandMatchesSuitePhase(String command, AutonomousDeliverySuiteManifest suite) {
+        String expectedPhase =
+                switch (command) {
+                    case "phase-1-gate" -> "PHASE_1";
+                    case "phase-2-gate" -> "PHASE_2";
+                    case "phase-3-gate" -> "PHASE_3";
+                    default -> throw new IllegalArgumentException("production Gate command is unsupported: " + command);
+                };
+        if (!expectedPhase.equals(suite.phase())) {
+            throw new IllegalArgumentException(command + " requires a " + expectedPhase + " suite");
+        }
     }
 
     private void runPhaseZeroGate(
