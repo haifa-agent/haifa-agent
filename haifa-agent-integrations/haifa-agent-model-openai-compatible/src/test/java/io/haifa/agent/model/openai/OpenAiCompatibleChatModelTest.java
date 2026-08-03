@@ -162,6 +162,34 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void acceptsTrustedThirdPartyHttpsHostForStandardChatCompletions() {
+        provider = openAiProvider(
+                URI.create("https://gateway.example.com/v1"),
+                Map.of(
+                        "dialect_id", "openai-chat-completions",
+                        "dialect_version", "1.0",
+                        "native_streaming", true,
+                        "endpoint_host", "gateway.example.com"));
+
+        model();
+    }
+
+    @Test
+    void rejectsThirdPartyHttpsHostThatDoesNotMatchFrozenTrustedHost() {
+        provider = openAiProvider(
+                URI.create("https://gateway.example.com/v1"),
+                Map.of(
+                        "dialect_id", "openai-chat-completions",
+                        "dialect_version", "1.0",
+                        "native_streaming", true,
+                        "endpoint_host", "other.example.com"));
+
+        assertThatThrownBy(this::model)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("provider endpoint host is not allowed");
+    }
+
+    @Test
     void streamsReasoningContentAndUsageWithoutReturningRawReasoning() throws Exception {
         response.set(
                 Response.sse(

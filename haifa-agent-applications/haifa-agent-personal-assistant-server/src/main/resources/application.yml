@@ -42,6 +42,9 @@ haifa:
         display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME:DeepSeek}
         mode: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODE:remote}
         allow-deterministic: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC:false}
+        dialect-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_DIALECTID:deepseek-openai-chat}
+        dialect-version: ${HAIFA_PERSONAL_MODELPROVIDERS_0_DIALECTVERSION:1.0}
+        native-streaming: ${HAIFA_PERSONAL_MODELPROVIDERS_0_NATIVESTREAMING:true}
         endpoint: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT:https://api.deepseek.com}
         credential-reference: ${HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE:env://DEEPSEEK_API_KEY}
         models:
@@ -55,6 +58,9 @@ haifa:
         display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_1_DISPLAYNAME:OpenAI}
         mode: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODE:remote}
         allow-deterministic: ${HAIFA_PERSONAL_MODELPROVIDERS_1_ALLOWDETERMINISTIC:false}
+        dialect-id: ${HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTID:openai-chat-completions}
+        dialect-version: ${HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTVERSION:1.0}
+        native-streaming: ${HAIFA_PERSONAL_MODELPROVIDERS_1_NATIVESTREAMING:false}
         endpoint: ${HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT:http://localhost:30000/v1}
         credential-reference: ${HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE:env://OPENAI_API_KEY}
         models:

@@ -17,6 +17,7 @@ import io.haifa.agent.model.core.ModelAccessPolicy;
 import io.haifa.agent.model.core.ModelAvailabilityRequest;
 import io.haifa.agent.model.core.ModelSelectionRequest;
 import io.haifa.agent.model.core.StaticModelPlatform;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -119,7 +120,9 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
     private static Set<ModelCapability> capabilities(CliConfiguration.Model model) {
         EnumSet<ModelCapability> capabilities =
                 EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT);
-        if (model.providerId().equals("deepseek")) capabilities.add(ModelCapability.REASONING);
+        if (OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialectId())) {
+            capabilities.add(ModelCapability.REASONING);
+        }
         return capabilities;
     }
 }

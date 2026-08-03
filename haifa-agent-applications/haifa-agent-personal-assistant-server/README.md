@@ -21,6 +21,9 @@ haifa:
       - id: deepseek
         display-name: DeepSeek
         mode: remote
+        dialect-id: deepseek-openai-chat
+        dialect-version: "1.0"
+        native-streaming: true
         endpoint: https://api.deepseek.com
         credential-reference: env://DEEPSEEK_API_KEY
         models:
@@ -33,6 +36,9 @@ haifa:
       - id: openai
         display-name: OpenAI
         mode: remote
+        dialect-id: openai-chat-completions
+        dialect-version: "1.0"
+        native-streaming: false
         endpoint: http://localhost:30000/v1
         credential-reference: env://OPENAI_API_KEY
         models:
@@ -43,7 +49,9 @@ haifa:
 ```
 
 模型 `id` 是产品内全局唯一的选择与偏好 ID；`provider-model-id` 是发送给对应 Provider 的实际模型
-或部署名称。
+或部署名称。远程 Provider 必须显式配置 `dialect-id`、`dialect-version` 和 `native-streaming`；
+Personal Assistant 不根据 Provider ID 推断协议。严格兼容 OpenAI Chat Completions 的第三方 HTTPS
+Provider 可使用任意内部 ID，并复用 `openai-chat-completions`，无需修改 transport。
 
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
 Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型

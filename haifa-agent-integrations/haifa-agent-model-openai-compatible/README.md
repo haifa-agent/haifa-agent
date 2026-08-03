@@ -15,6 +15,12 @@ transport 实现；厂商请求扩展、Endpoint policy 与错误分类由冻结
 新配置必须冻结 `dialect_id` 和 `dialect_version`。仅为读取早期 DeepSeek `2.0` 快照保留按
 `providerId=deepseek` 的兼容解析；其他缺少 dialect 的快照会被拒绝。
 
+标准 Chat Completions Provider 的受信配置还会把 Endpoint 主机冻结为 `endpoint_host`，因此
+Provider ID 不参与协议或主机推断。`https` 可指向该配置显式声明的第三方主机；`http` 即使主机匹配，
+也只有在产品同时显式允许不安全本机模型且 Endpoint 为 loopback 时才接受。严格遵守标准
+messages、响应、Tool Call 与 SSE 语义的新厂商只需复用 `openai-chat-completions` dialect；非标准字段、
+SSE、usage、错误或 Tool Call 行为才需要独立 dialect。
+
 ## 阿里云百炼
 
 使用 `AliyunBailianProviderFactory` 从外部治理配置构造 Provider 和模型 profile，不在 adapter 中固定
@@ -54,7 +60,7 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 
 | Provider | Endpoint 示例 | Credential 示例 | 模型引用 | 厂商扩展 |
 | --- | --- | --- | --- | --- |
-| OpenAI | `https://api.openai.com/v1` 或显式允许的 loopback `/v1` | `env://OPENAI_API_KEY` | model id | 无 |
+| OpenAI-compatible | `https://api.openai.com/v1`、受信第三方 HTTPS 主机或显式允许的 loopback `/v1` | `env://OPENAI_API_KEY` | model id | 无 |
 | DeepSeek | `https://api.deepseek.com` | `env://DEEPSEEK_API_KEY` | model id | thinking object |
 | Bailian | `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1` | `env://DASHSCOPE_API_KEY` | Qwen model id/alias | enable_thinking/tool_stream |
 | Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |

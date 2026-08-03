@@ -23,6 +23,9 @@ class CliConfigurationLoaderTest {
                   providers:
                     - id: deepseek
                       displayName: DeepSeek
+                      dialectId: deepseek-openai-chat
+                      dialectVersion: "1.0"
+                      nativeStreaming: true
                       endpoint: https://api.deepseek.com
                       credentialRef: env://DEEPSEEK_API_KEY
                       models:
@@ -34,6 +37,9 @@ class CliConfigurationLoaderTest {
                           providerModelId: deepseek-v4-flash
                     - id: aliyun-bailian
                       displayName: Alibaba Cloud Bailian
+                      dialectId: aliyun-bailian-openai-chat
+                      dialectVersion: "1.0"
+                      nativeStreaming: true
                       workspaceId: workspace-123
                       region: cn-beijing
                       credentialRef: env://DASHSCOPE_API_KEY
@@ -107,6 +113,9 @@ class CliConfigurationLoaderTest {
                   default: deepseek-v4-flash
                   providers:
                     - id: deepseek
+                      dialectId: deepseek-openai-chat
+                      dialectVersion: "1.0"
+                      nativeStreaming: true
                       endpoint: https://api.deepseek.com
                       credentialRef: env://DEEPSEEK_API_KEY
                       models:
@@ -114,6 +123,9 @@ class CliConfigurationLoaderTest {
                           providerModelId: deepseek-v4-flash
                     - id: openai
                       displayName: OpenAI
+                      dialectId: openai-chat-completions
+                      dialectVersion: "1.0"
+                      nativeStreaming: false
                       endpoint: http://localhost:30000/v1
                       credentialRef: env://OPENAI_API_KEY
                       models:
@@ -141,6 +153,42 @@ class CliConfigurationLoaderTest {
     }
 
     @Test
+    void freezesExplicitStandardDialectForAnArbitraryProviderId() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-third-party-openai", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                models:
+                  default: third-party-chat
+                  providers:
+                    - id: third-party-openai
+                      displayName: Third-party OpenAI-compatible
+                      dialectId: openai-chat-completions
+                      dialectVersion: "1.0"
+                      nativeStreaming: true
+                      endpoint: https://gateway.example.com/v1
+                      credentialRef: env://THIRD_PARTY_API_KEY
+                      models:
+                        - id: third-party-chat
+                          displayName: Third-party Chat
+                          providerModelId: vendor-chat-model
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+        var snapshot = LocalCodingAgent.modelSnapshot(result);
+
+        assertThat(snapshot.providerId().value()).isEqualTo("third-party-openai");
+        assertThat(snapshot.providerModelId()).isEqualTo("vendor-chat-model");
+        assertThat(snapshot.providerOptions())
+                .containsEntry("dialect_id", "openai-chat-completions")
+                .containsEntry("dialect_version", "1.0")
+                .containsEntry("native_streaming", true)
+                .containsEntry("endpoint_host", "gateway.example.com")
+                .doesNotContainKeys("thinking", "reasoning_effort");
+    }
+
+    @Test
     void freezesDisabledDeepSeekThinkingForCliRuns() {
         CliConfiguration defaults = CliConfiguration.defaults();
         var snapshot = LocalCodingAgent.modelSnapshot(defaults);
@@ -162,7 +210,18 @@ class CliConfigurationLoaderTest {
     @Test
     void derivesBailianEndpointAndFreezesThinkingDisabledProfile() {
         var model = new CliConfiguration.Model(
-                "aliyun-bailian", "qwen-plus", null, "env://DASHSCOPE_API_KEY", "workspace-123", null);
+                "aliyun-bailian",
+                "Alibaba Cloud Bailian",
+                "qwen-plus",
+                null,
+                "env://DASHSCOPE_API_KEY",
+                "aliyun-bailian-openai-chat",
+                "1.0",
+                true,
+                "workspace-123",
+                null,
+                "qwen-plus",
+                "Qwen Plus");
         CliConfiguration defaults = CliConfiguration.defaults();
         var snapshot = LocalCodingAgent.modelSnapshot(new CliConfiguration(
                 model,
@@ -193,11 +252,17 @@ class CliConfigurationLoaderTest {
     void rejectsBailianEndpointThatDoesNotMatchWorkspaceAndRegion() {
         assertThatThrownBy(() -> new CliConfiguration.Model(
                         "aliyun-bailian",
+                        "Alibaba Cloud Bailian",
                         "qwen-plus",
                         java.net.URI.create("https://example.com/compatible-mode/v1"),
                         "env://DASHSCOPE_API_KEY",
+                        "aliyun-bailian-openai-chat",
+                        "1.0",
+                        true,
                         "workspace-123",
-                        "cn-beijing"))
+                        "cn-beijing",
+                        "qwen-plus",
+                        "Qwen Plus"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("derived from workspaceId and region");
     }
@@ -213,6 +278,9 @@ class CliConfigurationLoaderTest {
                   providers:
                     - id: local
                       displayName: Local
+                      dialectId: openai-chat-completions
+                      dialectVersion: "1.0"
+                      nativeStreaming: true
                       endpoint: http://localhost:8080
                       credentialRef: env://TEST_KEY
                       models:

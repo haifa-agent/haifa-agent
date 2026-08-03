@@ -27,6 +27,9 @@ class PersonalModelFactoryTest {
                 Map.entry("provider.id", "deepseek"),
                 Map.entry("provider.display-name", "DeepSeek"),
                 Map.entry("provider.mode", "remote"),
+                Map.entry("provider.dialect-id", "deepseek-openai-chat"),
+                Map.entry("provider.dialect-version", "1.0"),
+                Map.entry("provider.native-streaming", true),
                 Map.entry("provider.endpoint", "https://api.deepseek.com"),
                 Map.entry("provider.credential-reference", "env://DEEPSEEK_API_KEY"),
                 Map.entry("provider.models[0].id", "deepseek-v4-pro"),
@@ -41,6 +44,8 @@ class PersonalModelFactoryTest {
                 .orElseThrow(() -> new AssertionError("model provider did not bind"));
 
         assertThat(provider.id()).isEqualTo("deepseek");
+        assertThat(provider.dialectId()).isEqualTo("deepseek-openai-chat");
+        assertThat(provider.nativeStreaming()).isTrue();
         assertThat(provider.models())
                 .extracting(PersonalAssistantProperties.ProviderModel::id)
                 .containsExactly("deepseek-v4-pro", "deepseek-v4-flash");
@@ -53,6 +58,9 @@ class PersonalModelFactoryTest {
                 "DeepSeek",
                 "remote",
                 false,
+                "deepseek-openai-chat",
+                "1.0",
+                true,
                 URI.create("https://api.deepseek.com"),
                 "env://DEEPSEEK_API_KEY",
                 List.of(
@@ -78,6 +86,9 @@ class PersonalModelFactoryTest {
                 "DeepSeek",
                 "remote",
                 false,
+                "deepseek-openai-chat",
+                "1.0",
+                true,
                 URI.create("https://api.deepseek.com"),
                 "env://DEEPSEEK_API_KEY",
                 List.of(new PersonalAssistantProperties.ProviderModel(
@@ -86,6 +97,9 @@ class PersonalModelFactoryTest {
                 "openai",
                 "OpenAI",
                 "remote",
+                false,
+                "openai-chat-completions",
+                "1.0",
                 false,
                 URI.create("http://localhost:30000/v1"),
                 "env://OPENAI_API_KEY",
@@ -108,11 +122,41 @@ class PersonalModelFactoryTest {
     }
 
     @Test
+    void freezesStandardChatCompletionsDialectForAnArbitraryProviderId() {
+        var provider = new PersonalAssistantProperties.ModelProvider(
+                "third-party-openai",
+                "Third-party OpenAI-compatible",
+                "remote",
+                false,
+                "openai-chat-completions",
+                "1.0",
+                true,
+                URI.create("https://gateway.example.com/v1"),
+                "env://THIRD_PARTY_API_KEY",
+                List.of(new PersonalAssistantProperties.ProviderModel(
+                        "third-party-chat", "Third-party Chat", "vendor-chat-model")));
+
+        var platform =
+                PersonalModelFactory.createPlatform(List.of(provider), "third-party-chat", new ObjectMapper(), shell());
+
+        assertThat(platform.contribution().snapshot().providerId().value()).isEqualTo("third-party-openai");
+        assertThat(platform.contribution().snapshot().providerOptions())
+                .containsEntry("dialect_id", "openai-chat-completions")
+                .containsEntry("dialect_version", "1.0")
+                .containsEntry("native_streaming", true)
+                .containsEntry("endpoint_host", "gateway.example.com")
+                .doesNotContainKeys("thinking", "reasoning_effort");
+    }
+
+    @Test
     void permitsInsecureHttpOnlyForExplicitLoopbackModelEndpoints() {
         var loopback = new PersonalAssistantProperties.ModelProvider(
                 "openai",
                 "OpenAI",
                 "remote",
+                false,
+                "openai-chat-completions",
+                "1.0",
                 false,
                 URI.create("http://localhost:30000/v1"),
                 "env://OPENAI_API_KEY",
@@ -122,6 +166,9 @@ class PersonalModelFactoryTest {
                 "openai",
                 "OpenAI",
                 "remote",
+                false,
+                "openai-chat-completions",
+                "1.0",
                 false,
                 URI.create("http://example.com/v1"),
                 "env://OPENAI_API_KEY",

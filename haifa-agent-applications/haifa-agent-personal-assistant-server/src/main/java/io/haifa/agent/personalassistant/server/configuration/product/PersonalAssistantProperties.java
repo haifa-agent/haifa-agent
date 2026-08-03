@@ -120,6 +120,9 @@ public record PersonalAssistantProperties(
             String displayName,
             String mode,
             boolean allowDeterministic,
+            String dialectId,
+            String dialectVersion,
+            boolean nativeStreaming,
             URI endpoint,
             String credentialReference,
             List<ProviderModel> models) {
@@ -134,6 +137,14 @@ public record PersonalAssistantProperties(
             if (mode.equals("deterministic") && !allowDeterministic) {
                 throw new IllegalArgumentException(
                         "deterministic model provider requires explicit allow-deterministic=true");
+            }
+            if (mode.equals("remote")) {
+                dialectId = text(dialectId, "modelProvider.dialectId");
+                dialectVersion = text(dialectVersion, "modelProvider.dialectVersion");
+            } else {
+                dialectId = dialectId == null || dialectId.isBlank() ? "deterministic" : dialectId.trim();
+                dialectVersion = dialectVersion == null || dialectVersion.isBlank() ? "1.0" : dialectVersion.trim();
+                nativeStreaming = false;
             }
             if (endpoint == null || !endpoint.isAbsolute()) {
                 throw new IllegalArgumentException("modelProvider.endpoint must be absolute");

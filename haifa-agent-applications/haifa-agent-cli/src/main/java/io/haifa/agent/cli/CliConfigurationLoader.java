@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import java.io.IOException;
@@ -104,7 +105,12 @@ final class CliConfigurationLoader {
             if (!providerIds.add(providerId)) {
                 throw new IllegalArgumentException("configuration contains duplicate model provider id: " + providerId);
             }
-            boolean bailian = providerId.equals("aliyun-bailian");
+            String dialectId = requiredText(provider, "dialectId", "configuration models.providers[].dialectId");
+            String dialectVersion =
+                    requiredText(provider, "dialectVersion", "configuration models.providers[].dialectVersion");
+            boolean nativeStreaming =
+                    requiredBoolean(provider, "nativeStreaming", "configuration models.providers[].nativeStreaming");
+            boolean bailian = OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(dialectId);
             String endpoint = nullableText(provider, "endpoint");
             Object configuredModels = provider.get("models");
             if (!(configuredModels instanceof List<?> providerModels) || providerModels.isEmpty()) {
@@ -121,6 +127,9 @@ final class CliConfigurationLoader {
                         text(model, "providerModelId", ""),
                         endpoint == null ? null : java.net.URI.create(endpoint),
                         text(provider, "credentialRef", bailian ? "env://DASHSCOPE_API_KEY" : "env://DEEPSEEK_API_KEY"),
+                        dialectId,
+                        dialectVersion,
+                        nativeStreaming,
                         nullableText(provider, "workspaceId"),
                         nullableText(provider, "region"),
                         text(model, "id", ""),
@@ -378,6 +387,12 @@ final class CliConfigurationLoader {
         if (!(value instanceof Boolean flag)) {
             throw new IllegalArgumentException("configuration " + key + " must be boolean");
         }
+        return flag;
+    }
+
+    private static boolean requiredBoolean(Map<String, Object> source, String key, String field) {
+        Object value = source.get(key);
+        if (!(value instanceof Boolean flag)) throw new IllegalArgumentException(field + " must be boolean");
         return flag;
     }
 

@@ -42,6 +42,7 @@ import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -163,7 +164,8 @@ public final class PersonalModelFactory {
             PersonalAssistantProperties.ModelProvider provider,
             PersonalAssistantProperties.ProviderModel model,
             String adapter) {
-        boolean standardOpenAi = provider.id().equals("openai");
+        Map<String, Object> providerOptions = providerOptions(provider);
+        Map<String, Object> invocationOptions = invocationOptions(provider);
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(provider.id()),
                 "1.0.0",
@@ -177,13 +179,8 @@ public final class PersonalModelFactory {
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                 64_000,
                 8_192,
-                standardOpenAi
-                        ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions(false)
-                        : Map.of(
-                                "dialect_id", "deepseek-openai-chat",
-                                "dialect_version", "1.0",
-                                "thinking", "disabled"),
-                standardOpenAi ? Map.of() : Map.of("thinking", "disabled"));
+                providerOptions,
+                invocationOptions);
     }
 
     private static StaticModelPlatform modelPlatform(
@@ -202,7 +199,7 @@ public final class PersonalModelFactory {
                                     Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                                     64_000,
                                     8_192,
-                                    provider.id().equals("openai") ? Map.of() : Map.of("thinking", "disabled"),
+                                    invocationOptions(provider),
                                     Map.of()))
                             .toList();
                     return new ModelProviderDefinition(
@@ -214,12 +211,7 @@ public final class PersonalModelFactory {
                             new CredentialRef(provider.credentialReference()),
                             ProviderStatus.ACTIVE,
                             models,
-                            provider.id().equals("openai")
-                                    ? OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions(false)
-                                    : Map.of(
-                                            "dialect_id", "deepseek-openai-chat",
-                                            "dialect_version", "1.0",
-                                            "thinking", "disabled"),
+                            providerOptions(provider),
                             Map.of());
                 })
                 .toList();
@@ -228,6 +220,22 @@ public final class PersonalModelFactory {
                 ModelAccessPolicy.allowAll(),
                 Map.of(adapter, "1.0.0"),
                 new InMemoryProviderHealthRegistry());
+    }
+
+    private static Map<String, Object> providerOptions(PersonalAssistantProperties.ModelProvider provider) {
+        if ("deterministic".equals(provider.mode())) return Map.of();
+        Map<String, Object> options = new LinkedHashMap<>(OpenAiCompatibleDialects.configuredOptions(
+                provider.dialectId(), provider.dialectVersion(), provider.nativeStreaming(), provider.endpoint()));
+        if (OpenAiCompatibleDialects.DEEPSEEK.equals(provider.dialectId())) {
+            options.put("thinking", "disabled");
+        }
+        return Map.copyOf(options);
+    }
+
+    private static Map<String, Object> invocationOptions(PersonalAssistantProperties.ModelProvider provider) {
+        return OpenAiCompatibleDialects.DEEPSEEK.equals(provider.dialectId())
+                ? Map.of("thinking", "disabled")
+                : Map.of();
     }
 
     private static void validateEndpoints(
