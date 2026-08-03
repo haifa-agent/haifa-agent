@@ -12,7 +12,7 @@ class LocalWorkspacePathCatalogTest {
     Path workspace;
 
     @Test
-    void listsOnlySafeSourceFilesForAtFileCompletion() throws Exception {
+    void listsOnlySafeSourceFilesAndDirectoriesForAtPathCompletion() throws Exception {
         Files.createDirectories(workspace.resolve("src/main"));
         Files.writeString(workspace.resolve("README.md"), "readme");
         Files.writeString(workspace.resolve("src/main/App.java"), "class App {}");
@@ -22,6 +22,7 @@ class LocalWorkspacePathCatalogTest {
         Files.createDirectories(workspace.resolve("target"));
         Files.writeString(workspace.resolve("target/generated.txt"), "generated");
 
-        assertThat(new LocalWorkspacePathCatalog(workspace).list()).containsExactly("README.md", "src/main/App.java");
+        assertThat(new LocalWorkspacePathCatalog(workspace).list())
+                .containsExactly("README.md", "src/", "src/main/", "src/main/App.java");
     }
 }

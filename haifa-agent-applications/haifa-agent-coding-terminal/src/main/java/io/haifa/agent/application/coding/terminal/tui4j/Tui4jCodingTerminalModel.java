@@ -62,7 +62,9 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public Command init() {
         syncComponents();
-        return nextTick();
+        // tui4j does not emit the initial size until explicitly requested. Without this,
+        // the production terminal stays at the 80x24 bootstrap size until the user resizes it.
+        return Command.batch(Command.checkWindowSize(), nextTick());
     }
 
     @Override
@@ -107,6 +109,9 @@ final class Tui4jCodingTerminalModel implements Model {
     private Command key(KeyPressMessage key) {
         TerminalUiState state = controller.state();
         if (state.selector().isPresent()) {
+            if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
+                return Command.none();
+            }
             selectorKey(key);
             return Command.none();
         }
@@ -199,6 +204,40 @@ final class Tui4jCodingTerminalModel implements Model {
         return edit(key);
     }
 
+    private boolean editCompletion(KeyPressMessage key) {
+        TerminalUiState state = controller.state();
+        String buffer = state.editorBuffer();
+        int cursor = state.editorCursor();
+        String updated;
+        int updatedCursor;
+        if (key.type() == KeyType.KeyRunes) {
+            String inserted = sanitizeEditorInput(new String(key.runes()));
+            if (inserted.isEmpty()) {
+                return true;
+            }
+            updated = buffer.substring(0, cursor) + inserted + buffer.substring(cursor);
+            updatedCursor = cursor + inserted.length();
+        } else if (key.type() == KeyType.keyBS || key.type() == KeyType.keyDEL) {
+            updatedCursor = TerminalTextCursor.previous(buffer, cursor);
+            updated = TerminalTextCursor.backspace(buffer, cursor);
+        } else if (key.type() == KeyType.KeyDelete) {
+            updated = TerminalTextCursor.delete(buffer, cursor);
+            updatedCursor = cursor;
+        } else if (key.type() == KeyType.KeyLeft) {
+            updated = buffer;
+            updatedCursor = TerminalTextCursor.previous(buffer, cursor);
+        } else if (key.type() == KeyType.KeyRight) {
+            updated = buffer;
+            updatedCursor = TerminalTextCursor.next(buffer, cursor);
+        } else {
+            return false;
+        }
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, updated, updatedCursor));
+        controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, updated, updatedCursor));
+        syncComponents();
+        return true;
+    }
+
     private void selectorKey(KeyPressMessage key) {
         if (key.type() == KeyType.KeyUp) {
             accept(TerminalInput.Kind.SELECT_PREVIOUS);
@@ -221,8 +260,25 @@ final class Tui4jCodingTerminalModel implements Model {
         String after = editor.value();
         editorCursor = cursorAfter(message, before, beforeCursor, after);
         controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, after, editorCursor));
+        if (startsCompletion(message, before, beforeCursor, after, editorCursor)) {
+            controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, after, editorCursor));
+        }
         syncComponents();
         return result.command();
+    }
+
+    private boolean startsCompletion(Message message, String before, int beforeCursor, String after, int afterCursor) {
+        if (!(message instanceof KeyPressMessage key) || key.type() != KeyType.KeyRunes) {
+            return false;
+        }
+        String inserted = new String(key.runes());
+        if (!(inserted.equals("/") || inserted.equals("@"))) {
+            return false;
+        }
+        if (after.length() != before.length() + 1 || afterCursor != beforeCursor + 1) {
+            return false;
+        }
+        return beforeCursor == 0 || Character.isWhitespace(before.charAt(beforeCursor - 1));
     }
 
     private void accept(TerminalInput.Kind kind) {

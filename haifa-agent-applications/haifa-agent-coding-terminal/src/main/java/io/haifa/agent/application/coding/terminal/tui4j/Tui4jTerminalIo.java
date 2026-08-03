@@ -108,8 +108,10 @@ public record Tui4jTerminalIo(
             options.add(ProgramOption.withoutSignalHandler());
         }
         options.add(KittyEnterKeyMappings.withKittyEnterKeyMappings());
-        return new Program(model, options.toArray(ProgramOption[]::new))
-                .withAltScreen()
-                .withKittyKeyboard();
+        // Do not enable Kitty keyboard mode globally. tui4j 0.3.3 only adds explicit
+        // mappings for modified Enter; other CSI-u control keys can leak trailing text
+        // into the editor (for example Ctrl+O becoming "5u"). Traditional control-key
+        // input keeps Ctrl+O as keySI while the registered Enter fallbacks remain usable.
+        return new Program(model, options.toArray(ProgramOption[]::new)).withAltScreen();
     }
 }

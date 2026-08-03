@@ -364,7 +364,8 @@ class CodingTerminalControllerTest {
         assertThat(controller.state().transcript())
                 .anyMatch(item ->
                         item.kind() == io.haifa.agent.application.coding.terminal.state.TranscriptItem.Kind.EXECUTION
-                                && item.body().contains("safe shell output"));
+                                && item.body().contains("safe shell output")
+                                && item.expanded());
     }
 
     @Test

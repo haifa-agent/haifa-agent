@@ -53,9 +53,11 @@ final class LocalWorkspacePathCatalog {
                             }
                             ProjectPath logical = logical(directory);
                             String name = directory.getFileName().toString().toLowerCase(Locale.ROOT);
-                            return SKIPPED_DIRECTORIES.contains(name) || !sensitivePaths.mayRead(logical)
-                                    ? FileVisitResult.SKIP_SUBTREE
-                                    : FileVisitResult.CONTINUE;
+                            if (SKIPPED_DIRECTORIES.contains(name) || !sensitivePaths.mayRead(logical)) {
+                                return FileVisitResult.SKIP_SUBTREE;
+                            }
+                            results.add(logical.value() + "/");
+                            return results.size() >= MAX_RESULTS ? FileVisitResult.TERMINATE : FileVisitResult.CONTINUE;
                         }
 
                         @Override

@@ -55,6 +55,11 @@ Windows ConPTY Spike 已证明 `Program / Model / update / view`、viewport、te
 Resize 在三次调整后仍会丢失 Header/Diagnostics/Transcript 区域，已标记
 `SKIPPED_AFTER_3_ATTEMPTS` 并延期。当前没有旧实现回退路径。
 
+生产 Model 初始化时主动请求一次真实 Window Size，避免在用户没有手工 Resize 时一直停留在
+`80x24` 启动尺寸。tui4j `0.3.3` 不全局启用 Kitty keyboard protocol；该版本只为修饰 Enter
+提供显式映射，全局启用会让部分 CSI-u 控制键残留字符进入编辑器。`Ctrl+O` 因此保持传统 `SI`
+输入并稳定切换最近 Tool/Execution 卡片的展开状态。
+
 非 TTY 自定义流会被 tui4j 内部终端后端报告为 `1x1`，导致多帧 Renderer 输出被截断。该自动化路径
 连续三轮调整仍未通过，已按规则跳过；输入语义由 Model/Reducer 测试覆盖，真实显示与退出恢复留给
 Windows ConPTY Gate B。
@@ -150,12 +155,14 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
   当前返回 `COMPACTION_INSTRUCTION_NOT_SUPPORTED`；
 - `/reload` 重新发现 Workspace 根 `AGENTS.md`，只影响后续新 Run；当前 Run 不热替换；
 - `!command` 与 `!!command` 都通过产品 Shell 服务进入同一 Policy/Approval/ExecutionBroker/
-  Sandbox 链；前者的安全结果进入后续模型 Context，后者只保留内部 Session 事实和审计；
+  Sandbox 链；用户在 Terminal 中输入精确命令并按 Enter 是该次 `ASK` 决策的显式一次授权，仍写入
+  精确绑定的 Decision/Evidence，但不再对同一用户重复弹确认；`DENY` 仍拒绝。前者的安全结果进入
+  后续模型 Context，后者只保留内部 Session 事实和审计；安全命令输出默认展开显示，长输出仍有界；
 - `/export <workspace-relative-path>` 新建版本化、脱敏 JSONL，不覆盖文件、不跟随符号链接；
-- 输入 `/` 或 `@` 后按 Tab 打开可见候选选择器；方向键选择、Enter 回填；空闲时 Escape 关闭并
-  保留草稿，活动 Run 时 Escape 优先取消任务；
-- `/command` 与 `/commands` 打开同一命令选择器；`@file` 候选来自受限 Workspace 文件目录，
-  不列出敏感路径、版本库元数据和常见生成目录；
+- 输入 `/` 或 `@` 后立即打开可见候选选择器，Tab 仍可按当前 token 重新打开；方向键选择、Enter
+  回填；空闲时 Escape 关闭并保留草稿，活动 Run 时 Escape 优先取消任务；
+- `/command` 与 `/commands` 打开同一命令选择器；`@path` 候选来自受限 Workspace 文件和目录，
+  目录以 `/` 结尾，不列出敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；
 - `/model` 打开安全 Selector，也支持 `/model <internal-id>`；活动 Run 期间拒绝切换，成功后只影响
   下一新 Run；
