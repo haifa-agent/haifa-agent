@@ -17,7 +17,6 @@ import java.util.Set;
 public final class AgentLoopContext {
     private int iteration;
     private final List<String> fingerprints;
-    private final Set<String> convergenceReasons = new LinkedHashSet<>();
     private final List<String> progressSignatures = new ArrayList<>();
     private int repairAttempts;
     private int forcedContextRebuildAttempts;
@@ -57,21 +56,6 @@ public final class AgentLoopContext {
 
     public List<String> fingerprints() {
         return List.copyOf(fingerprints);
-    }
-
-    public void requestConvergence(String reason) {
-        if (reason == null || reason.isBlank()) throw new IllegalArgumentException("reason must not be blank");
-        convergenceReasons.add(reason.trim());
-    }
-
-    public List<String> convergenceReasons() {
-        return List.copyOf(convergenceReasons);
-    }
-
-    public List<String> consumeConvergenceReasons() {
-        List<String> pending = List.copyOf(convergenceReasons);
-        convergenceReasons.clear();
-        return pending;
     }
 
     public void recordProgress(String signature) {
@@ -168,10 +152,6 @@ public final class AgentLoopContext {
         Set<Integer> newlyCrossed = new LinkedHashSet<>(snapshot.crossedThresholds());
         newlyCrossed.removeAll(issuedBudgetThresholds);
         issuedBudgetThresholds.addAll(newlyCrossed);
-        newlyCrossed.stream()
-                .sorted(java.util.Comparator.reverseOrder())
-                .forEach(threshold -> requestConvergence(
-                        "remaining budget reached the " + threshold + "% threshold; converge with evidence"));
         return Set.copyOf(newlyCrossed);
     }
 

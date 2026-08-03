@@ -3,8 +3,6 @@ package io.haifa.agent.application.project.product.coding.delivery;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.context.api.ContextBuildRequest;
-import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.TextPart;
@@ -22,7 +20,6 @@ import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunSpec;
 import io.haifa.agent.core.run.AgentRunType;
-import io.haifa.agent.core.run.AgentRunUsage;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
@@ -31,20 +28,13 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
-import io.haifa.agent.model.api.CredentialRef;
-import io.haifa.agent.model.api.ModelCapability;
-import io.haifa.agent.model.api.ModelDefinitionId;
-import io.haifa.agent.model.api.ModelProviderId;
-import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
-import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CodingDeliveryControlTest {
@@ -158,38 +148,6 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void deliveryContextContainsOnlyBoundedFactsAndActivatesReserveForTrustedChange() {
-        Fixture fixture = fixture("fix behavior according to PERF.md", trusted("CHANGE"));
-        CodingDeliveryContextSource source = new CodingDeliveryContextSource(
-                fixture.store(),
-                new CodingTaskModeResolver(fixture.store()),
-                new CodingDeliveryEvidenceLedger(fixture.store()),
-                CodingDeliveryProfile.safeDefault());
-        AgentRunUsage usage = new AgentRunUsage(0, 0, 0, 0, 0, 0, 0, 48_000);
-
-        String text = ((TextContextContent)
-                        source.load(request(fixture.run(), usage)).getFirst().content())
-                .text();
-
-        assertThat(text)
-                .startsWith("[CODING_RUN_STATE]")
-                .contains(
-                        "remainingModelCalls=20",
-                        "remainingToolCalls=20",
-                        "remainingIterations=19",
-                        "remainingWallTimeSeconds=12",
-                        "workspaceChanged=false",
-                        "validationAttempted=false",
-                        "validationPassed=unknown",
-                        "diffInspected=false",
-                        "deliveryReserve=ACTIVE",
-                        "missingDeliveryEvidence=WORKSPACE_CHANGE|VALIDATION_ATTEMPT|DIFF_INSPECTION")
-                .doesNotContain("PERF.md", "before editing", "malformed", "deduplication", "/Users/");
-        assertThat(fixture.run().budget().maxModelCalls()).isEqualTo(20);
-        assertThat(fixture.run().limits().maxWallTimeMillis()).isEqualTo(60_000);
-    }
-
-    @Test
     void evidenceBackedNoChangeCanComplete() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(
@@ -285,40 +243,6 @@ class CodingDeliveryControlTest {
     private static FinalAnswerDecision finalDecision() {
         return new FinalAnswerDecision(
                 AgentRunOutcome.SUCCESS, "done", "output", "1.0", Map.of("answer", "done"), List.of(), List.of());
-    }
-
-    private static ContextBuildRequest request(AgentRun run, AgentRunUsage usage) {
-        return new ContextBuildRequest(
-                run.id(),
-                run.sessionId(),
-                run.tenant(),
-                run.principal(),
-                1,
-                ResolvedModelSnapshot.create(
-                        new ModelProviderId("provider"),
-                        "provider-v1",
-                        new ModelDefinitionId("model"),
-                        "model-v1",
-                        "model",
-                        "adapter",
-                        "adapter-v1",
-                        URI.create("https://provider.example.invalid"),
-                        new CredentialRef("env://MODEL_KEY"),
-                        Set.of(ModelCapability.TEXT_CHAT),
-                        1_000,
-                        100,
-                        Map.of(),
-                        Map.of()),
-                run.budget(),
-                usage,
-                List.of(),
-                List.of(),
-                List.of(),
-                100,
-                10,
-                "none-v1",
-                "none-v1",
-                0);
     }
 
     private record Fixture(InMemoryRuntimeStore store, AgentRun run) {}

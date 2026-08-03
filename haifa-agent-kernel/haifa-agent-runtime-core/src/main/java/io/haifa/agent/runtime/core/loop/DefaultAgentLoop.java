@@ -3,8 +3,13 @@ package io.haifa.agent.runtime.core.loop;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.checkpoint.CheckpointType;
+import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentError;
 import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.core.message.AgentMessageId;
+import io.haifa.agent.core.message.MessageRole;
+import io.haifa.agent.core.message.MessageStatus;
+import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
@@ -45,6 +50,7 @@ import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import java.time.Duration;
@@ -132,8 +138,6 @@ public final class DefaultAgentLoop implements AgentLoop {
                 run.usage().childRuns(),
                 restored.isPresent(),
                 initialBudget);
-        progress.updateBudgetSnapshot(RunBudgetSnapshot.from(
-                run, progress.iteration(), progress.failureClusterAttempts(), progress.repairAttempts(), time.now()));
         decisionExecutor.applyPendingToolApproval(run);
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         String traceId = ids.nextValue();
@@ -202,6 +206,29 @@ public final class DefaultAgentLoop implements AgentLoop {
                             "newThresholds",
                             thresholds.stream().sorted().toList()),
                     time.now());
+            if (!thresholds.isEmpty()) {
+                List<Integer> orderedThresholds = thresholds.stream()
+                        .sorted(java.util.Comparator.reverseOrder())
+                        .toList();
+                appendRuntimeControlMessage(
+                        run,
+                        String.join(
+                                "\n",
+                                "[RUNTIME_CONTROL_UPDATE]",
+                                "type=BUDGET_THRESHOLD",
+                                "thresholds="
+                                        + orderedThresholds.stream()
+                                                .map(value -> value + "%")
+                                                .collect(java.util.stream.Collectors.joining("|")),
+                                "nextAction=converge with authoritative evidence"),
+                        Map.of(
+                                "runtimeControl",
+                                true,
+                                "runtimeControlType",
+                                "BUDGET_THRESHOLD",
+                                "budgetThresholds",
+                                orderedThresholds));
+            }
             Optional<AgentLoopDirective> pendingTools = decisionExecutor.resumePendingTools(run, progress);
             if (pendingTools.filter(value -> value == AgentLoopDirective.WAIT).isPresent()) {
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.WAIT);
@@ -525,6 +552,26 @@ public final class DefaultAgentLoop implements AgentLoop {
                                     update.directive().name()),
                             time.now());
                 }
+                if (!update.directive().terminal()) {
+                    appendRuntimeControlMessage(
+                            run,
+                            String.join(
+                                    "\n",
+                                    "[RUNTIME_CONTROL_UPDATE]",
+                                    "type=RECOVERY_STRATEGY",
+                                    "failureCategory="
+                                            + update.observation().category().name(),
+                                    "attempts=" + update.attempts(),
+                                    "directive=" + update.directive().name(),
+                                    "nextAction=" + update.directive().guidance()),
+                            Map.of(
+                                    "runtimeControl", true,
+                                    "runtimeControlType", "RECOVERY_STRATEGY",
+                                    "failureCategory",
+                                            update.observation().category().name(),
+                                    "recoveryAttempts", update.attempts(),
+                                    "recoveryDirective", update.directive().name()));
+                }
                 if (update.directive().terminal()) {
                     return structuredTermination(run, iteration, update);
                 }
@@ -603,6 +650,20 @@ public final class DefaultAgentLoop implements AgentLoop {
         } catch (RuntimeException ignored) {
             // Trace is a best-effort projection and never changes Agent execution semantics.
         }
+    }
+
+    private void appendRuntimeControlMessage(AgentRun run, String text, Map<String, Object> metadata) {
+        state.appendSessionMessage(new SessionMessageDraft(
+                new AgentMessageId(ids.nextValue()),
+                run.sessionId(),
+                Optional.of(run.id()),
+                Optional.empty(),
+                MessageRole.RUNTIME,
+                MessageStatus.COMPLETED,
+                MessageVisibility.AGENT_VISIBLE,
+                List.of(new TextPart(text, "plain")),
+                metadata,
+                time.now()));
     }
 
     private static AgentErrorCode modelErrorCode(RuntimeException error) {

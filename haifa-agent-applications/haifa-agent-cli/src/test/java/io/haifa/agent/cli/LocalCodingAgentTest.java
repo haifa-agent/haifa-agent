@@ -419,21 +419,25 @@ class LocalCodingAgentTest {
     void stubModelCompletesChangeAfterDeliveryEvidenceExists() throws Exception {
         Path successfulWorkspace = Files.createDirectory(workspace.resolve("delivery-success"));
         AtomicInteger successfulCalls = new AtomicInteger();
+        List<AgentChatRequest> successfulRequests = new CopyOnWriteArrayList<>();
         var successfulModel = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            successfulRequests.add(request);
             int call = successfulCalls.incrementAndGet();
             return switch (call) {
                 case 1 -> {
                     assertThat(request.messages())
                             .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
                                     && message.content().contains("smallest complete change")
-                                    && message.content().contains("result-verification skill"))
-                            .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
-                                    && message.content().contains("[CODING_RUN_STATE]")
-                                    && message.content().contains("workspaceChanged=false")
-                                    && message.content().contains("missingDeliveryEvidence=TASK_EVIDENCE"));
+                                    && message.content().contains("result-verification skill")
+                                    && message.content().contains("authoritative tool results show a workspace change"))
+                            .noneMatch(message -> message.content().contains("[CODING_RUN_STATE]"));
                     yield answer("delivery-premature", "premature final");
                 }
                 case 2 -> {
+                    assertThat(request.messages())
+                            .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
+                                    && message.content().contains("[DELIVERY_COMPLETION_REPAIR]")
+                                    && message.content().contains("TASK_INTENT_OR_DELIVERY_EVIDENCE"));
                     yield toolResponse(
                             "delivery-write", "file_create", Map.of("path", "delivered.txt", "content", "delivered\n"));
                 }
@@ -492,6 +496,14 @@ class LocalCodingAgentTest {
         assertThat(Files.readString(successfulWorkspace.resolve("delivered.txt")))
                 .isEqualTo("delivered\n");
         assertThat(successfulCalls).hasValue(5);
+        for (int index = 1; index < successfulRequests.size(); index++) {
+            AgentChatRequest previous = successfulRequests.get(index - 1);
+            AgentChatRequest current = successfulRequests.get(index);
+            assertThat(current.messages().subList(0, previous.messages().size()))
+                    .as("request %s must preserve request %s as its full message prefix", index + 1, index)
+                    .containsExactlyElementsOf(previous.messages());
+            assertThat(current.tools()).containsExactlyElementsOf(previous.tools());
+        }
     }
 
     @Test

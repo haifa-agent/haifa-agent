@@ -4,17 +4,8 @@ import io.haifa.agent.context.api.AgentContextBuilder;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.api.ContextBuildRequest;
-import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.item.ContextItem;
-import io.haifa.agent.context.item.ContextItemId;
-import io.haifa.agent.context.item.ContextItemType;
-import io.haifa.agent.context.item.ContextPriority;
-import io.haifa.agent.context.item.ContextProvenance;
-import io.haifa.agent.context.item.ContextRetention;
-import io.haifa.agent.context.item.ContextRole;
-import io.haifa.agent.context.item.ContextSecurity;
 import io.haifa.agent.context.item.MessageGroupContextContent;
-import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
 import io.haifa.agent.context.prompt.PromptComponentId;
 import io.haifa.agent.context.prompt.PromptLayer;
@@ -39,9 +30,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 /** Builds trusted Context IR from frozen run state and persisted facts. */
 public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder {
@@ -82,8 +71,6 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
     public RuntimeContextBuildResult build(AgentRun run, AgentLoopContext loopContext, FrozenModelBinding model) {
         RuntimeMiddlewareContext middlewareContext = new RuntimeMiddlewareContext(run, state);
         middleware.apply(RuntimePhase.BEFORE_CONTEXT_BUILD, middlewareContext);
-        List<String> convergenceReasons = loopContext.consumeConvergenceReasons();
-        String runtimeControl = runtimeControl(convergenceReasons, loopContext.modelControlPrompt());
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
         addSkillPrompts(run, middlewareContext);
 
@@ -96,7 +83,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 .flatMap(group -> group.messages().stream())
                 .forEach(this::validateContents);
         items.addAll(memorySource.select(run, model));
-        addSessionItems(items, selection.items(), loopContext.iteration(), runtimeControl);
+        items.addAll(selection.items());
         int divisor = loopContext.forcedContextRebuildAttempts() > 0 ? 10 : 20;
         int safetyMargin =
                 Math.min(16_384, Math.max(256, model.configuration().model().contextWindow() / divisor));
@@ -118,40 +105,6 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 selection.compressorVersion(),
                 loopContext.forcedContextRebuildAttempts());
         return new RuntimeContextBuildResult(contexts.build(request), middlewareContext);
-    }
-
-    private static String runtimeControl(List<String> convergenceReasons, String controlPrompt) {
-        List<String> sections = new ArrayList<>();
-        if (!convergenceReasons.isEmpty()) {
-            sections.add("Completion requirements: " + String.join(", ", convergenceReasons));
-        }
-        if (!controlPrompt.isBlank()) sections.add(controlPrompt);
-        return String.join("\n", sections);
-    }
-
-    private static void addSessionItems(
-            List<ContextItem> target, List<ContextItem> sessionItems, int iteration, String runtimeControl) {
-        if (runtimeControl.isBlank() || sessionItems.isEmpty()) {
-            target.addAll(sessionItems);
-            if (!runtimeControl.isBlank()) target.add(runtimeControlItem(iteration, runtimeControl));
-            return;
-        }
-        target.addAll(sessionItems.subList(0, sessionItems.size() - 1));
-        target.add(runtimeControlItem(iteration, runtimeControl));
-        target.add(sessionItems.getLast());
-    }
-
-    private static ContextItem runtimeControlItem(int iteration, String text) {
-        return new ContextItem(
-                new ContextItemId("runtime-control-" + iteration),
-                ContextItemType.RUNTIME_STATE,
-                new TextContextContent(ContextRole.SYSTEM, text),
-                HeuristicTokenEstimator.tokens(text) + 6,
-                ContextPriority.CRITICAL,
-                ContextRetention.MUST_KEEP,
-                new ContextSecurity(Set.of("internal", "budget", "recovery"), true),
-                new ContextProvenance("runtime-control", "agent-loop", Integer.toString(iteration), sha256(text)),
-                Map.of("iteration", Integer.toString(iteration)));
     }
 
     private void addSkillPrompts(AgentRun run, RuntimeMiddlewareContext context) {

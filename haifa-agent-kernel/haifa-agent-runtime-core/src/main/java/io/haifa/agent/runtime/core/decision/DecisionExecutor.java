@@ -244,7 +244,7 @@ public final class DecisionExecutor {
                             readiness.evidenceCodes(),
                             missingEvidence,
                             remainingPercent),
-                    MessageVisibility.INTERNAL,
+                    MessageVisibility.AGENT_VISIBLE,
                     Map.of(
                             "completionRepair",
                             true,

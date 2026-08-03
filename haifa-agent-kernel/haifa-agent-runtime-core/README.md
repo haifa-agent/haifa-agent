@@ -13,7 +13,7 @@ client feed.
 `CompletionPolicy` 返回 Provider-neutral 的 `CompletionPolicyResult`：包括稳定
 `CompletionBlocker(code, safeMessage, recoverable, evidenceRequirement)` 与安全 Evidence Code。
 Runtime Core 不依赖 Coding 产品类型，也不读取 Coding 表。Final 缺少证据时，AgentLoop 追加
-`completion.deferred` 安全事件和固定顺序的内部纠偏 Context；次数由 `RepairRetryPolicy` 限制，
+`completion.deferred` 安全事件和固定顺序、Agent-visible 且用户不可见的纠偏 Session Message；次数由 `RepairRetryPolicy` 限制，
 默认产品装配最多两次。纠偏计数保存在权威 Session Message metadata，Checkpoint/进程恢复时重建，
 耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 失败，不能伪装为成功。
 
@@ -45,8 +45,8 @@ Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进
 A-B Loop、失败簇和硬预算约束，不会被误当成已停滞的交付。恢复时从权威 ToolCall、Plan、Child Run、
 Interaction 与 Usage 重建控制状态；旧
 Checkpoint 无需 Schema 升级。精确剩余模型、工具、迭代、时间和 Token 预算只写入安全 Trace，不再逐轮
-改变模型请求；模型仅在失败恢复或 50%、25%、10% 阈值首次跨越时收到控制指导。动态指导位于最新原子
-Session 消息组之前，正常请求可复用稳定 Prompt 与完整历史前缀，同时保持 Tool Result 为末条消息。
+改变模型请求；模型仅在失败恢复或 50%、25%、10% 阈值首次跨越时收到控制指导。动态指导作为新的
+Agent-visible Session Message 追加，不替换或插入既有消息，因此正常请求可复用稳定 Prompt 与完整历史前缀。
 
 ## Safe Tool argument repair
 

@@ -8,9 +8,10 @@ Coding Agent 的基础工作方法由产品拥有的版本化资源
 `operationFamily` 和验证/Diff 用法由对应 Tool Definition 描述；`task-planning` 与
 `result-verification` 继续通过 Skill 渐进披露。
 
-每轮动态 Context 使用 `[CODING_RUN_STATE]`，只披露剩余预算、实际 Workspace 修改、验证尝试与
-结果、Diff 检查、结构化阻塞和缺失交付证据。它不注入业务分类教程、Case/Fixture 信息、宿主路径、
-原始 Tool 输出或模型自报的语义覆盖。
+交付约束位于版本化基础 Prompt。精确剩余预算和完整交付状态留在权威控制面与 Trace，不再通过每轮
+重建的尾部 `[CODING_RUN_STATE]` 改写模型请求。预算阈值、恢复策略和完成门禁纠偏只在状态转换时作为
+Agent-visible、用户不可见的 Session 消息追加；旧请求因此保持为新请求的完整历史前缀。追加消息不包含
+Case/Fixture 信息、宿主路径、原始 Tool 输出或模型自报的语义覆盖。
 
 ## 自主交付模式与完成证据
 
@@ -23,8 +24,8 @@ Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/R
 No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改；UNKNOWN 必须收敛到
 完整修改证据、确定性只读证据或结构化阻塞路径之一。
 
-默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为有界运行事实，
-不增加 Runtime 的总预算或时限。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
+默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
+不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
 从持久消息重建次数，耗尽后以 `COMPLETION_REPAIR_EXHAUSTED` 稳定失败。
 
 生产控制面不维护 Verification Plan/Dimension/Evidence，也不接受模型自报的验证标签。外部
