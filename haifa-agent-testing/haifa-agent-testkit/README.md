@@ -88,7 +88,9 @@ Usage、Failure/Progress/Completion、Process、Secret Scan、`result.json`、Su
 顶层 `delivery.AutonomousDeliveryGateCoordinator` 只负责 Host/Secret 前置、Policy、Probe、
 Case/Repeat 循环、Result Aggregation、Baseline Comparison 和 Evidence Finalization；单次
 Fixture/Workspace/Driver/Runtime/Acceptance 执行由 `delivery.AutonomousDeliveryRepeatExecutor`
-承担。旧 `AutonomousDeliveryPhaseOneGate` 已移除，避免类名继续误导其 Phase 1～3 实际范围。
+承担。隐藏 Acceptance 是所有 Case 的强制 Gate 条件；Case 10 的 bounded-convergence 指标只作为
+诊断证据，不能覆盖失败的隐藏验收。旧 `AutonomousDeliveryPhaseOneGate` 已移除，避免类名继续误导其
+Phase 1～3 实际范围。
 `result.TestResultProjection` 提供版本 1 跨 Suite Sidecar。Critical Path 和 Autonomous Delivery
 各自保留原生报告、Budget 与状态，同时在只读证据中新增 `result-projection-v1.json`；投影同时记录
 共同 `status` 和 `nativeStatus`，因此 TIMEOUT、SKIPPED、NOT_RUN 或 `gatePassed=false` 不会被

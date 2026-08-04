@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
+import io.haifa.agent.context.api.AgentContext;
+import io.haifa.agent.context.budget.ContextWindowBudget;
 import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.compression.CompressionRequest;
 import io.haifa.agent.context.compression.CompressionResult;
@@ -43,6 +45,7 @@ import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.checkpoint.RuntimeCheckpointState;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
+import io.haifa.agent.runtime.core.model.ModelMessageAssembler;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -192,6 +195,38 @@ class SessionCompressionCheckpointTest {
                 .extracting(AgentMessage::id)
                 .containsExactly(new AgentMessageId("stable-three"), new AgentMessageId("stable-four"));
         assertThat(store.latestVersion(run.sessionId())).isEqualTo(1);
+    }
+
+    @Test
+    void assembledModelMessagesKeepThePreviousWindowAsAStrictPrefix() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        AtomicInteger ids = new AtomicInteger();
+        var runtime = runtime(store, scheduler, request -> finalResponse("unused"), ids);
+        var accepted = runtime.start(request("model-prefix-run", "model-prefix-session"));
+        var run = store.find(accepted.runId()).orElseThrow();
+        AgentSessionId session = run.sessionId();
+        AgentRunId runId = run.id();
+        store.appendSessionMessage(draft("prefix-two", session, runId.value(), MessageRole.USER, "two"));
+        store.appendSessionMessage(draft("prefix-three", session, runId.value(), MessageRole.USER, "three"));
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(2, 10, 1),
+                () -> "model-prefix-summary-" + ids.incrementAndGet(),
+                () -> NOW);
+        var first = source.compact(session);
+        var assembler = new ModelMessageAssembler(store);
+        var firstMessages = assembler.assemble(runId, context(first));
+
+        store.appendSessionMessage(draft("prefix-four", session, runId.value(), MessageRole.USER, "four"));
+        var second = source.select(run, 0);
+        var secondMessages = assembler.assemble(runId, context(second));
+
+        assertThat(second.summary()).isEqualTo(first.summary());
+        assertThat(secondMessages).startsWith(firstMessages.toArray(io.haifa.agent.model.api.ModelMessage[]::new));
+        assertThat(secondMessages).hasSize(firstMessages.size() + 1);
     }
 
     @Test
@@ -525,7 +560,9 @@ class SessionCompressionCheckpointTest {
                                 "compactionElapsedMillis",
                                 "estimatedSessionTokens",
                                 "sessionTokenBudget",
-                                "summarySourceHash"));
+                                "summarySourceHash",
+                                "runConfigurationDigest",
+                                "instructionComponentDigests"));
     }
 
     @Test
@@ -587,6 +624,15 @@ class SessionCompressionCheckpointTest {
                 .identifierGenerator(generator)
                 .timeProvider(() -> NOW)
                 .build();
+    }
+
+    private static AgentContext context(SessionMessageSource.Selection selection) {
+        return new AgentContext(
+                List.of(),
+                selection.items(),
+                List.of(),
+                new ContextWindowBudget(10_000, 1, 0, 9_999, 10_000, 10_000),
+                selection.estimatedSessionTokens());
     }
 
     private static AgentChatResponse finalResponse(String text) {

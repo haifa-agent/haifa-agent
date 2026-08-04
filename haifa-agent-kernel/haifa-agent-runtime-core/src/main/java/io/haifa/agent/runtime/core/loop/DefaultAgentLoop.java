@@ -265,6 +265,9 @@ public final class DefaultAgentLoop implements AgentLoop {
                             Map.entry(
                                     "modelConfigDigest", built.context().trace().modelConfigurationDigest()),
                             Map.entry(
+                                    "runConfigurationDigest",
+                                    model.configuration().reference().contentHash()),
+                            Map.entry(
                                     "estimatedInputTokens",
                                     built.context().context().estimatedInputTokens()),
                             Map.entry(
@@ -312,10 +315,17 @@ public final class DefaultAgentLoop implements AgentLoop {
                                             .map(io.haifa.agent.context.compression.ConversationSummary::sourceHash)
                                             .orElse("none")),
                             Map.entry(
+                                    "instructionComponentDigests",
+                                    built.context().trace().prompts().stream()
+                                            .map(prompt -> prompt.componentId().value() + "@" + prompt.version() + ":"
+                                                    + prompt.contentHash())
+                                            .toList()),
+                            Map.entry(
                                     "sourceIds",
-                                    built.context().trace().items().stream()
-                                            .map(item -> item.sourceType() + ":" + item.sourceId() + "@"
-                                                    + item.sourceVersion())
+                                    built.context().context().items().stream()
+                                            .map(item -> item.provenance().sourceType() + ":"
+                                                    + item.provenance().sourceId() + "@"
+                                                    + item.provenance().sourceVersion())
                                             .toList())),
                     time.now()));
             RuntimeContextBuildResult[] builtRef = {built};

@@ -135,6 +135,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
             SessionMessageSource.Selection selection,
             FrozenModelBinding model) {
         List<String> components = new ArrayList<>();
+        components.add("configuration:" + model.configuration().reference().contentHash());
         middlewareContext
                 .prompts()
                 .forEach(prompt -> components.add(
