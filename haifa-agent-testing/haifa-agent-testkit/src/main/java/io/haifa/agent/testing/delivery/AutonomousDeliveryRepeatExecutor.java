@@ -146,11 +146,12 @@ final class AutonomousDeliveryRepeatExecutor {
                 && withinBudget
                 && authoritative.maximumClusterAttempts() <= 4;
         boolean caseTenConverged = testCase.caseId().equals("10") && bounded && wallSeconds < 900;
-        boolean preliminaryGatePassed = (acceptancePassed || caseTenConverged)
-                && driverContract.passed()
-                && authoritative.scratchSatisfied()
-                && authoritative.terminalStateObserved()
-                && bounded;
+        boolean preliminaryGatePassed = gateEligible(
+                acceptancePassed,
+                driverContract.passed(),
+                authoritative.scratchSatisfied(),
+                authoritative.terminalStateObserved(),
+                bounded);
         AutonomousDeliveryPhaseThreeVerificationCollector.Result phaseThree = phasePolicy.requiresExternalVerification()
                 ? phaseThreeVerificationCollector.collect(
                         repeat,
@@ -190,6 +191,15 @@ final class AutonomousDeliveryRepeatExecutor {
                                 phaseThree.atomicity()),
                         selectedSecrets);
         return collected.summary();
+    }
+
+    static boolean gateEligible(
+            boolean acceptancePassed,
+            boolean driverContractPassed,
+            boolean scratchSatisfied,
+            boolean terminalStateObserved,
+            boolean bounded) {
+        return acceptancePassed && driverContractPassed && scratchSatisfied && terminalStateObserved && bounded;
     }
 
     private int maximumIteration(Path trace) throws IOException {
