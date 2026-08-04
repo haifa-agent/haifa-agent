@@ -177,6 +177,11 @@ public final class DecisionExecutor {
                     .distinct()
                     .sorted()
                     .toList();
+            List<String> repairGuidance = readiness.blockers().stream()
+                    .sorted(java.util.Comparator.comparing(CompletionBlocker::code))
+                    .map(blocker -> blocker.code() + ": " + blocker.safeMessage())
+                    .distinct()
+                    .toList();
             int remainingPercent = loopContext
                     .budgetSnapshot()
                     .map(value -> value.remainingPercent())
@@ -243,6 +248,7 @@ public final class DecisionExecutor {
                             blockerCodes,
                             readiness.evidenceCodes(),
                             missingEvidence,
+                            repairGuidance,
                             remainingPercent),
                     MessageVisibility.AGENT_VISIBLE,
                     Map.of(
@@ -276,6 +282,7 @@ public final class DecisionExecutor {
             List<String> blockerCodes,
             List<String> evidenceCodes,
             List<String> missingEvidence,
+            List<String> repairGuidance,
             int remainingPercent) {
         return String.join(
                 "\n",
@@ -285,6 +292,7 @@ public final class DecisionExecutor {
                 "blockers=" + String.join("|", blockerCodes),
                 "evidence=" + (evidenceCodes.isEmpty() ? "NONE" : String.join("|", evidenceCodes)),
                 "missing=" + String.join("|", missingEvidence),
+                "guidance=" + String.join(" || ", repairGuidance),
                 "remainingPercent=" + remainingPercent,
                 "nextAction=collect the smallest authoritative missing evidence, then submit final output");
     }
