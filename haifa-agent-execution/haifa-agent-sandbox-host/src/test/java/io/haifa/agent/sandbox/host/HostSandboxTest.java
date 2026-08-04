@@ -38,6 +38,7 @@ import io.haifa.agent.sandbox.api.SandboxProcessStatus;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.WorkspaceCopyBudget;
 import io.haifa.agent.sandbox.api.WorkspaceMount;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -490,7 +491,6 @@ class HostSandboxTest {
 
     @Test
     void reportsScratchCleanupFailureWithoutExposingItsPhysicalPath() throws Exception {
-        org.junit.jupiter.api.Assumptions.assumeFalse(isWindows());
         Fixture fixture =
                 fixture(root, "workspace-cleanup-failure", "binding-cleanup-failure", "location-cleanup-failure");
         Path scratchRoot = isolatedBase.resolve("host-cleanup-failure");
@@ -501,7 +501,10 @@ class HostSandboxTest {
                 () -> "scratch-cleanup-failure",
                 Instant::now,
                 HostShell.auto(),
-                scratchRoot);
+                scratchRoot,
+                target -> {
+                    throw new IOException("simulated scratch cleanup failure");
+                });
         var profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("scratch-cleanup-failure", "1"),
                 provider.configurationDigest(),
@@ -511,8 +514,7 @@ class HostSandboxTest {
 
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
             var result = session.execute(new SandboxExecution(
-                    ExecutionCommand.direct(List.of(
-                            "/bin/sh", "-c", "touch \"$TMPDIR/locked\"; chmod 500 \"$TMPDIR\"; printf cleanup-probe")),
+                    ExecutionCommand.direct(List.of("/bin/sh", "-c", "printf cleanup-probe")),
                     WorkspacePath.root(fixture.workspaceId),
                     Map.of(),
                     new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2)));
