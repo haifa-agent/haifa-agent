@@ -61,6 +61,12 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     private final TimeProvider time;
     private final HostShell shell;
     private final Path scratchRoot;
+    private final ScratchDirectoryDeleter scratchDirectoryDeleter;
+
+    @FunctionalInterface
+    interface ScratchDirectoryDeleter {
+        void delete(Path target) throws IOException;
+    }
 
     public HostGuardedSandboxProvider(
             WorkspaceStore workspaces,
@@ -103,6 +109,26 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             TimeProvider time,
             HostShell shell,
             Path scratchRoot) {
+        this(
+                workspaces,
+                bindings,
+                locations,
+                identifiers,
+                time,
+                shell,
+                scratchRoot,
+                HostGuardedSandboxProvider::deleteTree);
+    }
+
+    HostGuardedSandboxProvider(
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            LocalWorkspaceLocationStore locations,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            HostShell shell,
+            Path scratchRoot,
+            ScratchDirectoryDeleter scratchDirectoryDeleter) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
         this.locations = Objects.requireNonNull(locations, "locations must not be null");
@@ -110,10 +136,20 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         this.time = Objects.requireNonNull(time, "time must not be null");
         this.shell = Objects.requireNonNull(shell, "shell must not be null");
         this.scratchRoot = requireScratchRoot(scratchRoot);
+        this.scratchDirectoryDeleter =
+                Objects.requireNonNull(scratchDirectoryDeleter, "scratchDirectoryDeleter must not be null");
     }
 
     public String shellDisplayName() {
         return shell.displayName();
+    }
+
+    private static void deleteTree(Path target) throws IOException {
+        try (var paths = Files.walk(target)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        }
     }
 
     @Override
@@ -666,11 +702,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             if (!canonicalTarget.startsWith(canonicalScratchRoot) || canonicalTarget.equals(canonicalScratchRoot)) {
                 return false;
             }
-            try (var paths = Files.walk(target)) {
-                for (Path path :
-                        paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
-                    Files.deleteIfExists(path);
-                }
+            try {
+                scratchDirectoryDeleter.delete(target);
                 return Files.notExists(target, LinkOption.NOFOLLOW_LINKS);
             } catch (IOException exception) {
                 return false;
