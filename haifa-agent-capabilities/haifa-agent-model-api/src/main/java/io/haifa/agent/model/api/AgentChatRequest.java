@@ -25,6 +25,10 @@ public record AgentChatRequest(
         model = Objects.requireNonNull(model, "model must not be null");
         messages = List.copyOf(Objects.requireNonNull(messages, "messages must not be null"));
         if (messages.isEmpty()) throw new IllegalArgumentException("messages must not be empty");
+        if (messages.stream().anyMatch(message -> !message.images().isEmpty())
+                && !model.capabilities().contains(ModelCapability.IMAGE_INPUT)) {
+            throw new IllegalArgumentException("selected model does not declare image input capability");
+        }
         tools = List.copyOf(Objects.requireNonNull(tools, "tools must not be null"));
         if (maxOutputTokens < 1) throw new IllegalArgumentException("maxOutputTokens must be positive");
         timeout = Objects.requireNonNull(timeout, "timeout must not be null");

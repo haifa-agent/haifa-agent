@@ -1,11 +1,24 @@
 package io.haifa.agent.sdk.conversation;
 
+import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
+import java.util.List;
 import java.util.Objects;
 
 public record StartConversationCommand(
-        String idempotencyKey, String displayName, String message, java.util.Optional<String> runProfileId) {
+        String idempotencyKey,
+        String displayName,
+        String message,
+        java.util.Optional<String> runProfileId,
+        List<ContentPart> inputs) {
     public StartConversationCommand(String idempotencyKey, String displayName, String message) {
-        this(idempotencyKey, displayName, message, java.util.Optional.empty());
+        this(idempotencyKey, displayName, message, java.util.Optional.empty(), List.of());
+    }
+
+    public StartConversationCommand(
+            String idempotencyKey, String displayName, String message, java.util.Optional<String> runProfileId) {
+        this(idempotencyKey, displayName, message, runProfileId, List.of());
     }
 
     public StartConversationCommand {
@@ -14,6 +27,7 @@ public record StartConversationCommand(
         message = requireText(message, "message", 32_000);
         runProfileId = Objects.requireNonNull(runProfileId, "runProfileId must not be null")
                 .map(value -> requireText(value, "runProfileId", 256));
+        inputs = imageInputs(inputs);
     }
 
     private static String requireText(String value, String field, int limit) {
@@ -22,5 +36,16 @@ public record StartConversationCommand(
         if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
         if (normalized.length() > limit) throw new IllegalArgumentException(field + " is too long");
         return normalized;
+    }
+
+    private static List<ContentPart> imageInputs(List<ContentPart> values) {
+        List<ContentPart> copied = List.copyOf(Objects.requireNonNull(values, "inputs must not be null"));
+        if (copied.size() > 4) throw new IllegalArgumentException("a conversation turn may contain at most 4 images");
+        if (copied.stream()
+                .anyMatch(value ->
+                        !(value instanceof ImageUrlContentPart) && !(value instanceof StoredImageContentPart))) {
+            throw new IllegalArgumentException("conversation inputs may contain image references only");
+        }
+        return copied;
     }
 }

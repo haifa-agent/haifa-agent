@@ -8,6 +8,8 @@ import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialResolver;
+import io.haifa.agent.model.api.ImageDataPart;
+import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
 import io.haifa.agent.model.api.ModelInvocationException;
@@ -32,6 +34,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -479,7 +482,22 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         return mapped;
     }
 
-    private String messageContent(ModelMessage message) {
+    private Object messageContent(ModelMessage message) {
+        if (!message.images().isEmpty()) {
+            List<Map<String, Object>> parts = new ArrayList<>();
+            parts.add(Map.of("type", "text", "text", message.content()));
+            message.images().forEach(image -> {
+                String url =
+                        switch (image) {
+                            case ImageUrlPart remote -> remote.url().toASCIIString();
+                            case ImageDataPart data ->
+                                "data:" + data.mediaType() + ";base64,"
+                                        + Base64.getEncoder().encodeToString(data.bytes());
+                        };
+                parts.add(Map.of("type", "image_url", "image_url", Map.of("url", url)));
+            });
+            return List.copyOf(parts);
+        }
         if (message.role() != ModelMessageRole.TOOL
                 || (message.toolResultData().isEmpty() && !message.toolResultTruncated())) {
             return message.content();

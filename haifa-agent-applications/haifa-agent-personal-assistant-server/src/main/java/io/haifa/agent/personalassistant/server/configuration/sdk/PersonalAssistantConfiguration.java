@@ -11,6 +11,7 @@ import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRunt
 import io.haifa.agent.personalassistant.server.configuration.model.PersonalModelFactory;
 import io.haifa.agent.personalassistant.server.configuration.model.SqlitePersonalModelPreferenceStore;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
@@ -52,7 +53,8 @@ public class PersonalAssistantConfiguration {
             PersonalAssistantProperties properties,
             ObjectMapper mapper,
             Clock personalClock,
-            PersonalMcpRuntime mcpRuntime) {
+            PersonalMcpRuntime mcpRuntime,
+            PersonalImageStore imageStore) {
         Path dataDirectory = prepare(properties.dataDirectory());
         byte[] key = decodeKey(properties.continuationKeyBase64());
         var protector = new AesGcmModelContinuationProtector(new SecretKeySpec(key, "AES"), new SecureRandom());
@@ -120,11 +122,17 @@ public class PersonalAssistantConfiguration {
                     List.of(
                             dataDirectory,
                             Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath()),
-                    personalClock));
+                    personalClock,
+                    imageStore));
         } catch (RuntimeException | Error exception) {
             sqlite.persistence().close();
             throw exception;
         }
+    }
+
+    @Bean
+    PersonalImageStore personalImageStore(PersonalAssistantProperties properties) {
+        return new PersonalImageStore(prepare(properties.dataDirectory()));
     }
 
     private static String resolveCredential(PersonalAssistantProperties.Web web) {

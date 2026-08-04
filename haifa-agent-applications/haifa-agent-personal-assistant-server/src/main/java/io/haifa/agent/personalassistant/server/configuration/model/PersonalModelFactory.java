@@ -176,7 +176,7 @@ public final class PersonalModelFactory {
                 "1.0.0",
                 provider.endpoint(),
                 new CredentialRef(provider.credentialReference()),
-                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                capabilities(model),
                 64_000,
                 8_192,
                 providerOptions,
@@ -196,7 +196,7 @@ public final class PersonalModelFactory {
                                     model.providerModelId(),
                                     model.displayName(),
                                     ModelStatus.ACTIVE,
-                                    Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                                    capabilities(model),
                                     64_000,
                                     8_192,
                                     invocationOptions(provider),
@@ -236,6 +236,12 @@ public final class PersonalModelFactory {
         return OpenAiCompatibleDialects.DEEPSEEK.equals(provider.dialectId())
                 ? Map.of("thinking", "disabled")
                 : Map.of();
+    }
+
+    private static Set<ModelCapability> capabilities(PersonalAssistantProperties.ProviderModel model) {
+        return model.imageInput()
+                ? Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_INPUT)
+                : Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING);
     }
 
     private static void validateEndpoints(

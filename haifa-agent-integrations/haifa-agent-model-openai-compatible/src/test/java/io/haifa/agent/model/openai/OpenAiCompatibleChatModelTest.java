@@ -11,6 +11,8 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ImageDataPart;
+import io.haifa.agent.model.api.ImageUrlPart;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
@@ -121,6 +123,48 @@ class OpenAiCompatibleChatModelTest {
         assertThat(sent.has("thinking")).isFalse();
         assertThat(sent.has("reasoning_effort")).isFalse();
         assertThat(authorization.get()).isEqualTo("Bearer test-secret");
+    }
+
+    @Test
+    void mapsRemoteAndUploadedImagesToStandardChatCompletionsContentParts() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-image","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"two images"}}],
+                 "usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}
+                """));
+        ModelMessage message = ModelMessage.user(
+                "describe both images",
+                List.of(
+                        new ImageUrlPart(URI.create("https://images.example.com/cat.png")),
+                        new ImageDataPart("image/png", new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47})));
+
+        var actual = model().invoke(new AgentChatRequest(
+                new ModelCallId("call-image"),
+                new AgentRunId("run-image"),
+                1,
+                1,
+                openAiSnapshot(),
+                List.of(message),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of()));
+
+        assertThat(actual.content()).isEqualTo("two images");
+        JsonNode content =
+                json.readTree(requestBody.get()).path("messages").get(0).path("content");
+        assertThat(content.isArray()).isTrue();
+        assertThat(content.get(0).path("type").asText()).isEqualTo("text");
+        assertThat(content.get(0).path("text").asText()).isEqualTo("describe both images");
+        assertThat(content.get(1).path("type").asText()).isEqualTo("image_url");
+        assertThat(content.get(1).path("image_url").path("url").asText())
+                .isEqualTo("https://images.example.com/cat.png");
+        assertThat(content.get(2).path("image_url").path("url").asText()).isEqualTo("data:image/png;base64,iVBORw==");
     }
 
     @Test
@@ -731,7 +775,7 @@ class OpenAiCompatibleChatModelTest {
                 "1.0.0",
                 provider.endpoint(),
                 provider.credentialRef(),
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_INPUT, ModelCapability.TOOL_CALLING),
                 128_000,
                 8_192,
                 provider.options(),

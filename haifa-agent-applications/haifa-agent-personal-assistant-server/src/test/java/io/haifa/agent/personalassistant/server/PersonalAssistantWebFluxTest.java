@@ -32,6 +32,9 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 class PersonalAssistantWebFluxTest {
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration RUN_STATUS_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration RUN_STATUS_POLL_INTERVAL = Duration.ofMillis(100);
     private static final Path DATA = temporaryDirectory();
     private static final int MCP_PORT = freeMcpPort();
     private static final AtomicInteger IDS = new AtomicInteger();
@@ -49,6 +52,7 @@ class PersonalAssistantWebFluxTest {
     void useExplicitLoopbackHost() {
         web = WebTestClient.bindToServer()
                 .baseUrl("http://127.0.0.1:" + serverPort)
+                .responseTimeout(HTTP_TIMEOUT)
                 .build();
     }
 
@@ -66,6 +70,7 @@ class PersonalAssistantWebFluxTest {
         registry.add("haifa.personal.model-providers[0].models[0].id", () -> "personal-test");
         registry.add("haifa.personal.model-providers[0].models[0].display-name", () -> "Personal test");
         registry.add("haifa.personal.model-providers[0].models[0].provider-model-id", () -> "personal-test");
+        registry.add("haifa.personal.model-providers[0].models[0].image-input", () -> "true");
         registry.add("haifa.personal.default-model-id", () -> "personal-test");
         registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
         registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
@@ -142,6 +147,70 @@ class PersonalAssistantWebFluxTest {
             assertThat(sse).isNotEmpty();
         }
         assertThat(observedKinds).containsExactlyInAnyOrder("MODEL", "TOOL", "SKILL", "MCP");
+    }
+
+    @Test
+    void uploadedImageFlowsThroughTheConversationAndRemainsAnOpaqueTurnReference() throws Exception {
+        byte[] png = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1};
+        String uploadBody = web.post()
+                .uri("/api/v1/images")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "image-" + IDS.incrementAndGet())
+                .header("X-Image-Filename", "cat.png")
+                .contentType(MediaType.IMAGE_PNG)
+                .bodyValue(png)
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody(String.class)
+                .returnResult()
+                .getResponseBody();
+        String imageId = mapper.readTree(uploadBody).path("imageId").asText();
+
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Image","message":"Describe this image","images":[{"kind":"upload","imageId":%s}]}
+                """
+                        .formatted(mapper.writeValueAsString(imageId)));
+        assertThat(awaitTerminal(conversation.path("activeRunId").asText())
+                        .path("status")
+                        .asText())
+                .isEqualTo("COMPLETED");
+
+        web.get()
+                .uri("/api/v1/conversations/{id}/turns", conversation.path("id").asText())
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$[0].images[0].kind")
+                .isEqualTo("upload")
+                .jsonPath("$[0].images[0].imageId")
+                .isEqualTo(imageId)
+                .jsonPath("$[0].images[0].url")
+                .doesNotExist();
+    }
+
+    @Test
+    void imageUploadMayUseTheDocumentedBudgetBeyondTheDefaultApiBodyLimit() {
+        byte[] png = new byte[70 * 1024];
+        byte[] signature = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+        System.arraycopy(signature, 0, png, 0, signature.length);
+
+        web.post()
+                .uri("/api/v1/images")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "large-image-" + IDS.incrementAndGet())
+                .header("X-Image-Filename", "large.png")
+                .contentType(MediaType.IMAGE_PNG)
+                .bodyValue(png)
+                .exchange()
+                .expectStatus()
+                .isCreated()
+                .expectBody()
+                .jsonPath("$.sizeBytes")
+                .isEqualTo(png.length);
     }
 
     @Test
@@ -449,14 +518,14 @@ class PersonalAssistantWebFluxTest {
     }
 
     private JsonNode awaitStatus(String runId, Set<String> expected) throws Exception {
-        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        long deadline = System.nanoTime() + RUN_STATUS_TIMEOUT.toNanos();
         JsonNode latest;
         do {
             latest = get("/api/v1/runs/" + runId);
             if (expected.contains(latest.path("status").asText())) {
                 return latest;
             }
-            Thread.sleep(25);
+            Thread.sleep(RUN_STATUS_POLL_INTERVAL);
         } while (System.nanoTime() < deadline);
         throw new AssertionError("run did not become terminal: " + latest);
     }

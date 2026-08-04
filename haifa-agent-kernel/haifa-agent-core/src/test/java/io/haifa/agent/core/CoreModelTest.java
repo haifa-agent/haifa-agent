@@ -9,6 +9,8 @@ import io.haifa.agent.core.checkpoint.CheckpointId;
 import io.haifa.agent.core.checkpoint.CheckpointStatus;
 import io.haifa.agent.core.checkpoint.CheckpointType;
 import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
@@ -41,6 +43,19 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class CoreModelTest {
+    @Test
+    void imageContentUsesSafeRemoteAndOpaqueStoredReferences() {
+        var remote = new ImageUrlContentPart(java.net.URI.create("https://images.example.test/cat.png?token=secret"));
+        var stored = new StoredImageContentPart(
+                "personal-local", "img-1", "image/png", 4, "sha256:" + "a".repeat(64), "cat.png");
+
+        assertThat(remote.contentType()).isEqualTo("image-url");
+        assertThat(remote.toString()).doesNotContain("token=secret");
+        assertThat(stored.contentType()).isEqualTo("stored-image");
+        assertThat(stored.toString()).doesNotContain("cat.png").doesNotContain("sha256:");
+        assertThatThrownBy(() -> new ImageUrlContentPart(java.net.URI.create("http://localhost/cat.png")))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 
     @Test
     void messageUsesOrderedImmutableContentParts() {

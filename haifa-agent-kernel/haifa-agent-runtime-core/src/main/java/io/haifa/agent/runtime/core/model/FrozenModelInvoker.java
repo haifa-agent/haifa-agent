@@ -42,11 +42,12 @@ public final class FrozenModelInvoker {
             RuntimeModelOutputPublisher output,
             RunControlRegistry controls,
             RuntimeEventAppender events,
-            TimeProvider time) {
+            TimeProvider time,
+            ModelImageResolver imageResolver) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.adapters = Map.copyOf(Objects.requireNonNull(adapters, "adapters must not be null"));
         this.ids = Objects.requireNonNull(ids, "ids must not be null");
-        this.messages = new ModelMessageAssembler(state);
+        this.messages = new ModelMessageAssembler(state, imageResolver);
         this.responses = new AgentChatResponseMapper(ids);
         this.output = Objects.requireNonNull(output, "output must not be null");
         this.controls = Objects.requireNonNull(controls, "controls must not be null");

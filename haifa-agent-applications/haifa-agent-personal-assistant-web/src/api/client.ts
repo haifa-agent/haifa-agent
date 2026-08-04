@@ -5,6 +5,7 @@ import type {
   Conversation,
   Interaction,
   InteractionReceipt,
+  ImageInput,
   Memory,
   MemoryCandidate,
   ModelSelection,
@@ -12,6 +13,7 @@ import type {
   Run,
   StreamEvent,
   Turn,
+  UploadedImage,
   UpdateConversation,
 } from "./generated";
 
@@ -50,6 +52,7 @@ export interface PersonalAssistantClient {
     message: string,
     options?: CommandOptions,
     modelId?: string,
+    images?: ImageInput[],
   ): Promise<Conversation>;
   selectModel?(
     conversation: Conversation,
@@ -67,7 +70,9 @@ export interface PersonalAssistantClient {
     conversation: Conversation,
     message: string,
     options?: CommandOptions,
+    images?: ImageInput[],
   ): Promise<Conversation>;
+  uploadImage?(file: File, options?: CommandOptions): Promise<UploadedImage>;
   recommendedQuestions(
     conversationId: string,
     runId: string,
@@ -177,13 +182,14 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     message: string,
     options: CommandOptions = {},
     modelId?: string,
+    images: ImageInput[] = [],
   ) {
     return this.request<Conversation>(
       "/conversations",
       {
         method: "POST",
         headers: commandHeaders(undefined, options.idempotencyKey),
-        body: JSON.stringify({ displayName, message, modelId }),
+        body: JSON.stringify({ displayName, message, modelId, ...(images.length ? { images } : {}) }),
       },
       options.signal,
     );
@@ -193,6 +199,7 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     conversation: Conversation,
     modelId: string,
     options: CommandOptions = {},
+    images: ImageInput[] = [],
   ) {
     return this.request<ModelSelection>(
       `/conversations/${encoded(conversation.id)}/model`,
@@ -233,13 +240,31 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     conversation: Conversation,
     message: string,
     options: CommandOptions = {},
+    images: ImageInput[] = [],
   ) {
     return this.request<Conversation>(
       `/conversations/${encoded(conversation.id)}/messages`,
       {
         method: "POST",
         headers: commandHeaders(conversation.revision, options.idempotencyKey),
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, ...(images.length ? { images } : {}) }),
+      },
+      options.signal,
+    );
+  }
+
+  uploadImage(file: File, options: CommandOptions = {}) {
+    return this.request<UploadedImage>(
+      "/images",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": file.type,
+          "X-Haifa-CSRF": "1",
+          "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
+          "X-Image-Filename": encodeURIComponent(file.name),
+        },
+        body: file,
       },
       options.signal,
     );

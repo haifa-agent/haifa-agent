@@ -1,5 +1,13 @@
 # Haifa Personal Assistant Web
 
+## Image composer behavior
+
+For models that declare `IMAGE_INPUT`, the composer exposes one `+` menu for file upload,
+HTTPS image URLs, and drag-and-drop. Pending images render as compact thumbnails inside the
+composer with a quick `解释图片` action. The URL entry can be dismissed with its close button,
+`Escape`, or an outside pointer action. Attachments belong only to the turn being submitted and
+are cleared after a successful request, so a later turn never silently reuses them.
+
 The right-side activity panel renders safe durable Model, Tool, Skill, and MCP events.
 Model-call cards show the model, attempt coordinates, status, and terminal token or
 normalized failure summary without prompt or response text.
@@ -8,6 +16,10 @@ normalized failure summary without prompt or response text.
 调用带 `If-Match` 与幂等键的切换 API。页面只提交内部 Model ID。
 消息输入框输入 `/` 会打开命令菜单；当前 `/model`“选择模型”命令按 Provider、Model 两级展示
 Bootstrap 返回的可用模型，并复用同一模型切换 API。
+当选中模型声明 `IMAGE_INPUT` 时，输入区通过单一“添加图片”入口提供 HTTPS 图片 URL、文件选择和拖放；
+待发送附件按顺序显示且最多四张，上传成功后只把 Server 返回的 opaque image id 放入 Conversation 请求。
+已发送图片随用户 Turn 显示在主对话中：外部 URL 显示缩略图，本地上传显示不暴露 opaque id 的附件卡片。
+当前不提供本地图片二进制预览或下载端点。
 
 Personal Assistant 的独立 React Web 部署单元。它只消费
 `haifa-agent-personal-assistant-server` 发布的 `/api/v1` HTTP/WebFlux SSE 契约，不参与 Server
@@ -19,6 +31,7 @@ JAR 的构建或静态资源打包。
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
 - 输入框 `/` 命令菜单，以及按模型厂商、模型两级完成的新会话选择或已有会话切换；
+- 图片模型下的 HTTPS URL、PNG/JPEG/WEBP/非动画 GIF 文件选择与拖放上传；
 - 完成态 Assistant 回答底部的 2～3 个推荐问题；点击后按普通新消息提交，快问快答、简单计算或
   推荐生成失败时不展示；
 - 对话正文的 Markdown、代码块、表格和 KaTeX/LaTeX 公式渲染；

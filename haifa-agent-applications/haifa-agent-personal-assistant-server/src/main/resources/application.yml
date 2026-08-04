@@ -7,6 +7,8 @@ server:
     include-stacktrace: never
 
 spring:
+  codec:
+    max-in-memory-size: 11MB
   application:
     name: haifa-personal-assistant
   lifecycle:
@@ -67,6 +69,7 @@ haifa:
           - id: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_ID:openai-gpt-5.6-luna}
             display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_DISPLAYNAME:GPT-5.6 Luna}
             provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID:gpt-5.6-luna}
+            image-input: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_IMAGEINPUT:true}
     default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-v4-flash}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:

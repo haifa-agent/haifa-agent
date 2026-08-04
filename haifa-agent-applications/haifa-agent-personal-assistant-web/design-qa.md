@@ -1,50 +1,32 @@
-# Design QA
+# Personal Assistant Image Composer Design QA
 
-## Comparison target
-
-- Source visual truth: `C:\Users\wangr\AppData\Local\Temp\codex-clipboard-2c28a412-e4a2-480f-85d5-f61bbfe1d14c.png`
-- Implementation screenshot: `C:\Users\wangr\AppData\Local\Temp\haifa-personal-assistant-implementation-1554x879.png`
-- Side-by-side comparison: `C:\Users\wangr\AppData\Local\Temp\haifa-personal-assistant-comparison.png`
-- Viewport and pixels: source `1554 x 879`; implementation `1554 x 879`; CSS viewport `1554 x 879`; device scale factor `1`
-- State: desktop conversation with one user turn, one assistant Markdown turn, activity panel open, and an empty two-line composer
-
-## Evidence
-
-### Full-view comparison
-
-- The composer is fully visible at the bottom of the conversation viewport. Its bottom edge is at `865.33px` in an `879px` viewport, with no document overflow (`scrollHeight = 879px`).
-- Optional error and interaction rows no longer change the composer row because the conversation uses named grid areas.
-- The assistant card uses the DeerFlow answer color pair: background `rgb(248, 249, 250)` (`#f8f9fa`) and border `rgb(233, 236, 239)` (`#e9ecef`).
-
-### Focused region comparison
-
-- The textarea measures `48px` with a computed `24px` line height and zero vertical padding, exactly two line heights.
-- Entering two lines keeps the textarea at `48px` with `scrollHeight = 48px`; the send action becomes enabled.
-- The side-by-side image was inspected at equal pixel dimensions. No additional focused crop was needed because the annotated message and composer regions remain clearly legible in the full comparison.
-
-## Required fidelity surfaces
-
-- Fonts and typography: existing application typography is preserved; the composer retains its inherited `16px / 24px` text metrics.
-- Spacing and layout rhythm: the message list owns the flexible scrolling row and the composer remains in the final fixed grid row.
-- Colors and visual tokens: the assistant card matches DeerFlow's `--bg-primary` and `--border-light` values.
-- Image quality and asset fidelity: no image assets were introduced or replaced.
-- Copy and content: existing product copy is unchanged; realistic local-only fixture content was used for visual verification.
+- Approved prototype evidence: local-only `02-final.png` (not version controlled).
+- Production evidence: local-only `08-production-with-pending.png` (not version controlled).
+- Full comparison evidence: local-only `08-prototype-vs-production.jpg` (not version controlled).
+- Focused composer evidence: local-only `08-composer-comparison.jpg` (not version controlled).
+- Viewport: 1440 x 1024 CSS px; device scale factor 1.
+- State: completed image conversation with one pending URL image in the composer.
 
 ## Findings
 
-- No actionable P0, P1, or P2 differences remain for the two annotated requirements.
-- The reference shows a collapsed activity panel while the verification state keeps the existing panel open. This is an unrelated application state and was not treated as a design mismatch.
+- No actionable P0, P1, or P2 visual issues remain.
+- The composer matches the approved hierarchy: compact thumbnail inside the composer, `解释图片` immediately below it, message input, then one `+` attachment entry and a round send button.
+- Existing typography, blue-purple accents, borders, radii, shadows, and three-column product layout are preserved.
+- External URLs and newly selected local files show real pending thumbnails. Durable uploaded-image history remains an honest attachment card because Phase 1 intentionally has no image download endpoint.
+- Pending attachments are scoped to the submitted turn and cleared after a successful request.
 
-## Comparison history
+## Interaction And Live Checks
 
-- First post-build comparison: passed. The annotated assistant background, fixed-bottom composer, and two-line default input height all matched their intended states, so no visual correction loop was required.
+- The `+` menu exposes file upload and image URL entry only for an image-capable model.
+- The image URL panel closes from its close button, `Escape`, or an outside pointer action.
+- `解释图片` fills the composer with `请解释这张图片` and focuses the message field.
+- First live turn used a blue-and-white porcelain URL and GPT-5.6 Luna described that image.
+- Second live turn in the same conversation uploaded an unrelated Personal Assistant UI screenshot. GPT-5.6 Luna described the software interface and did not reuse the porcelain image from the first turn.
+- Product-page browser console warnings/errors: 0.
 
-## Interaction and console checks
+## Intentional Differences
 
-- Primary composer interaction tested with two lines of text.
-- Send button enabled after input and no submission was performed.
-- Browser console errors: none.
-
-## Final result
+- The production capture contains real conversation and run activity instead of the prototype's shorter sample content.
+- Production shows `1/4` capacity feedback in the thumbnail row and uses the existing paper-plane icon from the product icon set.
 
 final result: passed

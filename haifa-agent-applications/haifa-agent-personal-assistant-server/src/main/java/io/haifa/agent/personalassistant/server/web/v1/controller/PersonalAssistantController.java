@@ -1,16 +1,21 @@
 package io.haifa.agent.personalassistant.server.web.v1.controller;
 
+import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
 import io.haifa.agent.personalassistant.server.observability.PersonalRunLoggingService;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
 import io.haifa.agent.sdk.conversation.ConversationStatus;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -31,16 +36,19 @@ public final class PersonalAssistantController {
     private final PersonalApiMapper mapper;
     private final PersonalAssistantProperties properties;
     private final PersonalRunLoggingService runLogging;
+    private final PersonalImageStore imageStore;
 
     public PersonalAssistantController(
             PersonalAssistantApplication application,
             PersonalApiMapper mapper,
             PersonalAssistantProperties properties,
-            PersonalRunLoggingService runLogging) {
+            PersonalRunLoggingService runLogging,
+            PersonalImageStore imageStore) {
         this.application = application;
         this.mapper = mapper;
         this.properties = properties;
         this.runLogging = runLogging;
+        this.imageStore = imageStore;
     }
 
     @GetMapping("/bootstrap")
@@ -94,7 +102,8 @@ public final class PersonalAssistantController {
                 key(idempotencyKey),
                 text(request.displayName(), "displayName"),
                 text(request.message(), "message"),
-                modelId));
+                modelId,
+                imageInputs(request.images())));
         value.activeRunId().ifPresent(runId -> runLogging.observe(value.id(), runId, "conversation-created"));
         return ResponseEntity.created(URI.create("/api/v1/conversations/" + value.id()))
                 .eTag(Long.toString(value.revision()))
@@ -156,9 +165,47 @@ public final class PersonalAssistantController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PersonalApiDtos.SubmitMessage request) {
         var body = mapper.conversation(application.submit(
-                conversationId, revision(ifMatch), key(idempotencyKey), text(request.message(), "message")));
+                conversationId,
+                revision(ifMatch),
+                key(idempotencyKey),
+                text(request.message(), "message"),
+                imageInputs(request.images())));
         body.activeRunId().ifPresent(runId -> runLogging.observe(body.id(), runId, "message-submitted"));
         return ResponseEntity.accepted().eTag(Long.toString(body.revision())).body(body);
+    }
+
+    @PostMapping(
+            value = "/images",
+            consumes = {"image/png", "image/jpeg", "image/webp", "image/gif"})
+    ResponseEntity<PersonalApiDtos.UploadedImage> uploadImage(
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestHeader(HttpHeaders.CONTENT_TYPE) String mediaType,
+            @RequestHeader(value = "X-Image-Filename", required = false) String filename,
+            @RequestBody byte[] bytes) {
+        key(idempotencyKey);
+        var image = imageStore.save(bytes, mediaType, filename);
+        return ResponseEntity.created(URI.create("/api/v1/images/" + image.imageId()))
+                .body(new PersonalApiDtos.UploadedImage(
+                        image.imageId(),
+                        image.mediaType(),
+                        image.sizeBytes(),
+                        image.originalFilename(),
+                        image.sha256()));
+    }
+
+    private List<ContentPart> imageInputs(List<PersonalApiDtos.ImageInput> values) {
+        List<PersonalApiDtos.ImageInput> inputs = values == null ? List.of() : List.copyOf(values);
+        if (inputs.size() > 4) throw new IllegalArgumentException("a message may contain at most 4 images");
+        List<ContentPart> result = new ArrayList<>(inputs.size());
+        for (PersonalApiDtos.ImageInput input : inputs) {
+            String kind = text(input.kind(), "image.kind").toLowerCase(Locale.ROOT);
+            switch (kind) {
+                case "url" -> result.add(new ImageUrlContentPart(URI.create(text(input.url(), "image.url"))));
+                case "upload" -> result.add(imageStore.reference(text(input.imageId(), "image.imageId")));
+                default -> throw new IllegalArgumentException("image.kind must be url or upload");
+            }
+        }
+        return List.copyOf(result);
     }
 
     @PostMapping("/conversations/{conversationId}/runs/{runId}/recommend-questions")

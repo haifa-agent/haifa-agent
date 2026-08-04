@@ -178,6 +178,7 @@ describe("appReducer", () => {
           runId: completed.id,
           sequence: 1,
           text: "Question",
+          images: [],
           createdAt: "2026-07-28T00:00:00Z",
         },
         {
@@ -186,6 +187,7 @@ describe("appReducer", () => {
           runId: completed.id,
           sequence: 2,
           text: "Complete committed answer",
+          images: [],
           createdAt: "2026-07-28T00:00:01Z",
         },
       ],

@@ -1,6 +1,9 @@
 package io.haifa.agent.personalassistant.application;
 
 import io.haifa.agent.common.time.TimePrecision;
+import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -87,9 +90,16 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     public ConversationView start(String idempotencyKey, String displayName, String message, String modelId) {
+        return start(idempotencyKey, displayName, message, modelId, List.of());
+    }
+
+    public ConversationView start(
+            String idempotencyKey, String displayName, String message, String modelId, List<ContentPart> inputs) {
         PersonalModelOption selected = requireModel(modelId);
+        requireImageInput(selected, inputs);
         ConversationRecord started = agent.conversations()
-                .start(new StartConversationCommand(idempotencyKey, displayName, message, Optional.of(selected.id())));
+                .start(new StartConversationCommand(
+                        idempotencyKey, displayName, message, Optional.of(selected.id()), inputs));
         modelPreferences.create(started.sessionId().value(), selected.id(), TimePrecision.now(clock));
         return conversation(started);
     }
@@ -148,15 +158,22 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     }
 
     public ConversationView submit(String sessionId, long expectedRevision, String idempotencyKey, String message) {
+        return submit(sessionId, expectedRevision, idempotencyKey, message, List.of());
+    }
+
+    public ConversationView submit(
+            String sessionId, long expectedRevision, String idempotencyKey, String message, List<ContentPart> inputs) {
         PersonalModelPreference preference = requirePreference(sessionId);
-        requireModel(preference.modelId());
+        PersonalModelOption selected = requireModel(preference.modelId());
+        requireImageInput(selected, inputs);
         return conversation(agent.conversations()
                 .submit(new SubmitConversationTurnCommand(
                         new AgentSessionId(sessionId),
                         expectedRevision,
                         idempotencyKey,
                         message,
-                        Optional.of(preference.modelId()))));
+                        Optional.of(preference.modelId()),
+                        inputs)));
     }
 
     public List<PersonalModelOption> models() {
@@ -472,7 +489,35 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 value.runId().map(AgentRunId::value),
                 value.sequence(),
                 value.text(),
+                value.contents().stream()
+                        .filter(content ->
+                                content instanceof ImageUrlContentPart || content instanceof StoredImageContentPart)
+                        .map(PersonalAssistantApplication::image)
+                        .toList(),
                 value.createdAt());
+    }
+
+    private static ImageView image(ContentPart value) {
+        return switch (value) {
+            case ImageUrlContentPart image ->
+                new ImageView(
+                        "url", Optional.of(image.url().toASCIIString()), Optional.empty(), Optional.empty(), 0, "");
+            case StoredImageContentPart image ->
+                new ImageView(
+                        "upload",
+                        Optional.empty(),
+                        Optional.of(image.imageId()),
+                        Optional.of(image.mediaType()),
+                        image.sizeBytes(),
+                        image.originalFilename());
+            default -> throw new IllegalArgumentException("unsupported image content");
+        };
+    }
+
+    private static void requireImageInput(PersonalModelOption model, List<ContentPart> inputs) {
+        if (!inputs.isEmpty() && !model.capabilities().contains("IMAGE_INPUT")) {
+            throw new IllegalArgumentException("selected model does not support image input");
+        }
     }
 
     private static InteractionViewValue interaction(InteractionView value) {
@@ -647,7 +692,21 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     public record ModelSelectionView(PersonalModelOption model, long revision, boolean available) {}
 
     public record TurnView(
-            String id, String role, Optional<String> runId, long sequence, String text, Instant createdAt) {}
+            String id,
+            String role,
+            Optional<String> runId,
+            long sequence,
+            String text,
+            List<ImageView> images,
+            Instant createdAt) {}
+
+    public record ImageView(
+            String kind,
+            Optional<String> url,
+            Optional<String> imageId,
+            Optional<String> mediaType,
+            long sizeBytes,
+            String originalFilename) {}
 
     public record UsageView(
             long inputTokens,

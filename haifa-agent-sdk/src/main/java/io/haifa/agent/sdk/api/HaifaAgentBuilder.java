@@ -54,6 +54,7 @@ public final class HaifaAgentBuilder {
     private ProductApprovalPromptFormatter toolApprovalPrompts = ProductApprovalPromptFormatter.defaultFormatter();
     private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
             java.util.function.UnaryOperator.identity();
+    private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
 
     HaifaAgentBuilder() {}
 
@@ -89,6 +90,11 @@ public final class HaifaAgentBuilder {
      */
     public HaifaAgentBuilder publicToolPolicyDecorator(java.util.function.UnaryOperator<PublicToolPolicy> value) {
         publicToolPolicyDecorator = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder modelImageResolver(ModelImageResolver value) {
+        modelImageResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -153,6 +159,7 @@ public final class HaifaAgentBuilder {
                     .scheduler(scheduler)
                     .toolApprovalPrompts(toolApprovalPrompts::format)
                     .publicToolPolicyDecorator(publicToolPolicyDecorator)
+                    .modelImageResolver(modelImageResolver::resolve)
                     .persistence(persistence.runtimePersistence())
                     .callers(() -> {
                         SdkCaller caller = Objects.requireNonNull(callers.current(), "caller provider returned null");
