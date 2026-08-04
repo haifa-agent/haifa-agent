@@ -87,6 +87,33 @@ class ModelMessageAssemblerTest {
     }
 
     @Test
+    void mapsRuntimeNotificationsToAUserTurn() {
+        AgentMessage notification = message(
+                "runtime-notification",
+                new AgentSessionId("session-1"),
+                RUN_ID,
+                MessageRole.RUNTIME,
+                1,
+                List.of(new TextPart("collect the missing evidence", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item(
+                        "runtime-notification",
+                        ContextItemType.MESSAGE,
+                        new MessageContextContent(notification))),
+                List.of(),
+                budget(),
+                20);
+
+        var messages = new ModelMessageAssembler(new InMemoryRuntimeStore()).assemble(RUN_ID, context);
+
+        assertThat(messages)
+                .extracting(message -> message.role())
+                .containsExactly(ModelMessageRole.SYSTEM, ModelMessageRole.USER);
+        assertThat(messages.getLast().content()).isEqualTo("collect the missing evidence");
+    }
+
+    @Test
     void rejectsRawAssetMessageContent() {
         AgentMessage message = new AgentMessage(
                 new AgentMessageId("message-1"),
