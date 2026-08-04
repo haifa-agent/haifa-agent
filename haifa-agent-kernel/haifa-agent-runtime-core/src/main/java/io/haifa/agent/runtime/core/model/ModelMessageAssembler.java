@@ -215,7 +215,8 @@ public final class ModelMessageAssembler {
             case USER -> ModelMessageRole.USER;
             case ASSISTANT -> ModelMessageRole.ASSISTANT;
             case TOOL -> ModelMessageRole.TOOL;
-            case SYSTEM, DEVELOPER, AGENT, RUNTIME -> ModelMessageRole.SYSTEM;
+            case RUNTIME -> ModelMessageRole.USER;
+            case SYSTEM, DEVELOPER, AGENT -> ModelMessageRole.SYSTEM;
         };
     }
 

@@ -21,8 +21,10 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
@@ -220,8 +222,14 @@ class RuntimeCoreHardeningTest {
 
     @Test
     void exhaustedCompletionRepairFailsTheRun() {
+        AtomicReference<AgentChatRequest> repairRequest = new AtomicReference<>();
+        Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions =
+                new ArrayDeque<>(List.of(finalDecision("first"), finalDecision("second")));
         Fixture blocked = fixture(
-                model(finalDecision("first"), finalDecision("second")),
+                request -> {
+                    if (request.iteration() == 2) repairRequest.set(request);
+                    return response(decisions.remove());
+                },
                 builder -> builder.requiredArtifactChecker((run, decision) -> false)
                         .repairRetry(new RepairRetryPolicy(1)));
         var blockedRun = blocked.runtime.start(request("artifact-blocked"));
@@ -248,6 +256,13 @@ class RuntimeCoreHardeningTest {
                 .singleElement()
                 .satisfies(event ->
                         assertThat(event.data()).containsEntry("attempt", 1).containsEntry("maximumAttempts", 1));
+        assertThat(repairRequest.get().messages().getLast())
+                .satisfies(message -> {
+                    assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+                    assertThat(message.content())
+                            .contains("[DELIVERY_COMPLETION_REPAIR]")
+                            .contains("guidance=REQUIRED_ARTIFACT_MISSING: A required artifact is missing.");
+                });
     }
 
     @Test
