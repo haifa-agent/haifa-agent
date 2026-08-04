@@ -21,8 +21,9 @@ Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/R
 `CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、ChangeSet 和 Execution 状态
 引用重建工作区修改、Diff、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
 修改或验证通过证据。`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限
-No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改；UNKNOWN 必须收敛到
-完整修改证据、确定性只读证据或结构化阻塞路径之一。
+No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
+没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；一旦观察到 Workspace 修改，
+仍必须满足完整的修改、验证和 Diff 证据。需要硬性交付保证的调用方必须提供可信任务模式。
 
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
 不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后

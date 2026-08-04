@@ -208,6 +208,7 @@ class TerminalUiReducerTest {
                 .singleElement()
                 .satisfies(item -> {
                     assertThat(item.status()).isEqualTo("SUCCEEDED");
+                    assertThat(item.title()).isEqualTo("workspace.write · src/App.java");
                     assertThat(item.body()).contains("Target: src/App.java", "Result: artifact:tool-1");
                 });
         assertThat(execution.transcript())
@@ -221,6 +222,39 @@ class TerminalUiReducerTest {
                                 "Exit: 1",
                                 "Changes: changes:1"));
         assertThat(execution.status()).isEqualTo("Attention");
+    }
+
+    @Test
+    void doesNotRepeatTheToolNameWhenItsSafeTargetSummaryMatches() {
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "file_stat", "SUCCEEDED", "NONE", "file_stat", "artifact:tool-1"))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> assertThat(item.title())
+                .isEqualTo("file_stat"));
+    }
+
+    @Test
+    void boundsLongSafeToolTargetsWithoutSplittingSurrogatePairs() {
+        String target = "x".repeat(237) + "😀tail";
+
+        TerminalUiState state = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "workspace.read", "SUCCEEDED", "NONE", target, "artifact:tool-1"))));
+
+        assertThat(state.transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).hasSizeLessThanOrEqualTo(256).endsWith("…");
+            assertThat(item.title().chars().anyMatch(value -> Character.isSurrogate((char) value)))
+                    .isFalse();
+        });
     }
 
     @Test
@@ -341,6 +375,12 @@ class TerminalUiReducerTest {
                 .isEqualTo(TerminalRecovery.Category.RETRYABLE);
         assertThat(TerminalRecovery.fromCode("MODIFIED_ENTER_UNAVAILABLE").category())
                 .isEqualTo(TerminalRecovery.Category.TERMINAL_CAPABILITY);
+        TerminalRecovery windows = TerminalRecovery.fromCode("WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP");
+        assertThat(windows.displayTitle()).isEqualTo("Terminal capability");
+        assertThat(windows.code()).isEqualTo("WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP");
+        assertThat(windows.action())
+                .contains("Windows Terminal", "Ctrl+J", "custom key bindings")
+                .doesNotContain("ESC[", "13;2u", "13;3u");
         assertThat(TerminalRecovery.fromCode("TERMINAL_FAILURE").category())
                 .isEqualTo(TerminalRecovery.Category.TERMINAL_FAILURE);
         assertThat(TerminalRecovery.fromCode("UNKNOWN_SAFE_CODE").action()).contains("draft is preserved");

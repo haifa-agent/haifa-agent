@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Coding Agent 的普通交互不再因缺少工具或交付证据进入完成修复：未声明可信任务模式且没有权威
+  Workspace 修改时，文本回答可正常结束；显式 CHANGE/CREATE/ANALYZE/REVIEW 及已观察到的修改
+  继续执行既有证据门禁，真实 Provider 故障仍按原错误终止。
 - 修复 Windows Host Guarded PowerShell 将命令不存在或复合原生命令失败误报为成功的问题；Autonomous
   Delivery 生成配置同步显式声明当前 CLI 所需的 DeepSeek dialect/version/streaming 字段，并在迁移
   窗口关闭后统一拒绝测试资产 Schema 1 台账。

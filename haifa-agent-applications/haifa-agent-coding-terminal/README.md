@@ -89,11 +89,31 @@ Error、Queued 和 Focus。TrueColor 参考色会按明暗背景自适应；NoCo
 边界和顺序区分：
 
 - User 使用低对比消息块，便于定位用户意图；
-- Assistant 正文直接进入对话流，不使用厚卡片；
-- Tool/Execution 根据 `requested/started/succeeded/failed/cancelled` 使用状态色，并在折叠时显示
-  `ctrl+o expand`；
+- Assistant 正文直接进入对话流，不使用厚卡片；高频 Markdown 子集只在 View 层转换为终端样式，
+  `TranscriptItem`、Session 与持久化继续保留原始 Markdown；
+- Tool/Execution 根据 `requested/started/succeeded/failed/cancelled` 使用状态色。成功或进行中的折叠项
+  只占一行并把 `ctrl+o expand` 放在同一行；连续折叠项之间不插入空行。失败项在折叠状态额外保留
+  最多两行安全原因，展开后才显示既有有界详情；
 - Approval 使用 Pending 语义，Error 使用 Error 语义，Resource 保持中性；
 - Editor/Selector 的当前操作提示使用 Focus 语义。
+
+### Assistant Markdown
+
+Terminal 当前支持标题、粗体、斜体、行内代码、围栏代码块、两级有序/无序列表、引用、普通链接、
+段落和终端宽度换行。流式 Assistant 正文使用按 Item ID 隔离的增量状态：正常 append 只消费新增
+delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界正文发生尾部滚动、旧前缀已经消失时，
+才从当前安全正文重建。控制字符在产生任何 Terminal Style 前移除，NoColor 保留相同文字和顺序。
+
+延期 TODO（当前不应描述为已支持）：
+
+- [ ] 代码语法高亮；
+- [ ] Markdown 表格与三层以上嵌套列表；
+- [ ] 终端图片渲染（当前降级为 `[image: alt] URL`）；
+- [ ] 内嵌 HTML、脚注、定义列表和自动目录；
+- [ ] Mermaid、数学公式与 KaTeX；
+- [ ] GFM 删除线、任务复选框及其他扩展；
+- [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
+- [ ] Tool 专用预览器、跨 Tool 聚合和批量展开；首版保持每个稳定 Tool Call ID 可独立审计。
 
 Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示
 `enter steer · alt+enter follow-up · esc interrupt`。macOS 的 Option 对应 Terminal Alt；
