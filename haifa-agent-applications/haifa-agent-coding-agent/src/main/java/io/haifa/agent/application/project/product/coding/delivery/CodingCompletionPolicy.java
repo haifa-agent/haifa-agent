@@ -87,9 +87,8 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
                 && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)) {
             return;
         }
-        blockers.add(CompletionBlocker.recoverable(
-                "UNKNOWN_INTENT_EVIDENCE_MISSING",
-                "Unknown task intent has neither change delivery nor deterministic read-only evidence.",
-                "TASK_INTENT_OR_DELIVERY_EVIDENCE"));
+        // An untrusted interactive prompt may be conversational. With no authoritative workspace
+        // activity to enforce, a text-only assistant response completes the turn normally. Trusted
+        // task modes and observed workspace changes retain their delivery evidence requirements.
     }
 }

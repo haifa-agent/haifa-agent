@@ -9,6 +9,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -46,6 +47,7 @@ final class Tui4jTerminalView {
             "TIMEOUT");
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
+    private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
 
     String render(
             TerminalUiState state,
@@ -82,9 +84,26 @@ final class Tui4jTerminalView {
 
     String transcriptContent(TerminalUiState state) {
         if (state.transcript().isEmpty()) {
+            markdown.retain(Set.of());
             return theme.muted("Start a task or use /commands.");
         }
-        return state.transcript().stream().map(this::transcriptItem).collect(Collectors.joining("\n"));
+        Set<String> assistantIds = new HashSet<>();
+        state.transcript().stream()
+                .filter(item -> item.kind() == TranscriptItem.Kind.ASSISTANT)
+                .map(TranscriptItem::id)
+                .forEach(assistantIds::add);
+        markdown.retain(assistantIds);
+
+        StringBuilder content = new StringBuilder();
+        TranscriptItem previous = null;
+        for (TranscriptItem item : state.transcript()) {
+            if (previous != null) {
+                content.append(isCompactTool(previous) && isCompactTool(item) ? '\n' : "\n\n");
+            }
+            content.append(transcriptItem(item, Math.max(12, state.columns() - 2)));
+            previous = item;
+        }
+        return content.toString();
     }
 
     private List<String> header(TerminalUiState state, boolean compact) {
@@ -120,7 +139,7 @@ final class Tui4jTerminalView {
             TerminalRecovery recovery = TerminalRecovery.fromCode(value);
             java.util.function.Function<String, String> recoveryStyle =
                     recovery.category() == TerminalRecovery.Category.TERMINAL_CAPABILITY ? theme::queued : theme::error;
-            lines.add(recoveryStyle.apply(recovery.category().label() + " · " + recovery.code()));
+            lines.add(recoveryStyle.apply(recovery.displayTitle()));
             if (!compact) lines.add(recoveryStyle.apply("  " + recovery.action()));
         });
         state.selector()
@@ -140,7 +159,7 @@ final class Tui4jTerminalView {
         return lines;
     }
 
-    private String transcriptItem(TranscriptItem item) {
+    private String transcriptItem(TranscriptItem item, int bodyWidth) {
         String status = item.status().toLowerCase(Locale.ROOT);
         String title = sanitize(
                 switch (item.kind()) {
@@ -152,15 +171,47 @@ final class Tui4jTerminalView {
                     case RESOURCE -> "Resource · " + item.title() + " [" + status + "]";
                     case ERROR -> "Error · " + item.title() + " [" + status + "]";
                 });
+        if (item.kind() == TranscriptItem.Kind.ASSISTANT) {
+            String rendered = markdown.render(item.id(), item.body(), bodyWidth);
+            String content = rendered.isEmpty() ? title : title + "\n" + indent(rendered);
+            return style(item, content);
+        }
+        if (isCollapsedTool(item)) {
+            String content = title + theme.muted(" · ctrl+o expand");
+            if (isErrorStatus(item.status())) {
+                String details = item.body()
+                        .lines()
+                        .limit(2)
+                        .map(value -> "  " + sanitize(value))
+                        .collect(Collectors.joining("\n"));
+                if (!details.isBlank()) content = content + "\n" + details;
+            }
+            return style(item, content);
+        }
         String body =
                 item.expanded() ? item.body() : item.body().lines().limit(5).collect(Collectors.joining("\n"));
         String content =
                 title + "\n" + body.lines().map(value -> "  " + sanitize(value)).collect(Collectors.joining("\n"));
-        if (!item.expanded()
-                && (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION)) {
-            content = content + "\n  ctrl+o expand";
-        }
-        return style(item, content) + "\n";
+        return style(item, content);
+    }
+
+    private boolean isCompactTool(TranscriptItem item) {
+        return isCollapsedTool(item) && !isErrorStatus(item.status());
+    }
+
+    private boolean isCollapsedTool(TranscriptItem item) {
+        return !item.expanded()
+                && (item.kind() == TranscriptItem.Kind.TOOL || item.kind() == TranscriptItem.Kind.EXECUTION);
+    }
+
+    private boolean isErrorStatus(String status) {
+        return ERROR_STATUSES.contains(status.strip().toUpperCase(Locale.ROOT));
+    }
+
+    private String indent(String value) {
+        return java.util.Arrays.stream(value.split("\n", -1))
+                .map(line -> "  " + line)
+                .collect(Collectors.joining("\n"));
     }
 
     private String pending(PendingMessage message) {

@@ -50,6 +50,13 @@ class Tui4jTerminalThemeTest {
         assertThat(theme.error("error")).isEqualTo(" error ");
         assertThat(theme.queued("queued")).isEqualTo(" queued ");
         assertThat(theme.focus("focus")).isEqualTo("focus");
+        assertThat(theme.heading("heading")).isEqualTo("heading");
+        assertThat(theme.strong("strong")).isEqualTo("strong");
+        assertThat(theme.emphasis("emphasis")).isEqualTo("emphasis");
+        assertThat(theme.inlineCode("code")).isEqualTo("code");
+        assertThat(theme.codeBlock("block")).isEqualTo("block");
+        assertThat(theme.quote("quote")).isEqualTo("quote");
+        assertThat(theme.link("link")).isEqualTo("link");
     }
 
     @Test
@@ -64,6 +71,17 @@ class Tui4jTerminalThemeTest {
             assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(rendered))
                     .isEqualTo(" 错误 🚀 ");
             assertThat(rendered).contains("\u001B[").endsWith("\u001B[0m");
+
+            String markdownStyles = theme.heading("heading")
+                    + theme.strong("strong")
+                    + theme.emphasis("emphasis")
+                    + theme.inlineCode("code")
+                    + theme.codeBlock("block")
+                    + theme.quote("quote")
+                    + theme.link("link");
+            assertThat(com.williamcallahan.tui4j.compat.x.ansi.Strip.strip(markdownStyles))
+                    .isEqualTo("headingstrongemphasiscodeblockquotelink");
+            assertThat(markdownStyles).contains("\u001B[");
         }
     }
 }

@@ -128,12 +128,12 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void unknownModeUsesObservedReadOnlyOrChangeEvidence() {
+    void unknownModeAcceptsConversationAndUsesObservedReadOnlyOrChangeEvidence() {
         Fixture readOnly = fixture("fix this if needed", Map.of());
         CodingCompletionPolicy readOnlyPolicy = policy(readOnly.store());
-        assertThat(readOnlyPolicy.evaluate(readOnly.run(), finalDecision()).blockers())
-                .extracting(blocker -> blocker.code())
-                .containsExactly("UNKNOWN_INTENT_EVIDENCE_MISSING");
+        var conversation = readOnlyPolicy.evaluate(readOnly.run(), finalDecision());
+        assertThat(conversation.allowed()).isTrue();
+        assertThat(conversation.evidenceCodes()).isEmpty();
         tool(readOnly, "file.search", Map.of("path", "."), Map.of("matches", List.of()));
         assertThat(readOnlyPolicy.evaluate(readOnly.run(), finalDecision()).allowed())
                 .isTrue();

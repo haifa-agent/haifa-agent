@@ -14,6 +14,7 @@ import java.util.Set;
 
 /** Deterministic, side-effect-free projection of product and committed Runtime facts. */
 public final class TerminalUiReducer {
+    private static final int MAX_TRANSCRIPT_TITLE_LENGTH = 256;
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
 
     public TerminalUiState reduce(TerminalUiState state, TerminalUiAction action) {
@@ -384,7 +385,7 @@ public final class TerminalUiReducer {
                     new TranscriptItem(
                             "tool-" + payload.toolCallId(),
                             TranscriptItem.Kind.TOOL,
-                            payload.displayName(),
+                            toolTitle(payload),
                             toolBody(payload),
                             payload.status(),
                             false));
@@ -597,6 +598,24 @@ public final class TerminalUiReducer {
         }
         if (!payload.resultRef().isBlank()) lines.add("Result: " + payload.resultRef());
         return String.join("\n", lines);
+    }
+
+    private static String toolTitle(RunEventPayloads.ToolLifecycle payload) {
+        String target = payload.targetSummary().strip();
+        if (target.isBlank() || target.equalsIgnoreCase(payload.displayName())) {
+            return payload.displayName();
+        }
+        String prefix = payload.displayName() + " · ";
+        int available = MAX_TRANSCRIPT_TITLE_LENGTH - prefix.length();
+        if (target.length() <= available) return prefix + target;
+        int end = Math.max(0, available - 1);
+        if (end > 0
+                && end < target.length()
+                && Character.isLowSurrogate(target.charAt(end))
+                && Character.isHighSurrogate(target.charAt(end - 1))) {
+            end--;
+        }
+        return prefix + target.substring(0, end) + "…";
     }
 
     private static String executionBody(RunEventPayloads.ExecutionLifecycle payload) {

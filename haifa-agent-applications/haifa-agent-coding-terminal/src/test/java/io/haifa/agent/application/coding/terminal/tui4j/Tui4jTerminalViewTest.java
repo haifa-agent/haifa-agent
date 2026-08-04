@@ -7,9 +7,11 @@ import com.williamcallahan.tui4j.compat.bubbles.textarea.Textarea;
 import com.williamcallahan.tui4j.compat.bubbles.viewport.Viewport;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
 import com.williamcallahan.tui4j.term.TerminalInfo;
+import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalFooter;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.core.run.AgentRunId;
@@ -46,6 +48,20 @@ class Tui4jTerminalViewTest {
                         "model: frozen",
                         "sandbox: frozen profile");
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(24);
+    }
+
+    @Test
+    void keepsTerminalCapabilityCodesAndEscapeSequencesOutOfTheUserFacingNotice() {
+        TerminalUiState state = new TerminalUiReducer()
+                .reduce(
+                        TerminalUiState.initial(100, 30),
+                        new TerminalUiAction.RecoverableFailure("WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP"));
+
+        String rendered = view.render(state, transcript(state), editor(100), true, false);
+
+        assertThat(rendered)
+                .contains("Terminal capability", "Windows Terminal", "Ctrl+J", "custom key bindings")
+                .doesNotContain("WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP", "ESC[", "13;2u", "13;3u");
     }
 
     @Test
@@ -297,6 +313,121 @@ class Tui4jTerminalViewTest {
                         "Error · Tool failed [failed]")
                 .contains("ctrl+o expand")
                 .doesNotContain("\u001B");
+    }
+
+    @Test
+    void keepsConsecutiveSuccessfulToolsToOneLineEachWithoutBlankRows() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(
+                        item("tool-1", TranscriptItem.Kind.TOOL, "file_stat", "Target: file_stat", "SUCCEEDED", false),
+                        item(
+                                "tool-2",
+                                TranscriptItem.Kind.TOOL,
+                                "file_read · README.md",
+                                "Target: README.md",
+                                "SUCCEEDED",
+                                false)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String content = view.transcriptContent(state);
+        String withoutBlockPadding =
+                content.lines().map(String::strip).collect(java.util.stream.Collectors.joining("\n"));
+
+        assertThat(withoutBlockPadding)
+                .isEqualTo(
+                        """
+                        Tool · file_stat [succeeded] · ctrl+o expand
+                        Tool · file_read · README.md [succeeded] · ctrl+o expand""")
+                .doesNotContain("Target:");
+    }
+
+    @Test
+    void keepsCollapsedToolErrorsActionableWithoutShowingTheWholeResult() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(item(
+                        "tool-1",
+                        TranscriptItem.Kind.TOOL,
+                        "workspace.read · missing.txt",
+                        "Reason: NOT_FOUND\nResult: safe-ref\nHidden detail",
+                        "FAILED",
+                        false)),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String content = view.transcriptContent(state);
+
+        assertThat(content)
+                .contains(
+                        "Tool · workspace.read · missing.txt [failed] · ctrl+o expand",
+                        "Reason: NOT_FOUND",
+                        "Result: safe-ref")
+                .doesNotContain("Hidden detail");
+    }
+
+    @Test
+    void rendersAssistantMarkdownWithoutPersistingTerminalStylesInState() {
+        TerminalUiState initial = TerminalUiState.initial(100, 30);
+        TranscriptItem assistant = item(
+                "assistant-1",
+                TranscriptItem.Kind.ASSISTANT,
+                "Assistant",
+                "# Result\nUse **tests** and `verify`.",
+                "STREAMING",
+                true);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                List.of(assistant),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        assertThat(view.transcriptContent(state))
+                .contains("Assistant", "Result", "Use tests and verify.")
+                .doesNotContain("# Result", "**", "`");
+        assertThat(assistant.body()).isEqualTo("# Result\nUse **tests** and `verify`.");
     }
 
     @Test

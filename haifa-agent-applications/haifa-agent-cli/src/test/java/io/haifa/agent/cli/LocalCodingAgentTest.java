@@ -9,7 +9,9 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
@@ -106,6 +108,59 @@ class LocalCodingAgentTest {
 
         assertThat(LocalCodingAgent.effectiveBuiltInTools(denied)).doesNotContain("execution.run");
         assertThat(LocalCodingAgent.effectiveBuiltInTools(defaults)).contains("execution.run");
+    }
+
+    @Test
+    void conversationalPromptsCompleteAfterOneModelResponseEach() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            int call = calls.incrementAndGet();
+            return answer("conversation-" + call, call == 1 ? "Hello! How can I help?" : "Paris is in France.");
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                trustedHostConfiguration(CliConfiguration.defaults()),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var greeting = awaitTerminal(agent, agent.start("hello").runId());
+            assertThat(greeting.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(greeting.output()).contains("Hello! How can I help?");
+            assertThat(calls).hasValue(1);
+
+            var knowledge = awaitTerminal(
+                    agent, agent.start("What country is Paris in?").runId());
+            assertThat(knowledge.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(knowledge.output()).contains("Paris is in France.");
+            assertThat(calls).hasValue(2);
+        }
+    }
+
+    @Test
+    void providerUnavailableStillFailsWithoutCompletionRepair() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            calls.incrementAndGet();
+            throw new ModelInvocationException(
+                    ModelErrorCategory.PROVIDER_UNAVAILABLE,
+                    true,
+                    503,
+                    "provider_unavailable",
+                    request.callId(),
+                    "model provider is unavailable",
+                    null);
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                trustedHostConfiguration(CliConfiguration.defaults()),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model)) {
+            var failed = awaitTerminal(agent, agent.start("hello").runId());
+            assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(failed.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_PROVIDER_UNAVAILABLE);
+        }
+        assertThat(calls).hasValue(1);
     }
 
     @Test
@@ -275,12 +330,12 @@ class LocalCodingAgentTest {
                 Thread.sleep(25);
                 completed = agent.runtime().find(accepted.runId()).orElseThrow();
             }
-            assertThat(completed.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(completed.error().orElseThrow().code()).isEqualTo(AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED);
+            assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(completed.output()).contains("rejection respected");
         }
 
         assertThat(workspace.resolve("must-not-exist.txt")).doesNotExist();
-        assertThat(calls).hasValue(4);
+        assertThat(calls).hasValue(2);
         assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
         assertThat(new JsonlTranscriptReader(transcripts).read(runId.value()).events())
                 .extracting(event -> event.eventType())
@@ -290,7 +345,7 @@ class LocalCodingAgentTest {
                         "approval.authority.verified",
                         "approval.target.validated",
                         "approval.responded",
-                        "run.failed");
+                        "run.completed");
     }
 
     @Test
@@ -431,17 +486,10 @@ class LocalCodingAgentTest {
                                     && message.content().contains("result-verification skill")
                                     && message.content().contains("authoritative tool results show a workspace change"))
                             .noneMatch(message -> message.content().contains("[CODING_RUN_STATE]"));
-                    yield answer("delivery-premature", "premature final");
-                }
-                case 2 -> {
-                    assertThat(request.messages())
-                            .anyMatch(message -> message.role() == ModelMessageRole.SYSTEM
-                                    && message.content().contains("[DELIVERY_COMPLETION_REPAIR]")
-                                    && message.content().contains("TASK_INTENT_OR_DELIVERY_EVIDENCE"));
                     yield toolResponse(
                             "delivery-write", "file_create", Map.of("path", "delivered.txt", "content", "delivered\n"));
                 }
-                case 3 -> {
+                case 2 -> {
                     yield toolResponse(
                             "delivery-test",
                             "execution_run",
@@ -457,7 +505,7 @@ class LocalCodingAgentTest {
                                     "operationFamily",
                                     "TEST"));
                 }
-                case 4 ->
+                case 3 ->
                     toolResponse(
                             "delivery-diff",
                             "execution_run",
@@ -495,7 +543,7 @@ class LocalCodingAgentTest {
         }
         assertThat(Files.readString(successfulWorkspace.resolve("delivered.txt")))
                 .isEqualTo("delivered\n");
-        assertThat(successfulCalls).hasValue(5);
+        assertThat(successfulCalls).hasValue(4);
         for (int index = 1; index < successfulRequests.size(); index++) {
             AgentChatRequest previous = successfulRequests.get(index - 1);
             AgentChatRequest current = successfulRequests.get(index);
@@ -511,8 +559,7 @@ class LocalCodingAgentTest {
         Files.writeString(workspace.resolve("README.md"), "deterministic root cause evidence\n");
         AtomicInteger calls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> switch (calls.incrementAndGet()) {
-            case 1 -> answer("analyze-premature", "premature analysis");
-            case 2 -> toolResponse("analyze-read", "file_read", Map.of("path", "README.md"));
+            case 1 -> toolResponse("analyze-read", "file_read", Map.of("path", "README.md"));
             default -> answer("analyze-complete", "root cause analyzed from deterministic read-only evidence");
         };
 
@@ -526,7 +573,7 @@ class LocalCodingAgentTest {
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(snapshot.output().orElseThrow()).contains("root cause analyzed");
         }
-        assertThat(calls).hasValue(3);
+        assertThat(calls).hasValue(2);
         assertThat(Files.readString(workspace.resolve("README.md"))).isEqualTo("deterministic root cause evidence\n");
     }
 

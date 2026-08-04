@@ -31,15 +31,15 @@ public record TerminalRecovery(Category category, String code, String action) {
             entry(
                     Category.TERMINAL_CAPABILITY,
                     "WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP",
-                    "Map Shift+Enter to ESC[13;2u and Alt+Enter to ESC[13;3u in Windows Terminal."),
+                    "Windows Terminal: use Ctrl+J for newline. Shift+Enter and Alt+Enter may need custom key bindings."),
             entry(
                     Category.TERMINAL_CAPABILITY,
                     "WEZTERM_OPTION_ENTER_REMAP",
-                    "Map Option+Enter to ESC[13;3u if the terminal reserves the shortcut."),
+                    "WezTerm: use Ctrl+J for newline. Option+Enter may need a custom key binding."),
             entry(
                     Category.TERMINAL_CAPABILITY,
                     "ALACRITTY_OPTION_ENTER_REMAP",
-                    "Map Option+Enter to ESC[13;3u if it arrives as plain Enter."),
+                    "Alacritty: use Ctrl+J for newline. Option+Enter may need a custom key binding."),
             entry(
                     Category.TERMINAL_CAPABILITY,
                     "APPLE_TERMINAL_MODIFIED_ENTER_LIMITED",
@@ -75,6 +75,12 @@ public record TerminalRecovery(Category category, String code, String action) {
                         Category.USER_ACTION_REQUIRED,
                         checked,
                         "Review the request and retry; the editor draft is preserved."));
+    }
+
+    /** User-facing title; stable capability codes remain available through {@link #code()}. */
+    public String displayTitle() {
+        if (category == Category.TERMINAL_CAPABILITY) return category.label();
+        return category.label() + " · " + code;
     }
 
     private static Map.Entry<String, TerminalRecovery> entry(Category category, String code, String action) {

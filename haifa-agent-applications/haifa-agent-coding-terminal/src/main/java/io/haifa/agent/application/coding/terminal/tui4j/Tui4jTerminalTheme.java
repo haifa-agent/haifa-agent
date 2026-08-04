@@ -31,6 +31,41 @@ final class Tui4jTerminalTheme {
         return Style.newStyle().foreground(FOCUS).render(value);
     }
 
+    String heading(String value) {
+        return Style.newStyle().foreground(ACCENT).bold(true).render(value);
+    }
+
+    String strong(String value) {
+        return Style.newStyle().bold(true).render(value);
+    }
+
+    String emphasis(String value) {
+        return Style.newStyle().italic(true).render(value);
+    }
+
+    String inlineCode(String value) {
+        return Style.newStyle()
+                .foreground(QUEUED_FOREGROUND)
+                .background(QUEUED_BACKGROUND)
+                .inline(true)
+                .render(value);
+    }
+
+    String codeBlock(String value) {
+        return Style.newStyle()
+                .foreground(USER_FOREGROUND)
+                .background(USER_BACKGROUND)
+                .render(value);
+    }
+
+    String quote(String value) {
+        return Style.newStyle().foreground(MUTED).italic(true).render(value);
+    }
+
+    String link(String value) {
+        return Style.newStyle().foreground(ACCENT).underline(true).render(value);
+    }
+
     String user(String value) {
         return block(value, USER_FOREGROUND, USER_BACKGROUND);
     }
