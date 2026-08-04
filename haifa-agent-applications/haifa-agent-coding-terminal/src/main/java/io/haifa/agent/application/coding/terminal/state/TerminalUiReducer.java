@@ -32,8 +32,8 @@ public final class TerminalUiReducer {
                     ? state.appliedCursor()
                     : active.map(io.haifa.agent.runtime.api.RunEventCursor::beforeFirst);
             var footer = new TerminalFooter(
-                    view.summary().projectId().value(),
-                    "",
+                    state.footer().project(),
+                    state.footer().gitBranch(),
                     view.summary().displayName(),
                     "queue: " + view.summary().queuedCount(),
                     view.model().model().providerDisplayName(),
@@ -69,7 +69,8 @@ public final class TerminalUiReducer {
                     "",
                     0,
                     Optional.empty(),
-                    TerminalFooter.empty(),
+                    new TerminalFooter(
+                            state.footer().project(), state.footer().gitBranch(), "", "context: —", "", "", "IDLE", ""),
                     state.columns(),
                     state.rows(),
                     Optional.empty(),

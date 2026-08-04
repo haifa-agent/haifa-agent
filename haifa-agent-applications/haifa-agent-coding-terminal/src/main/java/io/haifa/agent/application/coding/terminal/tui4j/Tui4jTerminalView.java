@@ -8,6 +8,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalRecovery;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -55,6 +56,16 @@ final class Tui4jTerminalView {
             Textarea editor,
             boolean followTranscript,
             boolean newOutputPending) {
+        return render(state, transcript, editor, followTranscript, newOutputPending, Duration.ZERO);
+    }
+
+    String render(
+            TerminalUiState state,
+            Viewport transcript,
+            Textarea editor,
+            boolean followTranscript,
+            boolean newOutputPending,
+            Duration workingElapsed) {
         if (state.columns() < MIN_COLUMNS || state.rows() < MIN_ROWS) {
             return String.join(
                     "\n",
@@ -67,7 +78,8 @@ final class Tui4jTerminalView {
 
         boolean compact = state.rows() < 24;
         List<String> before = header(state, compact);
-        List<String> after = lowerRegions(state, editor, newOutputPending && !followTranscript, compact);
+        List<String> after =
+                lowerRegions(state, editor, newOutputPending && !followTranscript, compact, workingElapsed);
         int viewportRows = Math.max(1, state.rows() - visualRows(before) - visualRows(after));
         transcript.setWidth(state.columns());
         transcript.setHeight(viewportRows);
@@ -123,7 +135,11 @@ final class Tui4jTerminalView {
     }
 
     private List<String> lowerRegions(
-            TerminalUiState state, Textarea editor, boolean newOutputPending, boolean compact) {
+            TerminalUiState state,
+            Textarea editor,
+            boolean newOutputPending,
+            boolean compact,
+            Duration workingElapsed) {
         List<String> lines = new ArrayList<>();
         if (!state.pending().isEmpty()) {
             lines.add(theme.queued("Pending · " + state.pending().size()));
@@ -134,7 +150,7 @@ final class Tui4jTerminalView {
                     .map(theme::queued)
                     .forEach(lines::add);
         }
-        status(state, newOutputPending).ifPresent(lines::add);
+        status(state, newOutputPending, workingElapsed).ifPresent(lines::add);
         state.recoverableError().ifPresent(value -> {
             TerminalRecovery recovery = TerminalRecovery.fromCode(value);
             java.util.function.Function<String, String> recoveryStyle =
@@ -147,15 +163,18 @@ final class Tui4jTerminalView {
                         selector -> lines.addAll(selector(selector, compact ? 1 : 4)), () -> lines.add(editor.view()));
         lines.add(theme.focus(editorHint(state)));
         var footer = state.footer();
+        List<String> workspace = new ArrayList<>();
+        if (!footer.model().isBlank()) addMeaningful(workspace, "model: " + footer.model());
+        if (!footer.project().isBlank()) addMeaningful(workspace, "cwd: " + footer.project());
+        if (!footer.gitBranch().isBlank()) addMeaningful(workspace, "git: " + footer.gitBranch());
+        if (!workspace.isEmpty()) lines.add(theme.muted(String.join(" · ", workspace)));
         List<String> context = new ArrayList<>();
         addMeaningful(context, footer.runStatus());
-        addMeaningful(context, footer.project());
         addMeaningful(context, footer.session());
         if (!compact) {
             addMeaningful(context, footer.metrics());
-            addGitIfReal(context, footer.gitBranch());
         }
-        lines.add(theme.muted(String.join(" · ", context)));
+        if (!context.isEmpty()) lines.add(theme.muted(String.join(" · ", context)));
         return lines;
     }
 
@@ -252,9 +271,13 @@ final class Tui4jTerminalView {
         return java.util.Optional.of(theme.muted("resources · " + String.join(" · ", values)));
     }
 
-    private java.util.Optional<String> status(TerminalUiState state, boolean newOutputPending) {
+    private java.util.Optional<String> status(
+            TerminalUiState state, boolean newOutputPending, Duration workingElapsed) {
         List<String> parts = new ArrayList<>();
         String value = sanitize(state.status().strip());
+        if (value.equalsIgnoreCase("working") && state.currentRunId().isPresent()) {
+            value = workingStatus(workingElapsed);
+        }
         if (!value.equalsIgnoreCase("idle")
                 && !(state.recoverableError().isPresent() && value.equalsIgnoreCase("Recovery required"))) {
             parts.add(value);
@@ -268,6 +291,11 @@ final class Tui4jTerminalView {
         return java.util.Optional.of(statusStyle(value, content));
     }
 
+    private String workingStatus(Duration elapsed) {
+        long seconds = Math.max(0, elapsed.toSeconds());
+        return "Working (%02dm %02ds · esc to interrupt)".formatted(seconds / 60, seconds % 60);
+    }
+
     private String style(TranscriptItem item, String content) {
         if (item.kind() == TranscriptItem.Kind.USER) return theme.user(content);
         if (item.kind() == TranscriptItem.Kind.ERROR) return theme.error(content);
@@ -279,7 +307,9 @@ final class Tui4jTerminalView {
     private String statusStyle(String status, String content) {
         String normalized = status.strip().toUpperCase(Locale.ROOT);
         if (SUCCESS_STATUSES.contains(normalized)) return theme.success(content);
-        if (PENDING_STATUSES.contains(normalized)) return theme.pending(content);
+        if (PENDING_STATUSES.contains(normalized) || normalized.startsWith("WORKING (")) {
+            return theme.pending(content);
+        }
         if (ERROR_STATUSES.contains(normalized)) return theme.error(content);
         return content;
     }
@@ -302,12 +332,6 @@ final class Tui4jTerminalView {
                 && !normalized.equals("none")
                 && !normalized.equals("loaded resources: none")
                 && !normalized.equals("resources: none");
-    }
-
-    private void addGitIfReal(List<String> target, String value) {
-        String normalized = value.strip().toLowerCase(Locale.ROOT);
-        if (normalized.equals("git: unavailable") || normalized.equals("git: via safe read model")) return;
-        addMeaningful(target, value);
     }
 
     private void addMeaningful(List<String> target, String value) {

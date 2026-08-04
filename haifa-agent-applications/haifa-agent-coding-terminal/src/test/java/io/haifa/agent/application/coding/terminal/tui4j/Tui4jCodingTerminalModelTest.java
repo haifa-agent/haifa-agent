@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.input.MouseAction;
+import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
+import com.williamcallahan.tui4j.compat.bubbletea.input.MouseMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.Key;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
 import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
@@ -167,6 +170,34 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void routesMouseWheelToTranscriptWithoutBrowsingEditorHistory() {
+        var fixture = fixture();
+        fixture.model.init();
+        for (int index = 1; index <= 30; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.update(new PasteMessage("current draft"));
+        assertThat(fixture.model.view()).contains("history-30");
+
+        fixture.model.update(wheel(MouseButton.MouseButtonWheelUp));
+        fixture.model.update(wheel(MouseButton.MouseButtonWheelUp));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("current draft");
+        assertThat(fixture.model.view()).contains("history-28").doesNotContain("history-30");
+
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "LATEST_OUTPUT", "SUCCEEDED"));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("new output below").doesNotContain("LATEST_OUTPUT");
+
+        for (int index = 0; index < 20; index++) {
+            fixture.model.update(wheel(MouseButton.MouseButtonWheelDown));
+        }
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("current draft");
+        assertThat(fixture.model.view()).contains("LATEST_OUTPUT").doesNotContain("new output below");
+    }
+
+    @Test
     void preservesHistoryDraftAndSynchronizesTheAuthoritativeCursor() {
         var fixture = fixture();
 
@@ -260,6 +291,10 @@ class Tui4jCodingTerminalModelTest {
 
     private KeyPressMessage runes(char value) {
         return new KeyPressMessage(new Key(KeyType.KeyRunes, new char[] {value}));
+    }
+
+    private MouseMessage wheel(MouseButton button) {
+        return new MouseMessage(1, 1, false, false, false, MouseAction.MouseActionPress, button);
     }
 
     private AgentRunEvent event(long sequence, AgentRunEvent.Payload payload) {

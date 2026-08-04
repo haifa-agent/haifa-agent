@@ -17,6 +17,12 @@ class LocalWorkspacePathCatalogTest {
         Files.writeString(workspace.resolve("README.md"), "readme");
         Files.writeString(workspace.resolve("src/main/App.java"), "class App {}");
         Files.writeString(workspace.resolve(".env"), "SECRET=value");
+        Files.writeString(workspace.resolve(".notes"), "hidden");
+        Files.writeString(workspace.resolve("src/.hidden.java"), "hidden");
+        Files.createDirectories(workspace.resolve(".hidden-dir"));
+        Files.writeString(workspace.resolve(".hidden-dir/inside.txt"), "hidden");
+        Files.createDirectories(workspace.resolve("src/.hidden-dir"));
+        Files.writeString(workspace.resolve("src/.hidden-dir/inside.txt"), "hidden");
         Files.createDirectories(workspace.resolve(".git"));
         Files.writeString(workspace.resolve(".git/config"), "private");
         Files.createDirectories(workspace.resolve("target"));

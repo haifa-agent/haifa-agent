@@ -78,8 +78,9 @@ Editor or Selector
 Footer
 ```
 
-不再常驻渲染 Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。Footer 只显示
-已有真实来源的 Project、Git（存在安全 Read Model 时）、Session、Context/Queue、Provider/Model 和 Run 状态；
+不再常驻渲染 Diagnostics、空 Pending、`Widgets above/below none` 或 `Footer` 标签。Editor hint
+下方显示已有真实来源的当前模型、Workspace 绝对路径和 Git 分支；后续状态行显示 Session、
+Context/Queue 和 Run 状态；
 Provider/Model 来自 Coding Product Facade 的脱敏投影，Terminal 不读取 Model Core、Provider 配置或
 SQLite。`git: via safe read model`、`sandbox: frozen profile` 等实现占位字段不进入
 产品界面。
@@ -116,7 +117,8 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] Tool 专用预览器、跨 Tool 聚合和批量展开；首版保持每个稳定 Tool Call ID 可独立审计。
 
 Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示
-`enter steer · alt+enter follow-up · esc interrupt`。macOS 的 Option 对应 Terminal Alt；
+`enter steer · alt+enter follow-up · esc interrupt`。等待模型或其他活动 Run 场景的状态显示为
+`Working (XXm YYs · esc to interrupt)`，使用进程内单调时钟累计，不写入 Session 或持久化事实。macOS 的 Option 对应 Terminal Alt；
 `Shift+Enter` 和 `Ctrl+J` 都用于换行。Phase C 会从终端能力白名单中识别 Windows Terminal、
 WezTerm、Alacritty、Apple Terminal 和常见受限终端：存在修饰 Enter 冲突时显示可执行 remap 或
 `Ctrl+J` fallback，但不读取秘密、不写入用户终端配置。非交互输入或 `TERM=dumb` 在装配产品 Runtime
@@ -140,6 +142,8 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随。
+- 鼠标滚轮与 PageUp/PageDown 一样只滚动 Transcript Viewport，不浏览输入历史或移动 Editor 光标；
+  向下滚到底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和多行光标移动语义。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
 50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成
@@ -182,7 +186,7 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - 输入 `/` 或 `@` 后立即打开可见候选选择器，Tab 仍可按当前 token 重新打开；方向键选择、Enter
   回填；空闲时 Escape 关闭并保留草稿，活动 Run 时 Escape 优先取消任务；
 - `/command` 与 `/commands` 打开同一命令选择器；`@path` 候选来自受限 Workspace 文件和目录，
-  目录以 `/` 结尾，不列出敏感路径、版本库元数据和常见生成目录；
+  目录以 `/` 结尾，不列出任意路径层级中点号开头的隐藏文件/目录、敏感路径、版本库元数据和常见生成目录；
 - pending Approval 在同一 tui4j Program input owner 中 approve/reject；
 - `/model` 打开安全 Selector，也支持 `/model <internal-id>`；活动 Run 期间拒绝切换，成功后只影响
   下一新 Run；

@@ -159,7 +159,7 @@ def validate_arguments(args: argparse.Namespace) -> None:
 
 
 def paths() -> Paths:
-    repository = Path(__file__).resolve().parents[3]
+    repository = Path(__file__).resolve().parents[1]
     server = repository / "haifa-agent-applications/haifa-agent-personal-assistant-server"
     web = repository / "haifa-agent-applications/haifa-agent-personal-assistant-web"
     runtime = repository / "local-tmp/personal-assistant-real"

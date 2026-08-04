@@ -53,7 +53,9 @@ final class LocalWorkspacePathCatalog {
                             }
                             ProjectPath logical = logical(directory);
                             String name = directory.getFileName().toString().toLowerCase(Locale.ROOT);
-                            if (SKIPPED_DIRECTORIES.contains(name) || !sensitivePaths.mayRead(logical)) {
+                            if (name.startsWith(".")
+                                    || SKIPPED_DIRECTORIES.contains(name)
+                                    || !sensitivePaths.mayRead(logical)) {
                                 return FileVisitResult.SKIP_SUBTREE;
                             }
                             results.add(logical.value() + "/");
@@ -69,7 +71,7 @@ final class LocalWorkspacePathCatalog {
                                     && !Files.isSymbolicLink(file)
                                     && Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
                                 ProjectPath logical = logical(file);
-                                if (sensitivePaths.mayRead(logical)) {
+                                if (!file.getFileName().toString().startsWith(".") && sensitivePaths.mayRead(logical)) {
                                     results.add(logical.value());
                                 }
                             }

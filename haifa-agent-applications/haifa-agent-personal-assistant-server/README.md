@@ -196,21 +196,21 @@ Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相�
 
 真实 DeepSeek、外部 Utility MCP 和独立 Web 的可重复环境搭建方法见
 [`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。PowerShell 与 POSIX Shell 入口都要求 Python 3；两者只负责
-参数兼容和解释器发现，启动、健康检查、状态文件与安全停止逻辑统一由
-`scripts/real_environment.py` 实现。
+参数兼容和解释器发现，启动、健康检查、状态文件与安全停止逻辑统一由根目录
+[`scripts/real_environment.py`](../../scripts/real_environment.py) 实现。
 
 macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 
 ```bash
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh
+./scripts/start-real-environment.sh
 
 # 只校验将要停止的 PID、端口和进程身份
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh \
+./scripts/start-real-environment.sh \
   --stop --dry-run
 
 # 停止后重新构建并启动
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh --stop
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh --rebuild
+./scripts/start-real-environment.sh --stop
+./scripts/start-real-environment.sh --rebuild
 ```
 
 Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据

@@ -2,6 +2,15 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Personal Assistant 真实环境的 PowerShell、POSIX、Python 生命周期脚本及单测统一迁移至根目录
+  `scripts/`，并同步启动、停止和环境搭建文档中的调用路径。
+- 修复 Coding Terminal 未启用鼠标报告而将滚轮退化为输入历史方向键的问题；滚轮现在滚动 Transcript，
+  到达底部后恢复新输出自动跟随，并保持 Editor 草稿和输入历史不变。
+- Coding Terminal 的 `@path` 补全现在过滤任意点号开头的文件或目录；活动状态显示累计耗时与
+  `esc to interrupt`，Editor hint 下方显示当前模型、Workspace 绝对路径及可用的 Git 分支。
+- Coding Agent 向模型冻结披露 `execution_run` 使用的宿主 Shell 方言，避免 Windows PowerShell
+  环境生成 POSIX 混合命令；执行前后 Manifest 现在按冻结的生成目录/根 `.gitignore` 目录策略过滤，
+  避免大型构建产物导致可信结果退化为 `OUTCOME_UNKNOWN`；新增真实批准后执行回归。
 - Coding Agent 的普通交互不再因缺少工具或交付证据进入完成修复：未声明可信任务模式且没有权威
   Workspace 修改时，文本回答可正常结束；显式 CHANGE/CREATE/ANALYZE/REVIEW 及已观察到的修改
   继续执行既有证据门禁，真实 Provider 故障仍按原错误终止。
@@ -16,7 +25,7 @@
 - Coding Agent 改用产品拥有的版本化短 Prompt，移除 CLI 中按 Case 累积的方法论字符串；动态 Context
   只披露预算、实际修改、验证、Diff 和缺失证据等事实，生产完成门禁不再依赖关键词验证计划或模型
   自报的语义覆盖标签。
-- 新增 macOS/Linux Local Coding Agent 可搬运发行目录：打包脚本生成 shaded JAR、无密钥安全配置和
+- 新增 macOS/Linux Haifa Coding Agent 可搬运发行目录：打包脚本生成 shaded JAR、无密钥安全配置和
   `haifa-coding` 启动器；将发行目录加入 `PATH` 后可从任意项目目录启动，并默认以当前目录作为
   Workspace。
 - 修复 Coding Agent 的 `execution.run` 失败链：macOS 启动器会物理解析符号链接 `JAVA_HOME`；

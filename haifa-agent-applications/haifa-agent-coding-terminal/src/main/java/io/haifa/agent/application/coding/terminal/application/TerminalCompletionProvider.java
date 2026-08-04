@@ -39,6 +39,7 @@ public final class TerminalCompletionProvider {
         if (word.startsWith("@")) {
             return logicalPaths.get().stream()
                     .map(TerminalCompletionProvider::safeLogicalPath)
+                    .filter(TerminalCompletionProvider::isVisibleLogicalPath)
                     .filter(value -> value.startsWith(word.substring(1)))
                     .map(value -> "@" + value)
                     .limit(MAX_CANDIDATES)
@@ -54,5 +55,11 @@ public final class TerminalCompletionProvider {
             throw new IllegalArgumentException("logical path must stay relative");
         }
         return safe;
+    }
+
+    private static boolean isVisibleLogicalPath(String value) {
+        return java.util.Arrays.stream(value.split("/"))
+                .filter(segment -> !segment.isEmpty())
+                .noneMatch(segment -> segment.startsWith("."));
     }
 }

@@ -327,7 +327,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             tenant,
                             principal,
                             workspaceIdentity.safeDisplayName(),
-                            "Local Coding Agent workspace",
+                            "Haifa Coding Agent workspace",
                             new ProjectConfigurationRef(configurationId.value(), configurationVersion.value()),
                             time.now(),
                             Map.of("identityNamespace", "local-workspace-v1"))
@@ -371,6 +371,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             time,
                             clock,
                             policy,
+                            workspaceRoot,
                             output)
                     : null;
             var provider = new ProjectToolExecutor(
@@ -459,6 +460,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             configuration.skills().allowedAliases(),
                             Set.of(),
                             CodingAgentPrompt.current().text()
+                                    + executionEnvironmentPrompt(
+                                            executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + resources.snapshot().instructionBlock(),
                             List.of()))
                     .profiles((profileId, overrides) -> new ResolvedProfile(
@@ -556,6 +559,15 @@ final class LocalCodingAgent implements AutoCloseable {
             }
             throw exception;
         }
+    }
+
+    static String executionEnvironmentPrompt(String shellDisplayName) {
+        if (shellDisplayName == null || shellDisplayName.isBlank()) return "";
+        return "\n\nRuntime execution environment:\n"
+                + "- execution_run uses "
+                + shellDisplayName.strip()
+                + " command syntax on this host.\n"
+                + "- Generate commands for that configured shell; do not assume a POSIX shell or mix shell dialects.";
     }
 
     AgentRunSnapshot start(String message) {

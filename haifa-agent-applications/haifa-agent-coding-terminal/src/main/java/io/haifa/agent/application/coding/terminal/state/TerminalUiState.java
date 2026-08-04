@@ -47,6 +47,11 @@ public record TerminalUiState(
     }
 
     public static TerminalUiState initial(int columns, int rows) {
+        return initial(columns, rows, TerminalWorkspaceContext.empty());
+    }
+
+    public static TerminalUiState initial(int columns, int rows, TerminalWorkspaceContext workspace) {
+        Objects.requireNonNull(workspace, "workspace must not be null");
         return new TerminalUiState(
                 "Haifa Coding Agent",
                 List.of("Loaded resources: none"),
@@ -56,7 +61,8 @@ public record TerminalUiState(
                 "",
                 0,
                 Optional.empty(),
-                TerminalFooter.empty(),
+                new TerminalFooter(
+                        workspace.workingDirectory(), workspace.gitBranch(), "", "context: —", "", "", "IDLE", ""),
                 columns,
                 rows,
                 Optional.empty(),

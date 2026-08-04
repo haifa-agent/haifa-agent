@@ -16,7 +16,7 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 - Java 21；
 - Maven 可通过 `mvn.cmd` 使用；
 - Node.js 22.x、npm 10.x；
-- Python 3；PowerShell 与 POSIX Shell 入口共用 `scripts/real_environment.py` 中的生命周期实现；
+- Python 3；PowerShell 与 POSIX Shell 入口共用仓库根目录 `scripts/real_environment.py` 中的生命周期实现；
 - 主仓：`D:\workspace\haifa-agent`；
 - Utility MCP 仓库：
   `D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server`；
@@ -33,7 +33,7 @@ Key 文件不能提交到 Git，也不要把内容复制到命令历史、日志
 
 ```powershell
 Set-Location D:\workspace\haifa-agent
-& .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1
+& .\scripts\start-real-environment.ps1
 ```
 
 `.ps1` 与同目录 `.sh` 只处理各自平台的参数入口和 Python 3 解释器发现；服务配置、构建、健康检查、
@@ -67,7 +67,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 先使用脚本自身的停止功能关闭旧环境：
 
 ```powershell
-& .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 -Stop
+& .\scripts\start-real-environment.ps1 -Stop
 ```
 
 停止前，脚本会同时核对 `last-start.json` 记录的 PID、端口当前监听 PID、进程名和
@@ -76,14 +76,14 @@ Set-ExecutionPolicy -Scope Process Bypass
 需要只查看将要停止的进程时：
 
 ```powershell
-& .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 -Stop -WhatIf
+& .\scripts\start-real-environment.ps1 -Stop -WhatIf
 ```
 
 状态文件缺失、记录 PID 已过期或进程身份校验无法通过时，可按三个固定端口的当前监听
 进程显式强制停止：
 
 ```powershell
-& .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 -Stop -Force
+& .\scripts\start-real-environment.ps1 -Stop -Force
 ```
 
 `-Force` 只允许与 `-Stop` 一起使用。它会把状态或身份不一致降级为警告，并强制结束
@@ -93,7 +93,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 确认 20000、20001、20002 均已释放后，再执行：
 
 ```powershell
-& .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 -Rebuild
+& .\scripts\start-real-environment.ps1 -Rebuild
 ```
 
 `-Rebuild` 会重新构建后端和前端。为了避免 Windows 上正在运行的 JAR 文件锁和
@@ -102,7 +102,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 需要使用非默认 Key 或 MCP 路径时：
 
 ```powershell
-& .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 `
+& .\scripts\start-real-environment.ps1 `
   -DeepSeekKeyFile 'D:\secure\deepseek.txt' `
   -AliyunIqsKeyFile 'D:\secure\aliyun-iqs.txt' `
   -ContinuationKeyFile 'D:\secure\personal-continuation.txt' `
@@ -174,7 +174,7 @@ D:\workspace\haifa-agent\local-tmp\personal-assistant-real\logs\
 正常停止直接使用启动脚本：
 
 ```powershell
-& .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1 -Stop
+& .\scripts\start-real-environment.ps1 -Stop
 ```
 
 停止结果写入：
@@ -232,13 +232,13 @@ macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚�
 从主仓根目录启动：
 
 ```bash
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh
+./scripts/start-real-environment.sh
 ```
 
 路径不同时显式覆盖：
 
 ```bash
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh \
+./scripts/start-real-environment.sh \
   --deepseek-key-file /absolute/secure/deepseek.txt \
   --aliyun-iqs-key-file /absolute/secure/aliyun-iqs.txt \
   --continuation-key-file /absolute/secure/personal-continuation.txt \
@@ -261,14 +261,14 @@ HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST
 
 ```bash
 # 只显示并验证目标，不停止进程
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh \
+./scripts/start-real-environment.sh \
   --stop --dry-run
 
 # 安全停止
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh --stop
+./scripts/start-real-environment.sh --stop
 
 # 三个端口释放后执行后端 clean package、重新构建前端并启动
-./haifa-agent-applications/haifa-agent-personal-assistant-server/scripts/start-real-environment.sh --rebuild
+./scripts/start-real-environment.sh --rebuild
 ```
 
 macOS 与 Windows 共用：

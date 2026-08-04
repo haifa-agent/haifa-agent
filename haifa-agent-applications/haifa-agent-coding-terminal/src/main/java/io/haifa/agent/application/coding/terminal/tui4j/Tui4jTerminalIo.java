@@ -112,6 +112,8 @@ public record Tui4jTerminalIo(
         // mappings for modified Enter; other CSI-u control keys can leak trailing text
         // into the editor (for example Ctrl+O becoming "5u"). Traditional control-key
         // input keeps Ctrl+O as keySI while the registered Enter fallbacks remain usable.
-        return new Program(model, options.toArray(ProgramOption[]::new)).withAltScreen();
+        return new Program(model, options.toArray(ProgramOption[]::new))
+                .withAltScreen()
+                .withMouseCellMotion();
     }
 }
