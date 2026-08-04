@@ -34,7 +34,35 @@ $env:Path = 'D:\tools\haifa-coding-agent;' + $env:Path
 随后在任意已有项目目录执行 `haifa-coding`；启动脚本不会改变当前目录，CLI 会把它作为默认
 Workspace。详细配置与安全边界见 `haifa-agent-applications/haifa-agent-cli/README.md`。
 
+Linux 的确定性发行/文件系统/Git/进程 Happy Path 可用
+`coding-agent-linux-special-smoke.py` 验证。它不调用模型，要求仓库外尚不存在的运行目录和已生成的
+POSIX 发行启动器：
+
+```bash
+python3 scripts/coding-agent-linux-special-smoke.py \
+  --run-root /tmp/haifa-coding-linux-special-001 \
+  --launcher /absolute/path/to/haifa-coding
+```
+
+该脚本验证发行权限、空格/Unicode 路径与 cwd、Linux 大小写和可执行位、shebang、原子移动、自然
+完成的子进程树，以及 Git file-mode diff、dirty diff 和 worktree 正常释放，并生成 JSON 与 SHA-256
+Manifest。超时、信号升级、资源耗尽和恶意路径属于单独的非 Happy Path 测试。
+
 ## Terminal UI 离线冒烟
+
+Linux/macOS 可使用 `terminal-ui-unix-pty-smoke.py` 在真实 Unix PTY 中启动本地发行包。该脚本只输入
+不会触发模型的编辑器草稿与 `/quit`，验证 UTF-8、Resize、alternate-screen 进入/退出和正常进程结束；
+它不会调用 Provider。`--run-root` 必须是仓库外尚不存在的目录：
+
+```bash
+python3 scripts/terminal-ui-unix-pty-smoke.py \
+  --run-root /tmp/haifa-terminal-unix-pty-001 \
+  --launcher /absolute/path/to/haifa-coding \
+  --workspace /absolute/path/to/test-workspace
+```
+
+输出包含 ANSI、纯文本、asciicast v2、输入动作、结果和 SHA-256 Manifest。该外部 Driver 只验证
+现有生产 Terminal 在 Unix PTY 下的前台交互，不表示 Coding Agent 已提供后台 PTY Tool 或 Job 能力。
 
 `terminal-ui-smoke.mjs` 通过 Windows ConPTY 启动真实 shaded CLI 系统终端，记录 ANSI、
 asciicast v2、纯文本、输入时间线、Trace 和校验清单。运行根必须位于源码仓库之外且事先不存在；

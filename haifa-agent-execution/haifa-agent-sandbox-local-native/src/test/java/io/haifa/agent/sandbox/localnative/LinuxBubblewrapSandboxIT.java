@@ -16,4 +16,11 @@ class LinuxBubblewrapSandboxIT {
                 System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("linux"));
         LocalNativeOsIsolationSupport.verify(temporary, "linux-bubblewrap");
     }
+
+    @Test
+    void allowsWorkspaceScratchLoopbackAndNaturalChildCompletion() throws Exception {
+        Assumptions.assumeTrue(
+                System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("linux"));
+        LocalNativeOsIsolationSupport.verifyLinuxHappyPath(temporary);
+    }
 }

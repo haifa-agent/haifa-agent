@@ -9,10 +9,36 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class HostShellTest {
+    @Test
+    void linuxAutoShellExecutesUtf8QuotingPipesAndRedirection(@TempDir Path temporary) throws Exception {
+        assumeTrue(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("linux"));
+        HostShell shell = HostShell.auto();
+
+        assertThat(shell.displayName()).isEqualTo("Bash");
+        assertThat(shell.invocationPrefix()).containsExactly("/bin/bash", "-lc");
+
+        Process process = new ProcessBuilder(shell.launch(
+                        "value='中文 value'; printf '%s\\n' \"$value\" | tr 'a-z' 'A-Z' > result.txt; cat result.txt"))
+                .directory(temporary.toFile())
+                .start();
+        byte[] output = process.getInputStream().readAllBytes();
+        byte[] error = process.getErrorStream().readAllBytes();
+
+        assertThat(process.waitFor(Duration.ofSeconds(10).toMillis(), TimeUnit.MILLISECONDS))
+                .isTrue();
+        assertThat(process.exitValue()).isZero();
+        assertThat(decodeStrictUtf8(output)).isEqualTo("中文 VALUE\n");
+        assertThat(decodeStrictUtf8(error)).isEmpty();
+        assertThat(java.nio.file.Files.readString(temporary.resolve("result.txt")))
+                .isEqualTo("中文 VALUE\n");
+    }
+
     @Test
     void compilesTrustedBashAndPowerShellLaunchArgumentsWithoutExposingCommandText() {
         Path executable = javaExecutable();
