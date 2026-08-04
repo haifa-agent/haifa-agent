@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.context.compression.CompressionPolicy;
+import io.haifa.agent.context.compression.CompressionRequest;
+import io.haifa.agent.context.compression.CompressionResult;
+import io.haifa.agent.context.compression.ContextCompressor;
 import io.haifa.agent.context.compression.DeterministicContextCompressor;
 import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.core.agent.AgentDefinitionId;
@@ -50,6 +53,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -132,14 +136,11 @@ class SessionCompressionCheckpointTest {
                 new CompressionPolicy(2, 10, 1),
                 () -> "summary-id-" + ids.incrementAndGet(),
                 () -> NOW);
-        var first = source.select(run, 0);
+        var first = source.compact(run.sessionId());
         var summary = first.summary().orElseThrow();
 
-        assertThat(first.items())
-                .filteredOn(item -> item.content() instanceof MessageGroupContextContent)
-                .anySatisfy(item -> assertThat(((MessageGroupContextContent) item.content()).messages())
-                        .extracting(AgentMessage::id)
-                        .containsExactly(new AgentMessageId("assistant-tool"), new AgentMessageId("tool-result")));
+        assertThat(summary.sourceMessageIds())
+                .containsSubsequence(new AgentMessageId("assistant-tool"), new AgentMessageId("tool-result"));
         assertThat(source.select(run, 0).summary().orElseThrow().version()).isEqualTo(summary.version());
         assertThatThrownBy(() -> store.compareAndSet(summary, 0)).isInstanceOf(OptimisticLockException.class);
 
@@ -147,8 +148,134 @@ class SessionCompressionCheckpointTest {
         assertThat(store.latestValid(run.sessionId())).isEmpty();
         store.appendSessionMessage(
                 draft("post-redaction", run.sessionId(), run.id().value(), MessageRole.USER, "after redaction"));
-        assertThat(source.select(run, 0).summary().orElseThrow().version().value())
+        assertThat(source.compact(run.sessionId())
+                        .summary()
+                        .orElseThrow()
+                        .version()
+                        .value())
                 .isEqualTo(2);
+    }
+
+    @Test
+    void automaticSummaryRemainsImmutableWhileNewSessionMessagesAppend() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        AtomicInteger ids = new AtomicInteger();
+        var runtime = runtime(store, scheduler, request -> finalResponse("unused"), ids);
+        var accepted = runtime.start(request("stable-summary-run", "stable-summary-session"));
+        var run = store.find(accepted.runId()).orElseThrow();
+        store.appendSessionMessage(draft("stable-two", run.sessionId(), run.id().value(), MessageRole.USER, "two"));
+        store.appendSessionMessage(
+                draft("stable-three", run.sessionId(), run.id().value(), MessageRole.USER, "three"));
+
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(2, 10, 1),
+                () -> "stable-summary-" + ids.incrementAndGet(),
+                () -> NOW);
+        var first = source.compact(run.sessionId());
+        var checkpoint = first.summary().orElseThrow();
+
+        store.appendSessionMessage(
+                draft("stable-four", run.sessionId(), run.id().value(), MessageRole.USER, "four"));
+        var second = source.select(run, 0);
+
+        assertThat(second.summary()).contains(checkpoint);
+        assertThat(second.items().stream().map(item -> item.id().value()).toList())
+                .startsWith(
+                        first.items().stream().map(item -> item.id().value()).toArray(String[]::new));
+        assertThat(second.items())
+                .filteredOn(item -> item.content() instanceof MessageGroupContextContent)
+                .flatExtracting(item -> ((MessageGroupContextContent) item.content()).messages())
+                .extracting(AgentMessage::id)
+                .containsExactly(new AgentMessageId("stable-three"), new AgentMessageId("stable-four"));
+        assertThat(store.latestVersion(run.sessionId())).isEqualTo(1);
+    }
+
+    @Test
+    void automaticCompactionUsesTokenBudgetInsteadOfMessageCountAndSwitchesOnlyOnce() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        AtomicInteger ids = new AtomicInteger();
+        var runtime = runtime(store, scheduler, request -> finalResponse("unused"), ids);
+        var accepted = runtime.start(request("token-window-run", "token-window-session"));
+        var run = store.find(accepted.runId()).orElseThrow();
+        for (int index = 2; index <= 15; index++) {
+            store.appendSessionMessage(draft(
+                    "token-message-" + index, run.sessionId(), run.id().value(), MessageRole.USER, "short-" + index));
+        }
+
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                new DeterministicContextCompressor(),
+                new CompressionPolicy(12, 32, 4),
+                () -> "token-summary-" + ids.incrementAndGet(),
+                () -> NOW);
+
+        var belowThreshold = source.select(run, 0, 10_000);
+        assertThat(belowThreshold.summary()).isEmpty();
+        assertThat(belowThreshold.compacted()).isFalse();
+
+        var threshold = source.select(run, 0, 80);
+        var checkpoint = threshold.summary().orElseThrow();
+        assertThat(threshold.compacted()).isTrue();
+        assertThat(threshold.compactionReason()).isEqualTo(SessionMessageSource.CompactionReason.TOKEN_THRESHOLD);
+
+        store.appendSessionMessage(
+                draft("token-message-16", run.sessionId(), run.id().value(), MessageRole.USER, "short-16"));
+        var reused = source.select(run, 0, 10_000);
+        assertThat(reused.summary()).contains(checkpoint);
+        assertThat(reused.compacted()).isFalse();
+        assertThat(reused.compactionReason()).isEqualTo(SessionMessageSource.CompactionReason.NONE);
+        assertThat(store.latestVersion(run.sessionId())).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentCompactionAdoptsTheSingleCasWinner() throws Exception {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId session = new AgentSessionId("concurrent-compaction-session");
+        store.appendSessionMessage(draft("concurrent-one", session, "run-1", MessageRole.USER, "one"));
+        store.appendSessionMessage(draft("concurrent-two", session, "run-1", MessageRole.USER, "two"));
+        store.appendSessionMessage(draft("concurrent-three", session, "run-1", MessageRole.USER, "three"));
+        DeterministicContextCompressor delegate = new DeterministicContextCompressor();
+        CountDownLatch compressorsReady = new CountDownLatch(2);
+        ContextCompressor synchronizedCompressor = new ContextCompressor() {
+            @Override
+            public CompressionResult compress(CompressionRequest request) {
+                compressorsReady.countDown();
+                try {
+                    assertThat(compressorsReady.await(5, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("concurrent compressor interrupted", interrupted);
+                }
+                return delegate.compress(request);
+            }
+
+            @Override
+            public String version() {
+                return delegate.version();
+            }
+        };
+        AtomicInteger ids = new AtomicInteger();
+        SessionMessageSource source = new SessionMessageSource(
+                store,
+                store,
+                synchronizedCompressor,
+                new CompressionPolicy(3, 10, 1),
+                () -> "concurrent-summary-" + ids.incrementAndGet(),
+                () -> NOW);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> source.compact(session));
+            var second = executor.submit(() -> source.compact(session));
+            assertThat(first.get(10, TimeUnit.SECONDS).summary())
+                    .isEqualTo(second.get(10, TimeUnit.SECONDS).summary());
+        }
+        assertThat(store.latestVersion(session)).isEqualTo(1);
     }
 
     @Test
@@ -181,11 +308,14 @@ class SessionCompressionCheckpointTest {
                 () -> "unused-summary",
                 () -> NOW);
 
-        assertThat(source.compact(session).items())
+        var selection = source.compact(session);
+        assertThat(selection.summary().orElseThrow().sourceMessageIds())
+                .containsExactly(new AgentMessageId("m-user-before"));
+        assertThat(selection.items())
                 .filteredOn(item -> item.content() instanceof MessageGroupContextContent)
                 .flatExtracting(item -> ((MessageGroupContextContent) item.content()).messages())
                 .extracting(AgentMessage::id)
-                .containsExactly(new AgentMessageId("m-user-before"), new AgentMessageId("m-user-after"));
+                .containsExactly(new AgentMessageId("m-user-after"));
     }
 
     @Test
@@ -383,6 +513,19 @@ class SessionCompressionCheckpointTest {
                     .isNotEqualTo(tool.idempotencyKey().value());
         });
         assertThat(traces).anyMatch(trace -> trace.operation().equals("context.forced-rebuild"));
+        assertThat(traces)
+                .filteredOn(trace -> trace.operation().equals("context.built"))
+                .anySatisfy(trace -> assertThat(trace.safeAttributes())
+                        .containsKeys(
+                                "windowGeneration",
+                                "compactionGeneration",
+                                "compactionCount",
+                                "compacted",
+                                "compactionReason",
+                                "compactionElapsedMillis",
+                                "estimatedSessionTokens",
+                                "sessionTokenBudget",
+                                "summarySourceHash"));
     }
 
     @Test

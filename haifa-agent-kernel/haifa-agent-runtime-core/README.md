@@ -81,10 +81,14 @@ wake-up 再 drain 持久 Journal，通知丢失由有界轮询补偿。Listener 
 replay-then-tail 订阅。Task 03 的 HTTP/SSE 参考 Adapter 位于 Integration 层，只通过 Runtime API
 访问本模块。
 
-`SessionMessageSource.compact(sessionId)` 是产品手动压缩复用的唯一入口：它继续使用
-`ConversationSummaryRepository`、确定性 Compressor、Policy/version 和 CAS，按当前唯一线性
-Session 历史保留最近原子消息组并生成 Summary，不删除原始 Message，也不建立 Terminal Summary
-Store。Tree/活动路径延期期间不得把该入口解释为分支感知压缩。
+`SessionMessageSource` 把有效 `ConversationSummary` 作为不可变 Context Window Checkpoint；普通消息只从
+`coveredThrough` 之后追加，只有输入 Token 预算达到阈值、强制重建或手动压缩才生成下一代 Summary。
+Tail 按 Token 预算从后向前选择，固定消息组数只作为安全上限，Tool Call/Result 原子组不会被拆开。
+`compact(sessionId)` 是产品手动压缩复用的唯一入口，并与自动切换共用 Policy/version、CAS、Redaction
+校验和原始 Message 保留语义。Context Trace 只记录窗口摘要、代次、触发原因和 Token 数，不记录正文。
+Todo 与 governed Memory 等可变快照位于 append-only Session 前缀之后，其安全 provenance digest 参与
+`windowGeneration` identity；变化表现为显式窗口边界，而不是静默改写未标识的前置内容。Tree/活动路径
+延期期间不得把该入口解释为分支感知压缩。
 
 Resume、Steer 和 Runtime Command 的 expected Run version 由 Runtime 校验；Resume/Command 的
 校验位于 UoW 执行路径，实际状态写入仍服从 Store 的 optimistic locking。Transport 的 `If-Match`

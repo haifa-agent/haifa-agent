@@ -32,6 +32,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.runtime.core.storage.OptimisticLockException;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -48,15 +49,30 @@ import java.util.Set;
 
 /** Loads cross-Run session facts and keeps tool protocol turns atomic during window selection. */
 public final class SessionMessageSource {
+    public enum CompactionReason {
+        NONE,
+        TOKEN_THRESHOLD,
+        FORCED_REBUILD,
+        MANUAL
+    }
+
     public record Selection(
             List<ContextItem> items,
             MessageCursor through,
             Optional<ConversationSummary> summary,
             String policyVersion,
-            String compressorVersion) {
+            String compressorVersion,
+            long windowGeneration,
+            long compactionCount,
+            boolean compacted,
+            CompactionReason compactionReason,
+            long compactionElapsedMillis,
+            long estimatedSessionTokens,
+            long sessionTokenBudget) {
         public Selection {
             items = List.copyOf(items);
             summary = Objects.requireNonNull(summary);
+            compactionReason = Objects.requireNonNull(compactionReason);
         }
     }
 
@@ -83,48 +99,192 @@ public final class SessionMessageSource {
     }
 
     public Selection select(AgentRun run, int forcedRebuildAttempt) {
-        return select(run.sessionId(), forcedRebuildAttempt);
+        return select(run, forcedRebuildAttempt, Long.MAX_VALUE);
+    }
+
+    public Selection select(AgentRun run, int forcedRebuildAttempt, long sessionTokenBudget) {
+        Objects.requireNonNull(run, "run must not be null");
+        return select(run.sessionId(), forcedRebuildAttempt, sessionTokenBudget, false);
     }
 
     /** Explicit deterministic compaction for the single linear Session path. */
     public Selection compact(AgentSessionId sessionId) {
-        return select(sessionId, 1);
+        return select(sessionId, 1, Long.MAX_VALUE, true);
     }
 
-    private Selection select(AgentSessionId sessionId, int forcedRebuildAttempt) {
+    private Selection select(
+            AgentSessionId sessionId, int forcedRebuildAttempt, long requestedSessionTokenBudget, boolean manual) {
+        if (requestedSessionTokenBudget < 1) {
+            throw new IllegalArgumentException("sessionTokenBudget must be positive");
+        }
         List<AgentMessage> visible =
                 messages.messagesAfter(sessionId, MessageCursor.BEFORE_FIRST, Integer.MAX_VALUE).stream()
                         .filter(this::visibleToContext)
                         .toList();
         if (visible.isEmpty()) {
             return new Selection(
-                    List.of(), MessageCursor.BEFORE_FIRST, Optional.empty(), policy.version(), compressor.version());
+                    List.of(),
+                    MessageCursor.BEFORE_FIRST,
+                    Optional.empty(),
+                    policy.version(),
+                    compressor.version(),
+                    0,
+                    summaries.latestVersion(sessionId),
+                    false,
+                    CompactionReason.NONE,
+                    0,
+                    0,
+                    requestedSessionTokenBudget);
         }
         List<List<AgentMessage>> groups = atomicGroups(visible);
-        int recentLimit = forcedRebuildAttempt > 0 ? policy.forcedRecentMessageGroups() : policy.recentMessageGroups();
-        int split = Math.max(0, groups.size() - recentLimit);
-        List<ContextItem> items = new ArrayList<>();
-        Optional<ConversationSummary> summary = Optional.empty();
-        if (split > 0) {
-            List<AgentMessage> older =
-                    groups.subList(0, split).stream().flatMap(List::stream).toList();
-            summary = Optional.of(summaryFor(sessionId, older));
-            items.add(summaryItem(summary.orElseThrow()));
-        }
-        List<List<AgentMessage>> recent = groups.subList(split, groups.size());
         Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun = new HashMap<>();
-        for (int index = 0; index < recent.size(); index++) {
-            boolean current = index == recent.size() - 1;
-            items.add(groupItem(recent.get(index), current, toolCallsByRun));
+        Optional<ConversationSummary> checkpoint = compatibleCheckpoint(sessionId);
+        List<List<AgentMessage>> activeGroups = groupsAfterCheckpoint(groups, checkpoint);
+        long activeTokens = checkpoint.map(ConversationSummary::estimatedTokens).orElse(0)
+                + estimateGroups(activeGroups, toolCallsByRun);
+        long sessionTokenBudget = requestedSessionTokenBudget == Long.MAX_VALUE
+                ? Math.max(1L, activeTokens)
+                : requestedSessionTokenBudget;
+        boolean thresholdReached = requestedSessionTokenBudget != Long.MAX_VALUE && activeTokens >= sessionTokenBudget;
+        boolean shouldCompact = manual || forcedRebuildAttempt > 0 || thresholdReached;
+        CompactionReason reason = manual
+                ? CompactionReason.MANUAL
+                : forcedRebuildAttempt > 0
+                        ? CompactionReason.FORCED_REBUILD
+                        : thresholdReached ? CompactionReason.TOKEN_THRESHOLD : CompactionReason.NONE;
+        if (!shouldCompact || groups.size() < 2) {
+            return selection(
+                    sessionId,
+                    checkpoint,
+                    activeGroups,
+                    visible.getLast().cursor(),
+                    toolCallsByRun,
+                    false,
+                    CompactionReason.NONE,
+                    0,
+                    activeTokens,
+                    sessionTokenBudget);
         }
-        return new Selection(items, visible.getLast().cursor(), summary, policy.version(), compressor.version());
+
+        long totalRawTokens = estimateGroups(groups, toolCallsByRun);
+        long effectiveBudget = requestedSessionTokenBudget == Long.MAX_VALUE ? totalRawTokens : sessionTokenBudget;
+        int retainedPercent =
+                forcedRebuildAttempt > 0 ? policy.forcedRetainedTailTokenPercent() : policy.retainedTailTokenPercent();
+        long retainedTailBudget = Math.max(1L, effectiveBudget * retainedPercent / 100L);
+        int groupLimit = forcedRebuildAttempt > 0 ? policy.forcedRecentMessageGroups() : policy.recentMessageGroups();
+        int split = tailSplit(groups, retainedTailBudget, groupLimit, toolCallsByRun);
+        if (split == 0) {
+            return selection(
+                    sessionId,
+                    checkpoint,
+                    activeGroups,
+                    visible.getLast().cursor(),
+                    toolCallsByRun,
+                    false,
+                    CompactionReason.NONE,
+                    0,
+                    activeTokens,
+                    sessionTokenBudget);
+        }
+
+        List<AgentMessage> older =
+                groups.subList(0, split).stream().flatMap(List::stream).toList();
+        long compactionStarted = System.nanoTime();
+        ConversationSummary summary = summaryFor(sessionId, older);
+        long compactionElapsedMillis =
+                java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(Math.max(0L, System.nanoTime() - compactionStarted));
+        List<List<AgentMessage>> tail = groups.stream()
+                .filter(group -> group.getFirst().cursor().compareTo(summary.coveredThrough()) > 0)
+                .toList();
+        long compactedTokens = summary.estimatedTokens() + estimateGroups(tail, toolCallsByRun);
+        MessageCursor selectedThrough =
+                summary.coveredThrough().compareTo(visible.getLast().cursor()) > 0
+                        ? summary.coveredThrough()
+                        : visible.getLast().cursor();
+        return selection(
+                sessionId,
+                Optional.of(summary),
+                tail,
+                selectedThrough,
+                toolCallsByRun,
+                checkpoint.isEmpty() || !checkpoint.orElseThrow().equals(summary),
+                reason,
+                compactionElapsedMillis,
+                compactedTokens,
+                sessionTokenBudget);
+    }
+
+    private Selection selection(
+            AgentSessionId sessionId,
+            Optional<ConversationSummary> summary,
+            List<List<AgentMessage>> groups,
+            MessageCursor through,
+            Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun,
+            boolean compacted,
+            CompactionReason reason,
+            long compactionElapsedMillis,
+            long estimatedTokens,
+            long sessionTokenBudget) {
+        List<ContextItem> items = new ArrayList<>();
+        summary.ifPresent(value -> items.add(summaryItem(value)));
+        for (int index = 0; index < groups.size(); index++) {
+            items.add(groupItem(groups.get(index), index == groups.size() - 1, toolCallsByRun));
+        }
+        return new Selection(
+                items,
+                through,
+                summary,
+                policy.version(),
+                compressor.version(),
+                summary.map(value -> value.version().value()).orElse(0L),
+                summaries.latestVersion(sessionId),
+                compacted,
+                reason,
+                compactionElapsedMillis,
+                estimatedTokens,
+                sessionTokenBudget);
+    }
+
+    private Optional<ConversationSummary> compatibleCheckpoint(AgentSessionId sessionId) {
+        return summaries
+                .latestValid(sessionId)
+                .filter(summary -> summary.policyVersion().equals(policy.version()))
+                .filter(summary -> summary.compressorVersion().equals(compressor.version()))
+                .filter(summary -> summaries.coversValidSource(summary, summary.coveredThrough()));
+    }
+
+    private List<List<AgentMessage>> groupsAfterCheckpoint(
+            List<List<AgentMessage>> groups, Optional<ConversationSummary> checkpoint) {
+        return checkpoint
+                .map(summary -> groups.stream()
+                        .filter(group -> group.getFirst().cursor().compareTo(summary.coveredThrough()) > 0)
+                        .toList())
+                .orElse(groups);
+    }
+
+    private int tailSplit(
+            List<List<AgentMessage>> groups,
+            long retainedTailBudget,
+            int groupLimit,
+            Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun) {
+        long retained = 0L;
+        int retainedGroups = 0;
+        int split = groups.size();
+        for (int index = groups.size() - 1; index >= 0; index--) {
+            long groupTokens = estimate(groups.get(index), toolCallsByRun);
+            if (retainedGroups > 0 && (retainedGroups >= groupLimit || retained + groupTokens > retainedTailBudget))
+                break;
+            retained = saturatedAdd(retained, groupTokens);
+            retainedGroups++;
+            split = index;
+        }
+        return split;
     }
 
     private ConversationSummary summaryFor(AgentSessionId sessionId, List<AgentMessage> source) {
         List<io.haifa.agent.core.message.AgentMessageId> sourceIds =
                 source.stream().map(AgentMessage::id).toList();
-        Optional<ConversationSummary> reusable = summaries
-                .latestValid(sessionId)
+        Optional<ConversationSummary> reusable = compatibleCheckpoint(sessionId)
                 .filter(summary -> summary.sourceMessageIds().equals(sourceIds))
                 .filter(summary ->
                         summaries.coversValidSource(summary, source.getLast().cursor()));
@@ -149,7 +309,18 @@ public final class SessionMessageSource {
                 || !summary.valid()) {
             throw new IllegalStateException("compressor returned an invalid coverage or version");
         }
-        return summaries.compareAndSet(summary, previous);
+        try {
+            return summaries.compareAndSet(summary, previous);
+        } catch (OptimisticLockException conflict) {
+            return compatibleCheckpoint(sessionId)
+                    .filter(winner -> winner.sourceMessageIds().size() >= sourceIds.size())
+                    .filter(winner -> winner.sourceMessageIds()
+                            .subList(0, sourceIds.size())
+                            .equals(sourceIds))
+                    .filter(winner ->
+                            winner.coveredThrough().compareTo(source.getLast().cursor()) >= 0)
+                    .orElseThrow(() -> conflict);
+        }
     }
 
     private ContextItem summaryItem(ConversationSummary summary) {
@@ -293,6 +464,15 @@ public final class SessionMessageSource {
             }
         }
         return Math.toIntExact(Math.max(1L, Math.min(Integer.MAX_VALUE, estimatedTokens)));
+    }
+
+    private long estimateGroups(
+            List<List<AgentMessage>> groups, Map<AgentRunId, Map<ToolCallId, ToolCall>> toolCallsByRun) {
+        long estimated = 0L;
+        for (List<AgentMessage> group : groups) {
+            estimated = saturatedAdd(estimated, estimate(group, toolCallsByRun));
+        }
+        return estimated;
     }
 
     private Map<ToolCallId, ToolCall> toolCallsById(AgentRunId runId) {
