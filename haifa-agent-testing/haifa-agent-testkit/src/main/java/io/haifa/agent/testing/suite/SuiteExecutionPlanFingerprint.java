@@ -1,5 +1,6 @@
 package io.haifa.agent.testing.suite;
 
+import io.haifa.agent.testing.repository.RepositoryRevision;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -22,11 +23,19 @@ public record SuiteExecutionPlanFingerprint(int schemaVersion, String sha256) {
         }
     }
 
-    public static SuiteExecutionPlanFingerprint create(SuiteManifest manifest, MatrixManifest.Combination combination) {
+    public static SuiteExecutionPlanFingerprint create(
+            SuiteManifest manifest,
+            MatrixManifest.Combination combination,
+            RepositoryRevision productRevision,
+            RepositoryRevision testConfigRevision) {
         Objects.requireNonNull(manifest, "manifest must not be null");
         Objects.requireNonNull(combination, "combination must not be null");
+        Objects.requireNonNull(productRevision, "productRevision must not be null");
+        Objects.requireNonNull(testConfigRevision, "testConfigRevision must not be null");
         MessageDigest digest = sha256Digest();
         add(digest, DOMAIN);
+        add(digest, productRevision.commit());
+        add(digest, testConfigRevision.commit());
         add(digest, manifest.schemaVersion());
         add(digest, manifest.suiteId());
         add(digest, manifest.matrixRef());
