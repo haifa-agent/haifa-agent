@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.execution.api.ExecutionCommand;
+import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
+import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
@@ -107,6 +109,85 @@ final class LocalNativeOsIsolationSupport {
             assertThat(timedOut.status()).isEqualTo(SandboxProcessStatus.TIMED_OUT);
             assertThat(timedOut.processTreeTerminated()).isTrue();
         }
+        if (Files.exists(configuration.controlRoot())) {
+            try (var entries = Files.list(configuration.controlRoot())) {
+                assertThat(entries).isEmpty();
+            }
+        }
+    }
+
+    static void verifyLinuxHappyPath(Path temporary) throws Exception {
+        Path workspaceRoot = Files.createDirectory(temporary.resolve("happy-workspace"));
+        Fixture fixture = fixture(workspaceRoot);
+        LocalNativeSandboxConfiguration defaults = LocalNativeSandboxConfiguration.defaults();
+        LocalNativeSandboxConfiguration configuration = new LocalNativeSandboxConfiguration(
+                List.of("/bin/bash", "-lc"),
+                temporary.resolve("happy-controls"),
+                defaults.seatbeltExecutable(),
+                defaults.bubblewrapExecutable(),
+                Map.of(),
+                Set.of());
+        LocalNativeSandboxProvider provider = new LocalNativeSandboxProvider(
+                fixture.workspaces(),
+                fixture.bindings(),
+                fixture.locations(),
+                () -> "happy-session-" + System.nanoTime(),
+                Instant::now,
+                configuration);
+        SandboxProfile profile = new SandboxProfile(
+                new SandboxProfileRef("local-native-linux-happy", "1"),
+                LocalNativeSandboxProvider.PROVIDER_ID,
+                configuration.digest(),
+                Set.of(),
+                Set.of(),
+                true,
+                NetworkPolicy.ALLOW,
+                new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
+                new SandboxCapabilities(true, true, false, false, false));
+        assertThat(provider.preflight(profile).adapterId()).isEqualTo("linux-bubblewrap");
+
+        try (ServerSocket listener = new ServerSocket(0);
+                var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId(), false))) {
+            Thread accept = Thread.ofPlatform().start(() -> {
+                try (var connection = listener.accept()) {
+                    connection.getOutputStream().write("loopback-ok".getBytes(StandardCharsets.UTF_8));
+                } catch (java.io.IOException exception) {
+                    throw new java.io.UncheckedIOException(exception);
+                }
+            });
+            String command =
+                    """
+                    printf workspace-ok > result.txt
+                    printf scratch-ok > "$TMPDIR/scratch.txt"
+                    (printf child-ok > child.txt) & child=$!
+                    wait "$child"
+                    exec 3<>/dev/tcp/127.0.0.1/%d
+                    IFS= read -r response <&3
+                    test "$response" = loopback-ok
+                    test "$(cat result.txt)" = workspace-ok
+                    test "$(cat child.txt)" = child-ok
+                    test "$(cat "$TMPDIR/scratch.txt")" = scratch-ok
+                    """
+                            .formatted(listener.getLocalPort());
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.shell(command),
+                    WorkspacePath.root(fixture.workspaceId()),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4),
+                    ExecutionInput.none(),
+                    ExecutionScratchSpaceSpec.genericRequired()));
+            accept.join(Duration.ofSeconds(10));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
+            assertThat(result.exitCode())
+                    .as("sandbox stderr=%s", new String(result.stderr(), StandardCharsets.UTF_8))
+                    .isZero();
+            assertThat(result.processTreeTerminated()).isTrue();
+            assertThat(result.scratchProvisioned()).isTrue();
+            assertThat(result.scratchCleanupFailed()).isFalse();
+        }
+        assertThat(Files.readString(workspaceRoot.resolve("result.txt"))).isEqualTo("workspace-ok");
+        assertThat(Files.readString(workspaceRoot.resolve("child.txt"))).isEqualTo("child-ok");
         if (Files.exists(configuration.controlRoot())) {
             try (var entries = Files.list(configuration.controlRoot())) {
                 assertThat(entries).isEmpty();
