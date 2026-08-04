@@ -4,6 +4,8 @@ import io.haifa.agent.context.api.AgentContextBuilder;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.api.ContextBuildRequest;
+import io.haifa.agent.context.budget.ContextWindowBudget;
+import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.item.ContextItem;
 import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.prompt.PromptComponent;
@@ -74,19 +76,38 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
         addSkillPrompts(run, middlewareContext);
 
+        List<ContextItem> memoryItems = memorySource.select(run, model);
+        int divisor = loopContext.forcedContextRebuildAttempts() > 0 ? 10 : 20;
+        int safetyMargin =
+                Math.min(16_384, Math.max(256, model.configuration().model().contextWindow() / divisor));
+        ContextWindowBudget budget = ContextWindowBudget.calculate(
+                model.configuration().model(),
+                run.budget(),
+                run.usage(),
+                model.configuration().model().maxOutputTokens(),
+                safetyMargin);
+        HeuristicTokenEstimator estimator = new HeuristicTokenEstimator();
+        long nonSessionTokens = middlewareContext.prompts().stream()
+                        .mapToLong(estimator::estimate)
+                        .sum()
+                + model.tools().stream().mapToLong(estimator::estimate).sum()
+                + middlewareContext.contextItems().stream()
+                        .mapToLong(estimator::estimate)
+                        .sum()
+                + memoryItems.stream().mapToLong(estimator::estimate).sum();
+        long sessionTokenBudget = Math.max(1L, budget.availableInputTokens() - nonSessionTokens);
         SessionMessageSource.Selection selection =
-                sessionMessages.select(run, loopContext.forcedContextRebuildAttempts());
-        List<ContextItem> items = new ArrayList<>(middlewareContext.contextItems());
+                sessionMessages.select(run, loopContext.forcedContextRebuildAttempts(), sessionTokenBudget);
+        List<ContextItem> items = new ArrayList<>(selection.items());
         selection.items().stream()
                 .filter(item -> item.content() instanceof MessageGroupContextContent)
                 .map(item -> (MessageGroupContextContent) item.content())
                 .flatMap(group -> group.messages().stream())
                 .forEach(this::validateContents);
-        items.addAll(memorySource.select(run, model));
-        items.addAll(selection.items());
-        int divisor = loopContext.forcedContextRebuildAttempts() > 0 ? 10 : 20;
-        int safetyMargin =
-                Math.min(16_384, Math.max(256, model.configuration().model().contextWindow() / divisor));
+        // Mutable snapshots follow the append-only Session prefix. Their provenance digests are traced as
+        // explicit window-boundary inputs when a Plan or governed Memory selection changes.
+        items.addAll(middlewareContext.contextItems());
+        items.addAll(memoryItems);
         var request = new ContextBuildRequest(
                 run.id(),
                 run.sessionId(),
@@ -104,7 +125,39 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 selection.policyVersion(),
                 selection.compressorVersion(),
                 loopContext.forcedContextRebuildAttempts());
-        return new RuntimeContextBuildResult(contexts.build(request), middlewareContext);
+        String windowIdentity = windowIdentity(middlewareContext, memoryItems, selection, model);
+        return new RuntimeContextBuildResult(contexts.build(request), middlewareContext, selection, windowIdentity);
+    }
+
+    private String windowIdentity(
+            RuntimeMiddlewareContext middlewareContext,
+            List<ContextItem> memoryItems,
+            SessionMessageSource.Selection selection,
+            FrozenModelBinding model) {
+        List<String> components = new ArrayList<>();
+        middlewareContext
+                .prompts()
+                .forEach(prompt -> components.add(
+                        "prompt:" + prompt.id().value() + ":" + prompt.version() + ":" + sha256(prompt.text())));
+        model.tools()
+                .forEach(tool -> components.add("tool:" + tool.name() + ":" + tool.version() + ":"
+                        + tool.inputSchemaId() + ":" + tool.inputSchemaVersion()));
+        middlewareContext
+                .contextItems()
+                .forEach(item -> components.add("runtime-item:"
+                        + item.provenance().sourceType() + ":"
+                        + item.provenance().sourceId() + ":"
+                        + item.provenance().sourceVersion() + ":"
+                        + item.provenance().contentHash()));
+        memoryItems.forEach(item -> components.add("memory:" + item.provenance().sourceId() + ":"
+                + item.provenance().sourceVersion() + ":" + item.provenance().contentHash()));
+        components.add("compression:" + selection.policyVersion() + ":" + selection.compressorVersion());
+        components.add("summary:"
+                + selection
+                        .summary()
+                        .map(summary -> summary.version().value() + ":" + summary.sourceHash())
+                        .orElse("none"));
+        return sha256(String.join("|", components));
     }
 
     private void addSkillPrompts(AgentRun run, RuntimeMiddlewareContext context) {

@@ -261,21 +261,62 @@ public final class DefaultAgentLoop implements AgentLoop {
                     progress.iteration(),
                     RuntimePhase.AFTER_CONTEXT_BUILD,
                     "context.built",
-                    Map.of(
-                            "modelConfigDigest", built.context().trace().modelConfigurationDigest(),
-                            "estimatedInputTokens", built.context().context().estimatedInputTokens(),
-                            "selectedItems", built.context().context().items().size(),
-                            "traceItems", built.context().trace().items().size(),
-                            "estimatorVersion", built.context().trace().estimatorVersion(),
-                            "selectionPolicyVersion", built.context().trace().selectionPolicyVersion(),
-                            "compressionPolicyVersion", built.context().trace().compressionPolicyVersion(),
-                            "compressorVersion", built.context().trace().compressorVersion(),
-                            "forcedRebuildAttempt", built.context().trace().forcedRebuildAttempt(),
-                            "sourceIds",
+                    Map.<String, Object>ofEntries(
+                            Map.entry(
+                                    "modelConfigDigest", built.context().trace().modelConfigurationDigest()),
+                            Map.entry(
+                                    "estimatedInputTokens",
+                                    built.context().context().estimatedInputTokens()),
+                            Map.entry(
+                                    "selectedItems",
+                                    built.context().context().items().size()),
+                            Map.entry(
+                                    "traceItems",
+                                    built.context().trace().items().size()),
+                            Map.entry(
+                                    "estimatorVersion", built.context().trace().estimatorVersion()),
+                            Map.entry(
+                                    "selectionPolicyVersion",
+                                    built.context().trace().selectionPolicyVersion()),
+                            Map.entry(
+                                    "compressionPolicyVersion",
+                                    built.context().trace().compressionPolicyVersion()),
+                            Map.entry(
+                                    "compressorVersion", built.context().trace().compressorVersion()),
+                            Map.entry(
+                                    "forcedRebuildAttempt",
+                                    built.context().trace().forcedRebuildAttempt()),
+                            Map.entry("windowGeneration", built.windowIdentity()),
+                            Map.entry(
+                                    "compactionGeneration",
+                                    built.sessionSelection().windowGeneration()),
+                            Map.entry(
+                                    "compactionCount", built.sessionSelection().compactionCount()),
+                            Map.entry("compacted", built.sessionSelection().compacted()),
+                            Map.entry(
+                                    "compactionReason",
+                                    built.sessionSelection().compactionReason().name()),
+                            Map.entry(
+                                    "compactionElapsedMillis",
+                                    built.sessionSelection().compactionElapsedMillis()),
+                            Map.entry(
+                                    "estimatedSessionTokens",
+                                    built.sessionSelection().estimatedSessionTokens()),
+                            Map.entry(
+                                    "sessionTokenBudget",
+                                    built.sessionSelection().sessionTokenBudget()),
+                            Map.entry(
+                                    "summarySourceHash",
+                                    built.sessionSelection()
+                                            .summary()
+                                            .map(io.haifa.agent.context.compression.ConversationSummary::sourceHash)
+                                            .orElse("none")),
+                            Map.entry(
+                                    "sourceIds",
                                     built.context().trace().items().stream()
                                             .map(item -> item.sourceType() + ":" + item.sourceId() + "@"
                                                     + item.sourceVersion())
-                                            .toList()),
+                                            .toList())),
                     time.now()));
             RuntimeContextBuildResult[] builtRef = {built};
             RuntimeMiddlewareContext[] middlewareContextRef = {built.middlewareContext()};

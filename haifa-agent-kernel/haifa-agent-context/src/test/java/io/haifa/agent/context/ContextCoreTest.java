@@ -8,6 +8,7 @@ import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.context.api.ContextBuildRequest;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.budget.TokenEstimator;
+import io.haifa.agent.context.compression.CompressionPolicy;
 import io.haifa.agent.context.core.DefaultAgentContextBuilder;
 import io.haifa.agent.context.item.AssetDerivedTextContent;
 import io.haifa.agent.context.item.ContextItem;
@@ -57,6 +58,16 @@ class ContextCoreTest {
                 .isGreaterThan(300);
         assertThat(HeuristicTokenEstimator.tokens("测试估算")).isEqualTo(4);
         assertThat(estimator.version()).isEqualTo("heuristic-structured-v2");
+    }
+
+    @Test
+    void defaultCompressionPolicyUsesTokenTailBudgetsAndVersionedWindowSemantics() {
+        CompressionPolicy policy = CompressionPolicy.defaults();
+
+        assertThat(policy.retainedTailTokenPercent()).isEqualTo(50);
+        assertThat(policy.forcedRetainedTailTokenPercent()).isEqualTo(25);
+        assertThat(policy.version()).isEqualTo("session-window-v2");
+        assertThatThrownBy(() -> new CompressionPolicy(12, 32, 4, 50, 51)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
