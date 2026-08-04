@@ -19,9 +19,14 @@ public final class PersonalApiDtos {
             String defaultModelId,
             List<Model> models) {}
 
-    public record CreateConversation(String displayName, String message, String modelId) {}
+    public record CreateConversation(String displayName, String message, String modelId, List<ImageInput> images) {}
 
-    public record SubmitMessage(String message) {}
+    public record SubmitMessage(String message, List<ImageInput> images) {}
+
+    public record ImageInput(String kind, String url, String imageId) {}
+
+    public record UploadedImage(
+            String imageId, String mediaType, long sizeBytes, String originalFilename, String sha256) {}
 
     public record RecommendedQuestions(List<String> questions) {}
 
@@ -49,7 +54,22 @@ public final class PersonalApiDtos {
             long revision,
             ModelSelection model) {}
 
-    public record Turn(String id, String role, Optional<String> runId, long sequence, String text, Instant createdAt) {}
+    public record Turn(
+            String id,
+            String role,
+            Optional<String> runId,
+            long sequence,
+            String text,
+            List<TurnImage> images,
+            Instant createdAt) {}
+
+    public record TurnImage(
+            String kind,
+            Optional<String> url,
+            Optional<String> imageId,
+            Optional<String> mediaType,
+            long sizeBytes,
+            String originalFilename) {}
 
     public record Usage(
             long inputTokens,

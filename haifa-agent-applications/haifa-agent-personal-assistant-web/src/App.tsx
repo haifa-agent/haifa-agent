@@ -10,9 +10,13 @@ import {
   Copy,
   Cpu,
   Database,
+  Image as ImageIcon,
   Menu,
   MessageSquarePlus,
+  Link,
+  Paperclip,
   PanelRight,
+  Plus,
   RefreshCw,
   Search,
   Send,
@@ -24,6 +28,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  type DragEvent,
   type MouseEvent,
   useCallback,
   useEffect,
@@ -36,10 +41,12 @@ import type {
   Conversation,
   ExecutionError,
   Interaction,
+  ImageInput,
   Memory,
   MemoryCandidate,
   Model,
   Run,
+  TurnImage,
 } from "./api/generated";
 import {
   HttpPersonalAssistantClient,
@@ -71,6 +78,57 @@ interface ModelProviderGroup {
   id: string;
   displayName: string;
   models: Model[];
+}
+
+type PendingImage = ImageInput & {
+  key: string;
+  label: string;
+  previewUrl?: string;
+};
+
+const opaqueImageFilename = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]+$/i;
+
+function imageHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "外部图片";
+  }
+}
+
+function uploadedImageLabel(image: TurnImage, index: number): string {
+  const filename = image.originalFilename?.trim();
+  return filename && !opaqueImageFilename.test(filename) ? filename : `已上传图片 ${index + 1}`;
+}
+
+function TurnImages({ images }: { images: TurnImage[] }) {
+  return (
+    <div className="turn-images" aria-label={`消息包含 ${images.length} 张图片`}>
+      {images.map((image, index) => {
+        if (image.kind === "url" && image.url) {
+          return (
+            <a
+              className="turn-image turn-image-preview"
+              href={image.url}
+              key={`${image.url}-${index}`}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`打开第 ${index + 1} 张图片`}
+            >
+              <img src={image.url} alt={`第 ${index + 1} 张图片`} />
+              <span><b>{index + 1}</b>{imageHost(image.url)}</span>
+            </a>
+          );
+        }
+        return (
+          <div className="turn-image turn-image-file" key={`${image.imageId}-${index}`}>
+            <div><ImageIcon size={22} aria-hidden="true" /></div>
+            <span><b>{index + 1}</b>{uploadedImageLabel(image, index)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 const slashCommands = [
@@ -737,9 +795,51 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [newModelId, setNewModelId] = useState("");
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [imageUrl, setImageUrl] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageToolsOpen, setImageToolsOpen] = useState(false);
+  const [imageUrlInputOpen, setImageUrlInputOpen] = useState(false);
+  const [draggingImages, setDraggingImages] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageToolsRef = useRef<HTMLDivElement>(null);
+  const pendingImagePreviews = useRef(new Set<string>());
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
   >(null);
+
+  const closeImageTools = useCallback(() => {
+    setImageToolsOpen(false);
+    setImageUrlInputOpen(false);
+    setImageUrl("");
+  }, []);
+
+  const revokePreview = useCallback((previewUrl?: string) => {
+    if (!previewUrl || !pendingImagePreviews.current.delete(previewUrl)) return;
+    URL.revokeObjectURL(previewUrl);
+  }, []);
+
+  useEffect(() => () => {
+    pendingImagePreviews.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl));
+    pendingImagePreviews.current.clear();
+  }, []);
+
+  useEffect(() => {
+    if (!imageToolsOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!imageToolsRef.current?.contains(event.target as Node)) closeImageTools();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeImageTools();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [closeImageTools, imageToolsOpen]);
 
   const loadMemories = useCallback(async (signal?: AbortSignal) => {
     const [candidates, memories] = await Promise.all([client.memoryCandidates(signal), client.memories(signal)]);
@@ -1009,21 +1109,40 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   }, []);
 
   const submitMessage = (value: string) => {
-    const message = value.trim();
+    const message = value.trim() || (pendingImages.length > 1
+      ? "请分别解释这些图片"
+      : pendingImages.length === 1
+        ? "请解释这张图片"
+        : "");
     if (!message || state.pending || state.selectedConversation?.activeRunId) return;
     const key = crypto.randomUUID();
+    const sentImages = pendingImages.map((image) => ({ ...image }));
     recommendationRequestGeneration.current += 1;
     setRecommendedQuestions(null);
     void execute("提交消息", async () => {
+      const images = sentImages.map(({ kind, url, imageId }) => ({ kind, url, imageId }));
       const conversation = state.selectedConversation
-        ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key })
-        : await client.createConversation(
-            message.slice(0, 32),
-            message,
-            { idempotencyKey: key },
-            newModelId || state.bootstrap?.defaultModelId,
-          );
+        ? images.length
+          ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images)
+          : await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key })
+        : images.length
+          ? await client.createConversation(
+              message.slice(0, 32),
+              message,
+              { idempotencyKey: key },
+              newModelId || state.bootstrap?.defaultModelId,
+              images,
+            )
+          : await client.createConversation(
+              message.slice(0, 32),
+              message,
+              { idempotencyKey: key },
+              newModelId || state.bootstrap?.defaultModelId,
+            );
       dispatch({ type: "setComposer", value: "" });
+      sentImages.forEach((image) => revokePreview(image.previewUrl));
+      setPendingImages([]);
+      closeImageTools();
       if (state.selectedConversationId !== conversation.id) {
         selectConversation(conversation.id, "replace");
       } else {
@@ -1051,6 +1170,78 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const configuredModels = state.bootstrap?.models ?? [];
   const modelProviders = groupModelsByProvider(configuredModels);
   const selectedModelId = state.selectedConversation?.model.model.id ?? newModelId;
+  const imageCapable = (state.selectedConversation?.model.model
+    ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
+    ?.capabilities.includes("IMAGE_INPUT") ?? false;
+
+  const addImageUrl = () => {
+    if (!imageCapable || pendingImages.length >= 4) return;
+    try {
+      const parsed = new URL(imageUrl.trim());
+      if (parsed.protocol !== "https:") throw new Error("not HTTPS");
+      setPendingImages((current) => [...current, {
+        kind: "url",
+        url: parsed.toString(),
+        key: crypto.randomUUID(),
+        label: parsed.hostname,
+      }]);
+      closeImageTools();
+    } catch {
+      dispatch({ type: "error", message: "图片 URL 必须是可公开访问的 HTTPS 地址。" });
+    }
+  };
+
+  const uploadFiles = async (files: FileList | File[]) => {
+    if (!imageCapable || !client.uploadImage || uploadingImage) return;
+    const selected = Array.from(files).slice(0, Math.max(0, 4 - pendingImages.length));
+    if (!selected.length) return;
+    const allowed = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+    if (selected.some((file) => !allowed.has(file.type) || file.size < 1 || file.size > 10 * 1024 * 1024)) {
+      dispatch({ type: "error", message: "仅支持不超过 10 MiB 的 PNG、JPEG、WEBP 或非动画 GIF。" });
+      return;
+    }
+    setUploadingImage(true);
+    const uploaded: PendingImage[] = [];
+    try {
+      for (const file of selected) {
+        const result = await client.uploadImage(file, { idempotencyKey: crypto.randomUUID() });
+        const previewUrl = typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : undefined;
+        if (previewUrl) pendingImagePreviews.current.add(previewUrl);
+        uploaded.push({
+          kind: "upload",
+          imageId: result.imageId,
+          key: crypto.randomUUID(),
+          label: file.name,
+          previewUrl,
+        });
+      }
+      setPendingImages((current) => [...current, ...uploaded].slice(0, 4));
+      closeImageTools();
+    } catch (error) {
+      uploaded.forEach((image) => revokePreview(image.previewUrl));
+      dispatch({ type: "error", message: safeError(error) || "图片上传失败。" });
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const removePendingImage = (key: string) => {
+    setPendingImages((current) => {
+      const removed = current.find((image) => image.key === key);
+      revokePreview(removed?.previewUrl);
+      return current.filter((image) => image.key !== key);
+    });
+  };
+
+  const explainPendingImages = () => {
+    if (!pendingImages.length) return;
+    dispatch({
+      type: "setComposer",
+      value: pendingImages.length > 1 ? "请分别解释这些图片" : "请解释这张图片",
+    });
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
   const slashQuery = slashMenu?.stage === "commands"
     ? state.composer.slice(1).trim().toLocaleLowerCase()
     : "";
@@ -1071,6 +1262,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const updateComposer = (value: string) => {
     dispatch({ type: "setComposer", value });
     const slashInput = value.startsWith("/") && !value.includes("\n");
+    if (slashInput) closeImageTools();
     if (!slashInput) {
       setSlashMenu(null);
     } else if (!slashMenu || (slashMenu.stage !== "commands" && value !== "/model")) {
@@ -1183,6 +1375,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
   const runActive = Boolean(state.selectedConversation?.activeRunId) && !isTerminal(state.run);
   const composerDisabled = Boolean(state.pending) || runActive;
+  const dropImages = (event: DragEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setDraggingImages(false);
+    if (!composerDisabled) void uploadFiles(event.dataTransfer.files);
+  };
 
   return (
     <div className="app-shell">
@@ -1251,8 +1448,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     ? recommendedQuestions
                     : null;
                   return (
-                    <article className={`message ${assistant ? "assistant" : "user"}`} key={turn.id}>
+                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}`} key={turn.id}>
                       <span className="message-role">{assistant ? "Haifa" : "你"}</span>
+                      {turn.images?.length > 0 && <TurnImages images={turn.images} />}
                       <MessageContent text={turn.text} /><time>{formatTime(turn.createdAt)}</time>
                       {assistant && (
                         <div className="message-actions">
@@ -1289,7 +1487,22 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               <CircleAlert size={17} /><span>{state.interactionError}</span>
             </div>
           )}
-          <form className="composer" onSubmit={submit}>
+          <form
+            className={`composer${imageCapable ? " image-capable" : ""}${pendingImages.length ? " has-pending-images" : ""}${draggingImages ? " image-dragging" : ""}`}
+            onSubmit={submit}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              if (imageCapable && !composerDisabled) setDraggingImages(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              if (imageCapable && !composerDisabled) setDraggingImages(true);
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingImages(false);
+            }}
+            onDrop={dropImages}
+          >
             {slashMenu && !composerDisabled && (
               <section
                 className="slash-command-menu"
@@ -1390,9 +1603,125 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 <span><RefreshCw className="spin" size={15} /> 当前任务运行中，完成或停止后可继续输入。</span>
               </div>
             )}
+            <input
+              ref={fileInputRef}
+              className="sr-only"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              onChange={(event) => event.target.files && void uploadFiles(event.target.files)}
+            />
+            {pendingImages.length > 0 && (
+              <section className="image-attachment-stage" aria-label="待发送图片">
+                <div className="image-attachment-row">
+                  {pendingImages.map((image, index) => (
+                    <figure key={image.key} className="image-attachment">
+                      {image.url || image.previewUrl
+                        ? <img src={image.url ?? image.previewUrl} alt={`待发送图片 ${index + 1}`} />
+                        : <span className="image-file-icon"><ImageIcon size={22} aria-hidden="true" /></span>}
+                      <figcaption>{image.label}</figcaption>
+                      <button
+                        type="button"
+                        aria-label={`移除图片 ${image.label}`}
+                        onClick={() => removePendingImage(image.key)}
+                      ><X size={13} /></button>
+                    </figure>
+                  ))}
+                </div>
+                <button className="explain-image-action" type="button" onClick={explainPendingImages}>
+                  <Sparkles size={14} />解释图片 <span>→</span>
+                </button>
+                <span className="image-attachment-count">{pendingImages.length}/4</span>
+              </section>
+            )}
+            {imageCapable && (
+              <div className="image-add-control" ref={imageToolsRef}>
+                <button
+                  type="button"
+                  className="image-add-trigger"
+                  aria-label="添加图片"
+                  aria-controls="image-add-menu"
+                  aria-expanded={imageToolsOpen}
+                  title="添加图片"
+                  disabled={composerDisabled || pendingImages.length >= 4}
+                  onClick={() => {
+                    setSlashMenu(null);
+                    if (imageToolsOpen) closeImageTools();
+                    else setImageToolsOpen(true);
+                  }}
+                >
+                  <Plus size={20} />
+                </button>
+                {imageToolsOpen && (
+                  <section className="image-add-menu" id="image-add-menu" role="dialog" aria-label="添加图片">
+                    <header>
+                      <strong>添加图片</strong>
+                      <button type="button" aria-label="关闭图片菜单" onClick={closeImageTools}><X size={15} /></button>
+                    </header>
+                    <button
+                      type="button"
+                      disabled={composerDisabled || uploadingImage || pendingImages.length >= 4}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Paperclip size={17} />
+                      <span><strong>{uploadingImage ? "正在上传…" : "上传图片"}</strong><small>选择或拖放，最多 4 张</small></span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-expanded={imageUrlInputOpen}
+                      onClick={() => setImageUrlInputOpen((open) => !open)}
+                    >
+                      <Link size={17} />
+                      <span><strong>添加图片 URL</strong><small>仅支持 HTTPS 图片地址</small></span>
+                    </button>
+                    {imageUrlInputOpen && (
+                      <div className="image-url-popover">
+                        <header>
+                          <label htmlFor="image-url-input">图片 URL</label>
+                          <button type="button" aria-label="关闭图片 URL" onClick={() => {
+                            setImageUrlInputOpen(false);
+                            setImageUrl("");
+                          }}><X size={14} /></button>
+                        </header>
+                        <div>
+                          <input
+                            id="image-url-input"
+                            type="url"
+                            value={imageUrl}
+                            disabled={composerDisabled || pendingImages.length >= 4}
+                            placeholder="https://…"
+                            aria-label="图片 URL"
+                            autoFocus
+                            onChange={(event) => setImageUrl(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                addImageUrl();
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            aria-label="确认添加图片 URL"
+                            disabled={!imageUrl.trim() || composerDisabled || pendingImages.length >= 4}
+                            onClick={addImageUrl}
+                          >添加</button>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                )}
+              </div>
+            )}
+            {draggingImages && (
+              <div className="image-drop-hint" aria-live="polite">
+                <ImageIcon size={19} /> 松开即可添加图片
+              </div>
+            )}
             <label>
               <span className="sr-only">给个人助理发送消息</span>
               <textarea
+                ref={textareaRef}
                 value={state.composer}
                 disabled={composerDisabled}
                 aria-expanded={Boolean(slashMenu)}
@@ -1429,7 +1758,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 rows={2}
               />
             </label>
-            <Button type="submit" className="send-button" aria-label="发送消息" busy={Boolean(state.pending)} disabled={composerDisabled || !state.composer.trim()}>
+            <span className="image-input-hint">{imageCapable ? "支持上传、URL 和拖放图片" : ""}</span>
+            <Button type="submit" className="send-button" aria-label="发送消息" busy={Boolean(state.pending)} disabled={composerDisabled || (!state.composer.trim() && !pendingImages.length)}>
               <Send size={18} />
             </Button>
           </form>

@@ -14,7 +14,8 @@ public record ModelMessage(
         Optional<ProviderToolCallCorrelationId> providerCorrelationId,
         Map<String, Object> toolResultData,
         boolean toolResultTruncated,
-        Optional<SensitiveModelReasoning> reasoning) {
+        Optional<SensitiveModelReasoning> reasoning,
+        List<ModelImagePart> images) {
     public ModelMessage {
         role = Objects.requireNonNull(role, "role must not be null");
         content = Objects.requireNonNull(content, "content must not be null");
@@ -22,6 +23,13 @@ public record ModelMessage(
         providerCorrelationId = Objects.requireNonNull(providerCorrelationId, "providerCorrelationId must not be null");
         toolResultData = ModelValues.map(toolResultData, "toolResultData");
         reasoning = Objects.requireNonNull(reasoning, "reasoning must not be null");
+        images = List.copyOf(Objects.requireNonNull(images, "images must not be null"));
+        if (images.size() > 4) {
+            throw new IllegalArgumentException("model message may contain at most 4 images");
+        }
+        if (!images.isEmpty() && role != ModelMessageRole.USER) {
+            throw new IllegalArgumentException("image inputs are only allowed on user messages");
+        }
         if (role == ModelMessageRole.ASSISTANT && content.isBlank() && toolCalls.isEmpty()) {
             throw new IllegalArgumentException("assistant message must contain content or tool calls");
         }
@@ -48,6 +56,25 @@ public record ModelMessage(
             List<ModelToolCall> toolCalls,
             Optional<ProviderToolCallCorrelationId> providerCorrelationId,
             Map<String, Object> toolResultData,
+            boolean toolResultTruncated,
+            Optional<SensitiveModelReasoning> reasoning) {
+        this(
+                role,
+                content,
+                toolCalls,
+                providerCorrelationId,
+                toolResultData,
+                toolResultTruncated,
+                reasoning,
+                List.of());
+    }
+
+    public ModelMessage(
+            ModelMessageRole role,
+            String content,
+            List<ModelToolCall> toolCalls,
+            Optional<ProviderToolCallCorrelationId> providerCorrelationId,
+            Map<String, Object> toolResultData,
             boolean toolResultTruncated) {
         this(role, content, toolCalls, providerCorrelationId, toolResultData, toolResultTruncated, Optional.empty());
     }
@@ -62,6 +89,18 @@ public record ModelMessage(
 
     public static ModelMessage text(ModelMessageRole role, String content) {
         return new ModelMessage(role, content, List.of(), Optional.empty());
+    }
+
+    public static ModelMessage user(String content, List<? extends ModelImagePart> images) {
+        return new ModelMessage(
+                ModelMessageRole.USER,
+                content,
+                List.of(),
+                Optional.empty(),
+                Map.of(),
+                false,
+                Optional.empty(),
+                List.copyOf(images));
     }
 
     public static ModelMessage tool(ProviderToolCallCorrelationId correlationId, String content) {

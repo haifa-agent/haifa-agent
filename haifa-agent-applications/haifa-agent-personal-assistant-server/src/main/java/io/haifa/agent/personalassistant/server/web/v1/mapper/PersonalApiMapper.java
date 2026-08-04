@@ -34,7 +34,21 @@ public final class PersonalApiMapper {
 
     public PersonalApiDtos.Turn turn(PersonalAssistantApplication.TurnView value) {
         return new PersonalApiDtos.Turn(
-                value.id(), value.role(), value.runId(), value.sequence(), value.text(), value.createdAt());
+                value.id(),
+                value.role(),
+                value.runId(),
+                value.sequence(),
+                value.text(),
+                value.images().stream()
+                        .map(image -> new PersonalApiDtos.TurnImage(
+                                image.kind(),
+                                image.url(),
+                                image.imageId(),
+                                image.mediaType(),
+                                image.sizeBytes(),
+                                image.originalFilename()))
+                        .toList(),
+                value.createdAt());
     }
 
     public PersonalApiDtos.Run run(PersonalAssistantApplication.RunView value) {

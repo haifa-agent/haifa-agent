@@ -104,6 +104,7 @@ import io.haifa.agent.runtime.core.middleware.ToolDisclosureMiddleware;
 import io.haifa.agent.runtime.core.middleware.TraceMiddleware;
 import io.haifa.agent.runtime.core.model.FrozenModelInvoker;
 import io.haifa.agent.runtime.core.model.ModelAdapterKey;
+import io.haifa.agent.runtime.core.model.ModelImageResolver;
 import io.haifa.agent.runtime.core.model.RuntimeModelOutputPublisher;
 import io.haifa.agent.runtime.core.policy.RuntimePolicyAuthorizationEvidenceStore;
 import io.haifa.agent.runtime.core.policy.RuntimePolicyDecisionStore;
@@ -214,6 +215,7 @@ public final class RuntimeCoreBuilder {
     private MemoryRetriever memoryRetriever;
     private MemoryAuditSink memoryAudit;
     private MemoryService memoryService;
+    private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
 
     public RuntimeCoreBuilder registerChatModel(String adapterType, String adapterVersion, AgentChatModel value) {
         ModelAdapterKey key = new ModelAdapterKey(adapterType, adapterVersion);
@@ -221,6 +223,11 @@ public final class RuntimeCoreBuilder {
             throw new IllegalArgumentException(
                     "duplicate model adapter: " + key.adapterType() + "@" + key.adapterVersion());
         }
+        return this;
+    }
+
+    public RuntimeCoreBuilder modelImageResolver(ModelImageResolver value) {
+        modelImageResolver = Objects.requireNonNull(value, "value must not be null");
         return this;
     }
 
@@ -486,7 +493,8 @@ public final class RuntimeCoreBuilder {
         ExecutionOwnershipPort configuredOwnership =
                 ownership != null ? ownership : ExecutionOwnershipPort.local(workerId);
         RuntimeModelOutputPublisher modelOutput = new RuntimeModelOutputPublisher(time);
-        FrozenModelInvoker models = new FrozenModelInvoker(state, chatModels, ids, modelOutput, controls, events, time);
+        FrozenModelInvoker models =
+                new FrozenModelInvoker(state, chatModels, ids, modelOutput, controls, events, time, modelImageResolver);
         InMemoryMemoryStore defaultMemoryStore = new InMemoryMemoryStore();
         var defaultMemoryPolicy = new DefaultMemoryPolicy();
         MemoryRetriever configuredMemoryRetriever = memoryRetriever != null

@@ -45,6 +45,7 @@ haifa:
           - id: openai-gpt-5.6-luna
             display-name: GPT-5.6 Luna
             provider-model-id: gpt-5.6-luna
+            image-input: true
     allow-insecure-loopback-model: true
 ```
 
@@ -58,6 +59,12 @@ Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写�
 仍是 `deepseek-v4-flash`，Personal 的模型 API/Selector 可把空闲 Conversation 切换到
 `openai-gpt-5.6-luna`，只影响后续新 Run。
 
+`image-input: true` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
+最多四个 `{kind: url|upload}` 图片输入。外部 URL 只接受受限 HTTPS；上传通过 `POST /api/v1/images`
+写入 `<data-directory>/images`，单文件上限 10 MiB、目录上限 1 GiB，类型限 PNG/JPEG/WEBP/非动画
+GIF。SQLite 与 Turn 只保存 opaque 引用、MIME、长度和摘要，不保存图片 Base64 或绝对路径。本阶段
+没有下载、缩略图、OCR、单附件删除或自动过期任务。
+
 Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
 端口冲突会使启动失败，不会自动换端口。
@@ -68,6 +75,7 @@ Server 负责：
 - 按配置启用公共 `haifa-agent-web` 的 Aliyun IQS Search/Fetch，并把环境变量凭据绑定到
   Runtime `CredentialBroker`，不把 Key 放入 Profile、Tool Definition 或日志；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；
+- 图片上传的 magic-byte/MIME 校验、本地有界 Store，以及调用模型前的摘要复核；
 
 普通 Run API 的 `error` 与 OpenAPI `ExecutionError` 对齐，包含稳定执行 code、安全 message、
 category、retryability、有界 details、diagnosticId 和 occurredAt；请求错误仍使用独立的安全
@@ -187,7 +195,9 @@ Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相�
 命令见 `../haifa-agent-personal-assistant-web/README.md`。
 
 真实 DeepSeek、外部 Utility MCP 和独立 Web 的可重复环境搭建方法见
-[`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。
+[`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。PowerShell 与 POSIX Shell 入口都要求 Python 3；两者只负责
+参数兼容和解释器发现，启动、健康检查、状态文件与安全停止逻辑统一由
+`scripts/real_environment.py` 实现。
 
 macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 

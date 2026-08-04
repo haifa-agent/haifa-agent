@@ -84,7 +84,9 @@ public final class DefaultConversationService implements ConversationService {
                         + "\u0000"
                         + command.message()
                         + "\u0000"
-                        + command.runProfileId().orElse(""),
+                        + command.runProfileId().orElse("")
+                        + "\u0000"
+                        + inputSignature(command.inputs()),
                 proposedSession,
                 now);
         ConversationCommandBinding binding = persistence.inTransaction(() -> {
@@ -127,7 +129,8 @@ public final class DefaultConversationService implements ConversationService {
         if (binding.completed()) {
             return requireAuthorized(binding.sessionId(), caller);
         }
-        AgentRunSnapshot run = runtime.start(runRequest(binding, command.message(), command.runProfileId()));
+        AgentRunSnapshot run =
+                runtime.start(runRequest(binding, command.message(), command.runProfileId(), command.inputs()));
         return persistence.inTransaction(() -> {
             ConversationRecord activated = conversations.activateRun(
                     binding.sessionId(), binding.dispatchKey(), run.runId(), run.version(), time.now());
@@ -182,7 +185,9 @@ public final class DefaultConversationService implements ConversationService {
                 var safeContents = message.contents().stream()
                         .filter(content -> content instanceof TextPart
                                 || content instanceof io.haifa.agent.core.content.AssetRefPart
-                                || content instanceof io.haifa.agent.core.content.ArtifactRefPart)
+                                || content instanceof io.haifa.agent.core.content.ArtifactRefPart
+                                || content instanceof io.haifa.agent.core.content.ImageUrlContentPart
+                                || content instanceof io.haifa.agent.core.content.StoredImageContentPart)
                         .toList();
                 if (!safeContents.isEmpty()) {
                     result.add(new ConversationTurn(
@@ -219,7 +224,8 @@ public final class DefaultConversationService implements ConversationService {
                 caller,
                 "submit",
                 command.idempotencyKey(),
-                command.message() + "\u0000" + command.runProfileId().orElse(""),
+                command.message() + "\u0000" + command.runProfileId().orElse("") + "\u0000"
+                        + inputSignature(command.inputs()),
                 command.sessionId(),
                 now);
         ConversationCommandBinding binding = persistence.inTransaction(() -> {
@@ -237,7 +243,8 @@ public final class DefaultConversationService implements ConversationService {
         if (binding.completed()) {
             return reconcileTerminalRun(requireAuthorized(command.sessionId(), caller));
         }
-        AgentRunSnapshot run = runtime.start(runRequest(binding, command.message(), command.runProfileId()));
+        AgentRunSnapshot run =
+                runtime.start(runRequest(binding, command.message(), command.runProfileId(), command.inputs()));
         return persistence.inTransaction(() -> {
             ConversationRecord activated = conversations.activateRun(
                     binding.sessionId(), binding.dispatchKey(), run.runId(), run.version(), time.now());
@@ -365,7 +372,10 @@ public final class DefaultConversationService implements ConversationService {
     }
 
     private AgentRunRequest runRequest(
-            ConversationCommandBinding binding, String message, Optional<String> runProfileId) {
+            ConversationCommandBinding binding,
+            String message,
+            Optional<String> runProfileId,
+            List<io.haifa.agent.core.content.ContentPart> inputs) {
         return new AgentRunRequest(
                 binding.dispatchKey(),
                 profile.definitionId(),
@@ -374,8 +384,27 @@ public final class DefaultConversationService implements ConversationService {
                 binding.sessionId(),
                 Optional.empty(),
                 message,
-                List.of(),
+                inputs,
                 RuntimeOverrides.NONE);
+    }
+
+    private static String inputSignature(List<io.haifa.agent.core.content.ContentPart> inputs) {
+        return inputs.stream()
+                .map(value -> switch (value) {
+                    case io.haifa.agent.core.content.ImageUrlContentPart image ->
+                        "url:" + image.url().toASCIIString();
+                    case io.haifa.agent.core.content.StoredImageContentPart image ->
+                        String.join(
+                                ":",
+                                "stored",
+                                image.storeId(),
+                                image.imageId(),
+                                image.mediaType(),
+                                Long.toString(image.sizeBytes()),
+                                image.sha256());
+                    default -> throw new IllegalArgumentException("unsupported conversation input");
+                })
+                .collect(java.util.stream.Collectors.joining("\u0000"));
     }
 
     private ConversationCommandBinding commandBinding(

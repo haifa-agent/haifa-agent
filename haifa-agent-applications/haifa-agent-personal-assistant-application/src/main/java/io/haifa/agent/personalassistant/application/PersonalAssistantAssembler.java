@@ -13,6 +13,7 @@ import io.haifa.agent.personalassistant.application.tool.PersonalToolPlatform;
 import io.haifa.agent.personalassistant.application.trust.PersonalTrustedScriptManifest;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.sdk.api.HaifaAgents;
+import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
@@ -75,6 +76,7 @@ public final class PersonalAssistantAssembler {
                     .toolApprovalPrompts(dependencies.execution()::approvalPrompt)
                     .publicToolPolicyDecorator(PersonalWebAllowPolicy.decorator(
                             tools.tool().catalog(), dependencies.web(), dependencies.policy(), dependencies.clock()))
+                    .modelImageResolver(dependencies.imageResolver())
                     .contribute(dependencies.model())
                     .contribute(dependencies.persistence())
                     .contribute(dependencies.conversation())
@@ -119,7 +121,8 @@ public final class PersonalAssistantAssembler {
             Optional<Path> localSkillRoot,
             Optional<Path> trustedScriptManifest,
             List<Path> protectedPaths,
-            Clock clock) {
+            Clock clock,
+            ModelImageResolver imageResolver) {
         public Dependencies(
                 TenantRef tenant,
                 PrincipalRef principal,
@@ -152,7 +155,8 @@ public final class PersonalAssistantAssembler {
                     localSkillRoot,
                     Optional.empty(),
                     protectedPaths,
-                    clock);
+                    clock,
+                    ModelImageResolver.unsupported());
         }
 
         public Dependencies(
@@ -188,7 +192,8 @@ public final class PersonalAssistantAssembler {
                     localSkillRoot,
                     trustedScriptManifest,
                     protectedPaths,
-                    clock);
+                    clock,
+                    ModelImageResolver.unsupported());
         }
 
         public Dependencies {
@@ -209,6 +214,7 @@ public final class PersonalAssistantAssembler {
             trustedScriptManifest = Objects.requireNonNull(trustedScriptManifest);
             protectedPaths = List.copyOf(protectedPaths);
             Objects.requireNonNull(clock);
+            Objects.requireNonNull(imageResolver);
         }
 
         private static PersonalModelCatalog defaultCatalog(ModelContribution model) {

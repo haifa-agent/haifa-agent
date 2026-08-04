@@ -58,6 +58,7 @@ const turns: Turn[] = [
     runId: "run-1",
     sequence: 1,
     text: "请整理今天的待办",
+    images: [],
     createdAt: "2026-07-28T01:00:00Z",
   },
   {
@@ -66,6 +67,7 @@ const turns: Turn[] = [
     runId: "run-1",
     sequence: 2,
     text: "已经按优先级整理完成。",
+    images: [],
     createdAt: "2026-07-28T01:00:01Z",
   },
 ];
@@ -348,6 +350,139 @@ describe("Personal Assistant application", () => {
         expect.objectContaining({ idempotencyKey: expect.any(String) }),
       ),
     );
+  });
+
+  it("adds an HTTPS image URL and an uploaded image to one message", async () => {
+    const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_INPUT"] };
+    const imageConversation = {
+      ...conversation,
+      model: { model: imageModel, revision: 0, available: true },
+    };
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({ ...bootstrap, defaultModelId: imageModel.id, models: [imageModel] });
+    vi.mocked(api.conversations).mockResolvedValue([imageConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(imageConversation);
+    vi.mocked(api.submitMessage).mockResolvedValue(imageConversation);
+    api.uploadImage = vi.fn(async () => ({
+      imageId: "11111111-1111-4111-8111-111111111111",
+      mediaType: "image/png",
+      sizeBytes: 9,
+      originalFilename: "cat.png",
+      sha256: `sha256:${"a".repeat(64)}`,
+    }));
+    const { container } = render(<App client={api} />);
+
+    expect(screen.queryByRole("textbox", { name: "图片 URL" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "添加图片" }));
+    const imageDialog = screen.getByRole("dialog", { name: "添加图片" });
+    fireEvent.click(within(imageDialog).getByRole("button", { name: /^添加图片 URL/ }));
+    const url = within(imageDialog).getByRole("textbox", { name: "图片 URL" });
+    fireEvent.change(url, { target: { value: "https://images.example.test/cat.png" } });
+    fireEvent.click(within(imageDialog).getByRole("button", { name: "确认添加图片 URL" }));
+    const file = new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])], "cat.png", {
+      type: "image/png",
+    });
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    expect(await screen.findByText("cat.png")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "待发送图片" })).getByText("2/4")).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "给个人助理发送消息" }), {
+      target: { value: "描述这些图片" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    await waitFor(() => expect(api.submitMessage).toHaveBeenCalledWith(
+      imageConversation,
+      "描述这些图片",
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      [
+        { kind: "url", url: "https://images.example.test/cat.png", imageId: undefined },
+        { kind: "upload", url: undefined, imageId: "11111111-1111-4111-8111-111111111111" },
+      ],
+    ));
+
+    await waitFor(() => expect(screen.queryByRole("region", { name: "待发送图片" })).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "添加图片" }));
+    const secondDialog = screen.getByRole("dialog", { name: "添加图片" });
+    fireEvent.click(within(secondDialog).getByRole("button", { name: /^添加图片 URL/ }));
+    fireEvent.change(within(secondDialog).getByRole("textbox", { name: "图片 URL" }), {
+      target: { value: "https://images.example.test/architecture.png" },
+    });
+    fireEvent.click(within(secondDialog).getByRole("button", { name: "确认添加图片 URL" }));
+    fireEvent.click(screen.getByRole("button", { name: /^解释图片/ }));
+    expect((screen.getByRole("textbox", { name: "给个人助理发送消息" }) as HTMLTextAreaElement).value)
+      .toBe("请解释这张图片");
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    await waitFor(() => expect(api.submitMessage).toHaveBeenNthCalledWith(
+      2,
+      imageConversation,
+      "请解释这张图片",
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+      [{ kind: "url", url: "https://images.example.test/architecture.png", imageId: undefined }],
+    ));
+  });
+
+  it("closes the image URL input with its close control and closes the menu with Escape", async () => {
+    const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_INPUT"] };
+    const imageConversation = {
+      ...conversation,
+      model: { model: imageModel, revision: 0, available: true },
+    };
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({ ...bootstrap, defaultModelId: imageModel.id, models: [imageModel] });
+    vi.mocked(api.conversations).mockResolvedValue([imageConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(imageConversation);
+    render(<App client={api} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "添加图片" }));
+    const imageDialog = screen.getByRole("dialog", { name: "添加图片" });
+    fireEvent.click(within(imageDialog).getByRole("button", { name: /^添加图片 URL/ }));
+    expect(within(imageDialog).getByRole("textbox", { name: "图片 URL" })).toBeTruthy();
+    fireEvent.click(within(imageDialog).getByRole("button", { name: "关闭图片 URL" }));
+    expect(screen.queryByRole("textbox", { name: "图片 URL" })).toBeNull();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "添加图片" })).toBeNull();
+  });
+
+  it("renders sent images inside the user message without exposing opaque ids", async () => {
+    const opaqueId = "11111111-1111-4111-8111-111111111111";
+    const api = client();
+    vi.mocked(api.turns).mockResolvedValue([
+      {
+        ...turns[0],
+        images: [
+          {
+            kind: "url",
+            url: "https://images.example.test/blue-vase.png",
+            imageId: null,
+            mediaType: null,
+            sizeBytes: 0,
+            originalFilename: "",
+          },
+          {
+            kind: "upload",
+            url: null,
+            imageId: opaqueId,
+            mediaType: "image/png",
+            sizeBytes: 9,
+            originalFilename: `${opaqueId}.png`,
+          },
+        ],
+      },
+      turns[1],
+    ]);
+
+    const { container } = render(<App client={api} />);
+
+    await screen.findByRole("img", { name: "第 1 张图片" });
+    const message = container.querySelector(".messages > .message.user")!;
+    expect(message.querySelector('.turn-images[aria-label="消息包含 2 张图片"]')).toBeTruthy();
+    expect(within(message as HTMLElement).getByRole("img", { name: "第 1 张图片" })).toBeTruthy();
+    expect(within(message as HTMLElement).getByText("已上传图片 2")).toBeTruthy();
+    expect(screen.queryByText(`${opaqueId}.png`)).toBeNull();
+    expect(container.querySelector(".activity-panel .turn-images")).toBeNull();
   });
 
   it("copies a complete assistant answer and an individual code block", async () => {

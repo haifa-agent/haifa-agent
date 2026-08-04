@@ -16,6 +16,7 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 - Java 21；
 - Maven 可通过 `mvn.cmd` 使用；
 - Node.js 22.x、npm 10.x；
+- Python 3；PowerShell 与 POSIX Shell 入口共用 `scripts/real_environment.py` 中的生命周期实现；
 - 主仓：`D:\workspace\haifa-agent`；
 - Utility MCP 仓库：
   `D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server`；
@@ -34,6 +35,9 @@ Key 文件不能提交到 Git，也不要把内容复制到命令历史、日志
 Set-Location D:\workspace\haifa-agent
 & .\haifa-agent-applications\haifa-agent-personal-assistant-server\scripts\start-real-environment.ps1
 ```
+
+`.ps1` 与同目录 `.sh` 只处理各自平台的参数入口和 Python 3 解释器发现；服务配置、构建、健康检查、
+状态文件、PID 身份校验与安全停止逻辑均由共用 Python 实现，两个入口保持同一行为。
 
 脚本会依次完成：
 

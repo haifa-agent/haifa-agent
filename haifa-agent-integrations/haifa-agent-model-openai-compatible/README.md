@@ -54,9 +54,14 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | SSE Content | 是 | 是 | 是 | 是 |
 | final usage chunk | 是 | 是 | 是 | 是 |
 | Tool Calls | 是 | 是 | 是 | 是 |
+| Image input | 显式 capability | 显式 capability | 显式 capability | 显式 capability |
 | Thinking | 无厂商扩展 | enabled/high | profile-gated | profile-gated |
 | Tool reasoning continuation | 否 | 必须 | profile-gated | profile-gated |
 | Live IT | 未提供 | opt-in | opt-in | opt-in |
+
+图片输入不是 dialect 推断结果。冻结模型只有声明 `IMAGE_INPUT` 时才可发送图片；纯文本消息继续使用
+字符串 `content`，包含 `ImageUrlPart` 或临时 `ImageDataPart` 的 USER 消息映射为标准 Chat Completions
+`text` / `image_url` 数组。Adapter 不抓取 URL；临时字节仅在请求组装时转换为 data URL，不进入持久化。
 
 | Provider | Endpoint 示例 | Credential 示例 | 模型引用 | 厂商扩展 |
 | --- | --- | --- | --- | --- |

@@ -15,10 +15,26 @@ export interface CreateConversation {
   displayName: string;
   message: string;
   modelId?: string;
+  images?: Array<ImageInput>;
 }
 
 export interface SubmitMessage {
   message: string;
+  images?: Array<ImageInput>;
+}
+
+export interface ImageInput {
+  kind: "url" | "upload";
+  url?: string;
+  imageId?: string;
+}
+
+export interface UploadedImage {
+  imageId: string;
+  mediaType: string;
+  sizeBytes: number;
+  originalFilename: string;
+  sha256: string;
 }
 
 export interface RecommendedQuestions {
@@ -66,7 +82,17 @@ export interface Turn {
   runId?: string | null;
   sequence: number;
   text: string;
+  images: Array<TurnImage>;
   createdAt: string;
+}
+
+export interface TurnImage {
+  kind: string;
+  url?: string | null;
+  imageId?: string | null;
+  mediaType?: string | null;
+  sizeBytes: number;
+  originalFilename: string;
 }
 
 export interface Usage {
@@ -192,4 +218,4 @@ export interface ApiError {
   correlationId: string;
 }
 
-export type OperationId = "bootstrap" | "listModels" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory";
+export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory";

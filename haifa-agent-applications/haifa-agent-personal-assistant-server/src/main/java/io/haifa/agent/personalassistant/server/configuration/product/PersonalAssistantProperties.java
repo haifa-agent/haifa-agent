@@ -160,7 +160,12 @@ public record PersonalAssistantProperties(
         }
     }
 
-    public record ProviderModel(String id, String displayName, String providerModelId) {
+    public record ProviderModel(String id, String displayName, String providerModelId, boolean imageInput) {
+        public ProviderModel(String id, String displayName, String providerModelId) {
+            this(id, displayName, providerModelId, false);
+        }
+
+        @ConstructorBinding
         public ProviderModel {
             id = text(id, "providerModel.id");
             displayName = text(displayName == null ? id : displayName, "providerModel.displayName");

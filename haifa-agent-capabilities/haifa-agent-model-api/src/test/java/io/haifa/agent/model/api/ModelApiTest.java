@@ -70,6 +70,38 @@ class ModelApiTest {
     }
 
     @Test
+    void imagePartsAreBoundedTypedAndRedacted() {
+        ImageUrlPart remote = new ImageUrlPart(URI.create("https://images.example.com/cat.png?token=private"));
+        byte[] source = {(byte) 0x89, 0x50, 0x4e, 0x47};
+        ImageDataPart uploaded = new ImageDataPart("image/png", source);
+        ModelMessage message = ModelMessage.user("describe both images", List.of(remote, uploaded));
+
+        source[0] = 0;
+
+        assertThat(message.images()).containsExactly(remote, uploaded);
+        assertThat(uploaded.bytes()).containsExactly((byte) 0x89, 0x50, 0x4e, 0x47);
+        assertThat(remote.toString()).doesNotContain("token=private", "/cat.png");
+        assertThat(uploaded.toString()).doesNotContain("iVBOR");
+        assertThatThrownBy(() -> new ImageUrlPart(URI.create("file:///tmp/cat.png")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("HTTPS");
+        assertThatThrownBy(() -> ModelMessage.user("too many", List.of(remote, remote, remote, remote, remote)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("at most 4");
+        assertThatThrownBy(() -> new ModelMessage(
+                        ModelMessageRole.ASSISTANT,
+                        "not allowed",
+                        List.of(),
+                        java.util.Optional.empty(),
+                        Map.of(),
+                        false,
+                        java.util.Optional.empty(),
+                        List.of(remote)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("user messages");
+    }
+
+    @Test
     void providerOptionsAreDeeplyImmutable() {
         List<Object> nested = new ArrayList<>(List.of("disabled"));
         Map<String, Object> options = new LinkedHashMap<>();

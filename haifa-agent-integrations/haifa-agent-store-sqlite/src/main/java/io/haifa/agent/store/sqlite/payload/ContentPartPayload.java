@@ -3,6 +3,8 @@ package io.haifa.agent.store.sqlite.payload;
 import io.haifa.agent.core.content.ArtifactRefPart;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
@@ -20,15 +22,29 @@ public record ContentPartPayload(
         String toolCallId,
         String providerCorrelationId,
         String toolName,
-        String toolVersion) {
+        String toolVersion,
+        ImageUrlPayload imageUrl,
+        StoredImagePayload storedImage) {
 
     public static ContentPartPayload from(ContentPart part) {
         return switch (part) {
             case TextPart value ->
-                new ContentPartPayload("text", value.text(), value.format(), null, null, null, null, null, null, null);
+                new ContentPartPayload(
+                        "text", value.text(), value.format(), null, null, null, null, null, null, null, null, null);
             case AssetRefPart value ->
                 new ContentPartPayload(
-                        "asset-ref", null, null, AssetPayload.from(value.asset()), null, null, null, null, null, null);
+                        "asset-ref",
+                        null,
+                        null,
+                        AssetPayload.from(value.asset()),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
             case ArtifactRefPart value ->
                 new ContentPartPayload(
                         "artifact-ref",
@@ -40,7 +56,37 @@ public record ContentPartPayload(
                         null,
                         null,
                         null,
+                        null,
+                        null,
                         null);
+            case ImageUrlContentPart value ->
+                new ContentPartPayload(
+                        "image-url",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        ImageUrlPayload.from(value),
+                        null);
+            case StoredImageContentPart value ->
+                new ContentPartPayload(
+                        "stored-image",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        StoredImagePayload.from(value));
             case ToolCallPart value ->
                 new ContentPartPayload(
                         "tool-call-ref",
@@ -52,7 +98,9 @@ public record ContentPartPayload(
                         value.toolCallId().value(),
                         value.providerCorrelationId().value(),
                         value.toolName(),
-                        value.toolVersion());
+                        value.toolVersion(),
+                        null,
+                        null);
             case ToolResultPart value ->
                 new ContentPartPayload(
                         "tool-result-ref",
@@ -64,6 +112,8 @@ public record ContentPartPayload(
                         value.toolCallId().value(),
                         value.providerCorrelationId().value(),
                         null,
+                        null,
+                        null,
                         null);
         };
     }
@@ -73,6 +123,8 @@ public record ContentPartPayload(
             case "text" -> new TextPart(text, format);
             case "asset-ref" -> new AssetRefPart(asset.toDomain());
             case "artifact-ref" -> new ArtifactRefPart(artifact.toDomain(), summary);
+            case "image-url" -> imageUrl.toDomain();
+            case "stored-image" -> storedImage.toDomain();
             case "tool-call-ref" ->
                 new ToolCallPart(
                         new ToolCallId(toolCallId),

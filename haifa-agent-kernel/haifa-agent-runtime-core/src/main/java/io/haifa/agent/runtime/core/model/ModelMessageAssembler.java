@@ -13,6 +13,8 @@ import io.haifa.agent.context.item.MessageGroupContextContent;
 import io.haifa.agent.context.item.TextContextContent;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
@@ -20,6 +22,8 @@ import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolCall;
+import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelImagePart;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
@@ -36,9 +40,15 @@ import java.util.stream.Collectors;
 /** The only Runtime boundary that turns Context IR into provider-neutral ModelMessage values. */
 public final class ModelMessageAssembler {
     private final RuntimeStateRepository state;
+    private final ModelImageResolver images;
 
     public ModelMessageAssembler(RuntimeStateRepository state) {
+        this(state, ModelImageResolver.unsupported());
+    }
+
+    public ModelMessageAssembler(RuntimeStateRepository state, ModelImageResolver images) {
         this.state = Objects.requireNonNull(state, "state must not be null");
+        this.images = Objects.requireNonNull(images, "images must not be null");
     }
 
     public List<ModelMessage> assemble(AgentRunId runId, AgentContext context) {
@@ -155,6 +165,15 @@ public final class ModelMessageAssembler {
         if (message.role() == MessageRole.TOOL) {
             throw new IllegalStateException("tool message has no typed provider correlation");
         }
+        List<ModelImagePart> mappedImages = renderImages(message.contents());
+        if (!mappedImages.isEmpty()) {
+            if (message.role() != MessageRole.USER) {
+                throw new ContextBuildException(
+                        ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
+                        "image inputs are only allowed on user messages");
+            }
+            return List.of(ModelMessage.user(text, mappedImages));
+        }
         return List.of(ModelMessage.text(mapRole(message.role()), text));
     }
 
@@ -170,13 +189,25 @@ public final class ModelMessageAssembler {
                 throw new ContextBuildException(
                         ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
                         "raw asset references require a derived text, OCR, or transcript context item");
-            } else if (!(content instanceof ToolCallPart) && !(content instanceof ToolResultPart)) {
+            } else if (!(content instanceof ImageUrlContentPart)
+                    && !(content instanceof StoredImageContentPart)
+                    && !(content instanceof ToolCallPart)
+                    && !(content instanceof ToolResultPart)) {
                 throw new ContextBuildException(
                         ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT,
                         "unsupported context content: " + content.contentType());
             }
         }
         return String.join("\n", values).trim();
+    }
+
+    private List<ModelImagePart> renderImages(List<ContentPart> contents) {
+        List<ModelImagePart> values = new ArrayList<>();
+        for (ContentPart content : contents) {
+            if (content instanceof ImageUrlContentPart image) values.add(new ImageUrlPart(image.url()));
+            else if (content instanceof StoredImageContentPart image) values.add(images.resolve(image));
+        }
+        return List.copyOf(values);
     }
 
     private ModelMessageRole mapRole(MessageRole role) {

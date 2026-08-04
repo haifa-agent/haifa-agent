@@ -24,6 +24,8 @@ import io.haifa.agent.context.prompt.PromptComponentId;
 import io.haifa.agent.context.prompt.PromptLayer;
 import io.haifa.agent.context.prompt.PromptRole;
 import io.haifa.agent.core.content.AssetRefPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
@@ -43,6 +45,7 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -108,6 +111,39 @@ class ModelMessageAssemblerTest {
                 .isInstanceOf(ContextBuildException.class)
                 .extracting(error -> ((ContextBuildException) error).failure())
                 .isEqualTo(ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT);
+    }
+
+    @Test
+    void mapsRemoteAndStoredImagesWithoutPersistingBinaryData() {
+        StoredImageContentPart stored = new StoredImageContentPart(
+                "personal-local", "img-1", "image/png", 4, "sha256:" + "a".repeat(64), "cat.png");
+        AgentMessage message = message(
+                "image-message",
+                new AgentSessionId("session-1"),
+                RUN_ID,
+                MessageRole.USER,
+                1,
+                List.of(
+                        new TextPart("describe", "plain"),
+                        new ImageUrlContentPart(URI.create("https://images.example.test/cat.png")),
+                        stored));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(item("image-message", ContextItemType.MESSAGE, new MessageContextContent(message))),
+                List.of(),
+                budget(),
+                20);
+
+        var messages = new ModelMessageAssembler(
+                        new InMemoryRuntimeStore(),
+                        image -> new io.haifa.agent.model.api.ImageDataPart("image/png", new byte[] {1, 2, 3, 4}))
+                .assemble(RUN_ID, context);
+
+        assertThat(messages.getLast().content()).isEqualTo("describe");
+        assertThat(messages.getLast().images())
+                .hasSize(2)
+                .anyMatch(io.haifa.agent.model.api.ImageUrlPart.class::isInstance)
+                .anyMatch(io.haifa.agent.model.api.ImageDataPart.class::isInstance);
     }
 
     @Test
