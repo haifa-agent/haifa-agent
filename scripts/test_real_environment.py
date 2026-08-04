@@ -14,6 +14,18 @@ import real_environment
 
 
 class RealEnvironmentTest(unittest.TestCase):
+    def test_root_scripts_location_resolves_repository_paths(self) -> None:
+        repository = Path(__file__).resolve().parents[1]
+
+        paths = real_environment.paths()
+
+        self.assertEqual(repository, paths.repository)
+        self.assertEqual(
+            repository / "haifa-agent-applications/haifa-agent-personal-assistant-server",
+            paths.server,
+        )
+        self.assertEqual(repository / "haifa-agent-applications/haifa-agent-personal-assistant-web", paths.web)
+
     def test_openai_image_capability_is_part_of_shared_backend_configuration(self) -> None:
         root = Path("repository")
         paths = real_environment.Paths(

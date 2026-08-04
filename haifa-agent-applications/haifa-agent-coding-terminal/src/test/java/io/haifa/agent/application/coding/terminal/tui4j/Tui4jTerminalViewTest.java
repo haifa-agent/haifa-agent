@@ -15,6 +15,7 @@ import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.core.run.AgentRunId;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.IntStream;
@@ -134,11 +135,11 @@ class Tui4jTerminalViewTest {
                 initial.selector(),
                 new TerminalFooter(
                         "local-project-v1-" + "a".repeat(64),
-                        "git: via safe read model",
+                        "feat-long-footer",
                         "a long session name that must remain on one physical row",
                         "queue: 0",
                         "provider: frozen",
-                        "model: frozen",
+                        "frozen-model",
                         "COMPLETED",
                         "sandbox: frozen profile"),
                 initial.columns(),
@@ -155,8 +156,8 @@ class Tui4jTerminalViewTest {
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(40);
         assertThat(rendered.lines()).allMatch(line -> TextWidth.measureCellWidth(line) <= 119);
         assertThat(rendered)
-                .contains("COMPLETED")
-                .doesNotContain("git: via safe read model", "provider: frozen", "model: frozen", "sandbox: frozen");
+                .contains("COMPLETED", "model: frozen-model", "git: fea")
+                .doesNotContain("provider: frozen", "sandbox: frozen");
     }
 
     @Test
@@ -196,12 +197,53 @@ class Tui4jTerminalViewTest {
                 initial.recoverableError(),
                 initial.exitRequested());
 
-        String rendered = view.render(active, transcript(active), editor(80), true, false);
+        String rendered = view.render(active, transcript(active), editor(80), true, false, Duration.ofSeconds(125));
 
         assertThat(rendered)
                 .contains(
-                        "enter steer", "alt/option+enter follow-up", "alt/option+up restore queued message", "Working")
+                        "enter steer",
+                        "alt/option+enter follow-up",
+                        "alt/option+up restore queued message",
+                        "Working (02m 05s · esc to interrupt)")
                 .doesNotContain("enter send");
+    }
+
+    @Test
+    void showsSelectedModelWorkingDirectoryAndGitBranchBelowEnterSend() {
+        TerminalUiState initial = TerminalUiState.initial(120, 30);
+        TerminalUiState state = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                initial.status(),
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                new TerminalFooter(
+                        "D:\\workspace\\haifa-agent",
+                        "feat-coding-terminal-mouse-scroll",
+                        "terminal context",
+                        "queue: 0",
+                        "DeepSeek",
+                        "DeepSeek V4 Flash",
+                        "IDLE",
+                        ""),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                initial.currentRunId(),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        String rendered = view.render(state, transcript(state), editor(120), true, false);
+
+        assertThat(rendered)
+                .containsSubsequence(
+                        "enter send",
+                        "model: DeepSeek V4 Flash · cwd: D:\\workspace\\haifa-agent · git: feat-coding-terminal-mouse-scroll");
     }
 
     @Test
@@ -220,11 +262,11 @@ class Tui4jTerminalViewTest {
                 initial.selector(),
                 new TerminalFooter(
                         "project-1",
-                        "git: unavailable",
+                        "",
                         "retry task",
                         "queue: 2",
                         "provider: frozen",
-                        "model: frozen",
+                        "frozen-model",
                         "RUNNING",
                         "sandbox: frozen profile"),
                 initial.columns(),
@@ -248,9 +290,10 @@ class Tui4jTerminalViewTest {
                         "The session changed while submitting; retry the message.",
                         "Type a message",
                         "enter steer",
-                        "RUNNING · project-1 · retry task · queue: 2")
+                        "model: frozen-model · cwd: project-1",
+                        "RUNNING · retry task · queue: 2")
                 .containsOnlyOnce("Retryable")
-                .doesNotContain("provider: frozen", "model: frozen", "sandbox: frozen profile");
+                .doesNotContain("provider: frozen", "sandbox: frozen profile");
     }
 
     @Test

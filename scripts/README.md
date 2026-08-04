@@ -1,8 +1,26 @@
 # Scripts
 
-后续可复用的构建、迁移和发布脚本统一放置在此目录。当前构建入口为根目录 Maven Reactor。
+后续可复用的构建、迁移、运行验证和发布脚本统一放置在此目录。当前构建入口为根目录 Maven Reactor。
 
-## Local Coding Agent 发行目录
+## Personal Assistant 真实环境
+
+`start-real-environment.ps1`（Windows PowerShell）和 `start-real-environment.sh`
+（macOS/Linux）从仓库根目录启动、复用、验证或停止 Personal Assistant 的真实联调环境。
+两个入口统一调用 `real_environment.py`；`test_real_environment.py` 覆盖共享配置、参数约束和
+状态文件写入。运行方法和安全边界见
+[`haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md`](../haifa-agent-applications/haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md)。
+
+```powershell
+.\scripts\start-real-environment.ps1
+.\scripts\start-real-environment.ps1 -Stop -WhatIf
+```
+
+```bash
+./scripts/start-real-environment.sh
+./scripts/start-real-environment.sh --stop --dry-run
+```
+
+## Haifa Coding Agent 发行目录
 
 `package-local-coding-agent.sh`（macOS/Linux）和 `package-local-coding-agent.ps1`（Windows）构建
 `haifa-agent-cli` shaded JAR，并生成包含启动脚本、JAR 和无密钥默认配置的可搬运目录。默认输出为

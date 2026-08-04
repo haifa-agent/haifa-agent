@@ -7,9 +7,9 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
 
-/** Versioned product-owned base prompt for the local Coding Agent. */
+/** Versioned product-owned base prompt for Haifa Coding Agent. */
 public final class CodingAgentPrompt {
-    public static final String VERSION = "1.0.2";
+    public static final String VERSION = "1.0.3";
     public static final String RESOURCE = "/META-INF/haifa-agent/prompts/coding-agent-v1.txt";
     private static final Snapshot CURRENT = load();
 

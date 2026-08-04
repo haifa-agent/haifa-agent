@@ -451,6 +451,15 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；默认不继承 API Key、`*_TOKEN`、`*_SECRET`、云凭据或代理凭据。命令输出实时脱敏展示，最终模型结果默认限制为最后 2000 行且最多 50KB；较大分通道输出通过 Output Ref 访问。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
+CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该
+Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与
+Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。
+
+执行前后的 Workspace Manifest 使用启动时冻结的 ignore policy：排除标准构建/IDE 目录，并读取根
+`.gitignore` 中不含 glob 的目录规则。若存在 `!` 反向规则则不采用 `.gitignore` 规则，避免漏审重新纳入的
+内容；策略版本随规则摘要进入 Manifest。非忽略路径仍受文件数、总字节和哈希字节预算约束，超预算继续
+按未知结果失败关闭。
+
 当前已包含 tui4j Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
 `/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久
 Follow-up、Cancel、Approval selector 和 SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护

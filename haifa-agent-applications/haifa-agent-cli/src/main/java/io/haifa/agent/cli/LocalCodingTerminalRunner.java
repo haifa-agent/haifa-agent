@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalApplication;
 import io.haifa.agent.application.coding.terminal.session.LocalCodingSessionClient;
+import io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.io.OutputStream;
@@ -49,7 +50,15 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
                     agent::reloadResources,
                     agent.shell(),
                     agent.exporter());
-            new CodingTerminalApplication(agent.projectId(), client, Optional.empty(), terminalIo).run();
+            new CodingTerminalApplication(
+                            agent.projectId(),
+                            client,
+                            Optional.empty(),
+                            terminalIo,
+                            new TerminalWorkspaceContext(
+                                    workspace.toAbsolutePath().normalize().toString(),
+                                    LocalGitBranchResolver.resolve(workspace).orElse("")))
+                    .run();
         }
     }
 

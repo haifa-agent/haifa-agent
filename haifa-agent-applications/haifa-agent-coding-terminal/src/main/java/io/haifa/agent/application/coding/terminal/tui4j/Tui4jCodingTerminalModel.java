@@ -9,6 +9,8 @@ import com.williamcallahan.tui4j.compat.bubbletea.Model;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.UpdateResult;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
+import com.williamcallahan.tui4j.compat.bubbletea.input.MouseButton;
+import com.williamcallahan.tui4j.compat.bubbletea.input.MouseMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.Key;
 import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
 import com.williamcallahan.tui4j.message.EnterKeyModifier;
@@ -18,9 +20,11 @@ import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.core.run.AgentRunId;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.LongSupplier;
 
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
 final class Tui4jCodingTerminalModel implements Model {
@@ -32,6 +36,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private final Viewport transcript;
     private final Tui4jTerminalView view = new Tui4jTerminalView();
     private final List<String> history = new ArrayList<>();
+    private final LongSupplier monotonicNanos;
 
     private String transcriptContent = "";
     private int transcriptRows;
@@ -42,10 +47,17 @@ final class Tui4jCodingTerminalModel implements Model {
     private boolean followTranscript = true;
     private boolean newOutputPending;
     private boolean fullRepaintRequested;
+    private AgentRunId timedRunId;
+    private long runStartedNanos;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
+        this(controller, pump, System::nanoTime);
+    }
+
+    Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump, LongSupplier monotonicNanos) {
         this.controller = controller;
         this.pump = pump;
+        this.monotonicNanos = monotonicNanos;
         TerminalUiState state = controller.state();
         this.editorCursor = state.editorCursor();
         this.transcript = Viewport.create(state.columns(), 2);
@@ -83,6 +95,8 @@ final class Tui4jCodingTerminalModel implements Model {
                         || modified.modifier() == EnterKeyModifier.Ctrl
                         || modified.modifier() == EnterKeyModifier.CtrlShift)) {
             edit(new PasteMessage("\n"));
+        } else if (message instanceof MouseMessage mouse) {
+            command = mouse(mouse);
         } else if (message instanceof KeyPressMessage key) {
             command = key(key);
         } else if (message instanceof PasteMessage paste) {
@@ -100,10 +114,44 @@ final class Tui4jCodingTerminalModel implements Model {
         return UpdateResult.from(this, command);
     }
 
+    private Command mouse(MouseMessage mouse) {
+        if (!mouse.isWheel()) {
+            return Command.none();
+        }
+        int before = transcript.getYOffset();
+        if (mouse.getButton() == MouseButton.MouseButtonWheelUp) {
+            transcript.scrollUp(transcript.getMouseWheelDelta());
+            if (transcript.getYOffset() != before) {
+                followTranscript = false;
+            }
+        } else if (mouse.getButton() == MouseButton.MouseButtonWheelDown) {
+            transcript.scrollDown(transcript.getMouseWheelDelta());
+            if (transcript.atBottom()) {
+                followTranscript = true;
+                newOutputPending = false;
+            }
+        }
+        return Command.none();
+    }
+
     @Override
     public String view() {
         TerminalUiState state = controller.state();
-        return view.render(state, transcript, editor, followTranscript, newOutputPending);
+        return view.render(state, transcript, editor, followTranscript, newOutputPending, workingElapsed(state));
+    }
+
+    private Duration workingElapsed(TerminalUiState state) {
+        if (state.currentRunId().isEmpty()) {
+            timedRunId = null;
+            return Duration.ZERO;
+        }
+        AgentRunId runId = state.currentRunId().orElseThrow();
+        long now = monotonicNanos.getAsLong();
+        if (!runId.equals(timedRunId)) {
+            timedRunId = runId;
+            runStartedNanos = now;
+        }
+        return Duration.ofNanos(Math.max(0, now - runStartedNanos));
     }
 
     private Command key(KeyPressMessage key) {

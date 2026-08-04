@@ -11,7 +11,7 @@ from typing import Optional
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build a portable local Haifa Coding Agent distribution."
+        description="Build a portable Haifa Coding Agent distribution."
     )
     parser.add_argument(
         "output_directory",
@@ -46,7 +46,7 @@ def build_cli(repository_directory: Path) -> Path:
     if not maven_wrapper.is_file():
         raise FileNotFoundError(f"Maven Wrapper is missing: {maven_wrapper}")
 
-    print("Building the local Coding Agent shaded JAR...", flush=True)
+    print("Building the Haifa Coding Agent shaded JAR...", flush=True)
     subprocess.run(
         [
             str(maven_wrapper),
@@ -133,7 +133,7 @@ def assemble_distribution(
 
 def print_next_steps(output_directory: Path) -> None:
     print()
-    print(f"Local Coding Agent distribution: {output_directory}")
+    print(f"Haifa Coding Agent distribution: {output_directory}")
     if os.name == "nt":
         print("Add it to PATH for the current PowerShell session:")
         print(f"  $env:Path = '{output_directory};' + $env:Path")

@@ -25,9 +25,11 @@ import io.haifa.agent.store.jsonl.JsonlTranscriptReader;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -108,6 +110,13 @@ class LocalCodingAgentTest {
 
         assertThat(LocalCodingAgent.effectiveBuiltInTools(denied)).doesNotContain("execution.run");
         assertThat(LocalCodingAgent.effectiveBuiltInTools(defaults)).contains("execution.run");
+    }
+
+    @Test
+    void tellsTheModelWhichConfiguredShellDialectExecutionRunUses() {
+        assertThat(LocalCodingAgent.executionEnvironmentPrompt("PowerShell"))
+                .contains("execution_run uses PowerShell command syntax", "do not assume a POSIX shell");
+        assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
     }
 
     @Test
@@ -468,6 +477,76 @@ class LocalCodingAgentTest {
         }
         assertThat(Files.readString(workspace.resolve("shell-e2e.txt"))).isEqualTo("stub");
         assertThat(calls).hasValue(4);
+    }
+
+    @Test
+    void approvedExecutionRunResumesAndReturnsARealToolResult() throws Exception {
+        Files.writeString(workspace.resolve(".gitignore"), "target/\n");
+        Path generated = Files.createDirectories(workspace.resolve("target")).resolve("generated.jar");
+        try (var channel = Files.newByteChannel(generated, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+            channel.position(17L * 1024 * 1024);
+            channel.write(ByteBuffer.wrap(new byte[] {0}));
+        }
+        AtomicInteger calls = new AtomicInteger();
+        var traces = new CopyOnWriteArrayList<io.haifa.agent.runtime.core.trace.RuntimeTraceEvent>();
+        String command = isWindows() ? "Write-Output APPROVED-EXECUTION" : "printf APPROVED-EXECUTION";
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            if (calls.incrementAndGet() == 1) {
+                return toolResponse(
+                        "approved-execution",
+                        "execution_run",
+                        Map.of(
+                                "command",
+                                command,
+                                "workdir",
+                                ".",
+                                "timeoutMillis",
+                                5000,
+                                "description",
+                                "Inspect the configured shell",
+                                "operationFamily",
+                                "INSPECT"));
+            }
+            assertThat(request.messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && "SUCCEEDED".equals(message.toolResultData().get("status"))
+                            && String.valueOf(message.toolResultData().get("output"))
+                                    .contains("APPROVED-EXECUTION"));
+            return answer("approved-execution-complete", "approved execution completed");
+        };
+
+        try (var agent = LocalCodingAgent.create(
+                workspace,
+                trustedHostConfiguration(CliConfiguration.defaults()),
+                new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                model,
+                traces::add)) {
+            var accepted = agent.start("Inspect the configured shell after approval.");
+            Instant pendingDeadline = now().plusSeconds(30);
+            var pending = agent.interactions().pending(accepted.runId());
+            while (pending.isEmpty() && now().isBefore(pendingDeadline)) {
+                Thread.sleep(25);
+                pending = agent.interactions().pending(accepted.runId());
+            }
+            var interaction = pending.orElseThrow();
+            agent.runtime()
+                    .respond(new InteractionResponse(
+                            new InteractionResponseId(agent.identifiers().nextValue()),
+                            interaction.id(),
+                            interaction.runId(),
+                            InteractionResponseType.APPROVE,
+                            List.of(),
+                            "approve-" + interaction.id().value(),
+                            agent.time().now()));
+
+            var completed = awaitTerminal(agent, accepted.runId());
+            assertThat(completed.status())
+                    .withFailMessage("run failed: %s; traces: %s", completed.error(), traces)
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(completed.output()).contains("approved execution completed");
+        }
+        assertThat(calls).hasValue(2);
+        assertThat(traces).noneMatch(event -> event.operation().equals("runtime.error"));
     }
 
     @Test

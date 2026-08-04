@@ -16,14 +16,22 @@ public final class WorkspaceManifestService {
     private final WorkspaceStore workspaces;
     private final WorkspaceFileService files;
     private final ManifestBudget budget;
-    private final String ignorePolicyVersion;
+    private final WorkspaceManifestIgnorePolicy ignorePolicy;
 
     public WorkspaceManifestService(
             WorkspaceStore workspaces, WorkspaceFileService files, ManifestBudget budget, String ignorePolicyVersion) {
+        this(workspaces, files, budget, WorkspaceManifestIgnorePolicy.none(ignorePolicyVersion));
+    }
+
+    public WorkspaceManifestService(
+            WorkspaceStore workspaces,
+            WorkspaceFileService files,
+            ManifestBudget budget,
+            WorkspaceManifestIgnorePolicy ignorePolicy) {
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.files = Objects.requireNonNull(files, "files must not be null");
         this.budget = Objects.requireNonNull(budget, "budget must not be null");
-        this.ignorePolicyVersion = Objects.requireNonNull(ignorePolicyVersion, "ignorePolicyVersion must not be null");
+        this.ignorePolicy = Objects.requireNonNull(ignorePolicy, "ignorePolicy must not be null");
     }
 
     public WorkspaceManifest capture(WorkspaceId workspaceId) {
@@ -42,6 +50,7 @@ public final class WorkspaceManifestService {
                 var page = files.list(new FileListRequest(directory, offset, 256));
                 for (var file : page.entries()) {
                     var metadata = file.metadata();
+                    if (ignorePolicy.ignores(metadata)) continue;
                     if (entries.size() + 1 > budget.maxFiles()) {
                         throw new ManifestBudgetException("manifest file budget exceeded");
                     }
@@ -64,6 +73,6 @@ public final class WorkspaceManifestService {
             } while (more);
         }
         entries.sort(Comparator.comparing(WorkspaceManifestEntry::path));
-        return new WorkspaceManifest(workspaceId, workspace.revision(), ignorePolicyVersion, entries);
+        return new WorkspaceManifest(workspaceId, workspace.revision(), ignorePolicy.version(), entries);
     }
 }

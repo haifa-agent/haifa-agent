@@ -78,6 +78,7 @@ final class CliExecutionPlatform {
             TimeProvider time,
             Clock clock,
             CodingAgentPolicyAssembly policy,
+            Path workspaceRoot,
             PrintStream output) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         HostShell shell = shell(configuration);
@@ -114,7 +115,7 @@ final class CliExecutionPlatform {
                 workspaces,
                 files,
                 new ManifestBudget(100_000, 1024L * 1024 * 1024, 256L * 1024 * 1024),
-                "cli-shell-v1");
+                CliWorkspaceManifestIgnorePolicy.load(workspaceRoot));
         var observedChanges = new ObservedFileChangeService(workspaces, changeSets, changeSetService, time);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
