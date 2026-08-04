@@ -55,7 +55,8 @@ public final class SuiteRunnerMain {
         SuiteManifest manifest = new SuiteManifestLoader().load(configRoot, options.suiteId());
         MatrixManifest matrix = new MatrixManifestLoader().load(configRoot, manifest.matrixRef());
         MatrixManifest.Combination combination = matrix.requireCombination(options.matrixCombination());
-        SuiteExecutionPlanFingerprint executionPlan = SuiteExecutionPlanFingerprint.create(manifest, combination);
+        SuiteExecutionPlanFingerprint executionPlan =
+                SuiteExecutionPlanFingerprint.create(manifest, combination, productRevision, testConfigRevision);
         String currentPlatform = currentPlatform();
         if (!combination.platform().equals(currentPlatform)) {
             throw new IllegalArgumentException("matrix combination "
