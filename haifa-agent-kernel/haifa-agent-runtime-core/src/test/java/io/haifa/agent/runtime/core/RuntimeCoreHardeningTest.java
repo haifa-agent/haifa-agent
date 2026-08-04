@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -237,6 +238,10 @@ class RuntimeCoreHardeningTest {
                     assertThat(message.metadata())
                             .containsEntry("completionRepairAttempt", 1)
                             .containsKey("completionBlockerCodes");
+                    assertThat(message.contents())
+                            .singleElement()
+                            .isInstanceOfSatisfying(TextPart.class, part -> assertThat(part.text())
+                                    .contains("guidance=REQUIRED_ARTIFACT_MISSING: A required artifact is missing."));
                 });
         assertThat(blocked.store.eventsFor(blockedRun.runId()))
                 .filteredOn(event -> event.type().equals("completion.deferred"))

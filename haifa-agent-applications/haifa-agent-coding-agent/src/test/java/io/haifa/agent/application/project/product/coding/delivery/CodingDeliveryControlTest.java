@@ -62,10 +62,16 @@ class CodingDeliveryControlTest {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         CodingCompletionPolicy policy = policy(fixture.store());
 
-        assertThat(policy.evaluate(fixture.run(), finalDecision()).blockers())
+        var initialBlockers = policy.evaluate(fixture.run(), finalDecision()).blockers();
+        assertThat(initialBlockers)
                 .extracting(blocker -> blocker.code())
                 .containsExactlyInAnyOrder(
                         "WORKSPACE_CHANGE_MISSING", "VALIDATION_ATTEMPT_MISSING", "DIFF_INSPECTION_MISSING");
+        assertThat(initialBlockers)
+                .filteredOn(blocker -> blocker.code().equals("DIFF_INSPECTION_MISSING"))
+                .singleElement()
+                .satisfies(blocker -> assertThat(blocker.safeMessage())
+                        .contains("git.diff", "execution.run", "operationFamily=DIFF"));
 
         tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
         tool(
