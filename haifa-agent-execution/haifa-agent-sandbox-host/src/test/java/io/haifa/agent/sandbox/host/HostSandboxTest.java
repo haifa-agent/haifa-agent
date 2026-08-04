@@ -526,8 +526,6 @@ class HostSandboxTest {
             if (Files.isDirectory(scratchRoot)) {
                 try (var sessions = Files.list(scratchRoot)) {
                     for (Path directory : sessions.toList()) {
-                        Files.setPosixFilePermissions(
-                                directory, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
                         try (var paths = Files.walk(directory)) {
                             for (Path path : paths.sorted(java.util.Comparator.reverseOrder())
                                     .toList()) {
