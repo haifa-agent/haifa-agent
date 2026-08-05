@@ -2,6 +2,11 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 新增纯 Java `haifa-agent-sdk-starter`：默认装配 DeepSeek V4 Flash、关闭 Thinking、从
+  `DEEPSEEK_API_KEY` 解析凭据并使用进程内 Runtime/Conversation Store，提供可编译的最小 Quickstart。
+- SDK 新增类型化 `JavaTool<I, O>`、Java record JSON Schema/编解码与
+  `HaifaAgentBuilder.tool(...)` 单 Tool 注册入口；构建时自动派生有效 Profile、合并已有 Catalog，
+  并保持统一 Schema、Policy、Approval、Credential、Journal 与精确 binding 执行链路。
 - Personal Assistant adds durable Mission execution and an explicit Deep Research mode: frozen
   briefs and Skill coordinates, isolated Task Runs, bounded Search/Fetch, strict source and claim
   validation, partial synthesis, restart-safe final messages, five immutable Artifacts, and a

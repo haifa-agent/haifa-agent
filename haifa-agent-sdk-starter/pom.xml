@@ -10,61 +10,22 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>haifa-agent-sdk</artifactId>
-    <name>Haifa Agent SDK</name>
+    <artifactId>haifa-agent-sdk-starter</artifactId>
+    <name>Haifa Agent SDK Starter</name>
+    <description>Pure Java safe-default starter for the Haifa Agent SDK</description>
 
     <dependencies>
         <dependency>
             <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-common</artifactId>
+            <artifactId>haifa-agent-sdk</artifactId>
         </dependency>
         <dependency>
             <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-core</artifactId>
+            <artifactId>haifa-agent-model-openai-compatible</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-runtime-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-runtime-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-context</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-model-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-tool-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-tool-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-skill-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-memory-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-policy-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-credential-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-artifact</artifactId>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
         </dependency>
 
         <dependency>
@@ -91,7 +52,7 @@
                 <artifactId>maven-enforcer-plugin</artifactId>
                 <executions>
                     <execution>
-                        <id>sdk-remains-framework-independent</id>
+                        <id>starter-remains-pure-java</id>
                         <goals><goal>enforce</goal></goals>
                         <configuration>
                             <rules>

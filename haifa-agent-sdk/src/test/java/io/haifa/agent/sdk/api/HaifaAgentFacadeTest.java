@@ -14,14 +14,55 @@ import io.haifa.agent.sdk.conversation.ConversationStatus;
 import io.haifa.agent.sdk.conversation.RenameConversationCommand;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.conversation.SubmitConversationTurnCommand;
+import io.haifa.agent.sdk.product.ProductCapabilities;
+import io.haifa.agent.sdk.product.ProductProfile;
+import io.haifa.agent.sdk.tool.JavaTool;
+import io.haifa.agent.sdk.tool.JavaToolContext;
+import io.haifa.agent.sdk.tool.JavaToolSpec;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
-class HaifaAgentFacadeTest {
+public class HaifaAgentFacadeTest {
+    @Test
+    void registersOneTypedJavaToolWithoutManualPlatformAssembly() {
+        try (HaifaAgent agent = HaifaAgents.builder()
+                .product(SdkTestFixtures.profile("java-tool", Map.of()))
+                .contributeAll(SdkTestFixtures.baseContributions())
+                .tool(new WeatherTool())
+                .build()) {
+            assertThat(agent.assembly().profile().allowedTools()).containsExactly("weather_get");
+            assertThat(agent.assembly()
+                            .profile()
+                            .requirement(ProductCapabilities.TOOL)
+                            .allowedContributions())
+                    .extracting("providerId")
+                    .containsExactly("sdk.java-tools");
+        }
+    }
+
+    @Test
+    void registersAListOfToolsWithoutMutatingAnotherBuilder() {
+        ProductProfile profile = SdkTestFixtures.profile("java-tool-list", Map.of());
+
+        try (HaifaAgent withTools = HaifaAgents.builder(profile)
+                        .contributeAll(SdkTestFixtures.baseContributions())
+                        .tools(List.of(new WeatherTool(), new GeocodeTool()))
+                        .build();
+                HaifaAgent withoutTools = HaifaAgents.builder(profile)
+                        .contributeAll(SdkTestFixtures.baseContributions())
+                        .build()) {
+            assertThat(withTools.assembly().profile().allowedTools())
+                    .containsExactlyInAnyOrder("weather_get", "geocode");
+            assertThat(withoutTools.assembly().profile().allowedTools()).isEmpty();
+            assertThat(profile.allowedTools()).isEmpty();
+        }
+    }
+
     @Test
     void appliesProductPublicToolPolicyDecoratorDuringRuntimeAssembly() {
         AtomicBoolean decorated = new AtomicBoolean();
@@ -133,5 +174,39 @@ class HaifaAgentFacadeTest {
                     assertThat(error.getMessage()).isEqualTo("AGENT_CLOSED");
                     assertThat(error.getCause()).isNull();
                 });
+    }
+
+    public record WeatherRequest(String city) {}
+
+    public record WeatherResponse(String forecast) {}
+
+    private static final class WeatherTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("weather.get", WeatherRequest.class, WeatherResponse.class)
+                    .alias("weather_get")
+                    .description("Gets the weather for a city")
+                    .pure()
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            return new WeatherResponse("Sunny in " + input.city());
+        }
+    }
+
+    private static final class GeocodeTool implements JavaTool<WeatherRequest, WeatherResponse> {
+        @Override
+        public JavaToolSpec<WeatherRequest, WeatherResponse> spec() {
+            return JavaToolSpec.builder("geocode", WeatherRequest.class, WeatherResponse.class)
+                    .pure()
+                    .build();
+        }
+
+        @Override
+        public WeatherResponse invoke(WeatherRequest input, JavaToolContext context) {
+            return new WeatherResponse(input.city());
+        }
     }
 }
