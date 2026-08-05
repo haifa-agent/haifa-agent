@@ -2,6 +2,11 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 新增纯 Java `haifa-agent-sdk-starter`：默认装配 DeepSeek V4 Flash、关闭 Thinking、从
+  `DEEPSEEK_API_KEY` 解析凭据并使用进程内 Runtime/Conversation Store，提供可编译的最小 Quickstart。
+- SDK 新增类型化 `JavaTool<I, O>`、Java record JSON Schema/编解码与
+  `HaifaAgentBuilder.tool(...)` 单 Tool 注册入口；构建时自动派生有效 Profile、合并已有 Catalog，
+  并保持统一 Schema、Policy、Approval、Credential、Journal 与精确 binding 执行链路。
 - Coding Agent 的普通交互不再因缺少工具或交付证据进入完成修复：未声明可信任务模式且没有权威
   Workspace 修改时，文本回答可正常结束；显式 CHANGE/CREATE/ANALYZE/REVIEW 及已观察到的修改
   继续执行既有证据门禁，真实 Provider 故障仍按原错误终止。
