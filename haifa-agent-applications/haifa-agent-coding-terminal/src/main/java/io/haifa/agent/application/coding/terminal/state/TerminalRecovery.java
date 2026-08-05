@@ -57,6 +57,10 @@ public record TerminalRecovery(Category category, String code, String action) {
                     "TOOL_OUTCOME_UNKNOWN",
                     "Inspect the tool outcome before retrying; do not blindly replay the action."),
             entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "WORKSPACE_MANIFEST_UNAVAILABLE",
+                    "Fix or ignore the inaccessible workspace path, then retry the command."),
+            entry(
                     Category.TERMINAL_FAILURE,
                     "TERMINAL_FAILURE",
                     "Restart the terminal; the session remains recoverable."));

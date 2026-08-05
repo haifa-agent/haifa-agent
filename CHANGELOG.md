@@ -2,6 +2,19 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 新增默认 `file.patch` 1.1：支持 Codex 风格上下文定位、多文件新增/删除/更新/移动，以及大文件流式
+  转换、提交前哈希复核、同目录临时文件和原子替换；`file.write` 仅保留给整体替换的小文件。
+- CLI 执行审计从每条命令前后全量 Workspace Manifest 改为一次基线加 WatchService 候选增量哈希；仅在
+  事件溢出或观察器失效时全量重建，并保持预执行/执行后两类失败语义不变。
+- 修复 Coding Agent 执行失败链：Python 缓存/虚拟环境默认不进入 Manifest，`.gitignore` 否定规则只
+  撤销相交目录；Manifest 预检失败明确为 `WORKSPACE_MANIFEST_UNAVAILABLE`，OS 进程启动后才标记
+  DISPATCHED；Runtime 保留具体 Tool 错误、取消未启动兄弟调用，并将 Diagnostic ID 落盘为可查询诊断。
+- Coding Terminal 现在按 `os.name` / `os.version` / `os.arch` 识别宿主，并为 macOS 使用与真实
+  Control/Option 输入一致的 `MAC_SPECIAL` 快捷键符号（如 `⌃O`、`⌥↩`、`⌥↑`）；界面标签与按键判定
+  由同一 Shortcut Profile 生成，不把无法从当前终端协议可靠接收的 Command 键显示成可用快捷键。
+- Coding Agent 默认不再向模型披露 Java `file.search`；仓库级文件发现和内容搜索改走通用
+  `execution_run` OS CLI 主路径，优先使用当前 Shell `PATH` 中的 `rg --files` / `rg`，不可用时由模型
+  选择平台适配的替代命令。`file.search` 仍可显式启用以兼容既有配置，产品代码不拼接搜索命令选项。
 - Haifa Coding Agent 本地发行包默认改为 `SQLITE_WITH_JSONL + protection=NONE`：数据位于发行目录
   `data/`，无需 continuation key；可显式切换 `AES_GCM + env://HAIFA_CONTINUATION_KEY`。
 - Personal Assistant 真实环境的 PowerShell、POSIX、Python 生命周期脚本及单测统一迁移至根目录

@@ -24,6 +24,9 @@ import io.haifa.agent.project.mutation.WorkspaceMutationException;
 import io.haifa.agent.project.mutation.WorkspaceMutationProvider;
 import io.haifa.agent.project.mutation.WorkspaceWriteLease;
 import io.haifa.agent.project.mutation.WorkspaceWriteLeaseManager;
+import io.haifa.agent.project.patch.PatchFileMutationRequest;
+import io.haifa.agent.project.patch.PatchTransformException;
+import io.haifa.agent.project.patch.StreamingPatchMutationService;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.quarantine.QuarantineEntry;
@@ -45,6 +48,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -53,7 +57,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-public final class LocalWorkspaceMutationService implements WorkspaceMutationProvider, QuarantineService {
+public final class LocalWorkspaceMutationService
+        implements WorkspaceMutationProvider, StreamingPatchMutationService, QuarantineService {
     private static final int MAX_CONTENT_BYTES = 16 * 1024 * 1024;
     private static final String QUARANTINE_DIRECTORY = ".haifa-quarantine";
 
@@ -184,6 +189,78 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
             } catch (WorkspaceMutationException exception) {
                 fail(pending, exception.getMessage());
                 throw exception;
+            }
+        }
+    }
+
+    @Override
+    public MutationResult patch(PatchFileMutationRequest request) {
+        Objects.requireNonNull(request, "request must not be null");
+        access(request.path(), WorkspacePermission.WRITE);
+        Optional<MutationResult> replay = replayPatch(request);
+        if (replay.isPresent()) return replay.orElseThrow();
+        try (WorkspaceWriteLease ignored =
+                leases.acquire(request.path().workspaceId(), request.context().operationId())) {
+            Access access = access(request.path(), WorkspacePermission.WRITE);
+            validateRevision(access.workspace(), request.precondition(), request.path());
+            Path target = resolveExisting(access, request.path());
+            FileVersion before = requireRegularVersion(target, request.path());
+            validateHash(before, request.precondition(), request.path());
+            FileChangeSet pending = begin(access.workspace(), request.context());
+            Path temporary = null;
+            try {
+                temporary = Files.createTempFile(target.getParent(), ".haifa-patch-", ".tmp");
+                MessageDigest sourceDigest = sha256Digest();
+                try (var input = new DigestInputStream(
+                                Files.newInputStream(target, StandardOpenOption.READ), sourceDigest);
+                        var output = Files.newOutputStream(
+                                temporary, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    new LocalStreamingPatchTransformer()
+                            .transform(request.patch(), input, output, request.maxOutputBytes());
+                }
+                String streamedSourceHash = "sha256:" + HexFormat.of().formatHex(sourceDigest.digest());
+                if (!streamedSourceHash.equals(
+                        request.precondition().optionalContentHash().orElseThrow())) {
+                    throw failure(
+                            MutationErrorCode.CONTENT_HASH_CONFLICT,
+                            request.path(),
+                            "source changed while the patch was being transformed");
+                }
+                try (FileChannel channel = FileChannel.open(temporary, StandardOpenOption.WRITE)) {
+                    channel.force(true);
+                }
+                validateHash(
+                        requireRegularVersion(resolveExisting(access, request.path()), request.path()),
+                        request.precondition(),
+                        request.path());
+                boolean atomic = replacePreparedFile(temporary, target, request.path());
+                temporary = null;
+                FileVersion after = requireRegularVersion(resolveExisting(access, request.path()), request.path());
+                return completeOrUnknown(
+                        access.workspace(),
+                        pending,
+                        List.of(new FileChange(
+                                FileChangeType.REPLACE, request.path().projectPath(), null, before, after)),
+                        atomic);
+            } catch (PatchTransformException exception) {
+                fail(pending, exception.getMessage());
+                throw exception;
+            } catch (WorkspaceMutationException exception) {
+                fail(pending, exception.getMessage());
+                throw exception;
+            } catch (IOException exception) {
+                WorkspaceMutationException failure =
+                        failure(MutationErrorCode.IO_FAILURE, request.path(), "unable to apply streaming patch");
+                fail(pending, failure.getMessage());
+                throw failure;
+            } finally {
+                if (temporary != null) {
+                    try {
+                        Files.deleteIfExists(temporary);
+                    } catch (IOException ignoredDelete) {
+                        // A managed temporary file is harmless and can be reconciled later.
+                    }
+                }
             }
         }
     }
@@ -447,11 +524,21 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
                 throw failure(MutationErrorCode.PATH_DENIED, logical, "links and reparse points are denied");
             }
             if (attributes.isRegularFile()) {
-                if (attributes.size() > MAX_CONTENT_BYTES) {
-                    throw failure(MutationErrorCode.CONTENT_TOO_LARGE, logical, "file exceeds mutation hash budget");
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    String contentHash = "sha256:" + hashFile(target);
+                    BasicFileAttributes after =
+                            Files.readAttributes(target, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                    if (attributes.size() == after.size()
+                            && attributes.lastModifiedTime().equals(after.lastModifiedTime())
+                            && Objects.equals(attributes.fileKey(), after.fileKey())) {
+                        return new FileVersion(FileType.FILE, after.size(), contentHash);
+                    }
+                    attributes = after;
                 }
-                byte[] bytes = Files.readAllBytes(target);
-                return new FileVersion(FileType.FILE, attributes.size(), "sha256:" + hash(bytes));
+                throw failure(
+                        MutationErrorCode.CONCURRENT_MODIFICATION,
+                        logical,
+                        "logical target changed while it was being inspected");
             }
             if (attributes.isDirectory()) {
                 return new FileVersion(FileType.DIRECTORY, 0, "directory:empty");
@@ -517,6 +604,20 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
                     // The reconciliation path can identify a residual managed temporary file.
                 }
             }
+        }
+    }
+
+    private static boolean replacePreparedFile(Path temporary, Path target, WorkspacePath logical) {
+        try {
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                return true;
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                return false;
+            }
+        } catch (IOException exception) {
+            throw failure(MutationErrorCode.IO_FAILURE, logical, "unable to commit guarded patch");
         }
     }
 
@@ -625,6 +726,38 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
         });
     }
 
+    private Optional<MutationResult> replayPatch(PatchFileMutationRequest request) {
+        return changeSets
+                .findByOperation(request.path().workspaceId(), request.context().operationId())
+                .map(existing -> {
+                    if (existing.changes().size() != 1) {
+                        throw failure(
+                                MutationErrorCode.CONCURRENT_MODIFICATION,
+                                request.path(),
+                                "operation id is already bound to a different mutation");
+                    }
+                    FileChange change = existing.changes().get(0);
+                    String expectedBefore = request.precondition()
+                            .optionalContentHash()
+                            .orElseThrow(() -> failure(
+                                    MutationErrorCode.PRECONDITION_REQUIRED,
+                                    request.path(),
+                                    "content hash precondition is required"));
+                    if (change.type() != FileChangeType.REPLACE
+                            || !change.path().equals(request.path().projectPath())
+                            || change.optionalBefore()
+                                    .map(FileVersion::contentHash)
+                                    .filter(expectedBefore::equals)
+                                    .isEmpty()) {
+                        throw failure(
+                                MutationErrorCode.CONCURRENT_MODIFICATION,
+                                request.path(),
+                                "operation id is already bound to a different mutation");
+                    }
+                    return result(existing, true);
+                });
+    }
+
     private static void requireStillAbsent(Access access, WorkspacePath logical, Path expectedTarget) {
         Path current = resolveAbsentStatic(access, logical);
         if (!current.equals(expectedTarget)) {
@@ -706,6 +839,26 @@ public final class LocalWorkspaceMutationService implements WorkspaceMutationPro
     private static String hash(byte[] bytes) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required", exception);
+        }
+    }
+
+    private static String hashFile(Path path) throws IOException {
+        MessageDigest digest = sha256Digest();
+        try (var input = Files.newInputStream(path, StandardOpenOption.READ)) {
+            byte[] buffer = new byte[64 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) digest.update(buffer, 0, read);
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static MessageDigest sha256Digest() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required", exception);
         }

@@ -37,6 +37,11 @@ final class RedactingExecutionOutputObserver implements ExecutionOutputObserver 
     }
 
     @Override
+    public void onStarted() {
+        delegate.onStarted();
+    }
+
+    @Override
     public synchronized void onOutput(ProcessOutputChunk chunk) {
         byte[] previous = pending.get(chunk.channel());
         byte[] combined = new byte[previous.length + chunk.bytes().length];

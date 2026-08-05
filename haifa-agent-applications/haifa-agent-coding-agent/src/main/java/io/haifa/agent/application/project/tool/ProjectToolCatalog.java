@@ -234,17 +234,18 @@ public final class ProjectToolCatalog {
                         ? Set.of("unrestricted-network")
                         : Set.of(),
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
+        String version = name.equals("file.read") || name.equals("file.patch") ? "1.1.0" : "1.0.0";
         return new ToolDefinition(
                 new ToolName(name),
-                new SemanticVersion("1.0.0"),
+                new SemanticVersion(version),
                 ProjectToolExecutor.PROVIDER_ID,
                 title(name),
                 description(name, executionProfile),
                 new ToolSchema(
                         "haifa." + name + ".input",
-                        "1.0.0",
+                        version,
                         inputSchema(name, execution ? scratchSpace.canonicalDigest() : null)),
-                new ToolSchema("haifa." + name + ".output", "1.0.0", outputSchema(name)),
+                new ToolSchema("haifa." + name + ".output", version, outputSchema(name)),
                 execution ? ToolExecutionMode.HOST_PROCESS : ToolExecutionMode.IN_PROCESS,
                 true,
                 execution ? Duration.ofMinutes(30) : Duration.ofSeconds(30),
@@ -284,12 +285,26 @@ public final class ProjectToolCatalog {
         if (name.equals("execution.run")) {
             return "Run complete command text through the frozen "
                     + executionProfile.providerId()
-                    + " execution profile inside the project workspace. Use it for inspection and verification; "
-                    + "classify every call with operationFamily, using BUILD or TEST for validation and DIFF only "
-                    + "for read-only final diff inspection.";
+                    + " execution profile inside the project workspace. This is the general OS CLI path for scalable "
+                    + "repository discovery, content search, source inspection, builds, tests, and diffs; choose an "
+                    + "available CLI and its complete arguments at runtime instead of expecting command-specific "
+                    + "wrappers. Keep output bounded, adapt when a command is unavailable, and classify every call "
+                    + "with operationFamily, using BUILD or TEST for validation and DIFF only for read-only final "
+                    + "diff inspection.";
         }
         if (name.equals("git.diff")) {
             return "Read the final Git diff within the frozen project workspace and capability boundary.";
+        }
+        if (name.equals("file.read")) {
+            return "Read one bounded text window from a workspace file. Continue with nextCursor only when hasMore "
+                    + "is true; the cursor detects path reuse and file changes, so large files are never loaded in "
+                    + "full by default.";
+        }
+        if (name.equals("file.patch")) {
+            return "Apply a bounded context patch to one or more workspace files. Use *** Begin Patch / "
+                    + "*** End Patch with Add File, Delete File, or Update File sections; Update File supports "
+                    + "optional Move to and @@ context hunks. Existing files are matched exactly, large files are "
+                    + "transformed as streams, and failures report the exact committed prefix.";
         }
         if (WRITES.contains(name)) {
             return title(name)
@@ -312,7 +327,23 @@ public final class ProjectToolCatalog {
                 properties.put("recursive", Map.of("type", "boolean"));
                 properties.put("maxDepth", Map.of("type", "integer", "minimum", 1, "maximum", 32));
             }
-            case "file.stat", "file.read", "file.delete" -> path(properties, required, "path");
+            case "file.stat", "file.delete" -> path(properties, required, "path");
+            case "file.read" -> {
+                path(properties, required, "path");
+                properties.put(
+                        "cursor",
+                        Map.of(
+                                "type",
+                                "string",
+                                "minLength",
+                                1,
+                                "maxLength",
+                                2048,
+                                "description",
+                                "Opaque nextCursor returned by the preceding read of the same unchanged file."));
+                properties.put("maxBytes", Map.of("type", "integer", "minimum", 1, "maximum", 262144));
+                properties.put("maxLines", Map.of("type", "integer", "minimum", 1, "maximum", 2000));
+            }
             case "file.search" -> {
                 path(properties, required, "path");
                 string(properties, required, "query");
@@ -328,8 +359,18 @@ public final class ProjectToolCatalog {
                 path(properties, required, "destination");
             }
             case "file.patch" -> {
-                path(properties, required, "path");
-                string(properties, required, "patch");
+                properties.put(
+                        "patch",
+                        Map.of(
+                                "type",
+                                "string",
+                                "minLength",
+                                1,
+                                "maxLength",
+                                4194304,
+                                "description",
+                                "Context patch beginning with *** Begin Patch and ending with *** End Patch."));
+                required.add("patch");
             }
             case "git.inspect", "git.status" -> properties.put("includeIgnored", Map.of("type", "boolean"));
             case "git.diff" -> {
@@ -337,7 +378,18 @@ public final class ProjectToolCatalog {
                 properties.put("paths", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 100));
             }
             case "execution.run" -> {
-                properties.put("command", Map.of("type", "string", "minLength", 1, "maxLength", 32768));
+                properties.put(
+                        "command",
+                        Map.of(
+                                "type",
+                                "string",
+                                "minLength",
+                                1,
+                                "maxLength",
+                                32768,
+                                "description",
+                                "Complete non-interactive command text for the configured shell. Select available "
+                                        + "CLI programs and their options at runtime."));
                 required.add("command");
                 properties.put("workdir", Map.of("type", "string", "minLength", 1, "maxLength", 4096));
                 properties.put("timeoutMillis", Map.of("type", "integer", "minimum", 1, "maximum", 1800000));
@@ -370,6 +422,38 @@ public final class ProjectToolCatalog {
     }
 
     private static Map<String, Object> outputSchema(String name) {
+        if (name.equals("file.read")) {
+            return Map.of(
+                    "$schema",
+                    ToolSchema.DRAFT_2020_12,
+                    "type",
+                    "object",
+                    "properties",
+                    Map.ofEntries(
+                            Map.entry("path", Map.of("type", "string")),
+                            Map.entry("content", Map.of("type", "string")),
+                            Map.entry("startLine", Map.of("type", "integer", "minimum", 1)),
+                            Map.entry("endLine", Map.of("type", "integer", "minimum", 1)),
+                            Map.entry("bytesRead", Map.of("type", "integer", "minimum", 0)),
+                            Map.entry("totalBytes", Map.of("type", "integer", "minimum", 0)),
+                            Map.entry("contentVersion", Map.of("type", "string")),
+                            Map.entry("hasMore", Map.of("type", "boolean")),
+                            Map.entry("nextCursor", Map.of("type", "string")),
+                            Map.entry("truncated", Map.of("type", "boolean"))),
+                    "required",
+                    List.of(
+                            "path",
+                            "content",
+                            "startLine",
+                            "endLine",
+                            "bytesRead",
+                            "totalBytes",
+                            "contentVersion",
+                            "hasMore",
+                            "truncated"),
+                    "additionalProperties",
+                    false);
+        }
         if (name.equals("execution.run")) {
             return Map.of(
                     "$schema",

@@ -38,7 +38,6 @@ public final class ProjectToolExecutor implements ToolProvider {
         if (!binding.capabilities().containsAll(requiredCapabilities)) {
             throw new SecurityException("run workspace access does not authorize the frozen tool capability");
         }
-        request.observer().dispatched();
         String toolName = request.binding().definition().name().value();
         ToolResult result;
         if (toolName.equals("execution.run")) {
@@ -47,6 +46,7 @@ public final class ProjectToolExecutor implements ToolProvider {
             }
             result = executionOperations.execute(request, binding);
         } else {
+            request.observer().dispatched();
             String policyDecisionRef = request.policyDecisionRef()
                     .orElseThrow(() -> new SecurityException("policy decision reference is required"));
             result = operations.execute(

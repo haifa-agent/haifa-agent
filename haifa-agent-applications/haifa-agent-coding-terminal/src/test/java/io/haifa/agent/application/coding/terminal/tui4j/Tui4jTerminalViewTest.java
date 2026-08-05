@@ -17,6 +17,7 @@ import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeAll;
@@ -49,6 +50,25 @@ class Tui4jTerminalViewTest {
                         "model: frozen",
                         "sandbox: frozen profile");
         assertThat(rendered.lines()).hasSizeLessThanOrEqualTo(24);
+    }
+
+    @Test
+    void rendersMacSpecialShortcutNamesFromTheSamePlatformProfileUsedForInput() {
+        TerminalHostInfo mac = TerminalHostInfo.detect(
+                Map.of(
+                        "os.name", "Mac OS X",
+                        "os.version", "15.6",
+                        "os.arch", "aarch64",
+                        "java.version", "21"),
+                List.of());
+        Tui4jTerminalView macView = new Tui4jTerminalView(TerminalShortcutProfile.forHost(mac));
+        TerminalUiState state = TerminalUiState.initial(100, 30);
+
+        String rendered = macView.render(state, transcript(state), editor(100), true, false);
+
+        assertThat(rendered)
+                .contains("⌃C clear", "⌃O expand/collapse", "⇧↩/⌃J newline")
+                .doesNotContain("ctrl+o", "alt/option");
     }
 
     @Test
@@ -202,8 +222,8 @@ class Tui4jTerminalViewTest {
         assertThat(rendered)
                 .contains(
                         "enter steer",
-                        "alt/option+enter follow-up",
-                        "alt/option+up restore queued message",
+                        "alt+enter follow-up",
+                        "alt+up restore queued message",
                         "Working (02m 05s · esc to interrupt)")
                 .doesNotContain("enter send");
     }

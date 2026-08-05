@@ -414,6 +414,7 @@ final class LocalCodingAgent implements AutoCloseable {
                         traces.add(event);
                         traceObserver.accept(event);
                     })
+                    .failureDiagnostics(CliFailureDiagnosticSink.forPersistence(configuration.persistence()))
                     .completionPolicy(new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile))
                     .repairRetry(new RepairRetryPolicy(2))
                     .registerChatModel("openai-compatible", "1.0.0", model)
@@ -563,12 +564,44 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static String executionEnvironmentPrompt(String shellDisplayName) {
+        return executionEnvironmentPrompt(
+                shellDisplayName,
+                System.getProperty("os.name", "unknown"),
+                System.getProperty("os.version", "unknown"),
+                System.getProperty("os.arch", "unknown"),
+                System.getProperty("java.version", "unknown"));
+    }
+
+    static String executionEnvironmentPrompt(
+            String shellDisplayName, String osName, String osVersion, String architecture, String javaVersion) {
         if (shellDisplayName == null || shellDisplayName.isBlank()) return "";
         return "\n\nRuntime execution environment:\n"
+                + "- Host OS: "
+                + hostFact(osName)
+                + " "
+                + hostFact(osVersion)
+                + " ("
+                + hostFact(architecture)
+                + "); Java "
+                + hostFact(javaVersion)
+                + ".\n"
                 + "- execution_run uses "
                 + shellDisplayName.strip()
                 + " command syntax on this host.\n"
-                + "- Generate commands for that configured shell; do not assume a POSIX shell or mix shell dialects.";
+                + "- Generate commands for that configured shell; do not assume a POSIX shell or mix shell dialects.\n"
+                + "- execution_run can invoke any non-interactive CLI available through the inherited PATH. Discover "
+                + "command availability with the configured shell when uncertain, and adapt when a command is missing.\n"
+                + "- Use OS CLI commands for scalable repository discovery and inspection. Prefer rg --files for file "
+                + "discovery and rg for text search because they are fast; if rg is unavailable, use an appropriate "
+                + "alternative for the configured shell. Choose the exact command and options for the task rather than "
+                + "expecting a dedicated search wrapper.\n"
+                + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.";
+    }
+
+    private static String hostFact(String value) {
+        if (value == null) return "unknown";
+        String safe = value.replaceAll("[\\p{Cntrl}]", " ").strip();
+        return safe.isEmpty() ? "unknown" : safe;
     }
 
     AgentRunSnapshot start(String message) {

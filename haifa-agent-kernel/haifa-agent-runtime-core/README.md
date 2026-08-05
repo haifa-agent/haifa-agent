@@ -132,7 +132,7 @@ AgentLoop，Run 终态后清理。有效模型决策仍由 `DecisionExecutor` �
 Model、Tool、预算和完成门禁在拥有语义的边界映射到稳定 `AgentErrorCode`。分类后的
 `AgentError` 在 Step、Attempt、Run、Runtime Event 和 Trace 复用同一个 `diagnosticId`；
 `RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。可选 `FailureDiagnosticSink`
-仅接收这类意外故障的 Throwable；Trace 或诊断 Sink 失败属于观测投影失败，不会改变已经确定的
+接收所有终止 Attempt 的原始 Throwable 与已分类安全上下文，由实现负责有界脱敏存储；Trace 或诊断 Sink 失败属于观测投影失败，不会改变已经确定的
 Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOOL_OUTCOME_UNKNOWN` 并禁止盲目重放。
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
 - `start` 在 Run 持久化并提交执行后返回 `PENDING/QUEUED` 快照；等待完成由 `AgentRunHandle` 显式提供。
@@ -150,7 +150,7 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
   完整的 Assistant Tool Call / Tool Result 协议；`OUTCOME_UNKNOWN` 只用于告知状态，不允许自动重放。
 - 本阶段只允许 Asset 的派生文本、OCR、Transcript 进入 Context；原始 Asset Part 会被拒绝。
 - ToolCall 默认顺序执行，并通过 Run 的 `FrozenToolBinding` 完成 alias、精确 SemVer、Schema identity、Capability、Policy、Approval、执行环境、结果归一化、Journal 和持久化；不从全局可变规格表重新解析。
-- Tool 审批是可恢复协议：Policy 产生 typed Interaction 与 interaction Checkpoint，Attempt 进入 paused 并释放 Worker；批准或拒绝后新 Attempt 先恢复并校验 Checkpoint，再幂等应用响应。批准继续原 ToolCall 且不重复模型调用，拒绝向模型写入有界结果而不默认取消整个 Run。同一模型响应包含多个待处理 ToolCall 时，恢复始终按持久化 Step sequence 顺序推进，每个 `ASK` 独立暂停和恢复。
+- Tool 审批是可恢复协议：Policy 产生 typed Interaction 与 interaction Checkpoint，Attempt 进入 paused 并释放 Worker；批准或拒绝后新 Attempt 先恢复并校验 Checkpoint，再幂等应用响应。批准继续原 ToolCall 且不重复模型调用，拒绝向模型写入有界结果而不默认取消整个 Run。同一模型响应包含多个待处理 ToolCall 时，恢复始终按持久化 Step sequence 顺序推进；任一调用失败会把同批次尚未启动的兄弟 ToolCall 和 Step 收敛为 `CANCELLED`，不残留 `REQUESTED`。
 - 产品可通过 `ToolApprovalPromptFormatter` 定制审批展示内容；审批安全目标仍由 Runtime 冻结的 run、toolCall、definition hash、完整 arguments digest 和 principal scope 绑定，展示文案不参与授权判断。
 - Runtime 对公共 `InteractionView.safePrompt` 执行 2048 字符的防御性有界投影；这使升级前已经持久化的超长 Interaction 仍可查询和响应，而不会改变内部审批目标或授权摘要。
 - Resume 会重新校验当前调用者授权，并通过 `ToolInvoker.validateBinding` 确认冻结 provider/definition 仍可用；缺失或 hash/provider 漂移时 fail closed，不自动换 Provider。

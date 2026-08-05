@@ -3,9 +3,19 @@ package io.haifa.agent.execution.api;
 import java.time.Duration;
 import java.util.Objects;
 
-public record ExecutionLimits(Duration timeout, int maxStdoutBytes, int maxStderrBytes, int maxProcesses) {
+public record ExecutionLimits(
+        Duration timeout,
+        int maxStdoutBytes,
+        int maxStderrBytes,
+        int maxProcesses,
+        ExecutionOutputOverflowPolicy outputOverflowPolicy) {
+    public ExecutionLimits(Duration timeout, int maxStdoutBytes, int maxStderrBytes, int maxProcesses) {
+        this(timeout, maxStdoutBytes, maxStderrBytes, maxProcesses, ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL);
+    }
+
     public ExecutionLimits {
         timeout = Objects.requireNonNull(timeout, "timeout must not be null");
+        outputOverflowPolicy = Objects.requireNonNull(outputOverflowPolicy, "outputOverflowPolicy must not be null");
         if (timeout.isNegative() || timeout.isZero() || timeout.compareTo(Duration.ofMinutes(30)) > 0) {
             throw new IllegalArgumentException("timeout is out of range");
         }

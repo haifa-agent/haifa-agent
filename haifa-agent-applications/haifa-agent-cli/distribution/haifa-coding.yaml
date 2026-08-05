@@ -35,9 +35,9 @@ tools:
     - file.list
     - file.stat
     - file.read
-    - file.search
     - file.create
     - file.write
+    - file.patch
     - file.delete
     - file.move
     - execution.run

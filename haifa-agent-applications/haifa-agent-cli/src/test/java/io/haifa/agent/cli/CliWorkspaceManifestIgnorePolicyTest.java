@@ -9,6 +9,7 @@ import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,18 +39,44 @@ class CliWorkspaceManifestIgnorePolicyTest {
         assertThat(policy.ignores(metadata("src/generated/output.txt", FileType.FILE)))
                 .isTrue();
         assertThat(policy.ignores(metadata("src/main/App.java", FileType.FILE))).isFalse();
-        assertThat(policy.version()).startsWith("cli-workspace-manifest-v2-sha256-");
+        assertThat(policy.version()).startsWith("cli-workspace-manifest-v3-sha256-");
+    }
+
+    @Test
+    void ignoresStandardPythonGeneratedDirectoriesAtAnyDepth() {
+        var policy = CliWorkspaceManifestIgnorePolicy.load(workspace);
+
+        assertThat(List.of(
+                        ".pytest_cache/state",
+                        "module/.mypy_cache/state",
+                        "module/.ruff_cache/state",
+                        ".tox/state",
+                        "module/.venv/state",
+                        "src/__pycache__/module.pyc"))
+                .allMatch(path -> policy.ignores(metadata(path, FileType.FILE)));
     }
 
     @Test
     void doesNotApplyGitignoreRulesWhenNegationCouldReincludeTheirContents() throws Exception {
-        Files.writeString(workspace.resolve(".gitignore"), "cache/\n!cache/keep/\n");
+        Files.writeString(workspace.resolve(".gitignore"), "cache/\n!cache/keep.txt\n");
 
         var policy = CliWorkspaceManifestIgnorePolicy.load(workspace);
 
         assertThat(policy.ignores(metadata("cache/disposable.bin", FileType.FILE)))
                 .isFalse();
         assertThat(policy.ignores(metadata("target/generated.bin", FileType.FILE)))
+                .isTrue();
+    }
+
+    @Test
+    void retainsUnrelatedDirectoryRulesWhenGitignoreContainsNegations() throws Exception {
+        Files.writeString(workspace.resolve(".gitignore"), "cache/\nreports/\n!pom.xml\n!src/keep/\n");
+
+        var policy = CliWorkspaceManifestIgnorePolicy.load(workspace);
+
+        assertThat(policy.ignores(metadata("cache/disposable.bin", FileType.FILE)))
+                .isTrue();
+        assertThat(policy.ignores(metadata("reports/result.json", FileType.FILE)))
                 .isTrue();
     }
 

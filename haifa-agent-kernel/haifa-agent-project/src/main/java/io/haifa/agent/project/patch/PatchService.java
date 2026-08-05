@@ -26,6 +26,7 @@ import java.util.Objects;
 
 public final class PatchService {
     private static final int MAX_FILE_BYTES = 16 * 1024 * 1024;
+    private static final long MAX_PATCHED_FILE_BYTES = 4L * 1024 * 1024 * 1024;
 
     private final WorkspaceStore workspaces;
     private final WorkspaceFileService files;
@@ -65,11 +66,12 @@ public final class PatchService {
 
         List<MutationResult> results = new ArrayList<>();
         WorkspaceRevision revision = request.expectedRevision();
+        int completedFiles = 0;
         for (int index = 0; index < prepared.size(); index++) {
             PreparedPatch item = prepared.get(index);
             MutationContext context = childContext(request.context(), index);
             WorkspacePath path =
-                    new WorkspacePath(request.workspaceId(), item.patch().targetPath());
+                    new WorkspacePath(request.workspaceId(), item.patch().sourcePath());
             try {
                 MutationResult result;
                 if (item.patch().creation()) {
@@ -78,6 +80,13 @@ public final class PatchService {
                 } else if (item.patch().deletion()) {
                     result = mutations.delete(new DeleteFileRequest(
                             path, MutationPrecondition.existing(revision, item.expectedHash()), context));
+                } else if (mutations instanceof StreamingPatchMutationService streaming) {
+                    result = streaming.patch(new PatchFileMutationRequest(
+                            path,
+                            item.patch(),
+                            MutationPrecondition.existing(revision, item.expectedHash()),
+                            context,
+                            MAX_PATCHED_FILE_BYTES));
                 } else {
                     result = mutations.write(new WriteFileRequest(
                             path, item.after(), MutationPrecondition.existing(revision, item.expectedHash()), context));
@@ -92,6 +101,35 @@ public final class PatchService {
                     break;
                 }
                 revision = result.optionalResultRevision().orElse(revision);
+                if (item.patch().move()) {
+                    String patchedHash = files.stat(path, true)
+                            .contentHash()
+                            .orElseThrow(() -> new IllegalStateException("patched file hash is unavailable"));
+                    MutationResult moved = mutations.move(new io.haifa.agent.project.mutation.MoveFileRequest(
+                            path,
+                            new WorkspacePath(
+                                    request.workspaceId(), item.patch().targetPath()),
+                            MutationPrecondition.existing(revision, patchedHash),
+                            childContext(request.context(), index, "move")));
+                    results.add(moved);
+                    if (moved.optionalResultRevision().isEmpty()) {
+                        conflicts.add(new PatchConflict(
+                                item.patch().targetPath(),
+                                PatchConflictCode.MUTATION_REJECTED,
+                                -1,
+                                "move outcome requires reconciliation"));
+                        break;
+                    }
+                    revision = moved.optionalResultRevision().orElse(revision);
+                }
+                completedFiles++;
+            } catch (PatchTransformException exception) {
+                conflicts.add(new PatchConflict(
+                        item.patch().sourcePath(),
+                        PatchConflictCode.HUNK_MISMATCH,
+                        exception.hunkIndex(),
+                        exception.getMessage()));
+                break;
             } catch (WorkspaceMutationException exception) {
                 conflicts.add(new PatchConflict(
                         item.patch().targetPath(),
@@ -101,16 +139,12 @@ public final class PatchService {
                 break;
             }
         }
-        return new PatchApplyResult(
-                request.document().sha256(),
-                results,
-                conflicts,
-                conflicts.isEmpty() && results.size() == prepared.size());
+        return new PatchApplyResult(request.document().sha256(), results, conflicts, completedFiles == prepared.size());
     }
 
     private java.util.Optional<PreparedPatch> prepare(
             PatchApplyRequest request, FilePatch patch, List<PatchConflict> conflicts) {
-        WorkspacePath path = new WorkspacePath(request.workspaceId(), patch.targetPath());
+        WorkspacePath path = new WorkspacePath(request.workspaceId(), patch.sourcePath());
         if (patch.creation()) {
             try {
                 files.stat(path, false);
@@ -135,7 +169,7 @@ public final class PatchService {
             }
         }
 
-        String expected = request.expectedHashes().get(patch.targetPath());
+        String expected = request.expectedHashes().get(patch.sourcePath());
         if (expected == null || expected.isBlank()) {
             conflicts.add(new PatchConflict(
                     patch.targetPath(),
@@ -155,18 +189,40 @@ public final class PatchService {
                         "content hash precondition failed"));
                 return java.util.Optional.empty();
             }
+            if (patch.move()) {
+                WorkspacePath destination = new WorkspacePath(request.workspaceId(), patch.targetPath());
+                try {
+                    files.stat(destination, false);
+                    conflicts.add(new PatchConflict(
+                            patch.targetPath(), PatchConflictCode.TARGET_EXISTS, -1, "move target already exists"));
+                    return java.util.Optional.empty();
+                } catch (WorkspaceFileException exception) {
+                    if (exception.code() != WorkspaceFileErrorCode.PATH_NOT_FOUND) throw exception;
+                }
+            }
+            if (patch.deletion()) {
+                if (patch.hunks().stream().allMatch(hunk -> hunk.lines().isEmpty())) {
+                    return java.util.Optional.of(new PreparedPatch(patch, expected, new byte[0]));
+                }
+                FileContent content = files.read(
+                        path, new ReadOptions(MAX_FILE_BYTES, MAX_FILE_BYTES, StandardCharsets.UTF_8, false));
+                byte[] after = applyHunks(patch, content.text());
+                if (after.length != 0) {
+                    conflicts.add(new PatchConflict(
+                            patch.targetPath(),
+                            PatchConflictCode.HUNK_MISMATCH,
+                            -1,
+                            "delete patch did not remove all content"));
+                    return java.util.Optional.empty();
+                }
+                return java.util.Optional.of(new PreparedPatch(patch, expected, after));
+            }
+            if (mutations instanceof StreamingPatchMutationService) {
+                return java.util.Optional.of(new PreparedPatch(patch, expected, null));
+            }
             FileContent content =
                     files.read(path, new ReadOptions(MAX_FILE_BYTES, MAX_FILE_BYTES, StandardCharsets.UTF_8, false));
-            byte[] after = applyHunks(patch, content.text());
-            if (patch.deletion() && after.length != 0) {
-                conflicts.add(new PatchConflict(
-                        patch.targetPath(),
-                        PatchConflictCode.HUNK_MISMATCH,
-                        -1,
-                        "delete patch did not remove all content"));
-                return java.util.Optional.empty();
-            }
-            return java.util.Optional.of(new PreparedPatch(patch, expected, after));
+            return java.util.Optional.of(new PreparedPatch(patch, expected, applyHunks(patch, content.text())));
         } catch (HunkConflict exception) {
             conflicts.add(exception.toConflict(patch.targetPath()));
             return java.util.Optional.empty();
@@ -187,7 +243,27 @@ public final class PatchService {
         int cursor = 0;
         for (int hunkIndex = 0; hunkIndex < patch.hunks().size(); hunkIndex++) {
             PatchHunk hunk = patch.hunks().get(hunkIndex);
-            int target = hunk.oldStart() == 0 ? 0 : hunk.oldStart() - 1;
+            int target;
+            if (hunk.locateByContent()) {
+                if (hunk.changeContext() != null) {
+                    int anchor = original.subList(cursor, original.size()).indexOf(hunk.changeContext());
+                    if (anchor < 0) throw new HunkConflict(hunkIndex, "failed to find change context");
+                    anchor += cursor;
+                    output.addAll(original.subList(cursor, anchor + 1));
+                    cursor = anchor + 1;
+                }
+                List<String> expected = hunk.lines().stream()
+                        .filter(line -> line.type() != PatchLineType.ADD)
+                        .map(PatchLine::text)
+                        .toList();
+                target = expected.isEmpty() ? original.size() : findSequence(original, expected, cursor);
+                if (target < 0) throw new HunkConflict(hunkIndex, "failed to find expected lines");
+                if (hunk.endOfFile() && target + expected.size() != original.size()) {
+                    throw new HunkConflict(hunkIndex, "expected lines are not at end of file");
+                }
+            } else {
+                target = hunk.oldStart() == 0 ? 0 : hunk.oldStart() - 1;
+            }
             if (target < cursor || target > original.size()) {
                 throw new HunkConflict(hunkIndex, "hunk location is outside the source");
             }
@@ -211,6 +287,13 @@ public final class PatchService {
         return joined.getBytes(StandardCharsets.UTF_8);
     }
 
+    private static int findSequence(List<String> source, List<String> expected, int start) {
+        for (int index = start; index <= source.size() - expected.size(); index++) {
+            if (source.subList(index, index + expected.size()).equals(expected)) return index;
+        }
+        return -1;
+    }
+
     private static List<String> splitLines(String source) {
         if (source.isEmpty()) return List.of();
         String normalized = source.replace("\r\n", "\n").replace('\r', '\n');
@@ -220,8 +303,12 @@ public final class PatchService {
     }
 
     private static MutationContext childContext(MutationContext parent, int index) {
+        return childContext(parent, index, "file");
+    }
+
+    private static MutationContext childContext(MutationContext parent, int index, String suffix) {
         return new MutationContext(
-                parent.operationId() + ":file:" + index,
+                parent.operationId() + ":" + suffix + ":" + index,
                 parent.runRef(),
                 parent.toolCallRef(),
                 parent.actor(),
@@ -236,12 +323,12 @@ public final class PatchService {
 
     private record PreparedPatch(FilePatch patch, String expectedHash, byte[] after) {
         private PreparedPatch {
-            after = java.util.Arrays.copyOf(after, after.length);
+            after = after == null ? null : java.util.Arrays.copyOf(after, after.length);
         }
 
         @Override
         public byte[] after() {
-            return java.util.Arrays.copyOf(after, after.length);
+            return after == null ? null : java.util.Arrays.copyOf(after, after.length);
         }
     }
 

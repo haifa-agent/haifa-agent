@@ -11,7 +11,8 @@ import io.haifa.agent.project.workspace.WorkspacePermission;
 import io.haifa.agent.project.workspace.WorkspaceStatus;
 import java.util.Objects;
 
-public final class AuthorizedWorkspaceMutationService implements WorkspaceMutationService {
+public final class AuthorizedWorkspaceMutationService
+        implements WorkspaceMutationService, io.haifa.agent.project.patch.StreamingPatchMutationService {
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
     private final WorkspaceMutationService provider;
@@ -46,6 +47,15 @@ public final class AuthorizedWorkspaceMutationService implements WorkspaceMutati
         authorize(request.source(), WorkspacePermission.WRITE);
         authorize(request.destination(), WorkspacePermission.WRITE);
         return provider.move(request);
+    }
+
+    @Override
+    public MutationResult patch(io.haifa.agent.project.patch.PatchFileMutationRequest request) {
+        authorize(request.path(), WorkspacePermission.WRITE);
+        if (!(provider instanceof io.haifa.agent.project.patch.StreamingPatchMutationService streaming)) {
+            throw new UnsupportedOperationException("workspace mutation provider does not support streaming patches");
+        }
+        return streaming.patch(request);
     }
 
     private void authorize(WorkspacePath path, WorkspacePermission permission) {

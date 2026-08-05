@@ -161,12 +161,10 @@ public final class AttemptExecutor {
                         "failureTypes", failureTypes),
                 time.now());
         recordTrace(context);
-        if (attemptError.code() == AgentErrorCode.RUNTIME_EXECUTION_FAILED) {
-            try {
-                diagnostics.record(context, error);
-            } catch (RuntimeException ignored) {
-                // Diagnostics are a best-effort projection and never alter authoritative Run state.
-            }
+        try {
+            diagnostics.record(context, error);
+        } catch (RuntimeException ignored) {
+            // Diagnostics are a best-effort projection and never alter authoritative Run state.
         }
     }
 

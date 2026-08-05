@@ -26,6 +26,7 @@ import io.haifa.agent.project.mutation.MutationPrecondition;
 import io.haifa.agent.project.mutation.WorkspaceMutationException;
 import io.haifa.agent.project.mutation.WorkspaceWriteLease;
 import io.haifa.agent.project.mutation.WriteFileRequest;
+import io.haifa.agent.project.patch.ApplyPatchParser;
 import io.haifa.agent.project.patch.PatchApplyRequest;
 import io.haifa.agent.project.patch.PatchConflictCode;
 import io.haifa.agent.project.patch.PatchService;
@@ -277,6 +278,84 @@ class LocalWorkspaceMutationServiceTest {
     }
 
     @Test
+    void appliesContextPatchToFileLargerThanLegacyReadLimitWithoutLoadingItAll() throws Exception {
+        Path large = root.resolve("large.txt");
+        try (var writer = Files.newBufferedWriter(large, StandardCharsets.UTF_8)) {
+            for (int index = 0; index < 1_500_000; index++) writer.write("unchanged-line\n");
+            writer.write("tail-anchor\nold-tail\n");
+        }
+        assertThat(Files.size(large)).isGreaterThan(16L * 1024 * 1024);
+        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        var document = new ApplyPatchParser(10, 100, 1_000, 64 * 1024)
+                .parse(
+                        """
+                *** Begin Patch
+                *** Update File: large.txt
+                @@ tail-anchor
+                -old-tail
+                +new-tail
+                *** End of File
+                *** End Patch
+                """);
+        var result = new PatchService(
+                        fixture.workspaceStore(),
+                        fixture.files(),
+                        fixture.authorized(),
+                        new PatchValidationService(10, 100, 1_000))
+                .apply(new PatchApplyRequest(
+                        fixture.workspaceId(),
+                        document,
+                        fixture.workspace().revision(),
+                        Map.of(ProjectPath.of("large.txt"), hashFile(large)),
+                        context("large-context-patch")));
+
+        assertThat(result.complete()).isTrue();
+        assertThat(Files.size(large)).isGreaterThan(16L * 1024 * 1024);
+        try (var lines = Files.lines(large, StandardCharsets.UTF_8)) {
+            assertThat(lines.skip(1_500_000).toList()).containsExactly("tail-anchor", "new-tail");
+        }
+        try (var entries = Files.list(root)) {
+            assertThat(entries.map(path -> path.getFileName().toString()))
+                    .noneMatch(name -> name.startsWith(".haifa-patch-") && name.endsWith(".tmp"));
+        }
+    }
+
+    @Test
+    void parsesAndAppliesMultiFileContextPatchWithMove() throws Exception {
+        Files.writeString(root.resolve("old.txt"), "section\nold\n", StandardCharsets.UTF_8);
+        Fixture fixture = fixture(WorkspaceBindingMode.DIRECT, WorkspacePermissionSet.readWrite());
+        var document = new ApplyPatchParser(10, 100, 1_000, 64 * 1024)
+                .parse(
+                        """
+                *** Begin Patch
+                *** Update File: old.txt
+                *** Move to: moved.txt
+                @@ section
+                -old
+                +new
+                *** Add File: added.txt
+                +created
+                *** End Patch
+                """);
+        var result = new PatchService(
+                        fixture.workspaceStore(),
+                        fixture.files(),
+                        fixture.authorized(),
+                        new PatchValidationService(10, 100, 1_000))
+                .apply(new PatchApplyRequest(
+                        fixture.workspaceId(),
+                        document,
+                        fixture.workspace().revision(),
+                        Map.of(ProjectPath.of("old.txt"), hash("section\nold\n")),
+                        context("multi-context-patch")));
+
+        assertThat(result.complete()).isTrue();
+        assertThat(Files.exists(root.resolve("old.txt"))).isFalse();
+        assertThat(Files.readString(root.resolve("moved.txt"))).isEqualTo("section\nnew\n");
+        assertThat(Files.readString(root.resolve("added.txt"))).isEqualTo("created\n");
+    }
+
+    @Test
     void rejectsTraversalDuplicateAndOverBudgetPatchesDeterministically() {
         var parser = new UnifiedPatchParser(2, 20, 1024);
         String traversal = "--- a/../escape.txt\n+++ b/../escape.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n";
@@ -438,6 +517,14 @@ class LocalWorkspaceMutationServiceTest {
     private static String hash(String value) throws Exception {
         return "sha256:"
                 + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes(value)));
+    }
+
+    private static String hashFile(Path file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (var input = Files.newInputStream(file)) {
+            input.transferTo(new java.security.DigestOutputStream(java.io.OutputStream.nullOutputStream(), digest));
+        }
+        return "sha256:" + HexFormat.of().formatHex(digest.digest());
     }
 
     private static void assertReadOnly(org.assertj.core.api.ThrowableAssert.ThrowingCallable operation) {

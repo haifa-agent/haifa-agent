@@ -49,6 +49,15 @@ final class Tui4jTerminalView {
 
     private final Tui4jTerminalTheme theme = new Tui4jTerminalTheme();
     private final IncrementalTerminalMarkdownRenderer markdown = new IncrementalTerminalMarkdownRenderer(theme);
+    private final TerminalShortcutProfile shortcuts;
+
+    Tui4jTerminalView() {
+        this(TerminalShortcutProfile.standard());
+    }
+
+    Tui4jTerminalView(TerminalShortcutProfile shortcuts) {
+        this.shortcuts = java.util.Objects.requireNonNull(shortcuts, "shortcuts must not be null");
+    }
 
     String render(
             TerminalUiState state,
@@ -138,12 +147,21 @@ final class Tui4jTerminalView {
         List<String> lines = new ArrayList<>();
         lines.add(theme.accent(state.header()) + theme.muted("  v0.1"));
         if (compact) {
-            lines.add(theme.muted("tab complete · " + submitHint(state) + " · esc interrupt"));
+            lines.add(
+                    theme.muted("tab complete · " + submitHint(state) + " · " + shortcuts.interrupt() + " interrupt"));
         } else {
-            lines.add(theme.muted(
-                    "esc interrupt · ctrl+c clear · ctrl+o expand/collapse · tab complete · " + submitHint(state)));
+            lines.add(theme.muted(shortcuts.interrupt()
+                    + " interrupt · "
+                    + shortcuts.clear()
+                    + " clear · "
+                    + shortcuts.toggleExpansion()
+                    + " expand/collapse · tab complete · "
+                    + submitHint(state)));
             if (state.currentRunId().isPresent()) {
-                lines.add(theme.muted("alt/option+enter follow-up · alt/option+up restore queued message"));
+                lines.add(theme.muted(shortcuts.followUp()
+                        + " follow-up · "
+                        + shortcuts.restoreQueuedMessage()
+                        + " restore queued message"));
             }
         }
         resources(state).ifPresent(lines::add);
@@ -212,7 +230,7 @@ final class Tui4jTerminalView {
             return style(item, content);
         }
         if (isCollapsedTool(item)) {
-            String content = title + theme.muted(" · ctrl+o expand");
+            String content = title + theme.muted(" · " + shortcuts.toggleExpansion() + " expand");
             if (isErrorStatus(item.status())) {
                 String details = item.body()
                         .lines()
@@ -337,9 +355,15 @@ final class Tui4jTerminalView {
     private String editorHint(TerminalUiState state) {
         if (state.selector().isPresent()) return "enter select · escape close";
         if (state.currentRunId().isPresent()) {
-            return "enter steer · alt/option+enter follow-up · shift+enter/ctrl+j newline · esc interrupt";
+            return "enter steer · "
+                    + shortcuts.followUp()
+                    + " follow-up · "
+                    + shortcuts.newline()
+                    + " newline · "
+                    + shortcuts.interrupt()
+                    + " interrupt";
         }
-        return "enter send · shift+enter/ctrl+j newline · tab complete";
+        return "enter send · " + shortcuts.newline() + " newline · tab complete";
     }
 
     private boolean isMeaningfulResource(String value) {
