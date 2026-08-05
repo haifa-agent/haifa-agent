@@ -22,6 +22,8 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
   revision、单活动 Run 与重启恢复；
 - 类型化 `JavaTool<I, O>`、Java record Schema/Codec、单 Tool Catalog 合并，以及默认 DeepSeek V4
   Flash 的纯 Java `haifa-agent-sdk-starter`；
+- Spring Boot Starter 与自动装配：默认创建单例 `HaifaAgent`、收集 `JavaTool` Bean、生成配置元数据，
+  并在应用关闭时释放 Agent；默认模型仍为 DeepSeek V4 Flash 且关闭 Thinking；
 - 可选的安全 JSONL Transcript 投影，支持 at-least-once 去重、截断诊断、跨进程锁与原子轮转；
 - 纯 Java Policy API/Core，支持请求绑定决策、`DENY > ASK > ALLOW`、受限 Approval Grant、
   Project Trust、产品验证 SPI 和内存 Store；SQLite V3 已提供 Snapshot、Decision、Evidence、
@@ -48,6 +50,9 @@ build-support/
 haifa-agent-contract/
 haifa-agent-sdk/
 haifa-agent-sdk-starter/
+haifa-agent-spring/
+  haifa-agent-spring-boot-autoconfigure/
+  haifa-agent-spring-boot-starter/
 haifa-agent-kernel/
   haifa-agent-common/
   haifa-agent-core/
@@ -155,6 +160,8 @@ flowchart LR
   SDK --> SKAPI
   STARTER[sdk-starter] --> SDK
   STARTER --> OAI
+  SAUTO[spring-boot-autoconfigure] --> STARTER
+  SBOOT[spring-boot-starter] --> SAUTO
   SQLITE --> SDK
   PAPP[coding-agent + built-in Web Tool] --> RCORE
   PAPP --> SQLITE

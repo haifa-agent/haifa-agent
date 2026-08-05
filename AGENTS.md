@@ -59,6 +59,7 @@
 | [`haifa-agent-contract/`](haifa-agent-contract/README.md) | 对外 API/事件协议对象 | 只依赖 Common/JDK；不暴露 Core、Runtime、框架或 Provider DTO |
 | [`haifa-agent-sdk/`](haifa-agent-sdk/README.md) | 纯 Java SDK Facade、产品装配、Conversation 与 Java Tool 入口 | 普通 API 不暴露 Runtime Core、框架或 Provider DTO |
 | [`haifa-agent-sdk-starter/`](haifa-agent-sdk-starter/README.md) | 纯 Java 安全默认 Quickstart | 默认 DeepSeek V4 Flash、进程内开发 Store；不作为生产持久化方案 |
+| [`haifa-agent-spring/`](haifa-agent-spring/README.md) | Spring Boot 自动装配与依赖 Starter | 只适配纯 Java SDK；不得复制 Runtime/Capability 语义或引入 Spring AI |
 | [`haifa-agent-kernel/haifa-agent-common/`](haifa-agent-kernel/haifa-agent-common/README.md) | ID、时间、版本和基础异常 | 仅依赖 JDK；不包含产品语义 |
 | [`haifa-agent-kernel/haifa-agent-core/`](haifa-agent-kernel/haifa-agent-core/README.md) | 稳定 Agent 领域模型与 Run 状态机 | 纯 Java；状态变化必须经过命名领域行为 |
 | [`haifa-agent-kernel/haifa-agent-runtime-api/`](haifa-agent-kernel/haifa-agent-runtime-api/README.md) | Runtime 启动、查询、恢复、命令与交互契约 | 同步提交、异步执行；不依赖具体实现或 Provider |
