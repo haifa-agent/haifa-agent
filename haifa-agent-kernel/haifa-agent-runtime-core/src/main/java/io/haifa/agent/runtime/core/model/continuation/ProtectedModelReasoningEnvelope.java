@@ -2,7 +2,7 @@ package io.haifa.agent.runtime.core.model.continuation;
 
 import java.util.Objects;
 
-/** Persistence-safe encrypted envelope. It contains no key material or plaintext. */
+/** Persistence envelope whose confidentiality depends on the configured continuation protector. */
 public record ProtectedModelReasoningEnvelope(byte[] nonce, byte[] ciphertext) {
     public ProtectedModelReasoningEnvelope {
         nonce = Objects.requireNonNull(nonce, "nonce must not be null").clone();

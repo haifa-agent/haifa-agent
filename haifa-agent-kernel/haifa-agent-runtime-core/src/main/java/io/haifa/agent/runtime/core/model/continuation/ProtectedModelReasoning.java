@@ -2,7 +2,7 @@ package io.haifa.agent.runtime.core.model.continuation;
 
 import java.util.Objects;
 
-/** Encrypted continuation bytes. Access is intentionally limited to the continuation protector. */
+/** Opaque continuation bytes. Their protection scheme is owned by the configured continuation protector. */
 public final class ProtectedModelReasoning {
     private final byte[] nonce;
     private final byte[] ciphertext;

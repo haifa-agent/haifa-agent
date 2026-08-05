@@ -4,12 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
+import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class CliConfigurationLoaderTest {
     @Test
@@ -75,8 +77,20 @@ class CliConfigurationLoaderTest {
     }
 
     @Test
-    void packagedDistributionConfigurationIsValidAndSecretFree() {
-        Path configuration = Path.of("distribution", "haifa-coding.yaml").toAbsolutePath();
+    void packagedDistributionConfigurationIsValidAndSecretFree(@TempDir Path tempDirectory) throws Exception {
+        Path template = Path.of("distribution", "haifa-coding.yaml").toAbsolutePath();
+        Path database = tempDirectory.resolve("data").resolve("runtime.db");
+        Path transcriptRoot = tempDirectory.resolve("data").resolve("transcripts");
+        Path configuration = tempDirectory.resolve("haifa-coding.yaml");
+        Files.writeString(
+                configuration,
+                Files.readString(template)
+                        .replace(
+                                "__HAIFA_SQLITE_DATABASE_PATH__",
+                                "'" + database.toString().replace('\\', '/') + "'")
+                        .replace(
+                                "__HAIFA_TRANSCRIPT_ROOT__",
+                                "'" + transcriptRoot.toString().replace('\\', '/') + "'"));
 
         CliConfiguration result = new CliConfigurationLoader()
                 .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
@@ -99,7 +113,11 @@ class CliConfigurationLoaderTest {
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
         assertThat(result.execution().network()).isEqualTo("allow");
-        assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.MEMORY);
+        assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.SQLITE_WITH_JSONL);
+        assertThat(result.persistence().protection()).isEqualTo(ProjectPersistenceProtection.NONE);
+        assertThat(result.persistence().databasePath()).contains(database);
+        assertThat(result.persistence().transcriptRoot()).contains(transcriptRoot);
+        assertThat(result.persistence().protectorReference()).isEmpty();
         assertThat(result.enabledTools()).contains("file.read", "file.write", "execution.run");
     }
 
@@ -383,6 +401,7 @@ class CliConfigurationLoaderTest {
                         Path.of("."));
 
         assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.SQLITE_WITH_JSONL);
+        assertThat(result.persistence().protection()).isEqualTo(ProjectPersistenceProtection.AES_GCM);
         assertThat(result.persistence().databasePath()).contains(database);
         assertThat(result.persistence().transcriptRoot()).contains(transcriptRoot);
         assertThat(result.persistence().protectorReference()).contains("env://HAIFA_TEST_CONTINUATION_KEY");

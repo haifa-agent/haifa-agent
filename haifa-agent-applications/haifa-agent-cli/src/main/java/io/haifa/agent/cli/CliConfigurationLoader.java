@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
+import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -148,8 +149,16 @@ final class CliConfigurationLoader {
                 environment("HAIFA_TRANSCRIPT_ROOT").orElseGet(() -> nullableText(source, "transcriptRoot"));
         String protector =
                 environment("HAIFA_CONTINUATION_PROTECTOR_REF").orElseGet(() -> nullableText(source, "protectorRef"));
+        String defaultProtection = mode == ProjectPersistenceMode.MEMORY
+                ? ProjectPersistenceProtection.NONE.name()
+                : protector == null
+                        ? ProjectPersistenceProtection.NONE.name()
+                        : ProjectPersistenceProtection.AES_GCM.name();
+        String configuredProtection = environment("HAIFA_PERSISTENCE_PROTECTION")
+                .orElseGet(() -> text(source, "protection", defaultProtection));
         return new ProjectPersistenceConfiguration(
                 mode,
+                ProjectPersistenceProtection.parse(configuredProtection),
                 optionalPath(database),
                 optionalPath(transcript),
                 Optional.ofNullable(protector),

@@ -161,8 +161,9 @@ Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 | Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
 Project Application/CLI 已实现显式 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL` 选择，并在启动时注入
-Runtime Port、唯一 worker ID 与安全 busy retry。仍未接入的边界包括常驻 Outbox 后台投递器，以及生产
-环境 KMS/Vault 密钥解析与轮换；当前 CLI 只解析稳定 `env://` secret reference。
+Runtime Port、唯一 worker ID 与安全 busy retry。持久 payload protection 可显式选择本地明文 `NONE`
+或 `AES_GCM`；后者当前只解析稳定 `env://` secret reference。仍未接入的边界包括常驻 Outbox 后台
+投递器，以及生产环境 KMS/Vault 密钥解析与轮换。
 
 ## 性能诊断日志
 

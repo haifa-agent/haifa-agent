@@ -47,6 +47,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private boolean followTranscript = true;
     private boolean newOutputPending;
     private boolean fullRepaintRequested;
+    private int pendingTranscriptScrollRows;
     private AgentRunId timedRunId;
     private long runStartedNanos;
 
@@ -118,18 +119,10 @@ final class Tui4jCodingTerminalModel implements Model {
         if (!mouse.isWheel()) {
             return Command.none();
         }
-        int before = transcript.getYOffset();
         if (mouse.getButton() == MouseButton.MouseButtonWheelUp) {
-            transcript.scrollUp(transcript.getMouseWheelDelta());
-            if (transcript.getYOffset() != before) {
-                followTranscript = false;
-            }
+            requestTranscriptScroll(-transcript.getMouseWheelDelta());
         } else if (mouse.getButton() == MouseButton.MouseButtonWheelDown) {
-            transcript.scrollDown(transcript.getMouseWheelDelta());
-            if (transcript.atBottom()) {
-                followTranscript = true;
-                newOutputPending = false;
-            }
+            requestTranscriptScroll(transcript.getMouseWheelDelta());
         }
         return Command.none();
     }
@@ -137,7 +130,17 @@ final class Tui4jCodingTerminalModel implements Model {
     @Override
     public String view() {
         TerminalUiState state = controller.state();
-        return view.render(state, transcript, editor, followTranscript, newOutputPending, workingElapsed(state));
+        int requestedScrollRows = pendingTranscriptScrollRows;
+        pendingTranscriptScrollRows = 0;
+        Duration elapsed = workingElapsed(state);
+        String rendered = view.render(
+                state, transcript, editor, followTranscript, newOutputPending, elapsed, requestedScrollRows);
+        if (requestedScrollRows > 0 && transcript.atBottom()) {
+            followTranscript = true;
+            newOutputPending = false;
+            rendered = view.render(state, transcript, editor, true, false, elapsed, 0);
+        }
+        return rendered;
     }
 
     private Duration workingElapsed(TerminalUiState state) {
@@ -212,16 +215,11 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.KeyPgUp) {
-            transcript.scrollUp(Math.max(1, transcript.getHeight() - 1));
-            followTranscript = false;
+            requestTranscriptScroll(-Math.max(1, transcript.getHeight() - 1));
             return Command.none();
         }
         if (key.type() == KeyType.KeyPgDown) {
-            transcript.scrollDown(Math.max(1, transcript.getHeight() - 1));
-            if (transcript.atBottom()) {
-                followTranscript = true;
-                newOutputPending = false;
-            }
+            requestTranscriptScroll(Math.max(1, transcript.getHeight() - 1));
             return Command.none();
         }
         if (key.type() == KeyType.KeyLeft) {
@@ -250,6 +248,15 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         return edit(key);
+    }
+
+    private void requestTranscriptScroll(int rows) {
+        if (rows == 0) return;
+        if (rows < 0) {
+            followTranscript = false;
+        }
+        long requested = (long) pendingTranscriptScrollRows + rows;
+        pendingTranscriptScrollRows = (int) Math.max(-1_000_000L, Math.min(1_000_000L, requested));
     }
 
     private boolean editCompletion(KeyPressMessage key) {

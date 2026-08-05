@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceAssembly;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
+import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
@@ -743,7 +744,10 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     private static ModelContinuationProtector resolveContinuationProtector(CliConfiguration configuration) {
-        if (configuration.persistence().mode() == ProjectPersistenceMode.MEMORY) return null;
+        if (configuration.persistence().mode() == ProjectPersistenceMode.MEMORY
+                || configuration.persistence().protection() == ProjectPersistenceProtection.NONE) {
+            return null;
+        }
         String reference = configuration
                 .persistence()
                 .protectorReference()

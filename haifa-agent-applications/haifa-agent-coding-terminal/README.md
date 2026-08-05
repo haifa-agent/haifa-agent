@@ -143,7 +143,8 @@ message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随。
 - 鼠标滚轮与 PageUp/PageDown 一样只滚动 Transcript Viewport，不浏览输入历史或移动 Editor 光标；
-  向下滚到底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和多行光标移动语义。
+  滚动在当前帧布局重新计算 Viewport 尺寸后生效，内容超过一屏或窗口 Resize 后仍可回翻；向下滚到
+  底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和多行光标移动语义。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
 50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成
@@ -246,7 +247,7 @@ key，并在所有重启间保持不变。
 13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，
     Alt+Up 恢复且重启后不重复。
 14. PageUp 离开底部后产生新输出，确认 viewport 不跳动且出现 `new output below`；PageDown 回到底部
-    后提示消失。
+    后提示消失。先以大窗口渲染、再缩小窗口并滚轮向上，确认仍能回翻到上一屏内容。
 
 真实模型和 Web Provider 可能产生费用；未经单独授权保持 **NOT RUN**。自动化验证只使用 Stub/Fake：
 

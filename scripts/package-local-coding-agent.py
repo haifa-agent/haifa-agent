@@ -89,6 +89,10 @@ def write_windows_launcher(output_directory: Path) -> None:
     launcher = """@echo off
 setlocal
 set "HAIFA_DISTRIBUTION_DIR=%~dp0"
+if not exist "%HAIFA_DISTRIBUTION_DIR%data\\transcripts" mkdir "%HAIFA_DISTRIBUTION_DIR%data\\transcripts"
+if errorlevel 1 exit /b %ERRORLEVEL%
+if not defined HAIFA_SQLITE_DATABASE_PATH set "HAIFA_SQLITE_DATABASE_PATH=%HAIFA_DISTRIBUTION_DIR%data\\runtime.db"
+if not defined HAIFA_TRANSCRIPT_ROOT set "HAIFA_TRANSCRIPT_ROOT=%HAIFA_DISTRIBUTION_DIR%data\\transcripts"
 set "HAIFA_JAVA_EXE=java.exe"
 if defined JAVA_HOME if exist "%JAVA_HOME%\\bin\\java.exe" set "HAIFA_JAVA_EXE=%JAVA_HOME%\\bin\\java.exe"
 "%HAIFA_JAVA_EXE%" -jar "%HAIFA_DISTRIBUTION_DIR%haifa-agent.jar" --config "%HAIFA_DISTRIBUTION_DIR%haifa-coding.yaml" %*
@@ -103,7 +107,13 @@ exit /b %ERRORLEVEL%
 def write_posix_launcher(output_directory: Path) -> None:
     launcher = """#!/bin/sh
 set -eu
+umask 077
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+data_dir="${script_dir}/data"
+mkdir -p "${data_dir}/transcripts"
+: "${HAIFA_SQLITE_DATABASE_PATH:=${data_dir}/runtime.db}"
+: "${HAIFA_TRANSCRIPT_ROOT:=${data_dir}/transcripts}"
+export HAIFA_SQLITE_DATABASE_PATH HAIFA_TRANSCRIPT_ROOT
 if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
     java_executable="${JAVA_HOME}/bin/java"
 else
@@ -117,12 +127,41 @@ exec "$java_executable" -jar "${script_dir}/haifa-agent.jar" --config "${script_
     launcher_file.chmod(0o755)
 
 
+def yaml_single_quoted(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def render_configuration(
+    configuration_template: Path, output_file: Path, data_directory: Path
+) -> None:
+    database_token = "__HAIFA_SQLITE_DATABASE_PATH__"
+    transcript_token = "__HAIFA_TRANSCRIPT_ROOT__"
+    content = configuration_template.read_text(encoding="utf-8")
+    for token in (database_token, transcript_token):
+        if content.count(token) != 1:
+            raise ValueError(
+                f"Coding Agent configuration template must contain exactly one {token}."
+            )
+    rendered = content.replace(
+        database_token,
+        yaml_single_quoted(str((data_directory / "runtime.db").resolve())),
+    ).replace(
+        transcript_token,
+        yaml_single_quoted(str((data_directory / "transcripts").resolve())),
+    )
+    output_file.write_text(rendered, encoding="utf-8", newline="\n")
+
+
 def assemble_distribution(
     configuration_file: Path, output_directory: Path, jar_file: Path
 ) -> None:
     output_directory.mkdir(parents=True, exist_ok=True)
+    data_directory = output_directory / "data"
+    (data_directory / "transcripts").mkdir(parents=True, exist_ok=True)
     shutil.copy2(jar_file, output_directory / "haifa-agent.jar")
-    shutil.copy2(configuration_file, output_directory / "haifa-coding.yaml")
+    render_configuration(
+        configuration_file, output_directory / "haifa-coding.yaml", data_directory
+    )
     if os.name == "nt":
         write_windows_launcher(output_directory)
     else:

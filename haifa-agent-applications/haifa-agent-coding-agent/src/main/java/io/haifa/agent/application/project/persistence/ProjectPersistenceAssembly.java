@@ -29,6 +29,7 @@ import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.loop.SessionMessageSource;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.PlaintextModelContinuationProtector;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
@@ -111,8 +112,16 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                             policyStore,
                             policyStore));
         }
-        if (protector == null || !protector.supportsPersistentStorage()) {
+        ModelContinuationProtector effectiveProtector = protector;
+        if (configuration.protection() == ProjectPersistenceProtection.NONE && effectiveProtector == null) {
+            effectiveProtector = new PlaintextModelContinuationProtector();
+        }
+        if (effectiveProtector == null || !effectiveProtector.supportsPersistentStorage()) {
             throw new IllegalArgumentException("SQLite persistence requires a durable continuation protector");
+        }
+        boolean confidentialityRequired = configuration.protection() == ProjectPersistenceProtection.AES_GCM;
+        if (effectiveProtector.providesConfidentiality() != confidentialityRequired) {
+            throw new IllegalArgumentException("SQLite persistence protector does not match configured protection");
         }
         Path database = configuration.databasePath().orElseThrow();
         SqliteStoreConfiguration sqliteConfiguration = new SqliteStoreConfiguration(
@@ -121,11 +130,11 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         try {
             foundation = SqliteStoreFoundation.initialize(
                     sqliteConfiguration, clock, ProjectApplicationMigrations.all(), ProjectApplicationMappers.all());
-            RuntimePersistencePorts ports = foundation.persistencePorts(protector);
+            RuntimePersistencePorts ports = foundation.persistencePorts(effectiveProtector);
             ProjectProductSessionStore productSessions =
                     new SqliteProjectProductSessionStore(foundation.unitOfWork(), ports.sessions());
             CodingSessionStore codingSessions = new SqliteCodingSessionStore(
-                    foundation.unitOfWork(), protector, configuration.maximumPayloadBytes());
+                    foundation.unitOfWork(), effectiveProtector, configuration.maximumPayloadBytes());
             JsonlTranscriptProjector projector = null;
             if (configuration.mode() == ProjectPersistenceMode.SQLITE_WITH_JSONL) {
                 Path root = requireTranscriptRoot(configuration.transcriptRoot().orElseThrow());

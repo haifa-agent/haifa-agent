@@ -2,10 +2,13 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Haifa Coding Agent 本地发行包默认改为 `SQLITE_WITH_JSONL + protection=NONE`：数据位于发行目录
+  `data/`，无需 continuation key；可显式切换 `AES_GCM + env://HAIFA_CONTINUATION_KEY`。
 - Personal Assistant 真实环境的 PowerShell、POSIX、Python 生命周期脚本及单测统一迁移至根目录
   `scripts/`，并同步启动、停止和环境搭建文档中的调用路径。
-- 修复 Coding Terminal 未启用鼠标报告而将滚轮退化为输入历史方向键的问题；滚轮现在滚动 Transcript，
-  到达底部后恢复新输出自动跟随，并保持 Editor 草稿和输入历史不变。
+- 修复 Coding Terminal 未启用鼠标报告而将滚轮退化为输入历史方向键、以及内容超过一屏后因使用
+  上一帧 Viewport 尺寸而无法回翻的问题；滚动现在于当前帧布局完成后生效，到达底部后恢复新输出
+  自动跟随，并保持 Editor 草稿和输入历史不变。
 - Coding Terminal 的 `@path` 补全现在过滤任意点号开头的文件或目录；活动状态显示累计耗时与
   `esc to interrupt`，Editor hint 下方显示当前模型、Workspace 绝对路径及可用的 Git 分支。
 - Coding Agent 向模型冻结披露 `execution_run` 使用的宿主 Shell 方言，避免 Windows PowerShell

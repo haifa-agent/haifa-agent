@@ -108,7 +108,9 @@ Requester、Challenge 与精确 Target 的既有 Runtime Interaction；可信 Ca
 ## Provider continuation
 
 When an assistant response contains both reasoning and Tool Calls, Runtime atomically associates a safe
-continuation reference with the assistant Tool Call message and stores the reasoning as AES-GCM protected data.
+continuation reference with the assistant Tool Call message and stores the reasoning through the configured
+protector. `AES_GCM` provides confidentiality; explicit `NONE` is readable at rest and is intended only for trusted
+local profiles.
 The next model request resolves it only after provider, model, configuration digest, message, and tool correlation
 validation. Checkpoints contain refs/digests/versions only and validate payload integrity before resume.
 
