@@ -12,9 +12,6 @@ import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
 import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
-import io.haifa.agent.execution.core.manifest.ManifestBudget;
-import io.haifa.agent.execution.core.manifest.ManifestDiffService;
-import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.policy.api.PolicyDigest;
@@ -111,11 +108,8 @@ final class CliExecutionPlatform {
         Map<String, String> environment = environment(configuration, profile);
         ExecutionEnvironmentRef environmentRef = new ExecutionEnvironmentRef(
                 List.of("cli-execution-" + profile.contentDigest().value()));
-        var manifests = new WorkspaceManifestService(
-                workspaces,
-                files,
-                new ManifestBudget(100_000, 1024L * 1024 * 1024, 256L * 1024 * 1024),
-                CliWorkspaceManifestIgnorePolicy.load(workspaceRoot));
+        var ignorePolicy = CliWorkspaceManifestIgnorePolicy.load(workspaceRoot);
+        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceRoot, ignorePolicy);
         var observedChanges = new ObservedFileChangeService(workspaces, changeSets, changeSetService, time);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
@@ -127,8 +121,7 @@ final class CliExecutionPlatform {
                 providerRegistry,
                 workspaces,
                 bindings,
-                manifests,
-                new ManifestDiffService(),
+                workspaceChanges,
                 observedChanges);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
         var operations = new ProjectExecutionToolOperations(
@@ -313,6 +306,7 @@ final class CliExecutionPlatform {
     }
 
     static final class CliOutputObserver implements ExecutionOutputObserver {
+        private static final int MAX_PENDING_CHARACTERS = 8192;
         private final PrintStream output;
         private final StringBuilder pending = new StringBuilder();
 
@@ -336,6 +330,7 @@ final class CliExecutionPlatform {
             } else {
                 int newline = Math.max(pending.lastIndexOf("\n"), pending.lastIndexOf("\r"));
                 if (newline >= 0) flush(newline + 1);
+                while (pending.length() > MAX_PENDING_CHARACTERS) flush(MAX_PENDING_CHARACTERS);
             }
         }
 

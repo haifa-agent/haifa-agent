@@ -315,6 +315,9 @@ public final class ToolPipeline {
             boolean uncertain =
                     journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.DISPATCHED;
             boolean limitExceeded = exception instanceof RuntimeLimitExceededException;
+            String invocationFailureCode = exception instanceof io.haifa.agent.tool.api.ToolInvocationException failure
+                    ? failure.failureCode()
+                    : null;
             AgentErrorCode failureCode;
             if (limitExceeded && !uncertain) {
                 journal.recordFailed(run.id(), request.idempotencyKey());
@@ -326,34 +329,35 @@ public final class ToolPipeline {
                 appendToolEvent(run, call, "tool.failed", "FAILED", "OUTCOME_UNKNOWN", "");
             } else {
                 journal.recordFailed(run.id(), request.idempotencyKey());
-                failureCode = AgentErrorCode.TOOL_INVOCATION_FAILED;
-                appendToolEvent(run, call, "tool.failed", "FAILED", "INVOCATION_FAILED", "");
+                failureCode = AgentErrorCode.isKnownWireCode(invocationFailureCode)
+                        ? AgentErrorCode.fromWireCode(invocationFailureCode)
+                        : AgentErrorCode.TOOL_INVOCATION_FAILED;
+                appendToolEvent(run, call, "tool.failed", "FAILED", failureCode.wireCode(), "");
             }
+            Map<String, Object> errorDetails;
+            if (exception instanceof RuntimeLimitExceededException limitFailure) {
+                errorDetails = Map.of(
+                        "tool", definition.name().value(),
+                        "toolCallId", call.id().value(),
+                        "resource", limitFailure.resource(),
+                        "limit", limitFailure.limit(),
+                        "used", limitFailure.used(),
+                        "journalState", journalState.name(),
+                        "outcomeKnown", !uncertain);
+            } else {
+                errorDetails = Map.of(
+                        "tool", definition.name().value(),
+                        "toolCallId", call.id().value(),
+                        "journalState", journalState.name(),
+                        "sideEffecting", !definition.sideEffects().isEmpty(),
+                        "outcomeKnown", !uncertain);
+            }
+            AgentError failureError = new AgentError(failureCode, errorDetails, ids.nextValue(), time.now());
             if (call.status() == ToolCallStatus.RUNNING) {
-                Map<String, Object> errorDetails;
-                if (exception instanceof RuntimeLimitExceededException limitFailure) {
-                    errorDetails = Map.of(
-                            "tool", definition.name().value(),
-                            "toolCallId", call.id().value(),
-                            "resource", limitFailure.resource(),
-                            "limit", limitFailure.limit(),
-                            "used", limitFailure.used(),
-                            "journalState", journalState.name(),
-                            "outcomeKnown", !uncertain);
-                } else {
-                    errorDetails = Map.of(
-                            "tool", definition.name().value(),
-                            "toolCallId", call.id().value(),
-                            "journalState", journalState.name(),
-                            "sideEffecting", !definition.sideEffects().isEmpty(),
-                            "outcomeKnown", !uncertain);
-                }
-                call.fail(
-                        new ToolExecutionError(new AgentError(failureCode, errorDetails, ids.nextValue(), time.now())),
-                        time.now());
+                call.fail(new ToolExecutionError(failureError), time.now());
                 state.appendToolCall(call);
             }
-            throw exception;
+            throw new AgentExecutionFailureException(failureError, exception);
         }
     }
 

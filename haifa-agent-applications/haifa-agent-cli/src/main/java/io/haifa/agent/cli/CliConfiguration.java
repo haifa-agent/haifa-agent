@@ -32,14 +32,15 @@ record CliConfiguration(
             "file.list",
             "file.stat",
             "file.read",
-            "file.search",
             "file.create",
             "file.write",
+            "file.patch",
             "file.delete",
             "file.move",
             "execution.run");
+    private static final Set<String> OPTIONAL_TOOLS = Set.of("file.search", "web.search", "web.fetch");
     private static final Set<String> SUPPORTED_TOOLS = java.util.stream.Stream.concat(
-                    DEFAULT_TOOLS.stream(), java.util.stream.Stream.of("web.search", "web.fetch"))
+                    DEFAULT_TOOLS.stream(), OPTIONAL_TOOLS.stream())
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
     private static final Set<String> DEFAULT_ENVIRONMENT = Set.of(
             "PATH",

@@ -34,7 +34,8 @@ final class Tui4jCodingTerminalModel implements Model {
     private final TerminalEventPump pump;
     private final Textarea editor = new Textarea();
     private final Viewport transcript;
-    private final Tui4jTerminalView view = new Tui4jTerminalView();
+    private final TerminalShortcutProfile shortcuts;
+    private final Tui4jTerminalView view;
     private final List<String> history = new ArrayList<>();
     private final LongSupplier monotonicNanos;
 
@@ -52,13 +53,24 @@ final class Tui4jCodingTerminalModel implements Model {
     private long runStartedNanos;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
-        this(controller, pump, System::nanoTime);
+        this(controller, pump, System::nanoTime, null);
     }
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump, LongSupplier monotonicNanos) {
+        this(controller, pump, monotonicNanos, null);
+    }
+
+    Tui4jCodingTerminalModel(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            LongSupplier monotonicNanos,
+            TerminalHostInfo hostInfo) {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.shortcuts =
+                hostInfo == null ? TerminalShortcutProfile.standard() : TerminalShortcutProfile.forHost(hostInfo);
+        this.view = new Tui4jTerminalView(shortcuts);
         TerminalUiState state = controller.state();
         this.editorCursor = state.editorCursor();
         this.transcript = Viewport.create(state.columns(), 2);
@@ -166,7 +178,7 @@ final class Tui4jCodingTerminalModel implements Model {
             selectorKey(key);
             return Command.none();
         }
-        if (key.alt() && key.type() == KeyType.KeyUp) {
+        if (shortcuts.matchesRestoreQueuedMessage(key)) {
             accept(TerminalInput.Kind.RESTORE);
             return Command.none();
         }
@@ -182,7 +194,7 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.EOF);
             return Command.none();
         }
-        if (key.type() == KeyType.keySI) {
+        if (shortcuts.matchesToggleExpansion(key)) {
             accept(TerminalInput.Kind.TOGGLE_EXPANSION);
             return Command.none();
         }
@@ -191,7 +203,7 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyCR) {
-            submit(key.alt() ? TerminalInput.Kind.FOLLOW_UP : TerminalInput.Kind.SUBMIT);
+            submit(shortcuts.matchesFollowUp(key) ? TerminalInput.Kind.FOLLOW_UP : TerminalInput.Kind.SUBMIT);
             return Command.none();
         }
         if (key.type() == KeyType.keyLF) {

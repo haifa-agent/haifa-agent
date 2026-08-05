@@ -8,6 +8,7 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.project.filesystem.FileListRequest;
 import io.haifa.agent.project.filesystem.ReadOptions;
 import io.haifa.agent.project.filesystem.SearchRequest;
+import io.haifa.agent.project.filesystem.WorkspaceFileErrorCode;
 import io.haifa.agent.project.filesystem.WorkspaceFileException;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
@@ -16,6 +17,10 @@ import io.haifa.agent.project.mutation.MutationContext;
 import io.haifa.agent.project.mutation.MutationPrecondition;
 import io.haifa.agent.project.mutation.WorkspaceMutationProvider;
 import io.haifa.agent.project.mutation.WriteFileRequest;
+import io.haifa.agent.project.patch.ApplyPatchParser;
+import io.haifa.agent.project.patch.PatchApplyRequest;
+import io.haifa.agent.project.patch.PatchService;
+import io.haifa.agent.project.patch.PatchValidationService;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
@@ -23,12 +28,21 @@ import io.haifa.agent.project.store.WorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /** Local, capability-scoped file operations used by the CLI's Project Tool provider. */
 final class LocalFileToolOperations implements ProjectToolOperations {
+    private static final int DEFAULT_READ_BYTES = 64 * 1024;
+    private static final int MAX_READ_BYTES = 256 * 1024;
+    private static final int DEFAULT_READ_LINES = 400;
+    private static final int MAX_READ_LINES = 2_000;
     private static final String POST_MUTATION_REVIEW =
             " Before validation, inspect every changed classification and counter branch against the authoritative "
                     + "contract, then exercise one mixed scenario with exact counts. Differently named outcomes stay "
@@ -38,6 +52,8 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     private final LocalWorkspaceFileService files;
     private final WorkspaceMutationProvider mutations;
     private final IdentifierGenerator identifiers;
+    private final ApplyPatchParser patchParser;
+    private final PatchService patchService;
 
     LocalFileToolOperations(
             WorkspaceStore workspaces,
@@ -48,6 +64,9 @@ final class LocalFileToolOperations implements ProjectToolOperations {
         this.files = Objects.requireNonNull(files, "files must not be null");
         this.mutations = Objects.requireNonNull(mutations, "mutations must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
+        this.patchParser = new ApplyPatchParser(100, 1_000, 20_000, 4 * 1024 * 1024);
+        this.patchService = new PatchService(
+                this.workspaces, this.files, this.mutations, new PatchValidationService(100, 1_000, 20_000));
     }
 
     @Override
@@ -66,6 +85,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 case "file.search" -> search(workspaceId, arguments.values());
                 case "file.create" -> create(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
                 case "file.write" -> write(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
+                case "file.patch" -> patch(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
                 case "file.delete" -> delete(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
                 case "file.move" -> move(workspaceId, actor, runRef, policyDecisionRef, arguments.values());
                 default -> throw new IllegalStateException("CLI does not support tool: " + toolName);
@@ -116,16 +136,36 @@ final class LocalFileToolOperations implements ProjectToolOperations {
     }
 
     private ToolResult read(WorkspaceId workspaceId, Map<String, Object> values) {
-        var content = files.read(path(workspaceId, values, "path"), ReadOptions.defaults());
-        return success(
-                "Read " + content.path().projectPath(),
-                Map.of(
-                        "path",
-                        content.path().projectPath().toString(),
-                        "content",
-                        content.text(),
-                        "truncated",
-                        content.truncated()));
+        WorkspacePath path = path(workspaceId, values, "path");
+        String pathText = path.projectPath().toString();
+        ReadCursor cursor = decodeCursor(optionalString(values, "cursor"), pathText);
+        int maxBytes = boundedInteger(values, "maxBytes", DEFAULT_READ_BYTES, MAX_READ_BYTES);
+        int maxLines = boundedInteger(values, "maxLines", DEFAULT_READ_LINES, MAX_READ_LINES);
+        var content =
+                files.read(path, new ReadOptions(cursor.offset(), maxBytes, maxBytes, StandardCharsets.UTF_8, true));
+        if (cursor.sourceVersion() != null && !cursor.sourceVersion().equals(content.sourceVersion())) {
+            throw new WorkspaceFileException(
+                    WorkspaceFileErrorCode.FILE_CURSOR_STALE, path, "file changed after the read cursor was issued");
+        }
+        String visible = firstLines(content.text(), maxLines);
+        long visibleBytes = visible.getBytes(StandardCharsets.UTF_8).length;
+        long nextOffset = content.offset() + visibleBytes;
+        boolean hasMore = nextOffset < content.totalByteCount();
+        int nextLine = cursor.startLine() + lineBreaks(visible);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("path", pathText);
+        data.put("content", visible);
+        data.put("startLine", cursor.startLine());
+        data.put("endLine", visible.isEmpty() ? cursor.startLine() : nextLine);
+        data.put("bytesRead", visibleBytes);
+        data.put("totalBytes", content.totalByteCount());
+        data.put("contentVersion", content.sourceVersion());
+        data.put("hasMore", hasMore);
+        data.put("truncated", hasMore);
+        if (hasMore) {
+            data.put("nextCursor", encodeCursor(nextOffset, nextLine, content.sourceVersion(), pathText));
+        }
+        return success("Read " + pathText, Map.copyOf(data));
     }
 
     private ToolResult search(WorkspaceId workspaceId, Map<String, Object> values) {
@@ -205,6 +245,51 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 Map.of("changeSetId", result.changeSetId().value()));
     }
 
+    private ToolResult patch(
+            WorkspaceId workspaceId,
+            PrincipalRef actor,
+            String runRef,
+            String policyDecisionRef,
+            Map<String, Object> values) {
+        var document = patchParser.parse(string(values, "patch"));
+        Workspace workspace = workspace(workspaceId);
+        Map<ProjectPath, String> expectedHashes = new LinkedHashMap<>();
+        document.files().stream()
+                .filter(file -> !file.creation())
+                .forEach(file -> expectedHashes.put(
+                        file.sourcePath(),
+                        files.stat(new WorkspacePath(workspaceId, file.sourcePath()), true)
+                                .contentHash()
+                                .orElseThrow(() -> new IllegalArgumentException("file hash is unavailable"))));
+        var result = patchService.apply(new PatchApplyRequest(
+                workspaceId,
+                document,
+                workspace.revision(),
+                expectedHashes,
+                context(actor, runRef, policyDecisionRef)));
+        List<Map<String, Object>> conflicts = result.conflicts().stream()
+                .map(conflict -> Map.<String, Object>of(
+                        "path", conflict.path().toString(),
+                        "code", conflict.code().name(),
+                        "hunkIndex", conflict.hunkIndex(),
+                        "detail", conflict.safeDetail()))
+                .toList();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("patchSha256", result.patchSha256());
+        data.put("complete", result.complete());
+        data.put(
+                "changeSetIds",
+                result.appliedMutations().stream()
+                        .map(mutation -> mutation.changeSetId().value())
+                        .toList());
+        data.put("conflicts", conflicts);
+        if (!result.complete()) {
+            return failure("Patch stopped after the exact committed prefix", Map.copyOf(data));
+        }
+        return success(
+                "Applied patch to " + document.files().size() + " file(s)." + POST_MUTATION_REVIEW, Map.copyOf(data));
+    }
+
     private ToolResult move(
             WorkspaceId workspaceId,
             PrincipalRef actor,
@@ -254,6 +339,85 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             throw new IllegalArgumentException(key + " must be positive");
         return number.intValue();
     }
+
+    private static int boundedInteger(Map<String, Object> values, String key, int fallback, int maximum) {
+        int value = integer(values, key, fallback);
+        if (value > maximum) throw new IllegalArgumentException(key + " exceeds maximum " + maximum);
+        return value;
+    }
+
+    private static String optionalString(Map<String, Object> values, String key) {
+        Object value = values.get(key);
+        if (value == null) return null;
+        if (!(value instanceof String text) || text.isBlank()) {
+            throw new IllegalArgumentException(key + " must be non-empty text");
+        }
+        if (text.length() > 2048) throw new IllegalArgumentException(key + " is too long");
+        return text;
+    }
+
+    private static String firstLines(String value, int maximumLines) {
+        int lines = 0;
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            if (current != '\n' && current != '\r') continue;
+            if (current == '\r' && index + 1 < value.length() && value.charAt(index + 1) == '\n') index++;
+            if (++lines == maximumLines && index + 1 < value.length()) return value.substring(0, index + 1);
+        }
+        return value;
+    }
+
+    private static int lineBreaks(String value) {
+        int breaks = 0;
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            if (current != '\n' && current != '\r') continue;
+            if (current == '\r' && index + 1 < value.length() && value.charAt(index + 1) == '\n') index++;
+            breaks++;
+        }
+        return breaks;
+    }
+
+    private static String encodeCursor(long offset, int startLine, String sourceVersion, String path) {
+        String body = "1\n" + offset + "\n" + startLine + "\n" + sourceVersion + "\n" + digest(path);
+        String payload = body + "\n" + digest(body);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static ReadCursor decodeCursor(String encoded, String path) {
+        if (encoded == null) return new ReadCursor(0, 1, null);
+        try {
+            String payload = new String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8);
+            String[] fields = payload.split("\\n", -1);
+            if (fields.length != 6 || !fields[0].equals("1")) throw new IllegalArgumentException();
+            String body = String.join("\n", java.util.Arrays.copyOf(fields, 5));
+            if (!MessageDigest.isEqual(
+                            digest(body).getBytes(StandardCharsets.US_ASCII),
+                            fields[5].getBytes(StandardCharsets.US_ASCII))
+                    || !MessageDigest.isEqual(
+                            digest(path).getBytes(StandardCharsets.US_ASCII),
+                            fields[4].getBytes(StandardCharsets.US_ASCII))) {
+                throw new IllegalArgumentException();
+            }
+            long offset = Long.parseLong(fields[1]);
+            int startLine = Integer.parseInt(fields[2]);
+            if (offset < 0 || startLine < 1 || fields[3].isBlank()) throw new IllegalArgumentException();
+            return new ReadCursor(offset, startLine, fields[3]);
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("cursor is invalid or belongs to another path");
+        }
+    }
+
+    private static String digest(String value) {
+        try {
+            return HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required", exception);
+        }
+    }
+
+    private record ReadCursor(long offset, int startLine, String sourceVersion) {}
 
     private static ToolResult success(String summary, Map<String, Object> data) {
         return new ToolResult(true, summary, data, List.of(), List.of(), false);

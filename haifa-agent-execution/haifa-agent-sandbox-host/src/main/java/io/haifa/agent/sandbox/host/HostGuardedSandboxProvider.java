@@ -275,23 +275,30 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
+                observer.onStarted();
                 try (var standardInput = process.getOutputStream()) {
                     standardInput.write(execution.input().bytes());
                 }
+                var outputLimitExceeded = new java.util.concurrent.atomic.AtomicBoolean();
                 var stdout = CompletableFuture.supplyAsync(() -> read(
                         process.getInputStream(),
                         execution.limits().maxStdoutBytes(),
                         io.haifa.agent.execution.api.ExecutionOutputChannel.STDOUT,
-                        observer));
+                        observer,
+                        execution.limits().outputOverflowPolicy(),
+                        outputLimitExceeded));
                 var stderr = CompletableFuture.supplyAsync(() -> read(
                         process.getErrorStream(),
                         execution.limits().maxStderrBytes(),
                         io.haifa.agent.execution.api.ExecutionOutputChannel.STDERR,
-                        observer));
+                        observer,
+                        execution.limits().outputOverflowPolicy(),
+                        outputLimitExceeded));
                 WaitOutcome outcome = waitFor(
                         process,
                         execution.limits().timeout(),
-                        execution.limits().maxProcesses());
+                        execution.limits().maxProcesses(),
+                        outputLimitExceeded);
                 SandboxProcessStatus status;
                 boolean treeTerminated = true;
                 Integer exitCode = null;
@@ -303,12 +310,21 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                     status = SandboxProcessStatus.EXITED;
                 } else {
                     treeTerminated = terminateTree(process);
-                    status = outcome == WaitOutcome.PROCESS_LIMIT_EXCEEDED
-                            ? SandboxProcessStatus.UNKNOWN
-                            : treeTerminated ? SandboxProcessStatus.TIMED_OUT : SandboxProcessStatus.UNKNOWN;
+                    status = outcome == WaitOutcome.OUTPUT_LIMIT_EXCEEDED && treeTerminated
+                            ? SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED
+                            : outcome == WaitOutcome.PROCESS_LIMIT_EXCEEDED
+                                    ? SandboxProcessStatus.UNKNOWN
+                                    : treeTerminated ? SandboxProcessStatus.TIMED_OUT : SandboxProcessStatus.UNKNOWN;
                 }
                 BoundedBytes out = stdout.get(5, TimeUnit.SECONDS);
                 BoundedBytes err = stderr.get(5, TimeUnit.SECONDS);
+                if (outputLimitExceeded.get()
+                        && execution.limits().outputOverflowPolicy()
+                                == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
+                        && status == SandboxProcessStatus.EXITED) {
+                    status = SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED;
+                    exitCode = null;
+                }
                 Instant ended = time.now();
                 result = new SandboxProcessResult(
                         status,
@@ -408,10 +424,16 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             return process == null || terminateTree(process);
         }
 
-        private WaitOutcome waitFor(Process process, Duration timeout, int maxProcesses) throws InterruptedException {
+        private WaitOutcome waitFor(
+                Process process,
+                Duration timeout,
+                int maxProcesses,
+                java.util.concurrent.atomic.AtomicBoolean outputLimitExceeded)
+                throws InterruptedException {
             long deadlineMillis = System.currentTimeMillis() + timeout.toMillis();
             while (process.isAlive()) {
                 if (cancelRequested) return WaitOutcome.CANCELLED;
+                if (outputLimitExceeded.get()) return WaitOutcome.OUTPUT_LIMIT_EXCEEDED;
                 if (observedProcesses(process) > maxProcesses) return WaitOutcome.PROCESS_LIMIT_EXCEEDED;
                 long remainingMillis = deadlineMillis - System.currentTimeMillis();
                 if (remainingMillis <= 0) return WaitOutcome.TIMED_OUT;
@@ -738,14 +760,20 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             InputStream input,
             int maximum,
             io.haifa.agent.execution.api.ExecutionOutputChannel channel,
-            ExecutionOutputObserver observer) {
+            ExecutionOutputObserver observer,
+            io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy overflowPolicy,
+            java.util.concurrent.atomic.AtomicBoolean outputLimitExceeded) {
         try (input) {
-            TailBuffer output = new TailBuffer(maximum);
+            var output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximum);
             byte[] buffer = new byte[8192];
             int count;
             while ((count = input.read(buffer)) >= 0) {
                 byte[] chunk = java.util.Arrays.copyOf(buffer, count);
                 output.write(chunk);
+                if (output.truncated()
+                        && overflowPolicy == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE) {
+                    outputLimitExceeded.set(true);
+                }
                 notifyObserver(
                         observer, new io.haifa.agent.execution.api.ProcessOutputChunk(channel, chunk, false, false));
             }
@@ -844,42 +872,9 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     private record BoundedBytes(byte[] bytes, boolean truncated) {}
 
-    private static final class TailBuffer {
-        private final byte[] values;
-        private long count;
-
-        private TailBuffer(int maximum) {
-            values = new byte[maximum];
-        }
-
-        private void write(byte[] bytes) {
-            for (byte value : bytes) {
-                values[(int) (count % values.length)] = value;
-                count++;
-            }
-        }
-
-        private byte[] bytes() {
-            int length = (int) Math.min(count, values.length);
-            byte[] result = new byte[length];
-            if (count <= values.length) {
-                System.arraycopy(values, 0, result, 0, length);
-                return result;
-            }
-            int start = (int) (count % values.length);
-            int first = values.length - start;
-            System.arraycopy(values, start, result, 0, first);
-            System.arraycopy(values, 0, result, first, start);
-            return result;
-        }
-
-        private boolean truncated() {
-            return count > values.length;
-        }
-    }
-
     private enum WaitOutcome {
         FINISHED,
+        OUTPUT_LIMIT_EXCEEDED,
         TIMED_OUT,
         CANCELLED,
         PROCESS_LIMIT_EXCEEDED

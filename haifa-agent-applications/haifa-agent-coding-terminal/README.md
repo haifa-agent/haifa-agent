@@ -116,10 +116,14 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
 - [ ] Tool 专用预览器、跨 Tool 聚合和批量展开；首版保持每个稳定 Tool Call ID 可独立审计。
 
-Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示
-`enter steer · alt+enter follow-up · esc interrupt`。等待模型或其他活动 Run 场景的状态显示为
-`Working (XXm YYs · esc to interrupt)`，使用进程内单调时钟累计，不写入 Session 或持久化事实。macOS 的 Option 对应 Terminal Alt；
-`Shift+Enter` 和 `Ctrl+J` 都用于换行。Phase C 会从终端能力白名单中识别 Windows Terminal、
+Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示对应宿主的 Follow-up 与 Interrupt
+快捷键。Windows/Linux 使用 `ctrl+o`、`alt+enter`、`alt+up` 等文本标签；macOS 使用 Apple 标准
+`MAC_SPECIAL` 符号 `⌃O`、`⌥↩`、`⌥↑`、`⇧↩/⌃J`，并分别匹配终端实际产生的 Control/Option
+事件，不把当前 tui4j 无法可靠接收的 Command 键标成可用快捷键。启动时只采集白名单内的
+`os.name`、`os.version`、`os.arch`、`java.version`、`TERM_PROGRAM` 和 `TERM_PROGRAM_VERSION`，
+用于平台选择与兼容性判断，不收集任意环境变量，也不持久化这些宿主事实。等待模型或其他活动 Run
+场景的状态显示为 `Working (XXm YYs · esc to interrupt)`，使用进程内单调时钟累计，不写入 Session
+或持久化事实。Phase C 会从终端能力白名单中识别 Windows Terminal、
 WezTerm、Alacritty、Apple Terminal 和常见受限终端：存在修饰 Enter 冲突时显示可执行 remap 或
 `Ctrl+J` fallback，但不读取秘密、不写入用户终端配置。非交互输入或 `TERM=dumb` 在装配产品 Runtime
 前以稳定 `TUI_UNAVAILABLE` 失败。

@@ -8,15 +8,22 @@ Tenant、Principal、Run、Action、Execution 请求摘要、Snapshot，以及 `
 Decision 不能覆盖 Broker 既有的 Frozen Capability、Workspace、Profile、Provider、Sandbox、
 deadline、输出和审计硬边界。
 
-实现 `ExecutionBroker`、内存 Journal/输出存储、执行前后 Workspace Manifest 及 `FileChangeSet` 对账。
+实现 `ExecutionBroker`、内存 Journal/输出存储、可替换的 `WorkspaceChangeObserver` 及 `FileChangeSet`
+对账。Broker 不再强制每次执行前后都完整扫描 Workspace；产品装配可使用增量 Watcher、Git 或其他
+候选观察策略，旧 Manifest 实现只作为兼容 Adapter。进程启动前观察基线失败仍以稳定错误
+`WORKSPACE_MANIFEST_UNAVAILABLE` 明确拒绝，不产生 Execution 记录，也不进入结果未知状态；进程启动后
+对账失败才映射为 `MANIFEST_UNCERTAIN`。
 
-Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行的展示 observer 经过有界异步分发，不阻塞进程管道；环境值脱敏支持 secret 跨 chunk，observer 异常不影响进程收尾和 Execution Journal。
+Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行的展示 observer 经过有界异步分发，不阻塞进程管道；环境值脱敏支持 secret 跨 chunk，observer 异常不影响进程收尾和 Execution Journal。Provider 只在 `ProcessBuilder.start()` 成功后发出 `onStarted`，上层据此记录真实 DISPATCHED 边界。
 
 Broker 将请求的逻辑 Scratch Spec 原样传给选定 Provider，并把一次性与 Managed Process 的创建、清理
 状态带回结果。`execution.run` 的冻结配置摘要和幂等身份包含 Scratch Spec digest；Tool 结构化结果与
 Runtime Event 只记录该 digest、能力和状态，不记录物理路径。
 
-stdout/stderr 在各自执行预算内写入 `ExecutionOutputStore`，超过 inline 阈值后返回 `AssetRef`。Project Tool 只向模型返回按观察顺序合并的有界尾部，完整的分通道输出仍由 Execution Result 引用。
+stdout/stderr 由 Provider 持续排空，并在固定内存中保留有界首部和尾部；中间省略量写入明确标记，超过
+inline 阈值后返回 `AssetRef`。`ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL` 允许普通构建继续完成，
+`TERMINATE` 则在预算耗尽时终止进程树并返回 `OUTPUT_LIMIT_EXCEEDED`，供产品对探索性调用执行收窄重试。
+策略来自可信结构化请求，不检查 Shell 命令字符串或具体 CLI 选项。
 
 长驻会话与一次性执行共享相同的可信上下文、授权、环境解析、Sandbox Profile、输出预算、脱敏、Manifest 和审计流程。会话关闭、取消或异常退出时，Broker 先收敛底层进程与输出，再释放环境租约并完成审计记录。
 

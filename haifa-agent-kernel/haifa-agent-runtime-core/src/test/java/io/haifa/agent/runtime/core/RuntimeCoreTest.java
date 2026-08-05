@@ -17,6 +17,7 @@ import io.haifa.agent.core.plan.TodoPriority;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
@@ -507,6 +508,31 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void preservesKnownNotDispatchedToolFailureThroughTheAttemptBoundary() {
+        ToolRequest request = toolRequest(
+                "manifest-unavailable", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request))),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            "WORKSPACE_MANIFEST_UNAVAILABLE",
+                            io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                            "workspace manifest could not be captured before execution");
+                }));
+
+        var failed = fixture.runtime.start(request("manifest-unavailable"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(failed.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.WORKSPACE_MANIFEST_UNAVAILABLE);
+        });
+        assertThat(fixture.store.toolCalls(failed.runId())).singleElement().satisfies(call -> assertThat(
+                        call.error().orElseThrow().error().code())
+                .isEqualTo(AgentErrorCode.WORKSPACE_MANIFEST_UNAVAILABLE));
+    }
+
+    @Test
     void rejectsDuplicateToolCalls() {
         ToolRequest duplicate =
                 toolRequest("same-key", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));
@@ -769,6 +795,60 @@ class RuntimeCoreTest {
         assertThat(executed).containsExactly(1, 2);
         assertThat(modelCalls).hasValue(2);
         assertThat(fixture.store.attemptsFor(accepted.runId())).hasSize(3);
+    }
+
+    @Test
+    void failedApprovedToolPreservesSpecificErrorAndCancelsUnstartedSibling() {
+        AtomicInteger invocations = new AtomicInteger();
+        ToolRequest first =
+                toolRequest("first-write", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("v", 1)));
+        ToolRequest second =
+                toolRequest("second-write", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of("v", 2)));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(first, second))),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        ToolPolicyDecision.REQUIRE_APPROVAL,
+                        invocation -> {
+                            invocations.incrementAndGet();
+                            invocation.observer().dispatched();
+                            throw new IllegalStateException("provider failed after dispatch");
+                        }));
+
+        var accepted = fixture.runtime.start(request("failed-approved-tool"));
+        fixture.scheduler.runAll();
+        var approval = fixture.interactions.pending(accepted.runId()).orElseThrow();
+        fixture.runtime.respond(new InteractionResponse(
+                new InteractionResponseId("failure-response"),
+                approval.id(),
+                accepted.runId(),
+                InteractionResponseType.APPROVE,
+                List.of(),
+                "failure-approval-key",
+                Instant.parse("2026-07-21T00:00:00Z")));
+        fixture.scheduler.runAll();
+
+        assertThat(invocations).hasValue(1);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
+        });
+        assertThat(fixture.store.toolCalls(accepted.runId()))
+                .extracting(call -> call.status().name())
+                .containsExactly("FAILED", "CANCELLED");
+        assertThat(fixture.store.toolCalls(accepted.runId()).get(1).startedAt()).isEmpty();
+        assertThat(fixture.store.steps(accepted.runId()))
+                .filteredOn(step -> step.type() == AgentStepType.TOOL_EXECUTION)
+                .extracting(step -> step.status().name())
+                .containsExactly("FAILED", "CANCELLED");
+        assertThat(fixture.store.eventsFor(accepted.runId())).anySatisfy(event -> {
+            assertThat(event.type()).isEqualTo("tool.cancelled");
+            assertThat(event.data()).containsEntry("reasonCode", "SIBLING_TOOL_FAILED");
+        });
     }
 
     @Test

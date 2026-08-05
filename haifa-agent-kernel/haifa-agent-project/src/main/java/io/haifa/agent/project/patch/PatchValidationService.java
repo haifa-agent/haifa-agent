@@ -26,7 +26,10 @@ public final class PatchValidationService {
         int lines = 0;
         Set<ProjectPath> paths = new HashSet<>();
         for (FilePatch file : document.files()) {
-            if (!paths.add(file.targetPath())) throw new IllegalArgumentException("duplicate logical patch path");
+            if (!paths.add(file.sourcePath())) throw new IllegalArgumentException("duplicate logical patch path");
+            if (file.move() && !paths.add(file.targetPath())) {
+                throw new IllegalArgumentException("duplicate logical patch path");
+            }
             hunks += file.hunks().size();
             for (PatchHunk hunk : file.hunks()) lines += hunk.lines().size();
         }

@@ -88,6 +88,10 @@ public record Tui4jTerminalIo(
         return Optional.empty();
     }
 
+    TerminalHostInfo hostInfo() {
+        return TerminalHostInfo.system(environment);
+    }
+
     private Optional<String> value(String name) {
         String prefix = name + "=";
         return environment.stream()

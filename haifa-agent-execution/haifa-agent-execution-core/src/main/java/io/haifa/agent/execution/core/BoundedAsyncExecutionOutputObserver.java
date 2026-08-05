@@ -26,6 +26,11 @@ final class BoundedAsyncExecutionOutputObserver implements ExecutionOutputObserv
     }
 
     @Override
+    public void onStarted() {
+        delegate.onStarted();
+    }
+
+    @Override
     public void onOutput(ProcessOutputChunk chunk) {
         if (!accepting.get()) return;
         if (!queue.offer(chunk)) dropped.set(true);

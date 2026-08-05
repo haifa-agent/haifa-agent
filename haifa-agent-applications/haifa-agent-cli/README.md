@@ -186,7 +186,7 @@ models:
           displayName: DeepSeek V4 Pro
           providerModelId: deepseek-v4-pro
 tools:
-  enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, execution.run, web.search, web.fetch]
+  enabled: [file.list, file.stat, file.read, file.create, file.write, execution.run, web.search, web.fetch]
 web:
   search:
     enabled: true
@@ -280,7 +280,9 @@ Provider。普通运行不应设置该变量。
 CLI 可实时订阅现有 `RuntimeTraceEvent`，不需要启用 `--verbose`：
 
 最终失败输出使用 `[AgentErrorCode] 安全默认文案`，下一行显示可选 Diagnostic ID；非 Trace
-输出不包含 Java 异常、Provider 原文或 Stack Trace。
+输出不包含 Java 异常、Provider 原文或 Stack Trace。启用 SQLite 的 CLI 会把该 ID 对应的有界结构化
+诊断写入数据库同级的 `diagnostics/<Diagnostic ID>.json`；文件仅包含错误码、Run/Attempt 标识、异常
+类型和有界 Stack Frame，不保存异常消息、Prompt、Tool arguments、Provider 原文或完整宿主路径。
 
 ```powershell
 $jar = ".\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar"
@@ -335,7 +337,7 @@ models:
           displayName: DeepSeek V4 Pro
           providerModelId: deepseek-v4-pro
 tools:
-  enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.delete, file.move, execution.run]
+  enabled: [file.list, file.stat, file.read, file.create, file.write, file.delete, file.move, execution.run]
 skills:
   allowed: [task-planning, result-verification, my-test-skill]
   localDirectories:
@@ -405,7 +407,27 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_SQLITE_DATABASE_PATH`、`HAIFA_TRANSCRIPT_ROOT` 和
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
-`tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_write`、`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作目录和 timeout；任何本机已安装且可由配置 Shell 解析的普通 CLI 都走同一生产路径，文档中的具体命令仅是非穷举示例。
+`tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_patch`、
+`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作
+目录和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
+命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
+检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
+选择替代方案。产品代码不识别搜索意图，也不拼接 `rg`、`grep` 或其他命令的具体选项。
+
+Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可在自定义 `tools.enabled` 中显式
+加入；发行配置和 `CliConfiguration.defaults()` 不再默认披露它，避免 Coding Agent 在大型仓库反复走
+逐文件 Java 扫描。通用 Shell 命令仍遵循配置的 Approval、ExecutionBroker、Workspace、Sandbox、输出
+预算和审计边界；不会因为 `operationFamily=INSPECT` 是模型声明就自动降低授权要求。
+
+`file.read` 1.1 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
+后续窗口通过 `SeekableByteChannel` 从游标字节位置读取，不按文件大小分配内存；游标绑定逻辑路径和版本，
+文件变化会返回 `FILE_CURSOR_STALE`，跨路径复用则作为无效游标拒绝。
+
+`file.patch` 1.1 默认启用，接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，可在同一次调用中
+新增、删除、更新或移动多个文件。更新使用 `@@` 精确上下文定位；本地 Provider 以流方式读取源文件，
+写入同目录临时文件，提交前再次校验内容哈希，再以原子替换（文件系统不支持时明确降级并记录）提交。
+因此普通源码编辑不需要全量读取或重写大文件；`file.write` 仅用于有意整体替换的小文件。多文件调用按
+顺序提交，失败结果返回已经提交的精确前缀，不宣称跨文件事务原子性。
 
 `execution.provider` 只接受 `local-native` 或 `host-guarded`，`execution.network` 只接受 `deny`
 或 `allow`。macOS、Linux、Windows 缺省值统一为 `host-guarded + allow + shell auto`，面向用户已经
@@ -464,16 +486,22 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 写文件、删除文件、移动文件和 Shell 命令默认要求控制台确认。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。`--approval auto` 仅适用于用户明确信任的本地工作区，仍经过 Broker、Workspace capability、Profile、环境和审计；`--approval deny` 会在 Catalog freeze 前移除 `execution.run`，模型不可见，底层授权仍 fail closed。
 
-`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；默认不继承 API Key、`*_TOKEN`、`*_SECRET`、云凭据或代理凭据。命令输出实时脱敏展示，最终模型结果默认限制为最后 2000 行且最多 50KB；较大分通道输出通过 Output Ref 访问。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
+`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；默认不继承 API Key、`*_TOKEN`、`*_SECRET`、云凭据或代理凭据。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
 CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该
 Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与
-Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。
+Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。该环境指令同时说明 `PATH` 中任意非交互 CLI
+均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
 
-执行前后的 Workspace Manifest 使用启动时冻结的 ignore policy：排除标准构建/IDE 目录，并读取根
-`.gitignore` 中不含 glob 的目录规则。若存在 `!` 反向规则则不采用 `.gitignore` 规则，避免漏审重新纳入的
-内容；策略版本随规则摘要进入 Manifest。非忽略路径仍受文件数、总字节和哈希字节预算约束，超预算继续
-按未知结果失败关闭。
+CLI 不再为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。启动后的首次执行建立一次基线，
+后续通过 `WatchService` 收集执行窗口内的候选路径，只重新检查和哈希候选文件；事件溢出、Watcher
+失效或候选状态无法确认时才回退为全量重建，不能确认则保持 `MANIFEST_UNCERTAIN` 的 fail-closed 语义。
+冻结的 ignore policy 排除标准构建/IDE 目录，并读取根
+`.gitignore` 中不含 glob 的目录规则。默认还忽略 `.pytest_cache`、`.mypy_cache`、`.ruff_cache`、`.tox`、
+`.venv` 和 `__pycache__`；`!` 只撤销可能包含该重新纳入目录的正向目录规则，不再清空其他无关规则。
+进程启动前基线不可用时仍使用稳定错误
+`WORKSPACE_MANIFEST_UNAVAILABLE` 且不标记 DISPATCHED；只有 OS 进程创建成功后才进入 DISPATCHED。
+进程启动后的增量对账失败仍按结果不确定失败关闭。
 
 当前已包含 tui4j Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
 `/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久

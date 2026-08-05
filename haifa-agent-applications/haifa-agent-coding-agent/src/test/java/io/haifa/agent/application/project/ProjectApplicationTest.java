@@ -120,7 +120,19 @@ class ProjectApplicationTest {
                 .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION);
         assertThat(execution.definition().provenance()).isEqualTo("haifa-coding-agent");
         assertThat(execution.definition().description())
-                .contains("inspection and verification", "operationFamily", "BUILD or TEST", "final diff inspection");
+                .contains(
+                        "general OS CLI path",
+                        "repository discovery",
+                        "content search",
+                        "available CLI",
+                        "command-specific wrappers",
+                        "operationFamily",
+                        "BUILD or TEST",
+                        "final diff inspection");
+        @SuppressWarnings("unchecked")
+        var commandSchema = (java.util.Map<String, Object>) properties.get("command");
+        assertThat(commandSchema.get("description").toString())
+                .contains("Complete non-interactive command text", "Select available CLI programs");
         @SuppressWarnings("unchecked")
         var fileProperties = (java.util.Map<String, Object>)
                 fileRead.definition().inputSchema().document().get("properties");
@@ -273,7 +285,7 @@ class ProjectApplicationTest {
                 new AgentRunId("run-tool"),
                 new TenantRef("tenant"),
                 principal,
-                new ToolArguments("haifa.file.read.input", "1.0.0", java.util.Map.of("path", "README.md")),
+                new ToolArguments("haifa.file.read.input", "1.1.0", java.util.Map.of("path", "README.md")),
                 NOW.plusSeconds(30),
                 Optional.of("key"),
                 Optional.of("policy-1"),

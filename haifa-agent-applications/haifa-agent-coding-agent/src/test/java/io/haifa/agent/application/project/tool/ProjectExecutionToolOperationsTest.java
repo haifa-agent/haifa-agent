@@ -1,6 +1,7 @@
 package io.haifa.agent.application.project.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -16,6 +17,7 @@ import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionOutput;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
@@ -24,6 +26,8 @@ import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.changeset.FileChangeSetId;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.tool.api.ToolInvocationException;
+import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
@@ -38,6 +42,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -84,8 +89,8 @@ class ProjectExecutionToolOperationsTest {
                 });
         assertThat(result.successful()).isFalse();
         assertThat(result.summary())
-                .contains("Command failed (exit 7)", "second", "third")
-                .doesNotContain("first");
+                .contains("Command failed (exit 7)", "first", "1 lines omitted", "third")
+                .doesNotContain("second");
         assertThat(result.structuredData())
                 .containsEntry("status", "FAILED")
                 .containsEntry("exitCode", 7)
@@ -101,6 +106,38 @@ class ProjectExecutionToolOperationsTest {
                         "scratchSpecDigest",
                         CodingToolchainEnvironmentProfile.defaultScratchSpace().canonicalDigest());
         assertThat(result.assets()).extracting(AssetRef::assetId).containsExactly("stdout-asset");
+    }
+
+    @Test
+    void classifiesCrossShellMissingCommandsAsRecoverableToolchainFailures() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                observer.onOutput(chunk("The term 'fast-search' is not recognized as the name of a cmdlet. "
+                        + "CommandNotFoundException\n"));
+                return result(request.id(), ExecutionStatus.FAILED, 1);
+            }
+        };
+
+        var result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of(
+                                        "command", "fast-search needle",
+                                        "operationFamily", "INSPECT"),
+                                () -> false),
+                        access());
+
+        assertThat(result.structuredData())
+                .containsEntry("failureCategory", "DEPENDENCY_UNAVAILABLE")
+                .containsEntry("stableFailureCode", "DEPENDENCY_UNAVAILABLE")
+                .containsEntry("resourceClass", "TOOLCHAIN");
+        assertThat(captured.get().limits().maxStdoutBytes()).isEqualTo(4096);
+        assertThat(captured.get().limits().maxStderrBytes()).isEqualTo(4096);
+        assertThat(captured.get().limits().outputOverflowPolicy())
+                .isEqualTo(io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE);
     }
 
     @Test
@@ -298,6 +335,57 @@ class ProjectExecutionToolOperationsTest {
                 .doesNotContain("D:\\private\\workspace");
     }
 
+    @Test
+    void marksDispatchOnlyAfterTheBrokerReportsProcessStart() {
+        AtomicInteger dispatches = new AtomicInteger();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                assertThat(dispatches).hasValue(0);
+                observer.onStarted();
+                assertThat(dispatches).hasValue(1);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        operations(broker, 1024, 2000)
+                .execute(
+                        invocation(
+                                Map.of("command", "representative command"), () -> false, new ToolInvocationObserver() {
+                                    @Override
+                                    public void dispatched() {
+                                        dispatches.incrementAndGet();
+                                    }
+
+                                    @Override
+                                    public void acknowledged() {}
+                                }),
+                        access());
+
+        assertThat(dispatches).hasValue(1);
+    }
+
+    @Test
+    void mapsPreExecutionManifestFailureAsKnownNotDispatchedFailure() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new ExecutionPreflightException(
+                        "WORKSPACE_MANIFEST_UNAVAILABLE",
+                        "workspace manifest could not be captured before execution",
+                        new IllegalStateException("manifest failed"));
+            }
+        };
+
+        assertThatThrownBy(() -> operations(broker, 1024, 2000)
+                        .execute(invocation(Map.of("command", "representative command"), () -> false), access()))
+                .isInstanceOfSatisfying(ToolInvocationException.class, exception -> {
+                    assertThat(exception.failureCode()).isEqualTo("WORKSPACE_MANIFEST_UNAVAILABLE");
+                    assertThat(exception.dispatchState())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
+                });
+    }
+
     private static ProjectExecutionToolOperations operations(
             ExecutionBroker broker, int maximumOutputBytes, int maximumOutputLines) {
         return new ProjectExecutionToolOperations(
@@ -318,6 +406,13 @@ class ProjectExecutionToolOperationsTest {
 
     private static ToolInvocationRequest invocation(
             Map<String, Object> arguments, io.haifa.agent.tool.api.ToolCancellation cancellation) {
+        return invocation(arguments, cancellation, ToolInvocationObserver.noop());
+    }
+
+    private static ToolInvocationRequest invocation(
+            Map<String, Object> arguments,
+            io.haifa.agent.tool.api.ToolCancellation cancellation,
+            ToolInvocationObserver observer) {
         var binding = new ProjectToolCatalog()
                 .freeze(Set.of("execution.run"), Set.of("execution.run"), true, provider(), executionProfile())
                 .snapshot()
@@ -335,7 +430,7 @@ class ProjectExecutionToolOperationsTest {
                 Optional.of("policy-1"),
                 cancellation,
                 List.of(),
-                io.haifa.agent.tool.api.ToolInvocationObserver.noop());
+                observer);
     }
 
     private static RunWorkspaceAccess access() {

@@ -91,6 +91,38 @@ class LocalWorkspaceFileServiceTest {
     }
 
     @Test
+    void readsUtf8FilesByStableByteCursorWithoutLoadingTheWholeFile() throws Exception {
+        Files.writeString(root.resolve("paged.txt"), "α\nβ\nγ\n", StandardCharsets.UTF_8);
+        var fixture = fixture();
+        WorkspacePath path = new WorkspacePath(fixture.workspaceId, ProjectPath.of("paged.txt"));
+
+        var first = fixture.service.read(path, new ReadOptions(0, 3, 10, StandardCharsets.UTF_8, true));
+        var second =
+                fixture.service.read(path, new ReadOptions(first.nextOffset(), 3, 10, StandardCharsets.UTF_8, true));
+
+        assertThat(first.text()).isEqualTo("α\n");
+        assertThat(first.offset()).isZero();
+        assertThat(first.byteCount()).isEqualTo(3);
+        assertThat(first.totalByteCount()).isEqualTo(9);
+        assertThat(first.hasMore()).isTrue();
+        assertThat(second.text()).isEqualTo("β\n");
+        assertThat(second.offset()).isEqualTo(3);
+        assertThat(second.sourceVersion()).isEqualTo(first.sourceVersion());
+    }
+
+    @Test
+    void rejectsCursorBeyondCurrentFileEnd() throws Exception {
+        Files.writeString(root.resolve("short.txt"), "short", StandardCharsets.UTF_8);
+        var fixture = fixture();
+
+        assertFailure(
+                fixture,
+                "short.txt",
+                new ReadOptions(99, 16, 16, StandardCharsets.UTF_8, true),
+                WorkspaceFileErrorCode.FILE_CURSOR_STALE);
+    }
+
+    @Test
     void rejectsLinksEvenWhenTheyPointInsideOrOutsideTheRoot() throws Exception {
         Path target = Files.writeString(root.resolve("target.txt"), "safe", StandardCharsets.UTF_8);
         Path link = root.resolve("link.txt");

@@ -15,6 +15,9 @@ final class CodingExecutionFailureClassifier {
         if (result.status() == ExecutionStatus.CANCELLED) {
             return new Classification("CANCELLED", "CANCELLED", "PROCESS");
         }
+        if (result.status() == ExecutionStatus.OUTPUT_LIMIT_EXCEEDED) {
+            return new Classification("OUTPUT_LIMIT", "OUTPUT_LIMIT_EXCEEDED", "OUTPUT");
+        }
         if (result.status() == ExecutionStatus.UNKNOWN) {
             return new Classification("OUTCOME_UNKNOWN", "OUTCOME_UNKNOWN", "PROCESS");
         }
@@ -39,6 +42,9 @@ final class CodingExecutionFailureClassifier {
             return new Classification("FILESYSTEM_DENIED", "FILESYSTEM_ACCESS_DENIED", resource);
         }
         if (output.contains("command not found")
+                || output.contains("commandnotfoundexception")
+                || output.contains("is not recognized as the name of a cmdlet")
+                || output.contains("is not recognized as an internal or external command")
                 || output.contains("no such file or directory")
                 || output.contains("module not found")
                 || output.contains("cannot find package")) {

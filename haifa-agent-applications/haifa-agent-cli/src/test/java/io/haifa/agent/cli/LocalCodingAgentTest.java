@@ -115,7 +115,16 @@ class LocalCodingAgentTest {
     @Test
     void tellsTheModelWhichConfiguredShellDialectExecutionRunUses() {
         assertThat(LocalCodingAgent.executionEnvironmentPrompt("PowerShell"))
-                .contains("execution_run uses PowerShell command syntax", "do not assume a POSIX shell");
+                .contains(
+                        "execution_run uses PowerShell command syntax",
+                        "do not assume a POSIX shell",
+                        "non-interactive CLI available through the inherited PATH",
+                        "rg --files for file discovery",
+                        "rg for text search",
+                        "dedicated search wrapper",
+                        "Keep command output bounded");
+        assertThat(LocalCodingAgent.executionEnvironmentPrompt("zsh", "Mac OS X", "15.6.1", "aarch64", "21.0.3"))
+                .contains("Host OS: Mac OS X 15.6.1 (aarch64); Java 21.0.3.", "execution_run uses zsh");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt(" ")).isEmpty();
     }
 
@@ -394,7 +403,8 @@ class LocalCodingAgentTest {
             if (call == 1) {
                 assertThat(request.tools())
                         .extracting(io.haifa.agent.model.api.ModelToolSpecification::name)
-                        .contains("execution_run", "skill_load", "skill_resource_read");
+                        .contains("execution_run", "skill_load", "skill_resource_read")
+                        .doesNotContain("file_search");
                 return toolResponse(
                         "shell-call-1",
                         "execution_run",

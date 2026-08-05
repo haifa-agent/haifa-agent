@@ -85,6 +85,11 @@ public enum AgentErrorCode {
             "Tool outcome could not be determined",
             AgentErrorCategory.TOOL,
             Retryability.RETRYABLE_AFTER_INTERACTION),
+    WORKSPACE_MANIFEST_UNAVAILABLE(
+            "WORKSPACE_MANIFEST_UNAVAILABLE",
+            "Workspace manifest is unavailable",
+            AgentErrorCategory.CONFIGURATION,
+            Retryability.RETRYABLE_AFTER_INTERACTION),
     REPEATED_TOOL_FAILURE(
             "REPEATED_TOOL_FAILURE",
             "Repeated Tool failures made no meaningful progress",

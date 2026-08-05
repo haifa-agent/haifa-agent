@@ -152,7 +152,7 @@ class HostSandboxTest {
     }
 
     @Test
-    void runsGeneralShellTextThroughConfiguredShellAndStreamsBoundedTail() throws Exception {
+    void runsGeneralShellTextThroughConfiguredShellAndStreamsBoundedHeadAndTail() throws Exception {
         Fixture fixture = fixture(root, "workspace-shell", "binding-shell", "location-shell");
         HostShell shell = HostShell.auto();
         var provider = new HostGuardedSandboxProvider(
@@ -174,7 +174,7 @@ class HostSandboxTest {
                             ExecutionCommand.shell(command),
                             WorkspacePath.root(fixture.workspaceId),
                             hostBaselineEnvironment(),
-                            new ExecutionLimits(Duration.ofSeconds(10), 8, 4096, 4)),
+                            new ExecutionLimits(Duration.ofSeconds(10), 64, 4096, 4)),
                     chunk -> streamed.writeBytes(chunk.bytes()));
 
             assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
@@ -183,7 +183,7 @@ class HostSandboxTest {
             assertThat(new String(streamed.toByteArray(), java.nio.charset.StandardCharsets.UTF_8))
                     .containsIgnoringCase("shell-ok");
             assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8).replace("\r\n", "\n"))
-                    .endsWithIgnoringCase("ell-ok\n");
+                    .containsIgnoringCase("shell-ok");
         }
 
         SandboxProfile secretProfile = SandboxProfile.hostGuarded(
@@ -260,6 +260,48 @@ class HostSandboxTest {
             assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
             assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8))
                     .isEqualTo("script-through-stdin");
+        }
+    }
+
+    @Test
+    void terminatesInspectionWhenItsOutputBudgetIsExceeded() throws Exception {
+        Fixture fixture = fixture(root, "workspace-output-limit", "binding-output-limit", "location-output-limit");
+        copyProcessClass(root, LargeOutputProcess.class);
+        var provider = new HostGuardedSandboxProvider(
+                fixture.workspaces,
+                fixture.bindings,
+                fixture.locations,
+                () -> "output-limit-session",
+                Instant::now,
+                HostShell.auto(),
+                isolatedBase.resolve("output-limit-scratch"));
+        String javaExecutable = Path.of(System.getProperty("java.home"), "bin", isWindows() ? "java.exe" : "java")
+                .toString();
+        SandboxProfile profile = SandboxProfile.hostGuarded(
+                new SandboxProfileRef("output-limit-test", "1"),
+                provider.configurationDigest(),
+                Set.of(javaExecutable),
+                Set.of(),
+                false);
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
+            var result = session.execute(new SandboxExecution(
+                    ExecutionCommand.direct(List.of(javaExecutable, "-cp", ".", LargeOutputProcess.class.getName())),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(
+                            Duration.ofSeconds(10),
+                            1024,
+                            1024,
+                            2,
+                            io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE)));
+
+            assertThat(result.status()).isEqualTo(SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED);
+            assertThat(result.processTreeTerminated()).isTrue();
+            assertThat(result.stdoutTruncated()).isTrue();
+            assertThat(new String(result.stdout(), java.nio.charset.StandardCharsets.UTF_8))
+                    .startsWith("BEGIN-")
+                    .contains("bytes omitted");
         }
     }
 
