@@ -32,6 +32,9 @@ haifa-coding-agent/
   haifa-coding          # 可加入 PATH 的 POSIX 启动脚本
   haifa-agent.jar       # 包含全部运行依赖的 shaded JAR
   haifa-coding.yaml     # 无密钥的安全默认配置
+  data/
+    runtime.db          # 首次运行后创建；SQLite 权威存储
+    transcripts/        # JSONL 审计投影
 ```
 
 默认发布到用户目录 `~/.haifa-agent/coding/`：
@@ -49,8 +52,12 @@ haifa-coding
 
 把 `PATH` 配置写入 `~/.zshrc` 或 `~/.bashrc` 后可长期使用。`haifa-coding` 不切换目录，且 Java
 入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
-发行配置只使用 `env://DEEPSEEK_API_KEY`，不包含密钥，默认保持
-`approval=ask`、`host-guarded + network allow + shell auto` 和内存存储。可通过
+发行配置只使用 `env://...` 引用，不包含密钥，默认保持
+`approval=ask`、`host-guarded + network allow + shell auto`，并启用
+`SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Policy 证据等恢复状态
+的唯一事实源；本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
+JSONL 只用于审计投影，不参与恢复。启动器按自身目录设置绝对数据路径，因此发行目录整体移动后仍可
+使用；重新打包只覆盖 JAR、配置和启动器，不删除既有 `data/`。可通过
 `haifa-coding --config /absolute/path/to/config.yaml` 使用自定义配置，也可显式传
 `--workspace /absolute/path/to/project`；调用方参数位于默认参数之后，因此优先级更高。
 
@@ -71,6 +78,9 @@ coding\
   haifa-coding.cmd
   haifa-agent.jar
   haifa-coding.yaml
+  data\
+    runtime.db
+    transcripts\
 ```
 
 默认输出到当前用户的 `%USERPROFILE%\.haifa-agent\coding`，也可以指定绝对路径或相对仓库根目录的
@@ -88,7 +98,10 @@ haifa-coding
 
 启动器优先使用 `%JAVA_HOME%\bin\java.exe`，否则从 `PATH` 查找 `java.exe`；必须使用 Java 21。
 启动器不切换当前目录，调用方参数位于默认 `--config` 参数之后，因此仍可覆盖配置或显式指定
-Workspace。发行目录和 YAML 不包含模型凭据。打包入口使用 `-DskipTests`；它只生成发行制品，不替代
+Workspace。默认 `protection=NONE` 不需要 continuation key；如改为 `AES_GCM`，则必须通过
+`protectorRef: env://HAIFA_CONTINUATION_KEY` 注入跨重启稳定的 Base64 32 字节 AES key。启动器会创建
+`data/transcripts` 并按发行目录设置 SQLite/JSONL 绝对路径，同时允许 `HAIFA_SQLITE_DATABASE_PATH` 和
+`HAIFA_TRANSCRIPT_ROOT` 显式覆盖。打包入口使用 `-DskipTests`；它只生成发行制品，不替代
 模块测试或 CI 验证。macOS/Linux 与 Windows 入口复用同一个 Python 3 打包核心；可通过
 `HAIFA_PYTHON_EXECUTABLE` 固定解释器路径。
 
@@ -370,23 +383,25 @@ persistence:
   mode: MEMORY
 ```
 
-`persistence.mode` 只允许 `MEMORY`、`SQLITE` 和 `SQLITE_WITH_JSONL`；默认 `MEMORY` 保持现有一次性
-CLI 行为。持久模式示例：
+`persistence.mode` 只允许 `MEMORY`、`SQLITE` 和 `SQLITE_WITH_JSONL`；CLI 内置配置默认
+`MEMORY`，由打包脚本生成的 Haifa Coding Agent 发行配置默认 `SQLITE_WITH_JSONL`。持久模式示例：
 
 ```yaml
 persistence:
   mode: SQLITE_WITH_JSONL
   databasePath: D:\haifa-agent-data\runtime.db
   transcriptRoot: D:\haifa-agent-data\transcripts
-  protectorRef: env://HAIFA_CONTINUATION_KEY
+  protection: NONE
   busyTimeoutMillis: 5000
   maximumPayloadBytes: 1048576
 ```
 
 数据库与 transcript 路径必须是绝对路径，父目录/Transcript 目录必须预先受控创建。`SQLITE` 不会创建
-JSONL；JSONL 从不参与恢复。`protectorRef` 只保存环境变量引用，变量值必须是 Base64 编码的 32 字节
-AES key，且必须由用户的 Secret Manager 或环境注入并在重启间保持稳定。缺失、临时生成或长度错误都会使
-持久模式在启动期 fail closed。对应环境变量覆盖为 `HAIFA_PERSISTENCE_MODE`、
+JSONL；JSONL 从不参与恢复。`protection` 支持 `NONE` 和 `AES_GCM`。`NONE` 将受控 payload 以带版本、
+binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可信本地目录。`AES_GCM` 必须同时配置
+`protectorRef: env://HAIFA_CONTINUATION_KEY`；变量值必须是 Base64 编码的 32 字节 AES key，并在重启间
+保持稳定。旧配置若包含 `protectorRef` 但省略 `protection`，继续按 `AES_GCM` 读取。对应环境变量覆盖为
+`HAIFA_PERSISTENCE_MODE`、`HAIFA_PERSISTENCE_PROTECTION`、
 `HAIFA_SQLITE_DATABASE_PATH`、`HAIFA_TRANSCRIPT_ROOT` 和
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 

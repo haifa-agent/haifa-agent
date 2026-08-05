@@ -1,4 +1,5 @@
 # Portable, secret-free defaults for the Haifa Coding Agent distribution.
+# The packaging script renders the two persistence path tokens as absolute paths.
 # Secrets are injected through environment variables, never stored in this file.
 models:
   default: deepseek-v4-flash
@@ -88,4 +89,13 @@ runtime:
   maxWallTimeMillis: 300000
 
 persistence:
-  mode: MEMORY
+  mode: SQLITE_WITH_JSONL
+  databasePath: __HAIFA_SQLITE_DATABASE_PATH__
+  transcriptRoot: __HAIFA_TRANSCRIPT_ROOT__
+  # Payload protection options:
+  #   protection: NONE
+  #   protection: AES_GCM
+  #   protectorRef: env://HAIFA_CONTINUATION_KEY
+  protection: NONE
+  busyTimeoutMillis: 5000
+  maximumPayloadBytes: 1048576

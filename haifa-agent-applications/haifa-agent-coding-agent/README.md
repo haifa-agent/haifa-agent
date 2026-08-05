@@ -60,8 +60,9 @@ Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Po
 - `SQLITE`：SQLite 是 Session、Run、Attempt、Checkpoint、Runtime State、Event/Outbox 与产品会话映射的唯一事实源；
 - `SQLITE_WITH_JSONL`：在 `SQLITE` 基础上，把已提交 Outbox 的安全事件投影为可删除的 JSONL。
 
-SQLite 模式要求数据库文件绝对路径和 `env://` 形式的稳定 continuation protector 引用；JSONL 模式还要求
-已存在、可写、非符号链接的受控绝对目录。Application 在一次 checksum 校验中组合 Runtime Migration 与自己
+SQLite 模式要求数据库文件绝对路径，并显式选择 `NONE` 或 `AES_GCM` payload protection；后者还要求
+`env://` 形式的稳定 continuation protector 引用。JSONL 模式还要求已存在、可写、非符号链接的受控
+绝对目录。Application 在一次 checksum 校验中组合 Runtime Migration 与自己
 拥有的 `V1000 project_product_session`、`V1001 coding_session_*`、
 `V1002 coding_session_event_cursor` 与 `V1003 coding_session_management` Migration，不修改
 Runtime Schema。每次进程启动生成新的 worker ID，
@@ -87,8 +88,9 @@ Follow-up、恢复编辑、已消费事件 Cursor 确认和取消活动 Run。`C
 
 同一 Session 最多保留一个活动 Run 或待恢复 dispatch。新 Turn 与 Follow-up 在调用 Runtime `start`
 前先持久化调用者作用域幂等事实及稳定 dispatch key；进程在 Runtime 提交前后退出时，显式
-reconciliation 使用同一 key 收敛到同一 Run。SQLite 中尚未投递的消息与附件引用使用 continuation
-protector 加密并校验 digest，不进入 JSONL 或普通日志。`MEMORY` 与 `SQLITE` 通过同一
+reconciliation 使用同一 key 收敛到同一 Run。SQLite 中尚未投递的消息与附件引用通过配置的 continuation
+protector 编码并校验 digest，不进入 JSONL 或普通日志；`NONE` 明文可读且不提供保密性，`AES_GCM`
+提供加密与完整性保护。`MEMORY` 与 `SQLITE` 通过同一
 `CodingSessionStore` 端口提供相同行为。
 
 tui4j Terminal UI 与富 Tool/Execution/Resource 客户端事件已进入独立

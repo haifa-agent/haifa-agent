@@ -56,7 +56,7 @@ final class Tui4jTerminalView {
             Textarea editor,
             boolean followTranscript,
             boolean newOutputPending) {
-        return render(state, transcript, editor, followTranscript, newOutputPending, Duration.ZERO);
+        return render(state, transcript, editor, followTranscript, newOutputPending, Duration.ZERO, 0);
     }
 
     String render(
@@ -66,6 +66,17 @@ final class Tui4jTerminalView {
             boolean followTranscript,
             boolean newOutputPending,
             Duration workingElapsed) {
+        return render(state, transcript, editor, followTranscript, newOutputPending, workingElapsed, 0);
+    }
+
+    String render(
+            TerminalUiState state,
+            Viewport transcript,
+            Textarea editor,
+            boolean followTranscript,
+            boolean newOutputPending,
+            Duration workingElapsed,
+            int requestedScrollRows) {
         if (state.columns() < MIN_COLUMNS || state.rows() < MIN_ROWS) {
             return String.join(
                     "\n",
@@ -85,6 +96,11 @@ final class Tui4jTerminalView {
         transcript.setHeight(viewportRows);
         if (followTranscript) {
             transcript.gotoBottom();
+        }
+        if (requestedScrollRows < 0) {
+            transcript.scrollUp(-requestedScrollRows);
+        } else if (requestedScrollRows > 0) {
+            transcript.scrollDown(requestedScrollRows);
         }
 
         List<String> lines = new ArrayList<>(state.rows());

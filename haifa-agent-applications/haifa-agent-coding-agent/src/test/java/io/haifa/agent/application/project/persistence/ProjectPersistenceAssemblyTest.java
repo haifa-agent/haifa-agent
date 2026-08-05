@@ -113,12 +113,37 @@ class ProjectPersistenceAssemblyTest {
                 ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"), CLOCK, ids, protector())) {
             assertThat(reopened.workerId()).isNotEqualTo(firstWorker);
         }
+        Path plaintextDatabase = directory.resolve("plaintext.db");
+        try (ProjectPersistenceAssembly plaintext = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqliteUnprotected(plaintextDatabase), CLOCK, ids, null)) {
+            assertThat(plaintext.mode()).isEqualTo(ProjectPersistenceMode.SQLITE);
+        }
         assertThatThrownBy(() -> ProjectPersistenceMode.parse("JSONL"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("MEMORY, SQLITE, or SQLITE_WITH_JSONL");
         assertThatThrownBy(() -> ProjectPersistenceConfiguration.sqlite(Path.of("relative.db"), "env://TEST_KEY"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("database path must be absolute");
+        assertThatThrownBy(() -> new ProjectPersistenceConfiguration(
+                        ProjectPersistenceMode.SQLITE,
+                        ProjectPersistenceProtection.NONE,
+                        Optional.of(directory.resolve("none-with-key.db")),
+                        Optional.empty(),
+                        Optional.of("env://TEST_KEY"),
+                        5_000,
+                        1_048_576))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not accept a protector reference");
+        assertThatThrownBy(() -> new ProjectPersistenceConfiguration(
+                        ProjectPersistenceMode.SQLITE,
+                        ProjectPersistenceProtection.AES_GCM,
+                        Optional.of(directory.resolve("aes-without-key.db")),
+                        Optional.empty(),
+                        Optional.empty(),
+                        5_000,
+                        1_048_576))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requires a protector reference");
         assertThatThrownBy(() -> ProjectPersistenceAssembly.open(
                         ProjectPersistenceConfiguration.sqlite(
                                 directory.resolve("missing-protector.db"), "env://TEST_KEY"),
@@ -128,6 +153,7 @@ class ProjectPersistenceAssemblyTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("durable continuation protector");
         assertThat(Files.deleteIfExists(database)).isTrue();
+        assertThat(Files.deleteIfExists(plaintextDatabase)).isTrue();
     }
 
     @Test
@@ -266,6 +292,54 @@ class ProjectPersistenceAssemblyTest {
                             .restore("follow-1", claim.followUp().revision(), NOW.plusSeconds(3)))
                     .isInstanceOf(RuntimeException.class)
                     .hasRootCauseMessage("follow-up is already reserved for dispatch");
+        }
+    }
+
+    @Test
+    void codingSessionQueueCanUseExplicitPlaintextProtectionAndRecoverWithoutAKey() throws Exception {
+        Path database = directory.resolve("coding-session-plaintext.db");
+        ProductFixture fixture = productFixture();
+        AgentSessionId sessionId;
+        AgentRunId activeRunId = new AgentRunId("plaintext-active-run");
+        try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqliteUnprotected(database),
+                CLOCK,
+                new TestIds("plaintext-first"),
+                null)) {
+            ProjectProductService service = fixture.service(first, new TestIds("plaintext-service"));
+            sessionId =
+                    service.start(fixture.projectId, "first turn", List.of()).sessionId();
+            first.codingSessions()
+                    .createActivity(new CodingSessionActivity(
+                            sessionId,
+                            fixture.projectId,
+                            TENANT,
+                            PRINCIPAL,
+                            "first turn",
+                            io.haifa.agent.core.session.AgentSessionStatus.ACTIVE,
+                            Optional.of(activeRunId),
+                            OptionalLong.of(1),
+                            Optional.empty(),
+                            NOW,
+                            NOW,
+                            0));
+            first.codingSessions()
+                    .enqueue(followUp(
+                            "plaintext-follow-up",
+                            sessionId,
+                            activeRunId,
+                            "readable local queued turn",
+                            "plaintext-key"));
+        }
+
+        assertThat(new String(Files.readAllBytes(database), java.nio.charset.StandardCharsets.UTF_8))
+                .contains("readable local queued turn");
+        try (ProjectPersistenceAssembly reopened = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqliteUnprotected(database),
+                CLOCK,
+                new TestIds("plaintext-second"),
+                null)) {
+            assertThat(reopened.codingSessions().queuedCount(sessionId)).isEqualTo(1);
         }
     }
 

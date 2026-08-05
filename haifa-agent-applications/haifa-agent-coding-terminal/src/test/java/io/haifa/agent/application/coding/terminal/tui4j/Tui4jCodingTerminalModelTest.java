@@ -198,6 +198,60 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void appliesWheelScrollAfterTheCurrentFrameRecalculatesViewportHeight() {
+        var fixture = fixture();
+        fixture.model.init();
+        for (int index = 1; index <= 10; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 60));
+        fixture.model.view();
+
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.update(wheel(MouseButton.MouseButtonWheelUp));
+
+        assertThat(fixture.model.view()).contains("history-5").doesNotContain("history-10");
+    }
+
+    @Test
+    void pagesThroughTranscriptAndResumesFollowingAtTheBottom() {
+        var fixture = fixture();
+        fixture.model.init();
+        for (int index = 1; index <= 30; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("history-30");
+
+        fixture.model.update(key(KeyType.KeyPgUp));
+        assertThat(fixture.model.view()).contains("history-24").doesNotContain("history-30");
+
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "LATEST_OUTPUT", "SUCCEEDED"));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("new output below").doesNotContain("LATEST_OUTPUT");
+
+        fixture.model.update(key(KeyType.KeyPgDown));
+        fixture.model.view();
+        fixture.model.update(key(KeyType.KeyPgDown));
+        assertThat(fixture.model.view()).contains("LATEST_OUTPUT").doesNotContain("new output below");
+    }
+
+    @Test
+    void routesParsedSgrMouseWheelInputToTheTranscript() {
+        var fixture = fixture();
+        for (int index = 1; index <= 30; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("history-30");
+
+        fixture.model.update(MouseMessage.parseSGRMouseEvent(64, 2, 2, false));
+        fixture.model.update(MouseMessage.parseSGRMouseEvent(64, 2, 2, false));
+
+        assertThat(fixture.model.view()).contains("history-23").doesNotContain("history-30");
+    }
+
+    @Test
     void preservesHistoryDraftAndSynchronizesTheAuthoritativeCursor() {
         var fixture = fixture();
 
