@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 新增 `haifa-agent-spring-boot-starter`：自动装配单例 `HaifaAgent`、按 Spring 顺序收集
+  `JavaTool` Bean、支持配置属性元数据与用户 Bean backoff，并以安全 Failure Analysis 报告缺失凭据；
+  默认沿用 DeepSeek V4 Flash、关闭 Thinking 和进程内开发 Store。
 - 新增纯 Java `haifa-agent-sdk-starter`：默认装配 DeepSeek V4 Flash、关闭 Thinking、从
   `DEEPSEEK_API_KEY` 解析凭据并使用进程内 Runtime/Conversation Store，提供可编译的最小 Quickstart。
 - SDK 新增类型化 `JavaTool<I, O>`、Java record JSON Schema/编解码与

@@ -21,6 +21,7 @@
         <module>haifa-agent-sdk</module>
         <module>haifa-agent-integrations</module>
         <module>haifa-agent-sdk-starter</module>
+        <module>haifa-agent-spring</module>
         <module>haifa-agent-applications</module>
         <module>haifa-agent-testing</module>
     </modules>
@@ -232,6 +233,16 @@
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-sdk-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-spring-boot-autoconfigure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-spring-boot-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
