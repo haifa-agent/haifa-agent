@@ -2,6 +2,7 @@ package io.haifa.agent.application.coding.terminal.tui4j;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.williamcallahan.tui4j.compat.bubbletea.Command;
 import com.williamcallahan.tui4j.compat.bubbletea.KeyPressMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.PasteMessage;
 import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
@@ -131,6 +132,23 @@ class Tui4jCodingTerminalModelTest {
         fixture.model.update(key(KeyType.keyCR));
 
         assertThat(fixture.controller.state().exitRequested()).isTrue();
+    }
+
+    @Test
+    void rendersConversationSubmissionBeforeClientIoRuns() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("inspect the repository"));
+
+        var updated = fixture.model.update(key(KeyType.keyCR));
+
+        assertThat(Command.isNone(updated.command())).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().status()).isEqualTo("Submitting");
+        assertThat(fixture.controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.title()).isEqualTo("You");
+            assertThat(item.body()).isEqualTo("inspect the repository");
+        });
+
     }
 
     @Test

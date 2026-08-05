@@ -158,8 +158,8 @@ class CodingTerminalControllerTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
         assertThat(controller.state().selector()).isEmpty();
-        assertThat(controller.state().editorBuffer()).isEqualTo("/resume");
-        assertThat(controller.state().editorCursor()).isEqualTo("/resume".length());
+        assertThat(controller.state().editorBuffer()).isEqualTo("/new");
+        assertThat(controller.state().editorCursor()).isEqualTo("/new".length());
     }
 
     @Test

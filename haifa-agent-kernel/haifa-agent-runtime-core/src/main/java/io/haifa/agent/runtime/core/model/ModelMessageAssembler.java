@@ -31,6 +31,7 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -86,7 +87,50 @@ public final class ModelMessageAssembler {
             throw new ContextBuildException(
                     ContextBuildFailure.REQUIRED_CONTEXT_TOO_LARGE, "model context must not be empty");
         }
-        return List.copyOf(messages);
+        return canonicalizeToolProtocol(messages);
+    }
+
+    /**
+     * Keeps every provider tool-call group contiguous at the model boundary.
+     *
+     * <p>Runtime recovery, approval, steering, and other control messages may be persisted while tools execute. The
+     * OpenAI tool protocol nevertheless requires the assistant tool-call message to be followed immediately by one
+     * tool result for every provider correlation id. Control messages retain their relative order, but move behind
+     * the completed tool group before the request is serialized.
+     */
+    private List<ModelMessage> canonicalizeToolProtocol(List<ModelMessage> messages) {
+        List<ModelMessage> canonical = new ArrayList<>(messages.size());
+        int index = 0;
+        while (index < messages.size()) {
+            ModelMessage message = messages.get(index++);
+            canonical.add(message);
+            if (message.role() != ModelMessageRole.ASSISTANT
+                    || message.toolCalls().isEmpty()) {
+                continue;
+            }
+
+            var pending = message.toolCalls().stream()
+                    .map(ModelToolCall::providerCorrelationId)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            List<ModelMessage> deferred = new ArrayList<>();
+            while (!pending.isEmpty() && index < messages.size()) {
+                ModelMessage candidate = messages.get(index++);
+                if (candidate.role() == ModelMessageRole.TOOL
+                        && candidate
+                                .providerCorrelationId()
+                                .filter(pending::remove)
+                                .isPresent()) {
+                    canonical.add(candidate);
+                } else {
+                    deferred.add(candidate);
+                }
+            }
+            if (!pending.isEmpty()) {
+                throw new IllegalStateException("model context contains an incomplete tool-call group");
+            }
+            canonical.addAll(deferred);
+        }
+        return List.copyOf(canonical);
     }
 
     private String renderSummary(ConversationSummaryContent summary) {

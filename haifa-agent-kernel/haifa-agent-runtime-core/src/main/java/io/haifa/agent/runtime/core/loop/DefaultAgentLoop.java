@@ -749,6 +749,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             details.put("modelCategory", modelError.category().name());
             if (modelError.httpStatus() > 0) details.put("httpStatus", modelError.httpStatus());
             if (!modelError.providerCode().isBlank()) details.put("providerCode", modelError.providerCode());
+            details.put("providerMessage", modelError.getMessage());
         }
         return Map.copyOf(details);
     }
@@ -777,6 +778,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             attributes.put("httpStatus", modelError.httpStatus());
             attributes.put("providerCode", modelError.providerCode());
             attributes.put("modelCallId", modelError.callId().value());
+            attributes.put("providerMessage", modelError.getMessage());
         }
         return Map.copyOf(attributes);
     }

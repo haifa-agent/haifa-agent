@@ -15,6 +15,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
+import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
@@ -27,6 +28,7 @@ import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -71,6 +73,75 @@ public final class CodingTerminalController implements AutoCloseable {
 
     public TerminalUiState state() {
         return state;
+    }
+
+    /**
+     * Starts a normal conversation submission without performing Runtime or storage IO.
+     *
+     * <p>The terminal adapter can render the cleared editor and optimistic user message before it executes the
+     * returned submission on a command worker. Slash commands, shell commands, selectors, and empty input continue
+     * through {@link #accept(TerminalInput)} and therefore return an empty result here.
+     */
+    public Optional<PreparedMessageSubmission> prepareMessageSubmission(TerminalInput input) {
+        Objects.requireNonNull(input, "input must not be null");
+        drainEvents();
+        if ((input.kind() != TerminalInput.Kind.SUBMIT && input.kind() != TerminalInput.Kind.FOLLOW_UP)
+                || state.selector().isPresent()
+                || input.text().isBlank()
+                || input.text().startsWith("!")
+                || commands.route(input.text()) != TerminalCommand.MESSAGE) {
+            return Optional.empty();
+        }
+        return Optional.of(beginMessageSubmission(input.text(), input.kind() == TerminalInput.Kind.FOLLOW_UP));
+    }
+
+    /** Performs only client IO and does not mutate Controller state. */
+    public MessageSubmissionResult executeMessageSubmission(PreparedMessageSubmission submission) {
+        Objects.requireNonNull(submission, "submission must not be null");
+        try {
+            CodingSessionView view;
+            if (submission.sessionId().isEmpty()) {
+                view = client.create(projectId, submission.text(), submission.idempotencyKey());
+            } else {
+                AgentSessionId sessionId = submission.sessionId().orElseThrow();
+                dispatchMessage(
+                        sessionId,
+                        submission.activeRunId(),
+                        submission.text(),
+                        submission.followUp(),
+                        submission.idempotencyKey(),
+                        true);
+                view = client.reconcile(sessionId);
+            }
+            return MessageSubmissionResult.succeeded(submission, view);
+        } catch (ProjectProductException exception) {
+            return MessageSubmissionResult.failed(submission, exception.code());
+        } catch (IllegalArgumentException
+                | IllegalStateException
+                | SecurityException
+                | UnsupportedOperationException exception) {
+            return MessageSubmissionResult.failed(submission, safeFailureCode(exception));
+        }
+    }
+
+    /** Applies a completed background submission on the single terminal UI thread. */
+    public void completeMessageSubmission(MessageSubmissionResult result) {
+        Objects.requireNonNull(result, "result must not be null");
+        if (result.failureCode().isPresent()) {
+            apply(new TerminalUiAction.UserMessageRejected(result.submission().idempotencyKey()));
+            if (state.editorBuffer().isBlank()) {
+                apply(new TerminalUiAction.EditorChanged(
+                        result.submission().text(), result.submission().text().length()));
+            }
+            apply(new TerminalUiAction.RecoverableFailure(result.failureCode().orElseThrow()));
+            return;
+        }
+        try {
+            load(result.view().orElseThrow());
+            replayAndTail();
+        } catch (ProjectProductException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+        }
     }
 
     public void open(AgentSessionId sessionId) {
@@ -205,29 +276,23 @@ public final class CodingTerminalController implements AutoCloseable {
             command(command, text);
             return;
         }
+        completeMessageSubmission(executeMessageSubmission(beginMessageSubmission(text, followUp)));
+    }
+
+    private PreparedMessageSubmission beginMessageSubmission(String text, boolean followUp) {
         String key = UUID.randomUUID().toString();
-        if (awaitingNewSessionMessage || state.session().isEmpty()) {
+        Optional<AgentSessionId> sessionId =
+                state.session().map(value -> value.summary().sessionId());
+        Optional<AgentRunId> activeRunId = state.currentRunId();
+        if (awaitingNewSessionMessage || sessionId.isEmpty()) {
             awaitingNewSessionMessage = false;
-            CodingSessionView created = client.create(projectId, text, key);
-            apply(new TerminalUiAction.EditorChanged("", 0));
-            try {
-                load(created);
-                apply(new TerminalUiAction.UserMessageCommitted(key, text));
-                replayAndTail();
-            } catch (ProjectProductException exception) {
-                apply(new TerminalUiAction.UserMessageCommitted(key, text));
-                apply(new TerminalUiAction.RecoverableFailure(exception.code()));
-            }
-            return;
+            sessionId = Optional.empty();
+            activeRunId = Optional.empty();
         }
-        sendToCurrentSession(text, followUp, key, true);
         apply(new TerminalUiAction.EditorChanged("", 0));
         apply(new TerminalUiAction.UserMessageCommitted(key, text));
-        try {
-            refresh();
-        } catch (ProjectProductException exception) {
-            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
-        }
+        apply(new TerminalUiAction.StatusChanged("Submitting"));
+        return new PreparedMessageSubmission(text, followUp, key, sessionId, activeRunId);
     }
 
     private void shell(String input) {
@@ -263,14 +328,19 @@ public final class CodingTerminalController implements AutoCloseable {
                         : "Shell result excluded from model context"));
     }
 
-    private void sendToCurrentSession(String text, boolean followUp, String key, boolean retrySessionRace) {
-        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+    private void dispatchMessage(
+            AgentSessionId sessionId,
+            Optional<AgentRunId> activeRunId,
+            String text,
+            boolean followUp,
+            String key,
+            boolean retrySessionRace) {
         try {
-            if (state.currentRunId().isPresent()) {
+            if (activeRunId.isPresent()) {
                 if (followUp) {
-                    client.enqueueFollowUp(sessionId, state.currentRunId().orElseThrow(), text, key);
+                    client.enqueueFollowUp(sessionId, activeRunId.orElseThrow(), text, key);
                 } else {
-                    client.steer(sessionId, state.currentRunId().orElseThrow(), text, key);
+                    client.steer(sessionId, activeRunId.orElseThrow(), text, key);
                 }
             } else {
                 client.submit(sessionId, text, key);
@@ -279,8 +349,47 @@ public final class CodingTerminalController implements AutoCloseable {
             if (!retrySessionRace || !RETRYABLE_SESSION_RACES.contains(exception.code())) {
                 throw exception;
             }
-            refresh();
-            sendToCurrentSession(text, followUp, key, false);
+            CodingSessionView reconciled = client.reconcile(sessionId);
+            dispatchMessage(sessionId, reconciled.activeRun().map(value -> value.runId()), text, followUp, key, false);
+        }
+    }
+
+    private static String safeFailureCode(RuntimeException exception) {
+        String code = exception.getMessage();
+        return code != null && code.matches("[A-Z][A-Z0-9_]{2,63}") ? code : "OPERATION_REJECTED";
+    }
+
+    public record PreparedMessageSubmission(
+            String text,
+            boolean followUp,
+            String idempotencyKey,
+            Optional<AgentSessionId> sessionId,
+            Optional<AgentRunId> activeRunId) {
+        public PreparedMessageSubmission {
+            text = Objects.requireNonNull(text, "text must not be null");
+            idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
+            sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
+            activeRunId = Objects.requireNonNull(activeRunId, "activeRunId must not be null");
+        }
+    }
+
+    public record MessageSubmissionResult(
+            PreparedMessageSubmission submission, Optional<CodingSessionView> view, Optional<String> failureCode) {
+        public MessageSubmissionResult {
+            submission = Objects.requireNonNull(submission, "submission must not be null");
+            view = Objects.requireNonNull(view, "view must not be null");
+            failureCode = Objects.requireNonNull(failureCode, "failureCode must not be null");
+            if (view.isPresent() == failureCode.isPresent()) {
+                throw new IllegalArgumentException("submission result must contain exactly one outcome");
+            }
+        }
+
+        static MessageSubmissionResult succeeded(PreparedMessageSubmission submission, CodingSessionView view) {
+            return new MessageSubmissionResult(submission, Optional.of(view), Optional.empty());
+        }
+
+        static MessageSubmissionResult failed(PreparedMessageSubmission submission, String failureCode) {
+            return new MessageSubmissionResult(submission, Optional.empty(), Optional.of(failureCode));
         }
     }
 
