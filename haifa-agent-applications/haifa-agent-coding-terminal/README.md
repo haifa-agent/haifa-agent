@@ -146,9 +146,9 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随。
-- 鼠标滚轮与 PageUp/PageDown 一样只滚动 Transcript Viewport，不浏览输入历史或移动 Editor 光标；
-  滚动在当前帧布局重新计算 Viewport 尺寸后生效，内容超过一屏或窗口 Resize 后仍可回翻；向下滚到
-  底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和多行光标移动语义。
+- 终端不启用鼠标事件上报，普通拖拽由宿主终端原生选择和复制文字；Transcript 使用
+  PageUp/PageDown 回翻，PageDown 到底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和
+  多行光标移动语义。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
 50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成
@@ -168,6 +168,8 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn，Active Enter 发送 Steer；
+- 普通对话按 Enter 后先清空 Editor、显示用户消息与 `Submitting`，再由 tui4j Command Worker 执行
+  Session/Runtime IO；完成结果只在 UI 线程归约，避免提交期间冻结首次可见反馈；
 - Run 进入 `COMPLETED`、`FAILED`、`CANCELLED` 或 `TIMEOUT` 后立即回到 Idle；同一已结束 Run 随后
   到达的 Checkpoint/Resource 事件不得把它重新标记为 Active，下一次 Enter 必须提交新 Turn；
 - Active Alt+Enter 写入持久 Follow-up Queue，Alt+Up 选择并恢复待发消息；
@@ -251,7 +253,7 @@ key，并在所有重启间保持不变。
 13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，
     Alt+Up 恢复且重启后不重复。
 14. PageUp 离开底部后产生新输出，确认 viewport 不跳动且出现 `new output below`；PageDown 回到底部
-    后提示消失。先以大窗口渲染、再缩小窗口并滚轮向上，确认仍能回翻到上一屏内容。
+    后提示消失。先以大窗口渲染、再缩小窗口并用 PageUp 回翻；同时确认鼠标拖拽可由宿主终端选择文字。
 
 真实模型和 Web Provider 可能产生费用；未经单独授权保持 **NOT RUN**。自动化验证只使用 Stub/Fake：
 

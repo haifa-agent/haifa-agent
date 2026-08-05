@@ -1002,14 +1002,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         }
         ModelErrorCategory category = dialect(request).classifyError(status, providerCode, safeDetail);
         boolean retryable = dialect(request).retryable(status, category, providerCode);
-        return failure(
-                request,
-                category,
-                retryable,
-                status,
-                providerCode,
-                "model provider request failed with HTTP " + status,
-                null);
+        String safeMessage = "model provider request failed with HTTP " + status;
+        if (!safeDetail.isBlank()) safeMessage += ": " + safeDetail;
+        return failure(request, category, retryable, status, providerCode, safeMessage, null);
     }
 
     private static boolean retainReasoning(AgentChatRequest request, ModelFinishReason finishReason) {

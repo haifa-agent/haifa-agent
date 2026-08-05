@@ -16,6 +16,8 @@ import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
 import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalController.MessageSubmissionResult;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalController.PreparedMessageSubmission;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
@@ -51,6 +53,7 @@ final class Tui4jCodingTerminalModel implements Model {
     private int pendingTranscriptScrollRows;
     private AgentRunId timedRunId;
     private long runStartedNanos;
+    private PreparedMessageSubmission pendingSubmission;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -99,6 +102,12 @@ final class Tui4jCodingTerminalModel implements Model {
             controller.drainEvents();
             syncComponents();
             command = nextTick();
+        } else if (message instanceof SubmissionCompletedMessage completed) {
+            if (completed.result().submission().equals(pendingSubmission)) {
+                controller.completeMessageSubmission(completed.result());
+                pendingSubmission = null;
+                syncComponents();
+            }
         } else if (message instanceof WindowSizeMessage resized) {
             pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
             controller.drainEvents();
@@ -203,8 +212,7 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyCR) {
-            submit(shortcuts.matchesFollowUp(key) ? TerminalInput.Kind.FOLLOW_UP : TerminalInput.Kind.SUBMIT);
-            return Command.none();
+            return submit(shortcuts.matchesFollowUp(key) ? TerminalInput.Kind.FOLLOW_UP : TerminalInput.Kind.SUBMIT);
         }
         if (key.type() == KeyType.keyLF) {
             edit(new PasteMessage("\n"));
@@ -357,14 +365,26 @@ final class Tui4jCodingTerminalModel implements Model {
         syncComponents();
     }
 
-    private void submit(TerminalInput.Kind kind) {
+    private Command submit(TerminalInput.Kind kind) {
         TerminalUiState state = controller.state();
+        if (pendingSubmission != null) {
+            return Command.none();
+        }
         if (!state.editorBuffer().isBlank()) {
             history.add(state.editorBuffer());
         }
         resetHistoryNavigation();
-        controller.accept(new TerminalInput(kind, state.editorBuffer(), state.editorCursor()));
+        TerminalInput input = new TerminalInput(kind, state.editorBuffer(), state.editorCursor());
+        var prepared = controller.prepareMessageSubmission(input);
+        if (prepared.isEmpty()) {
+            controller.accept(input);
+            syncComponents();
+            return Command.none();
+        }
+        pendingSubmission = prepared.orElseThrow();
         syncComponents();
+        PreparedMessageSubmission submission = pendingSubmission;
+        return () -> new SubmissionCompletedMessage(controller.executeMessageSubmission(submission));
     }
 
     private void navigateHistory(int direction) {
@@ -494,4 +514,6 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private record PollMessage() implements Message {}
+
+    private record SubmissionCompletedMessage(MessageSubmissionResult result) implements Message {}
 }

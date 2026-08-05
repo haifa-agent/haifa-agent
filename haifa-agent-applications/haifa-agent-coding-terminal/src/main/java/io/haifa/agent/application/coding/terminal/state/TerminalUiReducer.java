@@ -208,6 +208,13 @@ public final class TerminalUiReducer {
                     state.recoverableError(),
                     state.exitRequested());
         }
+        if (action instanceof TerminalUiAction.UserMessageRejected rejected) {
+            return copyWithTranscript(
+                    state,
+                    state.transcript().stream()
+                            .filter(item -> !item.id().equals(rejected.id()))
+                            .toList());
+        }
         if (action instanceof TerminalUiAction.EditorChanged editor) {
             return copy(
                     state,

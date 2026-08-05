@@ -116,8 +116,9 @@ public record Tui4jTerminalIo(
         // mappings for modified Enter; other CSI-u control keys can leak trailing text
         // into the editor (for example Ctrl+O becoming "5u"). Traditional control-key
         // input keeps Ctrl+O as keySI while the registered Enter fallbacks remain usable.
-        return new Program(model, options.toArray(ProgramOption[]::new))
-                .withAltScreen()
-                .withMouseCellMotion();
+        // Keep terminal mouse reporting disabled. Enabling cell motion makes the application
+        // consume ordinary click-and-drag gestures even though the UI has no text-selection
+        // model, which prevents native terminal selection and copy.
+        return new Program(model, options.toArray(ProgramOption[]::new)).withAltScreen();
     }
 }

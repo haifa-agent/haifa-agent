@@ -43,6 +43,7 @@ import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import java.net.URI;
@@ -235,6 +236,76 @@ class ModelMessageAssemblerTest {
                 .isEqualTo(correlationId);
         assertThat(messages.get(2).providerCorrelationId()).contains(correlationId);
         assertThat(messages.get(2).content()).isEqualTo("Tool execution was rejected by the operator.");
+    }
+
+    @Test
+    void movesRuntimeControlMessagesBehindTheCompleteToolCallGroup() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-1");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                RUN_ID,
+                new AgentStepId("step-1"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "execution_run",
+                "1.0.0",
+                new ToolArguments("execution.input", "1.0.0", Map.of("command", "rg --files")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.waitForApproval();
+        call.deny(Instant.parse("2026-07-21T00:00:01Z"));
+        store.appendToolCall(call);
+
+        AgentMessage assistant = message(
+                "assistant-tool-call",
+                sessionId,
+                RUN_ID,
+                MessageRole.ASSISTANT,
+                1,
+                List.of(new ToolCallPart(toolCallId, correlationId, "execution_run", "1.0.0")));
+        AgentMessage runtime = message(
+                "runtime-control",
+                sessionId,
+                RUN_ID,
+                MessageRole.RUNTIME,
+                2,
+                List.of(new TextPart("[RUNTIME_CONTROL_UPDATE] retry safely", "plain")));
+        AgentMessage result = message(
+                "tool-result",
+                sessionId,
+                RUN_ID,
+                MessageRole.TOOL,
+                3,
+                List.of(new ToolResultPart(toolCallId, correlationId, "Tool execution was rejected by the operator.")));
+        AgentMessage user = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 4, List.of(new TextPart("continue", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant", ContextItemType.MESSAGE, new MessageContextContent(assistant)),
+                        item("runtime", ContextItemType.MESSAGE, new MessageContextContent(runtime)),
+                        item("result", ContextItemType.MESSAGE, new MessageContextContent(result)),
+                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user))),
+                List.of(),
+                budget(),
+                40);
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context);
+
+        assertThat(messages)
+                .extracting(ModelMessage::role)
+                .containsExactly(
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.ASSISTANT,
+                        ModelMessageRole.TOOL,
+                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.USER);
+        assertThat(messages.get(2).providerCorrelationId()).contains(correlationId);
+        assertThat(messages.get(3).content()).contains("RUNTIME_CONTROL_UPDATE");
     }
 
     private static AgentMessage message(

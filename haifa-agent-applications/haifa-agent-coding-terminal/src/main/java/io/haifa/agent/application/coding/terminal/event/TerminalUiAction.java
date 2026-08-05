@@ -32,6 +32,8 @@ public sealed interface TerminalUiAction {
 
     record UserMessageCommitted(String id, String text) implements TerminalUiAction {}
 
+    record UserMessageRejected(String id) implements TerminalUiAction {}
+
     record EditorChanged(String buffer, int cursor) implements TerminalUiAction {}
 
     record PendingChanged(List<PendingMessage> messages) implements TerminalUiAction {}
