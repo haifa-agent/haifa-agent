@@ -14,6 +14,7 @@ export const initialState: UiState = {
   memoryCandidates: [],
   memories: [],
   streamDraft: "",
+  outputPhase: "idle",
   streamSequences: { durable: 0, transient: 0 },
   connection: "connecting",
   search: "",
@@ -38,15 +39,39 @@ function newestRun(current: Run | null, next: Run | null): Run | null {
   return current;
 }
 
+function earlier(left?: string | null, right?: string | null): string | undefined {
+  if (!left) return right ?? undefined;
+  if (!right) return left;
+  return new Date(left).getTime() <= new Date(right).getTime() ? left : right;
+}
+
+function mergeActivity(previous: Activity, next: Activity): Activity {
+  if (next.version < previous.version) return previous;
+  return {
+    ...previous,
+    ...next,
+    parentActivityId: next.parentActivityId ?? previous.parentActivityId,
+    requestedAt: earlier(previous.requestedAt, next.requestedAt),
+    startedAt: earlier(previous.startedAt, next.startedAt),
+    completedAt: next.completedAt ?? previous.completedAt,
+    safeTargetSummary: next.safeTargetSummary || previous.safeTargetSummary,
+    safeResultSummary: next.safeResultSummary || previous.safeResultSummary,
+    interactionRef: next.interactionRef ?? previous.interactionRef,
+  };
+}
+
+function activityTime(activity: Activity): number {
+  return new Date(activity.requestedAt ?? activity.startedAt ?? activity.occurredAt).getTime();
+}
+
 function mergeActivities(current: Activity[], incoming: Activity[]): Activity[] {
   const values = new Map(current.map((activity) => [activity.activityId, activity]));
   for (const activity of incoming) {
     const previous = values.get(activity.activityId);
-    if (!previous || activity.version >= previous.version) values.set(activity.activityId, activity);
+    values.set(activity.activityId, previous ? mergeActivity(previous, activity) : activity);
   }
   return [...values.values()].sort(
-    (left, right) =>
-      new Date(left.startedAt).getTime() - new Date(right.startedAt).getTime(),
+    (left, right) => activityTime(left) - activityTime(right),
   );
 }
 
@@ -90,6 +115,7 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         interaction: null,
         interactionError: null,
         streamDraft: "",
+        outputPhase: "idle",
         streamSequences: { durable: 0, transient: 0 },
         sidebarOpen: false,
         error: null,
@@ -135,6 +161,10 @@ export function appReducer(state: UiState, action: AppAction): UiState {
           !next || changed || ["FAILED", "CANCELLED", "TIMEOUT"].includes(next.status)
             ? ""
             : state.streamDraft,
+        outputPhase:
+          !next || changed || ["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"].includes(next.status)
+            ? "idle"
+            : state.outputPhase,
       };
     }
     case "activitiesLoaded":
@@ -174,6 +204,13 @@ export function appReducer(state: UiState, action: AppAction): UiState {
         "answer.failed",
         "answer.superseded",
       ].includes(action.event.type);
+      const outputPhase = action.event.type === "answer.started"
+        ? "starting"
+        : action.event.type === "answer.delta"
+          ? "streaming"
+          : ["answer.committed", "answer.failed", "answer.superseded"].includes(action.event.type)
+            ? "idle"
+            : state.outputPhase;
       return {
         ...state,
         streamSequences:
@@ -186,6 +223,7 @@ export function appReducer(state: UiState, action: AppAction): UiState {
             : resetDraft
               ? ""
               : state.streamDraft,
+        outputPhase,
         activities: action.event.activity
           ? mergeActivities(state.activities, [action.event.activity])
           : state.activities,

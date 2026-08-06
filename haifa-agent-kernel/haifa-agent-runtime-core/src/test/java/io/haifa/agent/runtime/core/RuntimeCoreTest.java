@@ -637,6 +637,15 @@ class RuntimeCoreTest {
                 List.of(new TodoItem(
                         new TodoItemId("todo-1"), "verify", "verify output", TodoPriority.HIGH, List.of())),
                 Instant.parse("2026-07-21T00:00:00Z")));
+
+        var plan = fixture.runtime.plan(accepted.runId()).orElseThrow();
+        assertThat(plan.id()).isEqualTo("plan-1");
+        assertThat(plan.runId()).isEqualTo(accepted.runId().value());
+        assertThat(plan.items()).singleElement().satisfies(item -> {
+            assertThat(item.id()).isEqualTo("todo-1");
+            assertThat(item.title()).isEqualTo("verify");
+            assertThat(item.status()).isEqualTo("PENDING");
+        });
         fixture.scheduler.runAll();
 
         var run = fixture.store.find(accepted.runId()).orElseThrow();

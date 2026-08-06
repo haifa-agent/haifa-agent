@@ -1,5 +1,10 @@
 # Haifa Personal Assistant Web
 
+The live Run card shows an evidence-based phase summary. It displays observed activity counts
+without presenting them as a percentage; when the Server supplies an authoritative Plan, it shows
+real Todo completion and the current or blocked step. Activity lifecycle events are merged by the
+stable operation ID, and execution child records retain their parent Tool relationship.
+
 ## Image composer behavior
 
 For models that declare `IMAGE_INPUT`, the composer exposes one `+` menu for file upload,
@@ -10,7 +15,12 @@ are cleared after a successful request, so a later turn never silently reuses th
 
 The right-side activity panel renders safe durable Model, Tool, Skill, and MCP events.
 Model-call cards show the model, attempt coordinates, status, and terminal token or
-normalized failure summary without prompt or response text.
+normalized failure summary without prompt or response text. When an activity is added or
+updated, the panel automatically scrolls to the latest event.
+
+输入框上方的实时运行卡按优先级汇总当前 Run：审批或交互、失败或超时、SSE 重连、流式回答、
+最新安全 Activity、Run 生命周期。卡片只使用现有安全投影，不展示原始 Prompt、工具参数、Provider
+响应或虚构进度；普通活动可打开右侧详情，待处理状态会聚焦主消息流中的 Interaction 卡片。
 
 会话标题区提供模型 Selector。新会话使用 Bootstrap 默认值或用户选择；已有会话仅在无活动 Run 时
 调用带 `If-Match` 与幂等键的切换 API。页面只提交内部 Model ID。

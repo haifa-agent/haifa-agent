@@ -35,7 +35,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 
 .brand, .brand > div, .top-actions, .connection, .button, .archive-filter,
-.active-run-note, .privacy-note, .activity-kind, .interaction-heading,
+.privacy-note, .activity-kind, .interaction-heading,
 .safe-error, .error-banner {
   display: flex;
   align-items: center;
@@ -84,7 +84,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   background: rgb(255 255 255 / 90%);
 }
 .sidebar { border-right: 1px solid #dfe4ed; }
-.activity-panel { padding: 16px; gap: 13px; overflow-y: auto; border-left: 1px solid #dfe4ed; }
+.activity-panel { padding: 16px; gap: 13px; overflow-y: auto; border-left: 1px solid #dfe4ed; outline: 0; }
+.activity-panel-attention { animation: activity-panel-attention 1.2s ease-out; }
 .sidebar-title, .panel-heading, .dialog-heading, .conversation-heading {
   display: flex;
   align-items: center;
@@ -170,11 +171,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   grid-template-areas:
     "heading"
     "error"
     "messages"
+    "live"
     "composer";
   padding: 18px 20px 14px;
   gap: 10px;
@@ -194,6 +196,153 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   padding: 18px clamp(4px, 3vw, 42px) 30px;
   scroll-behavior: smooth;
 }
+.live-run-card {
+  grid-area: live;
+  width: min(680px, calc(100% - clamp(8px, 6vw, 84px)));
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 7px;
+  margin: 0 clamp(4px, 3vw, 42px);
+  padding: 4px 7px;
+  color: #344158;
+  border: 1px solid rgb(207 215 228 / 34%);
+  border-radius: 8px;
+  background: rgb(248 250 253 / 50%);
+}
+.live-run-icon {
+  grid-row: 1 / 3;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: #7381aa;
+}
+.live-run-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.live-run-copy {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+}
+.live-run-secondary {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.live-run-label {
+  flex: 0 0 auto;
+  color: #9aa3b2;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: .04em;
+}
+.live-run-copy strong {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: #3f4a5f;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-run-detail {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: #7c879a;
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-run-progress {
+  min-width: 0;
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #8b95a6;
+}
+.live-run-phase {
+  flex: 0 0 auto;
+  padding: 0;
+  color: #7885aa;
+  font-size: 9px;
+  font-weight: 650;
+}
+.live-run-elapsed {
+  flex: 0 0 auto;
+  color: #6f7b91;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.live-run-progress small {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.live-run-progress-track {
+  width: 56px;
+  height: 3px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e4e8ef;
+}
+.live-run-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #8a98c4;
+  transition: width 180ms ease;
+}
+.live-run-action {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 6px;
+  color: #6f7b96;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.live-run-action:hover { color: #526078; background: rgb(231 235 243 / 70%); }
+.live-run-action-details { display: none; }
+.live-run-card.tone-attention { border-color: rgb(214 200 164 / 50%); background: rgb(252 250 244 / 62%); }
+.live-run-card.tone-attention .live-run-icon { color: #9a7a45; }
+.live-run-card.tone-success .live-run-icon { color: #668b78; }
+.live-run-card.tone-danger {
+  border-color: #e7bcc5;
+  background: #fff7f8;
+  box-shadow: 0 4px 14px rgb(157 65 82 / 8%);
+}
+.live-run-card.tone-danger .live-run-icon,
+.live-run-card.tone-danger .live-run-action { color: #9d6871; }
+.live-run-card.tone-danger .live-run-icon { border-radius: 6px; background: #fbe8ec; }
+.live-run-card.tone-danger .live-run-label,
+.live-run-card.tone-danger .live-run-copy strong { color: #9b4f5d; }
+.live-run-card.tone-muted .live-run-icon { color: #8791a1; }
 .message {
   width: fit-content;
   max-width: min(760px, 86%);
@@ -360,7 +509,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   position: relative;
   grid-area: composer;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 42px;
+  grid-template-columns: 34px minmax(0, 1fr) auto 42px;
   gap: 5px 9px;
   padding: 10px 11px 9px;
   border: 1px solid #d9dfea;
@@ -370,8 +519,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 .composer > label { min-width: 0; grid-column: 1 / -1; grid-row: 1; }
 .composer.has-pending-images > label { grid-row: 2; }
-.image-attachment-stage,
-.active-run-note { grid-column: 1 / -1; }
+.image-attachment-stage { grid-column: 1 / -1; }
 .image-attachment-stage {
   position: relative;
   grid-row: 1;
@@ -690,12 +838,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   background: transparent;
 }
 .composer textarea:disabled { cursor: not-allowed; }
-.active-run-note { grid-column: 1 / -1; justify-content: space-between; gap: 8px; padding: 7px 8px; color: #57637b; font-size: 12px; border-radius: 9px; background: #f2f5fb; }
-.active-run-note span { display: flex; align-items: center; gap: 7px; }
 .send-button {
   width: 36px;
   height: 36px;
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 2;
   align-self: end;
   justify-content: center;
@@ -708,6 +854,24 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 .composer.has-pending-images .send-button { grid-row: 3; }
 .send-button:disabled { color: #9ca6b7; background: #e8ebf0; cursor: not-allowed; }
+.retry-send-button {
+  width: 30px;
+  height: 30px;
+  grid-column: 3;
+  grid-row: 2;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #a55261;
+  border: 1px solid #efd1d7;
+  border-radius: 50%;
+  background: #fff7f8;
+  cursor: pointer;
+}
+.composer.has-pending-images .retry-send-button { grid-row: 3; }
+.retry-send-button:hover { color: #8f3e4e; border-color: #e6b7c0; background: #fdeef1; }
+.retry-send-button:disabled { opacity: .5; cursor: not-allowed; }
 
 .button { justify-content: center; gap: 6px; min-height: 34px; padding: 7px 11px; border: 1px solid #d9dfea; border-radius: 9px; background: white; cursor: pointer; }
 .button:disabled { opacity: .58; cursor: wait; }
@@ -764,7 +928,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .panel-section h3 { margin: 0 0 9px; font-size: 13px; }
 .activity-list { display: flex; flex-direction: column; gap: 8px; }
 .activity-card, .memory-card { padding: 11px; border: 1px solid #e0e5ed; border-radius: 12px; background: white; }
+.activity-card.activity-child { margin-left: 14px; border-left: 3px solid #d8dfef; }
 .activity-card strong { display: block; margin: 7px 0 3px; font-size: 12px; }
+.activity-relation { display: block; margin-top: 6px; color: #8993a5; font-size: 9px; }
 .activity-card p, .interaction-card p, .memory-card p { margin: 4px 0; color: #647086; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .activity-kind { gap: 5px; color: #50617b; font-size: 10px; font-weight: 800; }
 .activity-kind small { margin-left: auto; color: #818b9c; font-weight: 500; }
@@ -877,6 +1043,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes blink { 50% { opacity: 0; } }
+@keyframes activity-panel-attention {
+  0% { box-shadow: inset 3px 0 #879bd8; background: #f7f9ff; }
+  100% { box-shadow: inset 0 0 transparent; background: #f7f8fb; }
+}
 
 /* Direct-entry Admin diagnostics. No selector below is used by the Personal Assistant UI. */
 .admin-app {
@@ -1429,6 +1599,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   .conversation { height: calc(100dvh - 58px); padding: 12px 10px 9px; }
   .conversation-heading h1 { max-width: 58vw; font-size: 17px; }
   .messages { padding: 12px 2px 20px; }
+  .live-run-card {
+    width: 100%;
+    margin: 0;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .live-run-action { grid-column: 3; grid-row: 1 / 3; justify-self: end; margin-left: 0; }
+  .live-run-action-details { display: inline-flex; }
+  .live-run-progress { flex-wrap: nowrap; gap: 5px; }
   .message { max-width: 92%; }
   .message.has-images { width: 92%; }
   .turn-images { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -43,9 +43,17 @@ import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
+import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
@@ -233,6 +241,103 @@ class ModelMessageAssemblerTest {
                 .isEqualTo(correlationId);
         assertThat(messages.get(2).providerCorrelationId()).contains(correlationId);
         assertThat(messages.get(2).content()).isEqualTo("Tool execution was rejected by the operator.");
+    }
+
+    @Test
+    void omitsProviderContinuationWhenConversationSwitchesModelConfiguration() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AgentRunId previousRunId = new AgentRunId("run-previous");
+        AgentSessionId sessionId = new AgentSessionId("session-1");
+        ToolCallId toolCallId = new ToolCallId("tool-call-1");
+        ProviderToolCallCorrelationId correlationId = new ProviderToolCallCorrelationId("provider-tool-call-1");
+        ToolCall call = new ToolCall(
+                toolCallId,
+                previousRunId,
+                new AgentStepId("step-1"),
+                correlationId,
+                new RuntimeIdempotencyKey("idempotency-1"),
+                "utility_search",
+                "1.0.0",
+                new ToolArguments("search.input", "1.0.0", Map.of("query", "haifa")),
+                Instant.parse("2026-07-21T00:00:00Z"));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.waitForApproval();
+        call.deny(Instant.parse("2026-07-21T00:00:01Z"));
+        store.appendToolCall(call);
+
+        ResolvedModelSnapshot previousModel = DefaultResolvedModelSnapshots.deepSeekV4Pro();
+        SensitiveModelReasoning reasoning = SensitiveModelReasoning.of("provider-private-continuation");
+        AgentMessage assistant = store.appendSessionMessageWithContinuation(
+                new SessionMessageDraft(
+                        new AgentMessageId("assistant-tool-call"),
+                        sessionId,
+                        Optional.of(previousRunId),
+                        Optional.empty(),
+                        MessageRole.ASSISTANT,
+                        MessageStatus.COMPLETED,
+                        MessageVisibility.AGENT_VISIBLE,
+                        List.of(new ToolCallPart(toolCallId, correlationId, "utility_search", "1.0.0")),
+                        Map.of(),
+                        Instant.parse("2026-07-21T00:00:02Z")),
+                new ModelContinuationDraft(
+                        new ModelContinuationRef("continuation-1", "1.0", reasoning.digest(), reasoning.byteLength()),
+                        previousRunId,
+                        sessionId,
+                        "model-call-1",
+                        previousModel.providerId().value(),
+                        previousModel.providerModelId(),
+                        previousModel.configurationDigest(),
+                        Set.of(correlationId.value()),
+                        reasoning,
+                        Instant.parse("2026-07-21T00:00:02Z")));
+        AgentMessage toolResult = message(
+                "tool-result",
+                sessionId,
+                previousRunId,
+                MessageRole.TOOL,
+                2,
+                List.of(new ToolResultPart(toolCallId, correlationId, "Tool execution was rejected by the operator.")));
+        AgentMessage user = message(
+                "next-user", sessionId, RUN_ID, MessageRole.USER, 3, List.of(new TextPart("continue", "plain")));
+        AgentContext context = new AgentContext(
+                List.of(prompt()),
+                List.of(
+                        item("assistant", ContextItemType.MESSAGE, new MessageContextContent(assistant)),
+                        item("tool-result", ContextItemType.MESSAGE, new MessageContextContent(toolResult)),
+                        item("user", ContextItemType.MESSAGE, new MessageContextContent(user))),
+                List.of(),
+                budget(),
+                40);
+
+        ResolvedModelSnapshot anthropicModel = ResolvedModelSnapshot.create(
+                previousModel.providerId(),
+                previousModel.providerVersion(),
+                new ModelDefinitionId("deepseek-anthropic-flash"),
+                previousModel.modelVersion(),
+                previousModel.providerModelId(),
+                ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER,
+                previousModel.adapterVersion(),
+                ModelApiStyles.ANTHROPIC_MESSAGES,
+                "deepseek-anthropic-messages",
+                URI.create("https://api.deepseek.com/anthropic"),
+                previousModel.credentialRef(),
+                previousModel.nativeStreaming(),
+                previousModel.capabilities(),
+                previousModel.contextWindow(),
+                previousModel.maxOutputTokens(),
+                previousModel.providerOptions(),
+                previousModel.invocationOptions());
+
+        var messages = new ModelMessageAssembler(store).assemble(RUN_ID, context, anthropicModel);
+
+        assertThat(messages)
+                .filteredOn(message -> message.role() == ModelMessageRole.ASSISTANT)
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message.toolCalls()).singleElement();
+                    assertThat(message.reasoning()).isEmpty();
+                });
     }
 
     @Test

@@ -32,6 +32,11 @@ public interface AgentRuntime {
         throw new UnsupportedOperationException("transport-ready Run views are not supported");
     }
 
+    /** Returns the authoritative plan when this Runtime has one for the caller-visible Run. */
+    default Optional<AgentPlanView> plan(io.haifa.agent.core.run.AgentRunId runId) {
+        throw new UnsupportedOperationException("public plan views are not supported");
+    }
+
     AgentRunHandle handle(io.haifa.agent.core.run.AgentRunId runId);
 
     void addListener(AgentRunListener listener);

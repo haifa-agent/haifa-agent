@@ -429,21 +429,54 @@
               {"type": "null"}
             ]
           },
+          "plan": {
+            "oneOf": [
+              {"$ref": "#/components/schemas/Plan"},
+              {"type": "null"}
+            ]
+          },
           "usage": {"$ref": "#/components/schemas/Usage"}
+        }
+      },
+      "Plan": {
+        "type": "object",
+        "required": ["id", "objective", "items", "revision", "updatedAt"],
+        "properties": {
+          "id": {"type": "string"},
+          "objective": {"type": "string"},
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/Todo"}},
+          "revision": {"type": "integer", "format": "int64"},
+          "updatedAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Todo": {
+        "type": "object",
+        "required": ["id", "title", "priority", "status"],
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "priority": {"type": "string"},
+          "status": {"type": "string", "enum": ["PENDING", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED", "SKIPPED"]},
+          "startedAt": {"type": ["string", "null"], "format": "date-time"},
+          "completedAt": {"type": ["string", "null"], "format": "date-time"}
         }
       },
       "Activity": {
         "type": "object",
-        "required": ["activityId", "runId", "kind", "displayName", "safeTargetSummary", "status", "startedAt", "safeResultSummary", "version"],
+        "required": ["activityId", "eventId", "runId", "kind", "displayName", "safeTargetSummary", "status", "occurredAt", "safeResultSummary", "version"],
         "properties": {
           "activityId": {"type": "string"},
+          "eventId": {"type": "string"},
+          "parentActivityId": {"type": ["string", "null"]},
           "runId": {"type": "string"},
           "kind": {"type": "string", "enum": ["MODEL", "TOOL", "SKILL", "MCP"]},
           "displayName": {"type": "string"},
           "safeTargetSummary": {"type": "string"},
           "status": {"type": "string"},
-          "startedAt": {"type": "string", "format": "date-time"},
+          "requestedAt": {"type": ["string", "null"], "format": "date-time"},
+          "startedAt": {"type": ["string", "null"], "format": "date-time"},
           "completedAt": {"type": ["string", "null"], "format": "date-time"},
+          "occurredAt": {"type": "string", "format": "date-time"},
           "safeResultSummary": {"type": "string"},
           "interactionRef": {"type": ["string", "null"]},
           "version": {"type": "integer", "format": "int64"}

@@ -90,6 +90,17 @@ def fail(message: str) -> "NoReturn":
     raise RuntimeError(message)
 
 
+def rebuild_port_conflict_message() -> str:
+    return (
+        "Rebuild requires ports 20000, 20001, and 20002 to be free.\n"
+        "Stop the running environment first, then rebuild:\n"
+        "  PowerShell: .\\scripts\\start-real-environment.ps1 -Stop\n"
+        "              .\\scripts\\start-real-environment.ps1 -Rebuild\n"
+        "  Bash:       ./scripts/start-real-environment.sh --stop\n"
+        "              ./scripts/start-real-environment.sh --rebuild"
+    )
+
+
 def parser() -> argparse.ArgumentParser:
     windows = os.name == "nt"
     home = Path.home()
@@ -695,6 +706,9 @@ def ensure_service(
 
 
 def start_environment(args: argparse.Namespace, value: Paths) -> None:
+    if args.rebuild and any(port_open(port) for port in (FRONTEND_PORT, BACKEND_PORT, MCP_PORT)):
+        fail(rebuild_port_conflict_message())
+
     java = required_command("java")
     node = required_command("node")
     npm = required_command("npm")
@@ -721,9 +735,6 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(stat.S_IRWXU)
-
-    if args.rebuild and any(port_open(port) for port in (FRONTEND_PORT, BACKEND_PORT, MCP_PORT)):
-        fail("Rebuild requires ports 20000, 20001, and 20002 to be free. Stop the environment first.")
 
     server_jar = latest_server_jar(value)
     if args.rebuild or server_jar is None:

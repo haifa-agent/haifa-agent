@@ -44,10 +44,21 @@ class PersonalAssistantRestartTest {
             assertThat(recovered.status()).isEqualTo("COMPLETED");
             assertThat(recovered.usage().inputTokens()).isPositive();
             assertThat(recovered.usage().toolCalls()).isEqualTo(1);
-            assertThat(application.activities(runId, 100)).anySatisfy(activity -> {
-                assertThat(activity.kind()).isEqualTo(PersonalAssistantApplication.ActivityKind.MCP);
-                assertThat(activity.status()).isEqualTo("SUCCEEDED");
-            });
+            assertThat(application.activities(runId, 100).stream()
+                            .filter(activity -> activity.kind() == PersonalAssistantApplication.ActivityKind.MCP)
+                            .toList())
+                    .singleElement()
+                    .satisfies(activity -> {
+                        assertThat(activity.kind()).isEqualTo(PersonalAssistantApplication.ActivityKind.MCP);
+                        assertThat(activity.status()).isEqualTo("SUCCEEDED");
+                        assertThat(activity.activityId()).startsWith("tool:");
+                        assertThat(activity.eventId()).isNotEqualTo(activity.activityId());
+                        assertThat(activity.requestedAt()).isPresent();
+                        assertThat(activity.startedAt()).isPresent();
+                        assertThat(activity.completedAt()).isPresent();
+                        assertThat(activity.occurredAt())
+                                .isEqualTo(activity.completedAt().orElseThrow());
+                    });
         }
     }
 

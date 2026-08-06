@@ -1,5 +1,12 @@
 # Haifa Agent Runtime API
 
+## Authoritative plan view
+
+`AgentRuntime.plan(runId)` exposes an immutable, caller-scoped `AgentPlanView` when the
+Runtime has a persisted plan for the Run. The view includes the authoritative plan revision
+and Todo lifecycle state; implementations that do not support plan queries fail fast through
+the default method. It is a read-only projection and does not add a second plan state machine.
+
 ## Durable model-call lifecycle
 
 The provider-neutral Run Event Feed includes bounded `model.call.started`,

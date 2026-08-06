@@ -1,5 +1,9 @@
 # Haifa Personal Assistant Server
 
+The v1 Run response includes an optional authoritative Plan/Todo projection. Activity responses
+use stable operation IDs plus durable event IDs, parent correlation, event time, and optional
+requested/started/completed lifecycle timestamps. Existing Runs without a plan omit `plan` or return `null`.
+
 The public activities endpoint projects bounded durable Model, Tool, Skill, and MCP
 events. Model activities never include prompts, assistant text, endpoints, credentials,
 or raw provider failures.

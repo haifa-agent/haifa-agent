@@ -190,6 +190,7 @@ class PersonalRunStreamServiceTest {
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
+                Optional.empty(),
                 new PersonalAssistantApplication.UsageView(0, 0, 0, 0, 0, 0));
     }
 
@@ -200,6 +201,7 @@ class PersonalRunStreamServiceTest {
                 "COMPLETED",
                 2,
                 Instant.EPOCH,
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),

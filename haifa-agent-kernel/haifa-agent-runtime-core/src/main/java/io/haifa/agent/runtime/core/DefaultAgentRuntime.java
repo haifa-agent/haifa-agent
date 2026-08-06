@@ -744,6 +744,37 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     }
 
     @Override
+    public Optional<io.haifa.agent.runtime.api.AgentPlanView> plan(AgentRunId runId) {
+        var caller = callers.current();
+        AgentRunId checked = Objects.requireNonNull(runId, "runId must not be null");
+        return runs.find(checked)
+                .filter(run -> caller.tenant().equals(run.tenant())
+                        && caller.principal().equals(run.principal()))
+                .flatMap(run -> state.plan(checked))
+                .map(plan -> new io.haifa.agent.runtime.api.AgentPlanView(
+                        plan.id().value(),
+                        plan.runId().value(),
+                        plan.objective(),
+                        plan.items().stream()
+                                .map(item -> new io.haifa.agent.runtime.api.TodoItemView(
+                                        item.id().value(),
+                                        item.title(),
+                                        item.description(),
+                                        item.priority().name(),
+                                        item.dependencies().stream()
+                                                .map(dependency -> dependency.value())
+                                                .toList(),
+                                        item.status().name(),
+                                        item.completionSummary(),
+                                        item.startedAt(),
+                                        item.completedAt()))
+                                .toList(),
+                        plan.revision(),
+                        plan.createdAt(),
+                        plan.updatedAt()));
+    }
+
+    @Override
     public AgentRunHandle handle(AgentRunId runId) {
         if (find(runId).isEmpty()) throw new IllegalArgumentException("unknown or invisible run");
         return new Handle(runId);

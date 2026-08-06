@@ -1,5 +1,10 @@
 # Haifa Personal Assistant Application
 
+Activity projection now correlates lifecycle events by stable Model/Tool/Execution operation ID,
+retains the durable event ID and parent Tool relationship, and folds requested/started/completed
+timestamps into one activity. Run views also include the caller-visible authoritative Plan/Todo
+snapshot when one exists; no plan is synthesized from prompts or event counts.
+
 The safe Activity projection includes durable Model, Tool, Skill, and MCP lifecycle
 events. Model activities expose only model identity, physical attempt coordinates,
 status, token counts, finish reason, and normalized failure codes.

@@ -124,18 +124,40 @@ export interface Run {
   resultSummary?: string | null;
   errorCode?: string | null;
   error?: ExecutionError | null;
+  plan?: Plan | null;
   usage: Usage;
+}
+
+export interface Plan {
+  id: string;
+  objective: string;
+  items: Array<Todo>;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface Todo {
+  id: string;
+  title: string;
+  priority: string;
+  status: "PENDING" | "IN_PROGRESS" | "BLOCKED" | "COMPLETED" | "CANCELLED" | "SKIPPED";
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface Activity {
   activityId: string;
+  eventId: string;
+  parentActivityId?: string | null;
   runId: string;
   kind: "MODEL" | "TOOL" | "SKILL" | "MCP";
   displayName: string;
   safeTargetSummary: string;
   status: string;
-  startedAt: string;
+  requestedAt?: string | null;
+  startedAt?: string | null;
   completedAt?: string | null;
+  occurredAt: string;
   safeResultSummary: string;
   interactionRef?: string | null;
   version: number;

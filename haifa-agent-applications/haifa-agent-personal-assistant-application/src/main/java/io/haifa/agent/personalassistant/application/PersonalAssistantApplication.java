@@ -46,6 +46,8 @@ import io.haifa.agent.sdk.memory.RejectMemoryCandidateCommand;
 import io.haifa.agent.sdk.memory.ReviewMemoryCandidateCommand;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -238,6 +240,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                                     error.details(),
                                     error.optionalDiagnosticId(),
                                     error.occurredAt())),
+                    agent.runs().plan(snapshot.runId()).map(PersonalAssistantApplication::plan),
                     new UsageView(
                             usage.inputTokens(),
                             usage.outputTokens(),
@@ -294,10 +297,24 @@ public final class PersonalAssistantApplication implements AutoCloseable {
 
     public List<ActivityView> activities(String runId, int limit) {
         AgentRunId id = new AgentRunId(runId);
-        return agent.runs().events(id, RunEventCursor.beforeFirst(id), limit).items().stream()
-                .map(this::activity)
-                .flatMap(Optional::stream)
+        Map<String, ActivityView> activities = new LinkedHashMap<>();
+        RunEventCursor cursor = RunEventCursor.beforeFirst(id);
+        boolean hasMore;
+        do {
+            var page = agent.runs().events(id, cursor, 1_000);
+            page.items().stream()
+                    .map(this::activity)
+                    .flatMap(Optional::stream)
+                    .forEach(activity -> activities.merge(
+                            activity.activityId(), activity, PersonalAssistantApplication::mergeActivity));
+            cursor = page.nextCursor();
+            hasMore = page.hasMore();
+        } while (hasMore);
+        List<ActivityView> ordered = activities.values().stream()
+                .sorted(Comparator.comparing(PersonalAssistantApplication::activitySortTime)
+                        .thenComparingLong(ActivityView::version))
                 .toList();
+        return ordered.subList(Math.max(0, ordered.size() - limit), ordered.size());
     }
 
     public StreamSubscription subscribe(String runId, StreamListener listener) {
@@ -540,28 +557,36 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private Optional<ActivityView> activity(AgentRunEvent event) {
         if (event.payload() instanceof RunEventPayloads.ModelLifecycle model) {
             return Optional.of(new ActivityView(
+                    "model:" + model.modelCallId(),
                     event.eventId(),
+                    Optional.empty(),
                     event.runId().value(),
                     ActivityKind.MODEL,
                     model.modelId(),
                     model.providerId() + " · iteration " + model.iteration() + " · attempt " + model.attempt(),
                     model.status(),
-                    event.occurredAt(),
+                    Optional.empty(),
+                    "STARTED".equals(model.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
                     terminal(model.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
+                    event.occurredAt(),
                     safeResult(model),
                     Optional.empty(),
                     event.sequence()));
         }
         if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle execution) {
             return Optional.of(new ActivityView(
+                    "execution:" + execution.executionId(),
                     event.eventId(),
+                    Optional.of("tool:" + execution.toolCallId()),
                     event.runId().value(),
                     ActivityKind.TOOL,
                     PersonalAssistantProfile.EXECUTION_TOOL_ALIAS,
                     execution.commandSummary(),
                     execution.status(),
-                    event.occurredAt(),
+                    Optional.empty(),
+                    Optional.empty(),
                     Optional.of(event.occurredAt()),
+                    event.occurredAt(),
                     execution.chunkOrRef(),
                     Optional.empty(),
                     event.sequence()));
@@ -577,17 +602,74 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                                 ? ActivityKind.MCP
                                 : ActivityKind.TOOL;
         return Optional.of(new ActivityView(
+                "tool:" + tool.toolCallId(),
                 event.eventId(),
+                Optional.empty(),
                 event.runId().value(),
                 kind,
                 tool.displayName(),
                 tool.targetSummary(),
                 tool.status(),
-                event.occurredAt(),
+                "REQUESTED".equals(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
+                "STARTED".equals(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
                 terminal(tool.status()) ? Optional.of(event.occurredAt()) : Optional.empty(),
+                event.occurredAt(),
                 safeResult(tool),
                 Optional.empty(),
                 event.sequence()));
+    }
+
+    private static ActivityView mergeActivity(ActivityView previous, ActivityView next) {
+        if (next.version() < previous.version()) return previous;
+        return new ActivityView(
+                next.activityId(),
+                next.eventId(),
+                next.parentActivityId().or(() -> previous.parentActivityId()),
+                next.runId(),
+                next.kind(),
+                next.displayName(),
+                prefer(next.safeTargetSummary(), previous.safeTargetSummary()),
+                next.status(),
+                earliest(previous.requestedAt(), next.requestedAt()),
+                earliest(previous.startedAt(), next.startedAt()),
+                next.completedAt().or(() -> previous.completedAt()),
+                next.occurredAt(),
+                prefer(next.safeResultSummary(), previous.safeResultSummary()),
+                next.interactionRef().or(() -> previous.interactionRef()),
+                next.version());
+    }
+
+    private static Instant activitySortTime(ActivityView activity) {
+        return activity.requestedAt().or(() -> activity.startedAt()).orElse(activity.occurredAt());
+    }
+
+    private static Optional<Instant> earliest(Optional<Instant> left, Optional<Instant> right) {
+        if (left.isEmpty()) return right;
+        if (right.isEmpty()) return left;
+        Instant leftValue = left.orElseThrow();
+        Instant rightValue = right.orElseThrow();
+        return Optional.of(leftValue.isBefore(rightValue) ? leftValue : rightValue);
+    }
+
+    private static String prefer(String preferred, String fallback) {
+        return preferred == null || preferred.isBlank() ? fallback : preferred;
+    }
+
+    private static PlanView plan(io.haifa.agent.runtime.api.AgentPlanView value) {
+        return new PlanView(
+                value.id(),
+                value.objective(),
+                value.items().stream()
+                        .map(item -> new TodoView(
+                                item.id(),
+                                item.title(),
+                                item.priority(),
+                                item.status(),
+                                item.startedAt(),
+                                item.completedAt()))
+                        .toList(),
+                value.revision(),
+                value.updatedAt());
     }
 
     private static String safeResult(RunEventPayloads.ToolLifecycle tool) {
@@ -735,7 +817,18 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             Optional<String> resultSummary,
             Optional<String> errorCode,
             Optional<ExecutionErrorView> error,
+            Optional<PlanView> plan,
             UsageView usage) {}
+
+    public record PlanView(String id, String objective, List<TodoView> items, long revision, Instant updatedAt) {}
+
+    public record TodoView(
+            String id,
+            String title,
+            String priority,
+            String status,
+            Optional<Instant> startedAt,
+            Optional<Instant> completedAt) {}
 
     public record InteractionViewValue(
             String id,
@@ -770,13 +863,17 @@ public final class PersonalAssistantApplication implements AutoCloseable {
 
     public record ActivityView(
             String activityId,
+            String eventId,
+            Optional<String> parentActivityId,
             String runId,
             ActivityKind kind,
             String displayName,
             String safeTargetSummary,
             String status,
-            Instant startedAt,
+            Optional<Instant> requestedAt,
+            Optional<Instant> startedAt,
             Optional<Instant> completedAt,
+            Instant occurredAt,
             String safeResultSummary,
             Optional<String> interactionRef,
             long version) {}
