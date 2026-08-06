@@ -35,38 +35,17 @@ record CliConfiguration(
             "file.list",
             "file.stat",
             "file.read",
-            "file.search",
             "file.create",
             "file.write",
+            "file.patch",
             "file.delete",
             "file.move",
             "execution.run");
+    private static final Set<String> OPTIONAL_TOOLS = Set.of("file.search", "web.search", "web.fetch");
     private static final Set<String> SUPPORTED_TOOLS = java.util.stream.Stream.concat(
-                    DEFAULT_TOOLS.stream(), java.util.stream.Stream.of("web.search", "web.fetch"))
+                    DEFAULT_TOOLS.stream(), OPTIONAL_TOOLS.stream())
             .collect(java.util.stream.Collectors.toUnmodifiableSet());
-    private static final Set<String> DEFAULT_ENVIRONMENT = Set.of(
-            "PATH",
-            "PATHEXT",
-            "HOME",
-            "USERPROFILE",
-            "TMP",
-            "TEMP",
-            "SystemRoot",
-            "SystemDrive",
-            "WINDIR",
-            "ComSpec",
-            "HOMEDRIVE",
-            "HOMEPATH",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "ProgramData",
-            "ProgramFiles",
-            "ProgramW6432",
-            "PUBLIC",
-            "PSModulePath",
-            "JAVA_HOME",
-            "MAVEN_OPTS",
-            "GRADLE_USER_HOME");
+    private static final Set<String> DEFAULT_ENVIRONMENT = Set.of("*");
 
     CliConfiguration {
         model = Objects.requireNonNull(model, "model must not be null");
@@ -406,7 +385,8 @@ record CliConfiguration(
             }
             inheritEnvironment = Set.copyOf(
                     Objects.requireNonNull(inheritEnvironment, "execution.inheritEnvironment must not be null"));
-            if (inheritEnvironment.stream().anyMatch(name -> !name.matches("[A-Za-z_][A-Za-z0-9_]*"))) {
+            if (inheritEnvironment.stream()
+                    .anyMatch(name -> !name.equals("*") && !name.matches("[A-Za-z_][A-Za-z0-9_]*"))) {
                 throw new IllegalArgumentException("execution.inheritEnvironment contains an invalid name");
             }
             if (inheritEnvironment.stream()

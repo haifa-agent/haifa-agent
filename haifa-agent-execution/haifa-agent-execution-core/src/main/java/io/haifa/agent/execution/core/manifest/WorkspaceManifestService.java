@@ -58,12 +58,12 @@ public final class WorkspaceManifestService {
                     if (totalBytes > budget.maxTotalBytes())
                         throw new ManifestBudgetException("manifest byte budget exceeded");
                     if (metadata.type() == FileType.DIRECTORY) directories.addLast(metadata.path());
-                    var detailed = metadata.type() == FileType.FILE ? files.stat(metadata.path(), true) : metadata;
                     if (metadata.type() == FileType.FILE) {
                         hashedBytes += metadata.size();
                         if (hashedBytes > budget.maxHashBytes())
                             throw new ManifestBudgetException("manifest hash budget exceeded");
                     }
+                    var detailed = metadata.type() == FileType.FILE ? files.stat(metadata.path(), true) : metadata;
                     String hash = detailed.contentHash().orElse("metadata:" + metadata.type() + ":" + metadata.size());
                     entries.add(new WorkspaceManifestEntry(
                             metadata.path().projectPath(), metadata.type(), metadata.size(), hash));

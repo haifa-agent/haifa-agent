@@ -13,15 +13,20 @@ public record FilePatch(
         boolean newEndsWithNewline) {
     public FilePatch {
         if (oldPath == null && newPath == null) throw new IllegalArgumentException("file patch requires a path");
-        if (oldPath != null && newPath != null && !oldPath.equals(newPath)) {
-            throw new IllegalArgumentException("rename patches are unsupported");
-        }
         hunks = List.copyOf(Objects.requireNonNull(hunks, "hunks must not be null"));
         if (hunks.isEmpty()) throw new IllegalArgumentException("file patch requires at least one hunk");
     }
 
     public ProjectPath targetPath() {
         return newPath == null ? oldPath : newPath;
+    }
+
+    public ProjectPath sourcePath() {
+        return oldPath == null ? newPath : oldPath;
+    }
+
+    public boolean move() {
+        return oldPath != null && newPath != null && !oldPath.equals(newPath);
     }
 
     public boolean creation() {

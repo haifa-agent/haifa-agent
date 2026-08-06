@@ -13,6 +13,7 @@ import io.haifa.agent.skill.api.SkillParserMode;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -161,7 +162,30 @@ class CliConfigurationLoaderTest {
         assertThat(result.persistence().databasePath()).contains(database);
         assertThat(result.persistence().transcriptRoot()).contains(transcriptRoot);
         assertThat(result.persistence().protectorReference()).isEmpty();
-        assertThat(result.enabledTools()).contains("file.read", "file.write", "execution.run");
+        assertThat(result.enabledTools())
+                .contains("file.read", "file.write", "execution.run")
+                .doesNotContain("file.search");
+    }
+
+    @Test
+    void defaultsToGenericOsCliSearchWhileKeepingFileSearchAsExplicitCompatibilityTool() {
+        CliConfiguration defaults = CliConfiguration.defaults();
+
+        assertThat(defaults.enabledTools()).contains("execution.run").doesNotContain("file.search");
+
+        var explicitCompatibilityConfiguration = new CliConfiguration(
+                defaults.model(),
+                Set.of("file.search"),
+                defaults.mcpServers(),
+                defaults.web(),
+                defaults.skills(),
+                defaults.execution(),
+                defaults.approval(),
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxToolCalls(),
+                defaults.persistence());
+        assertThat(explicitCompatibilityConfiguration.enabledTools()).containsExactly("file.search");
     }
 
     @Test

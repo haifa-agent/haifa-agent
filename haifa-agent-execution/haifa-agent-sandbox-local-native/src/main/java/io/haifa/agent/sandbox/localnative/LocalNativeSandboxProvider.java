@@ -4,7 +4,6 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.io.SecureFilePermissions;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
-import io.haifa.agent.execution.api.ExecutionDispatchObserver;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
@@ -234,17 +233,8 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
 
         @Override
         public synchronized SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
-            return execute(execution, observer, ExecutionDispatchObserver.noop());
-        }
-
-        @Override
-        public synchronized SandboxProcessResult execute(
-                SandboxExecution execution,
-                ExecutionOutputObserver observer,
-                ExecutionDispatchObserver dispatchObserver) {
             Objects.requireNonNull(execution, "execution must not be null");
             Objects.requireNonNull(observer, "observer must not be null");
-            Objects.requireNonNull(dispatchObserver, "dispatchObserver must not be null");
             if (closed) throw failure("SANDBOX_START_FAILED", "sandbox session is closed");
             if (executed) throw failure("SANDBOX_START_FAILED", "local-native session is single-use");
             executed = true;
@@ -299,25 +289,31 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
-                dispatchObserver.dispatched();
+                observer.onStarted();
                 shutdownHook = registerShutdownHook(process);
                 try (var standardInput = process.getOutputStream()) {
                     standardInput.write(execution.input().bytes());
                 }
+                var outputLimitExceeded = new java.util.concurrent.atomic.AtomicBoolean();
                 CompletableFuture<BoundedBytes> stdout = CompletableFuture.supplyAsync(() -> read(
                         process.getInputStream(),
                         execution.limits().maxStdoutBytes(),
                         ExecutionOutputChannel.STDOUT,
-                        observer));
+                        observer,
+                        execution.limits().outputOverflowPolicy(),
+                        outputLimitExceeded));
                 CompletableFuture<BoundedBytes> stderr = CompletableFuture.supplyAsync(() -> read(
                         process.getErrorStream(),
                         execution.limits().maxStderrBytes(),
                         ExecutionOutputChannel.STDERR,
-                        observer));
+                        observer,
+                        execution.limits().outputOverflowPolicy(),
+                        outputLimitExceeded));
                 WaitOutcome outcome = waitFor(
                         process,
                         execution.limits().timeout(),
-                        execution.limits().maxProcesses());
+                        execution.limits().maxProcesses(),
+                        outputLimitExceeded);
                 boolean treeTerminated = true;
                 Integer exitCode = null;
                 SandboxProcessStatus status;
@@ -329,12 +325,21 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                     status = SandboxProcessStatus.EXITED;
                 } else {
                     treeTerminated = terminateTree(process);
-                    status = outcome == WaitOutcome.TIMED_OUT && treeTerminated
-                            ? SandboxProcessStatus.TIMED_OUT
-                            : SandboxProcessStatus.UNKNOWN;
+                    status = outcome == WaitOutcome.OUTPUT_LIMIT_EXCEEDED && treeTerminated
+                            ? SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED
+                            : outcome == WaitOutcome.TIMED_OUT && treeTerminated
+                                    ? SandboxProcessStatus.TIMED_OUT
+                                    : SandboxProcessStatus.UNKNOWN;
                 }
                 BoundedBytes out = stdout.get(5, TimeUnit.SECONDS);
                 BoundedBytes err = stderr.get(5, TimeUnit.SECONDS);
+                if (outputLimitExceeded.get()
+                        && execution.limits().outputOverflowPolicy()
+                                == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
+                        && status == SandboxProcessStatus.EXITED) {
+                    status = SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED;
+                    exitCode = null;
+                }
                 result = new SandboxProcessResult(
                         status,
                         exitCode,
@@ -506,10 +511,16 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
             }
         }
 
-        private WaitOutcome waitFor(Process process, Duration timeout, int maxProcesses) throws InterruptedException {
+        private WaitOutcome waitFor(
+                Process process,
+                Duration timeout,
+                int maxProcesses,
+                java.util.concurrent.atomic.AtomicBoolean outputLimitExceeded)
+                throws InterruptedException {
             long deadline = System.nanoTime() + timeout.toNanos();
             while (process.isAlive()) {
                 if (cancelRequested) return WaitOutcome.CANCELLED;
+                if (outputLimitExceeded.get()) return WaitOutcome.OUTPUT_LIMIT_EXCEEDED;
                 if (observedProcesses(process) > maxProcesses) return WaitOutcome.PROCESS_LIMIT_EXCEEDED;
                 long remaining = deadline - System.nanoTime();
                 if (remaining <= 0) return WaitOutcome.TIMED_OUT;
@@ -548,14 +559,23 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
     }
 
     private static BoundedBytes read(
-            InputStream input, int maximum, ExecutionOutputChannel channel, ExecutionOutputObserver observer) {
+            InputStream input,
+            int maximum,
+            ExecutionOutputChannel channel,
+            ExecutionOutputObserver observer,
+            io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy overflowPolicy,
+            java.util.concurrent.atomic.AtomicBoolean outputLimitExceeded) {
         try (input) {
-            TailBuffer output = new TailBuffer(maximum);
+            var output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximum);
             byte[] buffer = new byte[8192];
             int count;
             while ((count = input.read(buffer)) >= 0) {
                 byte[] chunk = java.util.Arrays.copyOf(buffer, count);
                 output.write(chunk);
+                if (output.truncated()
+                        && overflowPolicy == io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE) {
+                    outputLimitExceeded.set(true);
+                }
                 notifyObserver(
                         observer, new io.haifa.agent.execution.api.ProcessOutputChunk(channel, chunk, false, false));
             }
@@ -656,42 +676,9 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
 
     private record BoundedBytes(byte[] bytes, boolean truncated) {}
 
-    private static final class TailBuffer {
-        private final byte[] values;
-        private long count;
-
-        private TailBuffer(int maximum) {
-            values = new byte[maximum];
-        }
-
-        private void write(byte[] bytes) {
-            for (byte value : bytes) {
-                values[(int) (count % values.length)] = value;
-                count++;
-            }
-        }
-
-        private byte[] bytes() {
-            int length = (int) Math.min(count, values.length);
-            byte[] result = new byte[length];
-            if (count <= values.length) {
-                System.arraycopy(values, 0, result, 0, length);
-                return result;
-            }
-            int start = (int) (count % values.length);
-            int first = values.length - start;
-            System.arraycopy(values, start, result, 0, first);
-            System.arraycopy(values, 0, result, first, start);
-            return result;
-        }
-
-        private boolean truncated() {
-            return count > values.length;
-        }
-    }
-
     private enum WaitOutcome {
         FINISHED,
+        OUTPUT_LIMIT_EXCEEDED,
         TIMED_OUT,
         CANCELLED,
         PROCESS_LIMIT_EXCEEDED

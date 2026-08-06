@@ -16,10 +16,13 @@ import com.williamcallahan.tui4j.compat.bubbletea.input.key.KeyType;
 import com.williamcallahan.tui4j.message.EnterKeyModifier;
 import com.williamcallahan.tui4j.message.EnterKeyModifierMessage;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalController;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalController.MessageSubmissionResult;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalController.PreparedMessageSubmission;
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -34,11 +37,14 @@ final class Tui4jCodingTerminalModel implements Model {
     private final TerminalEventPump pump;
     private final Textarea editor = new Textarea();
     private final Viewport transcript;
-    private final Tui4jTerminalView view = new Tui4jTerminalView();
+    private final TerminalShortcutProfile shortcuts;
+    private final Tui4jTerminalView view;
     private final List<String> history = new ArrayList<>();
     private final LongSupplier monotonicNanos;
 
     private String transcriptContent = "";
+    private List<TranscriptItem> renderedTranscript = List.of();
+    private int renderedTranscriptColumns = -1;
     private int transcriptRows;
     private String historyDraft = "";
     private int editorCursor;
@@ -50,15 +56,27 @@ final class Tui4jCodingTerminalModel implements Model {
     private int pendingTranscriptScrollRows;
     private AgentRunId timedRunId;
     private long runStartedNanos;
+    private PreparedMessageSubmission pendingSubmission;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
-        this(controller, pump, System::nanoTime);
+        this(controller, pump, System::nanoTime, null);
     }
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump, LongSupplier monotonicNanos) {
+        this(controller, pump, monotonicNanos, null);
+    }
+
+    Tui4jCodingTerminalModel(
+            CodingTerminalController controller,
+            TerminalEventPump pump,
+            LongSupplier monotonicNanos,
+            TerminalHostInfo hostInfo) {
         this.controller = controller;
         this.pump = pump;
         this.monotonicNanos = monotonicNanos;
+        this.shortcuts =
+                hostInfo == null ? TerminalShortcutProfile.standard() : TerminalShortcutProfile.forHost(hostInfo);
+        this.view = new Tui4jTerminalView(shortcuts);
         TerminalUiState state = controller.state();
         this.editorCursor = state.editorCursor();
         this.transcript = Viewport.create(state.columns(), 2);
@@ -87,6 +105,12 @@ final class Tui4jCodingTerminalModel implements Model {
             controller.drainEvents();
             syncComponents();
             command = nextTick();
+        } else if (message instanceof SubmissionCompletedMessage completed) {
+            if (completed.result().submission().equals(pendingSubmission)) {
+                controller.completeMessageSubmission(completed.result());
+                pendingSubmission = null;
+                syncComponents();
+            }
         } else if (message instanceof WindowSizeMessage resized) {
             pump.offer(new TerminalUiAction.TerminalResized(resized.width(), resized.height()));
             controller.drainEvents();
@@ -166,7 +190,7 @@ final class Tui4jCodingTerminalModel implements Model {
             selectorKey(key);
             return Command.none();
         }
-        if (key.alt() && key.type() == KeyType.KeyUp) {
+        if (shortcuts.matchesRestoreQueuedMessage(key)) {
             accept(TerminalInput.Kind.RESTORE);
             return Command.none();
         }
@@ -182,7 +206,7 @@ final class Tui4jCodingTerminalModel implements Model {
             accept(TerminalInput.Kind.EOF);
             return Command.none();
         }
-        if (key.type() == KeyType.keySI) {
+        if (shortcuts.matchesToggleExpansion(key)) {
             accept(TerminalInput.Kind.TOGGLE_EXPANSION);
             return Command.none();
         }
@@ -191,8 +215,7 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyCR) {
-            submit(key.alt() ? TerminalInput.Kind.FOLLOW_UP : TerminalInput.Kind.SUBMIT);
-            return Command.none();
+            return submit(shortcuts.matchesFollowUp(key) ? TerminalInput.Kind.FOLLOW_UP : TerminalInput.Kind.SUBMIT);
         }
         if (key.type() == KeyType.keyLF) {
             edit(new PasteMessage("\n"));
@@ -345,14 +368,26 @@ final class Tui4jCodingTerminalModel implements Model {
         syncComponents();
     }
 
-    private void submit(TerminalInput.Kind kind) {
+    private Command submit(TerminalInput.Kind kind) {
         TerminalUiState state = controller.state();
+        if (pendingSubmission != null) {
+            return Command.none();
+        }
         if (!state.editorBuffer().isBlank()) {
             history.add(state.editorBuffer());
         }
         resetHistoryNavigation();
-        controller.accept(new TerminalInput(kind, state.editorBuffer(), state.editorCursor()));
+        TerminalInput input = new TerminalInput(kind, state.editorBuffer(), state.editorCursor());
+        var prepared = controller.prepareMessageSubmission(input);
+        if (prepared.isEmpty()) {
+            controller.accept(input);
+            syncComponents();
+            return Command.none();
+        }
+        pendingSubmission = prepared.orElseThrow();
         syncComponents();
+        PreparedMessageSubmission submission = pendingSubmission;
+        return () -> new SubmissionCompletedMessage(controller.executeMessageSubmission(submission));
     }
 
     private void navigateHistory(int direction) {
@@ -417,19 +452,25 @@ final class Tui4jCodingTerminalModel implements Model {
             editor.focus();
         }
 
-        String nextTranscript = view.transcriptContent(state);
-        if (!nextTranscript.equals(transcriptContent)) {
+        boolean transcriptChanged =
+                renderedTranscript != state.transcript() || renderedTranscriptColumns != state.columns();
+        if (transcriptChanged) {
+            String nextTranscript = view.transcriptContent(state);
             int nextTranscriptRows = (int) nextTranscript.lines().count();
-            fullRepaintRequested = transcriptRows != 0 && transcriptRows != nextTranscriptRows;
-            transcript.setContent(nextTranscript);
-            transcriptContent = nextTranscript;
-            transcriptRows = nextTranscriptRows;
-            if (followTranscript) {
-                transcript.gotoBottom();
-                newOutputPending = false;
-            } else {
-                newOutputPending = true;
+            if (!nextTranscript.equals(transcriptContent)) {
+                fullRepaintRequested = transcriptRows != 0 && transcriptRows != nextTranscriptRows;
+                transcript.setContent(nextTranscript);
+                transcriptContent = nextTranscript;
+                transcriptRows = nextTranscriptRows;
+                if (followTranscript) {
+                    transcript.gotoBottom();
+                    newOutputPending = false;
+                } else {
+                    newOutputPending = true;
+                }
             }
+            renderedTranscript = state.transcript();
+            renderedTranscriptColumns = state.columns();
         }
     }
 
@@ -482,4 +523,6 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private record PollMessage() implements Message {}
+
+    private record SubmissionCompletedMessage(MessageSubmissionResult result) implements Message {}
 }

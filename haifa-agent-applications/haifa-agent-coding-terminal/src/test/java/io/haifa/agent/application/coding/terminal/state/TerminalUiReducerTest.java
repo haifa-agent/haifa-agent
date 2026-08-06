@@ -288,6 +288,25 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void authoritativeInteractionCompletionClosesTheMatchingSelector() {
+        TerminalUiState selected = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                        "interaction:interaction-1", "Approval", List.of("approve", "reject"), 0)));
+
+        TerminalUiState completed = reducer.reduce(
+                selected,
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.InteractionLifecycle(
+                                "interaction-1", "APPROVAL", "RESPONDED", "ignored"))));
+
+        assertThat(completed.selector()).isEmpty();
+        assertThat(completed.status()).isEqualTo("Working");
+    }
+
+    @Test
     void steerRemainsPendingFromAcceptedUntilAppliedAndFollowUpsRemainDurable() {
         PendingMessage followUp = new PendingMessage("follow-1", PendingMessage.Kind.FOLLOW_UP, "Run tests", 1);
         TerminalUiState initial = reducer.reduce(
@@ -372,6 +391,8 @@ class TerminalUiReducerTest {
     @Test
     void recoveryCodesHaveActionableCategoriesWithoutLeakingExceptionMessages() {
         assertThat(TerminalRecovery.fromCode("EVENT_OUT_OF_ORDER").category())
+                .isEqualTo(TerminalRecovery.Category.RETRYABLE);
+        assertThat(TerminalRecovery.fromCode("TOOL_RESULT_PERSISTENCE_FAILED").category())
                 .isEqualTo(TerminalRecovery.Category.RETRYABLE);
         assertThat(TerminalRecovery.fromCode("MODIFIED_ENTER_UNAVAILABLE").category())
                 .isEqualTo(TerminalRecovery.Category.TERMINAL_CAPABILITY);

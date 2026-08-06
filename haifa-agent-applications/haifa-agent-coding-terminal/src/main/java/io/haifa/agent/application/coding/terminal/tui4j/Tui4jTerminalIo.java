@@ -88,6 +88,10 @@ public record Tui4jTerminalIo(
         return Optional.empty();
     }
 
+    TerminalHostInfo hostInfo() {
+        return TerminalHostInfo.system(environment);
+    }
+
     private Optional<String> value(String name) {
         String prefix = name + "=";
         return environment.stream()
@@ -112,8 +116,15 @@ public record Tui4jTerminalIo(
         // mappings for modified Enter; other CSI-u control keys can leak trailing text
         // into the editor (for example Ctrl+O becoming "5u"). Traditional control-key
         // input keeps Ctrl+O as keySI while the registered Enter fallbacks remain usable.
+        // Alternate-screen applications have no usable native scrollback because each frame
+        // replaces the viewport. Cell-motion reporting is therefore required for wheel events;
+        // terminal-native text selection remains available through Shift+drag. The selection
+        // helpers keep the transcript moving when a selection reaches a viewport edge.
         return new Program(model, options.toArray(ProgramOption[]::new))
                 .withAltScreen()
-                .withMouseCellMotion();
+                .withMouseCellMotion()
+                .withMouseSelectionExtendOnScroll()
+                .withMouseSelectionAutoScroll()
+                .withMouseSelectionCursor();
     }
 }

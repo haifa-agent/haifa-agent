@@ -333,19 +333,7 @@ public final class DecisionExecutor {
                         "Tool request rejected; repair the arguments or choose another capability.");
                 continue;
             } catch (RuntimeException failure) {
-                AgentError toolError = failure instanceof AgentExecutionFailureException classified
-                        ? classified.error()
-                        : call.error()
-                                .map(io.haifa.agent.core.tool.ToolExecutionError::error)
-                                .orElseGet(() -> new AgentError(
-                                        AgentErrorCode.TOOL_INVOCATION_FAILED,
-                                        Map.of("tool", call.toolName()),
-                                        ids.nextValue(),
-                                        time.now()));
-                step.fail(new AgentStepError(toolError), time.now());
-                state.appendStep(step);
-                appendToolResult(run, call, toolError.message());
-                throw new AgentExecutionFailureException(toolError, failure);
+                throw failToolAndCancelPendingSiblings(run, call, step, failure);
             }
             if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
                 step.waitForExternalInput();
@@ -515,7 +503,12 @@ public final class DecisionExecutor {
             else if (call.status() == ToolCallStatus.REQUESTED) step.start(time.now());
             state.appendStep(step);
             ToolRequest request = requestFrom(call);
-            ToolPipelineOutcome outcome = tools.execute(run, call, request, loopContext.iteration());
+            ToolPipelineOutcome outcome;
+            try {
+                outcome = tools.execute(run, call, request, loopContext.iteration());
+            } catch (RuntimeException failure) {
+                throw failToolAndCancelPendingSiblings(run, call, step, failure);
+            }
             if (outcome instanceof ToolPipelineOutcome.ApprovalRequired approval) {
                 step.waitForExternalInput();
                 state.appendStep(step);
@@ -539,6 +532,73 @@ public final class DecisionExecutor {
     }
 
     private record PendingTool(ToolCall call, AgentStep step) {}
+
+    private AgentExecutionFailureException failToolAndCancelPendingSiblings(
+            AgentRun run, ToolCall failedCall, AgentStep failedStep, RuntimeException failure) {
+        AgentError toolError = failure instanceof AgentExecutionFailureException classified
+                ? classified.error()
+                : failedCall
+                        .error()
+                        .map(io.haifa.agent.core.tool.ToolExecutionError::error)
+                        .orElseGet(() -> new AgentError(
+                                AgentErrorCode.TOOL_INVOCATION_FAILED,
+                                Map.of("tool", failedCall.toolName()),
+                                ids.nextValue(),
+                                time.now()));
+        if (failedStep.status() == AgentStepStatus.RUNNING || failedStep.status() == AgentStepStatus.WAITING) {
+            failedStep.fail(new AgentStepError(toolError), time.now());
+            state.appendStep(failedStep);
+        }
+        appendToolResult(run, failedCall, toolError.message());
+
+        for (ToolCall sibling : state.toolCalls(run.id())) {
+            if (sibling.id().equals(failedCall.id()) || sibling.startedAt().isPresent() || terminal(sibling.status()))
+                continue;
+            sibling.cancel(time.now());
+            state.appendToolCall(sibling);
+            state.steps(run.id()).stream()
+                    .filter(step -> step.id().equals(sibling.stepId()))
+                    .findFirst()
+                    .filter(step -> !terminal(step.status()))
+                    .ifPresent(step -> {
+                        step.cancel(time.now());
+                        state.appendStep(step);
+                    });
+            appendToolResult(run, sibling, "Tool call was cancelled because another call in the same batch failed.");
+            events.append(
+                    run.id(),
+                    "tool.cancelled",
+                    Map.of(
+                            "toolCallId",
+                            sibling.id().value(),
+                            "displayName",
+                            sibling.toolName(),
+                            "status",
+                            "CANCELLED",
+                            "reasonCode",
+                            "SIBLING_TOOL_FAILED",
+                            "targetSummary",
+                            sibling.toolName(),
+                            "resultRef",
+                            ""),
+                    time.now());
+        }
+        return new AgentExecutionFailureException(toolError, failure);
+    }
+
+    private static boolean terminal(ToolCallStatus status) {
+        return switch (status) {
+            case COMPLETED, FAILED, DENIED, CANCELLED, TIMEOUT -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean terminal(AgentStepStatus status) {
+        return switch (status) {
+            case COMPLETED, FAILED, CANCELLED, SKIPPED -> true;
+            default -> false;
+        };
+    }
 
     public void resolveToolApproval(
             AgentRun run,

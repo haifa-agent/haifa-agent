@@ -1,6 +1,7 @@
 package io.haifa.agent.application.coding.terminal.state;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
+import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -48,7 +49,7 @@ public final class TerminalUiReducer {
                     active.isPresent() ? "Working" : "Idle",
                     state.editorBuffer(),
                     state.editorCursor(),
-                    state.selector(),
+                    selectorAfterSessionLoad(state.selector(), view),
                     footer,
                     state.columns(),
                     state.rows(),
@@ -208,6 +209,13 @@ public final class TerminalUiReducer {
                     state.recoverableError(),
                     state.exitRequested());
         }
+        if (action instanceof TerminalUiAction.UserMessageRejected rejected) {
+            return copyWithTranscript(
+                    state,
+                    state.transcript().stream()
+                            .filter(item -> !item.id().equals(rejected.id()))
+                            .toList());
+        }
         if (action instanceof TerminalUiAction.EditorChanged editor) {
             return copy(
                     state,
@@ -353,7 +361,7 @@ public final class TerminalUiReducer {
                 status(event, state.status()),
                 state.editorBuffer(),
                 state.editorCursor(),
-                state.selector(),
+                selectorAfterEvent(state.selector(), event.payload()),
                 footer,
                 state.columns(),
                 state.rows(),
@@ -363,6 +371,29 @@ public final class TerminalUiReducer {
                 seen,
                 executionFailure,
                 state.exitRequested());
+    }
+
+    private static Optional<TerminalSelector> selectorAfterSessionLoad(
+            Optional<TerminalSelector> current, CodingSessionView view) {
+        if (current.isEmpty() || !current.orElseThrow().kind().startsWith("interaction:")) {
+            return current;
+        }
+        String expected = "interaction:"
+                + view.pendingInteraction()
+                        .map(interaction -> interaction.requestId().value())
+                        .orElse("");
+        return current.filter(selector -> selector.kind().equals(expected));
+    }
+
+    private static Optional<TerminalSelector> selectorAfterEvent(
+            Optional<TerminalSelector> current, AgentRunEvent.Payload payload) {
+        if (!(payload instanceof RunEventPayloads.InteractionLifecycle interaction)
+                || interaction.state().equals("PENDING")
+                || interaction.state().equals("REQUESTED")) {
+            return current;
+        }
+        String completed = "interaction:" + interaction.requestId();
+        return current.filter(selector -> !selector.kind().equals(completed));
     }
 
     private static List<TranscriptItem> project(List<TranscriptItem> current, AgentRunEvent event) {

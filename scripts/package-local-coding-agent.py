@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +48,7 @@ def build_cli(repository_directory: Path) -> Path:
         raise FileNotFoundError(f"Maven Wrapper is missing: {maven_wrapper}")
 
     print("Building the Haifa Coding Agent shaded JAR...", flush=True)
+    build_started_ns = time.time_ns()
     subprocess.run(
         [
             str(maven_wrapper),
@@ -82,7 +84,12 @@ def build_cli(repository_directory: Path) -> Path:
         raise RuntimeError(
             "More than one shaded CLI JAR was found; run the Maven clean package first."
         )
-    return jar_files[0]
+    jar_file = jar_files[0]
+    if jar_file.stat().st_mtime_ns < build_started_ns:
+        raise RuntimeError(
+            "The CLI build did not produce a fresh shaded JAR; refusing to deploy a stale artifact."
+        )
+    return jar_file
 
 
 def write_windows_launcher(output_directory: Path) -> None:

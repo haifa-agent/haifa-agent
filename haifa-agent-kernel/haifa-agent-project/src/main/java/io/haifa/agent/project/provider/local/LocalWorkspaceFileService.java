@@ -23,11 +23,13 @@ import io.haifa.agent.project.workspace.WorkspacePermission;
 import io.haifa.agent.project.workspace.WorkspaceStatus;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -119,33 +121,58 @@ public final class LocalWorkspaceFileService implements WorkspaceProvider {
             throw failure(WorkspaceFileErrorCode.WRONG_FILE_TYPE, path, "logical path is not a regular file");
         }
         try {
-            long size = Files.size(hostPath);
-            if (size > options.maxBytes() && !options.allowTruncation()) {
+            BasicFileAttributes before =
+                    Files.readAttributes(hostPath, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            long size = before.size();
+            if (options.offset() > size) {
+                throw failure(WorkspaceFileErrorCode.FILE_CURSOR_STALE, path, "read cursor is beyond the file end");
+            }
+            long remaining = size - options.offset();
+            if (remaining > options.maxBytes() && !options.allowTruncation()) {
                 throw failure(WorkspaceFileErrorCode.FILE_TOO_LARGE, path, "file exceeds the configured read budget");
             }
-            int readLimit = Math.toIntExact(Math.min(size, options.maxBytes()));
-            byte[] bytes;
-            try (var input = Files.newInputStream(hostPath)) {
-                bytes = input.readNBytes(readLimit);
+            int readLimit = Math.toIntExact(Math.min(remaining, options.maxBytes()));
+            ByteBuffer buffer = ByteBuffer.allocate(readLimit);
+            try (SeekableByteChannel channel = Files.newByteChannel(hostPath, StandardOpenOption.READ)) {
+                channel.position(options.offset());
+                while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
+                    // Bounded channel read; no allocation is proportional to the complete file.
+                }
             }
+            byte[] bytes = java.util.Arrays.copyOf(buffer.array(), buffer.position());
             if (looksBinary(bytes)) {
                 throw failure(WorkspaceFileErrorCode.BINARY_CONTENT, path, "binary content is not readable as text");
             }
-            String text = decode(bytes, options, path);
-            boolean truncated = size > bytes.length || text.length() > options.maxCharacters();
+            Decoded decoded = decode(bytes, options, path);
+            String text = decoded.text();
+            int consumedBytes = decoded.byteCount();
+            boolean truncated = options.offset() + consumedBytes < size || text.length() > options.maxCharacters();
             if (text.length() > options.maxCharacters()) {
                 if (!options.allowTruncation()) {
                     throw failure(WorkspaceFileErrorCode.FILE_TOO_LARGE, path, "text exceeds the character budget");
                 }
-                text = text.substring(0, options.maxCharacters());
+                int characters = options.maxCharacters();
+                if (characters < text.length()
+                        && characters > 0
+                        && Character.isHighSurrogate(text.charAt(characters - 1))) {
+                    characters--;
+                }
+                text = text.substring(0, characters);
+                consumedBytes = text.getBytes(options.charset()).length;
             }
-            verifyUnchanged(access, path, hostPath);
+            BasicFileAttributes after =
+                    Files.readAttributes(hostPath, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            verifyUnchanged(access, path, hostPath, before, after);
+            byte[] consumed = java.util.Arrays.copyOf(bytes, consumedBytes);
             return new FileContent(
                     path,
                     text,
                     options.charset(),
-                    bytes.length,
-                    (truncated ? "sha256-partial:" : "sha256:") + hash(bytes),
+                    options.offset(),
+                    consumedBytes,
+                    size,
+                    sourceVersion(before),
+                    (truncated || options.offset() > 0 ? "sha256-partial:" : "sha256:") + hash(consumed),
                     truncated);
         } catch (WorkspaceFileException exception) {
             throw exception;
@@ -247,10 +274,16 @@ public final class LocalWorkspaceFileService implements WorkspaceProvider {
         }
     }
 
-    private void verifyUnchanged(Access access, WorkspacePath logical, Path opened) {
+    private void verifyUnchanged(
+            Access access, WorkspacePath logical, Path opened, BasicFileAttributes before, BasicFileAttributes after) {
         Path current = resolveExisting(access, logical);
         if (!current.equals(opened)) {
             throw failure(WorkspaceFileErrorCode.PATH_ESCAPE, logical, "logical path changed during read");
+        }
+        if (before.size() != after.size()
+                || !before.lastModifiedTime().equals(after.lastModifiedTime())
+                || !Objects.equals(before.fileKey(), after.fileKey())) {
+            throw failure(WorkspaceFileErrorCode.FILE_CURSOR_STALE, logical, "file changed during read");
         }
     }
 
@@ -266,10 +299,10 @@ public final class LocalWorkspaceFileService implements WorkspaceProvider {
                             : attributes.isDirectory() ? FileType.DIRECTORY : FileType.OTHER;
             Optional<String> hash = Optional.empty();
             if (includeHash && type == FileType.FILE) {
-                if (attributes.size() > 16 * 1024 * 1024) {
-                    throw failure(WorkspaceFileErrorCode.FILE_TOO_LARGE, logical, "file exceeds metadata hash budget");
-                }
-                hash = Optional.of("sha256:" + hash(Files.readAllBytes(hostPath)));
+                hash = Optional.of("sha256:" + hashFile(hostPath));
+                BasicFileAttributes after =
+                        Files.readAttributes(hostPath, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                verifyUnchanged(access, logical, hostPath, attributes, after);
             }
             return new FileMetadata(
                     logical,
@@ -305,13 +338,13 @@ public final class LocalWorkspaceFileService implements WorkspaceProvider {
         }
     }
 
-    private static String decode(byte[] bytes, ReadOptions options, WorkspacePath path) {
+    private static Decoded decode(byte[] bytes, ReadOptions options, WorkspacePath path) {
         try {
             var decoder = options.charset()
                     .newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT);
-            return decoder.decode(ByteBuffer.wrap(bytes)).toString();
+            return new Decoded(decoder.decode(ByteBuffer.wrap(bytes)).toString(), bytes.length);
         } catch (CharacterCodingException exception) {
             if (options.allowTruncation()) {
                 for (int trim = 1; trim <= Math.min(4, bytes.length); trim++) {
@@ -320,8 +353,10 @@ public final class LocalWorkspaceFileService implements WorkspaceProvider {
                                 .newDecoder()
                                 .onMalformedInput(CodingErrorAction.REPORT)
                                 .onUnmappableCharacter(CodingErrorAction.REPORT);
-                        return decoder.decode(ByteBuffer.wrap(bytes, 0, bytes.length - trim))
-                                .toString();
+                        return new Decoded(
+                                decoder.decode(ByteBuffer.wrap(bytes, 0, bytes.length - trim))
+                                        .toString(),
+                                bytes.length - trim);
                     } catch (CharacterCodingException ignored) {
                         // Try the next possible incomplete trailing sequence.
                     }
@@ -365,6 +400,31 @@ public final class LocalWorkspaceFileService implements WorkspaceProvider {
         }
     }
 
+    private static String hashFile(Path path) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (var input = Files.newInputStream(path, java.nio.file.StandardOpenOption.READ)) {
+                byte[] buffer = new byte[64 * 1024];
+                int read;
+                while ((read = input.read(buffer)) >= 0) {
+                    if (read > 0) digest.update(buffer, 0, read);
+                }
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required", exception);
+        }
+    }
+
+    private static String sourceVersion(BasicFileAttributes attributes) {
+        String identity = attributes.size()
+                + ":"
+                + attributes.lastModifiedTime().toMillis()
+                + ":"
+                + Objects.toString(attributes.fileKey(), "");
+        return "sha256:" + hash(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     private static WorkspaceFileException failure(WorkspaceFileErrorCode code, WorkspacePath path, String message) {
         return new WorkspaceFileException(code, path, message);
     }
@@ -372,4 +432,6 @@ public final class LocalWorkspaceFileService implements WorkspaceProvider {
     private record Access(Workspace workspace, WorkspaceBinding binding, Path root) {}
 
     private record Candidate(Path hostPath, WorkspacePath logical) {}
+
+    private record Decoded(String text, int byteCount) {}
 }

@@ -21,8 +21,20 @@ import java.util.Set;
 /** Frozen CLI policy for generated directories that should not enter execution manifests. */
 final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnorePolicy {
     private static final long MAX_GITIGNORE_BYTES = 64 * 1024;
-    private static final Set<String> STANDARD_DIRECTORY_NAMES =
-            Set.of(".git", ".idea", ".vscode", "node_modules", "target", "build", "dist");
+    private static final Set<String> STANDARD_DIRECTORY_NAMES = Set.of(
+            ".git",
+            ".idea",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".tox",
+            ".venv",
+            ".vscode",
+            "__pycache__",
+            "node_modules",
+            "target",
+            "build",
+            "dist");
 
     private final List<DirectoryRule> rules;
     private final String version;
@@ -32,7 +44,7 @@ final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnoreP
                 .distinct()
                 .sorted(Comparator.comparing(DirectoryRule::identity))
                 .toList();
-        this.version = "cli-workspace-manifest-v2-sha256-"
+        this.version = "cli-workspace-manifest-v3-sha256-"
                 + sha256(this.rules.stream()
                                 .map(DirectoryRule::identity)
                                 .reduce("", (left, right) -> left + "\n" + right))
@@ -56,10 +68,16 @@ final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnoreP
     @Override
     public boolean ignores(FileMetadata metadata) {
         Objects.requireNonNull(metadata, "metadata must not be null");
-        List<String> segments = metadata.path().projectPath().segments().stream()
+        return ignores(metadata.path().projectPath(), metadata.type());
+    }
+
+    boolean ignores(io.haifa.agent.project.path.ProjectPath path, FileType type) {
+        Objects.requireNonNull(path, "path must not be null");
+        Objects.requireNonNull(type, "type must not be null");
+        List<String> segments = path.segments().stream()
                 .map(value -> value.toLowerCase(Locale.ROOT))
                 .toList();
-        return rules.stream().anyMatch(rule -> rule.matches(segments, metadata.type()));
+        return rules.stream().anyMatch(rule -> rule.matches(segments, type));
     }
 
     private static List<DirectoryRule> readRootGitignore(Path file) {
@@ -70,14 +88,21 @@ final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnoreP
                 return List.of();
             }
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            if (lines.stream().map(String::strip).anyMatch(line -> line.startsWith("!"))) {
-                return List.of();
-            }
-            return lines.stream()
+            List<DirectoryRule> ignored = lines.stream()
                     .map(String::strip)
-                    .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                    .filter(line -> !line.isEmpty() && !line.startsWith("#") && !line.startsWith("!"))
                     .map(CliWorkspaceManifestIgnorePolicy::directoryRule)
                     .flatMap(java.util.Optional::stream)
+                    .toList();
+            List<DirectoryRule> reIncluded = lines.stream()
+                    .map(String::strip)
+                    .filter(line -> line.startsWith("!") && line.length() > 1)
+                    .map(line -> line.substring(1))
+                    .map(CliWorkspaceManifestIgnorePolicy::reIncludedPath)
+                    .flatMap(java.util.Optional::stream)
+                    .toList();
+            return ignored.stream()
+                    .filter(rule -> reIncluded.stream().noneMatch(rule::couldContain))
                     .toList();
         } catch (IOException | RuntimeException ignored) {
             return List.of();
@@ -98,6 +123,10 @@ final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnoreP
             return java.util.Optional.empty();
         }
         return java.util.Optional.of(new DirectoryRule(anchored || segments.size() > 1, segments));
+    }
+
+    private static java.util.Optional<DirectoryRule> reIncludedPath(String line) {
+        return directoryRule(line.endsWith("/") ? line : line + "/");
     }
 
     private static boolean containsGlob(String value) {
@@ -139,12 +168,33 @@ final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnoreP
             return (anchored ? "/" : "") + String.join("/", segments) + "/";
         }
 
+        private boolean couldContain(DirectoryRule reIncluded) {
+            if (anchored) {
+                return startsWith(reIncluded.segments, segments);
+            }
+            if (segments.size() == 1) {
+                return reIncluded.segments.contains(segments.getFirst());
+            }
+            for (int index = 0; index <= reIncluded.segments.size() - segments.size(); index++) {
+                if (startsWith(reIncluded.segments.subList(index, reIncluded.segments.size()), segments)) return true;
+            }
+            return false;
+        }
+
         private static boolean startsWithDirectory(List<String> path, List<String> prefix, FileType type) {
             if (path.size() < prefix.size()) return false;
             for (int index = 0; index < prefix.size(); index++) {
                 if (!path.get(index).equals(prefix.get(index))) return false;
             }
             return path.size() > prefix.size() || type == FileType.DIRECTORY;
+        }
+
+        private static boolean startsWith(List<String> path, List<String> prefix) {
+            if (path.size() < prefix.size()) return false;
+            for (int index = 0; index < prefix.size(); index++) {
+                if (!path.get(index).equals(prefix.get(index))) return false;
+            }
+            return true;
         }
     }
 }

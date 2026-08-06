@@ -11,6 +11,7 @@ import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ManagedProcessRequest;
@@ -149,6 +150,7 @@ class ExecutionCoreTest {
 
                     @Override
                     public SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
+                        observer.onStarted();
                         observer.onOutput(new io.haifa.agent.execution.api.ProcessOutputChunk(
                                 ExecutionOutputChannel.STDOUT,
                                 "secret-".getBytes(StandardCharsets.UTF_8),
@@ -184,11 +186,23 @@ class ExecutionCoreTest {
         };
         DefaultExecutionBroker broker = fixture.broker(provider, request -> {});
         var streamed = new java.io.ByteArrayOutputStream();
+        AtomicInteger starts = new AtomicInteger();
 
         var result = broker.execute(
                 fixture.request("streamed", "streamed-key", Set.of("execution.run"), List.of("fake")),
-                chunk -> streamed.writeBytes(chunk.bytes()));
+                new ExecutionOutputObserver() {
+                    @Override
+                    public void onStarted() {
+                        starts.incrementAndGet();
+                    }
 
+                    @Override
+                    public void onOutput(io.haifa.agent.execution.api.ProcessOutputChunk chunk) {
+                        streamed.writeBytes(chunk.bytes());
+                    }
+                });
+
+        assertThat(starts).hasValue(1);
         assertThat(new String(streamed.toByteArray(), StandardCharsets.UTF_8)).isEqualTo("***\n");
         assertThat(result.stdout().summary()).isEqualTo("***\n");
 
@@ -198,6 +212,23 @@ class ExecutionCoreTest {
                     throw new IllegalStateException("presentation failed");
                 });
         assertThat(observerFailureResult.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
+    }
+
+    @Test
+    void rejectsUnavailablePreExecutionManifestBeforeOpeningTheProcess() throws Exception {
+        for (int index = 0; index < 101; index++) {
+            Files.writeString(root.resolve("file-" + index + ".txt"), "data");
+        }
+        Fixture fixture = fixture();
+        AtomicInteger processStarts = new AtomicInteger();
+        DefaultExecutionBroker broker =
+                fixture.broker(fakeProvider(processStarts::incrementAndGet, new byte[0]), ignored -> {});
+
+        assertThatThrownBy(() -> broker.execute(fixture.request(
+                        "manifest-failure", "manifest-failure-key", Set.of("execution.run"), List.of("fake"))))
+                .isInstanceOfSatisfying(ExecutionPreflightException.class, exception -> assertThat(exception.code())
+                        .isEqualTo("WORKSPACE_MANIFEST_UNAVAILABLE"));
+        assertThat(processStarts).hasValue(0);
     }
 
     @Test

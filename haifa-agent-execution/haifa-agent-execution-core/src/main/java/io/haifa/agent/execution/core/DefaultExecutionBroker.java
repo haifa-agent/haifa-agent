@@ -2,19 +2,21 @@ package io.haifa.agent.execution.core;
 
 import io.haifa.agent.execution.api.EnvironmentLeaseResolver;
 import io.haifa.agent.execution.api.ExecutionBroker;
-import io.haifa.agent.execution.api.ExecutionDispatchObserver;
 import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionOutputStore;
+import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ExecutionStore;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
+import io.haifa.agent.execution.core.change.ManifestWorkspaceChangeObserver;
+import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
+import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
 import io.haifa.agent.execution.core.manifest.ManifestDiffService;
-import io.haifa.agent.execution.core.manifest.WorkspaceManifest;
 import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
 import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
@@ -47,8 +49,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     private final SandboxProviderResolver providers;
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
-    private final WorkspaceManifestService manifests;
-    private final ManifestDiffService manifestDiff;
+    private final WorkspaceChangeObserver workspaceChanges;
     private final ObservedFileChangeService observedChanges;
     private final ConcurrentHashMap<ExecutionId, SandboxSession> active = new ConcurrentHashMap<>();
 
@@ -64,6 +65,30 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             WorkspaceManifestService manifests,
             ManifestDiffService manifestDiff,
             ObservedFileChangeService observedChanges) {
+        this(
+                executions,
+                outputs,
+                environments,
+                policy,
+                profiles,
+                providers,
+                workspaces,
+                bindings,
+                new ManifestWorkspaceChangeObserver(manifests, manifestDiff),
+                observedChanges);
+    }
+
+    public DefaultExecutionBroker(
+            ExecutionStore executions,
+            ExecutionOutputStore outputs,
+            EnvironmentLeaseResolver environments,
+            ExecutionPolicy policy,
+            SandboxResolver profiles,
+            SandboxProviderResolver providers,
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            WorkspaceChangeObserver workspaceChanges,
+            ObservedFileChangeService observedChanges) {
         this.executions = Objects.requireNonNull(executions, "executions must not be null");
         this.outputs = Objects.requireNonNull(outputs, "outputs must not be null");
         this.environments = Objects.requireNonNull(environments, "environments must not be null");
@@ -72,8 +97,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         this.providers = Objects.requireNonNull(providers, "providers must not be null");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.bindings = Objects.requireNonNull(bindings, "bindings must not be null");
-        this.manifests = Objects.requireNonNull(manifests, "manifests must not be null");
-        this.manifestDiff = Objects.requireNonNull(manifestDiff, "manifestDiff must not be null");
+        this.workspaceChanges = Objects.requireNonNull(workspaceChanges, "workspaceChanges must not be null");
         this.observedChanges = Objects.requireNonNull(observedChanges, "observedChanges must not be null");
     }
 
@@ -84,15 +108,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
 
     @Override
     public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-        return execute(request, observer, ExecutionDispatchObserver.noop());
-    }
-
-    @Override
-    public ExecutionResult execute(
-            ExecutionRequest request, ExecutionOutputObserver observer, ExecutionDispatchObserver dispatchObserver) {
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(observer, "observer must not be null");
-        Objects.requireNonNull(dispatchObserver, "dispatchObserver must not be null");
         Optional<ExecutionResult> replay = executions.findByIdempotencyKey(request.idempotencyKey());
         if (replay.isPresent()) {
             var previous = executions.findRequest(replay.orElseThrow().id()).orElseThrow();
@@ -106,9 +123,15 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         policy.authorize(request);
         ResolvedSandbox resolved = resolveSandbox(request, false);
         Map<String, String> environment = Map.copyOf(environments.resolve(request.environmentRef()));
-        WorkspaceManifest before = manifests.capture(request.workspaceId());
-        executions.create(request);
-        SandboxSession session = resolved.provider().open(resolved.profile(), resolved.mount());
+        WorkspaceChangeObservation changeObservation = beginChangeObservation(request);
+        SandboxSession session;
+        try {
+            executions.create(request);
+            session = resolved.provider().open(resolved.profile(), resolved.mount());
+        } catch (RuntimeException exception) {
+            changeObservation.cancel();
+            throw exception;
+        }
         active.put(request.id(), session);
         try (session) {
             io.haifa.agent.sandbox.api.SandboxProcessResult process;
@@ -122,8 +145,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                                 request.limits(),
                                 request.input(),
                                 request.scratchSpace()),
-                        safeObserver,
-                        dispatchObserver);
+                        safeObserver);
             }
             byte[] stdoutBytes = redact(process.stdout(), environment);
             byte[] stderrBytes = redact(process.stderr(), environment);
@@ -135,8 +157,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             ExecutionStatus status = map(process.status(), process.exitCode());
             ExecutionFailure failure = failure(status, process.processTreeTerminated());
             try {
-                WorkspaceManifest after = manifests.capture(request.workspaceId());
-                var changes = manifestDiff.diff(before, after);
+                var changes = changeObservation.complete();
                 if (!changes.isEmpty()) {
                     var workspace = workspaces.find(request.workspaceId()).orElseThrow();
                     changeSetId = observedChanges
@@ -174,6 +195,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             executions.complete(request, result);
             return result;
         } finally {
+            changeObservation.cancel();
             active.remove(request.id());
         }
     }
@@ -193,9 +215,15 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         policy.authorize(request);
         ResolvedSandbox resolved = resolveSandbox(request, true);
         Map<String, String> environment = Map.copyOf(environments.resolve(request.environmentRef()));
-        WorkspaceManifest before = manifests.capture(request.workspaceId());
-        executions.create(request);
-        SandboxSession sandbox = resolved.provider().open(resolved.profile(), resolved.mount());
+        WorkspaceChangeObservation changeObservation = beginChangeObservation(request);
+        SandboxSession sandbox;
+        try {
+            executions.create(request);
+            sandbox = resolved.provider().open(resolved.profile(), resolved.mount());
+        } catch (RuntimeException exception) {
+            changeObservation.cancel();
+            throw exception;
+        }
         active.put(request.id(), sandbox);
         try {
             var process = sandbox.openManagedProcess(new SandboxExecution(
@@ -205,8 +233,9 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                     request.limits(),
                     request.input(),
                     request.scratchSpace()));
-            return new BrokerManagedSession(request, sandbox, process, environment, before);
+            return new BrokerManagedSession(request, sandbox, process, environment, changeObservation);
         } catch (RuntimeException exception) {
+            changeObservation.cancel();
             active.remove(request.id());
             sandbox.close();
             throw exception;
@@ -265,7 +294,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         private final SandboxSession sandbox;
         private final io.haifa.agent.sandbox.api.SandboxManagedProcess process;
         private final Map<String, String> environment;
-        private final WorkspaceManifest before;
+        private final WorkspaceChangeObservation changeObservation;
         private final ByteArrayOutputStream stdout = new ByteArrayOutputStream();
         private final ByteArrayOutputStream stderr = new ByteArrayOutputStream();
         private final java.util.concurrent.atomic.AtomicBoolean closed =
@@ -277,13 +306,14 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 SandboxSession sandbox,
                 io.haifa.agent.sandbox.api.SandboxManagedProcess process,
                 Map<String, String> environment,
-                WorkspaceManifest before) {
+                WorkspaceChangeObservation changeObservation) {
             this.request = request;
             this.sandbox = sandbox;
             this.process = process;
             this.environment = environment;
-            this.before = before;
+            this.changeObservation = changeObservation;
             this.exit = process.exit().thenApply(this::complete);
+            this.exit.whenComplete((ignored, failure) -> changeObservation.cancel());
         }
 
         @Override
@@ -333,6 +363,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             try {
                 process.close();
             } finally {
+                changeObservation.cancel();
                 sandbox.close();
                 active.remove(request.id());
             }
@@ -352,8 +383,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             ExecutionStatus status = processExit.status();
             ExecutionFailure executionFailure = failure(status, processExit.processTreeTerminated());
             try {
-                WorkspaceManifest after = manifests.capture(request.workspaceId());
-                var changes = manifestDiff.diff(before, after);
+                var changes = changeObservation.complete();
                 if (!changes.isEmpty()) {
                     var workspace = workspaces.find(request.workspaceId()).orElseThrow();
                     changeSetId = observedChanges
@@ -409,9 +439,21 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                 && first.invocationDigest().equals(second.invocationDigest());
     }
 
+    private WorkspaceChangeObservation beginChangeObservation(ExecutionRequest request) {
+        try {
+            return workspaceChanges.begin(request.workspaceId());
+        } catch (RuntimeException exception) {
+            throw new ExecutionPreflightException(
+                    "WORKSPACE_MANIFEST_UNAVAILABLE",
+                    "workspace change baseline could not be established before execution",
+                    exception);
+        }
+    }
+
     private static ExecutionStatus map(SandboxProcessStatus status, Integer exitCode) {
         return switch (status) {
             case EXITED -> exitCode != null && exitCode == 0 ? ExecutionStatus.SUCCEEDED : ExecutionStatus.FAILED;
+            case OUTPUT_LIMIT_EXCEEDED -> ExecutionStatus.OUTPUT_LIMIT_EXCEEDED;
             case TIMED_OUT -> ExecutionStatus.TIMED_OUT;
             case CANCELLED -> ExecutionStatus.CANCELLED;
             case UNKNOWN -> ExecutionStatus.UNKNOWN;
@@ -422,6 +464,12 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         return switch (status) {
             case SUCCEEDED -> null;
             case FAILED -> new ExecutionFailure("NON_ZERO_EXIT", "process exited with a non-zero status");
+            case OUTPUT_LIMIT_EXCEEDED ->
+                new ExecutionFailure(
+                        treeTerminated ? "OUTPUT_LIMIT_EXCEEDED" : "OUTPUT_LIMIT_TREE_UNKNOWN",
+                        treeTerminated
+                                ? "process output exceeded its budget and the process tree was terminated"
+                                : "process output exceeded its budget and process tree termination is uncertain");
             case TIMED_OUT ->
                 new ExecutionFailure(
                         treeTerminated ? "TIMEOUT" : "TIMEOUT_TREE_UNKNOWN",

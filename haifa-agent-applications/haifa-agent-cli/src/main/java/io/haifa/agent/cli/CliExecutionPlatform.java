@@ -12,9 +12,6 @@ import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
 import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
-import io.haifa.agent.execution.core.manifest.ManifestBudget;
-import io.haifa.agent.execution.core.manifest.ManifestDiffService;
-import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.policy.api.PolicyDigest;
@@ -42,7 +39,6 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -99,7 +95,8 @@ final class CliExecutionPlatform {
             throw new IllegalArgumentException(
                     "SANDBOX_ADAPTER_UNAVAILABLE: configured execution provider is unavailable");
         }
-        SandboxProfile profile = profile(configuration, selected);
+        Map<String, String> environment = CliExecutionEnvironment.resolve(configuration, selected.providerId());
+        SandboxProfile profile = profile(configuration, selected, environment.keySet());
         var profileRegistry = new ImmutableSandboxProfileRegistry(List.of(profile));
         var providerRegistry = new ImmutableSandboxProviderRegistry(configuredProviders.values());
         SandboxPreflight preflight;
@@ -108,14 +105,10 @@ final class CliExecutionPlatform {
         } catch (SandboxException exception) {
             throw diagnostic(configuration, exception);
         }
-        Map<String, String> environment = environment(configuration, profile);
         ExecutionEnvironmentRef environmentRef = new ExecutionEnvironmentRef(
                 List.of("cli-execution-" + profile.contentDigest().value()));
-        var manifests = new WorkspaceManifestService(
-                workspaces,
-                files,
-                new ManifestBudget(100_000, 1024L * 1024 * 1024, 256L * 1024 * 1024),
-                CliWorkspaceManifestIgnorePolicy.load(workspaceRoot));
+        var ignorePolicy = CliWorkspaceManifestIgnorePolicy.load(workspaceRoot);
+        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceRoot, ignorePolicy);
         var observedChanges = new ObservedFileChangeService(workspaces, changeSets, changeSetService, time);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
@@ -127,8 +120,7 @@ final class CliExecutionPlatform {
                 providerRegistry,
                 workspaces,
                 bindings,
-                manifests,
-                new ManifestDiffService(),
+                workspaceChanges,
                 observedChanges);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
         var operations = new ProjectExecutionToolOperations(
@@ -221,6 +213,12 @@ final class CliExecutionPlatform {
     }
 
     static SandboxProfile profile(CliConfiguration.Execution configuration, SandboxProvider provider) {
+        Map<String, String> environment = CliExecutionEnvironment.resolve(configuration, provider.providerId());
+        return profile(configuration, provider, environment.keySet());
+    }
+
+    private static SandboxProfile profile(
+            CliConfiguration.Execution configuration, SandboxProvider provider, Set<String> inheritedEnvironment) {
         NetworkPolicy network = NetworkPolicy.valueOf(configuration.network().toUpperCase(java.util.Locale.ROOT));
         List<String> identityFields = new java.util.ArrayList<>();
         identityFields.add("cli-execution-v1");
@@ -243,7 +241,7 @@ final class CliExecutionPlatform {
                         .substring("sha256:".length());
         SandboxProfileRef reference = new SandboxProfileRef("cli-" + provider.providerId(), version);
         Set<String> allowedEnvironment = java.util.stream.Stream.concat(
-                        configuration.inheritEnvironment().stream(),
+                        inheritedEnvironment.stream(),
                         CodingToolchainEnvironmentProfile.defaultScratchSpace().environmentNames().stream())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         if (provider.providerId().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
@@ -265,20 +263,6 @@ final class CliExecutionPlatform {
                                 .map(CliConfiguration.ExtraPathPolicy::id)
                                 .collect(java.util.stream.Collectors.toUnmodifiableSet())),
                 new SandboxCapabilities(true, true, network == NetworkPolicy.DENY, false, false));
-    }
-
-    private static Map<String, String> environment(CliConfiguration.Execution configuration, SandboxProfile profile) {
-        var values = new LinkedHashMap<String, String>();
-        configuration.inheritEnvironment().stream().sorted().forEach(name -> {
-            if (profile.providerId().equals(LocalNativeSandboxProvider.PROVIDER_ID)
-                    && Set.of("HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "GOTMPDIR", "GOCACHE")
-                            .contains(name)) {
-                return;
-            }
-            String value = System.getenv(name);
-            if (value != null) values.put(name, value);
-        });
-        return Map.copyOf(values);
     }
 
     static IllegalArgumentException diagnostic(CliConfiguration.Execution configuration, SandboxException exception) {
@@ -313,6 +297,7 @@ final class CliExecutionPlatform {
     }
 
     static final class CliOutputObserver implements ExecutionOutputObserver {
+        private static final int MAX_PENDING_CHARACTERS = 8192;
         private final PrintStream output;
         private final StringBuilder pending = new StringBuilder();
 
@@ -336,6 +321,7 @@ final class CliExecutionPlatform {
             } else {
                 int newline = Math.max(pending.lastIndexOf("\n"), pending.lastIndexOf("\r"));
                 if (newline >= 0) flush(newline + 1);
+                while (pending.length() > MAX_PENDING_CHARACTERS) flush(MAX_PENDING_CHARACTERS);
             }
         }
 

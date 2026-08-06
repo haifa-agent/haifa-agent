@@ -9,6 +9,7 @@ import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionInput;
 import io.haifa.agent.execution.api.ExecutionLimits;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
+import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
@@ -22,6 +23,7 @@ import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
+import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
@@ -233,18 +235,9 @@ public final class ExecutionToolProvider implements ToolProvider {
                         io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(invocation.arguments()),
                         configuration.scratchSpace()),
                 configuration.scratchSpace());
-        AtomicBoolean dispatched = new AtomicBoolean();
-        try {
-            ToolResult result = execute(request, invocation.cancellation(), parsed, () -> {
-                if (dispatched.compareAndSet(false, true)) invocation.observer().dispatched();
-            });
-            invocation.observer().acknowledged();
-            return result;
-        } catch (ToolInvocationException exception) {
-            throw exception;
-        } catch (RuntimeException exception) {
-            throw invocationFailure(exception, dispatched.get());
-        }
+        ToolResult result = execute(request, invocation.cancellation(), invocation.observer(), parsed);
+        invocation.observer().acknowledged();
+        return result;
     }
 
     private ParsedInvocation parse(Map<String, Object> values) {
@@ -301,10 +294,13 @@ public final class ExecutionToolProvider implements ToolProvider {
     private ToolResult execute(
             ExecutionRequest request,
             ToolCancellation cancellation,
-            ParsedInvocation parsed,
-            io.haifa.agent.execution.api.ExecutionDispatchObserver dispatchObserver) {
+            ToolInvocationObserver invocationObserver,
+            ParsedInvocation parsed) {
         MergedTailObserver merged = new MergedTailObserver(
-                configuration.outputObserver(), configuration.maximumOutputBytes(), configuration.maximumOutputLines());
+                configuration.outputObserver(),
+                invocationObserver,
+                configuration.maximumOutputBytes(),
+                configuration.maximumOutputLines());
         AtomicBoolean complete = new AtomicBoolean();
         Thread watcher = Thread.ofVirtual()
                 .name("haifa-execution-tool-cancellation")
@@ -319,7 +315,11 @@ public final class ExecutionToolProvider implements ToolProvider {
                     }
                 });
         try {
-            return toToolResult(broker.execute(request, merged, dispatchObserver), merged, parsed);
+            return toToolResult(broker.execute(request, merged), merged, parsed);
+        } catch (ToolInvocationException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw invocationFailure(exception, merged.started());
         } finally {
             complete.set(true);
             watcher.interrupt();
@@ -338,6 +338,9 @@ public final class ExecutionToolProvider implements ToolProvider {
         } else if (exception instanceof ManifestBudgetException) {
             code = "MANIFEST_BUDGET_EXCEEDED";
             message = "workspace manifest exceeded the configured execution budget";
+        } else if (exception instanceof ExecutionPreflightException preflight) {
+            code = preflight.code();
+            message = preflight.getMessage();
         } else {
             code = "EXECUTION_PROVIDER_FAILED";
             message = "execution provider failed";
@@ -377,6 +380,7 @@ public final class ExecutionToolProvider implements ToolProvider {
                 switch (result.status()) {
                     case SUCCEEDED -> parsed.mode.equals("SCRIPT") ? "Script succeeded" : "Command succeeded";
                     case FAILED -> parsed.mode.equals("SCRIPT") ? "Script failed" : "Command failed";
+                    case OUTPUT_LIMIT_EXCEEDED -> "Execution stopped after reaching its output budget";
                     case TIMED_OUT -> "Execution timed out";
                     case CANCELLED -> "Execution was cancelled";
                     case UNKNOWN -> "Execution outcome is unknown";
@@ -447,16 +451,31 @@ public final class ExecutionToolProvider implements ToolProvider {
 
     private static final class MergedTailObserver implements ExecutionOutputObserver {
         private final ExecutionOutputObserver delegate;
-        private final byte[] tail;
+        private final ToolInvocationObserver invocationObserver;
+        private final AtomicBoolean started = new AtomicBoolean();
+        private final io.haifa.agent.execution.api.BoundedOutputBuffer output;
         private final int maximumLines;
-        private long count;
-        private long lines;
         private boolean upstreamTruncated;
 
-        private MergedTailObserver(ExecutionOutputObserver delegate, int maximumBytes, int maximumLines) {
+        private MergedTailObserver(
+                ExecutionOutputObserver delegate,
+                ToolInvocationObserver invocationObserver,
+                int maximumBytes,
+                int maximumLines) {
             this.delegate = delegate;
-            tail = new byte[maximumBytes];
+            this.invocationObserver = invocationObserver;
+            output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximumBytes);
             this.maximumLines = maximumLines;
+        }
+
+        @Override
+        public void onStarted() {
+            if (started.compareAndSet(false, true)) invocationObserver.dispatched();
+            try {
+                delegate.onStarted();
+            } catch (RuntimeException ignored) {
+                // Rendering failures cannot change the authoritative dispatch boundary.
+            }
         }
 
         @Override
@@ -467,47 +486,45 @@ public final class ExecutionToolProvider implements ToolProvider {
             } catch (RuntimeException ignored) {
                 // Rendering or transport observers do not own the authoritative Tool result.
             }
-            for (byte value : chunk.bytes()) {
-                tail[(int) (count % tail.length)] = value;
-                count++;
-                if (value == '\n') lines++;
-            }
+            output.write(chunk.bytes());
         }
 
         private synchronized String text() {
-            int length = (int) Math.min(count, tail.length);
-            byte[] result = new byte[length];
-            if (count <= tail.length) {
-                System.arraycopy(tail, 0, result, 0, length);
-            } else {
-                int start = (int) (count % tail.length);
-                int first = tail.length - start;
-                System.arraycopy(tail, start, result, 0, first);
-                System.arraycopy(tail, 0, result, first, start);
-            }
-            return keepLastLines(sanitize(new String(result, StandardCharsets.UTF_8)), maximumLines);
+            return keepHeadAndTailLines(sanitize(new String(output.bytes(), StandardCharsets.UTF_8)), maximumLines);
         }
 
         private synchronized boolean truncated() {
-            return upstreamTruncated || count > tail.length || lines > maximumLines;
+            String retained = sanitize(new String(output.bytes(), StandardCharsets.UTF_8));
+            return upstreamTruncated || output.truncated() || lineCount(retained) > maximumLines;
         }
 
-        private static String keepLastLines(String value, int maximumLines) {
-            int newlineCount = 0;
-            for (int index = value.length() - 1; index >= 0; index--) {
-                if (value.charAt(index) == '\n' && ++newlineCount > maximumLines) {
-                    return value.substring(index + 1);
-                }
-            }
-            return value;
+        private boolean started() {
+            return started.get();
+        }
+
+        private static String keepHeadAndTailLines(String value, int maximumLines) {
+            String[] lines = value.split("(?<=\\n)");
+            if (lines.length <= maximumLines) return value;
+            int head = (maximumLines + 1) / 2;
+            int tail = maximumLines - head;
+            StringBuilder bounded = new StringBuilder(value.length());
+            for (int index = 0; index < head; index++) bounded.append(lines[index]);
+            bounded.append("... ").append(lines.length - maximumLines).append(" lines omitted ...\n");
+            for (int index = lines.length - tail; index < lines.length; index++) bounded.append(lines[index]);
+            return bounded.toString();
         }
 
         private static String bound(String value, int maximumBytes, int maximumLines) {
             byte[] bytes = Objects.requireNonNullElse(value, "").getBytes(StandardCharsets.UTF_8);
-            int start = Math.max(0, bytes.length - maximumBytes);
-            while (start < bytes.length && (bytes[start] & 0xC0) == 0x80) start++;
-            return keepLastLines(
-                    sanitize(new String(bytes, start, bytes.length - start, StandardCharsets.UTF_8)), maximumLines);
+            var output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximumBytes);
+            output.write(bytes);
+            return keepHeadAndTailLines(sanitize(new String(output.bytes(), StandardCharsets.UTF_8)), maximumLines);
+        }
+
+        private static long lineCount(String value) {
+            if (value.isEmpty()) return 0;
+            long breaks = value.chars().filter(character -> character == '\n').count();
+            return breaks + (value.endsWith("\n") ? 0 : 1);
         }
 
         private static String sanitize(String value) {

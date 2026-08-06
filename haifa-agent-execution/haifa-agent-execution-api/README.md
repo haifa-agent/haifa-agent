@@ -1,8 +1,8 @@
 # Haifa Agent Execution API
 
-`ExecutionDispatchObserver` marks the irreversible dispatch boundary. Process-backed brokers notify it only after
-the operating-system process has started; validation, policy, manifest, environment, workspace, and scratch
-provisioning failures remain not dispatched.
+`ExecutionOutputObserver.onStarted()` marks the irreversible dispatch boundary. Process-backed providers notify it
+only after the operating-system process has started; validation, policy, manifest, environment, workspace, and
+scratch provisioning failures remain not dispatched.
 
 Provider-neutral 的执行契约，定义有界请求、可信调用上下文、幂等执行、取消、结构化结果、输出存储和环境租约端口。
 

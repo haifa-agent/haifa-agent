@@ -116,10 +116,14 @@ delta，重复 frame 不重新解析；只有权威正文替换或 16 KB 有界�
 - [ ] OSC 8 可点击链接（当前显示 `label (URL)`）；
 - [ ] Tool 专用预览器、跨 Tool 聚合和批量展开；首版保持每个稳定 Tool Call ID 可独立审计。
 
-Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示
-`enter steer · alt+enter follow-up · esc interrupt`。等待模型或其他活动 Run 场景的状态显示为
-`Working (XXm YYs · esc to interrupt)`，使用进程内单调时钟累计，不写入 Session 或持久化事实。macOS 的 Option 对应 Terminal Alt；
-`Shift+Enter` 和 `Ctrl+J` 都用于换行。Phase C 会从终端能力白名单中识别 Windows Terminal、
+Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显示对应宿主的 Follow-up 与 Interrupt
+快捷键。Windows/Linux 使用 `ctrl+o`、`alt+enter`、`alt+up` 等文本标签；macOS 使用 Apple 标准
+`MAC_SPECIAL` 符号 `⌃O`、`⌥↩`、`⌥↑`、`⇧↩/⌃J`，并分别匹配终端实际产生的 Control/Option
+事件，不把当前 tui4j 无法可靠接收的 Command 键标成可用快捷键。启动时只采集白名单内的
+`os.name`、`os.version`、`os.arch`、`java.version`、`TERM_PROGRAM` 和 `TERM_PROGRAM_VERSION`，
+用于平台选择与兼容性判断，不收集任意环境变量，也不持久化这些宿主事实。等待模型或其他活动 Run
+场景的状态显示为 `Working (XXm YYs · esc to interrupt)`，使用进程内单调时钟累计，不写入 Session
+或持久化事实。Phase C 会从终端能力白名单中识别 Windows Terminal、
 WezTerm、Alacritty、Apple Terminal 和常见受限终端：存在修饰 Enter 冲突时显示可执行 remap 或
 `Ctrl+J` fallback，但不读取秘密、不写入用户终端配置。非交互输入或 `TERM=dumb` 在装配产品 Runtime
 前以稳定 `TUI_UNAVAILABLE` 失败。
@@ -142,9 +146,9 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随。
-- 鼠标滚轮与 PageUp/PageDown 一样只滚动 Transcript Viewport，不浏览输入历史或移动 Editor 光标；
-  滚动在当前帧布局重新计算 Viewport 尺寸后生效，内容超过一屏或窗口 Resize 后仍可回翻；向下滚到
-  底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和多行光标移动语义。
+- 终端不启用鼠标事件上报，普通拖拽由宿主终端原生选择和复制文字；Transcript 使用
+  PageUp/PageDown 回翻，PageDown 到底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和
+  多行光标移动语义。
 
 终端采用 tui4j `Program`、`Model`、`Viewport` 和 `Textarea`。Runtime 回调只写入有界 Action Queue；
 50ms tick 在 Program 事件循环中排空队列，再由既有 Reducer 归约到唯一 `TerminalUiState` 并生成
@@ -157,6 +161,9 @@ tick 重试，不会终止渲染轮询或截断后续回复。
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
 keypad 和光标。
 
+alternate screen 不提供可靠的终端原生历史回滚，因此生产配置启用 mouse cell-motion，将滚轮事件路由到
+Transcript viewport；`PageUp/PageDown` 提供键盘回看，`Shift+拖拽` 保留终端原生文字选择与复制。
+
 Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
 序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width
 对齐。Transcript 和固定区域同样按 cell width 截断，并在渲染前移除 ESC、控制字符和 Tab 注入。
@@ -164,6 +171,8 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 
 - 普通首条消息创建真实 Coding Session/Run；
 - Idle Enter 提交新 Turn，Active Enter 发送 Steer；
+- 普通对话按 Enter 后先清空 Editor、显示用户消息与 `Submitting`，再由 tui4j Command Worker 执行
+  Session/Runtime IO；完成结果只在 UI 线程归约，避免提交期间冻结首次可见反馈；
 - Run 进入 `COMPLETED`、`FAILED`、`CANCELLED` 或 `TIMEOUT` 后立即回到 Idle；同一已结束 Run 随后
   到达的 Checkpoint/Resource 事件不得把它重新标记为 Active，下一次 Enter 必须提交新 Turn；
 - Active Alt+Enter 写入持久 Follow-up Queue，Alt+Up 选择并恢复待发消息；
@@ -247,13 +256,29 @@ key，并在所有重启间保持不变。
 13. Active Enter 后观察 Steer 从 accepted 保持到 applied；Alt+Enter 后观察持久 Follow-up Queue，
     Alt+Up 恢复且重启后不重复。
 14. PageUp 离开底部后产生新输出，确认 viewport 不跳动且出现 `new output below`；PageDown 回到底部
-    后提示消失。先以大窗口渲染、再缩小窗口并滚轮向上，确认仍能回翻到上一屏内容。
+    后提示消失。先以大窗口渲染、再缩小窗口并用 PageUp 回翻；同时确认鼠标拖拽可由宿主终端选择文字。
 
 真实模型和 Web Provider 可能产生费用；未经单独授权保持 **NOT RUN**。自动化验证只使用 Stub/Fake：
 
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-coding-agent,:haifa-agent-coding-terminal,:haifa-agent-cli -am test
 ```
+
+## UI thread and background effects
+
+The tui4j update thread only handles input, pure state reduction, and rendering. Runtime, storage,
+workspace discovery, shell execution, session commands, reconcile, replay, subscription changes,
+and cursor persistence run on bounded background executors. Latency-critical approval, cancel, and interrupt
+operations use a CONTROL lane; ordinary interaction uses INTERACTIVE; cursor and recovery work uses MAINTENANCE. User actions first project an
+immediate state such as `Approving`, `Cancelling`, or `Running shell command`; immutable completion
+messages return to the UI thread on the next polling turn. A pending/requested interaction event queries only its
+authoritative `InteractionView` on CONTROL and does not reload the Session, replay history, or rebuild subscriptions.
+Reconciles are reserved for queue overflow, closed subscriptions, version races, and
+explicit recovery.
+
+Event replay retains at most the latest 2,000 lifecycle events in one background load so reopening a
+large session cannot allocate an unbounded intermediate list. Durable conversation messages remain
+the authoritative reopened transcript.
 
 ## Assistant streaming boundary
 

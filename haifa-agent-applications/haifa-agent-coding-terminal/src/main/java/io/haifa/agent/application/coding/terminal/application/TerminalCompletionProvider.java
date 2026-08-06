@@ -7,18 +7,18 @@ import java.util.function.Supplier;
 /** Bounded completion over supported commands and product-provided logical paths only. */
 public final class TerminalCompletionProvider {
     public static final List<String> COMMANDS = List.of(
+            "/model",
             "/new",
             "/resume",
+            "/compact",
+            "/session",
+            "/reload",
             "/rename",
+            "/export",
             "/archive",
             "/delete",
-            "/reload",
-            "/compact",
-            "/export",
-            "/model",
-            "/session",
-            "/help",
             "/commands",
+            "/help",
             "/quit");
     private static final int MAX_CANDIDATES = 16;
 
@@ -29,7 +29,12 @@ public final class TerminalCompletionProvider {
     }
 
     public List<String> suggestions(String word) {
+        return suggestions(word, word.startsWith("@") ? logicalPaths.get() : List.of());
+    }
+
+    public List<String> suggestions(String word, List<String> availableLogicalPaths) {
         Objects.requireNonNull(word, "word must not be null");
+        Objects.requireNonNull(availableLogicalPaths, "availableLogicalPaths must not be null");
         if (word.startsWith("/")) {
             return COMMANDS.stream()
                     .filter(value -> value.startsWith(word))
@@ -37,7 +42,7 @@ public final class TerminalCompletionProvider {
                     .toList();
         }
         if (word.startsWith("@")) {
-            return logicalPaths.get().stream()
+            return availableLogicalPaths.stream()
                     .map(TerminalCompletionProvider::safeLogicalPath)
                     .filter(TerminalCompletionProvider::isVisibleLogicalPath)
                     .filter(value -> value.startsWith(word.substring(1)))

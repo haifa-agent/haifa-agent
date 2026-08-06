@@ -494,6 +494,7 @@ class OpenAiCompatibleChatModelTest {
         response.set(Response.json(400, "{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"too long\"}}"));
         assertThatThrownBy(() -> model().invoke(simpleRequest()))
                 .isInstanceOf(ModelInvocationException.class)
+                .hasMessageContaining("too long")
                 .satisfies(error -> assertThat(((ModelInvocationException) error).category())
                         .isEqualTo(ModelErrorCategory.CONTEXT_TOO_LONG));
 
