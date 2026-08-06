@@ -2,9 +2,9 @@
 
 ## API Style 与 dialect
 
-本模块实现彼此独立的 `openai-chat-completions` 与 `openai-responses`。二者复用 Java HTTP、凭据解析和
-安全限制，但 Responses 使用自己的 Item 请求/响应与语义 SSE accumulator，不复用 Chat 的
-`messages`/`choices` DTO 或 parser。Provider ID 不参与 Style 或 dialect 推断。
+本模块实现彼此独立的 `openai-chat-completions`、`openai-responses` 与 `anthropic-messages`。三者复用
+Java HTTP、凭据解析和安全限制，但分别拥有自己的请求/响应 DTO 与 SSE accumulator，不跨 Style 复用
+`messages`、`choices`、Item 或 Content Block parser。Provider ID 不参与 Style 或 dialect 推断。
 
 Chat Completions 当前支持：
 
@@ -35,6 +35,19 @@ Parser 对累计响应、单事件、事件数、内容和 Tool 参数设限；�
 并以 Responses 终态收敛而不等待 `[DONE]`。本地 `chatgpt2api` 文本与 SSE 使用 `standard`，但普通
 function tool 当前不产生 `function_call`，所以对应模型能力只声明 `TEXT_CHAT`。
 
+## Anthropic Messages
+
+`AnthropicMessagesModel` 以 Anthropic Messages 官方契约作为 `standard`：请求使用 `POST /v1/messages`、
+`x-api-key` 与 `anthropic-version: 2023-06-01`，映射顶层 system、Content Blocks、`tool_use`、
+`tool_result`、`input_schema`、usage 和 named SSE。thinking、signature 与 redacted thinking 只作为受保护
+continuation 保留，不进入公共输出；Tool 参数 JSON、累计响应、事件数和单事件均受限。
+
+DeepSeek Anthropic API 使用显式 `deepseek-anthropic-messages` dialect，因为其 ignored/unsupported 字段、
+模型映射与 thinking 行为不完全等同 Anthropic standard。该 dialect 仅允许已验证的
+`deepseek-v4-flash`/`deepseek-v4-pro`，拒绝图片、文档、redacted thinking 和 server tools；产品默认
+冻结 `thinking=disabled`。Binding 使用完整 Endpoint 覆盖 `https://api.deepseek.com/anthropic`，共享
+Credential 与 `nativeStreaming` 仍归 Provider 所有。
+
 ## 阿里云百炼
 
 使用 `AliyunBailianProviderFactory` 从外部治理配置构造 Provider 和模型 profile，不在 adapter 中固定
@@ -49,8 +62,7 @@ binding/lease。
 `preserve_thinking`、`reasoning_effort`、`tool_stream`；`tool_stream` 默认不发送。百炼 thinking 复用
 Runtime 的受保护 continuation，raw reasoning 不进入公共输出。
 
-百炼当前仅支持 OpenAI Chat Completions。DashScope 原生协议和 Anthropic-compatible 不在 Phase 1；
-Responses 已作为本模块内独立 Adapter 落地。
+百炼当前仅支持 OpenAI Chat Completions。DashScope 原生协议和百炼 Anthropic-compatible 尚未接入。
 
 ## 火山方舟
 
@@ -122,11 +134,20 @@ models:
           dialect: deepseek-openai-chat
         - style: openai-responses
           dialect: deepseek-openai-responses
+        - style: anthropic-messages
+          dialect: deepseek-anthropic-messages
+          endpoint: https://api.deepseek.com/anthropic
       models:
         - id: deepseek-responses-flash
           providerModelId: deepseek-v4-flash
           style: openai-responses
           capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-anthropic-flash
+          providerModelId: deepseek-v4-flash
+          style: anthropic-messages
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
           contextWindow: 131072
           maxOutputTokens: 8192
 ```
@@ -182,6 +203,10 @@ HAIFA_OPENAI_RESPONSES_LIVE_TEST=true
 OPENAI_BASE_URL=http://127.0.0.1:30000/v1
 OPENAI_API_KEY=<secret>
 OPENAI_MODEL_ID=<model-id>
+
+HAIFA_DEEPSEEK_ANTHROPIC_LIVE_TEST=true
+DEEPSEEK_API_KEY=<secret>
+HAIFA_DEEPSEEK_ANTHROPIC_MODEL_ID=deepseek-v4-flash
 ```
 
 百炼 Live IT 还要求显式设置（会产生真实费用）：

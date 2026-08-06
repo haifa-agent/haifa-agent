@@ -52,6 +52,9 @@ haifa:
             dialect: deepseek-openai-chat
           - style: openai-responses
             dialect: deepseek-openai-responses
+          - style: anthropic-messages
+            dialect: deepseek-anthropic-messages
+            endpoint: https://api.deepseek.com/anthropic
         models:
           - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID:deepseek-chat-pro}
             display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME:DeepSeek Chat Pro}
@@ -72,6 +75,13 @@ haifa:
             provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_PROVIDERMODELID:deepseek-v4-flash}
             style: openai-responses
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 131072
+            max-output-tokens: 8192
+          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_ID:deepseek-anthropic-flash}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_DISPLAYNAME:DeepSeek Anthropic Messages Flash}
+            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_PROVIDERMODELID:deepseek-v4-flash}
+            style: anthropic-messages
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
             context-window: 131072
             max-output-tokens: 8192
       - id: local-openai

@@ -126,7 +126,16 @@ class CliConfigurationLoaderTest {
                         "deepseek-chat-flash",
                         "deepseek-chat-pro",
                         "deepseek-responses-flash",
+                        "deepseek-anthropic-flash",
                         "local-openai-responses");
+        assertThat(result.availableModels())
+                .filteredOn(model -> model.id().equals("deepseek-anthropic-flash"))
+                .singleElement()
+                .satisfies(model -> {
+                    assertThat(model.style()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
+                    assertThat(model.dialect()).isEqualTo("deepseek-anthropic-messages");
+                    assertThat(model.endpoint()).hasToString("https://api.deepseek.com/anthropic");
+                });
         assertThat(result.availableModels())
                 .filteredOn(model -> model.id().equals("local-openai-responses"))
                 .singleElement()
@@ -262,7 +271,7 @@ class CliConfigurationLoaderTest {
         assertThat(defaults.model().id()).isEqualTo("deepseek-responses-flash");
         assertThat(defaults.availableModels())
                 .extracting(CliConfiguration.Model::id)
-                .containsExactly("deepseek-responses-flash", "deepseek-chat-pro");
+                .containsExactly("deepseek-responses-flash", "deepseek-chat-pro", "deepseek-anthropic-flash");
         assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
         assertThat(snapshot.dialect()).isEqualTo("deepseek-openai-responses");
         assertThat(snapshot.capabilities()).contains(ModelCapability.REASONING);
@@ -270,6 +279,22 @@ class CliConfigurationLoaderTest {
                 .doesNotContainKeys("thinking", "reasoning_effort", "requires_reasoning_continuation");
         assertThat(snapshot.invocationOptions())
                 .doesNotContainKeys("thinking", "reasoning_effort", "requires_reasoning_continuation");
+    }
+
+    @Test
+    void freezesDeepSeekAnthropicEndpointAndDisabledThinking() {
+        var model = CliConfiguration.defaults().availableModels().stream()
+                .filter(candidate -> candidate.id().equals("deepseek-anthropic-flash"))
+                .findFirst()
+                .orElseThrow();
+
+        var snapshot = LocalCodingAgent.modelSnapshot(model);
+
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
+        assertThat(snapshot.adapterType()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER);
+        assertThat(snapshot.dialect()).isEqualTo("deepseek-anthropic-messages");
+        assertThat(snapshot.endpoint()).hasToString("https://api.deepseek.com/anthropic");
+        assertThat(snapshot.invocationOptions()).containsEntry("thinking", "disabled");
     }
 
     @Test

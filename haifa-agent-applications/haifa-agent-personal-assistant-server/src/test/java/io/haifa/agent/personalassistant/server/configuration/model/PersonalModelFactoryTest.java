@@ -155,6 +155,34 @@ class PersonalModelFactoryTest {
     }
 
     @Test
+    void freezesDeepSeekAnthropicBindingEndpointAndDisabledThinking() {
+        var provider = provider(
+                "deepseek",
+                "DeepSeek",
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "anthropic-messages",
+                        "deepseek-anthropic-messages",
+                        URI.create("https://api.deepseek.com/anthropic"))),
+                List.of(model(
+                        "deepseek-anthropic-flash",
+                        "DeepSeek Anthropic Messages Flash",
+                        "deepseek-v4-flash",
+                        "anthropic-messages")));
+
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(provider), "deepseek-anthropic-flash", new ObjectMapper(), shell());
+        var snapshot = platform.contribution().snapshot();
+
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
+        assertThat(snapshot.adapterType()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER);
+        assertThat(snapshot.endpoint()).hasToString("https://api.deepseek.com/anthropic");
+        assertThat(snapshot.invocationOptions()).containsEntry("thinking", "disabled");
+    }
+
+    @Test
     void permitsInsecureHttpOnlyForExplicitLoopbackModelEndpoints() {
         var loopback = provider(
                 "openai",

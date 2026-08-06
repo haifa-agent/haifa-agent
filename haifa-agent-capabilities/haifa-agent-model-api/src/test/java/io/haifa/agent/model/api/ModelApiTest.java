@@ -135,6 +135,8 @@ class ModelApiTest {
                 model(providerId, "chat-model", "same-provider-model", ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
         ModelDefinition responses =
                 model(providerId, "responses-model", "same-provider-model", ModelApiStyles.OPENAI_RESPONSES);
+        ModelDefinition anthropic =
+                model(providerId, "anthropic-model", "same-provider-model", ModelApiStyles.ANTHROPIC_MESSAGES);
         URI providerEndpoint = URI.create("https://model.example.com/v1");
         URI responsesEndpoint = URI.create("https://responses.example.com/v1");
 
@@ -149,8 +151,12 @@ class ModelApiTest {
                 List.of(
                         new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS),
                         new ModelApiBindingDefinition(
-                                ModelApiStyles.OPENAI_RESPONSES, "vendor-responses", responsesEndpoint)),
-                List.of(chat, responses),
+                                ModelApiStyles.OPENAI_RESPONSES, "vendor-responses", responsesEndpoint),
+                        new ModelApiBindingDefinition(
+                                ModelApiStyles.ANTHROPIC_MESSAGES,
+                                "vendor-anthropic",
+                                URI.create("https://messages.example.com"))),
+                List.of(chat, responses, anthropic),
                 Map.of(),
                 Map.of());
 
@@ -163,9 +169,11 @@ class ModelApiTest {
                 .isEqualTo(providerEndpoint);
         assertThat(provider.binding(ModelApiStyles.OPENAI_RESPONSES).resolveEndpoint(provider.endpoint()))
                 .isEqualTo(responsesEndpoint);
+        assertThat(ModelApiStyles.adapterType(ModelApiStyles.ANTHROPIC_MESSAGES))
+                .isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER);
         assertThat(provider.models())
                 .extracting(ModelDefinition::providerModelId)
-                .containsExactly("same-provider-model", "same-provider-model");
+                .containsExactly("same-provider-model", "same-provider-model", "same-provider-model");
 
         assertThatThrownBy(() -> new ModelProviderDefinition(
                         providerId,

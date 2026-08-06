@@ -83,16 +83,21 @@ public final class DeepSeekRuntimeMain {
                 .filter(candidate -> candidate.id().equals(DeepSeekDefaults.MODEL_ID))
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("DeepSeek V4 Pro model definition is unavailable"));
+        var binding = provider.binding(modelDefinition.style());
+        String adapterType = io.haifa.agent.model.api.ModelApiStyles.adapterType(modelDefinition.style());
         ResolvedModelSnapshot modelSnapshot = ResolvedModelSnapshot.create(
                 provider.id(),
                 provider.version(),
                 modelDefinition.id(),
                 modelDefinition.version(),
                 modelDefinition.providerModelId(),
-                provider.adapterType(),
+                adapterType,
                 "1.0.0",
-                provider.endpoint(),
+                modelDefinition.style(),
+                binding.dialect(),
+                binding.resolveEndpoint(provider.endpoint()),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 modelDefinition.capabilities(),
                 modelDefinition.contextWindow(),
                 maxOutputTokens,
@@ -131,7 +136,7 @@ public final class DeepSeekRuntimeMain {
                     .timeProvider(time)
                     .persistence(persistence)
                     .scheduler(scheduler)
-                    .registerChatModel(provider.adapterType(), "1.0.0", model)
+                    .registerChatModel(adapterType, "1.0.0", model)
                     .definitions((id, requestedVersion) -> new ResolvedDefinition(
                             id,
                             requestedVersion.orElse(new AgentDefinitionVersion(1, 0, 0)),

@@ -7,6 +7,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -97,8 +98,11 @@ class PersonalQuestionRecommenderTest {
                 "test-model",
                 "test-adapter",
                 "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "standard",
                 URI.create("https://example.test/v1"),
                 new CredentialRef("env://TEST_KEY"),
+                false,
                 Set.of(ModelCapability.TEXT_CHAT),
                 8_192,
                 1_024,

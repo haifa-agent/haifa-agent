@@ -6,6 +6,7 @@ import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -143,9 +144,26 @@ record CliConfiguration(
                         ModelCapability.REASONING),
                 131_072,
                 8_192);
+        Model anthropicFlash = new Model(
+                "deepseek",
+                "DeepSeek",
+                "deepseek-v4-flash",
+                URI.create("https://api.deepseek.com"),
+                URI.create("https://api.deepseek.com/anthropic"),
+                "env://DEEPSEEK_API_KEY",
+                io.haifa.agent.model.api.ModelApiStyles.ANTHROPIC_MESSAGES,
+                AnthropicMessagesDialects.DEEPSEEK,
+                true,
+                null,
+                null,
+                "deepseek-anthropic-flash",
+                "DeepSeek Anthropic Messages Flash",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                131_072,
+                8_192);
         return new CliConfiguration(
                 responsesFlash,
-                List.of(responsesFlash, chatPro),
+                List.of(responsesFlash, chatPro, anthropicFlash),
                 DEFAULT_TOOLS,
                 List.of(),
                 Web.defaults(),

@@ -14,6 +14,9 @@ models:
           dialect: deepseek-openai-chat
         - style: openai-responses
           dialect: deepseek-openai-responses
+        - style: anthropic-messages
+          dialect: deepseek-anthropic-messages
+          endpoint: https://api.deepseek.com/anthropic
       models:
         - id: deepseek-chat-flash
           displayName: DeepSeek Chat Flash
@@ -34,6 +37,13 @@ models:
           providerModelId: deepseek-v4-flash
           style: openai-responses
           capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-anthropic-flash
+          displayName: DeepSeek Anthropic Messages Flash
+          providerModelId: deepseek-v4-flash
+          style: anthropic-messages
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
           contextWindow: 131072
           maxOutputTokens: 8192
     - id: local-openai

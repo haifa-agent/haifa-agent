@@ -62,6 +62,22 @@ class RealEnvironmentTest(unittest.TestCase):
             environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_DIALECT"],
         )
         self.assertEqual(
+            "anthropic-messages",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_STYLE"],
+        )
+        self.assertEqual(
+            "https://api.deepseek.com/anthropic",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_ENDPOINT"],
+        )
+        self.assertEqual(
+            "deepseek-anthropic-messages",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_2_DIALECT"],
+        )
+        self.assertEqual(
+            "anthropic-messages",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_STYLE"],
+        )
+        self.assertEqual(
             "openai-responses",
             environment["HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_STYLE"],
         )
@@ -70,6 +86,7 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertEqual("env://OPENAI_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE"])
         self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTID", environment)
         self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_IMAGEINPUT", environment)
+        self.assertFalse(any(name.startswith("CHATGPT2API_") for name in environment))
         self.assertNotIn("openai-secret", json.dumps(list(environment)))
 
     def test_invalid_mode_combinations_are_rejected(self) -> None:

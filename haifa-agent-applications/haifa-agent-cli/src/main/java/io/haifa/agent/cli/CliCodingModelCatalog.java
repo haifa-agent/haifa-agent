@@ -49,7 +49,8 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
                 ModelAccessPolicy.allowAll(),
                 Map.of(
                         ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0",
-                        ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0"),
+                        ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0",
+                        ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"),
                 new InMemoryProviderHealthRegistry());
     }
 

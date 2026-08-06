@@ -44,6 +44,8 @@ import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
@@ -193,13 +195,15 @@ final class LocalCodingAgent implements AutoCloseable {
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
+        var anthropic = new AnthropicMessagesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         return create(
                 workspaceRoot,
                 configuration,
                 output,
                 Map.of(
                         new ModelAdapterKey(ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0"), chat,
-                        new ModelAdapterKey(ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0"), responses),
+                        new ModelAdapterKey(ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0"), responses,
+                        new ModelAdapterKey(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"), anthropic),
                 traceObserver,
                 resolveContinuationProtector(configuration));
     }
@@ -811,7 +815,8 @@ final class LocalCodingAgent implements AutoCloseable {
         if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(model.style())) {
             providerOptions.putAll(OpenAiCompatibleDialects.configuredOptions(model.dialect(), model.endpoint()));
         }
-        boolean deepSeek = OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialect());
+        boolean deepSeek = OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialect())
+                || AnthropicMessagesDialects.DEEPSEEK.equals(model.dialect());
         if (deepSeek) providerOptions.put("thinking", "disabled");
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),

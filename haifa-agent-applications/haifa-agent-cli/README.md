@@ -179,12 +179,22 @@ models:
       apiBindings:
         - style: openai-responses
           dialect: deepseek-openai-responses
+        - style: anthropic-messages
+          dialect: deepseek-anthropic-messages
+          endpoint: https://api.deepseek.com/anthropic
       models:
         - id: deepseek-responses-flash
           displayName: DeepSeek Responses Flash
           providerModelId: deepseek-v4-flash
           style: openai-responses
           capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-anthropic-flash
+          displayName: DeepSeek Anthropic Messages Flash
+          providerModelId: deepseek-v4-flash
+          style: anthropic-messages
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
           contextWindow: 131072
           maxOutputTokens: 8192
 tools:
@@ -264,7 +274,8 @@ models:
 Provider 是一级接入实例：Endpoint、Credential、百炼 Workspace/Region 只配置一次；其 `models`
 是该 Provider 可用的模型列表。模型 `id` 是产品内全局唯一选择 ID，`providerModelId` 是供应商实际
 模型或部署名称。Provider 持有共享 Endpoint、CredentialRef 与 `nativeStreaming`；Binding 只持有
-`style`、可选 dialect 和可选完整 Endpoint 覆盖。Coding Agent 不根据 Provider ID 推断协议；严格兼容
+`style`、可选 dialect 和可选完整 Endpoint 覆盖。DeepSeek Anthropic Messages 因 Base URL 不同，在
+Binding 上覆盖 `https://api.deepseek.com/anthropic`。Coding Agent 不根据 Provider ID 推断协议；严格兼容
 现有 Style 的新 Provider 省略 dialect，只增加配置。
 
 `host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；

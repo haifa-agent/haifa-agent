@@ -29,6 +29,8 @@ class PackageLocalCodingAgentTest(unittest.TestCase):
 
         MODULE.validate_model_configuration(rendered)
         self.assertIn("apiBindings:", rendered)
+        self.assertIn("style: anthropic-messages", rendered)
+        self.assertIn("endpoint: https://api.deepseek.com/anthropic", rendered)
         self.assertIn("credentialRef: env://OPENAI_API_KEY", rendered)
         self.assertNotIn("CHATGPT2API_", rendered)
         self.assertNotIn("dialectVersion:", rendered)

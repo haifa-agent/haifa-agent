@@ -30,6 +30,9 @@ haifa:
             dialect: deepseek-openai-chat
           - style: openai-responses
             dialect: deepseek-openai-responses
+          - style: anthropic-messages
+            dialect: deepseek-anthropic-messages
+            endpoint: https://api.deepseek.com/anthropic
         models:
           - id: deepseek-chat-pro
             display-name: DeepSeek Chat Pro
@@ -43,6 +46,13 @@ haifa:
             provider-model-id: deepseek-v4-flash
             style: openai-responses
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 131072
+            max-output-tokens: 8192
+          - id: deepseek-anthropic-flash
+            display-name: DeepSeek Anthropic Messages Flash
+            provider-model-id: deepseek-v4-flash
+            style: anthropic-messages
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
             context-window: 131072
             max-output-tokens: 8192
       - id: local-openai
@@ -67,6 +77,8 @@ haifa:
 模型 `id` 是产品内全局唯一的选择与偏好 ID；`provider-model-id` 是发送给对应 Provider 的实际模型
 或部署名称。Personal Assistant 不根据 Provider ID 推断协议。严格兼容既有 Style 的第三方 HTTPS
 Provider 只需新增配置并省略 dialect；旧单模型、旧 dialect/version 字段和模型级连接字段不再接受。
+DeepSeek Anthropic Messages 因 Base URL 与其余 Style 不同，在 Binding 上覆盖完整 `/anthropic` Endpoint；
+Credential 与 `native-streaming` 仍只配置在 Provider。
 
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
 Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型

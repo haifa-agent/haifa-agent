@@ -32,6 +32,8 @@ import io.haifa.agent.model.core.StaticModelPlatform;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
 import io.haifa.agent.personalassistant.application.PersonalModelOption;
@@ -233,14 +235,18 @@ public final class PersonalModelFactory {
         if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.value().equals(binding.style())) {
             options.putAll(OpenAiCompatibleDialects.configuredOptions(binding.dialect(), endpoint));
         }
-        if (OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())) {
+        if (OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
+                || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())) {
             options.put("thinking", "disabled");
         }
         return Map.copyOf(options);
     }
 
     private static Map<String, Object> invocationOptions(PersonalAssistantProperties.ApiBinding binding) {
-        return OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect()) ? Map.of("thinking", "disabled") : Map.of();
+        return OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
+                        || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())
+                ? Map.of("thinking", "disabled")
+                : Map.of();
     }
 
     private static PersonalAssistantProperties.ApiBinding binding(
@@ -282,6 +288,9 @@ public final class PersonalModelFactory {
                                     4 * 1024 * 1024);
                         case ModelApiStyles.OPENAI_RESPONSES_ADAPTER ->
                             new OpenAiResponsesModel(
+                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                        case ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER ->
+                            new AnthropicMessagesModel(
                                     http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
                         default ->
                             throw new IllegalArgumentException(
