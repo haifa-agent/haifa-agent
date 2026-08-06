@@ -39,6 +39,7 @@ import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -83,22 +84,7 @@ class CodingTerminalControllerTest {
 
     @Test
     void pendingInteractionUsesTheSameSelectorInputOwnerAndRuntimeClient() {
-        InteractionView interaction = new InteractionView(
-                new InteractionRequestId("interaction-1"),
-                new AgentRunId("run-1"),
-                SESSION_ID,
-                0,
-                InteractionKind.APPROVAL,
-                InteractionState.PENDING,
-                "Approval",
-                "Allow file change?",
-                List.of(InteractionAction.REJECT, InteractionAction.APPROVE),
-                InteractionInputContract.NONE,
-                new InteractionTargetView("tool", "file-write", Optional.empty(), Optional.empty(), "workspace file"),
-                new InteractionRequesterView("user", "local user"),
-                Instant.EPOCH,
-                Instant.EPOCH.plusSeconds(60),
-                new InteractionConsequenceView("Run tool", "Reject tool", "Expire request"));
+        InteractionView interaction = approval();
         FakeClient client = new FakeClient(view(Optional.of(interaction)));
         client.reconciledView = view(Optional.empty());
         var controller = controller(client);
@@ -128,6 +114,150 @@ class CodingTerminalControllerTest {
         assertThat(controller.state().editorCursor()).isEqualTo(9);
         assertThat(controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.status())
                 .isEqualTo("RESPONDED"));
+    }
+
+    @Test
+    void approvalImmediatelyUpdatesUiWhileRuntimeResponseRemainsInBackground() {
+        InteractionView interaction = approval();
+        FakeClient client = new FakeClient(view(Optional.of(interaction)));
+        var queuedEffects = new ArrayDeque<Runnable>();
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                queuedEffects::add);
+        controller.open(SESSION_ID);
+
+        controller.accept(input(TerminalInput.Kind.SELECT_NEXT, ""));
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().status()).isEqualTo("Approving");
+        assertThat(client.respondedActions).isEmpty();
+        assertThat(queuedEffects).hasSize(1);
+
+        queuedEffects.remove().run();
+        controller.drainEvents();
+
+        assertThat(client.respondedActions).containsExactly(InteractionAction.APPROVE);
+    }
+
+    @Test
+    void cursorMaintenanceCannotQueueAheadOfAnApprovalResponse() {
+        InteractionView interaction = approval();
+        FakeClient client = new FakeClient(view(Optional.of(interaction)));
+        var controlEffects = new ArrayDeque<Runnable>();
+        var interactiveEffects = new ArrayDeque<Runnable>();
+        var maintenanceEffects = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                controlEffects::add,
+                interactiveEffects::add,
+                maintenanceEffects::add);
+        controller.open(SESSION_ID);
+        pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.AssistantTextDelta("generation-1", "delta"))));
+        controller.drainEvents();
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+
+        assertThat(maintenanceEffects).hasSize(1);
+        assertThat(interactiveEffects).isEmpty();
+        assertThat(controlEffects).hasSize(1);
+        controlEffects.remove().run();
+        controller.drainEvents();
+
+        assertThat(client.respondedActions).containsExactly(InteractionAction.REJECT);
+        assertThat(maintenanceEffects).hasSize(1);
+    }
+
+    @Test
+    void pendingInteractionEventHydratesApprovalSelectorInBackground() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.reconciledView = view(Optional.of(approval()));
+        var controlEffects = new ArrayDeque<Runnable>();
+        var interactiveEffects = new ArrayDeque<Runnable>();
+        var maintenanceEffects = new ArrayDeque<Runnable>();
+        var pump = new TerminalEventPump(32);
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                controlEffects::add,
+                interactiveEffects::add,
+                maintenanceEffects::add);
+        controller.open(SESSION_ID);
+        pump.offer(new TerminalUiAction.RunEventReceived(event(
+                1,
+                new RunEventPayloads.InteractionLifecycle(
+                        "interaction-1", "APPROVAL", "PENDING", "UNSAFE_FREE_TEXT"))));
+
+        controller.drainEvents();
+
+        assertThat(client.reconcileCalls).isZero();
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .contains("Structured approval details are loading."));
+        assertThat(controlEffects).hasSize(1);
+        assertThat(interactiveEffects).isEmpty();
+        assertThat(maintenanceEffects).hasSize(1);
+
+        controlEffects.removeFirst().run();
+        controller.drainEvents();
+
+        assertThat(client.pendingInteractionCalls).isEqualTo(1);
+        assertThat(client.reconcileCalls).isZero();
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().transcript()).singleElement().satisfies(item -> {
+            assertThat(item.approvalDetails()).isPresent();
+            assertThat(item.body()).contains("Allowed: reject / approve");
+        });
+
+        controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
+        assertThat(controlEffects).hasSize(1);
+        controlEffects.removeFirst().run();
+        controller.drainEvents();
+
+        assertThat(client.respondedActions).containsExactly(InteractionAction.REJECT);
+        assertThat(client.reconcileCalls).isZero();
+    }
+
+    @Test
+    void workspaceCompletionDoesNotBlockEditorOrResizeWhileDiscoveryRuns() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.logicalPaths = List.of("src/main/App.java");
+        var queuedEffects = new ArrayDeque<Runnable>();
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                queuedEffects::add);
+
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "@src", 4));
+        controller.accept(new TerminalInput(TerminalInput.Kind.COMPLETION_REQUESTED, "@src", 4));
+        controller.accept(new TerminalInput(TerminalInput.Kind.EDITOR_CHANGED, "@srcx", 5));
+        controller.accept(new TerminalInput(TerminalInput.Kind.TICK, "", 0));
+
+        assertThat(controller.state().editorBuffer()).isEqualTo("@srcx");
+        assertThat(controller.state().selector()).isEmpty();
+        assertThat(queuedEffects).hasSize(1);
+
+        queuedEffects.remove().run();
+        controller.drainEvents();
+
+        assertThat(controller.state().editorBuffer()).isEqualTo("@srcx");
+        assertThat(controller.state().selector()).isEmpty();
     }
 
     @Test
@@ -217,7 +347,8 @@ class CodingTerminalControllerTest {
                 new TerminalUiAction.RunEventReceived(
                         event(1, new RunEventPayloads.RunLifecycle("COMPLETED", 2, "NONE"))));
         FakeClient client = new FakeClient(view(Optional.empty()));
-        var controller = new CodingTerminalController(PROJECT_ID, client, new TerminalEventPump(32), reducer, settled);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, new TerminalEventPump(32), reducer, settled, Runnable::run);
 
         controller.accept(input(TerminalInput.Kind.SUBMIT, "next turn"));
 
@@ -268,8 +399,8 @@ class CodingTerminalControllerTest {
                 new TerminalUiAction.SelectorOpened(
                         new io.haifa.agent.application.coding.terminal.state.TerminalSelector(
                                 "completion", "Commands", List.of("/resume"), 0)));
-        var controller =
-                new CodingTerminalController(PROJECT_ID, client, new TerminalEventPump(32), reducer, activeState);
+        var controller = new CodingTerminalController(
+                PROJECT_ID, client, new TerminalEventPump(32), reducer, activeState, Runnable::run);
 
         controller.accept(input(TerminalInput.Kind.CANCEL_OR_CLOSE, "draft"));
 
@@ -314,7 +445,7 @@ class CodingTerminalControllerTest {
         client.reconciledView = view(Optional.empty());
         TerminalEventPump pump = new TerminalEventPump(1);
         var controller = new CodingTerminalController(
-                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40));
+                PROJECT_ID, client, pump, new TerminalUiReducer(), TerminalUiState.initial(120, 40), Runnable::run);
         controller.open(SESSION_ID);
         assertThat(pump.offer(new TerminalUiAction.StatusChanged("first"))).isTrue();
         assertThat(pump.offer(new TerminalUiAction.StatusChanged("dropped"))).isFalse();
@@ -401,7 +532,27 @@ class CodingTerminalControllerTest {
                 client,
                 new TerminalEventPump(32),
                 new TerminalUiReducer(),
-                TerminalUiState.initial(120, 40));
+                TerminalUiState.initial(120, 40),
+                Runnable::run);
+    }
+
+    private static InteractionView approval() {
+        return new InteractionView(
+                new InteractionRequestId("interaction-1"),
+                new AgentRunId("run-1"),
+                SESSION_ID,
+                0,
+                InteractionKind.APPROVAL,
+                InteractionState.PENDING,
+                "Approval",
+                "Allow file change?",
+                List.of(InteractionAction.REJECT, InteractionAction.APPROVE),
+                InteractionInputContract.NONE,
+                new InteractionTargetView("tool", "file-write", Optional.empty(), Optional.empty(), "workspace file"),
+                new InteractionRequesterView("user", "local user"),
+                Instant.EPOCH,
+                Instant.EPOCH.plusSeconds(60),
+                new InteractionConsequenceView("Run tool", "Reject tool", "Expire request"));
     }
 
     private static CodingSessionView view(Optional<InteractionView> interaction) {
@@ -495,6 +646,7 @@ class CodingTerminalControllerTest {
         private long renamedExpectedRevision = -1;
         private String renamedDisplayName;
         private int reconcileCalls;
+        private int pendingInteractionCalls;
         private int subscriptionCount;
         private RunEventSubscription lastSubscription;
         private AgentRunEventListener lastListener;
@@ -560,6 +712,12 @@ class CodingTerminalControllerTest {
             restored.add(followUpId);
             restorable = List.of();
             return new CodingRestoredMessage(followUpId, sessionId, "queued task", List.of(), revision + 1);
+        }
+
+        @Override
+        public Optional<InteractionView> pendingInteraction(AgentRunId runId) {
+            pendingInteractionCalls++;
+            return reconciledView.pendingInteraction();
         }
 
         @Override

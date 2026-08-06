@@ -163,6 +163,7 @@ final class Tui4jTerminalView {
                         + shortcuts.restoreQueuedMessage()
                         + " restore queued message"));
             }
+            lines.add(theme.muted("mouse wheel/page up/down scroll · shift+drag select"));
         }
         resources(state).ifPresent(lines::add);
         return lines;

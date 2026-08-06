@@ -22,6 +22,7 @@ import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
 import io.haifa.agent.application.coding.terminal.event.TerminalInput;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
+import io.haifa.agent.application.coding.terminal.state.TranscriptItem;
 import io.haifa.agent.core.run.AgentRunId;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -42,6 +43,8 @@ final class Tui4jCodingTerminalModel implements Model {
     private final LongSupplier monotonicNanos;
 
     private String transcriptContent = "";
+    private List<TranscriptItem> renderedTranscript = List.of();
+    private int renderedTranscriptColumns = -1;
     private int transcriptRows;
     private String historyDraft = "";
     private int editorCursor;
@@ -449,19 +452,25 @@ final class Tui4jCodingTerminalModel implements Model {
             editor.focus();
         }
 
-        String nextTranscript = view.transcriptContent(state);
-        if (!nextTranscript.equals(transcriptContent)) {
+        boolean transcriptChanged =
+                renderedTranscript != state.transcript() || renderedTranscriptColumns != state.columns();
+        if (transcriptChanged) {
+            String nextTranscript = view.transcriptContent(state);
             int nextTranscriptRows = (int) nextTranscript.lines().count();
-            fullRepaintRequested = transcriptRows != 0 && transcriptRows != nextTranscriptRows;
-            transcript.setContent(nextTranscript);
-            transcriptContent = nextTranscript;
-            transcriptRows = nextTranscriptRows;
-            if (followTranscript) {
-                transcript.gotoBottom();
-                newOutputPending = false;
-            } else {
-                newOutputPending = true;
+            if (!nextTranscript.equals(transcriptContent)) {
+                fullRepaintRequested = transcriptRows != 0 && transcriptRows != nextTranscriptRows;
+                transcript.setContent(nextTranscript);
+                transcriptContent = nextTranscript;
+                transcriptRows = nextTranscriptRows;
+                if (followTranscript) {
+                    transcript.gotoBottom();
+                    newOutputPending = false;
+                } else {
+                    newOutputPending = true;
+                }
             }
+            renderedTranscript = state.transcript();
+            renderedTranscriptColumns = state.columns();
         }
     }
 
