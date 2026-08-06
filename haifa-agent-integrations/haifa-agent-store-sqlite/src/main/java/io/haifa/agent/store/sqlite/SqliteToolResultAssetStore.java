@@ -31,25 +31,17 @@ public final class SqliteToolResultAssetStore implements ToolResultAssetStore {
 
     @Override
     public AssetRef put(ToolCallId toolCallId, ToolResult result) {
+        return execute(() -> putWithinUnitOfWork(toolCallId, result));
+    }
+
+    @Override
+    public Optional<AssetRef> tryPut(ToolCallId toolCallId, ToolResult result) {
         return execute(() -> {
-            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            EncodedPayload payload =
-                    codecs.encode(SqliteRuntimePayloadTypes.TOOL_RESULT, ToolResultPayload.from(result));
-            String id = "tool-result:" + payload.hash();
-            mapper.insertToolResultAsset(new ToolResultAssetRow(
-                    id,
-                    toolCallId.value(),
-                    payload.schemaVersion(),
-                    payload.bytes(),
-                    payload.hash(),
-                    payload.bytes().length,
-                    java.time.Instant.ofEpochMilli(clock.millis())));
-            ToolResultAssetRow stored = mapper.findToolResultAsset(id);
-            ToolResult restored = decode(stored);
-            if (!stored.toolCallId().equals(toolCallId.value()) || !restored.equals(result)) {
-                throw new IllegalStateException("tool result asset hash collision");
+            try {
+                return Optional.of(putWithinUnitOfWork(toolCallId, result));
+            } catch (RuntimeException ignored) {
+                return Optional.empty();
             }
-            return new AssetRef(id, MIME_TYPE, toolCallId.value() + ".result");
         });
     }
 
@@ -75,6 +67,26 @@ public final class SqliteToolResultAssetStore implements ToolResultAssetStore {
                                 row.resultPayload(),
                                 row.resultHash()))
                 .toDomain();
+    }
+
+    private AssetRef putWithinUnitOfWork(ToolCallId toolCallId, ToolResult result) {
+        RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+        EncodedPayload payload = codecs.encode(SqliteRuntimePayloadTypes.TOOL_RESULT, ToolResultPayload.from(result));
+        String id = "tool-result:" + toolCallId.value();
+        mapper.insertToolResultAsset(new ToolResultAssetRow(
+                id,
+                toolCallId.value(),
+                payload.schemaVersion(),
+                payload.bytes(),
+                payload.hash(),
+                payload.bytes().length,
+                java.time.Instant.ofEpochMilli(clock.millis())));
+        ToolResultAssetRow stored = mapper.findToolResultAsset(id);
+        ToolResult restored = decode(stored);
+        if (!stored.toolCallId().equals(toolCallId.value()) || !restored.equals(result)) {
+            throw new IllegalStateException("tool result asset id collision");
+        }
+        return new AssetRef(id, MIME_TYPE, toolCallId.value() + ".result");
     }
 
     private <T> T execute(Supplier<T> work) {

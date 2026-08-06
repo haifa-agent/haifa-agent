@@ -158,6 +158,8 @@ Codec 都使用受控重建入口，不把领域对象直接交给 MyBatis。
 | Event / Outbox / Idempotency | `SqliteRuntimeEventAppender`、`SqliteRuntimeOutboxPublisher`、`SqliteIdempotencyRepository` |
 | Tool journal / Interaction / Input | `SqliteToolExecutionJournal`、`SqliteInteractionPort`、`SqliteRunInputPort` |
 | Summary / Memory / Continuation / Skill / Asset | 对应 `Sqlite*Repository` / `SqliteToolResultAssetStore` |
+
+Tool Result Asset 使用 Tool Call ID 形成稳定且逐调用唯一的 Asset ID；内容哈希只承担完整性校验，不用于跨 Tool Call 归并相同结果。
 | Atomic composition | `SqliteRuntimeUnitOfWork`、`SqliteStoreFoundation.persistencePorts(...)` |
 
 Project Application/CLI 已实现显式 `MEMORY`、`SQLITE`、`SQLITE_WITH_JSONL` 选择，并在启动时注入

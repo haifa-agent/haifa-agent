@@ -16,6 +16,7 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.content.ToolCallPart;
 import io.haifa.agent.core.content.ToolResultPart;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageCursor;
@@ -612,6 +613,96 @@ class SessionCompressionCheckpointTest {
                         store.latest(accepted.runId()).orElseThrow().id().value())
                 .orElseThrow();
         assertThat(checkpoint.derivedContentReferences()).containsAll(result.assets());
+    }
+
+    @Test
+    void largeToolResultFallsBackInlineAndContinuesModelWhenAssetStoreRemainsUnavailable() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        store.failNextToolResultAssetWrites(2);
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        AtomicInteger ids = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger executions = new AtomicInteger();
+        AgentChatModel model = request -> modelCalls.incrementAndGet() == 1
+                ? new AgentChatResponse(
+                        "tool-response",
+                        "deepseek-v4-pro",
+                        "",
+                        List.of(new ModelToolCall(
+                                new ProviderToolCallCorrelationId("provider-large-fallback"),
+                                "echo",
+                                Map.of("text", "large"))),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unpriced(1, 1),
+                        "",
+                        Map.of())
+                : finalResponse("done");
+        RuntimeCoreBuilder builder = new RuntimeCoreBuilder().registerChatModel("openai-compatible", "1.0.0", model);
+        var runtime = TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
+                    executions.incrementAndGet();
+                    return new ToolResult(
+                            true, "x".repeat(20_000), Map.of("full", "y".repeat(20_000)), List.of(), List.of(), false);
+                })
+                .persistence(RuntimePersistencePorts.inMemory(store))
+                .scheduler(scheduler)
+                .identifierGenerator(() -> "fallback-id-" + ids.incrementAndGet())
+                .timeProvider(() -> NOW)
+                .build();
+
+        var accepted = runtime.start(request("asset-fallback-run", "asset-fallback-session"));
+        scheduler.runAll();
+
+        assertThat(runtime.find(accepted.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(modelCalls).hasValue(2);
+        assertThat(executions).hasValue(1);
+        var result = store.toolCalls(accepted.runId()).getFirst().result().orElseThrow();
+        assertThat(result.truncated()).isTrue();
+        assertThat(result.summary()).hasSize(4_000);
+        assertThat(result.assets()).isEmpty();
+    }
+
+    @Test
+    void authoritativeToolResultPersistenceFailureKeepsSpecificErrorCode() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        store.failNextCompletedToolCallWrite();
+        ManualExecutionScheduler scheduler = new ManualExecutionScheduler();
+        AtomicInteger ids = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicInteger executions = new AtomicInteger();
+        AgentChatModel model = request -> {
+            modelCalls.incrementAndGet();
+            return new AgentChatResponse(
+                    "tool-response",
+                    "deepseek-v4-pro",
+                    "",
+                    List.of(new ModelToolCall(
+                            new ProviderToolCallCorrelationId("provider-persistence-failure"),
+                            "echo",
+                            Map.of("text", "hello"))),
+                    ModelFinishReason.TOOL_CALLS,
+                    ModelUsage.unpriced(1, 1),
+                    "",
+                    Map.of());
+        };
+        RuntimeCoreBuilder builder = new RuntimeCoreBuilder().registerChatModel("openai-compatible", "1.0.0", model);
+        var runtime = TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
+                    executions.incrementAndGet();
+                    return new ToolResult(true, "echoed", Map.of("text", "hello"), List.of(), List.of(), false);
+                })
+                .persistence(RuntimePersistencePorts.inMemory(store))
+                .scheduler(scheduler)
+                .identifierGenerator(() -> "persistence-failure-id-" + ids.incrementAndGet())
+                .timeProvider(() -> NOW)
+                .build();
+
+        var accepted = runtime.start(request("persistence-failure-run", "persistence-failure-session"));
+        scheduler.runAll();
+
+        var failed = runtime.find(accepted.runId()).orElseThrow();
+        assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(failed.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_RESULT_PERSISTENCE_FAILED);
+        assertThat(modelCalls).hasValue(1);
+        assertThat(executions).hasValue(1);
     }
 
     private static DefaultAgentRuntime runtime(
