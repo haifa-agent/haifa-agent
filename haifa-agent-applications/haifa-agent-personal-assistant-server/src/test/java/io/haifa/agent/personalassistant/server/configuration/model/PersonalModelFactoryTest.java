@@ -20,9 +20,34 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.io.ClassPathResource;
 
 class PersonalModelFactoryTest {
+    @Test
+    void defaultApplicationConfigurationIsDeepSeekOnly() throws Exception {
+        var sources = new MutablePropertySources();
+        var resource = new ClassPathResource("application.yml");
+        for (var source : new YamlPropertySourceLoader().load("application", resource)) {
+            sources.addLast(source);
+        }
+
+        var providers = new Binder(
+                        ConfigurationPropertySources.from(sources), new PropertySourcesPlaceholdersResolver(sources))
+                .bind(
+                        "haifa.personal.model-providers",
+                        Bindable.listOf(PersonalAssistantProperties.ModelProvider.class))
+                .orElseThrow(() -> new AssertionError("default model providers did not bind"));
+
+        assertThat(providers)
+                .extracting(PersonalAssistantProperties.ModelProvider::id)
+                .containsExactly("deepseek");
+    }
+
     @Test
     void bindsProviderWithItsAvailableModelList() {
         var source = new MapConfigurationPropertySource(Map.ofEntries(

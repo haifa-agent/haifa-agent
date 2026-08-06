@@ -84,23 +84,6 @@ haifa:
             capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
             context-window: 131072
             max-output-tokens: 8192
-      - id: local-openai
-        display-name: Local OpenAI Responses Gateway
-        mode: remote
-        allow-deterministic: false
-        native-streaming: true
-        endpoint: ${OPENAI_BASE_URL:http://127.0.0.1:30000/v1}
-        credential-reference: env://OPENAI_API_KEY
-        api-bindings:
-          - style: openai-responses
-        models:
-          - id: local-openai-responses
-            display-name: Local OpenAI Responses
-            provider-model-id: ${OPENAI_MODEL_ID:gpt-5.6-luna}
-            style: openai-responses
-            capabilities: [TEXT_CHAT]
-            context-window: 131072
-            max-output-tokens: 8192
     default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-responses-flash}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:

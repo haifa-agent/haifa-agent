@@ -249,11 +249,12 @@ macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据
 写入参数、状态文件或日志。
 
-PowerShell 与 Bash 启动脚本共用同一个配置生成器，并从当前进程环境读取
-`OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`。本机中转被装配为使用 standard dialect 的
-OpenAI Responses Provider，Provider 持有共享 Endpoint、CredentialRef 与 `nativeStreaming=true`，Binding
-只声明 `style: openai-responses`。该模型当前只声明 `TEXT_CHAT`，因此不会进入要求 Tool Calling 的
-Personal Assistant 可选模型目录。
+PowerShell 与 Bash 启动脚本共用同一个配置生成器。OpenAI 本机中转是可选 Provider：只有当前进程
+（Windows 也回退到用户环境）同时提供 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID` 时才
+装配；三项全部缺失或配置不完整都不阻断 DeepSeek-only 启动，配置不完整时脚本会输出不含值的警告。
+启用后，本机中转使用 standard dialect 的 OpenAI Responses API，Provider 持有共享 Endpoint、
+CredentialRef 与 `nativeStreaming=true`，Binding 只声明 `style: openai-responses`。该模型当前只声明
+`TEXT_CHAT`，因此不会进入要求 Tool Calling 的 Personal Assistant 可选模型目录。
 
 ## Process logging
 
