@@ -98,10 +98,7 @@ class ModelMessageAssemblerTest {
                 List.of(new TextPart("collect the missing evidence", "plain")));
         AgentContext context = new AgentContext(
                 List.of(prompt()),
-                List.of(item(
-                        "runtime-notification",
-                        ContextItemType.MESSAGE,
-                        new MessageContextContent(notification))),
+                List.of(item("runtime-notification", ContextItemType.MESSAGE, new MessageContextContent(notification))),
                 List.of(),
                 budget(),
                 20);
@@ -302,7 +299,7 @@ class ModelMessageAssemblerTest {
                         ModelMessageRole.SYSTEM,
                         ModelMessageRole.ASSISTANT,
                         ModelMessageRole.TOOL,
-                        ModelMessageRole.SYSTEM,
+                        ModelMessageRole.USER,
                         ModelMessageRole.USER);
         assertThat(messages.get(2).providerCorrelationId()).contains(correlationId);
         assertThat(messages.get(3).content()).contains("RUNTIME_CONTROL_UPDATE");

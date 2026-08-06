@@ -57,6 +57,10 @@ class PersonalAssistantProfileTest {
                         mcpAlias);
         assertThat(profile.allowedSkills())
                 .contains(PersonalAssistantProfile.BUNDLED_SKILL_ALIAS, PersonalAssistantProfile.EXECUTION_SKILL_ALIAS);
+        assertThat(profile.instructions())
+                .contains(
+                        "Treat the latest user message as the current objective",
+                        "Do not resume or retry a previous failed or abandoned tool call");
     }
 
     @Test

@@ -22,15 +22,18 @@ public record ResolvedModelSnapshot(
         String providerModelId,
         String adapterType,
         String adapterVersion,
+        ApiStyleId apiStyle,
+        String dialect,
         URI endpoint,
         CredentialRef credentialRef,
+        boolean nativeStreaming,
         Set<ModelCapability> capabilities,
         int contextWindow,
         int maxOutputTokens,
         Map<String, Object> providerOptions,
         Map<String, Object> invocationOptions,
         String configurationDigest) {
-    public static final String CURRENT_SCHEMA_VERSION = "2.0";
+    public static final String CURRENT_SCHEMA_VERSION = "3.0";
 
     public ResolvedModelSnapshot {
         schemaVersion = ModelValues.text(schemaVersion, "schemaVersion");
@@ -44,6 +47,8 @@ public record ResolvedModelSnapshot(
         providerModelId = ModelValues.text(providerModelId, "providerModelId");
         adapterType = ModelValues.text(adapterType, "adapterType");
         adapterVersion = ModelValues.text(adapterVersion, "adapterVersion");
+        apiStyle = Objects.requireNonNull(apiStyle, "apiStyle must not be null");
+        dialect = ModelValues.text(dialect, "dialect");
         endpoint = normalizeEndpoint(endpoint);
         credentialRef = Objects.requireNonNull(credentialRef, "credentialRef must not be null");
         capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
@@ -63,8 +68,11 @@ public record ResolvedModelSnapshot(
                 providerModelId,
                 adapterType,
                 adapterVersion,
+                apiStyle,
+                dialect,
                 endpoint,
                 credentialRef,
+                nativeStreaming,
                 capabilities,
                 contextWindow,
                 maxOutputTokens,
@@ -83,8 +91,11 @@ public record ResolvedModelSnapshot(
             String providerModelId,
             String adapterType,
             String adapterVersion,
+            ApiStyleId apiStyle,
+            String dialect,
             URI endpoint,
             CredentialRef credentialRef,
+            boolean nativeStreaming,
             Set<ModelCapability> capabilities,
             int contextWindow,
             int maxOutputTokens,
@@ -103,8 +114,11 @@ public record ResolvedModelSnapshot(
                 providerModelId,
                 adapterType,
                 adapterVersion,
+                apiStyle,
+                dialect,
                 normalizedEndpoint,
                 credentialRef,
+                nativeStreaming,
                 frozenCapabilities,
                 contextWindow,
                 maxOutputTokens,
@@ -119,8 +133,11 @@ public record ResolvedModelSnapshot(
                 providerModelId,
                 adapterType,
                 adapterVersion,
+                apiStyle,
+                dialect,
                 normalizedEndpoint,
                 credentialRef,
+                nativeStreaming,
                 frozenCapabilities,
                 contextWindow,
                 maxOutputTokens,
@@ -149,8 +166,11 @@ public record ResolvedModelSnapshot(
             String providerModelId,
             String adapterType,
             String adapterVersion,
+            ApiStyleId apiStyle,
+            String dialect,
             URI endpoint,
             CredentialRef credentialRef,
+            boolean nativeStreaming,
             Set<ModelCapability> capabilities,
             int contextWindow,
             int maxOutputTokens,
@@ -166,13 +186,20 @@ public record ResolvedModelSnapshot(
                 providerModelId,
                 adapterType,
                 adapterVersion,
+                apiStyle.value(),
+                dialect,
                 endpoint.toString(),
                 credentialRef.value(),
+                Boolean.toString(nativeStreaming),
                 capabilities.stream().map(Enum::name).sorted().toList().toString(),
                 Integer.toString(contextWindow),
                 Integer.toString(maxOutputTokens),
                 canonicalMap(providerOptions),
                 canonicalMap(invocationOptions));
+        return sha256(canonical);
+    }
+
+    private static String sha256(String canonical) {
         try {
             byte[] value = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return "sha256:" + HexFormat.of().formatHex(value);

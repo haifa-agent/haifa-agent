@@ -712,7 +712,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 return directory;
             } catch (IOException exception) {
                 cleanupScratchDirectory(directory);
-                throw failure("SCRATCH_PROVISION_FAILED", "host scratch space could not be provisioned");
+                throw failure("SCRATCH_PROVISION_FAILED", "host scratch space could not be provisioned", exception);
             }
         }
 
@@ -868,6 +868,10 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     private static HostSandboxException failure(String code, String message) {
         return new HostSandboxException(code, message);
+    }
+
+    private static HostSandboxException failure(String code, String message, Throwable cause) {
+        return new HostSandboxException(code, message, cause);
     }
 
     private record BoundedBytes(byte[] bytes, boolean truncated) {}

@@ -180,9 +180,10 @@ public final class HaifaAgentBuilder {
                             profile.budget(),
                             profile.limits(),
                             resolveModelSnapshot(model, profile, id),
-                            resolvedCapabilities(resolution)))
-                    .registerChatModel(
-                            model.snapshot().adapterType(), model.snapshot().adapterVersion(), model.model());
+                            resolvedCapabilities(resolution)));
+            model.adapters()
+                    .forEach((coordinate, adapter) ->
+                            runtimeBuilder.registerChatModel(coordinate.type(), coordinate.version(), adapter));
             runtimeBuilder.policyProductId(profile.productId().value());
 
             ProductContribution tool = resolution.selected().get(ProductCapabilities.TOOL);

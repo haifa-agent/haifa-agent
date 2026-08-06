@@ -132,6 +132,45 @@ class TrustedScriptExecutionToolProviderTest {
     }
 
     @Test
+    void preservesSafeBrokerFailureCodeWithoutClaimingDispatch() {
+        ExecutionBroker broker = new ExecutionBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request) {
+                throw new io.haifa.agent.execution.core.ExecutionRejectedException(
+                        "POLICY_RESOURCE_MISMATCH", "policy decision digest does not match execution");
+            }
+
+            @Override
+            public boolean cancel(ExecutionId id) {
+                return false;
+            }
+
+            @Override
+            public Optional<ExecutionResult> find(ExecutionId id) {
+                return Optional.empty();
+            }
+        };
+        ExecutionToolProvider provider =
+                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+
+        assertThatThrownBy(() -> provider.invokeTrustedScript(
+                        invocation(),
+                        "fixture-runtime",
+                        "safe",
+                        List.of(),
+                        "fixed transform",
+                        ".",
+                        Duration.ofSeconds(5),
+                        Set.of("execution.run"),
+                        List.of()))
+                .isInstanceOfSatisfying(io.haifa.agent.tool.api.ToolInvocationException.class, exception -> {
+                    assertThat(exception.failureCode()).isEqualTo("POLICY_RESOURCE_MISMATCH");
+                    assertThat(exception.dispatchState())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
+                });
+    }
+
+    @Test
     void fixedToolProviderLoadsAndRehashesTheFrozenSkillResource() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionToolProvider execution = provider(captured, Set.of("execution.run"), (workspaceId, paths) -> {});
@@ -195,6 +234,11 @@ class TrustedScriptExecutionToolProviderTest {
                 return Optional.empty();
             }
         };
+        return provider(broker, capabilities, validator);
+    }
+
+    private static ExecutionToolProvider provider(
+            ExecutionBroker broker, Set<String> capabilities, TrustedWorkspacePathValidator validator) {
         var runtimes = new ScriptRuntimeResolver(ExecutionOperatingSystem.LINUX, List.of(new ScriptRuntimeAdapter() {
             @Override
             public String language() {

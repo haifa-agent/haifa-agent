@@ -144,18 +144,9 @@ class PersonalAssistantRestartTest {
         return new String[] {
             "--server.address=127.0.0.1",
             "--server.port=" + serverPort,
+            "--spring.config.location=classpath:/application-deterministic-model.yml",
             "--haifa.personal.data-directory=" + data,
             "--haifa.personal.continuation-key-base64=" + Base64.getEncoder().encodeToString(new byte[32]),
-            "--haifa.personal.model-providers[0].id=personal-local",
-            "--haifa.personal.model-providers[0].display-name=Local acceptance",
-            "--haifa.personal.model-providers[0].mode=deterministic",
-            "--haifa.personal.model-providers[0].allow-deterministic=true",
-            "--haifa.personal.model-providers[0].endpoint=http://127.0.0.1:20999",
-            "--haifa.personal.model-providers[0].credential-reference=env://UNUSED",
-            "--haifa.personal.model-providers[0].models[0].id=personal-test",
-            "--haifa.personal.model-providers[0].models[0].display-name=Personal test",
-            "--haifa.personal.model-providers[0].models[0].provider-model-id=personal-test",
-            "--haifa.personal.default-model-id=personal-test",
             "--haifa.personal.execution.trusted-host-enabled=true",
             "--haifa.personal.mcp.port=" + mcpPort
         };

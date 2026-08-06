@@ -1,5 +1,6 @@
 package io.haifa.agent.model.core;
 
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelStatus;
 import io.haifa.agent.model.api.ProviderHealth;
@@ -36,13 +37,14 @@ public final class StaticModelPlatform implements ModelPlatform {
         Objects.requireNonNull(request, "request must not be null");
         List<ModelProviderView> providers = new ArrayList<>();
         for (var provider : catalog.providers()) {
-            if (provider.status() != ProviderStatus.ACTIVE || !adapterVersions.containsKey(provider.adapterType())) {
+            if (provider.status() != ProviderStatus.ACTIVE) {
                 continue;
             }
             List<ModelView> models = new ArrayList<>();
             for (var model : provider.models()) {
                 if (model.status() != ModelStatus.ACTIVE
-                        || !model.capabilities().containsAll(request.requiredCapabilities())) {
+                        || !model.capabilities().containsAll(request.requiredCapabilities())
+                        || !adapterAvailable(provider, model.style())) {
                     continue;
                 }
                 ModelSelectionRequest selection = new ModelSelectionRequest(
@@ -91,6 +93,15 @@ public final class StaticModelPlatform implements ModelPlatform {
             }
         });
         return Map.copyOf(normalized);
+    }
+
+    private boolean adapterAvailable(
+            io.haifa.agent.model.api.ModelProviderDefinition provider, io.haifa.agent.model.api.ApiStyleId style) {
+        try {
+            return adapterVersions.containsKey(ModelApiStyles.adapterType(style));
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
     }
 
     private static String requireText(String value, String field) {

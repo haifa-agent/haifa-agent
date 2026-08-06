@@ -15,8 +15,11 @@ import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.execution.core.ExecutionRejectedException;
+import io.haifa.agent.execution.core.manifest.ManifestBudgetException;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
+import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
@@ -313,16 +316,40 @@ public final class ExecutionToolProvider implements ToolProvider {
                 });
         try {
             return toToolResult(broker.execute(request, merged), merged, parsed);
-        } catch (ExecutionPreflightException exception) {
-            if ("WORKSPACE_MANIFEST_UNAVAILABLE".equals(exception.code())) {
-                throw new ToolInvocationException(
-                        exception.code(), ToolDispatchState.NOT_DISPATCHED, exception.getMessage(), exception);
-            }
+        } catch (ToolInvocationException exception) {
             throw exception;
+        } catch (RuntimeException exception) {
+            throw invocationFailure(exception, merged.started());
         } finally {
             complete.set(true);
             watcher.interrupt();
         }
+    }
+
+    private static ToolInvocationException invocationFailure(RuntimeException exception, boolean dispatched) {
+        String code;
+        String message;
+        if (exception instanceof ExecutionRejectedException rejected) {
+            code = rejected.code();
+            message = rejected.getMessage();
+        } else if (exception instanceof SandboxException sandbox) {
+            code = sandbox.code();
+            message = sandbox.getMessage();
+        } else if (exception instanceof ManifestBudgetException) {
+            code = "MANIFEST_BUDGET_EXCEEDED";
+            message = "workspace manifest exceeded the configured execution budget";
+        } else if (exception instanceof ExecutionPreflightException preflight) {
+            code = preflight.code();
+            message = preflight.getMessage();
+        } else {
+            code = "EXECUTION_PROVIDER_FAILED";
+            message = "execution provider failed";
+        }
+        return new ToolInvocationException(
+                code,
+                dispatched ? ToolDispatchState.OUTCOME_UNKNOWN : ToolDispatchState.NOT_DISPATCHED,
+                message,
+                exception);
     }
 
     private ToolResult toToolResult(ExecutionResult result, MergedTailObserver merged, ParsedInvocation parsed) {
@@ -469,6 +496,10 @@ public final class ExecutionToolProvider implements ToolProvider {
         private synchronized boolean truncated() {
             String retained = sanitize(new String(output.bytes(), StandardCharsets.UTF_8));
             return upstreamTruncated || output.truncated() || lineCount(retained) > maximumLines;
+        }
+
+        private boolean started() {
+            return started.get();
         }
 
         private static String keepHeadAndTailLines(String value, int maximumLines) {

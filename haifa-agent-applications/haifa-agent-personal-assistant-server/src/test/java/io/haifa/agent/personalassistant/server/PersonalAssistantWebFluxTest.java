@@ -29,7 +29,9 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = "spring.config.location=classpath:/application-deterministic-model.yml")
 @AutoConfigureWebTestClient
 class PersonalAssistantWebFluxTest {
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(15);
@@ -61,17 +63,6 @@ class PersonalAssistantWebFluxTest {
         registry.add("haifa.personal.data-directory", DATA::toString);
         registry.add("haifa.personal.continuation-key-base64", () -> Base64.getEncoder()
                 .encodeToString(new byte[32]));
-        registry.add("haifa.personal.model-providers[0].id", () -> "personal-local");
-        registry.add("haifa.personal.model-providers[0].display-name", () -> "Local acceptance");
-        registry.add("haifa.personal.model-providers[0].mode", () -> "deterministic");
-        registry.add("haifa.personal.model-providers[0].allow-deterministic", () -> "true");
-        registry.add("haifa.personal.model-providers[0].endpoint", () -> "http://127.0.0.1:20999");
-        registry.add("haifa.personal.model-providers[0].credential-reference", () -> "env://UNUSED");
-        registry.add("haifa.personal.model-providers[0].models[0].id", () -> "personal-test");
-        registry.add("haifa.personal.model-providers[0].models[0].display-name", () -> "Personal test");
-        registry.add("haifa.personal.model-providers[0].models[0].provider-model-id", () -> "personal-test");
-        registry.add("haifa.personal.model-providers[0].models[0].image-input", () -> "true");
-        registry.add("haifa.personal.default-model-id", () -> "personal-test");
         registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
         registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
     }
@@ -310,6 +301,37 @@ class PersonalAssistantWebFluxTest {
                 .anySatisfy(activity -> assertThat(
                                 activity.path("safeResultSummary").asText())
                         .matches("\\d+\\.\\d+(?:\\.\\d+){0,2}\\s*"));
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void approvedPowerShellDiskQueryCompletesThroughTheGuardedHost() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"PowerShell disk query","message":"[execution-disk]"}
+                """);
+        String runId = conversation.path("activeRunId").asText();
+        JsonNode waiting = awaitStatus(runId, Set.of("WAITING_APPROVAL"));
+        assertThat(waiting.path("status").asText()).isEqualTo("WAITING_APPROVAL");
+
+        JsonNode interaction = get("/api/v1/runs/" + runId + "/interaction");
+        assertThat(interaction.path("safePrompt").asText())
+                .contains("Mode: COMMAND", "Get-PSDrive -PSProvider FileSystem", "Risks: HIGH");
+        post(
+                "/api/v1/runs/" + runId + "/interactions/"
+                        + interaction.path("id").asText() + "/response",
+                interaction.path("revision").asLong(),
+                """
+                {"action":"approve","text":null}
+                """);
+
+        JsonNode completed = awaitTerminal(runId);
+        JsonNode activities = get("/api/v1/runs/" + runId + "/activities");
+        assertThat(completed.path("status").asText())
+                .as(completed.toPrettyString() + "\n" + activities.toPrettyString())
+                .isEqualTo("COMPLETED");
+        assertThat(activities.toString()).contains("execution_run", "COMMAND", "Inspect filesystem drive usage");
     }
 
     @Test

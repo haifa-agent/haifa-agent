@@ -1,9 +1,12 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
+import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -78,35 +81,68 @@ record CliConfiguration(
     }
 
     static CliConfiguration defaults() {
-        Model flash = new Model(
+        Model responsesFlash = new Model(
                 "deepseek",
                 "DeepSeek",
                 "deepseek-v4-flash",
                 URI.create("https://api.deepseek.com"),
+                URI.create("https://api.deepseek.com"),
                 "env://DEEPSEEK_API_KEY",
-                OpenAiCompatibleDialects.DEEPSEEK,
-                OpenAiCompatibleDialects.VERSION_1,
+                io.haifa.agent.model.api.ModelApiStyles.OPENAI_RESPONSES,
+                "deepseek-openai-responses",
                 true,
                 null,
                 null,
-                "deepseek-v4-flash",
-                "DeepSeek V4 Flash");
-        Model pro = new Model(
+                "deepseek-responses-flash",
+                "DeepSeek Responses Flash",
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING),
+                131_072,
+                8_192);
+        Model chatPro = new Model(
                 "deepseek",
                 "DeepSeek",
                 "deepseek-v4-pro",
                 URI.create("https://api.deepseek.com"),
+                URI.create("https://api.deepseek.com"),
                 "env://DEEPSEEK_API_KEY",
+                io.haifa.agent.model.api.ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 OpenAiCompatibleDialects.DEEPSEEK,
-                OpenAiCompatibleDialects.VERSION_1,
                 true,
                 null,
                 null,
-                "deepseek-v4-pro",
-                "DeepSeek V4 Pro");
+                "deepseek-chat-pro",
+                "DeepSeek Chat Pro",
+                Set.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT,
+                        ModelCapability.REASONING),
+                131_072,
+                8_192);
+        Model anthropicFlash = new Model(
+                "deepseek",
+                "DeepSeek",
+                "deepseek-v4-flash",
+                URI.create("https://api.deepseek.com"),
+                URI.create("https://api.deepseek.com/anthropic"),
+                "env://DEEPSEEK_API_KEY",
+                io.haifa.agent.model.api.ModelApiStyles.ANTHROPIC_MESSAGES,
+                AnthropicMessagesDialects.DEEPSEEK,
+                true,
+                null,
+                null,
+                "deepseek-anthropic-flash",
+                "DeepSeek Anthropic Messages Flash",
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                131_072,
+                8_192);
         return new CliConfiguration(
-                flash,
-                List.of(flash, pro),
+                responsesFlash,
+                List.of(responsesFlash, chatPro, anthropicFlash),
                 DEFAULT_TOOLS,
                 List.of(),
                 Web.defaults(),
@@ -231,15 +267,19 @@ record CliConfiguration(
             String providerId,
             String providerDisplayName,
             String modelId,
+            URI providerEndpoint,
             URI endpoint,
             String credentialRef,
-            String dialectId,
-            String dialectVersion,
+            ApiStyleId style,
+            String dialect,
             boolean nativeStreaming,
             String workspaceId,
             String region,
             String id,
-            String displayName) {
+            String displayName,
+            Set<ModelCapability> capabilities,
+            int contextWindow,
+            int maxOutputTokens) {
         Model {
             providerId = text(providerId, "model.providerId");
             providerDisplayName = text(providerDisplayName, "model.providerDisplayName");
@@ -247,12 +287,19 @@ record CliConfiguration(
             id = text(id, "model.id");
             displayName = text(displayName, "model.displayName");
             credentialRef = text(credentialRef, "model.credentialRef");
-            dialectId = text(dialectId, "model.dialectId");
-            dialectVersion = text(dialectVersion, "model.dialectVersion");
+            style = Objects.requireNonNull(style, "model.style must not be null");
+            dialect = text(dialect, "model.dialect");
+            capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "model.capabilities must not be null"));
+            if (capabilities.isEmpty()) throw new IllegalArgumentException("model.capabilities must not be empty");
+            if (contextWindow < 1 || maxOutputTokens < 1 || maxOutputTokens > contextWindow) {
+                throw new IllegalArgumentException("model token limits are invalid");
+            }
             if (!credentialRef.startsWith("env://")) {
                 throw new IllegalArgumentException("model.credentialRef must use env://");
             }
-            if (dialectId.equals(OpenAiCompatibleDialects.ALIYUN_BAILIAN)) {
+            providerEndpoint = normalizeEndpoint(
+                    Objects.requireNonNull(providerEndpoint, "model.providerEndpoint must not be null"));
+            if (dialect.equals(OpenAiCompatibleDialects.ALIYUN_BAILIAN)) {
                 if (!providerId.equals(AliyunBailianProviderFactory.PROVIDER_ID.value())) {
                     throw new IllegalArgumentException("aliyun-bailian-openai-chat requires providerId="
                             + AliyunBailianProviderFactory.PROVIDER_ID.value());
@@ -260,9 +307,10 @@ record CliConfiguration(
                 var configuration = new AliyunBailianProviderFactory.ProviderConfiguration(
                         "cli-v1", workspaceId, region, new CredentialRef(credentialRef));
                 URI derivedEndpoint = configuration.endpoint();
-                if (endpoint != null && !normalizeEndpoint(endpoint).equals(derivedEndpoint)) {
+                if (!providerEndpoint.equals(derivedEndpoint)
+                        || endpoint != null && !normalizeEndpoint(endpoint).equals(derivedEndpoint)) {
                     throw new IllegalArgumentException(
-                            "model.endpoint must match the endpoint derived from workspaceId and region");
+                            "model endpoints must match the endpoint derived from workspaceId and region");
                 }
                 workspaceId = configuration.workspaceId();
                 region = configuration.region();

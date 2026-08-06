@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
@@ -27,24 +29,37 @@ class PersonalModelFactoryTest {
                 Map.entry("provider.id", "deepseek"),
                 Map.entry("provider.display-name", "DeepSeek"),
                 Map.entry("provider.mode", "remote"),
-                Map.entry("provider.dialect-id", "deepseek-openai-chat"),
-                Map.entry("provider.dialect-version", "1.0"),
                 Map.entry("provider.native-streaming", true),
                 Map.entry("provider.endpoint", "https://api.deepseek.com"),
                 Map.entry("provider.credential-reference", "env://DEEPSEEK_API_KEY"),
+                Map.entry("provider.api-bindings[0].style", "openai-chat-completions"),
+                Map.entry("provider.api-bindings[0].dialect", "deepseek-openai-chat"),
                 Map.entry("provider.models[0].id", "deepseek-v4-pro"),
                 Map.entry("provider.models[0].display-name", "DeepSeek V4 Pro"),
                 Map.entry("provider.models[0].provider-model-id", "deepseek-v4-pro"),
+                Map.entry("provider.models[0].style", "openai-chat-completions"),
+                Map.entry("provider.models[0].capabilities[0]", "TEXT_CHAT"),
+                Map.entry("provider.models[0].capabilities[1]", "TOOL_CALLING"),
+                Map.entry("provider.models[0].context-window", 131072),
+                Map.entry("provider.models[0].max-output-tokens", 8192),
                 Map.entry("provider.models[1].id", "deepseek-v4-flash"),
                 Map.entry("provider.models[1].display-name", "DeepSeek V4 Flash"),
-                Map.entry("provider.models[1].provider-model-id", "deepseek-v4-flash")));
+                Map.entry("provider.models[1].provider-model-id", "deepseek-v4-flash"),
+                Map.entry("provider.models[1].style", "openai-chat-completions"),
+                Map.entry("provider.models[1].capabilities[0]", "TEXT_CHAT"),
+                Map.entry("provider.models[1].capabilities[1]", "TOOL_CALLING"),
+                Map.entry("provider.models[1].context-window", 131072),
+                Map.entry("provider.models[1].max-output-tokens", 8192)));
 
         var provider = new Binder(source)
                 .bind("provider", Bindable.of(PersonalAssistantProperties.ModelProvider.class))
                 .orElseThrow(() -> new AssertionError("model provider did not bind"));
 
         assertThat(provider.id()).isEqualTo("deepseek");
-        assertThat(provider.dialectId()).isEqualTo("deepseek-openai-chat");
+        assertThat(provider.apiBindings()).singleElement().satisfies(binding -> {
+            assertThat(binding.style()).isEqualTo("openai-chat-completions");
+            assertThat(binding.dialect()).isEqualTo("deepseek-openai-chat");
+        });
         assertThat(provider.nativeStreaming()).isTrue();
         assertThat(provider.models())
                 .extracting(PersonalAssistantProperties.ProviderModel::id)
@@ -53,21 +68,21 @@ class PersonalModelFactoryTest {
 
     @Test
     void exposesTwoModelsUnderOneProviderAndFreezesBothSnapshots() {
-        var provider = new PersonalAssistantProperties.ModelProvider(
+        var provider = provider(
                 "deepseek",
                 "DeepSeek",
-                "remote",
-                false,
-                "deepseek-openai-chat",
-                "1.0",
                 true,
                 URI.create("https://api.deepseek.com"),
                 "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", "deepseek-openai-chat", null)),
                 List.of(
-                        new PersonalAssistantProperties.ProviderModel(
-                                "deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek-v4-pro"),
-                        new PersonalAssistantProperties.ProviderModel(
-                                "deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek-v4-flash")));
+                        model("deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek-v4-pro", "openai-chat-completions"),
+                        model(
+                                "deepseek-v4-flash",
+                                "DeepSeek V4 Flash",
+                                "deepseek-v4-flash",
+                                "openai-chat-completions")));
 
         var platform =
                 PersonalModelFactory.createPlatform(List.of(provider), "deepseek-v4-pro", new ObjectMapper(), shell());
@@ -81,97 +96,109 @@ class PersonalModelFactoryTest {
 
     @Test
     void freezesOpenAiAsASecondProviderWithoutDeepSeekOptions() {
-        var deepSeek = new PersonalAssistantProperties.ModelProvider(
+        var deepSeek = provider(
                 "deepseek",
                 "DeepSeek",
-                "remote",
-                false,
-                "deepseek-openai-chat",
-                "1.0",
                 true,
                 URI.create("https://api.deepseek.com"),
                 "env://DEEPSEEK_API_KEY",
-                List.of(new PersonalAssistantProperties.ProviderModel(
-                        "deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek-v4-flash")));
-        var openAi = new PersonalAssistantProperties.ModelProvider(
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-responses", "deepseek-openai-responses", null)),
+                List.of(model(
+                        "deepseek-responses-flash",
+                        "DeepSeek Responses Flash",
+                        "deepseek-v4-flash",
+                        "openai-responses")));
+        var openAi = provider(
                 "openai",
                 "OpenAI",
-                "remote",
-                false,
-                "openai-chat-completions",
-                "1.0",
                 false,
                 URI.create("http://localhost:30000/v1"),
                 "env://OPENAI_API_KEY",
-                List.of(new PersonalAssistantProperties.ProviderModel(
-                        "openai-gpt-5.6-luna", "GPT-5.6 Luna", "gpt-5.6-luna")));
+                List.of(new PersonalAssistantProperties.ApiBinding("openai-responses", null, null)),
+                List.of(textModel("openai-gpt-5.6-luna", "GPT-5.6 Luna", "gpt-5.6-luna", "openai-responses")));
 
         var platform = PersonalModelFactory.createPlatform(
-                List.of(deepSeek, openAi), "deepseek-v4-flash", true, new ObjectMapper(), shell());
+                List.of(deepSeek, openAi), "deepseek-responses-flash", true, new ObjectMapper(), shell());
 
         assertThat(platform.catalog().available())
                 .extracting(model -> model.providerId() + "/" + model.id())
-                .containsExactly("deepseek/deepseek-v4-flash", "openai/openai-gpt-5.6-luna");
-        assertThat(platform.contribution()
-                        .snapshots()
-                        .get("openai-gpt-5.6-luna")
-                        .providerOptions())
-                .containsEntry("dialect_id", "openai-chat-completions")
-                .containsEntry("dialect_version", "1.0")
-                .doesNotContainKeys("thinking", "reasoning_effort");
+                .containsExactly("deepseek/deepseek-responses-flash");
+        assertThat(platform.catalog().find("openai-gpt-5.6-luna")).isEmpty();
+        var snapshot = platform.contribution().snapshots().get("openai-gpt-5.6-luna");
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+        assertThat(snapshot.dialect()).isEqualTo("standard");
+        assertThat(snapshot.nativeStreaming()).isFalse();
+        assertThat(snapshot.providerOptions()).doesNotContainKeys("thinking", "reasoning_effort");
     }
 
     @Test
     void freezesStandardChatCompletionsDialectForAnArbitraryProviderId() {
-        var provider = new PersonalAssistantProperties.ModelProvider(
+        var provider = provider(
                 "third-party-openai",
                 "Third-party OpenAI-compatible",
-                "remote",
-                false,
-                "openai-chat-completions",
-                "1.0",
                 true,
                 URI.create("https://gateway.example.com/v1"),
                 "env://THIRD_PARTY_API_KEY",
-                List.of(new PersonalAssistantProperties.ProviderModel(
-                        "third-party-chat", "Third-party Chat", "vendor-chat-model")));
+                List.of(new PersonalAssistantProperties.ApiBinding("openai-chat-completions", null, null)),
+                List.of(model("third-party-chat", "Third-party Chat", "vendor-chat-model", "openai-chat-completions")));
 
         var platform =
                 PersonalModelFactory.createPlatform(List.of(provider), "third-party-chat", new ObjectMapper(), shell());
 
         assertThat(platform.contribution().snapshot().providerId().value()).isEqualTo("third-party-openai");
+        assertThat(platform.contribution().snapshot().dialect()).isEqualTo("standard");
+        assertThat(platform.contribution().snapshot().nativeStreaming()).isTrue();
         assertThat(platform.contribution().snapshot().providerOptions())
-                .containsEntry("dialect_id", "openai-chat-completions")
-                .containsEntry("dialect_version", "1.0")
-                .containsEntry("native_streaming", true)
                 .containsEntry("endpoint_host", "gateway.example.com")
                 .doesNotContainKeys("thinking", "reasoning_effort");
     }
 
     @Test
+    void freezesDeepSeekAnthropicBindingEndpointAndDisabledThinking() {
+        var provider = provider(
+                "deepseek",
+                "DeepSeek",
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "anthropic-messages",
+                        "deepseek-anthropic-messages",
+                        URI.create("https://api.deepseek.com/anthropic"))),
+                List.of(model(
+                        "deepseek-anthropic-flash",
+                        "DeepSeek Anthropic Messages Flash",
+                        "deepseek-v4-flash",
+                        "anthropic-messages")));
+
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(provider), "deepseek-anthropic-flash", new ObjectMapper(), shell());
+        var snapshot = platform.contribution().snapshot();
+
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES);
+        assertThat(snapshot.adapterType()).isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER);
+        assertThat(snapshot.endpoint()).hasToString("https://api.deepseek.com/anthropic");
+        assertThat(snapshot.invocationOptions()).containsEntry("thinking", "disabled");
+    }
+
+    @Test
     void permitsInsecureHttpOnlyForExplicitLoopbackModelEndpoints() {
-        var loopback = new PersonalAssistantProperties.ModelProvider(
+        var loopback = provider(
                 "openai",
                 "OpenAI",
-                "remote",
-                false,
-                "openai-chat-completions",
-                "1.0",
                 false,
                 URI.create("http://localhost:30000/v1"),
                 "env://OPENAI_API_KEY",
-                List.of(new PersonalAssistantProperties.ProviderModel(
-                        "openai-gpt-5.6-luna", "GPT-5.6 Luna", "gpt-5.6-luna")));
-        var external = new PersonalAssistantProperties.ModelProvider(
+                List.of(new PersonalAssistantProperties.ApiBinding("openai-chat-completions", null, null)),
+                List.of(model("openai-gpt-5.6-luna", "GPT-5.6 Luna", "gpt-5.6-luna", "openai-chat-completions")));
+        var external = provider(
                 "openai",
                 "OpenAI",
-                "remote",
-                false,
-                "openai-chat-completions",
-                "1.0",
                 false,
                 URI.create("http://example.com/v1"),
                 "env://OPENAI_API_KEY",
+                loopback.apiBindings(),
                 loopback.models());
 
         assertThatThrownBy(() -> PersonalModelFactory.createPlatform(
@@ -182,6 +209,36 @@ class PersonalModelFactoryTest {
                         List.of(external), "openai-gpt-5.6-luna", true, new ObjectMapper(), shell()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("loopback-only opt-in");
+    }
+
+    private static PersonalAssistantProperties.ModelProvider provider(
+            String id,
+            String displayName,
+            boolean nativeStreaming,
+            URI endpoint,
+            String credentialReference,
+            List<PersonalAssistantProperties.ApiBinding> bindings,
+            List<PersonalAssistantProperties.ProviderModel> models) {
+        return new PersonalAssistantProperties.ModelProvider(
+                id, displayName, "remote", false, nativeStreaming, endpoint, credentialReference, bindings, models);
+    }
+
+    private static PersonalAssistantProperties.ProviderModel model(
+            String id, String displayName, String providerModelId, String style) {
+        return new PersonalAssistantProperties.ProviderModel(
+                id,
+                displayName,
+                providerModelId,
+                style,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                131_072,
+                8_192);
+    }
+
+    private static PersonalAssistantProperties.ProviderModel textModel(
+            String id, String displayName, String providerModelId, String style) {
+        return new PersonalAssistantProperties.ProviderModel(
+                id, displayName, providerModelId, style, Set.of(ModelCapability.TEXT_CHAT), 131_072, 8_192);
     }
 
     private static ShellPlatformContribution shell() {

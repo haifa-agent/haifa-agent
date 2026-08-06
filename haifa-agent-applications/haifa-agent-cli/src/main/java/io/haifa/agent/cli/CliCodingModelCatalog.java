@@ -4,6 +4,8 @@ import io.haifa.agent.application.project.product.coding.CodingModelCatalog;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -17,7 +19,6 @@ import io.haifa.agent.model.core.ModelAccessPolicy;
 import io.haifa.agent.model.core.ModelAvailabilityRequest;
 import io.haifa.agent.model.core.ModelSelectionRequest;
 import io.haifa.agent.model.core.StaticModelPlatform;
-import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -46,7 +47,10 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
         platform = new StaticModelPlatform(
                 new ImmutableModelCatalog(providers),
                 ModelAccessPolicy.allowAll(),
-                Map.of("openai-compatible", "1.0.0"),
+                Map.of(
+                        ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0",
+                        ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0",
+                        ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"),
                 new InMemoryProviderHealthRegistry());
     }
 
@@ -85,9 +89,11 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
         CliConfiguration.Model first = models.getFirst();
         var providerSnapshot = LocalCodingAgent.modelSnapshot(first);
         if (models.stream()
-                .anyMatch(model -> !model.endpoint().equals(first.endpoint())
-                        || !model.credentialRef().equals(first.credentialRef()))) {
-            throw new IllegalArgumentException("models for one provider must share endpoint and credentialRef");
+                .anyMatch(model -> !model.providerEndpoint().equals(first.providerEndpoint())
+                        || !model.credentialRef().equals(first.credentialRef())
+                        || model.nativeStreaming() != first.nativeStreaming())) {
+            throw new IllegalArgumentException(
+                    "models for one provider must share endpoint, credentialRef, and nativeStreaming");
         }
         ModelProviderId id = new ModelProviderId(providerId);
         List<ModelDefinition> definitions = models.stream()
@@ -98,31 +104,41 @@ final class CliCodingModelCatalog implements CodingModelCatalog {
                         model.modelId(),
                         model.displayName(),
                         ModelStatus.ACTIVE,
-                        capabilities(model),
-                        131_072,
-                        8_192,
+                        model.capabilities(),
+                        model.contextWindow(),
+                        model.maxOutputTokens(),
                         LocalCodingAgent.modelSnapshot(model).invocationOptions(),
-                        Map.of()))
+                        Map.of(),
+                        model.style()))
+                .toList();
+        List<ModelApiBindingDefinition> bindings = models.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        CliConfiguration.Model::style,
+                        model -> new ModelApiBindingDefinition(
+                                model.style(),
+                                model.dialect(),
+                                model.endpoint().equals(model.providerEndpoint()) ? null : model.endpoint()),
+                        (left, right) -> {
+                            if (!left.equals(right)) {
+                                throw new IllegalArgumentException("one API style must resolve to one binding");
+                            }
+                            return left;
+                        },
+                        LinkedHashMap::new))
+                .values()
+                .stream()
                 .toList();
         return new ModelProviderDefinition(
                 id,
                 "cli-v1",
                 first.providerDisplayName(),
-                "openai-compatible",
-                first.endpoint(),
+                first.providerEndpoint(),
                 new io.haifa.agent.model.api.CredentialRef(first.credentialRef()),
+                first.nativeStreaming(),
                 ProviderStatus.ACTIVE,
+                bindings,
                 definitions,
                 providerSnapshot.providerOptions(),
                 Map.of());
-    }
-
-    private static Set<ModelCapability> capabilities(CliConfiguration.Model model) {
-        EnumSet<ModelCapability> capabilities =
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT);
-        if (OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialectId())) {
-            capabilities.add(ModelCapability.REASONING);
-        }
-        return capabilities;
     }
 }

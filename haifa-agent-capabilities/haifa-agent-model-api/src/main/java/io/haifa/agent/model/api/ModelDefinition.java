@@ -16,7 +16,8 @@ public record ModelDefinition(
         int contextWindow,
         int maxOutputTokens,
         Map<String, Object> options,
-        Map<String, Object> metadata) {
+        Map<String, Object> metadata,
+        ApiStyleId style) {
     public ModelDefinition {
         id = Objects.requireNonNull(id, "id must not be null");
         version = ModelValues.text(version, "version");
@@ -31,5 +32,6 @@ public record ModelDefinition(
         }
         options = ModelValues.map(options, "options");
         metadata = ModelValues.map(metadata, "metadata");
+        style = Objects.requireNonNull(style, "style must not be null");
     }
 }

@@ -23,15 +23,20 @@ final class DeliveryCliConfigurationFactory {
                   providers:
                     - id: deepseek
                       displayName: DeepSeek
-                      dialectId: deepseek-openai-chat
-                      dialectVersion: "1.0"
-                      nativeStreaming: true
                       endpoint: https://api.deepseek.com
                       credentialRef: env://DEEPSEEK_API_KEY
+                      nativeStreaming: true
+                      apiBindings:
+                        - style: openai-responses
+                          dialect: deepseek-openai-responses
                       models:
                         - id: %s
                           displayName: %s
                           providerModelId: %s
+                          style: openai-responses
+                          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+                          contextWindow: 131072
+                          maxOutputTokens: 8192
                 tools:
                   enabled: [file.list, file.stat, file.read, file.search, file.create, file.write, file.delete, file.move, execution.run]
                 skills:

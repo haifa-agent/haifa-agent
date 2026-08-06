@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -64,10 +65,13 @@ class AliyunBailianLiveIT {
                 definition.id(),
                 definition.version(),
                 definition.providerModelId(),
-                provider.adapterType(),
+                ModelApiStyles.adapterType(definition.style()),
                 "1.0.0",
+                definition.style(),
+                provider.binding(definition.style()).dialect(),
                 provider.endpoint(),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 definition.capabilities(),
                 definition.contextWindow(),
                 definition.maxOutputTokens(),

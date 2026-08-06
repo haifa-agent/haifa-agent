@@ -15,7 +15,7 @@ final class StandardOpenAiChatCompletionsDialect implements OpenAiCompatibleDial
 
     @Override
     public String id() {
-        return OpenAiCompatibleDialects.OPENAI_CHAT_COMPLETIONS;
+        return OpenAiCompatibleDialects.STANDARD_IMPLEMENTATION_ID;
     }
 
     @Override
@@ -45,10 +45,6 @@ final class StandardOpenAiChatCompletionsDialect implements OpenAiCompatibleDial
     }
 
     private static void validateOptions(Map<String, Object> options) {
-        Object nativeStreaming = options.get(OpenAiCompatibleDialects.NATIVE_STREAMING);
-        if (nativeStreaming != null && !(nativeStreaming instanceof Boolean)) {
-            throw new IllegalArgumentException("native_streaming must be boolean");
-        }
         Object endpointHost = options.get(OpenAiCompatibleDialects.ENDPOINT_HOST);
         if (endpointHost != null && (!(endpointHost instanceof String host) || host.isBlank())) {
             throw new IllegalArgumentException("endpoint_host must be non-blank text");

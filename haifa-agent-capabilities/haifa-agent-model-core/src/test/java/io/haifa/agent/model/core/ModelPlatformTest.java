@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -59,7 +62,7 @@ class ModelPlatformTest {
         StaticModelPlatform platform = platform(
                 List.of(first, second, disabled, missingAdapter),
                 ModelAccessPolicy.allowAll(),
-                Map.of("adapter-one", "1.0.0", "adapter-two", "2.0.0", "adapter-three", "3.0.0"),
+                Map.of(ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0", ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "2.0.0"),
                 new InMemoryProviderHealthRegistry());
 
         List<ModelProviderView> available =
@@ -115,7 +118,7 @@ class ModelPlatformTest {
         StaticModelPlatform platform = platform(
                 List.of(coding, document),
                 productPolicy,
-                Map.of("openai-compatible", "1.0.0"),
+                Map.of(ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0"),
                 new InMemoryProviderHealthRegistry());
 
         List<ModelProviderView> codingModels = platform.listAvailable(
@@ -140,14 +143,14 @@ class ModelPlatformTest {
                 ProviderStatus.ACTIVE,
                 model("second", "second-chat", ModelStatus.ACTIVE, ModelCapability.TEXT_CHAT));
         Map<String, String> adapterVersions = new LinkedHashMap<>();
-        adapterVersions.put("adapter-one", "1.2.3");
-        adapterVersions.put("adapter-two", "4.5.6");
+        adapterVersions.put(ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.2.3");
+        adapterVersions.put(ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "4.5.6");
         StaticModelPlatform platform = platform(
                 List.of(first, second),
                 ModelAccessPolicy.allowAll(),
                 adapterVersions,
                 new InMemoryProviderHealthRegistry());
-        adapterVersions.put("adapter-one", "9.9.9");
+        adapterVersions.put(ModelApiStyles.OPENAI_CHAT_ADAPTER, "9.9.9");
 
         var firstSelection = platform.select(selection("first-chat"));
         var repeatedSelection = platform.select(selection("first-chat"));
@@ -174,7 +177,7 @@ class ModelPlatformTest {
         StaticModelPlatform platform = platform(
                 List.of(available, unavailable),
                 ModelAccessPolicy.allowAll(),
-                Map.of("adapter-one", "1.0.0"),
+                Map.of(ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0"),
                 new InMemoryProviderHealthRegistry());
 
         assertThat(platform.listAvailable(availability("user", "product", Set.of(ModelCapability.TEXT_CHAT))))
@@ -194,8 +197,11 @@ class ModelPlatformTest {
                 ProviderStatus.ACTIVE,
                 model("first", "first-chat", ModelStatus.ACTIVE, ModelCapability.TEXT_CHAT));
         InMemoryProviderHealthRegistry health = new InMemoryProviderHealthRegistry();
-        StaticModelPlatform platform =
-                platform(List.of(provider), ModelAccessPolicy.allowAll(), Map.of("adapter-one", "1.0.0"), health);
+        StaticModelPlatform platform = platform(
+                List.of(provider),
+                ModelAccessPolicy.allowAll(),
+                Map.of(ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0"),
+                health);
 
         String before = platform.select(selection("first-chat")).configurationDigest();
         Instant observedAt = Instant.parse("2026-07-30T04:00:00Z");
@@ -237,15 +243,37 @@ class ModelPlatformTest {
     private static ModelProviderDefinition provider(
             String id, String adapterType, ProviderStatus status, ModelDefinition... models) {
         ModelProviderId providerId = new ModelProviderId(id);
+        ApiStyleId style =
+                switch (adapterType) {
+                    case "adapter-two" -> ModelApiStyles.OPENAI_RESPONSES;
+                    case "adapter-missing" -> new ApiStyleId("unsupported-style");
+                    default -> ModelApiStyles.OPENAI_CHAT_COMPLETIONS;
+                };
+        List<ModelDefinition> styledModels = java.util.Arrays.stream(models)
+                .map(model -> new ModelDefinition(
+                        model.id(),
+                        model.version(),
+                        model.providerId(),
+                        model.providerModelId(),
+                        model.displayName(),
+                        model.status(),
+                        model.capabilities(),
+                        model.contextWindow(),
+                        model.maxOutputTokens(),
+                        model.options(),
+                        model.metadata(),
+                        style))
+                .toList();
         return new ModelProviderDefinition(
                 providerId,
                 "provider-v1",
                 id + " display",
-                adapterType,
                 URI.create("https://" + id + ".private.example"),
                 new CredentialRef("env://" + id.toUpperCase(java.util.Locale.ROOT) + "_SECRET"),
+                true,
                 status,
-                List.of(models),
+                List.of(new ModelApiBindingDefinition(style)),
+                styledModels,
                 Map.of("private", "private-provider-option"),
                 Map.of("private", "private-provider-metadata"));
     }
@@ -263,6 +291,7 @@ class ModelPlatformTest {
                 32_768,
                 4_096,
                 Map.of("private", "private-model-option"),
-                Map.of("private", "private-model-metadata"));
+                Map.of("private", "private-model-metadata"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
     }
 }

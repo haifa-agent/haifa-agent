@@ -63,7 +63,9 @@ class ConversationReconciliationTest {
                         profile.limits(),
                         model.snapshot()))
                 .registerChatModel(
-                        model.snapshot().adapterType(), model.snapshot().adapterVersion(), model.model())
+                        model.snapshot().adapterType(),
+                        model.snapshot().adapterVersion(),
+                        model.adapters().get(io.haifa.agent.model.api.ModelAdapterCoordinate.from(model.snapshot())))
                 .build();
         AgentSessionId sessionId = new AgentSessionId("pending-session");
         String dispatchKey = "sdk:submit:pending";

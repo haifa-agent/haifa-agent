@@ -138,12 +138,42 @@ def yaml_single_quoted(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def validate_model_configuration(content: str) -> None:
+    required_fragments = (
+        "apiBindings:",
+        "style: openai-responses",
+        "endpoint: ${OPENAI_BASE_URL:",
+        "credentialRef: env://OPENAI_API_KEY",
+        "providerModelId: ${OPENAI_MODEL_ID:",
+    )
+    missing = [fragment for fragment in required_fragments if fragment not in content]
+    if missing:
+        raise ValueError(
+            "Coding Agent configuration template is missing the current model API structure: "
+            + ", ".join(missing)
+        )
+    forbidden_fragments = (
+        "dialectId:",
+        "dialectVersion:",
+        "styleVersion:",
+        "adapterType:",
+        "CHATGPT2API_",
+    )
+    present = [fragment for fragment in forbidden_fragments if fragment in content]
+    if present:
+        raise ValueError(
+            "Coding Agent configuration template contains retired model configuration: "
+            + ", ".join(present)
+        )
+
+
 def render_configuration(
     configuration_template: Path, output_file: Path, data_directory: Path
 ) -> None:
     database_token = "__HAIFA_SQLITE_DATABASE_PATH__"
     transcript_token = "__HAIFA_TRANSCRIPT_ROOT__"
     content = configuration_template.read_text(encoding="utf-8")
+    validate_model_configuration(content)
     for token in (database_token, transcript_token):
         if content.count(token) != 1:
             raise ValueError(
@@ -156,6 +186,7 @@ def render_configuration(
         transcript_token,
         yaml_single_quoted(str((data_directory / "transcripts").resolve())),
     )
+    validate_model_configuration(rendered)
     output_file.write_text(rendered, encoding="utf-8", newline="\n")
 
 
@@ -185,12 +216,20 @@ def print_next_steps(output_directory: Path) -> None:
         print(f"  $env:Path = '{output_directory};' + $env:Path")
         print("Set the model credential, enter any workspace, and launch:")
         print("  $env:DEEPSEEK_API_KEY = '<secret>'")
+        print("For the configured local OpenAI Responses gateway, use:")
+        print("  $env:OPENAI_BASE_URL = 'http://127.0.0.1:30000/v1'")
+        print("  $env:OPENAI_API_KEY = '<api-key>'")
+        print("  $env:OPENAI_MODEL_ID = '<model-id>'")
         print(r"  Set-Location D:\path\to\project")
     else:
         print("Add it to PATH:")
         print(f'  export PATH="{output_directory}:$PATH"')
         print("Set the model credential, enter any workspace, and launch:")
         print("  export DEEPSEEK_API_KEY='<secret>'")
+        print("For the configured local OpenAI Responses gateway, use:")
+        print("  export OPENAI_BASE_URL='http://127.0.0.1:30000/v1'")
+        print("  export OPENAI_API_KEY='<api-key>'")
+        print("  export OPENAI_MODEL_ID='<model-id>'")
         print("  cd /path/to/project")
     print("  haifa-coding")
 

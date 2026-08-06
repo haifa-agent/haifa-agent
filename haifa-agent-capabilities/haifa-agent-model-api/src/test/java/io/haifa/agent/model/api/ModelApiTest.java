@@ -110,10 +110,11 @@ class ModelApiTest {
                 new ModelProviderId("deepseek"),
                 "provider-v1",
                 "DeepSeek",
-                "openai-compatible",
                 URI.create("https://api.deepseek.com"),
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS, "deepseek-openai-chat")),
                 List.of(model(new ModelProviderId("deepseek"), "deepseek-v4-pro", "deepseek-v4-pro")),
                 options,
                 Map.of());
@@ -128,6 +129,75 @@ class ModelApiTest {
     }
 
     @Test
+    void providerSharesConnectionWhileBindingsOwnDialectAndEndpointOverride() {
+        ModelProviderId providerId = new ModelProviderId("multi-style");
+        ModelDefinition chat =
+                model(providerId, "chat-model", "same-provider-model", ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
+        ModelDefinition responses =
+                model(providerId, "responses-model", "same-provider-model", ModelApiStyles.OPENAI_RESPONSES);
+        ModelDefinition anthropic =
+                model(providerId, "anthropic-model", "same-provider-model", ModelApiStyles.ANTHROPIC_MESSAGES);
+        URI providerEndpoint = URI.create("https://model.example.com/v1");
+        URI responsesEndpoint = URI.create("https://responses.example.com/v1");
+
+        ModelProviderDefinition provider = new ModelProviderDefinition(
+                providerId,
+                "provider-v1",
+                "Multi Style",
+                providerEndpoint,
+                new CredentialRef("env://MODEL_API_KEY"),
+                true,
+                ProviderStatus.ACTIVE,
+                List.of(
+                        new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS),
+                        new ModelApiBindingDefinition(
+                                ModelApiStyles.OPENAI_RESPONSES, "vendor-responses", responsesEndpoint),
+                        new ModelApiBindingDefinition(
+                                ModelApiStyles.ANTHROPIC_MESSAGES,
+                                "vendor-anthropic",
+                                URI.create("https://messages.example.com"))),
+                List.of(chat, responses, anthropic),
+                Map.of(),
+                Map.of());
+
+        assertThat(provider.endpoint()).isEqualTo(providerEndpoint);
+        assertThat(provider.credentialRef().value()).isEqualTo("env://MODEL_API_KEY");
+        assertThat(provider.nativeStreaming()).isTrue();
+        assertThat(provider.binding(ModelApiStyles.OPENAI_CHAT_COMPLETIONS).dialect())
+                .isEqualTo(ModelApiBindingDefinition.STANDARD_DIALECT);
+        assertThat(provider.binding(ModelApiStyles.OPENAI_CHAT_COMPLETIONS).resolveEndpoint(provider.endpoint()))
+                .isEqualTo(providerEndpoint);
+        assertThat(provider.binding(ModelApiStyles.OPENAI_RESPONSES).resolveEndpoint(provider.endpoint()))
+                .isEqualTo(responsesEndpoint);
+        assertThat(ModelApiStyles.adapterType(ModelApiStyles.ANTHROPIC_MESSAGES))
+                .isEqualTo(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER);
+        assertThat(provider.models())
+                .extracting(ModelDefinition::providerModelId)
+                .containsExactly("same-provider-model", "same-provider-model", "same-provider-model");
+
+        assertThatThrownBy(() -> new ModelProviderDefinition(
+                        providerId,
+                        "provider-v1",
+                        "Invalid",
+                        providerEndpoint,
+                        new CredentialRef("env://MODEL_API_KEY"),
+                        true,
+                        ProviderStatus.ACTIVE,
+                        provider.apiBindings(),
+                        List.of(
+                                chat,
+                                model(
+                                        providerId,
+                                        "duplicate-chat-model",
+                                        "same-provider-model",
+                                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS)),
+                        Map.of(),
+                        Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("duplicate provider model id within API style");
+    }
+
+    @Test
     void frozenSnapshotDigestCoversEndpointLimitsVersionsAndOptions() {
         ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
                 new ModelProviderId("deepseek"),
@@ -137,8 +207,11 @@ class ModelApiTest {
                 "deepseek-v4-pro",
                 "openai-compatible",
                 "adapter-v1",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                "deepseek-openai-chat",
                 URI.create("https://api.deepseek.com"),
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 EnumSet.of(ModelCapability.TEXT_CHAT),
                 1_048_576,
                 8_192,
@@ -155,8 +228,11 @@ class ModelApiTest {
                         snapshot.providerModelId(),
                         snapshot.adapterType(),
                         snapshot.adapterVersion(),
+                        snapshot.apiStyle(),
+                        snapshot.dialect(),
                         URI.create("https://changed.example.com"),
                         snapshot.credentialRef(),
+                        snapshot.nativeStreaming(),
                         snapshot.capabilities(),
                         snapshot.contextWindow(),
                         snapshot.maxOutputTokens(),
@@ -173,8 +249,11 @@ class ModelApiTest {
                                 snapshot.providerModelId(),
                                 snapshot.adapterType(),
                                 snapshot.adapterVersion(),
+                                snapshot.apiStyle(),
+                                snapshot.dialect(),
                                 snapshot.endpoint(),
                                 snapshot.credentialRef(),
+                                snapshot.nativeStreaming(),
                                 snapshot.capabilities(),
                                 snapshot.contextWindow(),
                                 snapshot.maxOutputTokens() - 1,
@@ -189,16 +268,22 @@ class ModelApiTest {
                 id,
                 "provider-v1",
                 "DeepSeek",
-                "openai-compatible",
                 URI.create("https://api.deepseek.com"),
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS, "deepseek-openai-chat")),
                 models,
                 Map.of("thinking", "disabled"),
                 Map.of());
     }
 
     private static ModelDefinition model(ModelProviderId providerId, String id, String providerModelId) {
+        return model(providerId, id, providerModelId, ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
+    }
+
+    private static ModelDefinition model(
+            ModelProviderId providerId, String id, String providerModelId, ApiStyleId style) {
         return new ModelDefinition(
                 new ModelDefinitionId(id),
                 "model-v1",
@@ -210,6 +295,7 @@ class ModelApiTest {
                 1_048_576,
                 393_216,
                 Map.of("thinking", "disabled"),
-                Map.of());
+                Map.of(),
+                style);
     }
 }

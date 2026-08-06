@@ -1,5 +1,9 @@
 # Haifa Agent Execution API
 
+`ExecutionOutputObserver.onStarted()` marks the irreversible dispatch boundary. Process-backed providers notify it
+only after the operating-system process has started; validation, policy, manifest, environment, workspace, and
+scratch provisioning failures remain not dispatched.
+
 Provider-neutral 的执行契约，定义有界请求、可信调用上下文、幂等执行、取消、结构化结果、输出存储和环境租约端口。
 
 请求只接受 Workspace 逻辑路径，以及 `ExecutionCommand.direct(argv)` 或 `ExecutionCommand.shell(command)` 两种明确命令形式，不接受宿主机工作目录、明文凭据或无界资源参数。SHELL 保存一个最大 32KB 的完整命令字符串，Shell 类型和路径由可信 Provider 配置决定。本模块保持纯 Java，不依赖 Sandbox 实现、Spring 或 Provider SDK。

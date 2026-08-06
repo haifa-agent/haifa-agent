@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
+import io.haifa.agent.model.api.ModelAdapterCoordinate;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
@@ -54,7 +55,15 @@ public final class PersonalQuestionRecommender {
     private final ObjectMapper mapper;
 
     public PersonalQuestionRecommender(ModelContribution model) {
-        this(model.model(), model.snapshot(), new ObjectMapper());
+        this(defaultAdapter(model), model.snapshot(), new ObjectMapper());
+    }
+
+    private static AgentChatModel defaultAdapter(ModelContribution contribution) {
+        Objects.requireNonNull(contribution, "model contribution must not be null");
+        AgentChatModel adapter = contribution.adapters().get(ModelAdapterCoordinate.from(contribution.snapshot()));
+        if (adapter == null)
+            throw new IllegalArgumentException("default model snapshot references an unavailable adapter");
+        return adapter;
     }
 
     PersonalQuestionRecommender(AgentChatModel model, ResolvedModelSnapshot snapshot, ObjectMapper mapper) {

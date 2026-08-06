@@ -169,22 +169,34 @@ Host Guarded Scratch Root 负责物理路径、权限和清理；配置、Prompt
 
 ```yaml
 models:
-  default: deepseek-v4-flash
+  default: deepseek-responses-flash
   providers:
     - id: deepseek
       displayName: DeepSeek
-      dialectId: deepseek-openai-chat
-      dialectVersion: "1.0"
       nativeStreaming: true
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
+      apiBindings:
+        - style: openai-responses
+          dialect: deepseek-openai-responses
+        - style: anthropic-messages
+          dialect: deepseek-anthropic-messages
+          endpoint: https://api.deepseek.com/anthropic
       models:
-        - id: deepseek-v4-flash
-          displayName: DeepSeek V4 Flash
+        - id: deepseek-responses-flash
+          displayName: DeepSeek Responses Flash
           providerModelId: deepseek-v4-flash
-        - id: deepseek-v4-pro
-          displayName: DeepSeek V4 Pro
-          providerModelId: deepseek-v4-pro
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-anthropic-flash
+          displayName: DeepSeek Anthropic Messages Flash
+          providerModelId: deepseek-v4-flash
+          style: anthropic-messages
+          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 tools:
   enabled: [file.list, file.stat, file.read, file.create, file.write, execution.run, web.search, web.fetch]
 web:
@@ -208,59 +220,63 @@ persistence:
   protectorRef: env://HAIFA_CONTINUATION_KEY
 ```
 
-也可使用可信多模型配置；内部 `id` 与供应商 `providerModelId` 分离：
+同一 Provider 可声明多个 Style Binding；Binding 省略 dialect 时使用 `standard`：
 
 ```yaml
 models:
-  default: deepseek-v4-flash
+  default: deepseek-responses-flash
   providers:
     - id: deepseek
       displayName: DeepSeek
-      dialectId: deepseek-openai-chat
-      dialectVersion: "1.0"
-      nativeStreaming: true
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
-      models:
-        - id: deepseek-v4-pro
-          displayName: DeepSeek V4 Pro
-          providerModelId: deepseek-v4-pro
-        - id: deepseek-v4-flash
-          displayName: DeepSeek V4 Flash
-          providerModelId: deepseek-v4-flash
-    - id: aliyun-bailian
-      displayName: Alibaba Cloud Bailian
-      dialectId: aliyun-bailian-openai-chat
-      dialectVersion: "1.0"
       nativeStreaming: true
-      workspaceId: workspace-id
-      region: cn-beijing
-      credentialRef: env://DASHSCOPE_API_KEY
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: deepseek-openai-chat
+        - style: openai-responses
+          dialect: deepseek-openai-responses
       models:
-        - id: bailian-qwen-plus
-          displayName: Qwen Plus
-          providerModelId: qwen-plus
-    - id: openai
-      displayName: OpenAI
-      dialectId: openai-chat-completions
-      dialectVersion: "1.0"
-      nativeStreaming: false
-      endpoint: http://localhost:30000/v1
+        - id: deepseek-chat-pro
+          displayName: DeepSeek Chat Pro
+          providerModelId: deepseek-v4-pro
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-responses-flash
+          displayName: DeepSeek Responses Flash
+          providerModelId: deepseek-v4-flash
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+    - id: local-openai
+      displayName: Local OpenAI Responses Gateway
+      endpoint: ${OPENAI_BASE_URL:http://127.0.0.1:30000/v1}
       credentialRef: env://OPENAI_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-responses
       models:
-        - id: openai-gpt-5.6-luna
-          displayName: GPT-5.6 Luna
-          providerModelId: gpt-5.6-luna
+        - id: local-openai-responses
+          displayName: Local OpenAI Responses
+          providerModelId: ${OPENAI_MODEL_ID:gpt-5.6-luna}
+          style: openai-responses
+          capabilities: [TEXT_CHAT]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 ```
 
-旧 `model` 配置仍按单模型读取。`--model`/`HAIFA_MODEL_ID` 只能选择已注册的内部 ID，不能临时
+旧 `model`、`dialectId`、versioned Binding 配置不再接受。`--model`/`HAIFA_MODEL_ID` 只能选择已注册的内部 ID，不能临时
 注入 Endpoint 或 Credential；未知 ID 会 fail closed。
 
 Provider 是一级接入实例：Endpoint、Credential、百炼 Workspace/Region 只配置一次；其 `models`
 是该 Provider 可用的模型列表。模型 `id` 是产品内全局唯一选择 ID，`providerModelId` 是供应商实际
-模型或部署名称。每个 Provider 必须显式配置 `dialectId`、`dialectVersion` 和 `nativeStreaming`；
-Coding Agent 不根据 Provider ID 推断协议。严格兼容 OpenAI Chat Completions 的第三方 HTTPS
-Provider 可使用任意内部 ID，并复用 `openai-chat-completions`，无需修改 transport。
+模型或部署名称。Provider 持有共享 Endpoint、CredentialRef 与 `nativeStreaming`；Binding 只持有
+`style`、可选 dialect 和可选完整 Endpoint 覆盖。DeepSeek Anthropic Messages 因 Base URL 不同，在
+Binding 上覆盖 `https://api.deepseek.com/anthropic`。Coding Agent 不根据 Provider ID 推断协议；严格兼容
+现有 Style 的新 Provider 省略 dialect，只增加配置。
 
 `host-guarded + allow` 以当前 Windows 用户身份执行，允许普通宿主网络，也不能提供容器级文件隔离；
 只应对自己检查并信任的测试 Workspace 使用。模型与 Web Provider 调用可能计费。密钥只通过
@@ -270,10 +286,10 @@ ConPTY 离线验收可在 CLI 子进程中显式设置 `HAIFA_ALLOW_INSECURE_LOO
 只允许 `http://localhost`、`http://127.0.0.1` 或 IPv6 loopback Endpoint，不能放宽外部 HTTP
 Provider。普通运行不应设置该变量。
 
-发行配置中的 OpenAI 第二 Provider 使用 `http://localhost:30000/v1`，因此启动 Coding Agent 前需
-设置 `OPENAI_API_KEY`，并仅为该本机 loopback 端点设置
-`HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true`。默认模型仍是 `deepseek-v4-flash`；使用
-`--model openai-gpt-5.6-luna`、`HAIFA_MODEL_ID=openai-gpt-5.6-luna` 或空闲 Session 的模型选择入口切换。
+发行配置中的本地 Responses Provider 只读取 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`，
+并仅在显式设置 `HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL=true` 时允许 HTTP loopback。其当前能力只有
+`TEXT_CHAT`，不会进入要求 `TOOL_CALLING` 的 Coding 模型列表；默认仍使用
+`deepseek-responses-flash`。
 
 ## 安全 Trace
 
@@ -320,22 +336,24 @@ $env:DEEPSEEK_API_KEY = "<secret>"
 
 ```yaml
 models:
-  default: deepseek-v4-flash
+  default: deepseek-responses-flash
   providers:
     - id: deepseek
       displayName: DeepSeek
-      dialectId: deepseek-openai-chat
-      dialectVersion: "1.0"
       nativeStreaming: true
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
+      apiBindings:
+        - style: openai-responses
+          dialect: deepseek-openai-responses
       models:
-        - id: deepseek-v4-flash
-          displayName: DeepSeek V4 Flash
+        - id: deepseek-responses-flash
+          displayName: DeepSeek Responses Flash
           providerModelId: deepseek-v4-flash
-        - id: deepseek-v4-pro
-          displayName: DeepSeek V4 Pro
-          providerModelId: deepseek-v4-pro
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 tools:
   enabled: [file.list, file.stat, file.read, file.create, file.write, file.delete, file.move, execution.run]
 skills:

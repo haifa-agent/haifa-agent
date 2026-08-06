@@ -13,6 +13,8 @@ import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ImageDataPart;
 import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
@@ -170,8 +172,7 @@ class OpenAiCompatibleChatModelTest {
     @Test
     void bridgesStandardOpenAiSynchronousTransportIntoModelStreamEvents() throws Exception {
         provider = openAiProvider(
-                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"),
-                Map.of("dialect_id", "openai-chat-completions", "dialect_version", "1.0", "native_streaming", false));
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"), false, Map.of());
         response.set(
                 Response.json(
                         200,
@@ -208,12 +209,7 @@ class OpenAiCompatibleChatModelTest {
     @Test
     void acceptsTrustedThirdPartyHttpsHostForStandardChatCompletions() {
         provider = openAiProvider(
-                URI.create("https://gateway.example.com/v1"),
-                Map.of(
-                        "dialect_id", "openai-chat-completions",
-                        "dialect_version", "1.0",
-                        "native_streaming", true,
-                        "endpoint_host", "gateway.example.com"));
+                URI.create("https://gateway.example.com/v1"), true, Map.of("endpoint_host", "gateway.example.com"));
 
         model();
     }
@@ -221,12 +217,7 @@ class OpenAiCompatibleChatModelTest {
     @Test
     void rejectsThirdPartyHttpsHostThatDoesNotMatchFrozenTrustedHost() {
         provider = openAiProvider(
-                URI.create("https://gateway.example.com/v1"),
-                Map.of(
-                        "dialect_id", "openai-chat-completions",
-                        "dialect_version", "1.0",
-                        "native_streaming", true,
-                        "endpoint_host", "other.example.com"));
+                URI.create("https://gateway.example.com/v1"), true, Map.of("endpoint_host", "other.example.com"));
 
         assertThatThrownBy(this::model)
                 .isInstanceOf(IllegalArgumentException.class)
@@ -560,10 +551,11 @@ class OpenAiCompatibleChatModelTest {
                 provider.id(),
                 provider.version(),
                 provider.displayName(),
-                provider.adapterType(),
                 provider.endpoint(),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 provider.status(),
+                provider.apiBindings(),
                 provider.models(),
                 Map.of("thinking", "enabled", "reasoning_effort", "high"),
                 Map.of());
@@ -573,10 +565,11 @@ class OpenAiCompatibleChatModelTest {
                 enabled.id(),
                 enabled.version(),
                 enabled.displayName(),
-                enabled.adapterType(),
                 enabled.endpoint(),
                 enabled.credentialRef(),
+                enabled.nativeStreaming(),
                 enabled.status(),
+                enabled.apiBindings(),
                 enabled.models(),
                 Map.of("thinking", "enabled", "reasoning_effort", "medium"),
                 Map.of());
@@ -738,8 +731,11 @@ class OpenAiCompatibleChatModelTest {
                 "deepseek-v4-pro",
                 "openai-compatible",
                 "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK,
                 provider.endpoint(),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 EnumSet.allOf(ModelCapability.class),
                 1_048_576,
                 393_216,
@@ -756,8 +752,11 @@ class OpenAiCompatibleChatModelTest {
                 "deepseek-v4-pro",
                 "openai-compatible",
                 "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK,
                 provider.endpoint(),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 EnumSet.allOf(ModelCapability.class),
                 1_048_576,
                 393_216,
@@ -774,8 +773,11 @@ class OpenAiCompatibleChatModelTest {
                 "gpt-5.6-luna",
                 "openai-compatible",
                 "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                ModelApiBindingDefinition.STANDARD_DIALECT,
                 provider.endpoint(),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_INPUT, ModelCapability.TOOL_CALLING),
                 128_000,
                 8_192,
@@ -796,25 +798,29 @@ class OpenAiCompatibleChatModelTest {
                 1_048_576,
                 393_216,
                 Map.of("thinking", "disabled"),
-                Map.of());
+                Map.of(),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
         return new ModelProviderDefinition(
                 providerId,
                 "provider-v1",
                 "DeepSeek",
-                "openai-compatible",
                 endpoint,
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS, OpenAiCompatibleDialects.DEEPSEEK)),
                 List.of(model),
                 Map.of("thinking", "disabled"),
                 Map.of());
     }
 
     private ModelProviderDefinition openAiProvider(URI endpoint) {
-        return openAiProvider(endpoint, Map.of("dialect_id", "openai-chat-completions", "dialect_version", "1.0"));
+        return openAiProvider(endpoint, true, Map.of());
     }
 
-    private ModelProviderDefinition openAiProvider(URI endpoint, Map<String, Object> providerOptions) {
+    private ModelProviderDefinition openAiProvider(
+            URI endpoint, boolean nativeStreaming, Map<String, Object> providerOptions) {
         ModelProviderId providerId = new ModelProviderId("openai");
         ModelDefinition model = new ModelDefinition(
                 new ModelDefinitionId("openai-gpt-5.6-luna"),
@@ -827,15 +833,17 @@ class OpenAiCompatibleChatModelTest {
                 128_000,
                 8_192,
                 Map.of(),
-                Map.of());
+                Map.of(),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
         return new ModelProviderDefinition(
                 providerId,
                 "provider-v1",
                 "OpenAI",
-                "openai-compatible",
                 endpoint,
                 new CredentialRef("env://OPENAI_API_KEY"),
+                nativeStreaming,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(ModelApiStyles.OPENAI_CHAT_COMPLETIONS)),
                 List.of(model),
                 providerOptions,
                 Map.of());

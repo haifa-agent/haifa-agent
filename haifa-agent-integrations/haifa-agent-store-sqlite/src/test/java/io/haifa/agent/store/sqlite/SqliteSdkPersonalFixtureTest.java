@@ -15,7 +15,9 @@ import io.haifa.agent.memory.api.MemoryStatus;
 import io.haifa.agent.memory.api.TextMemoryContent;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelAdapterCoordinate;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -375,8 +377,11 @@ class SqliteSdkPersonalFixtureTest {
                 "personal-test-chat",
                 "personal-test-adapter",
                 "1.0",
+                new ApiStyleId("personal-test-style"),
+                "standard",
                 URI.create("https://model.invalid/v1"),
                 new CredentialRef("credential:personal-test"),
+                true,
                 Set.of(ModelCapability.TEXT_CHAT),
                 8_192,
                 1_024,
@@ -401,8 +406,9 @@ class SqliteSdkPersonalFixtureTest {
                         ProductCapabilities.MODEL,
                         snapshot.configurationDigest(),
                         ProductProviderSuitability.DEVELOPMENT),
-                model,
-                snapshot);
+                Map.of(ModelAdapterCoordinate.from(snapshot), model),
+                snapshot,
+                Map.of(snapshot.modelId().value(), snapshot));
     }
 
     private static SqliteSdkContributions sqliteContributions(

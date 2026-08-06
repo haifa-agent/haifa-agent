@@ -15,6 +15,7 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
@@ -70,10 +71,11 @@ class DeepSeekRuntimeIntegrationTest {
                     defaults.id(),
                     defaults.version(),
                     defaults.displayName(),
-                    defaults.adapterType(),
                     endpoint,
                     defaults.credentialRef(),
+                    defaults.nativeStreaming(),
                     defaults.status(),
+                    defaults.apiBindings(),
                     defaults.models(),
                     defaults.options(),
                     defaults.metadata());
@@ -98,10 +100,13 @@ class DeepSeekRuntimeIntegrationTest {
                     modelDefinition.id(),
                     modelDefinition.version(),
                     modelDefinition.providerModelId(),
-                    provider.adapterType(),
+                    ModelApiStyles.adapterType(modelDefinition.style()),
                     "1.0.0",
+                    modelDefinition.style(),
+                    provider.binding(modelDefinition.style()).dialect(),
                     endpoint,
                     provider.credentialRef(),
+                    provider.nativeStreaming(),
                     modelDefinition.capabilities(),
                     modelDefinition.contextWindow(),
                     modelDefinition.maxOutputTokens(),

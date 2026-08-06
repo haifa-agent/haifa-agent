@@ -477,7 +477,10 @@ class RuntimeCoreTest {
                 model,
                 builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
                     invocation.observer().dispatched();
-                    throw new IllegalStateException("provider failed after dispatch");
+                    throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            "SANDBOX_PROCESS_FAILED",
+                            io.haifa.agent.tool.api.ToolDispatchState.OUTCOME_UNKNOWN,
+                            "sandbox process failed after dispatch");
                 }));
 
         var failed = fixture.runtime.start(request("failed-tool-run"));
@@ -486,7 +489,11 @@ class RuntimeCoreTest {
         assertThat(fixture.runtime.find(failed.runId()).orElseThrow().status()).isEqualTo(AgentRunStatus.FAILED);
         assertThat(fixture.store.toolCalls(failed.runId())).singleElement().satisfies(call -> {
             assertThat(call.status().name()).isEqualTo("FAILED");
-            assertThat(call.error().orElseThrow().error().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
+            var error = call.error().orElseThrow().error();
+            assertThat(error.code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
+            assertThat(error.details())
+                    .containsEntry("failureCode", "SANDBOX_PROCESS_FAILED")
+                    .containsEntry("dispatchState", "OUTCOME_UNKNOWN");
         });
         assertThat(fixture.journal.state(
                         failed.runId(),

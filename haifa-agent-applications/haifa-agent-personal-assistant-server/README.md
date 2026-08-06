@@ -10,56 +10,82 @@ Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显�
 Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
 
-Provider 是接入实例，持有 Endpoint、Credential 和运行模式；每个 Provider 再声明自己的可用模型
-列表。例如 DeepSeek 与本机 OpenAI-compatible 端点可以同时注册：
+Provider 是接入实例，持有共享 Endpoint、Credential、`native-streaming` 和运行模式；每个 Provider
+通过 `api-bindings` 声明一个或多个 API Style，再由 Model 的 `style` 精确引用。Binding 省略 dialect
+时使用 `standard`，只有 Style 使用不同 Base URL 时才配置完整 endpoint 覆盖：
 
 ```yaml
 haifa:
   personal:
-    default-model-id: deepseek-v4-flash
+    default-model-id: deepseek-responses-flash
     model-providers:
       - id: deepseek
         display-name: DeepSeek
         mode: remote
-        dialect-id: deepseek-openai-chat
-        dialect-version: "1.0"
         native-streaming: true
         endpoint: https://api.deepseek.com
         credential-reference: env://DEEPSEEK_API_KEY
+        api-bindings:
+          - style: openai-chat-completions
+            dialect: deepseek-openai-chat
+          - style: openai-responses
+            dialect: deepseek-openai-responses
+          - style: anthropic-messages
+            dialect: deepseek-anthropic-messages
+            endpoint: https://api.deepseek.com/anthropic
         models:
-          - id: deepseek-v4-pro
-            display-name: DeepSeek V4 Pro
+          - id: deepseek-chat-pro
+            display-name: DeepSeek Chat Pro
             provider-model-id: deepseek-v4-pro
-          - id: deepseek-v4-flash
-            display-name: DeepSeek V4 Flash
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 131072
+            max-output-tokens: 8192
+          - id: deepseek-responses-flash
+            display-name: DeepSeek Responses Flash
             provider-model-id: deepseek-v4-flash
-      - id: openai
-        display-name: OpenAI
+            style: openai-responses
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 131072
+            max-output-tokens: 8192
+          - id: deepseek-anthropic-flash
+            display-name: DeepSeek Anthropic Messages Flash
+            provider-model-id: deepseek-v4-flash
+            style: anthropic-messages
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            context-window: 131072
+            max-output-tokens: 8192
+      - id: local-openai
+        display-name: Local OpenAI Responses Gateway
         mode: remote
-        dialect-id: openai-chat-completions
-        dialect-version: "1.0"
-        native-streaming: false
-        endpoint: http://localhost:30000/v1
+        native-streaming: true
+        endpoint: ${OPENAI_BASE_URL:http://127.0.0.1:30000/v1}
         credential-reference: env://OPENAI_API_KEY
+        api-bindings:
+          - style: openai-responses
         models:
-          - id: openai-gpt-5.6-luna
-            display-name: GPT-5.6 Luna
-            provider-model-id: gpt-5.6-luna
-            image-input: true
+          - id: local-openai-responses
+            display-name: Local OpenAI Responses
+            provider-model-id: ${OPENAI_MODEL_ID:gpt-5.6-luna}
+            style: openai-responses
+            capabilities: [TEXT_CHAT]
+            context-window: 131072
+            max-output-tokens: 8192
     allow-insecure-loopback-model: true
 ```
 
 模型 `id` 是产品内全局唯一的选择与偏好 ID；`provider-model-id` 是发送给对应 Provider 的实际模型
-或部署名称。远程 Provider 必须显式配置 `dialect-id`、`dialect-version` 和 `native-streaming`；
-Personal Assistant 不根据 Provider ID 推断协议。严格兼容 OpenAI Chat Completions 的第三方 HTTPS
-Provider 可使用任意内部 ID，并复用 `openai-chat-completions`，无需修改 transport。
+或部署名称。Personal Assistant 不根据 Provider ID 推断协议。严格兼容既有 Style 的第三方 HTTPS
+Provider 只需新增配置并省略 dialect；旧单模型、旧 dialect/version 字段和模型级连接字段不再接受。
+DeepSeek Anthropic Messages 因 Base URL 与其余 Style 不同，在 Binding 上覆盖完整 `/anthropic` Endpoint；
+Credential 与 `native-streaming` 仍只配置在 Provider。
 
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
 Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型
-仍是 `deepseek-v4-flash`，Personal 的模型 API/Selector 可把空闲 Conversation 切换到
-`openai-gpt-5.6-luna`，只影响后续新 Run。
+仍是 `deepseek-responses-flash`。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
+`TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
-`image-input: true` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
+`IMAGE_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
 最多四个 `{kind: url|upload}` 图片输入。外部 URL 只接受受限 HTTPS；上传通过 `POST /api/v1/images`
 写入 `<data-directory>/images`，单文件上限 10 MiB、目录上限 1 GiB，类型限 PNG/JPEG/WEBP/非动画
 GIF。SQLite 与 Turn 只保存 opaque 引用、MIME、长度和摘要，不保存图片 Base64 或绝对路径。本阶段
@@ -127,12 +153,19 @@ haifa:
         display-name: Local acceptance
         mode: deterministic
         allow-deterministic: true
+        native-streaming: false
         endpoint: http://127.0.0.1:20999
         credential-reference: env://UNUSED
+        api-bindings:
+          - style: deterministic-chat
         models:
           - id: personal-test
             display-name: Personal test
             provider-model-id: personal-test
+            style: deterministic-chat
+            capabilities: [TEXT_CHAT, TOOL_CALLING]
+            context-window: 8192
+            max-output-tokens: 1024
 ```
 
 Phase 3 的本机命令/脚本能力复用平台 Execution Broker 和 Host Guarded Sandbox。因为当前
@@ -216,15 +249,18 @@ macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 Key、Utility MCP、Skill 和 Continuation Key 路径均可通过参数或专用环境变量覆盖；脚本不会把凭据
 写入参数、状态文件或日志。
 
-Windows 启动脚本从当前进程环境读取 `OPENAI_API_KEY`，缺失时再读取 Windows 用户环境，并将
-OpenAI 第二 Provider 显式装配为 `openai-gpt-5.6-luna`。该本机中转冻结
-`native_streaming=false`，上游使用同步 Chat Completions 返回权威 usage，产品侧仍通过模型契约桥接
-有界 Content/Usage 事件。
+PowerShell 与 Bash 启动脚本共用同一个配置生成器，并从当前进程环境读取
+`OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID`。本机中转被装配为使用 standard dialect 的
+OpenAI Responses Provider，Provider 持有共享 Endpoint、CredentialRef 与 `nativeStreaming=true`，Binding
+只声明 `style: openai-responses`。该模型当前只声明 `TEXT_CHAT`，因此不会进入要求 Tool Calling 的
+Personal Assistant 可选模型目录。
 
 ## Process logging
 
 The server uses Spring Boot's SLF4J/Logback logging stack. At `INFO`, it records safe operational milestones for Run acceptance and status changes, interaction/approval state, Tool and execution activity, and model call start/completion/failure with token counts and elapsed time. Known failures log stable codes and bounded safe attributes without a stack trace. Unexpected Throwables are available only to the explicitly configured internal diagnostic sink and are correlated by diagnostic ID. Logs intentionally exclude full prompts, assistant text, Tool arguments, command or script content, credentials, raw provider responses, result bodies, and messages from unclassified exceptions.
 Invalid server-side argument failures are logged with correlation ID, HTTP method/path, exception type, and bounded stack origin while omitting the exception message and request content.
+Execution diagnostics expose bounded `failureCode` and `dispatchState` values. They distinguish preflight rejection
+from failures after a host process was actually launched without exposing command content or physical scratch paths.
 
 ## Trusted Skill script manifest
 
