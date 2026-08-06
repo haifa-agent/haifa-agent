@@ -312,6 +312,7 @@ public final class ToolPipeline {
             }
             ToolJournalState journalState =
                     journal.state(run.id(), request.idempotencyKey()).orElse(ToolJournalState.INTENT_RECORDED);
+            boolean resultPersistenceFailed = exception instanceof ToolResultPersistenceException;
             boolean uncertain =
                     journalState == ToolJournalState.ACKNOWLEDGED || journalState == ToolJournalState.DISPATCHED;
             boolean limitExceeded = exception instanceof RuntimeLimitExceededException;
@@ -319,7 +320,9 @@ public final class ToolPipeline {
                     ? failure.failureCode()
                     : null;
             AgentErrorCode failureCode;
-            if (limitExceeded && !uncertain) {
+            if (resultPersistenceFailed) {
+                failureCode = AgentErrorCode.TOOL_RESULT_PERSISTENCE_FAILED;
+            } else if (limitExceeded && !uncertain) {
                 journal.recordFailed(run.id(), request.idempotencyKey());
                 failureCode = AgentErrorCode.RUN_BUDGET_EXCEEDED;
                 appendToolEvent(run, call, "tool.failed", "FAILED", "RUN_BUDGET_EXCEEDED", "");
@@ -335,7 +338,14 @@ public final class ToolPipeline {
                 appendToolEvent(run, call, "tool.failed", "FAILED", failureCode.wireCode(), "");
             }
             Map<String, Object> errorDetails;
-            if (exception instanceof RuntimeLimitExceededException limitFailure) {
+            if (resultPersistenceFailed) {
+                errorDetails = Map.of(
+                        "tool", definition.name().value(),
+                        "toolCallId", call.id().value(),
+                        "journalState", journalState.name(),
+                        "persistenceStage", "TOOL_RESULT",
+                        "outcomeKnown", true);
+            } else if (exception instanceof RuntimeLimitExceededException limitFailure) {
                 errorDetails = Map.of(
                         "tool", definition.name().value(),
                         "toolCallId", call.id().value(),
@@ -353,7 +363,7 @@ public final class ToolPipeline {
                         "outcomeKnown", !uncertain);
             }
             AgentError failureError = new AgentError(failureCode, errorDetails, ids.nextValue(), time.now());
-            if (call.status() == ToolCallStatus.RUNNING) {
+            if (!resultPersistenceFailed && call.status() == ToolCallStatus.RUNNING) {
                 call.fail(new ToolExecutionError(failureError), time.now());
                 state.appendToolCall(call);
             }
@@ -529,10 +539,15 @@ public final class ToolPipeline {
         FrozenToolBinding binding = binding(run, request);
         var definition = binding.definition();
         ToolResult result = resultNormalizer.normalize(binding, rawResult);
-        if (largeResultPolicy.requiresExternalization(rawResult)) {
+        boolean externalizationRequired = largeResultPolicy.requiresExternalization(rawResult);
+        boolean externalized = false;
+        if (externalizationRequired) {
             var reference = putResultAssetWithOnePersistenceRetry(call, rawResult);
             var assets = new ArrayList<>(result.assets());
-            if (!assets.contains(reference)) assets.add(reference);
+            if (reference.isPresent() && !assets.contains(reference.get())) {
+                assets.add(reference.get());
+                externalized = true;
+            }
             result = new ToolResult(
                     result.successful(), result.summary(), result.structuredData(), assets, result.artifacts(), true);
         }
@@ -550,16 +565,20 @@ public final class ToolPipeline {
                             time.now())),
                     time.now());
         }
-        state.appendToolCall(call);
-        journal.recordCompleted(run.id(), request.idempotencyKey(), result);
-        appendToolEvent(
-                run,
-                call,
-                result.successful() ? "tool.succeeded" : "tool.failed",
-                result.successful() ? "SUCCEEDED" : "FAILED",
-                result.successful() ? "NONE" : "TOOL_BUSINESS_FAILURE",
-                result.assets().isEmpty() ? "" : result.assets().getFirst().assetId());
-        appendExecutionAndResourceEvents(run, call, result);
+        try {
+            state.appendToolCall(call);
+            journal.recordCompleted(run.id(), request.idempotencyKey(), result);
+            appendToolEvent(
+                    run,
+                    call,
+                    result.successful() ? "tool.succeeded" : "tool.failed",
+                    result.successful() ? "SUCCEEDED" : "FAILED",
+                    result.successful() ? "NONE" : "TOOL_BUSINESS_FAILURE",
+                    result.assets().isEmpty() ? "" : result.assets().getFirst().assetId());
+            appendExecutionAndResourceEvents(run, call, result);
+        } catch (RuntimeException persistenceFailure) {
+            throw new ToolResultPersistenceException(persistenceFailure);
+        }
         recordTrace(new RuntimeTraceEvent(
                 ids.nextValue(),
                 run.id(),
@@ -572,9 +591,14 @@ public final class ToolPipeline {
                 RuntimePhase.AFTER_DECISION_EXECUTION,
                 "tool.persisted",
                 java.util.Map.of(
-                        "successful", result.successful(),
-                        "truncated", result.truncated(),
-                        "externalized", largeResultPolicy.requiresExternalization(rawResult)),
+                        "successful",
+                        result.successful(),
+                        "truncated",
+                        result.truncated(),
+                        "externalizationRequired",
+                        externalizationRequired,
+                        "externalized",
+                        externalized),
                 time.now()));
         return result;
     }
@@ -745,13 +769,10 @@ public final class ToolPipeline {
         return safe.toString();
     }
 
-    private io.haifa.agent.core.reference.AssetRef putResultAssetWithOnePersistenceRetry(
+    private java.util.Optional<io.haifa.agent.core.reference.AssetRef> putResultAssetWithOnePersistenceRetry(
             ToolCall call, ToolResult rawResult) {
-        try {
-            return resultAssets.put(call.id(), rawResult);
-        } catch (RuntimeException firstFailure) {
-            return resultAssets.put(call.id(), rawResult);
-        }
+        var firstAttempt = resultAssets.tryPut(call.id(), rawResult);
+        return firstAttempt.isPresent() ? firstAttempt : resultAssets.tryPut(call.id(), rawResult);
     }
 
     private static boolean isExecutionTool(ToolCall call) {

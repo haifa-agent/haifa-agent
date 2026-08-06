@@ -125,6 +125,22 @@ class SqliteExtendedRuntimeStateTest {
         state.appendToolCall(call);
         ToolResult result = new ToolResult(true, "read", Map.of("bytes", 5), List.of(), List.of(), false);
         var asset = first.toolResultAssets().put(call.id(), result);
+        AgentStep secondStep =
+                new AgentStep(new AgentStepId("step-2"), run.id(), null, null, new AgentStepType("tool"), 2, NOW);
+        state.appendStep(secondStep);
+        ToolCall secondCall = new ToolCall(
+                new ToolCallId("tool-call-2"),
+                run.id(),
+                secondStep.id(),
+                new ProviderToolCallCorrelationId("provider-call-2"),
+                new RuntimeIdempotencyKey("asset-key-2"),
+                "file.read",
+                "1",
+                new ToolArguments("tool.arguments", "1", Map.of("path", "readme")),
+                NOW);
+        state.appendToolCall(secondCall);
+        var secondAsset = first.toolResultAssets().put(secondCall.id(), result);
+        assertThat(secondAsset).isNotEqualTo(asset);
 
         SensitiveModelReasoning reasoning = SensitiveModelReasoning.of("sensitive-reasoning-plaintext");
         SessionMessageDraft message = new SessionMessageDraft(
@@ -186,6 +202,7 @@ class SqliteExtendedRuntimeStateTest {
                 .contains(activation);
         assertThat(reopenedState.addSkillResourceReadBytes(run.id(), 5, 10)).isEqualTo(10);
         assertThat(reopened.toolResultAssets().load(asset)).contains(result);
+        assertThat(reopened.toolResultAssets().load(secondAsset)).contains(result);
         assertThat(reopened.summaries().latestValid(run.sessionId())).contains(summary);
         assertThat(reopenedState.resolveContinuation(message.id(), configuration.model(), Set.of("provider-call")))
                 .isEqualTo(reasoning);

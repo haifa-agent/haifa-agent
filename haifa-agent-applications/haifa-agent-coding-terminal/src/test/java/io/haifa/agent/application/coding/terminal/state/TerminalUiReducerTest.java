@@ -373,6 +373,8 @@ class TerminalUiReducerTest {
     void recoveryCodesHaveActionableCategoriesWithoutLeakingExceptionMessages() {
         assertThat(TerminalRecovery.fromCode("EVENT_OUT_OF_ORDER").category())
                 .isEqualTo(TerminalRecovery.Category.RETRYABLE);
+        assertThat(TerminalRecovery.fromCode("TOOL_RESULT_PERSISTENCE_FAILED").category())
+                .isEqualTo(TerminalRecovery.Category.RETRYABLE);
         assertThat(TerminalRecovery.fromCode("MODIFIED_ENTER_UNAVAILABLE").category())
                 .isEqualTo(TerminalRecovery.Category.TERMINAL_CAPABILITY);
         TerminalRecovery windows = TerminalRecovery.fromCode("WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP");

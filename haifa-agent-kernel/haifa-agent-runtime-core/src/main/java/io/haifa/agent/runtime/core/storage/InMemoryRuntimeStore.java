@@ -100,7 +100,8 @@ public final class InMemoryRuntimeStore
     private final Map<AgentRunId, Map<SkillAlias, SkillActivation>> skillActivations = new HashMap<>();
     private final Map<AgentRunId, Long> skillResourceReadBytes = new HashMap<>();
     private final ThreadLocal<List<Runnable>> afterCommitListeners = new ThreadLocal<>();
-    private boolean failNextToolResultAssetWrite;
+    private int remainingToolResultAssetWriteFailures;
+    private boolean failNextCompletedToolCallWrite;
     private final List<MessageRedactionListener> messageRedactionListeners = new ArrayList<>();
 
     public InMemoryRuntimeStore() {
@@ -582,6 +583,10 @@ public final class InMemoryRuntimeStore
 
     @Override
     public synchronized void appendToolCall(ToolCall toolCall) {
+        if (failNextCompletedToolCallWrite && toolCall.status() == io.haifa.agent.core.tool.ToolCallStatus.COMPLETED) {
+            failNextCompletedToolCallWrite = false;
+            throw new IllegalStateException("injected completed tool call write failure");
+        }
         List<ToolCall> current = toolCalls.computeIfAbsent(toolCall.runId(), ignored -> new ArrayList<>());
         current.removeIf(existing -> existing.id().equals(toolCall.id()));
         current.add(toolCall);
@@ -760,8 +765,8 @@ public final class InMemoryRuntimeStore
 
     @Override
     public synchronized AssetRef put(ToolCallId toolCallId, ToolResult result) {
-        if (failNextToolResultAssetWrite) {
-            failNextToolResultAssetWrite = false;
+        if (remainingToolResultAssetWriteFailures > 0) {
+            remainingToolResultAssetWriteFailures--;
             throw new IllegalStateException("injected tool result asset write failure");
         }
         String assetId = "tool-result:" + toolCallId.value();
@@ -778,7 +783,16 @@ public final class InMemoryRuntimeStore
     }
 
     public synchronized void failNextToolResultAssetWrite() {
-        failNextToolResultAssetWrite = true;
+        failNextToolResultAssetWrites(1);
+    }
+
+    public synchronized void failNextToolResultAssetWrites(int count) {
+        if (count <= 0) throw new IllegalArgumentException("count must be greater than zero");
+        remainingToolResultAssetWriteFailures = count;
+    }
+
+    public synchronized void failNextCompletedToolCallWrite() {
+        failNextCompletedToolCallWrite = true;
     }
 
     @Override
