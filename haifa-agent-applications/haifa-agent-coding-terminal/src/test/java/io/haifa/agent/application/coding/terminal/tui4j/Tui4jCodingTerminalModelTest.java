@@ -148,7 +148,6 @@ class Tui4jCodingTerminalModelTest {
             assertThat(item.title()).isEqualTo("You");
             assertThat(item.body()).isEqualTo("inspect the repository");
         });
-
     }
 
     @Test
@@ -353,7 +352,8 @@ class Tui4jCodingTerminalModelTest {
                 new UnusedClient(),
                 pump,
                 new TerminalUiReducer(),
-                TerminalUiState.initial(80, 24));
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
         return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
     }
 
@@ -433,6 +433,11 @@ class Tui4jCodingTerminalModelTest {
         @Override
         public CodingRestoredMessage restore(AgentSessionId sessionId, String followUpId, long revision) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<InteractionView> pendingInteraction(AgentRunId runId) {
+            return Optional.empty();
         }
 
         @Override

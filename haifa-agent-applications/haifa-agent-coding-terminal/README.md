@@ -161,6 +161,9 @@ tick 重试，不会终止渲染轮询或截断后续回复。
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
 keypad 和光标。
 
+alternate screen 不提供可靠的终端原生历史回滚，因此生产配置启用 mouse cell-motion，将滚轮事件路由到
+Transcript viewport；`PageUp/PageDown` 提供键盘回看，`Shift+拖拽` 保留终端原生文字选择与复制。
+
 Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
 序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width
 对齐。Transcript 和固定区域同样按 cell width 截断，并在渲染前移除 ESC、控制字符和 Tab 注入。
@@ -260,6 +263,22 @@ key，并在所有重启间保持不变。
 ```powershell
 .\mvnw.cmd -pl :haifa-agent-coding-agent,:haifa-agent-coding-terminal,:haifa-agent-cli -am test
 ```
+
+## UI thread and background effects
+
+The tui4j update thread only handles input, pure state reduction, and rendering. Runtime, storage,
+workspace discovery, shell execution, session commands, reconcile, replay, subscription changes,
+and cursor persistence run on bounded background executors. Latency-critical approval, cancel, and interrupt
+operations use a CONTROL lane; ordinary interaction uses INTERACTIVE; cursor and recovery work uses MAINTENANCE. User actions first project an
+immediate state such as `Approving`, `Cancelling`, or `Running shell command`; immutable completion
+messages return to the UI thread on the next polling turn. A pending/requested interaction event queries only its
+authoritative `InteractionView` on CONTROL and does not reload the Session, replay history, or rebuild subscriptions.
+Reconciles are reserved for queue overflow, closed subscriptions, version races, and
+explicit recovery.
+
+Event replay retains at most the latest 2,000 lifecycle events in one background load so reopening a
+large session cannot allocate an unbounded intermediate list. Durable conversation messages remain
+the authoritative reopened transcript.
 
 ## Assistant streaming boundary
 

@@ -116,9 +116,15 @@ public record Tui4jTerminalIo(
         // mappings for modified Enter; other CSI-u control keys can leak trailing text
         // into the editor (for example Ctrl+O becoming "5u"). Traditional control-key
         // input keeps Ctrl+O as keySI while the registered Enter fallbacks remain usable.
-        // Keep terminal mouse reporting disabled. Enabling cell motion makes the application
-        // consume ordinary click-and-drag gestures even though the UI has no text-selection
-        // model, which prevents native terminal selection and copy.
-        return new Program(model, options.toArray(ProgramOption[]::new)).withAltScreen();
+        // Alternate-screen applications have no usable native scrollback because each frame
+        // replaces the viewport. Cell-motion reporting is therefore required for wheel events;
+        // terminal-native text selection remains available through Shift+drag. The selection
+        // helpers keep the transcript moving when a selection reaches a viewport edge.
+        return new Program(model, options.toArray(ProgramOption[]::new))
+                .withAltScreen()
+                .withMouseCellMotion()
+                .withMouseSelectionExtendOnScroll()
+                .withMouseSelectionAutoScroll()
+                .withMouseSelectionCursor();
     }
 }
