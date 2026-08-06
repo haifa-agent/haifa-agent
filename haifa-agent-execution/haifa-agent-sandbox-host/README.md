@@ -1,5 +1,9 @@
 # Haifa Agent Host Guarded Sandbox
 
+On Windows, scratch-root hardening first verifies an already exact owner-only ACL and avoids rewriting it. This
+keeps repeated startup and execution idempotent in environments that permit verification but reject redundant ACL
+mutation. Dispatch is reported only after `ProcessBuilder.start()` succeeds.
+
 首个本地主机 Provider，支持两种执行形式：DIRECT 继续执行显式白名单 argv；SHELL 要求 Profile 明确允许，并把完整命令文本交给可信配置的 Shell。macOS/Linux 默认优先 `/bin/bash -lc`，不可用时回退 `/bin/sh -c`；Windows 默认使用非交互 PowerShell，本地配置也可指定绝对 Git Bash/PowerShell 路径。模型不能选择 Shell 或宿主路径。
 
 Windows PowerShell 包装器对命令不存在、PowerShell 错误和原生命令非零退出统一 fail closed；失败输出

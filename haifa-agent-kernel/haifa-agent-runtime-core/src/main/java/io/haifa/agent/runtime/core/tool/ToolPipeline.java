@@ -340,6 +340,15 @@ public final class ToolPipeline {
                             "used", limitFailure.used(),
                             "journalState", journalState.name(),
                             "outcomeKnown", !uncertain);
+                } else if (exception instanceof io.haifa.agent.tool.api.ToolInvocationException invocationFailure) {
+                    errorDetails = Map.of(
+                            "tool", definition.name().value(),
+                            "toolCallId", call.id().value(),
+                            "journalState", journalState.name(),
+                            "sideEffecting", !definition.sideEffects().isEmpty(),
+                            "outcomeKnown", !uncertain,
+                            "failureCode", invocationFailure.failureCode(),
+                            "dispatchState", invocationFailure.dispatchState().name());
                 } else {
                     errorDetails = Map.of(
                             "tool", definition.name().value(),

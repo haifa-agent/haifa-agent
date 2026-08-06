@@ -51,6 +51,9 @@ Hermes 等外部 `SKILL.md` 的扩展 front matter；未知或嵌套 metadata �
 
 ## Phase 3 command and script execution
 
+The product prompt treats the latest user message as the current objective. A failed or abandoned execution from an
+earlier turn is not resumed on an unrelated follow-up unless the user explicitly requests a retry.
+
 Personal Assistant follows the shared cross-platform mode contract: `COMMAND` omits `language` and `args` and uses
 the trusted host default shell, while `SCRIPT` requires a configured `language`. The bundled execution Skill states
 the same rule so remote models can construct a valid exact-approval request on Windows, macOS, and Linux.

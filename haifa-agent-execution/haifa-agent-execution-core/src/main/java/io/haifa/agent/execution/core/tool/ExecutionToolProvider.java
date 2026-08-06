@@ -14,9 +14,14 @@ import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.execution.core.ExecutionRejectedException;
+import io.haifa.agent.execution.core.manifest.ManifestBudgetException;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
+import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolCancellation;
+import io.haifa.agent.tool.api.ToolDispatchState;
+import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
@@ -228,10 +233,18 @@ public final class ExecutionToolProvider implements ToolProvider {
                         io.haifa.agent.tool.api.ToolArgumentsDigest.sha256(invocation.arguments()),
                         configuration.scratchSpace()),
                 configuration.scratchSpace());
-        invocation.observer().dispatched();
-        ToolResult result = execute(request, invocation.cancellation(), parsed);
-        invocation.observer().acknowledged();
-        return result;
+        AtomicBoolean dispatched = new AtomicBoolean();
+        try {
+            ToolResult result = execute(request, invocation.cancellation(), parsed, () -> {
+                if (dispatched.compareAndSet(false, true)) invocation.observer().dispatched();
+            });
+            invocation.observer().acknowledged();
+            return result;
+        } catch (ToolInvocationException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw invocationFailure(exception, dispatched.get());
+        }
     }
 
     private ParsedInvocation parse(Map<String, Object> values) {
@@ -285,7 +298,11 @@ public final class ExecutionToolProvider implements ToolProvider {
         };
     }
 
-    private ToolResult execute(ExecutionRequest request, ToolCancellation cancellation, ParsedInvocation parsed) {
+    private ToolResult execute(
+            ExecutionRequest request,
+            ToolCancellation cancellation,
+            ParsedInvocation parsed,
+            io.haifa.agent.execution.api.ExecutionDispatchObserver dispatchObserver) {
         MergedTailObserver merged = new MergedTailObserver(
                 configuration.outputObserver(), configuration.maximumOutputBytes(), configuration.maximumOutputLines());
         AtomicBoolean complete = new AtomicBoolean();
@@ -302,11 +319,34 @@ public final class ExecutionToolProvider implements ToolProvider {
                     }
                 });
         try {
-            return toToolResult(broker.execute(request, merged), merged, parsed);
+            return toToolResult(broker.execute(request, merged, dispatchObserver), merged, parsed);
         } finally {
             complete.set(true);
             watcher.interrupt();
         }
+    }
+
+    private static ToolInvocationException invocationFailure(RuntimeException exception, boolean dispatched) {
+        String code;
+        String message;
+        if (exception instanceof ExecutionRejectedException rejected) {
+            code = rejected.code();
+            message = rejected.getMessage();
+        } else if (exception instanceof SandboxException sandbox) {
+            code = sandbox.code();
+            message = sandbox.getMessage();
+        } else if (exception instanceof ManifestBudgetException) {
+            code = "MANIFEST_BUDGET_EXCEEDED";
+            message = "workspace manifest exceeded the configured execution budget";
+        } else {
+            code = "EXECUTION_PROVIDER_FAILED";
+            message = "execution provider failed";
+        }
+        return new ToolInvocationException(
+                code,
+                dispatched ? ToolDispatchState.OUTCOME_UNKNOWN : ToolDispatchState.NOT_DISPATCHED,
+                message,
+                exception);
     }
 
     private ToolResult toToolResult(ExecutionResult result, MergedTailObserver merged, ParsedInvocation parsed) {

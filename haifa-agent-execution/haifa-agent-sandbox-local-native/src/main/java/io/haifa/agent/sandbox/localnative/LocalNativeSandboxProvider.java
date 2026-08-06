@@ -4,6 +4,7 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.io.SecureFilePermissions;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
+import io.haifa.agent.execution.api.ExecutionDispatchObserver;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
@@ -233,8 +234,17 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
 
         @Override
         public synchronized SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
+            return execute(execution, observer, ExecutionDispatchObserver.noop());
+        }
+
+        @Override
+        public synchronized SandboxProcessResult execute(
+                SandboxExecution execution,
+                ExecutionOutputObserver observer,
+                ExecutionDispatchObserver dispatchObserver) {
             Objects.requireNonNull(execution, "execution must not be null");
             Objects.requireNonNull(observer, "observer must not be null");
+            Objects.requireNonNull(dispatchObserver, "dispatchObserver must not be null");
             if (closed) throw failure("SANDBOX_START_FAILED", "sandbox session is closed");
             if (executed) throw failure("SANDBOX_START_FAILED", "local-native session is single-use");
             executed = true;
@@ -289,6 +299,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
+                dispatchObserver.dispatched();
                 shutdownHook = registerShutdownHook(process);
                 try (var standardInput = process.getOutputStream()) {
                     standardInput.write(execution.input().bytes());

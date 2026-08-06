@@ -61,6 +61,7 @@ public final class PersonalAdminQueryService {
             "repairHint",
             "failureCategory",
             "failureCode",
+            "dispatchState",
             "fingerprint",
             "attempts",
             "blockerCodes",

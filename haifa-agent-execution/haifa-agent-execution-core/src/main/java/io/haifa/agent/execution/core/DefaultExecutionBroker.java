@@ -2,6 +2,7 @@ package io.haifa.agent.execution.core;
 
 import io.haifa.agent.execution.api.EnvironmentLeaseResolver;
 import io.haifa.agent.execution.api.ExecutionBroker;
+import io.haifa.agent.execution.api.ExecutionDispatchObserver;
 import io.haifa.agent.execution.api.ExecutionFailure;
 import io.haifa.agent.execution.api.ExecutionId;
 import io.haifa.agent.execution.api.ExecutionOutputChannel;
@@ -83,8 +84,15 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
 
     @Override
     public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+        return execute(request, observer, ExecutionDispatchObserver.noop());
+    }
+
+    @Override
+    public ExecutionResult execute(
+            ExecutionRequest request, ExecutionOutputObserver observer, ExecutionDispatchObserver dispatchObserver) {
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(observer, "observer must not be null");
+        Objects.requireNonNull(dispatchObserver, "dispatchObserver must not be null");
         Optional<ExecutionResult> replay = executions.findByIdempotencyKey(request.idempotencyKey());
         if (replay.isPresent()) {
             var previous = executions.findRequest(replay.orElseThrow().id()).orElseThrow();
@@ -114,7 +122,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                                 request.limits(),
                                 request.input(),
                                 request.scratchSpace()),
-                        safeObserver);
+                        safeObserver,
+                        dispatchObserver);
             }
             byte[] stdoutBytes = redact(process.stdout(), environment);
             byte[] stderrBytes = redact(process.stderr(), environment);

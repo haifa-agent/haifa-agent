@@ -204,6 +204,9 @@ OPENAI_BASE_URL=http://127.0.0.1:30000/v1
 OPENAI_API_KEY=<secret>
 OPENAI_MODEL_ID=<model-id>
 
+# 独立探测普通 function Tool Call/Tool Result；不由文本 Live 开关隐式启用
+HAIFA_OPENAI_RESPONSES_TOOL_LIVE_TEST=true
+
 HAIFA_DEEPSEEK_ANTHROPIC_LIVE_TEST=true
 DEEPSEEK_API_KEY=<secret>
 HAIFA_DEEPSEEK_ANTHROPIC_MODEL_ID=deepseek-v4-flash

@@ -9,6 +9,21 @@ public interface ExecutionBroker {
         return execute(request);
     }
 
+    /**
+     * Executes a request and reports when the underlying process has actually started.
+     *
+     * <p>The compatibility default reports dispatch only after a synchronous implementation returns. Brokers that
+     * launch an external process must override this method and signal immediately after a successful launch.
+     */
+    default ExecutionResult execute(
+            ExecutionRequest request,
+            ExecutionOutputObserver outputObserver,
+            ExecutionDispatchObserver dispatchObserver) {
+        ExecutionResult result = execute(request, outputObserver);
+        dispatchObserver.dispatched();
+        return result;
+    }
+
     default ManagedProcessSession openManagedSession(ManagedProcessRequest request) {
         throw new UnsupportedOperationException("managed process sessions are not supported");
     }

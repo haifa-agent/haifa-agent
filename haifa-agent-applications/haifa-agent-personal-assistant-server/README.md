@@ -259,6 +259,8 @@ Personal Assistant 可选模型目录。
 
 The server uses Spring Boot's SLF4J/Logback logging stack. At `INFO`, it records safe operational milestones for Run acceptance and status changes, interaction/approval state, Tool and execution activity, and model call start/completion/failure with token counts and elapsed time. Known failures log stable codes and bounded safe attributes without a stack trace. Unexpected Throwables are available only to the explicitly configured internal diagnostic sink and are correlated by diagnostic ID. Logs intentionally exclude full prompts, assistant text, Tool arguments, command or script content, credentials, raw provider responses, result bodies, and messages from unclassified exceptions.
 Invalid server-side argument failures are logged with correlation ID, HTTP method/path, exception type, and bounded stack origin while omitting the exception message and request content.
+Execution diagnostics expose bounded `failureCode` and `dispatchState` values. They distinguish preflight rejection
+from failures after a host process was actually launched without exposing command content or physical scratch paths.
 
 ## Trusted Skill script manifest
 

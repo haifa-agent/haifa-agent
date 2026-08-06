@@ -4,6 +4,7 @@ import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.io.SecureFilePermissions;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
+import io.haifa.agent.execution.api.ExecutionDispatchObserver;
 import io.haifa.agent.execution.api.ExecutionOutputObserver;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
@@ -250,7 +251,16 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
         @Override
         public synchronized SandboxProcessResult execute(SandboxExecution execution, ExecutionOutputObserver observer) {
+            return execute(execution, observer, ExecutionDispatchObserver.noop());
+        }
+
+        @Override
+        public synchronized SandboxProcessResult execute(
+                SandboxExecution execution,
+                ExecutionOutputObserver observer,
+                ExecutionDispatchObserver dispatchObserver) {
             Objects.requireNonNull(observer, "observer must not be null");
+            Objects.requireNonNull(dispatchObserver, "dispatchObserver must not be null");
             if (closed) throw failure("SESSION_CLOSED", "sandbox session is closed");
             if (!execution.workingDirectory().workspaceId().equals(workspaceId)) {
                 throw failure("WORKSPACE_MISMATCH", "working directory belongs to another workspace");
@@ -275,6 +285,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
+                dispatchObserver.dispatched();
                 try (var standardInput = process.getOutputStream()) {
                     standardInput.write(execution.input().bytes());
                 }
@@ -690,7 +701,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 return directory;
             } catch (IOException exception) {
                 cleanupScratchDirectory(directory);
-                throw failure("SCRATCH_PROVISION_FAILED", "host scratch space could not be provisioned");
+                throw failure("SCRATCH_PROVISION_FAILED", "host scratch space could not be provisioned", exception);
             }
         }
 
@@ -840,6 +851,10 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
 
     private static HostSandboxException failure(String code, String message) {
         return new HostSandboxException(code, message);
+    }
+
+    private static HostSandboxException failure(String code, String message, Throwable cause) {
+        return new HostSandboxException(code, message, cause);
     }
 
     private record BoundedBytes(byte[] bytes, boolean truncated) {}

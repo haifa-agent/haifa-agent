@@ -1,0 +1,66 @@
+server:
+  address: 127.0.0.1
+  port: 0
+  shutdown: graceful
+
+spring:
+  codec:
+    max-in-memory-size: 11MB
+  application:
+    name: haifa-personal-assistant-test
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+haifa:
+  personal:
+    data-directory: ./target/personal-assistant-test
+    continuation-key-base64: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    caller:
+      tenant: local
+      principal: public-user
+      reviewer: public-user
+    default-model-id: personal-test
+    allow-insecure-loopback-model: true
+    model-providers:
+      - id: personal-local
+        display-name: Local acceptance
+        mode: deterministic
+        allow-deterministic: true
+        native-streaming: false
+        endpoint: http://127.0.0.1:20999
+        credential-reference: env://UNUSED
+        api-bindings:
+          - style: deterministic-chat
+        models:
+          - id: personal-test
+            display-name: Personal test
+            provider-model-id: personal-test
+            style: deterministic-chat
+            capabilities: [TEXT_CHAT, TOOL_CALLING, IMAGE_INPUT]
+            context-window: 8192
+            max-output-tokens: 1024
+    web:
+      enabled: false
+      credential-reference: env://UNUSED
+      timeout-millis: 30000
+      search-maximum-response-bytes: 2097152
+      fetch-maximum-response-bytes: 4194304
+    mcp:
+      mode: embedded-echo
+      address: 127.0.0.1
+      port: 20002
+      endpoint: http://127.0.0.1:20002/mcp
+      allowed-tools: [echo]
+      alias-namespace: personal_mcp
+      server-id: personal-local
+      display-name: Personal local utility
+    execution:
+      default-timeout-millis: 15000
+      maximum-timeout-millis: 30000
+      maximum-output-bytes: 65536
+      maximum-output-lines: 1000
+      maximum-processes: 4
+      trusted-host-enabled: true
+      python-path: ""
+      power-shell-path: ""
+    local-skill-root: ""

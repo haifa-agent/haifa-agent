@@ -68,8 +68,12 @@ public final class SecureFilePermissions {
             builder.setFlags(AclEntryFlag.FILE_INHERIT, AclEntryFlag.DIRECTORY_INHERIT);
         }
         AclEntry expected = builder.build();
-        acl.setAcl(List.of(expected));
-        if (!acl.getAcl().equals(List.of(expected))) {
+        List<AclEntry> expectedAcl = List.of(expected);
+        if (acl.getAcl().equals(expectedAcl)) {
+            return;
+        }
+        acl.setAcl(expectedAcl);
+        if (!acl.getAcl().equals(expectedAcl)) {
             throw new IOException("secure ACL could not be verified");
         }
     }

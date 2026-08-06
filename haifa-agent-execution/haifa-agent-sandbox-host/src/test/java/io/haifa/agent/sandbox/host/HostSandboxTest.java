@@ -82,13 +82,18 @@ class HostSandboxTest {
                 Set.of(),
                 false);
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
-            var version = session.execute(new SandboxExecution(
-                    new ExecutionCommand(ExecutionCommandMode.DIRECT, List.of("java", "-version")),
-                    WorkspacePath.root(fixture.workspaceId),
-                    Map.of(),
-                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+            AtomicInteger dispatches = new AtomicInteger();
+            var version = session.execute(
+                    new SandboxExecution(
+                            new ExecutionCommand(ExecutionCommandMode.DIRECT, List.of("java", "-version")),
+                            WorkspacePath.root(fixture.workspaceId),
+                            Map.of(),
+                            new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)),
+                    io.haifa.agent.execution.api.ExecutionOutputObserver.noop(),
+                    dispatches::incrementAndGet);
             assertThat(version.status()).isEqualTo(SandboxProcessStatus.EXITED);
             assertThat(version.exitCode()).isZero();
+            assertThat(dispatches).hasValue(1);
 
             try (var managed = session.openManagedProcess(new SandboxExecution(
                     new ExecutionCommand(ExecutionCommandMode.DIRECT, List.of("java", "-version")),
@@ -479,13 +484,18 @@ class HostSandboxTest {
                 false);
 
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
-            assertThatThrownBy(() -> session.execute(new SandboxExecution(
-                            ExecutionCommand.direct(List.of("/bin/sh", "-c", "true")),
-                            WorkspacePath.root(fixture.workspaceId),
-                            Map.of(),
-                            new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2))))
+            AtomicInteger dispatches = new AtomicInteger();
+            assertThatThrownBy(() -> session.execute(
+                            new SandboxExecution(
+                                    ExecutionCommand.direct(List.of("/bin/sh", "-c", "true")),
+                                    WorkspacePath.root(fixture.workspaceId),
+                                    Map.of(),
+                                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2)),
+                            io.haifa.agent.execution.api.ExecutionOutputObserver.noop(),
+                            dispatches::incrementAndGet))
                     .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
                             .isEqualTo("SCRATCH_PROVISION_FAILED"));
+            assertThat(dispatches).hasValue(0);
         }
     }
 

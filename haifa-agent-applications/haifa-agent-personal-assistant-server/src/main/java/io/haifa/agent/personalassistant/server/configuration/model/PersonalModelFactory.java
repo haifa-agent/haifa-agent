@@ -375,6 +375,21 @@ public final class PersonalModelFactory {
                         "读取当前系统 CPU 使用率与逻辑处理器数量",
                         "timeoutMillis",
                         10_000);
+            } else if (prompt.contains("[execution-disk]")) {
+                alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
+                arguments = Map.of(
+                        "mode",
+                        "COMMAND",
+                        "content",
+                        "Get-PSDrive -PSProvider FileSystem | Select-Object Name, "
+                                + "@{N='Used(GB)';E={[math]::Round($_.Used/1GB,2)}}, "
+                                + "@{N='Free(GB)';E={[math]::Round($_.Free/1GB,2)}}, "
+                                + "@{N='Total(GB)';E={[math]::Round(($_.Used+$_.Free)/1GB,2)}} "
+                                + "| Format-Table -AutoSize",
+                        "purpose",
+                        "Inspect filesystem drive usage",
+                        "timeoutMillis",
+                        5_000);
             } else if (prompt.contains("[execution-command]")) {
                 alias = PersonalAssistantProfile.EXECUTION_TOOL_ALIAS;
                 arguments = Map.of(

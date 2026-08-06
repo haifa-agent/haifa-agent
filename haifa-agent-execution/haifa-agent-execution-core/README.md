@@ -33,6 +33,10 @@ Environment、Limits 或 Sandbox Profile 漂移会返回 `IDEMPOTENCY_CONFLICT`�
 
 ## Phase 3 shared execution Tool
 
+`ExecutionToolProvider` records `DISPATCHED` only from the Broker's actual process-start callback. Safe preflight
+failures preserve their stable provider failure code and remain `NOT_DISPATCHED`; failures after launch retain
+the existing unknown-outcome protection.
+
 The model-visible input schema exposes two mutually exclusive branches on every operating system:
 
 - `COMMAND` sends complete shell text through the trusted host default shell and forbids `language` and `args`.

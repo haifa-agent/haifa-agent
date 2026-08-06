@@ -6,7 +6,11 @@ public class SandboxException extends RuntimeException {
     private final String code;
 
     public SandboxException(String code, String safeMessage) {
-        super(require(safeMessage, "safeMessage"));
+        this(code, safeMessage, null);
+    }
+
+    public SandboxException(String code, String safeMessage, Throwable cause) {
+        super(require(safeMessage, "safeMessage"), cause);
         this.code = require(code, "code");
     }
 
