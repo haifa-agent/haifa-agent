@@ -35,6 +35,7 @@ import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
@@ -43,6 +44,7 @@ import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
@@ -85,6 +87,7 @@ import io.haifa.agent.runtime.core.RuntimeCoreBuilder;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
+import io.haifa.agent.runtime.core.model.ModelAdapterKey;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
@@ -182,17 +185,23 @@ final class LocalCodingAgent implements AutoCloseable {
             Consumer<RuntimeTraceEvent> traceObserver) {
         boolean allowInsecureLoopback =
                 allowInsecureLoopback(configuration, System.getenv("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
-        var model = new OpenAiCompatibleChatModel(
-                "openai-compatible",
-                "1.0.0",
-                HttpClient.newBuilder()
-                        .followRedirects(HttpClient.Redirect.NEVER)
-                        .build(),
-                new ObjectMapper(),
-                new EnvironmentCredentialResolver(),
-                allowInsecureLoopback,
-                4 * 1024 * 1024);
-        return create(workspaceRoot, configuration, output, model, traceObserver);
+        var http = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+        var json = new ObjectMapper();
+        var credentials = new EnvironmentCredentialResolver();
+        var chat = new OpenAiCompatibleChatModel(
+                "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
+        var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
+        return create(
+                workspaceRoot,
+                configuration,
+                output,
+                Map.of(
+                        new ModelAdapterKey(ModelApiStyles.OPENAI_CHAT_ADAPTER, "1.0.0"), chat,
+                        new ModelAdapterKey(ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0"), responses),
+                traceObserver,
+                resolveContinuationProtector(configuration));
     }
 
     static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
@@ -246,6 +255,23 @@ final class LocalCodingAgent implements AutoCloseable {
             CliConfiguration configuration,
             PrintStream output,
             AgentChatModel model,
+            Consumer<RuntimeTraceEvent> traceObserver,
+            ModelContinuationProtector continuationProtector) {
+        ResolvedModelSnapshot selected = modelSnapshot(configuration);
+        return create(
+                workspaceRoot,
+                configuration,
+                output,
+                Map.of(new ModelAdapterKey(selected.adapterType(), selected.adapterVersion()), model),
+                traceObserver,
+                continuationProtector);
+    }
+
+    private static LocalCodingAgent create(
+            Path workspaceRoot,
+            CliConfiguration configuration,
+            PrintStream output,
+            Map<ModelAdapterKey, AgentChatModel> modelAdapters,
             Consumer<RuntimeTraceEvent> traceObserver,
             ModelContinuationProtector continuationProtector) {
         LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
@@ -406,7 +432,7 @@ final class LocalCodingAgent implements AutoCloseable {
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
-            var runtime = persistence
+            var runtimeBuilder = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
                     .timeProvider(time)
@@ -415,8 +441,10 @@ final class LocalCodingAgent implements AutoCloseable {
                         traceObserver.accept(event);
                     })
                     .completionPolicy(new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile))
-                    .repairRetry(new RepairRetryPolicy(2))
-                    .registerChatModel("openai-compatible", "1.0.0", model)
+                    .repairRetry(new RepairRetryPolicy(2));
+            modelAdapters.forEach((key, adapter) ->
+                    runtimeBuilder.registerChatModel(key.adapterType(), key.adapterVersion(), adapter));
+            var runtime = runtimeBuilder
                     .credentialBroker(webPlatform.credentialBroker())
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
                     .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
@@ -776,12 +804,14 @@ final class LocalCodingAgent implements AutoCloseable {
     }
 
     static ResolvedModelSnapshot modelSnapshot(CliConfiguration.Model model) {
-        if (OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(model.dialectId())) {
+        if (OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(model.dialect())) {
             return bailianModelSnapshot(model);
         }
-        Map<String, Object> providerOptions = new java.util.LinkedHashMap<>(OpenAiCompatibleDialects.configuredOptions(
-                model.dialectId(), model.dialectVersion(), model.nativeStreaming(), model.endpoint()));
-        boolean deepSeek = OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialectId());
+        Map<String, Object> providerOptions = new java.util.LinkedHashMap<>();
+        if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(model.style())) {
+            providerOptions.putAll(OpenAiCompatibleDialects.configuredOptions(model.dialect(), model.endpoint()));
+        }
+        boolean deepSeek = OpenAiCompatibleDialects.DEEPSEEK.equals(model.dialect());
         if (deepSeek) providerOptions.put("thinking", "disabled");
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),
@@ -789,30 +819,21 @@ final class LocalCodingAgent implements AutoCloseable {
                 new ModelDefinitionId(model.id()),
                 "cli-v1",
                 model.modelId(),
-                "openai-compatible",
+                ModelApiStyles.adapterType(model.style()),
                 "1.0.0",
+                model.style(),
+                model.dialect(),
                 model.endpoint(),
                 new CredentialRef(model.credentialRef()),
-                deepSeek
-                        ? EnumSet.of(
-                                ModelCapability.TEXT_CHAT,
-                                ModelCapability.TOOL_CALLING,
-                                ModelCapability.STRUCTURED_OUTPUT,
-                                ModelCapability.REASONING)
-                        : EnumSet.of(
-                                ModelCapability.TEXT_CHAT,
-                                ModelCapability.TOOL_CALLING,
-                                ModelCapability.STRUCTURED_OUTPUT),
-                131_072,
-                8_192,
+                model.nativeStreaming(),
+                model.capabilities(),
+                model.contextWindow(),
+                model.maxOutputTokens(),
                 Map.copyOf(providerOptions),
                 deepSeek ? Map.of("thinking", "disabled") : Map.of());
     }
 
     private static ResolvedModelSnapshot bailianModelSnapshot(CliConfiguration.Model model) {
-        if (!OpenAiCompatibleDialects.VERSION_1.equals(model.dialectVersion())) {
-            throw new IllegalArgumentException("unsupported aliyun-bailian-openai-chat dialect version");
-        }
         var provider = AliyunBailianProviderFactory.provider(
                 new AliyunBailianProviderFactory.ProviderConfiguration(
                         "cli-v1", model.workspaceId(), model.region(), new CredentialRef(model.credentialRef())),
@@ -825,8 +846,8 @@ final class LocalCodingAgent implements AutoCloseable {
                                 ModelCapability.TEXT_CHAT,
                                 ModelCapability.TOOL_CALLING,
                                 ModelCapability.STRUCTURED_OUTPUT),
-                        131_072,
-                        8_192,
+                        model.contextWindow(),
+                        model.maxOutputTokens(),
                         Map.of(
                                 "thinking_profile", "none",
                                 "thinking_enabled", false,
@@ -834,17 +855,19 @@ final class LocalCodingAgent implements AutoCloseable {
                                 "tool_stream", false))));
         var definition = provider.models().getFirst();
         Map<String, Object> providerOptions = new java.util.LinkedHashMap<>(provider.options());
-        providerOptions.put(OpenAiCompatibleDialects.NATIVE_STREAMING, model.nativeStreaming());
         return ResolvedModelSnapshot.create(
                 provider.id(),
                 provider.version(),
                 definition.id(),
                 definition.version(),
                 definition.providerModelId(),
-                provider.adapterType(),
+                ModelApiStyles.OPENAI_CHAT_ADAPTER,
                 "1.0.0",
+                model.style(),
+                model.dialect(),
                 provider.endpoint(),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 definition.capabilities(),
                 definition.contextWindow(),
                 definition.maxOutputTokens(),

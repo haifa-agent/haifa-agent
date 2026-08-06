@@ -26,7 +26,7 @@ class RealEnvironmentTest(unittest.TestCase):
         )
         self.assertEqual(repository / "haifa-agent-applications/haifa-agent-personal-assistant-web", paths.web)
 
-    def test_openai_image_capability_is_part_of_shared_backend_configuration(self) -> None:
+    def test_responses_style_configuration_uses_shared_provider_connection_fields(self) -> None:
         root = Path("repository")
         paths = real_environment.Paths(
             repository=root,
@@ -42,7 +42,9 @@ class RealEnvironmentTest(unittest.TestCase):
 
         environment = real_environment.backend_environment(
             "deepseek-secret",
+            "http://127.0.0.1:30000/v1",
             "openai-secret",
+            "gpt-test",
             "aliyun-secret",
             "continuation-secret",
             paths,
@@ -50,10 +52,24 @@ class RealEnvironmentTest(unittest.TestCase):
             None,
         )
 
-        self.assertEqual("openai-chat-completions", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTID"])
-        self.assertEqual("gpt-5.6-luna", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"])
-        self.assertEqual("true", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_IMAGEINPUT"])
+        self.assertEqual("deepseek-responses-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
+        self.assertEqual(
+            "openai-responses",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_STYLE"],
+        )
+        self.assertEqual(
+            "deepseek-openai-responses",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_DIALECT"],
+        )
+        self.assertEqual(
+            "openai-responses",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_STYLE"],
+        )
+        self.assertEqual("gpt-test", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"])
+        self.assertEqual("TEXT_CHAT", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CAPABILITIES_0"])
         self.assertEqual("env://OPENAI_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE"])
+        self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTID", environment)
+        self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_IMAGEINPUT", environment)
         self.assertNotIn("openai-secret", json.dumps(list(environment)))
 
     def test_invalid_mode_combinations_are_rejected(self) -> None:

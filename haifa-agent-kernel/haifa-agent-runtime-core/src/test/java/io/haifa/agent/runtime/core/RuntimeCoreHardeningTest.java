@@ -256,13 +256,12 @@ class RuntimeCoreHardeningTest {
                 .singleElement()
                 .satisfies(event ->
                         assertThat(event.data()).containsEntry("attempt", 1).containsEntry("maximumAttempts", 1));
-        assertThat(repairRequest.get().messages().getLast())
-                .satisfies(message -> {
-                    assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
-                    assertThat(message.content())
-                            .contains("[DELIVERY_COMPLETION_REPAIR]")
-                            .contains("guidance=REQUIRED_ARTIFACT_MISSING: A required artifact is missing.");
-                });
+        assertThat(repairRequest.get().messages().getLast()).satisfies(message -> {
+            assertThat(message.role()).isEqualTo(ModelMessageRole.USER);
+            assertThat(message.content())
+                    .contains("[DELIVERY_COMPLETION_REPAIR]")
+                    .contains("guidance=REQUIRED_ARTIFACT_MISSING: A required artifact is missing.");
+        });
     }
 
     @Test

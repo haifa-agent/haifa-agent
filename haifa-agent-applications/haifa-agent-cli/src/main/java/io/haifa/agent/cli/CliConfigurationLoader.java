@@ -6,7 +6,9 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
-import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.api.ApiStyleId;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import java.io.IOException;
@@ -23,6 +25,15 @@ import java.util.Set;
 
 final class CliConfigurationLoader {
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
+    private final java.util.function.Function<String, String> modelEnvironment;
+
+    CliConfigurationLoader() {
+        this(System::getenv);
+    }
+
+    CliConfigurationLoader(java.util.function.Function<String, String> modelEnvironment) {
+        this.modelEnvironment = Objects.requireNonNull(modelEnvironment, "modelEnvironment must not be null");
+    }
 
     CliConfiguration load(CliArguments arguments, Path workspace) {
         Objects.requireNonNull(arguments, "arguments must not be null");
@@ -90,7 +101,7 @@ final class CliConfigurationLoader {
                 persistence);
     }
 
-    private static List<CliConfiguration.Model> models(Map<String, Object> source) {
+    private List<CliConfiguration.Model> models(Map<String, Object> source) {
         Object configured = source.get("providers");
         if (!(configured instanceof List<?> providers) || providers.isEmpty()) {
             throw new IllegalArgumentException("configuration models.providers must be a non-empty list");
@@ -106,13 +117,15 @@ final class CliConfigurationLoader {
             if (!providerIds.add(providerId)) {
                 throw new IllegalArgumentException("configuration contains duplicate model provider id: " + providerId);
             }
-            String dialectId = requiredText(provider, "dialectId", "configuration models.providers[].dialectId");
-            String dialectVersion =
-                    requiredText(provider, "dialectVersion", "configuration models.providers[].dialectVersion");
+            reject(provider, "dialectId", "dialectVersion", "adapterType");
             boolean nativeStreaming =
                     requiredBoolean(provider, "nativeStreaming", "configuration models.providers[].nativeStreaming");
-            boolean bailian = OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(dialectId);
-            String endpoint = nullableText(provider, "endpoint");
+            String endpoint =
+                    expandEnvironment(requiredText(provider, "endpoint", "configuration models.providers[].endpoint"));
+            java.net.URI providerEndpoint = java.net.URI.create(endpoint);
+            String credentialRef =
+                    requiredText(provider, "credentialRef", "configuration models.providers[].credentialRef");
+            Map<ApiStyleId, Binding> bindings = bindings(provider);
             Object configuredModels = provider.get("models");
             if (!(configuredModels instanceof List<?> providerModels) || providerModels.isEmpty()) {
                 throw new IllegalArgumentException("configuration models.providers[].models must be a non-empty list");
@@ -122,23 +135,100 @@ final class CliConfigurationLoader {
                     throw new IllegalArgumentException("configuration models.providers[].models must contain objects");
                 }
                 Map<String, Object> model = stringObject(rawModel, "configuration models.providers[].models");
+                reject(model, "endpoint", "credentialRef", "nativeStreaming", "dialect", "dialectVersion");
+                ApiStyleId style =
+                        new ApiStyleId(requiredText(model, "style", "configuration models.providers[].models[].style"));
+                Binding binding = bindings.get(style);
+                if (binding == null) {
+                    throw new IllegalArgumentException("model references an unbound API style: " + style.value());
+                }
                 result.add(new CliConfiguration.Model(
                         providerId,
                         text(provider, "displayName", providerId),
-                        text(model, "providerModelId", ""),
-                        endpoint == null ? null : java.net.URI.create(endpoint),
-                        text(provider, "credentialRef", bailian ? "env://DASHSCOPE_API_KEY" : "env://DEEPSEEK_API_KEY"),
-                        dialectId,
-                        dialectVersion,
+                        expandEnvironment(text(model, "providerModelId", "")),
+                        providerEndpoint,
+                        java.net.URI.create(
+                                binding.endpoint() == null ? endpoint : expandEnvironment(binding.endpoint())),
+                        credentialRef,
+                        style,
+                        binding.dialect(),
                         nativeStreaming,
                         nullableText(provider, "workspaceId"),
                         nullableText(provider, "region"),
                         text(model, "id", ""),
-                        text(model, "displayName", text(model, "id", ""))));
+                        text(model, "displayName", text(model, "id", "")),
+                        capabilities(model),
+                        Math.toIntExact(number(model, "contextWindow", -1)),
+                        Math.toIntExact(number(model, "maxOutputTokens", -1))));
             }
         }
         return List.copyOf(result);
     }
+
+    private static Map<ApiStyleId, Binding> bindings(Map<String, Object> provider) {
+        Object configured = provider.get("apiBindings");
+        if (!(configured instanceof List<?> values) || values.isEmpty()) {
+            throw new IllegalArgumentException("configuration models.providers[].apiBindings must be a non-empty list");
+        }
+        Map<ApiStyleId, Binding> result = new LinkedHashMap<>();
+        for (Object value : values) {
+            if (!(value instanceof Map<?, ?> raw)) {
+                throw new IllegalArgumentException("configuration models.providers[].apiBindings must contain objects");
+            }
+            Map<String, Object> binding = stringObject(raw, "configuration models.providers[].apiBindings");
+            reject(binding, "id", "version", "styleVersion", "dialectVersion", "credentialRef", "nativeStreaming");
+            ApiStyleId style = new ApiStyleId(
+                    requiredText(binding, "style", "configuration models.providers[].apiBindings[].style"));
+            String dialect = nullableText(binding, "dialect");
+            Binding definition = new Binding(
+                    dialect == null ? ModelApiBindingDefinition.STANDARD_DIALECT : dialect,
+                    nullableText(binding, "endpoint"));
+            if (result.putIfAbsent(style, definition) != null) {
+                throw new IllegalArgumentException("duplicate API style binding: " + style.value());
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private static Set<ModelCapability> capabilities(Map<String, Object> model) {
+        Set<String> names = stringSet(
+                model.get("capabilities"), Set.of(), "configuration models.providers[].models[].capabilities");
+        if (names.isEmpty()) {
+            throw new IllegalArgumentException("model capabilities must be a non-empty list");
+        }
+        java.util.EnumSet<ModelCapability> result = java.util.EnumSet.noneOf(ModelCapability.class);
+        names.forEach(name -> result.add(enumValue(ModelCapability.class, name, "model capability")));
+        return Set.copyOf(result);
+    }
+
+    private static void reject(Map<String, Object> source, String... keys) {
+        for (String key : keys) {
+            if (source.containsKey(key))
+                throw new IllegalArgumentException("unsupported model configuration field: " + key);
+        }
+    }
+
+    private String expandEnvironment(String value) {
+        if (!value.startsWith("${") || !value.endsWith("}")) return value;
+        String expression = value.substring(2, value.length() - 1);
+        int separator = expression.indexOf(':');
+        String name = separator < 0 ? expression : expression.substring(0, separator);
+        String fallback = separator < 0 ? null : expression.substring(separator + 1);
+        if (!name.matches("[A-Z][A-Z0-9_]*")) {
+            throw new IllegalArgumentException("invalid environment placeholder in model configuration");
+        }
+        return Optional.ofNullable(modelEnvironment.apply(name))
+                .map(String::trim)
+                .filter(configured -> !configured.isEmpty())
+                .orElseGet(() -> {
+                    if (fallback == null || fallback.isBlank()) {
+                        throw new IllegalArgumentException("model environment variable is unavailable: " + name);
+                    }
+                    return fallback;
+                });
+    }
+
+    private record Binding(String dialect, String endpoint) {}
 
     private static ProjectPersistenceConfiguration persistence(Map<String, Object> source) {
         String configuredMode = environment("HAIFA_PERSISTENCE_MODE").orElseGet(() -> text(source, "mode", "MEMORY"));

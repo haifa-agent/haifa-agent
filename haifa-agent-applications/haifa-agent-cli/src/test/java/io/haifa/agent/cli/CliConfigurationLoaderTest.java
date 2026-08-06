@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -25,30 +28,45 @@ class CliConfigurationLoaderTest {
                   providers:
                     - id: deepseek
                       displayName: DeepSeek
-                      dialectId: deepseek-openai-chat
-                      dialectVersion: "1.0"
                       nativeStreaming: true
                       endpoint: https://api.deepseek.com
                       credentialRef: env://DEEPSEEK_API_KEY
+                      apiBindings:
+                        - style: openai-chat-completions
+                          dialect: deepseek-openai-chat
                       models:
                         - id: deepseek-v4-pro
                           displayName: DeepSeek V4 Pro
                           providerModelId: deepseek-v4-pro
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 131072
+                          maxOutputTokens: 8192
                         - id: deepseek-v4-flash
                           displayName: DeepSeek V4 Flash
                           providerModelId: deepseek-v4-flash
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 131072
+                          maxOutputTokens: 8192
                     - id: aliyun-bailian
                       displayName: Alibaba Cloud Bailian
-                      dialectId: aliyun-bailian-openai-chat
-                      dialectVersion: "1.0"
                       nativeStreaming: true
+                      endpoint: https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
                       workspaceId: workspace-123
                       region: cn-beijing
                       credentialRef: env://DASHSCOPE_API_KEY
+                      apiBindings:
+                        - style: openai-chat-completions
+                          dialect: aliyun-bailian-openai-chat
                       models:
                         - id: bailian-qwen-plus
                           displayName: Qwen Plus
                           providerModelId: qwen-plus
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 131072
+                          maxOutputTokens: 8192
                 """);
 
         CliConfiguration result = new CliConfigurationLoader()
@@ -92,24 +110,40 @@ class CliConfigurationLoaderTest {
                                 "__HAIFA_TRANSCRIPT_ROOT__",
                                 "'" + transcriptRoot.toString().replace('\\', '/') + "'"));
 
-        CliConfiguration result = new CliConfigurationLoader()
+        CliConfiguration result = new CliConfigurationLoader(name -> switch (name) {
+                    case "OPENAI_BASE_URL" -> "http://127.0.0.1:30000/v1";
+                    case "OPENAI_MODEL_ID" -> "gpt-5.6-luna";
+                    default -> null;
+                })
                 .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
 
         assertThat(result.model().providerId()).isEqualTo("deepseek");
-        assertThat(result.model().id()).isEqualTo("deepseek-v4-flash");
+        assertThat(result.model().id()).isEqualTo("deepseek-responses-flash");
         assertThat(result.model().credentialRef()).isEqualTo("env://DEEPSEEK_API_KEY");
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
-                .containsExactly("deepseek-v4-flash", "deepseek-v4-pro", "openai-gpt-5.6-luna");
+                .containsExactly(
+                        "deepseek-chat-flash",
+                        "deepseek-chat-pro",
+                        "deepseek-responses-flash",
+                        "local-openai-responses");
         assertThat(result.availableModels())
-                .filteredOn(model -> model.id().equals("openai-gpt-5.6-luna"))
+                .filteredOn(model -> model.id().equals("local-openai-responses"))
                 .singleElement()
                 .satisfies(model -> {
-                    assertThat(model.providerId()).isEqualTo("openai");
+                    assertThat(model.providerId()).isEqualTo("local-openai");
                     assertThat(model.modelId()).isEqualTo("gpt-5.6-luna");
-                    assertThat(model.endpoint()).hasToString("http://localhost:30000/v1");
+                    assertThat(model.endpoint()).hasToString("http://127.0.0.1:30000/v1");
                     assertThat(model.credentialRef()).isEqualTo("env://OPENAI_API_KEY");
+                    assertThat(model.style()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+                    assertThat(model.dialect()).isEqualTo("standard");
                 });
+        assertThat(new CliCodingModelCatalog(result)
+                        .available(
+                                new io.haifa.agent.core.reference.TenantRef("local"),
+                                new io.haifa.agent.core.reference.PrincipalRef("user", "user")))
+                .extracting(io.haifa.agent.application.project.product.coding.CodingModelOption::id)
+                .doesNotContain("local-openai-responses");
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
         assertThat(result.execution().network()).isEqualTo("allow");
@@ -131,25 +165,34 @@ class CliConfigurationLoaderTest {
                   default: deepseek-v4-flash
                   providers:
                     - id: deepseek
-                      dialectId: deepseek-openai-chat
-                      dialectVersion: "1.0"
                       nativeStreaming: true
                       endpoint: https://api.deepseek.com
                       credentialRef: env://DEEPSEEK_API_KEY
+                      apiBindings:
+                        - style: openai-chat-completions
+                          dialect: deepseek-openai-chat
                       models:
                         - id: deepseek-v4-flash
                           providerModelId: deepseek-v4-flash
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 131072
+                          maxOutputTokens: 8192
                     - id: openai
                       displayName: OpenAI
-                      dialectId: openai-chat-completions
-                      dialectVersion: "1.0"
                       nativeStreaming: false
                       endpoint: http://localhost:30000/v1
                       credentialRef: env://OPENAI_API_KEY
+                      apiBindings:
+                        - style: openai-chat-completions
                       models:
                         - id: openai-gpt-5.6-luna
                           displayName: GPT-5.6 Luna
                           providerModelId: gpt-5.6-luna
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 131072
+                          maxOutputTokens: 8192
                 """);
 
         CliConfiguration result = new CliConfigurationLoader()
@@ -164,10 +207,10 @@ class CliConfigurationLoaderTest {
                 .containsExactly("deepseek-v4-flash", "openai-gpt-5.6-luna");
         assertThat(snapshot.providerId().value()).isEqualTo("openai");
         assertThat(snapshot.providerModelId()).isEqualTo("gpt-5.6-luna");
-        assertThat(snapshot.providerOptions())
-                .containsEntry("dialect_id", "openai-chat-completions")
-                .containsEntry("dialect_version", "1.0")
-                .doesNotContainKeys("thinking", "reasoning_effort");
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
+        assertThat(snapshot.dialect()).isEqualTo("standard");
+        assertThat(snapshot.nativeStreaming()).isFalse();
+        assertThat(snapshot.providerOptions()).doesNotContainKeys("thinking", "reasoning_effort");
     }
 
     @Test
@@ -181,15 +224,19 @@ class CliConfigurationLoaderTest {
                   providers:
                     - id: third-party-openai
                       displayName: Third-party OpenAI-compatible
-                      dialectId: openai-chat-completions
-                      dialectVersion: "1.0"
                       nativeStreaming: true
                       endpoint: https://gateway.example.com/v1
                       credentialRef: env://THIRD_PARTY_API_KEY
+                      apiBindings:
+                        - style: openai-chat-completions
                       models:
                         - id: third-party-chat
                           displayName: Third-party Chat
                           providerModelId: vendor-chat-model
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 131072
+                          maxOutputTokens: 8192
                 """);
 
         CliConfiguration result = new CliConfigurationLoader()
@@ -198,10 +245,10 @@ class CliConfigurationLoaderTest {
 
         assertThat(snapshot.providerId().value()).isEqualTo("third-party-openai");
         assertThat(snapshot.providerModelId()).isEqualTo("vendor-chat-model");
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
+        assertThat(snapshot.dialect()).isEqualTo("standard");
+        assertThat(snapshot.nativeStreaming()).isTrue();
         assertThat(snapshot.providerOptions())
-                .containsEntry("dialect_id", "openai-chat-completions")
-                .containsEntry("dialect_version", "1.0")
-                .containsEntry("native_streaming", true)
                 .containsEntry("endpoint_host", "gateway.example.com")
                 .doesNotContainKeys("thinking", "reasoning_effort");
     }
@@ -212,17 +259,17 @@ class CliConfigurationLoaderTest {
         var snapshot = LocalCodingAgent.modelSnapshot(defaults);
 
         assertThat(defaults.model().providerId()).isEqualTo("deepseek");
-        assertThat(defaults.model().id()).isEqualTo("deepseek-v4-flash");
+        assertThat(defaults.model().id()).isEqualTo("deepseek-responses-flash");
         assertThat(defaults.availableModels())
                 .extracting(CliConfiguration.Model::id)
-                .containsExactly("deepseek-v4-flash", "deepseek-v4-pro");
+                .containsExactly("deepseek-responses-flash", "deepseek-chat-pro");
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+        assertThat(snapshot.dialect()).isEqualTo("deepseek-openai-responses");
         assertThat(snapshot.capabilities()).contains(ModelCapability.REASONING);
-        assertThat(snapshot.providerOptions()).containsEntry("thinking", "disabled");
         assertThat(snapshot.providerOptions())
-                .doesNotContainKeys("reasoning_effort", "requires_reasoning_continuation");
-        assertThat(snapshot.invocationOptions()).containsEntry("thinking", "disabled");
+                .doesNotContainKeys("thinking", "reasoning_effort", "requires_reasoning_continuation");
         assertThat(snapshot.invocationOptions())
-                .doesNotContainKeys("reasoning_effort", "requires_reasoning_continuation");
+                .doesNotContainKeys("thinking", "reasoning_effort", "requires_reasoning_continuation");
     }
 
     @Test
@@ -231,15 +278,19 @@ class CliConfigurationLoaderTest {
                 "aliyun-bailian",
                 "Alibaba Cloud Bailian",
                 "qwen-plus",
-                null,
+                URI.create("https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"),
+                URI.create("https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"),
                 "env://DASHSCOPE_API_KEY",
-                "aliyun-bailian-openai-chat",
-                "1.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.ALIYUN_BAILIAN,
                 true,
                 "workspace-123",
                 null,
                 "qwen-plus",
-                "Qwen Plus");
+                "Qwen Plus",
+                java.util.Set.of(ModelCapability.TEXT_CHAT),
+                131_072,
+                8_192);
         CliConfiguration defaults = CliConfiguration.defaults();
         var snapshot = LocalCodingAgent.modelSnapshot(new CliConfiguration(
                 model,
@@ -256,8 +307,8 @@ class CliConfigurationLoaderTest {
         assertThat(model.endpoint())
                 .hasToString("https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
         assertThat(snapshot.providerId().value()).isEqualTo("aliyun-bailian");
+        assertThat(snapshot.dialect()).isEqualTo(OpenAiCompatibleDialects.ALIYUN_BAILIAN);
         assertThat(snapshot.providerOptions())
-                .containsEntry("dialect_id", "aliyun-bailian-openai-chat")
                 .containsEntry("workspace_id", "workspace-123")
                 .containsEntry("region", "cn-beijing");
         assertThat(snapshot.invocationOptions())
@@ -273,14 +324,18 @@ class CliConfigurationLoaderTest {
                         "Alibaba Cloud Bailian",
                         "qwen-plus",
                         java.net.URI.create("https://example.com/compatible-mode/v1"),
+                        java.net.URI.create("https://example.com/compatible-mode/v1"),
                         "env://DASHSCOPE_API_KEY",
-                        "aliyun-bailian-openai-chat",
-                        "1.0",
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                        OpenAiCompatibleDialects.ALIYUN_BAILIAN,
                         true,
                         "workspace-123",
                         "cn-beijing",
                         "qwen-plus",
-                        "Qwen Plus"))
+                        "Qwen Plus",
+                        java.util.Set.of(ModelCapability.TEXT_CHAT),
+                        131_072,
+                        8_192))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("derived from workspaceId and region");
     }
@@ -296,15 +351,19 @@ class CliConfigurationLoaderTest {
                   providers:
                     - id: local
                       displayName: Local
-                      dialectId: openai-chat-completions
-                      dialectVersion: "1.0"
                       nativeStreaming: true
                       endpoint: http://localhost:8080
                       credentialRef: env://TEST_KEY
+                      apiBindings:
+                        - style: openai-chat-completions
                       models:
                         - id: test-model
                           displayName: Test model
                           providerModelId: test-model
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 8192
+                          maxOutputTokens: 1024
                 tools:
                   enabled: [file.read, file.write]
                 approval:
@@ -372,6 +431,55 @@ class CliConfigurationLoaderTest {
                         .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of(".")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("models.providers");
+    }
+
+    @Test
+    void rejectsRetiredProviderAndBindingVersionFields() throws Exception {
+        Path providerConfiguration = Files.createTempFile("haifa-cli-retired-provider", ".yaml");
+        Files.writeString(
+                providerConfiguration,
+                """
+                models:
+                  default: test-model
+                  providers:
+                    - id: test
+                      endpoint: https://model.example.com/v1
+                      credentialRef: env://TEST_KEY
+                      nativeStreaming: true
+                      dialectId: openai-chat-completions
+                      apiBindings:
+                        - style: openai-chat-completions
+                      models:
+                        - id: test-model
+                          providerModelId: test-model
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT]
+                          contextWindow: 8192
+                          maxOutputTokens: 1024
+                """);
+
+        assertThatThrownBy(() -> new CliConfigurationLoader()
+                        .load(
+                                CliArguments.parse(new String[] {"--config", providerConfiguration.toString()}),
+                                Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unsupported model configuration field: dialectId");
+
+        Path bindingConfiguration = Files.createTempFile("haifa-cli-retired-binding", ".yaml");
+        Files.writeString(
+                bindingConfiguration,
+                Files.readString(providerConfiguration)
+                        .replace("      dialectId: openai-chat-completions\n", "")
+                        .replace(
+                                "        - style: openai-chat-completions\n",
+                                "        - style: openai-chat-completions\n          styleVersion: '1.0'\n"));
+
+        assertThatThrownBy(() -> new CliConfigurationLoader()
+                        .load(
+                                CliArguments.parse(new String[] {"--config", bindingConfiguration.toString()}),
+                                Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unsupported model configuration field: styleVersion");
     }
 
     @Test

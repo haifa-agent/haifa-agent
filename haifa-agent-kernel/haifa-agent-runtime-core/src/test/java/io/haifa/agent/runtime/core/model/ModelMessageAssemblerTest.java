@@ -97,10 +97,7 @@ class ModelMessageAssemblerTest {
                 List.of(new TextPart("collect the missing evidence", "plain")));
         AgentContext context = new AgentContext(
                 List.of(prompt()),
-                List.of(item(
-                        "runtime-notification",
-                        ContextItemType.MESSAGE,
-                        new MessageContextContent(notification))),
+                List.of(item("runtime-notification", ContextItemType.MESSAGE, new MessageContextContent(notification))),
                 List.of(),
                 budget(),
                 20);

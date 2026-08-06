@@ -1,6 +1,8 @@
 package io.haifa.agent.model.openai;
 
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -27,18 +29,18 @@ public final class VolcengineArkProviderFactory {
         Objects.requireNonNull(configuration, "configuration must not be null");
         if (profiles == null || profiles.isEmpty()) throw new IllegalArgumentException("profiles must not be empty");
         LinkedHashMap<String, Object> providerOptions = new LinkedHashMap<>();
-        providerOptions.put(OpenAiCompatibleDialects.DIALECT_ID, OpenAiCompatibleDialects.VOLCENGINE_ARK);
-        providerOptions.put(OpenAiCompatibleDialects.DIALECT_VERSION, OpenAiCompatibleDialects.VERSION_1);
         providerOptions.put("region", configuration.region());
         providerOptions.put("endpoint_host", configuration.endpointHost());
         return new ModelProviderDefinition(
                 PROVIDER_ID,
                 configuration.providerVersion(),
                 "Volcengine Ark",
-                ADAPTER_TYPE,
                 configuration.endpoint(),
                 configuration.credentialRef(),
+                true,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS, OpenAiCompatibleDialects.VOLCENGINE_ARK)),
                 profiles.stream().map(ModelProfile::definition).toList(),
                 providerOptions,
                 Map.of("protocol", "openai-chat-completions"));
@@ -98,7 +100,8 @@ public final class VolcengineArkProviderFactory {
                     contextWindow,
                     maxOutputTokens,
                     frozen,
-                    Map.of("profile_source", "governed-configuration"));
+                    Map.of("profile_source", "governed-configuration"),
+                    ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
         }
     }
 

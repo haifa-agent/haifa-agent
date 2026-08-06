@@ -11,6 +11,7 @@ import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunUsage;
 import io.haifa.agent.core.session.AgentSessionId;
+import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -130,8 +131,11 @@ class ProjectContextSourceTest {
                         "model",
                         "adapter",
                         "adapter-v1",
+                        new ApiStyleId("test-style"),
+                        "standard",
                         URI.create("https://provider.example.invalid"),
                         new CredentialRef("env://MODEL_KEY"),
+                        true,
                         Set.of(ModelCapability.TEXT_CHAT),
                         1000,
                         100,

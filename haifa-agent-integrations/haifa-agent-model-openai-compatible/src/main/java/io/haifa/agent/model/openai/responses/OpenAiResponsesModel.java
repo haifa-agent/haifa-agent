@@ -1,0 +1,792 @@
+package io.haifa.agent.model.openai.responses;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
+import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.CredentialResolver;
+import io.haifa.agent.model.api.ImageDataPart;
+import io.haifa.agent.model.api.ImageUrlPart;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelErrorCategory;
+import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelInvocationException;
+import io.haifa.agent.model.api.ModelMessage;
+import io.haifa.agent.model.api.ModelMessageRole;
+import io.haifa.agent.model.api.ModelStreamControl;
+import io.haifa.agent.model.api.ModelStreamEvent;
+import io.haifa.agent.model.api.ModelStreamSink;
+import io.haifa.agent.model.api.ModelToolCall;
+import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.ResolvedCredential;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+
+/** Bounded OpenAI Responses adapter with an Item-aware synchronous and SSE parser. */
+public final class OpenAiResponsesModel implements AgentChatModel {
+    public static final String ADAPTER_TYPE = ModelApiStyles.OPENAI_RESPONSES_ADAPTER;
+    public static final String ADAPTER_VERSION = "1.0.0";
+
+    private static final int DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+    private static final int MAX_EVENTS = 100_000;
+    private static final int MAX_EVENT_BYTES = 1024 * 1024;
+
+    private final HttpClient http;
+    private final ObjectMapper json;
+    private final CredentialResolver credentials;
+    private final boolean allowInsecureHttp;
+    private final int maxResponseBytes;
+
+    public OpenAiResponsesModel(HttpClient http, ObjectMapper json, CredentialResolver credentials) {
+        this(http, json, credentials, false, DEFAULT_MAX_RESPONSE_BYTES);
+    }
+
+    public OpenAiResponsesModel(
+            HttpClient http,
+            ObjectMapper json,
+            CredentialResolver credentials,
+            boolean allowInsecureHttp,
+            int maxResponseBytes) {
+        this.http = Objects.requireNonNull(http, "http must not be null");
+        this.json = Objects.requireNonNull(json, "json must not be null");
+        this.credentials = Objects.requireNonNull(credentials, "credentials must not be null");
+        this.allowInsecureHttp = allowInsecureHttp;
+        if (maxResponseBytes < 1) throw new IllegalArgumentException("maxResponseBytes must be positive");
+        this.maxResponseBytes = maxResponseBytes;
+    }
+
+    @Override
+    public AgentChatResponse invoke(AgentChatRequest request) {
+        OpenAiResponsesDialects.Profile profile = validateSelection(request);
+        ResolvedCredential credential = credential(request);
+        HttpRequest httpRequest = request(request, profile, credential, false);
+        try {
+            HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            byte[] body;
+            try {
+                body = readBounded(response.body(), maxResponseBytes);
+            } catch (ResponseTooLargeException exception) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        false,
+                        response.statusCode(),
+                        "response_too_large",
+                        "provider response exceeds the configured size limit",
+                        exception);
+            }
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw httpFailure(request, response.statusCode());
+            }
+            requireContentType(request, response, "application/json");
+            return parseResponse(request, parseJson(request, body));
+        } catch (HttpTimeoutException exception) {
+            throw failure(
+                    request, ModelErrorCategory.TIMEOUT, true, 0, "timeout", "model request timed out", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw failure(
+                    request,
+                    ModelErrorCategory.CANCELLED,
+                    false,
+                    0,
+                    "interrupted",
+                    "model request was cancelled",
+                    exception);
+        } catch (ModelInvocationException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.PROVIDER_UNAVAILABLE,
+                    true,
+                    0,
+                    "io_failure",
+                    "model provider is unavailable",
+                    exception);
+        }
+    }
+
+    @Override
+    public AgentChatResponse invokeStreaming(AgentChatRequest request, ModelStreamSink sink) {
+        Objects.requireNonNull(sink, "sink must not be null");
+        OpenAiResponsesDialects.Profile profile = validateSelection(request);
+        if (!request.model().nativeStreaming()) return AgentChatModel.super.invokeStreaming(request, sink);
+        ResolvedCredential credential = credential(request);
+        HttpRequest httpRequest = request(request, profile, credential, true);
+        try {
+            HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                try (InputStream body = response.body()) {
+                    body.readNBytes(maxResponseBytes + 1);
+                }
+                throw httpFailure(request, response.statusCode());
+            }
+            requireContentType(request, response, "text/event-stream");
+            try (InputStream body = response.body()) {
+                return parseStream(request, profile, body, sink);
+            }
+        } catch (HttpTimeoutException exception) {
+            throw failure(
+                    request, ModelErrorCategory.TIMEOUT, true, 0, "timeout", "model request timed out", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw failure(
+                    request,
+                    ModelErrorCategory.CANCELLED,
+                    false,
+                    0,
+                    "interrupted",
+                    "model request was cancelled",
+                    exception);
+        } catch (ModelInvocationException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.PROVIDER_UNAVAILABLE,
+                    true,
+                    0,
+                    "io_failure",
+                    "model provider is unavailable",
+                    exception);
+        }
+    }
+
+    private OpenAiResponsesDialects.Profile validateSelection(AgentChatRequest request) {
+        Objects.requireNonNull(request, "request must not be null");
+        if (!ADAPTER_TYPE.equals(request.model().adapterType())
+                || !ADAPTER_VERSION.equals(request.model().adapterVersion())) {
+            throw new IllegalArgumentException("snapshot selects a different model adapter");
+        }
+        OpenAiResponsesDialects.Profile profile = OpenAiResponsesDialects.resolve(request.model(), allowInsecureHttp);
+        if (profile == OpenAiResponsesDialects.Profile.DEEPSEEK
+                && request.messages().stream()
+                        .anyMatch(message -> !message.images().isEmpty())) {
+            throw new IllegalArgumentException("DeepSeek Responses image input is not verified");
+        }
+        if (!request.tools().isEmpty()
+                && !request.model().capabilities().contains(io.haifa.agent.model.api.ModelCapability.TOOL_CALLING)) {
+            throw new IllegalArgumentException("selected model does not declare tool calling capability");
+        }
+        return profile;
+    }
+
+    private ResolvedCredential credential(AgentChatRequest request) {
+        try {
+            return credentials.resolve(request.model().credentialRef());
+        } catch (RuntimeException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.AUTHENTICATION_FAILED,
+                    false,
+                    0,
+                    "credential_unavailable",
+                    "model credential is unavailable",
+                    null);
+        }
+    }
+
+    private HttpRequest request(
+            AgentChatRequest request,
+            OpenAiResponsesDialects.Profile profile,
+            ResolvedCredential credential,
+            boolean stream) {
+        byte[] body;
+        try {
+            body = json.writeValueAsBytes(requestBody(request, profile, stream));
+        } catch (JsonProcessingException | IllegalArgumentException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "request_serialization_failed",
+                    "model request cannot be serialized",
+                    exception);
+        }
+        return HttpRequest.newBuilder(responsesUri(request.model().endpoint()))
+                .timeout(request.timeout())
+                .header("Content-Type", "application/json")
+                .header("Accept", stream ? "text/event-stream" : "application/json")
+                .header("Authorization", "Bearer " + credential.value())
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .build();
+    }
+
+    private Map<String, Object> requestBody(
+            AgentChatRequest request, OpenAiResponsesDialects.Profile profile, boolean stream) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", request.model().providerModelId());
+        body.put("input", inputItems(request, profile));
+        body.put("max_output_tokens", request.maxOutputTokens());
+        body.put("stream", stream);
+        body.put("store", false);
+        String instructions = instructions(request.messages());
+        if (!instructions.isEmpty()) body.put("instructions", instructions);
+        if (!request.tools().isEmpty()) {
+            body.put("tools", request.tools().stream().map(this::tool).toList());
+            Object toolChoice = request.options().getOrDefault("tool_choice", "auto");
+            if (profile == OpenAiResponsesDialects.Profile.DEEPSEEK && !"auto".equals(toolChoice)) {
+                throw new IllegalArgumentException("DeepSeek Responses supports only automatic function selection");
+            }
+            body.put("tool_choice", toolChoice);
+        }
+        Object format = request.options().get("response_format");
+        if (format != null) body.put("text", Map.of("format", responseFormat(format)));
+        Object effort = request.options().get("reasoning_effort");
+        if (effort != null) body.put("reasoning", Map.of("effort", reasoningEffort(effort)));
+        if (request.options().keySet().stream()
+                .anyMatch(key -> !key.equals("response_format")
+                        && !key.equals("tool_choice")
+                        && !key.equals("reasoning_effort"))) {
+            throw new IllegalArgumentException("unsupported Responses invocation option");
+        }
+        return Map.copyOf(body);
+    }
+
+    private List<Map<String, Object>> inputItems(AgentChatRequest request, OpenAiResponsesDialects.Profile profile) {
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (ModelMessage message : request.messages()) {
+            if (message.role() == ModelMessageRole.SYSTEM || message.role() == ModelMessageRole.DEVELOPER) continue;
+            if (message.role() == ModelMessageRole.TOOL) {
+                items.add(Map.of(
+                        "type",
+                        "function_call_output",
+                        "call_id",
+                        message.providerCorrelationId().orElseThrow().value(),
+                        "output",
+                        toolOutput(message)));
+                continue;
+            }
+            if (!message.content().isEmpty() || !message.images().isEmpty()) items.add(messageItem(message));
+            if (message.role() == ModelMessageRole.ASSISTANT) {
+                if (message.reasoning().isPresent()) {
+                    if (profile != OpenAiResponsesDialects.Profile.DEEPSEEK) {
+                        throw new IllegalArgumentException(
+                                "standard Responses reasoning continuation requires a protected opaque item");
+                    }
+                    items.add(message.reasoning()
+                            .orElseThrow()
+                            .use(value -> Map.of(
+                                    "type",
+                                    "reasoning",
+                                    "content",
+                                    List.of(Map.of("type", "reasoning_text", "text", value)))));
+                }
+                for (ModelToolCall call : message.toolCalls()) {
+                    items.add(Map.of(
+                            "type",
+                            "function_call",
+                            "call_id",
+                            call.providerCorrelationId().value(),
+                            "name",
+                            call.name(),
+                            "arguments",
+                            writeJson(call.arguments())));
+                }
+            }
+        }
+        return List.copyOf(items);
+    }
+
+    private Map<String, Object> messageItem(ModelMessage message) {
+        String role = message.role() == ModelMessageRole.ASSISTANT ? "assistant" : "user";
+        List<Map<String, Object>> content = new ArrayList<>();
+        if (!message.content().isEmpty()) {
+            content.add(Map.of(
+                    "type",
+                    message.role() == ModelMessageRole.ASSISTANT ? "output_text" : "input_text",
+                    "text",
+                    message.content()));
+        }
+        for (var image : message.images()) {
+            String imageUrl;
+            if (image instanceof ImageUrlPart remote) {
+                imageUrl = remote.url().toString();
+            } else if (image instanceof ImageDataPart data) {
+                imageUrl = "data:" + data.mediaType() + ";base64,"
+                        + Base64.getEncoder().encodeToString(data.bytes());
+            } else {
+                throw new IllegalArgumentException("unsupported model image part");
+            }
+            content.add(Map.of("type", "input_image", "image_url", imageUrl));
+        }
+        return Map.of("type", "message", "role", role, "content", List.copyOf(content));
+    }
+
+    private Map<String, Object> tool(ModelToolSpecification tool) {
+        return Map.of(
+                "type", "function",
+                "name", tool.name(),
+                "description", tool.description(),
+                "parameters", tool.inputJsonSchema(),
+                "strict", tool.strict());
+    }
+
+    private String toolOutput(ModelMessage message) {
+        return message.toolResultData().isEmpty() ? message.content() : writeJson(message.toolResultData());
+    }
+
+    private String instructions(List<ModelMessage> messages) {
+        return messages.stream()
+                .filter(message ->
+                        message.role() == ModelMessageRole.SYSTEM || message.role() == ModelMessageRole.DEVELOPER)
+                .map(ModelMessage::content)
+                .filter(value -> !value.isEmpty())
+                .collect(java.util.stream.Collectors.joining("\n\n"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> responseFormat(Object configured) {
+        if (!(configured instanceof Map<?, ?> raw)) {
+            throw new IllegalArgumentException("response_format must be an object");
+        }
+        Map<String, Object> value = new LinkedHashMap<>();
+        raw.forEach((key, item) -> value.put(String.valueOf(key), item));
+        String type = String.valueOf(value.get("type"));
+        if (!type.equals("json_object") && !type.equals("json_schema")) {
+            throw new IllegalArgumentException("response_format type is unsupported");
+        }
+        return Map.copyOf(value);
+    }
+
+    private static String reasoningEffort(Object configured) {
+        String value = String.valueOf(configured);
+        if (!List.of("low", "medium", "high", "max", "xhigh").contains(value)) {
+            throw new IllegalArgumentException("reasoning_effort is unsupported");
+        }
+        return value;
+    }
+
+    private AgentChatResponse parseResponse(AgentChatRequest request, JsonNode root) {
+        try {
+            return parseResponseValue(request, root);
+        } catch (ModelInvocationException exception) {
+            throw exception;
+        } catch (IllegalArgumentException exception) {
+            throw malformed(request, "provider returned an invalid Responses object");
+        }
+    }
+
+    private AgentChatResponse parseResponseValue(AgentChatRequest request, JsonNode root) {
+        String status = text(root, "status", true);
+        if ("failed".equals(status)) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.UNKNOWN_PROVIDER_ERROR,
+                    false,
+                    0,
+                    "response_failed",
+                    "provider reported a failed response",
+                    null);
+        }
+        if (!"completed".equals(status) && !"incomplete".equals(status)) {
+            throw malformed(request, "provider response has an invalid terminal status");
+        }
+        StringBuilder content = new StringBuilder();
+        StringBuilder reasoning = new StringBuilder();
+        List<ModelToolCall> calls = new ArrayList<>();
+        JsonNode output = root.path("output");
+        if (!output.isArray()) throw malformed(request, "provider response output must be an array");
+        for (JsonNode item : output) parseOutputItem(request, item, content, reasoning, calls);
+        ModelFinishReason finish = !calls.isEmpty()
+                ? ModelFinishReason.TOOL_CALLS
+                : "incomplete".equals(status) ? incompleteReason(root) : ModelFinishReason.STOP;
+        ModelUsage usage = usage(request, root.path("usage"));
+        if (content.isEmpty() && calls.isEmpty()) throw malformed(request, "provider response contains no output");
+        boolean retainReasoning = !reasoning.isEmpty()
+                && !calls.isEmpty()
+                && OpenAiResponsesDialects.DEEPSEEK.equals(request.model().dialect());
+        return new AgentChatResponse(
+                text(root, "id", true),
+                optionalText(root, "model", request.model().providerModelId()),
+                content.toString(),
+                calls,
+                finish,
+                usage,
+                "",
+                Map.of("status", status, "reasoningCharacters", reasoning.length()),
+                retainReasoning
+                        ? java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString()))
+                        : java.util.Optional.empty());
+    }
+
+    private void parseOutputItem(
+            AgentChatRequest request,
+            JsonNode item,
+            StringBuilder content,
+            StringBuilder reasoning,
+            List<ModelToolCall> calls) {
+        switch (text(item, "type", true)) {
+            case "message" -> {
+                JsonNode parts = item.path("content");
+                if (!parts.isArray()) throw malformed(request, "message content must be an array");
+                for (JsonNode part : parts) {
+                    String type = text(part, "type", true);
+                    if ("output_text".equals(type)) content.append(text(part, "text", true));
+                    else if ("refusal".equals(type)) content.append(text(part, "refusal", true));
+                }
+            }
+            case "function_call" ->
+                calls.add(new ModelToolCall(
+                        new ProviderToolCallCorrelationId(text(item, "call_id", true)),
+                        text(item, "name", true),
+                        arguments(request, text(item, "arguments", true))));
+            case "reasoning" -> appendReasoning(item, reasoning);
+            default -> {
+                // Unknown output Items are ignored only when known output remains; raw provider data is never exposed.
+            }
+        }
+        if (content.length() + reasoning.length() > maxResponseBytes) {
+            throw malformed(request, "provider output exceeds the configured size limit");
+        }
+    }
+
+    private static void appendReasoning(JsonNode item, StringBuilder reasoning) {
+        for (String field : List.of("summary", "content")) {
+            JsonNode values = item.path(field);
+            if (!values.isArray()) continue;
+            for (JsonNode value : values) {
+                JsonNode text = value.get("text");
+                if (text != null && text.isTextual()) reasoning.append(text.textValue());
+            }
+        }
+    }
+
+    private ModelUsage usage(AgentChatRequest request, JsonNode usage) {
+        if (!usage.isObject()) return ModelUsage.unpriced(0, 0);
+        long input = nonNegativeLong(request, usage, "input_tokens");
+        long output = nonNegativeLong(request, usage, "output_tokens");
+        long cached = nonNegativeLong(request, usage.path("input_tokens_details"), "cached_tokens");
+        long reasoning = nonNegativeLong(request, usage.path("output_tokens_details"), "reasoning_tokens");
+        return new ModelUsage(input, output, cached, Math.max(0, input - cached), reasoning, false, 0);
+    }
+
+    private AgentChatResponse parseStream(
+            AgentChatRequest request, OpenAiResponsesDialects.Profile profile, InputStream stream, ModelStreamSink sink)
+            throws IOException {
+        StreamState state = new StreamState(request, profile, sink);
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            StringBuilder data = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                state.addBytes(line.getBytes(StandardCharsets.UTF_8).length + 1);
+                if (line.isEmpty()) {
+                    if (!data.isEmpty()) {
+                        state.accept(data.toString());
+                        data.setLength(0);
+                    }
+                    continue;
+                }
+                if (line.startsWith("data:")) {
+                    String fragment = line.substring(5).stripLeading();
+                    if (!data.isEmpty()) data.append('\n');
+                    data.append(fragment);
+                    if (data.length() > MAX_EVENT_BYTES) throw malformed(request, "Responses SSE event is too large");
+                }
+            }
+            if (!data.isEmpty()) state.accept(data.toString());
+        }
+        return state.finish();
+    }
+
+    private final class StreamState {
+        private final AgentChatRequest request;
+        private final OpenAiResponsesDialects.Profile profile;
+        private final ModelStreamSink sink;
+        private long emittedIndex;
+        private long eventCount;
+        private long bytes;
+        private long sequence = Long.MIN_VALUE;
+        private boolean started;
+        private boolean terminal;
+        private AgentChatResponse completed;
+        private final Map<Integer, FunctionItem> functions = new LinkedHashMap<>();
+
+        private StreamState(AgentChatRequest request, OpenAiResponsesDialects.Profile profile, ModelStreamSink sink) {
+            this.request = request;
+            this.profile = profile;
+            this.sink = sink;
+        }
+
+        private void addBytes(long value) {
+            bytes += value;
+            if (bytes > maxResponseBytes) throw malformed(request, "Responses SSE stream is too large");
+        }
+
+        private void accept(String data) {
+            if ("[DONE]".equals(data)) {
+                if (!terminal) throw malformed(request, "Responses stream ended before a terminal event");
+                return;
+            }
+            if (++eventCount > MAX_EVENTS) throw malformed(request, "Responses SSE event limit exceeded");
+            JsonNode event = parseJson(request, data.getBytes(StandardCharsets.UTF_8));
+            validateSequence(event);
+            String type = text(event, "type", true);
+            if (terminal) throw malformed(request, "Responses stream emitted an event after terminal status");
+            if ("response.created".equals(type) || "response.in_progress".equals(type)) {
+                start();
+                return;
+            }
+            start();
+            switch (type) {
+                case "response.output_text.delta" -> emitContent(text(event, "delta", true));
+                case "response.reasoning_summary_text.delta", "response.reasoning_text.delta" ->
+                    emitReasoning(text(event, "delta", true));
+                case "response.output_item.added" -> addItem(event);
+                case "response.function_call_arguments.delta" -> functionDelta(event);
+                case "response.completed", "response.incomplete" -> complete(event);
+                case "response.failed", "error" ->
+                    throw failure(
+                            request,
+                            ModelErrorCategory.UNKNOWN_PROVIDER_ERROR,
+                            false,
+                            0,
+                            "stream_failed",
+                            "provider reported a failed response stream",
+                            null);
+                default -> {
+                    // Structural lifecycle events do not need a provider-neutral public delta.
+                }
+            }
+        }
+
+        private void validateSequence(JsonNode event) {
+            JsonNode configured = event.get("sequence_number");
+            if (profile == OpenAiResponsesDialects.Profile.DEEPSEEK
+                    && (configured == null || !configured.canConvertToLong())) {
+                throw malformed(request, "DeepSeek Responses event is missing sequence_number");
+            }
+            if (configured == null) return;
+            long current = configured.longValue();
+            if (sequence != Long.MIN_VALUE && current <= sequence) {
+                throw malformed(request, "Responses sequence_number is not monotonic");
+            }
+            sequence = current;
+        }
+
+        private void start() {
+            if (started) return;
+            started = true;
+            emit(new ModelStreamEvent.Started(request.callId(), ++emittedIndex));
+        }
+
+        private void emitContent(String delta) {
+            if (!delta.isEmpty()) emit(new ModelStreamEvent.ContentDelta(request.callId(), ++emittedIndex, delta));
+        }
+
+        private void emitReasoning(String delta) {
+            if (!delta.isEmpty()) emit(new ModelStreamEvent.ReasoningDelta(request.callId(), ++emittedIndex, delta));
+        }
+
+        private void addItem(JsonNode event) {
+            JsonNode item = event.path("item");
+            if (!"function_call".equals(item.path("type").asText())) return;
+            int outputIndex = nonNegativeInt(request, event, "output_index");
+            if (functions.putIfAbsent(
+                            outputIndex, new FunctionItem(text(item, "call_id", true), text(item, "name", true)))
+                    != null) {
+                throw malformed(request, "duplicate Responses function output index");
+            }
+        }
+
+        private void functionDelta(JsonNode event) {
+            int outputIndex = nonNegativeInt(request, event, "output_index");
+            FunctionItem item = functions.get(outputIndex);
+            if (item == null) throw malformed(request, "function arguments arrived before function item");
+            String delta = text(event, "delta", true);
+            item.arguments.append(delta);
+            if (item.arguments.length() > maxResponseBytes)
+                throw malformed(request, "function arguments are too large");
+            emit(new ModelStreamEvent.ToolCallDelta(
+                    request.callId(), ++emittedIndex, 0, outputIndex, item.callId, item.name, delta));
+        }
+
+        private void complete(JsonNode event) {
+            JsonNode response = event.path("response");
+            if (!response.isObject()) throw malformed(request, "terminal Responses event is missing response");
+            completed = parseResponse(request, response);
+            terminal = true;
+            emit(new ModelStreamEvent.UsageReported(request.callId(), ++emittedIndex, completed.usage()));
+        }
+
+        private void emit(ModelStreamEvent event) {
+            if (sink.emit(event) == ModelStreamControl.CANCEL) {
+                throw failure(
+                        request,
+                        ModelErrorCategory.CANCELLED,
+                        false,
+                        0,
+                        "stream_cancelled",
+                        "model stream was cancelled",
+                        null);
+            }
+        }
+
+        private AgentChatResponse finish() {
+            if (!terminal || completed == null) {
+                throw malformed(request, "Responses stream ended without a terminal event");
+            }
+            return completed;
+        }
+    }
+
+    private static final class FunctionItem {
+        private final String callId;
+        private final String name;
+        private final StringBuilder arguments = new StringBuilder();
+
+        private FunctionItem(String callId, String name) {
+            this.callId = callId;
+            this.name = name;
+        }
+    }
+
+    private Map<String, Object> arguments(AgentChatRequest request, String value) {
+        try {
+            JsonNode parsed = json.readTree(value);
+            if (!parsed.isObject()) throw malformed(request, "function arguments must be a JSON object");
+            return json.convertValue(parsed, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+        } catch (JsonProcessingException exception) {
+            throw malformed(request, "function arguments are malformed");
+        }
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return json.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalArgumentException("provider-neutral value cannot be serialized", exception);
+        }
+    }
+
+    private JsonNode parseJson(AgentChatRequest request, byte[] value) {
+        try {
+            return json.readTree(value);
+        } catch (JsonProcessingException exception) {
+            throw malformed(request, "provider returned malformed JSON");
+        } catch (IOException exception) {
+            throw malformed(request, "provider response could not be read");
+        }
+    }
+
+    private static byte[] readBounded(InputStream stream, int limit) throws IOException {
+        try (InputStream input = stream) {
+            byte[] value = input.readNBytes(limit + 1);
+            if (value.length > limit) throw new ResponseTooLargeException();
+            return value;
+        }
+    }
+
+    private static final class ResponseTooLargeException extends IOException {}
+
+    private static URI responsesUri(URI base) {
+        String value = base.toString();
+        while (value.endsWith("/")) value = value.substring(0, value.length() - 1);
+        if (value.endsWith("/responses")) return URI.create(value);
+        return URI.create(value + "/responses");
+    }
+
+    private static void requireContentType(AgentChatRequest request, HttpResponse<?> response, String expected) {
+        String contentType = response.headers().firstValue("Content-Type").orElse("");
+        if (!contentType.toLowerCase(Locale.ROOT).contains(expected)) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    response.statusCode(),
+                    "unexpected_content_type",
+                    "provider returned an unexpected content type",
+                    null);
+        }
+    }
+
+    private static ModelFinishReason incompleteReason(JsonNode root) {
+        String reason = root.path("incomplete_details").path("reason").asText("");
+        return "max_output_tokens".equals(reason) ? ModelFinishReason.LENGTH : ModelFinishReason.UNKNOWN;
+    }
+
+    private static int nonNegativeInt(AgentChatRequest request, JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        if (value == null || !value.canConvertToInt() || value.intValue() < 0) {
+            throw malformed(request, "provider response contains an invalid " + field);
+        }
+        return value.intValue();
+    }
+
+    private static long nonNegativeLong(AgentChatRequest request, JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        if (value == null || value.isNull() || value.isMissingNode()) return 0;
+        if (!value.canConvertToLong() || value.longValue() < 0) {
+            throw malformed(request, "provider response contains invalid usage");
+        }
+        return value.longValue();
+    }
+
+    private static String text(JsonNode node, String field, boolean required) {
+        JsonNode value = node.get(field);
+        if (value != null
+                && value.isTextual()
+                && (!required || !value.textValue().isEmpty())) return value.textValue();
+        if (!required) return "";
+        throw new IllegalArgumentException("provider response is missing " + field);
+    }
+
+    private static String optionalText(JsonNode node, String field, String fallback) {
+        String value = text(node, field, false);
+        return value.isEmpty() ? fallback : value;
+    }
+
+    private static ModelInvocationException httpFailure(AgentChatRequest request, int status) {
+        ModelErrorCategory category =
+                switch (status) {
+                    case 400, 422 -> ModelErrorCategory.INVALID_REQUEST;
+                    case 401 -> ModelErrorCategory.AUTHENTICATION_FAILED;
+                    case 403 -> ModelErrorCategory.PERMISSION_DENIED;
+                    case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
+                    case 408 -> ModelErrorCategory.TIMEOUT;
+                    case 429 -> ModelErrorCategory.RATE_LIMITED;
+                    case 500, 502, 503, 504 -> ModelErrorCategory.PROVIDER_UNAVAILABLE;
+                    default -> ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
+                };
+        boolean retryable = status == 408 || status == 429 || status >= 500;
+        return failure(
+                request, category, retryable, status, "http_" + status, "model provider rejected the request", null);
+    }
+
+    private static ModelInvocationException malformed(AgentChatRequest request, String message) {
+        return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 0, "malformed_response", message, null);
+    }
+
+    private static ModelInvocationException failure(
+            AgentChatRequest request,
+            ModelErrorCategory category,
+            boolean retryable,
+            int status,
+            String code,
+            String safeMessage,
+            Throwable cause) {
+        return new ModelInvocationException(category, retryable, status, code, request.callId(), safeMessage, cause);
+    }
+}

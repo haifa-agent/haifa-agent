@@ -44,33 +44,54 @@ haifa:
         display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME:DeepSeek}
         mode: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODE:remote}
         allow-deterministic: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC:false}
-        dialect-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_DIALECTID:deepseek-openai-chat}
-        dialect-version: ${HAIFA_PERSONAL_MODELPROVIDERS_0_DIALECTVERSION:1.0}
         native-streaming: ${HAIFA_PERSONAL_MODELPROVIDERS_0_NATIVESTREAMING:true}
         endpoint: ${HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT:https://api.deepseek.com}
         credential-reference: ${HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE:env://DEEPSEEK_API_KEY}
+        api-bindings:
+          - style: openai-chat-completions
+            dialect: deepseek-openai-chat
+          - style: openai-responses
+            dialect: deepseek-openai-responses
         models:
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID:deepseek-v4-pro}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME:DeepSeek V4 Pro}
+          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID:deepseek-chat-pro}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME:DeepSeek Chat Pro}
             provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID:deepseek-v4-pro}
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID:deepseek-v4-flash}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME:DeepSeek V4 Flash}
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 131072
+            max-output-tokens: 8192
+          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID:deepseek-chat-flash}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME:DeepSeek Chat Flash}
             provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID:deepseek-v4-flash}
-      - id: ${HAIFA_PERSONAL_MODELPROVIDERS_1_ID:openai}
-        display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_1_DISPLAYNAME:OpenAI}
-        mode: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODE:remote}
-        allow-deterministic: ${HAIFA_PERSONAL_MODELPROVIDERS_1_ALLOWDETERMINISTIC:false}
-        dialect-id: ${HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTID:openai-chat-completions}
-        dialect-version: ${HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTVERSION:1.0}
-        native-streaming: ${HAIFA_PERSONAL_MODELPROVIDERS_1_NATIVESTREAMING:false}
-        endpoint: ${HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT:http://localhost:30000/v1}
-        credential-reference: ${HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE:env://OPENAI_API_KEY}
+            style: openai-chat-completions
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 131072
+            max-output-tokens: 8192
+          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_ID:deepseek-responses-flash}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_DISPLAYNAME:DeepSeek Responses Flash}
+            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_PROVIDERMODELID:deepseek-v4-flash}
+            style: openai-responses
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 131072
+            max-output-tokens: 8192
+      - id: local-openai
+        display-name: Local OpenAI Responses Gateway
+        mode: remote
+        allow-deterministic: false
+        native-streaming: true
+        endpoint: ${OPENAI_BASE_URL:http://127.0.0.1:30000/v1}
+        credential-reference: env://OPENAI_API_KEY
+        api-bindings:
+          - style: openai-responses
         models:
-          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_ID:openai-gpt-5.6-luna}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_DISPLAYNAME:GPT-5.6 Luna}
-            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID:gpt-5.6-luna}
-            image-input: ${HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_IMAGEINPUT:true}
-    default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-v4-flash}
+          - id: local-openai-responses
+            display-name: Local OpenAI Responses
+            provider-model-id: ${OPENAI_MODEL_ID:gpt-5.6-luna}
+            style: openai-responses
+            capabilities: [TEXT_CHAT]
+            context-window: 131072
+            max-output-tokens: 8192
+    default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-responses-flash}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:
       enabled: ${HAIFA_PERSONAL_WEB_ENABLED:false}

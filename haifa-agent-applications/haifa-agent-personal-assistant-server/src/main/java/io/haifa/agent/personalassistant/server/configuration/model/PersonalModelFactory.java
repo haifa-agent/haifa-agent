@@ -6,7 +6,11 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelAdapterCoordinate;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -28,6 +32,7 @@ import io.haifa.agent.model.core.StaticModelPlatform;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
 import io.haifa.agent.personalassistant.application.PersonalModelOption;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
@@ -83,29 +88,17 @@ public final class PersonalModelFactory {
                 .filter(value -> value.model().id().equals(defaultModelId))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("default Personal model is unavailable"));
-        String adapter = deterministic ? "personal-deterministic" : "openai-compatible";
         Map<String, ResolvedModelSnapshot> snapshots = models.stream()
                 .collect(java.util.stream.Collectors.toMap(
                         value -> value.model().id(),
-                        value -> snapshot(value.provider(), value.model(), adapter),
+                        value -> snapshot(value.provider(), value.model()),
                         (left, right) -> {
                             throw new IllegalArgumentException("duplicate Personal model id");
                         },
                         java.util.LinkedHashMap::new));
         ResolvedModelSnapshot snapshot = snapshots.get(selected.model().id());
-        AgentChatModel model = deterministic
-                ? new DeterministicAcceptanceModel(selected.model().providerModelId(), shell)
-                : new OpenAiCompatibleChatModel(
-                        adapter,
-                        "1.0.0",
-                        HttpClient.newBuilder()
-                                .connectTimeout(Duration.ofSeconds(10))
-                                .build(),
-                        mapper,
-                        new EnvironmentCredentialResolver(),
-                        allowInsecureLoopbackModel,
-                        4 * 1024 * 1024);
-        model = new LoggingAgentChatModel(model);
+        Map<ModelAdapterCoordinate, AgentChatModel> adapters =
+                adapters(snapshots, selected, deterministic, mapper, shell, allowInsecureLoopbackModel);
         ModelContribution contribution = new ModelContribution(
                 new SdkContributionMetadata(
                         new ProductContributionCoordinate("haifa-personal-model", "1.0.0"),
@@ -113,10 +106,10 @@ public final class PersonalModelFactory {
                         snapshot.configurationDigest(),
                         deterministic ? ProductProviderSuitability.DEVELOPMENT : ProductProviderSuitability.PRODUCTION,
                         deterministic ? "Explicit offline acceptance model" : "OpenAI-compatible Personal model"),
-                model,
+                adapters,
                 snapshot,
                 snapshots);
-        StaticModelPlatform modelPlatform = modelPlatform(providers, adapter);
+        StaticModelPlatform modelPlatform = modelPlatform(providers, adapters);
         TenantRef tenant = new TenantRef("personal-product");
         PrincipalRef principal = new PrincipalRef("personal-user", "user");
         PersonalModelCatalog catalog = new PersonalModelCatalog() {
@@ -161,30 +154,35 @@ public final class PersonalModelFactory {
     }
 
     private static ResolvedModelSnapshot snapshot(
-            PersonalAssistantProperties.ModelProvider provider,
-            PersonalAssistantProperties.ProviderModel model,
-            String adapter) {
-        Map<String, Object> providerOptions = providerOptions(provider);
-        Map<String, Object> invocationOptions = invocationOptions(provider);
+            PersonalAssistantProperties.ModelProvider provider, PersonalAssistantProperties.ProviderModel model) {
+        PersonalAssistantProperties.ApiBinding binding = binding(provider, model.style());
+        ApiStyleId style = new ApiStyleId(model.style());
+        URI endpoint = binding.endpoint() == null ? provider.endpoint() : binding.endpoint();
+        Map<String, Object> providerOptions = providerOptions(binding, endpoint);
+        Map<String, Object> invocationOptions = invocationOptions(binding);
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(provider.id()),
                 "1.0.0",
                 new ModelDefinitionId(model.id()),
                 "1.0.0",
                 model.providerModelId(),
-                adapter,
+                ModelApiStyles.adapterType(style),
                 "1.0.0",
-                provider.endpoint(),
+                style,
+                binding.dialect(),
+                endpoint,
                 new CredentialRef(provider.credentialReference()),
-                capabilities(model),
-                64_000,
-                8_192,
+                provider.nativeStreaming(),
+                model.capabilities(),
+                model.contextWindow(),
+                model.maxOutputTokens(),
                 providerOptions,
                 invocationOptions);
     }
 
     private static StaticModelPlatform modelPlatform(
-            List<PersonalAssistantProperties.ModelProvider> configured, String adapter) {
+            List<PersonalAssistantProperties.ModelProvider> configured,
+            Map<ModelAdapterCoordinate, AgentChatModel> adapters) {
         List<ModelProviderDefinition> providers = configured.stream()
                 .map(provider -> {
                     ModelProviderId providerId = new ModelProviderId(provider.id());
@@ -196,66 +194,123 @@ public final class PersonalModelFactory {
                                     model.providerModelId(),
                                     model.displayName(),
                                     ModelStatus.ACTIVE,
-                                    capabilities(model),
-                                    64_000,
-                                    8_192,
-                                    invocationOptions(provider),
-                                    Map.of()))
+                                    model.capabilities(),
+                                    model.contextWindow(),
+                                    model.maxOutputTokens(),
+                                    invocationOptions(binding(provider, model.style())),
+                                    Map.of(),
+                                    new ApiStyleId(model.style())))
                             .toList();
                     return new ModelProviderDefinition(
                             providerId,
                             "1.0.0",
                             provider.displayName(),
-                            adapter,
                             provider.endpoint(),
                             new CredentialRef(provider.credentialReference()),
+                            provider.nativeStreaming(),
                             ProviderStatus.ACTIVE,
+                            provider.apiBindings().stream()
+                                    .map(binding -> new ModelApiBindingDefinition(
+                                            new ApiStyleId(binding.style()), binding.dialect(), binding.endpoint()))
+                                    .toList(),
                             models,
-                            providerOptions(provider),
+                            Map.of(),
                             Map.of());
                 })
                 .toList();
         return new StaticModelPlatform(
                 new ImmutableModelCatalog(providers),
                 ModelAccessPolicy.allowAll(),
-                Map.of(adapter, "1.0.0"),
+                adapters.keySet().stream()
+                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                ModelAdapterCoordinate::type, ModelAdapterCoordinate::version)),
                 new InMemoryProviderHealthRegistry());
     }
 
-    private static Map<String, Object> providerOptions(PersonalAssistantProperties.ModelProvider provider) {
-        if ("deterministic".equals(provider.mode())) return Map.of();
-        Map<String, Object> options = new LinkedHashMap<>(OpenAiCompatibleDialects.configuredOptions(
-                provider.dialectId(), provider.dialectVersion(), provider.nativeStreaming(), provider.endpoint()));
-        if (OpenAiCompatibleDialects.DEEPSEEK.equals(provider.dialectId())) {
+    private static Map<String, Object> providerOptions(PersonalAssistantProperties.ApiBinding binding, URI endpoint) {
+        if (ModelApiStyles.DETERMINISTIC_CHAT.value().equals(binding.style())) return Map.of();
+        Map<String, Object> options = new LinkedHashMap<>();
+        if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.value().equals(binding.style())) {
+            options.putAll(OpenAiCompatibleDialects.configuredOptions(binding.dialect(), endpoint));
+        }
+        if (OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())) {
             options.put("thinking", "disabled");
         }
         return Map.copyOf(options);
     }
 
-    private static Map<String, Object> invocationOptions(PersonalAssistantProperties.ModelProvider provider) {
-        return OpenAiCompatibleDialects.DEEPSEEK.equals(provider.dialectId())
-                ? Map.of("thinking", "disabled")
-                : Map.of();
+    private static Map<String, Object> invocationOptions(PersonalAssistantProperties.ApiBinding binding) {
+        return OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect()) ? Map.of("thinking", "disabled") : Map.of();
     }
 
-    private static Set<ModelCapability> capabilities(PersonalAssistantProperties.ProviderModel model) {
-        return model.imageInput()
-                ? Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.IMAGE_INPUT)
-                : Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING);
+    private static PersonalAssistantProperties.ApiBinding binding(
+            PersonalAssistantProperties.ModelProvider provider, String style) {
+        return provider.apiBindings().stream()
+                .filter(candidate -> candidate.style().equals(style))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("model references an unbound API style"));
+    }
+
+    private static Map<ModelAdapterCoordinate, AgentChatModel> adapters(
+            Map<String, ResolvedModelSnapshot> snapshots,
+            ConfiguredModel selected,
+            boolean deterministic,
+            ObjectMapper mapper,
+            ShellPlatformContribution shell,
+            boolean allowInsecureLoopbackModel) {
+        if (deterministic) {
+            AgentChatModel model = new LoggingAgentChatModel(
+                    new DeterministicAcceptanceModel(selected.model().providerModelId(), shell));
+            return Map.of(
+                    ModelAdapterCoordinate.from(snapshots.get(selected.model().id())), model);
+        }
+        HttpClient http =
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        EnvironmentCredentialResolver credentials = new EnvironmentCredentialResolver();
+        Map<ModelAdapterCoordinate, AgentChatModel> result = new LinkedHashMap<>();
+        snapshots.values().stream().map(ModelAdapterCoordinate::from).distinct().forEach(coordinate -> {
+            AgentChatModel adapter =
+                    switch (coordinate.type()) {
+                        case ModelApiStyles.OPENAI_CHAT_ADAPTER ->
+                            new OpenAiCompatibleChatModel(
+                                    coordinate.type(),
+                                    coordinate.version(),
+                                    http,
+                                    mapper,
+                                    credentials,
+                                    allowInsecureLoopbackModel,
+                                    4 * 1024 * 1024);
+                        case ModelApiStyles.OPENAI_RESPONSES_ADAPTER ->
+                            new OpenAiResponsesModel(
+                                    http, mapper, credentials, allowInsecureLoopbackModel, 4 * 1024 * 1024);
+                        default ->
+                            throw new IllegalArgumentException(
+                                    "unsupported Personal model adapter: " + coordinate.type());
+                    };
+            result.put(coordinate, new LoggingAgentChatModel(adapter));
+        });
+        return Map.copyOf(result);
     }
 
     private static void validateEndpoints(
             List<PersonalAssistantProperties.ModelProvider> providers, boolean allowInsecureLoopbackModel) {
         for (PersonalAssistantProperties.ModelProvider provider : providers) {
-            URI endpoint = provider.endpoint();
-            if ("https".equalsIgnoreCase(endpoint.getScheme())) continue;
-            String host = endpoint.getHost();
-            boolean loopback = host != null
-                    && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
-                            .contains(host.toLowerCase(java.util.Locale.ROOT));
-            if (!allowInsecureLoopbackModel || !"http".equalsIgnoreCase(endpoint.getScheme()) || !loopback) {
-                throw new IllegalArgumentException(
-                        "Personal model HTTP endpoint requires explicit loopback-only opt-in");
+            List<URI> endpoints = new java.util.ArrayList<>();
+            endpoints.add(provider.endpoint());
+            provider.apiBindings().stream()
+                    .map(PersonalAssistantProperties.ApiBinding::endpoint)
+                    .filter(java.util.Objects::nonNull)
+                    .forEach(endpoints::add);
+            for (URI endpoint : endpoints) {
+                if ("https".equalsIgnoreCase(endpoint.getScheme())) continue;
+                String host = endpoint.getHost();
+                boolean loopback = host != null
+                        && Set.of("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
+                                .contains(host.toLowerCase(java.util.Locale.ROOT));
+                if (!allowInsecureLoopbackModel || !"http".equalsIgnoreCase(endpoint.getScheme()) || !loopback) {
+                    throw new IllegalArgumentException(
+                            "Personal model HTTP endpoint requires explicit loopback-only opt-in");
+                }
             }
         }
     }

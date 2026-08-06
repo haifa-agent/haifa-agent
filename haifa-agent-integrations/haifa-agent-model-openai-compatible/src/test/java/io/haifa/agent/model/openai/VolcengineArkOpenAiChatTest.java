@@ -10,6 +10,7 @@ import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -309,10 +310,13 @@ class VolcengineArkOpenAiChatTest {
                 profile.id(),
                 profile.version(),
                 profile.providerModelId(),
-                definition.adapterType(),
+                ModelApiStyles.adapterType(profile.style()),
                 "1.0.0",
+                profile.style(),
+                definition.binding(profile.style()).dialect(),
                 definition.endpoint(),
                 definition.credentialRef(),
+                definition.nativeStreaming(),
                 profile.capabilities(),
                 profile.contextWindow(),
                 profile.maxOutputTokens(),

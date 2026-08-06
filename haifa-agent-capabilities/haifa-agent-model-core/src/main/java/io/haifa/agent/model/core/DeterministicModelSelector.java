@@ -1,5 +1,7 @@
 package io.haifa.agent.model.core;
 
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelProviderDefinition;
 import io.haifa.agent.model.api.ModelStatus;
@@ -54,11 +56,19 @@ public final class DeterministicModelSelector {
         if (!accessPolicy.allowed(request, provider, model)) {
             throw new ModelSelectionException(ModelSelectionFailure.ACCESS_DENIED, "model access is denied");
         }
-        String adapterVersion = adapterVersionResolver.apply(provider.adapterType());
+        ModelApiBindingDefinition binding;
+        String adapterType;
+        try {
+            binding = provider.binding(model.style());
+            adapterType = ModelApiStyles.adapterType(binding.style());
+        } catch (IllegalArgumentException exception) {
+            throw new ModelSelectionException(
+                    ModelSelectionFailure.ADAPTER_NOT_AVAILABLE, "model API style is not configured: " + model.style());
+        }
+        String adapterVersion = adapterVersionResolver.apply(adapterType);
         if (adapterVersion == null) {
             throw new ModelSelectionException(
-                    ModelSelectionFailure.ADAPTER_NOT_AVAILABLE,
-                    "model adapter is not configured: " + provider.adapterType());
+                    ModelSelectionFailure.ADAPTER_NOT_AVAILABLE, "model adapter is not configured: " + adapterType);
         }
         LinkedHashMap<String, Object> invocationOptions = new LinkedHashMap<>(model.options());
         return ResolvedModelSnapshot.create(
@@ -67,10 +77,13 @@ public final class DeterministicModelSelector {
                 model.id(),
                 model.version(),
                 model.providerModelId(),
-                provider.adapterType(),
+                adapterType,
                 adapterVersion,
-                provider.endpoint(),
+                binding.style(),
+                binding.dialect(),
+                binding.resolveEndpoint(provider.endpoint()),
                 provider.credentialRef(),
+                provider.nativeStreaming(),
                 model.capabilities(),
                 model.contextWindow(),
                 model.maxOutputTokens(),

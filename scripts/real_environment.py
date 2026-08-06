@@ -309,7 +309,7 @@ def read_secret_file(value: str, label: str) -> str:
     return secret
 
 
-def environment_secret(name: str) -> str:
+def required_environment(name: str) -> str:
     value = os.getenv(name, "").strip()
     if value:
         return value
@@ -532,7 +532,9 @@ def latest_server_jar(value: Paths) -> Path | None:
 
 def backend_environment(
     deepseek_key: str,
+    openai_base_url: str,
     openai_key: str,
+    openai_model_id: str,
     aliyun_key: str,
     continuation: str,
     value: Paths,
@@ -541,39 +543,59 @@ def backend_environment(
 ) -> dict[str, str]:
     return {
         "DEEPSEEK_API_KEY": deepseek_key,
+        "OPENAI_BASE_URL": openai_base_url,
         "OPENAI_API_KEY": openai_key,
+        "OPENAI_MODEL_ID": openai_model_id,
         "ALIYUN_IQS_API_KEY": aliyun_key,
         "HAIFA_PERSONAL_CONTINUATION_KEY": continuation,
         "HAIFA_PERSONAL_DATA_DIR": str(value.data),
-        "HAIFA_PERSONAL_DEFAULT_MODEL_ID": "deepseek-v4-flash",
+        "HAIFA_PERSONAL_DEFAULT_MODEL_ID": "deepseek-responses-flash",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_ID": "deepseek",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME": "DeepSeek",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODE": "remote",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_ALLOWDETERMINISTIC": "false",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_DIALECTID": "deepseek-openai-chat",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_DIALECTVERSION": "1.0",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_NATIVESTREAMING": "true",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_ENDPOINT": "https://api.deepseek.com",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_CREDENTIALREFERENCE": "env://DEEPSEEK_API_KEY",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID": "deepseek-v4-pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME": "DeepSeek V4 Pro",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_0_STYLE": "openai-chat-completions",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_0_DIALECT": "deepseek-openai-chat",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_STYLE": "openai-responses",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_APIBINDINGS_1_DIALECT": "deepseek-openai-responses",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID": "deepseek-chat-pro",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME": "DeepSeek Chat Pro",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID": "deepseek-v4-pro",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID": "deepseek-v4-flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME": "DeepSeek V4 Flash",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_STYLE": "openai-chat-completions",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CAPABILITIES_3": "REASONING",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_CONTEXTWINDOW": "131072",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_MAXOUTPUTTOKENS": "8192",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID": "deepseek-responses-flash",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME": "DeepSeek Responses Flash",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID": "deepseek-v4-flash",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_ID": "openai",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_DISPLAYNAME": "OpenAI",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_STYLE": "openai-responses",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CAPABILITIES_0": "TEXT_CHAT",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CAPABILITIES_1": "TOOL_CALLING",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CAPABILITIES_3": "REASONING",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_CONTEXTWINDOW": "131072",
+        "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_MAXOUTPUTTOKENS": "8192",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_ID": "local-openai",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_DISPLAYNAME": "Local OpenAI Responses Gateway",
         "HAIFA_PERSONAL_MODELPROVIDERS_1_MODE": "remote",
         "HAIFA_PERSONAL_MODELPROVIDERS_1_ALLOWDETERMINISTIC": "false",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTID": "openai-chat-completions",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_DIALECTVERSION": "1.0",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_NATIVESTREAMING": "false",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT": "http://localhost:30000/v1",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_NATIVESTREAMING": "true",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT": openai_base_url,
         "HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE": "env://OPENAI_API_KEY",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_ID": "openai-gpt-5.6-luna",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_DISPLAYNAME": "GPT-5.6 Luna",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID": "gpt-5.6-luna",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_IMAGEINPUT": "true",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_STYLE": "openai-responses",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_ID": "local-openai-responses",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_DISPLAYNAME": "Local OpenAI Responses",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID": openai_model_id,
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_STYLE": "openai-responses",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CONTEXTWINDOW": "131072",
+        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_MAXOUTPUTTOKENS": "8192",
         "HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL": "true",
         "HAIFA_PERSONAL_WEB_ENABLED": "true",
         "HAIFA_PERSONAL_WEB_CREDENTIAL": "env://ALIYUN_IQS_API_KEY",
@@ -651,7 +673,9 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
 
     deepseek_key = read_secret_file(args.deepseek_key_file, "DeepSeek")
     aliyun_key = read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS")
-    openai_key = environment_secret("OPENAI_API_KEY")
+    openai_base_url = required_environment("OPENAI_BASE_URL")
+    openai_key = required_environment("OPENAI_API_KEY")
+    openai_model_id = required_environment("OPENAI_MODEL_ID")
     continuation = continuation_key(args.continuation_key_file)
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
@@ -717,7 +741,9 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         ("-jar", str(server_jar)),
         backend_environment(
             deepseek_key,
+            openai_base_url,
             openai_key,
+            openai_model_id,
             aliyun_key,
             continuation,
             value,

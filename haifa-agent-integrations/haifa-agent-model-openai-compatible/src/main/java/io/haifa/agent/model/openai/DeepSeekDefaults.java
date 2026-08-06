@@ -1,6 +1,8 @@
 package io.haifa.agent.model.openai;
 
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -26,7 +28,7 @@ public final class DeepSeekDefaults {
     private DeepSeekDefaults() {}
 
     public static ModelProviderDefinition provider() {
-        LinkedHashMap<String, Object> providerOptions = new LinkedHashMap<>(OpenAiCompatibleDialects.deepSeekOptions());
+        LinkedHashMap<String, Object> providerOptions = new LinkedHashMap<>();
         providerOptions.putAll(
                 ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH).frozenOptions());
         ModelDefinition model = new ModelDefinition(
@@ -44,15 +46,18 @@ public final class DeepSeekDefaults {
                 1_048_576,
                 393_216,
                 reasoningOptions(),
-                Map.of("source", "deepseek-official-docs-2026-07-21"));
+                Map.of("source", "deepseek-official-docs-2026-07-21"),
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
         return new ModelProviderDefinition(
                 PROVIDER_ID,
                 "2026-07-21",
                 "DeepSeek",
-                ADAPTER_TYPE,
                 ENDPOINT,
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 ProviderStatus.ACTIVE,
+                List.of(new ModelApiBindingDefinition(
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS, OpenAiCompatibleDialects.DEEPSEEK)),
                 List.of(model),
                 providerOptions,
                 Map.of());

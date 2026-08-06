@@ -1,25 +1,39 @@
 # Haifa Agent OpenAI-Compatible Model Adapter
 
-## Transport 与 dialect
+## API Style 与 dialect
 
-HTTP、鉴权、同步 JSON、SSE framing/limits/cancel、Tool Call 分片和 usage 解析由同一个 Chat
-transport 实现；厂商请求扩展、Endpoint policy 与错误分类由冻结到 snapshot 的 dialect 负责。当前支持：
+本模块实现彼此独立的 `openai-chat-completions` 与 `openai-responses`。二者复用 Java HTTP、凭据解析和
+安全限制，但 Responses 使用自己的 Item 请求/响应与语义 SSE accumulator，不复用 Chat 的
+`messages`/`choices` DTO 或 parser。Provider ID 不参与 Style 或 dialect 推断。
+
+Chat Completions 当前支持：
 
 | Provider | dialect id | 同步 | SSE | Tool Call | Thinking |
 | --- | --- | --- | --- | --- | --- |
-| OpenAI Chat Completions | `openai-chat-completions` | 是 | 是 | 是 | 不发送厂商扩展 |
+| OpenAI Chat Completions | `standard` | 是 | 是 | 是 | 不发送厂商扩展 |
 | DeepSeek | `deepseek-openai-chat` | 是 | 是 | 是 | enabled/high，安全 continuation |
 | 阿里云百炼 | `aliyun-bailian-openai-chat` | 是 | 是 | 是 | 由受治理 Qwen profile 决定 |
 | 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
 
-新配置必须冻结 `dialect_id` 和 `dialect_version`。仅为读取早期 DeepSeek `2.0` 快照保留按
-`providerId=deepseek` 的兼容解析；其他缺少 dialect 的快照会被拒绝。
+配置通过 Provider 下的 `apiBindings` 声明 Style。省略 dialect 即 `standard`；只有存在已验证协议差异
+时才声明非标准 dialect。当前未发布旧配置或快照，不保留旧 options、Provider-ID 猜测或双轨入口。
 
 标准 Chat Completions Provider 的受信配置还会把 Endpoint 主机冻结为 `endpoint_host`，因此
 Provider ID 不参与协议或主机推断。`https` 可指向该配置显式声明的第三方主机；`http` 即使主机匹配，
 也只有在产品同时显式允许不安全本机模型且 Endpoint 为 loopback 时才接受。严格遵守标准
-messages、响应、Tool Call 与 SSE 语义的新厂商只需复用 `openai-chat-completions` dialect；非标准字段、
+messages、响应、Tool Call 与 SSE 语义的新厂商只需省略 dialect；非标准字段、
 SSE、usage、错误或 Tool Call 行为才需要独立 dialect。
+
+## OpenAI Responses
+
+`OpenAiResponsesModel` 支持同步 Responses 与语义 SSE，映射 message、function_call、
+function_call_output、reasoning、usage、incomplete/failed 和 Tool 参数分片。请求固定 `store=false`。
+Parser 对累计响应、单事件、事件数、内容和 Tool 参数设限；取消、终态缺失及终态后事件失败关闭。
+
+`standard` 以 OpenAI Responses 契约为准。`deepseek-openai-responses` 只允许已验证的
+`deepseek-v4-flash`，拒绝图片/文件与非 automatic function selection，要求单调 `sequence_number`，
+并以 Responses 终态收敛而不等待 `[DONE]`。本地 `chatgpt2api` 文本与 SSE 使用 `standard`，但普通
+function tool 当前不产生 `function_call`，所以对应模型能力只声明 `TEXT_CHAT`。
 
 ## 阿里云百炼
 
@@ -35,8 +49,8 @@ binding/lease。
 `preserve_thinking`、`reasoning_effort`、`tool_stream`；`tool_stream` 默认不发送。百炼 thinking 复用
 Runtime 的受保护 continuation，raw reasoning 不进入公共输出。
 
-本阶段仅支持百炼 OpenAI Chat Completions。OpenAI Responses、DashScope 原生协议和
-Anthropic-compatible 是独立的后续 adapter，不复用 Chat SSE accumulator，也不应被配置成已支持。
+百炼当前仅支持 OpenAI Chat Completions。DashScope 原生协议和 Anthropic-compatible 不在 Phase 1；
+Responses 已作为本模块内独立 Adapter 落地。
 
 ## 火山方舟
 
@@ -96,21 +110,25 @@ compatible.
 ## 默认配置
 
 ```yaml
-provider-id: deepseek
-provider-version: provider-v1
-adapter-type: openai-compatible
-adapter-version: 1.0.0
-endpoint: https://api.deepseek.com
-credential-ref: env://DEEPSEEK_API_KEY
 models:
-  - id: deepseek-v4-pro
-    version: model-v1
-    provider-model-id: deepseek-v4-pro
-provider-options:
-  dialect_id: deepseek-openai-chat
-  dialect_version: "1.0"
-thinking: enabled
-reasoning-effort: high
+  default: deepseek-responses-flash
+  providers:
+    - id: deepseek
+      endpoint: https://api.deepseek.com
+      credentialRef: env://DEEPSEEK_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: deepseek-openai-chat
+        - style: openai-responses
+          dialect: deepseek-openai-responses
+      models:
+        - id: deepseek-responses-flash
+          providerModelId: deepseek-v4-flash
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 ```
 
 `DeepSeekDefaults.provider()` 提供无密钥的类型安全示例。生产应用应通过配置构造 Provider，并用 `EnvironmentCredentialResolver` 或自有 Secret Manager Adapter 解析 `CredentialRef`。
@@ -152,6 +170,19 @@ DEEPSEEK_API_KEY=<secret>
 
 Suite Runner 的 `--execute` 路径会设置 `HAIFA_SUITE_EXECUTION=true`。任一显式开关启用后，
 缺少 `DEEPSEEK_API_KEY` 都会失败，而不是静默跳过。
+
+Responses Live IT 使用独立显式开关；本地中转只读取通用 OpenAI 变量：
+
+```text
+HAIFA_DEEPSEEK_RESPONSES_LIVE_TEST=true
+DEEPSEEK_API_KEY=<secret>
+HAIFA_DEEPSEEK_RESPONSES_MODEL_ID=deepseek-v4-flash
+
+HAIFA_OPENAI_RESPONSES_LIVE_TEST=true
+OPENAI_BASE_URL=http://127.0.0.1:30000/v1
+OPENAI_API_KEY=<secret>
+OPENAI_MODEL_ID=<model-id>
+```
 
 百炼 Live IT 还要求显式设置（会产生真实费用）：
 

@@ -34,6 +34,7 @@ import io.haifa.agent.memory.api.MemoryScope;
 import io.haifa.agent.memory.api.MemoryScopeType;
 import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.memory.api.MemoryVisibility;
+import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -263,8 +264,11 @@ class SqliteExtendedRuntimeStateTest {
                 "deepseek-chat",
                 "openai-compatible",
                 "1",
+                new ApiStyleId("openai-chat-completions"),
+                "standard",
                 URI.create("https://api.deepseek.com"),
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
                 Set.of(ModelCapability.TEXT_CHAT),
                 8_192,
                 1_024,

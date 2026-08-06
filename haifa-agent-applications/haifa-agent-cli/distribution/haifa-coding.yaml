@@ -2,33 +2,55 @@
 # The packaging script renders the two persistence path tokens as absolute paths.
 # Secrets are injected through environment variables, never stored in this file.
 models:
-  default: deepseek-v4-flash
+  default: deepseek-responses-flash
   providers:
     - id: deepseek
       displayName: DeepSeek
-      dialectId: deepseek-openai-chat
-      dialectVersion: "1.0"
-      nativeStreaming: true
       endpoint: https://api.deepseek.com
       credentialRef: env://DEEPSEEK_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-chat-completions
+          dialect: deepseek-openai-chat
+        - style: openai-responses
+          dialect: deepseek-openai-responses
       models:
-        - id: deepseek-v4-flash
-          displayName: DeepSeek V4 Flash
+        - id: deepseek-chat-flash
+          displayName: DeepSeek Chat Flash
           providerModelId: deepseek-v4-flash
-        - id: deepseek-v4-pro
-          displayName: DeepSeek V4 Pro
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-chat-pro
+          displayName: DeepSeek Chat Pro
           providerModelId: deepseek-v4-pro
-    - id: openai
-      displayName: OpenAI
-      dialectId: openai-chat-completions
-      dialectVersion: "1.0"
-      nativeStreaming: false
-      endpoint: http://localhost:30000/v1
+          style: openai-chat-completions
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+        - id: deepseek-responses-flash
+          displayName: DeepSeek Responses Flash
+          providerModelId: deepseek-v4-flash
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+          contextWindow: 131072
+          maxOutputTokens: 8192
+    - id: local-openai
+      displayName: Local OpenAI Responses Gateway
+      endpoint: ${OPENAI_BASE_URL:http://127.0.0.1:30000/v1}
       credentialRef: env://OPENAI_API_KEY
+      nativeStreaming: true
+      apiBindings:
+        - style: openai-responses
       models:
-        - id: openai-gpt-5.6-luna
-          displayName: GPT-5.6 Luna
-          providerModelId: gpt-5.6-luna
+        - id: local-openai-responses
+          displayName: Local OpenAI Responses
+          providerModelId: ${OPENAI_MODEL_ID:gpt-5.6-luna}
+          style: openai-responses
+          capabilities: [TEXT_CHAT]
+          contextWindow: 131072
+          maxOutputTokens: 8192
 
 tools:
   enabled:

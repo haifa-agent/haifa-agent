@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 
 class DeliveryCliConfigurationFactoryTest {
     @Test
-    void rendersTheExplicitDeepSeekDialectRequiredByTheCurrentCliSchema() {
+    void rendersTheExplicitDeepSeekResponsesBindingRequiredByTheCurrentCliSchema() {
         String configuration = DeliveryCliConfigurationFactory.render(
                 suite(),
                 toolchains(),
@@ -18,8 +18,8 @@ class DeliveryCliConfigurationFactoryTest {
                 combination("deepseek"));
 
         assertAll(
-                () -> assertTrue(configuration.contains("dialectId: deepseek-openai-chat")),
-                () -> assertTrue(configuration.contains("dialectVersion: \"1.0\"")),
+                () -> assertTrue(configuration.contains("style: openai-responses")),
+                () -> assertTrue(configuration.contains("dialect: deepseek-openai-responses")),
                 () -> assertTrue(configuration.contains("nativeStreaming: true")),
                 () -> assertTrue(configuration.contains("providerModelId: deepseek-v4-flash")));
     }

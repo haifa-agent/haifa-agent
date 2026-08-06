@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.server.configuration.product;
 
+import io.haifa.agent.model.api.ModelCapability;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
@@ -7,7 +8,7 @@ import java.util.Set;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
-@ConfigurationProperties("haifa.personal")
+@ConfigurationProperties(prefix = "haifa.personal", ignoreUnknownFields = false)
 public record PersonalAssistantProperties(
         Path dataDirectory,
         String continuationKeyBase64,
@@ -120,11 +121,10 @@ public record PersonalAssistantProperties(
             String displayName,
             String mode,
             boolean allowDeterministic,
-            String dialectId,
-            String dialectVersion,
             boolean nativeStreaming,
             URI endpoint,
             String credentialReference,
+            List<ApiBinding> apiBindings,
             List<ProviderModel> models) {
         @ConstructorBinding
         public ModelProvider {
@@ -138,18 +138,17 @@ public record PersonalAssistantProperties(
                 throw new IllegalArgumentException(
                         "deterministic model provider requires explicit allow-deterministic=true");
             }
-            if (mode.equals("remote")) {
-                dialectId = text(dialectId, "modelProvider.dialectId");
-                dialectVersion = text(dialectVersion, "modelProvider.dialectVersion");
-            } else {
-                dialectId = dialectId == null || dialectId.isBlank() ? "deterministic" : dialectId.trim();
-                dialectVersion = dialectVersion == null || dialectVersion.isBlank() ? "1.0" : dialectVersion.trim();
-                nativeStreaming = false;
-            }
+            if (mode.equals("deterministic")) nativeStreaming = false;
             if (endpoint == null || !endpoint.isAbsolute()) {
                 throw new IllegalArgumentException("modelProvider.endpoint must be absolute");
             }
             credentialReference = text(credentialReference, "modelProvider.credentialReference");
+            apiBindings = List.copyOf(apiBindings == null ? List.of() : apiBindings);
+            if (apiBindings.isEmpty())
+                throw new IllegalArgumentException("modelProvider.apiBindings must not be empty");
+            if (apiBindings.stream().map(ApiBinding::style).distinct().count() != apiBindings.size()) {
+                throw new IllegalArgumentException("API styles within a provider must be unique");
+            }
             models = List.copyOf(models == null ? List.of() : models);
             if (models.isEmpty()) {
                 throw new IllegalArgumentException("modelProvider.models must not be empty");
@@ -157,20 +156,54 @@ public record PersonalAssistantProperties(
             if (models.stream().map(ProviderModel::id).distinct().count() != models.size()) {
                 throw new IllegalArgumentException("model ids within a provider must be unique");
             }
+            Set<String> styles =
+                    apiBindings.stream().map(ApiBinding::style).collect(java.util.stream.Collectors.toSet());
+            if (models.stream().anyMatch(model -> !styles.contains(model.style()))) {
+                throw new IllegalArgumentException("model references an unbound API style");
+            }
         }
     }
 
-    public record ProviderModel(String id, String displayName, String providerModelId, boolean imageInput) {
-        public ProviderModel(String id, String displayName, String providerModelId) {
-            this(id, displayName, providerModelId, false);
+    public record ApiBinding(String style, String dialect, URI endpoint) {
+        @ConstructorBinding
+        public ApiBinding {
+            style = identifier(style, "apiBinding.style");
+            dialect = dialect == null || dialect.isBlank() ? "standard" : identifier(dialect, "apiBinding.dialect");
+            if (endpoint != null && !endpoint.isAbsolute()) {
+                throw new IllegalArgumentException("apiBinding.endpoint must be absolute");
+            }
         }
+    }
 
+    public record ProviderModel(
+            String id,
+            String displayName,
+            String providerModelId,
+            String style,
+            Set<ModelCapability> capabilities,
+            int contextWindow,
+            int maxOutputTokens) {
         @ConstructorBinding
         public ProviderModel {
             id = text(id, "providerModel.id");
             displayName = text(displayName == null ? id : displayName, "providerModel.displayName");
             providerModelId = text(providerModelId, "providerModel.providerModelId");
+            style = identifier(style, "providerModel.style");
+            capabilities = Set.copyOf(capabilities == null ? Set.of() : capabilities);
+            if (capabilities.isEmpty())
+                throw new IllegalArgumentException("providerModel.capabilities must not be empty");
+            if (contextWindow < 1 || maxOutputTokens < 1 || maxOutputTokens > contextWindow) {
+                throw new IllegalArgumentException("providerModel token limits are invalid");
+            }
         }
+    }
+
+    private static String identifier(String value, String field) {
+        String normalized = text(value, field);
+        if (!normalized.matches("[a-z][a-z0-9-]{0,127}")) {
+            throw new IllegalArgumentException(field + " must be lower-case kebab-case");
+        }
+        return normalized;
     }
 
     public record Mcp(

@@ -6,7 +6,9 @@ import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelAdapterCoordinate;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -91,8 +93,11 @@ public final class SdkTestFixtures {
                 "test-chat",
                 "test-adapter",
                 "1.0",
+                new ApiStyleId("test-style"),
+                "standard",
                 URI.create("https://model.invalid/v1"),
                 new CredentialRef("credential:test"),
+                true,
                 Set.of(ModelCapability.TEXT_CHAT),
                 8_192,
                 1_024,
@@ -114,8 +119,9 @@ public final class SdkTestFixtures {
                         ProductCapabilities.MODEL,
                         snapshot.configurationDigest(),
                         ProductProviderSuitability.DEVELOPMENT),
-                model,
-                snapshot);
+                Map.of(ModelAdapterCoordinate.from(snapshot), model),
+                snapshot,
+                Map.of(snapshot.modelId().value(), snapshot));
     }
 
     public static InMemoryPersistenceContribution persistenceContribution() {

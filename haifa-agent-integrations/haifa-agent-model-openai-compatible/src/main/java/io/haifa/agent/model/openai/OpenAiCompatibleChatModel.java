@@ -188,7 +188,7 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
         Objects.requireNonNull(request, "request must not be null");
         Objects.requireNonNull(sink, "sink must not be null");
         validateSelection(request);
-        if (Boolean.FALSE.equals(request.model().providerOptions().get(OpenAiCompatibleDialects.NATIVE_STREAMING))) {
+        if (!request.model().nativeStreaming()) {
             return AgentChatModel.super.invokeStreaming(request, sink);
         }
         ResolvedCredential credential;
@@ -448,7 +448,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     }
 
     private static String requireAdapterType(ModelProviderDefinition provider) {
-        return Objects.requireNonNull(provider, "provider must not be null").adapterType();
+        Objects.requireNonNull(provider, "provider must not be null")
+                .binding(io.haifa.agent.model.api.ModelApiStyles.OPENAI_CHAT_COMPLETIONS);
+        return io.haifa.agent.model.api.ModelApiStyles.OPENAI_CHAT_ADAPTER;
     }
 
     private static void validateProviderDefinition(ModelProviderDefinition provider, boolean allowInsecureHttp) {
