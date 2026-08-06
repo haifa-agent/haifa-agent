@@ -309,7 +309,7 @@ def read_secret_file(value: str, label: str) -> str:
     return secret
 
 
-def required_environment(name: str) -> str:
+def environment_value(name: str) -> str:
     value = os.getenv(name, "").strip()
     if value:
         return value
@@ -321,9 +321,25 @@ def required_environment(name: str) -> str:
                 value = str(winreg.QueryValueEx(key, name)[0]).strip()
         except (FileNotFoundError, OSError):
             value = ""
-    if not value:
-        fail(f"{name} is required in the process or user environment.")
     return value
+
+
+def optional_openai_environment(environment: Mapping[str, str] | None = None) -> tuple[str, str, str] | None:
+    names = ("OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL_ID")
+    values = {
+        name: (environment_value(name) if environment is None else environment.get(name, "").strip())
+        for name in names
+    }
+    missing = [name for name in names if not values[name]]
+    if missing:
+        configured = [name for name in names if values[name]]
+        if configured:
+            warn(
+                "Ignoring incomplete optional OpenAI provider configuration. "
+                f"Configured: {', '.join(configured)}; missing: {', '.join(missing)}."
+            )
+        return None
+    return values["OPENAI_BASE_URL"], values["OPENAI_API_KEY"], values["OPENAI_MODEL_ID"]
 
 
 def restrict_secret_file(path: Path) -> None:
@@ -532,20 +548,15 @@ def latest_server_jar(value: Paths) -> Path | None:
 
 def backend_environment(
     deepseek_key: str,
-    openai_base_url: str,
-    openai_key: str,
-    openai_model_id: str,
+    openai: tuple[str, str, str] | None,
     aliyun_key: str,
     continuation: str,
     value: Paths,
     skill_root: Path,
     trusted_manifest: Path | None,
 ) -> dict[str, str]:
-    return {
+    environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
-        "OPENAI_BASE_URL": openai_base_url,
-        "OPENAI_API_KEY": openai_key,
-        "OPENAI_MODEL_ID": openai_model_id,
         "ALIYUN_IQS_API_KEY": aliyun_key,
         "HAIFA_PERSONAL_CONTINUATION_KEY": continuation,
         "HAIFA_PERSONAL_DATA_DIR": str(value.data),
@@ -603,21 +614,6 @@ def backend_environment(
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_CAPABILITIES_2": "REASONING",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_CONTEXTWINDOW": "131072",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_MAXOUTPUTTOKENS": "8192",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_ID": "local-openai",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_DISPLAYNAME": "Local OpenAI Responses Gateway",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODE": "remote",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_ALLOWDETERMINISTIC": "false",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_NATIVESTREAMING": "true",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT": openai_base_url,
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE": "env://OPENAI_API_KEY",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_STYLE": "openai-responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_ID": "local-openai-responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_DISPLAYNAME": "Local OpenAI Responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID": openai_model_id,
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_STYLE": "openai-responses",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CONTEXTWINDOW": "131072",
-        "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_MAXOUTPUTTOKENS": "8192",
         "HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL": "true",
         "HAIFA_PERSONAL_WEB_ENABLED": "true",
         "HAIFA_PERSONAL_WEB_CREDENTIAL": "env://ALIYUN_IQS_API_KEY",
@@ -631,6 +627,31 @@ def backend_environment(
         "HAIFA_PERSONAL_MCP_DISPLAY_NAME": "Haifa Utility MCP",
         "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
     }
+    if openai is not None:
+        openai_base_url, openai_key, openai_model_id = openai
+        environment.update(
+            {
+                "OPENAI_BASE_URL": openai_base_url,
+                "OPENAI_API_KEY": openai_key,
+                "OPENAI_MODEL_ID": openai_model_id,
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_ID": "local-openai",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_DISPLAYNAME": "Local OpenAI Responses Gateway",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODE": "remote",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_ALLOWDETERMINISTIC": "false",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_NATIVESTREAMING": "true",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT": openai_base_url,
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE": "env://OPENAI_API_KEY",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_STYLE": "openai-responses",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_ID": "local-openai-responses",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_DISPLAYNAME": "Local OpenAI Responses",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID": openai_model_id,
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_STYLE": "openai-responses",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CONTEXTWINDOW": "131072",
+                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_MAXOUTPUTTOKENS": "8192",
+            }
+        )
+    return environment
 
 
 def ensure_service(
@@ -695,9 +716,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
 
     deepseek_key = read_secret_file(args.deepseek_key_file, "DeepSeek")
     aliyun_key = read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS")
-    openai_base_url = required_environment("OPENAI_BASE_URL")
-    openai_key = required_environment("OPENAI_API_KEY")
-    openai_model_id = required_environment("OPENAI_MODEL_ID")
+    openai = optional_openai_environment()
     continuation = continuation_key(args.continuation_key_file)
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
@@ -763,9 +782,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         ("-jar", str(server_jar)),
         backend_environment(
             deepseek_key,
-            openai_base_url,
-            openai_key,
-            openai_model_id,
+            openai,
             aliyun_key,
             continuation,
             value,

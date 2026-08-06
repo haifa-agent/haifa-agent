@@ -42,9 +42,7 @@ class RealEnvironmentTest(unittest.TestCase):
 
         environment = real_environment.backend_environment(
             "deepseek-secret",
-            "http://127.0.0.1:30000/v1",
-            "openai-secret",
-            "gpt-test",
+            ("http://127.0.0.1:30000/v1", "openai-secret", "gpt-test"),
             "aliyun-secret",
             "continuation-secret",
             paths,
@@ -88,6 +86,50 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertNotIn("HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_IMAGEINPUT", environment)
         self.assertFalse(any(name.startswith("CHATGPT2API_") for name in environment))
         self.assertNotIn("openai-secret", json.dumps(list(environment)))
+
+    def test_deepseek_only_configuration_omits_optional_openai_provider(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=root / "runtime",
+            data=root / "runtime/data",
+            logs=root / "runtime/logs",
+            state=root / "runtime/last-start.json",
+            stop_state=root / "runtime/last-stop.json",
+            maven_wrapper=root / "mvnw",
+        )
+
+        environment = real_environment.backend_environment(
+            "deepseek-secret",
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+        )
+
+        self.assertEqual("deepseek", environment["HAIFA_PERSONAL_MODELPROVIDERS_0_ID"])
+        self.assertFalse(any(name.startswith("OPENAI_") for name in environment))
+        self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_1_") for name in environment))
+
+    def test_optional_openai_provider_requires_complete_environment_group(self) -> None:
+        self.assertIsNone(real_environment.optional_openai_environment({}))
+        self.assertIsNone(
+            real_environment.optional_openai_environment({"OPENAI_API_KEY": "openai-secret"})
+        )
+        self.assertEqual(
+            ("http://127.0.0.1:30000/v1", "openai-secret", "gpt-test"),
+            real_environment.optional_openai_environment(
+                {
+                    "OPENAI_BASE_URL": "http://127.0.0.1:30000/v1",
+                    "OPENAI_API_KEY": "openai-secret",
+                    "OPENAI_MODEL_ID": "gpt-test",
+                }
+            ),
+        )
 
     def test_invalid_mode_combinations_are_rejected(self) -> None:
         arguments = real_environment.parser().parse_args(["--stop", "--rebuild"])

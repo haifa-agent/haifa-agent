@@ -27,6 +27,10 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 
 Key 文件不能提交到 Git，也不要把内容复制到命令历史、日志或文档。
 
+`OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID` 仅用于可选的本机 OpenAI Responses
+Provider。三项都配置时启用该 Provider；全部缺失或仅配置一部分时继续使用 DeepSeek-only 环境，
+其中不完整配置会输出不含配置值的警告。
+
 ## 2. 一键启动
 
 在普通 PowerShell 中执行：
