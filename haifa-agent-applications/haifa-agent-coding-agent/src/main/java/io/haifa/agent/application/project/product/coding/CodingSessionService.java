@@ -198,6 +198,18 @@ public final class CodingSessionService {
         return view(reconcile(activity, caller), product);
     }
 
+    /** Verifies caller and project ownership without reconciling or mutating the Coding Session. */
+    public void requireSessionInProject(AgentSessionId sessionId, ProjectId projectId) {
+        Objects.requireNonNull(projectId, "projectId must not be null");
+        TrustedProductCaller caller = callers.current();
+        ProjectProductSession product = requireProductSession(sessionId, caller);
+        CodingSessionActivity activity = requireActivity(sessionId, caller);
+        requireOwned(activity, caller);
+        if (!activity.projectId().equals(projectId) || !product.projectId().equals(projectId)) {
+            throw conflict("SESSION_NOT_FOUND", "Session is unavailable");
+        }
+    }
+
     public List<CodingModelOption> availableModels() {
         TrustedProductCaller caller = callers.current();
         return models.available(caller.tenant(), caller.principal());

@@ -189,12 +189,19 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public java.util.Optional<InteractionView> pendingInteraction(AgentRunId runId) {
+        requireRunScoped(runId);
+        return runtime.pendingInteraction(runId);
+    }
+
+    @Override
     public InteractionResponseReceipt respond(
             InteractionView interaction, InteractionAction action, String idempotencyKey) {
-        CodingSessionView current = requireScoped(interaction.sessionId());
-        InteractionView pending = current.pendingInteraction()
+        requireRunScoped(interaction.runId());
+        InteractionView pending = runtime.pendingInteraction(interaction.runId())
                 .filter(value -> value.requestId().equals(interaction.requestId())
                         && value.runId().equals(interaction.runId())
+                        && value.sessionId().equals(interaction.sessionId())
                         && value.revision() == interaction.revision())
                 .orElseThrow(() -> unavailable("Interaction is unavailable"));
         if (!pending.allowedActions().contains(action)) {
@@ -313,7 +320,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
         AgentSessionId sessionId = runtime.view(runId)
                 .map(value -> value.sessionId())
                 .orElseThrow(() -> unavailable("Run is unavailable"));
-        requireScoped(sessionId);
+        sessions.requireSessionInProject(sessionId, projectId);
     }
 
     private CodingSessionView requireScoped(AgentSessionId sessionId) {

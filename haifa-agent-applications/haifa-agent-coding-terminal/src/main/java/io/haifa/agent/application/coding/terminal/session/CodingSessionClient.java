@@ -24,6 +24,7 @@ import io.haifa.agent.runtime.api.RunEventSubscription;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.util.List;
+import java.util.Optional;
 
 /** Stable product/API boundary consumed by the terminal application. */
 public interface CodingSessionClient {
@@ -57,6 +58,8 @@ public interface CodingSessionClient {
     List<CodingQueuedMessage> restorableMessages(AgentSessionId sessionId, int limit);
 
     CodingRestoredMessage restore(AgentSessionId sessionId, String followUpId, long revision);
+
+    Optional<InteractionView> pendingInteraction(AgentRunId runId);
 
     InteractionResponseReceipt respond(InteractionView interaction, InteractionAction action, String idempotencyKey);
 

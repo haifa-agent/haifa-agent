@@ -26,15 +26,29 @@ import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /** Single-threaded application controller. Runtime callbacks only enqueue actions. */
 public final class CodingTerminalController implements AutoCloseable {
     private static final int PAGE_SIZE = 200;
+    private static final int MAX_REPLAY_EVENTS = 2_000;
+    private static final int CONTROL_COMPLETION_QUEUE_CAPACITY = 64;
+    private static final int COMPLETION_QUEUE_CAPACITY = 256;
     private static final Set<String> RETRYABLE_SESSION_RACES =
             Set.of("ACTIVE_RUN_SETTLED", "ACTIVE_RUN_MISMATCH", "CODING_SESSION_ACTIVE");
 
@@ -42,6 +56,17 @@ public final class CodingTerminalController implements AutoCloseable {
     private final CodingSessionClient client;
     private final TerminalEventPump pump;
     private final TerminalUiReducer reducer;
+    private final Executor controlEffects;
+    private final Executor effects;
+    private final Executor maintenanceEffects;
+    private final ExecutorService ownedControlEffects;
+    private final ExecutorService ownedEffects;
+    private final ExecutorService ownedMaintenanceEffects;
+    private final ArrayBlockingQueue<Runnable> controlCompletions =
+            new ArrayBlockingQueue<>(CONTROL_COMPLETION_QUEUE_CAPACITY);
+    private final ArrayBlockingQueue<Runnable> effectCompletions = new ArrayBlockingQueue<>(COMPLETION_QUEUE_CAPACITY);
+    private final ConcurrentLinkedQueue<AutoCloseable> deferredSubscriptionCloses = new ConcurrentLinkedQueue<>();
+    private final AtomicLong completionRequestIds = new AtomicLong();
     private final TerminalCommandRouter commands = new TerminalCommandRouter();
     private final TerminalCompletionProvider completions;
     private TerminalUiState state;
@@ -56,6 +81,11 @@ public final class CodingTerminalController implements AutoCloseable {
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
     private RunEventCursor pendingAcknowledgement;
+    private boolean acknowledgementInFlight;
+    private boolean reconcileInFlight;
+    private InteractionHydrationRequest interactionHydrationInFlight;
+    private InteractionView activeInteraction;
+    private long activeCompletionRequestId;
 
     public CodingTerminalController(
             ProjectId projectId,
@@ -63,12 +93,88 @@ public final class CodingTerminalController implements AutoCloseable {
             TerminalEventPump pump,
             TerminalUiReducer reducer,
             TerminalUiState initialState) {
+        this(
+                projectId,
+                client,
+                pump,
+                reducer,
+                initialState,
+                newEffectExecutor("haifa-coding-terminal-control"),
+                newEffectExecutor("haifa-coding-terminal-effects"),
+                newEffectExecutor("haifa-coding-terminal-maintenance"),
+                true);
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            Executor effects) {
+        this(projectId, client, pump, reducer, initialState, effects, effects, effects, false);
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            Executor effects,
+            Executor maintenanceEffects) {
+        this(projectId, client, pump, reducer, initialState, effects, effects, maintenanceEffects, false);
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            Executor controlEffects,
+            Executor effects,
+            Executor maintenanceEffects) {
+        this(projectId, client, pump, reducer, initialState, controlEffects, effects, maintenanceEffects, false);
+    }
+
+    private CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            Executor controlEffects,
+            Executor effects,
+            Executor maintenanceEffects,
+            boolean ownsEffects) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.client = Objects.requireNonNull(client, "client must not be null");
         this.pump = Objects.requireNonNull(pump, "pump must not be null");
         this.reducer = Objects.requireNonNull(reducer, "reducer must not be null");
         this.state = Objects.requireNonNull(initialState, "initialState must not be null");
+        this.controlEffects = Objects.requireNonNull(controlEffects, "controlEffects must not be null");
+        this.effects = Objects.requireNonNull(effects, "effects must not be null");
+        this.maintenanceEffects = Objects.requireNonNull(maintenanceEffects, "maintenanceEffects must not be null");
+        this.ownedControlEffects = ownsEffects ? (ExecutorService) controlEffects : null;
+        this.ownedEffects = ownsEffects ? (ExecutorService) effects : null;
+        this.ownedMaintenanceEffects = ownsEffects ? (ExecutorService) maintenanceEffects : null;
         this.completions = new TerminalCompletionProvider(client::logicalPaths);
+    }
+
+    private static ExecutorService newEffectExecutor(String threadName) {
+        return new ThreadPoolExecutor(
+                1,
+                1,
+                0,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(64),
+                runnable -> {
+                    Thread thread = new Thread(runnable, threadName);
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
     }
 
     public TerminalUiState state() {
@@ -113,7 +219,9 @@ public final class CodingTerminalController implements AutoCloseable {
                         true);
                 view = client.reconcile(sessionId);
             }
-            return MessageSubmissionResult.succeeded(submission, view);
+            LoadedSession loaded =
+                    readSession(view, submission.appliedCursor(), submission.outputRunId(), submission.outputCursor());
+            return MessageSubmissionResult.succeeded(submission, loaded);
         } catch (ProjectProductException exception) {
             return MessageSubmissionResult.failed(submission, exception.code());
         } catch (IllegalArgumentException
@@ -137,16 +245,15 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         try {
-            load(result.view().orElseThrow());
-            replayAndTail();
+            applyLoadedSession(result.loadedSession().orElseThrow());
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
         }
     }
 
+    /** Loads the initial session before the TUI event loop starts; interactive session changes use background effects. */
     public void open(AgentSessionId sessionId) {
-        load(client.open(sessionId));
-        replayAndTail();
+        applyLoadedSession(readSession(client.open(sessionId), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST));
     }
 
     public void drainEvents() {
@@ -158,13 +265,11 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void drainEventsGuarded() {
+        drainEffectCompletions();
         boolean reconcile = pump.consumeOverflow();
         for (TerminalUiAction action : pump.drain(PAGE_SIZE)) {
             apply(action);
-            if (action instanceof TerminalUiAction.RunEventReceived received
-                    && shouldReconcile(received.event().payload())) {
-                reconcile = true;
-            }
+            interactionHydration(action).ifPresent(this::scheduleInteractionHydration);
         }
         if (subscription != null
                 && subscription.closed()
@@ -172,9 +277,126 @@ public final class CodingTerminalController implements AutoCloseable {
             reconcile = true;
         }
         if (reconcile && state.session().isPresent()) {
-            refresh();
+            scheduleReconcile();
         }
-        acknowledgePendingCursor();
+        schedulePendingCursorAcknowledgement();
+        drainEffectCompletions();
+    }
+
+    private static Optional<InteractionHydrationRequest> interactionHydration(TerminalUiAction action) {
+        if (!(action instanceof TerminalUiAction.RunEventReceived received)
+                || !(received.event().payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle)) {
+            return Optional.empty();
+        }
+        if (!lifecycle.state().equals("PENDING") && !lifecycle.state().equals("REQUESTED")) {
+            return Optional.empty();
+        }
+        return Optional.of(new InteractionHydrationRequest(received.event().runId(), lifecycle.requestId()));
+    }
+
+    private void scheduleInteractionHydration(InteractionHydrationRequest request) {
+        if (request.equals(interactionHydrationInFlight)
+                || (activeInteraction != null
+                        && activeInteraction.runId().equals(request.runId())
+                        && activeInteraction.requestId().value().equals(request.requestId()))
+                || state.currentRunId().filter(request.runId()::equals).isEmpty()) {
+            return;
+        }
+        interactionHydrationInFlight = request;
+        submitControlEffect(
+                () -> {
+                    Optional<InteractionView> interaction = client.pendingInteraction(request.runId());
+                    return () -> completeInteractionHydration(request, interaction);
+                },
+                code -> {
+                    if (request.equals(interactionHydrationInFlight)) interactionHydrationInFlight = null;
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
+    }
+
+    private void completeInteractionHydration(
+            InteractionHydrationRequest request, Optional<InteractionView> interaction) {
+        if (!request.equals(interactionHydrationInFlight)) return;
+        interactionHydrationInFlight = null;
+        if (state.currentRunId().filter(request.runId()::equals).isEmpty() || !interactionStillPending(request)) return;
+        interaction
+                .filter(value -> value.requestId().value().equals(request.requestId()))
+                .filter(value -> value.state() == io.haifa.agent.runtime.api.InteractionState.PENDING)
+                .ifPresent(this::openInteractionSelector);
+    }
+
+    private boolean interactionStillPending(InteractionHydrationRequest request) {
+        return state.transcript().stream()
+                .filter(item -> item.id().equals("interaction-" + request.requestId()))
+                .map(item -> item.status().toUpperCase(java.util.Locale.ROOT))
+                .anyMatch(status -> status.equals("PENDING") || status.equals("REQUESTED"));
+    }
+
+    private void submitControlEffect(Supplier<Runnable> work, Consumer<String> failure) {
+        submitEffect(controlEffects, controlCompletions, work, failure);
+    }
+
+    private void submitEffect(Supplier<Runnable> work, Consumer<String> failure) {
+        submitEffect(effects, effectCompletions, work, failure);
+    }
+
+    private void submitMaintenanceEffect(Supplier<Runnable> work, Consumer<String> failure) {
+        submitEffect(maintenanceEffects, effectCompletions, work, failure);
+    }
+
+    private void submitEffect(
+            Executor executor,
+            ArrayBlockingQueue<Runnable> completionQueue,
+            Supplier<Runnable> work,
+            Consumer<String> failure) {
+        try {
+            executor.execute(() -> {
+                Runnable completion;
+                try {
+                    completion = Objects.requireNonNull(work.get(), "effect completion must not be null");
+                } catch (ProjectProductException exception) {
+                    completion = () -> failure.accept(exception.code());
+                } catch (IllegalArgumentException
+                        | IllegalStateException
+                        | SecurityException
+                        | UnsupportedOperationException exception) {
+                    String code = safeFailureCode(exception);
+                    completion = () -> failure.accept(code);
+                } catch (RuntimeException exception) {
+                    completion = () -> failure.accept("OPERATION_REJECTED");
+                }
+                enqueueCompletion(completionQueue, completion);
+            });
+        } catch (RejectedExecutionException exception) {
+            failure.accept("TERMINAL_BACKGROUND_UNAVAILABLE");
+        }
+        // Direct executors are useful for deterministic state tests. Production executors
+        // return immediately, so this remains an in-memory, non-blocking drain.
+        drainEffectCompletions();
+    }
+
+    private void enqueueCompletion(ArrayBlockingQueue<Runnable> completionQueue, Runnable completion) {
+        try {
+            completionQueue.put(completion);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void drainEffectCompletions() {
+        int remaining = PAGE_SIZE - drainCompletions(controlCompletions, PAGE_SIZE);
+        drainCompletions(effectCompletions, remaining);
+    }
+
+    private static int drainCompletions(ArrayBlockingQueue<Runnable> completions, int limit) {
+        int drained = 0;
+        while (drained < limit) {
+            Runnable completion = completions.poll();
+            if (completion == null) break;
+            completion.run();
+            drained++;
+        }
+        return drained;
     }
 
     public void accept(TerminalInput input) {
@@ -212,12 +434,17 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         if (input.kind() == TerminalInput.Kind.CANCEL_OR_CLOSE) {
-            if (cancelCurrentRunIfPresent()) {
+            if (state.currentRunId().isPresent() && cancelCurrentRunIfPresent()) {
                 return;
             }
             if (state.selector().isPresent()) {
                 discardPendingShell();
                 apply(new TerminalUiAction.SelectorClosed());
+                completionContext = null;
+                return;
+            }
+            if (cancelCurrentRunIfPresent()) {
+                return;
             }
             return;
         }
@@ -276,7 +503,13 @@ public final class CodingTerminalController implements AutoCloseable {
             command(command, text);
             return;
         }
-        completeMessageSubmission(executeMessageSubmission(beginMessageSubmission(text, followUp)));
+        PreparedMessageSubmission submission = beginMessageSubmission(text, followUp);
+        submitEffect(
+                () -> {
+                    MessageSubmissionResult result = executeMessageSubmission(submission);
+                    return () -> completeMessageSubmission(result);
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
     private PreparedMessageSubmission beginMessageSubmission(String text, boolean followUp) {
@@ -292,7 +525,8 @@ public final class CodingTerminalController implements AutoCloseable {
         apply(new TerminalUiAction.EditorChanged("", 0));
         apply(new TerminalUiAction.UserMessageCommitted(key, text));
         apply(new TerminalUiAction.StatusChanged("Submitting"));
-        return new PreparedMessageSubmission(text, followUp, key, sessionId, activeRunId);
+        return new PreparedMessageSubmission(
+                text, followUp, key, sessionId, activeRunId, state.appliedCursor(), outputRunId, outputCursor);
     }
 
     private void shell(String input) {
@@ -300,8 +534,17 @@ public final class CodingTerminalController implements AutoCloseable {
         boolean includeInContext = !input.startsWith("!!");
         int prefix = includeInContext ? 1 : 2;
         String command = input.substring(prefix).strip();
-        CodingShellPlan plan = client.planShell(current.summary().sessionId(), command, includeInContext);
         apply(new TerminalUiAction.EditorChanged("", 0));
+        apply(new TerminalUiAction.StatusChanged("Checking shell command"));
+        submitEffect(
+                () -> {
+                    CodingShellPlan plan = client.planShell(current.summary().sessionId(), command, includeInContext);
+                    return () -> completeShellPlan(plan);
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void completeShellPlan(CodingShellPlan plan) {
         if (plan.state() == CodingShellPlan.State.DENIED) {
             apply(new TerminalUiAction.RecoverableFailure(plan.reasonCode()));
             return;
@@ -315,11 +558,20 @@ public final class CodingTerminalController implements AutoCloseable {
                     1)));
             return;
         }
-        completeShell(plan, false);
+        scheduleShellExecution(plan, false);
     }
 
-    private void completeShell(CodingShellPlan plan, boolean approved) {
-        CodingShellResult result = client.executeShell(plan.token(), approved);
+    private void scheduleShellExecution(CodingShellPlan plan, boolean approved) {
+        apply(new TerminalUiAction.StatusChanged("Running shell command"));
+        submitEffect(
+                () -> {
+                    CodingShellResult result = client.executeShell(plan.token(), approved);
+                    return () -> completeShell(plan, result);
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void completeShell(CodingShellPlan plan, CodingShellResult result) {
         String prefix = plan.includeInContext() ? "!" : "!!";
         apply(new TerminalUiAction.ShellCompleted(prefix + plan.safeCommand(), result.safeSummary(), result.status()));
         apply(new TerminalUiAction.StatusChanged(
@@ -364,28 +616,33 @@ public final class CodingTerminalController implements AutoCloseable {
             boolean followUp,
             String idempotencyKey,
             Optional<AgentSessionId> sessionId,
-            Optional<AgentRunId> activeRunId) {
+            Optional<AgentRunId> activeRunId,
+            Optional<RunEventCursor> appliedCursor,
+            AgentRunId outputRunId,
+            RunOutputCursor outputCursor) {
         public PreparedMessageSubmission {
             text = Objects.requireNonNull(text, "text must not be null");
             idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
             sessionId = Objects.requireNonNull(sessionId, "sessionId must not be null");
             activeRunId = Objects.requireNonNull(activeRunId, "activeRunId must not be null");
+            appliedCursor = Objects.requireNonNull(appliedCursor, "appliedCursor must not be null");
+            outputCursor = Objects.requireNonNull(outputCursor, "outputCursor must not be null");
         }
     }
 
     public record MessageSubmissionResult(
-            PreparedMessageSubmission submission, Optional<CodingSessionView> view, Optional<String> failureCode) {
+            PreparedMessageSubmission submission, Optional<LoadedSession> loadedSession, Optional<String> failureCode) {
         public MessageSubmissionResult {
             submission = Objects.requireNonNull(submission, "submission must not be null");
-            view = Objects.requireNonNull(view, "view must not be null");
+            loadedSession = Objects.requireNonNull(loadedSession, "loadedSession must not be null");
             failureCode = Objects.requireNonNull(failureCode, "failureCode must not be null");
-            if (view.isPresent() == failureCode.isPresent()) {
+            if (loadedSession.isPresent() == failureCode.isPresent()) {
                 throw new IllegalArgumentException("submission result must contain exactly one outcome");
             }
         }
 
-        static MessageSubmissionResult succeeded(PreparedMessageSubmission submission, CodingSessionView view) {
-            return new MessageSubmissionResult(submission, Optional.of(view), Optional.empty());
+        static MessageSubmissionResult succeeded(PreparedMessageSubmission submission, LoadedSession loadedSession) {
+            return new MessageSubmissionResult(submission, Optional.of(loadedSession), Optional.empty());
         }
 
         static MessageSubmissionResult failed(PreparedMessageSubmission submission, String failureCode) {
@@ -397,31 +654,41 @@ public final class CodingTerminalController implements AutoCloseable {
         String argument = commandArgument(rawInput);
         switch (command) {
             case NEW -> {
-                closeSubscription();
+                detachSubscriptions();
                 awaitingNewSessionMessage = true;
                 apply(new TerminalUiAction.StatusChanged("New session: enter the first message"));
             }
             case RESUME -> {
-                resumeOptions = client.search(projectId, argument, 50);
-                var options = resumeOptions.stream()
-                        .map(summary -> summary.sessionId().value() + " · " + summary.displayName() + " · "
-                                + summary.status().name())
-                        .toList();
-                if (options.isEmpty()) {
-                    apply(new TerminalUiAction.RecoverableFailure("SESSION_LIST_EMPTY"));
-                } else {
-                    apply(new TerminalUiAction.SelectorOpened(
-                            new TerminalSelector("resume", "Resume session", options, 0)));
-                }
+                apply(new TerminalUiAction.StatusChanged("Searching sessions"));
+                submitEffect(
+                        () -> {
+                            List<CodingSessionSummary> found = client.search(projectId, argument, 50);
+                            return () -> showResumeOptions(found);
+                        },
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case RENAME -> {
-                CodingSessionView current = refresh();
-                CodingSessionSummary renamed = client.rename(
-                        current.summary().sessionId(),
-                        argument,
-                        current.summary().revision());
-                load(client.open(renamed.sessionId()));
-                apply(new TerminalUiAction.StatusChanged("Session renamed"));
+                CodingSessionView current = requireCurrentSession();
+                apply(new TerminalUiAction.StatusChanged("Renaming session"));
+                submitEffect(
+                        () -> {
+                            CodingSessionView reconciled =
+                                    client.reconcile(current.summary().sessionId());
+                            CodingSessionSummary renamed = client.rename(
+                                    reconciled.summary().sessionId(),
+                                    argument,
+                                    reconciled.summary().revision());
+                            LoadedSession loaded = readSession(
+                                    client.open(renamed.sessionId()),
+                                    Optional.empty(),
+                                    null,
+                                    RunOutputCursor.BEFORE_FIRST);
+                            return () -> {
+                                applyLoadedSession(loaded);
+                                apply(new TerminalUiAction.StatusChanged("Session renamed"));
+                            };
+                        },
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case ARCHIVE -> {
                 requireCurrentSession();
@@ -434,51 +701,57 @@ public final class CodingTerminalController implements AutoCloseable {
                         "delete-session", "Delete current session?", List.of("Delete session", "Cancel"), 1)));
             }
             case RELOAD -> {
-                List<String> resources = client.reloadResources();
-                apply(new TerminalUiAction.ResourcesChanged(resources));
-                apply(new TerminalUiAction.StatusChanged("Resources reloaded for future new Runs"));
+                apply(new TerminalUiAction.StatusChanged("Reloading resources"));
+                submitEffect(
+                        () -> {
+                            List<String> resources = client.reloadResources();
+                            return () -> {
+                                apply(new TerminalUiAction.ResourcesChanged(resources));
+                                apply(new TerminalUiAction.StatusChanged("Resources reloaded for future new Runs"));
+                            };
+                        },
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case COMPACT -> {
-                CodingSessionView current = refresh();
-                var result = client.compact(current.summary().sessionId(), argument);
-                apply(new TerminalUiAction.ContextChanged(result.safeIndicator()));
-                apply(new TerminalUiAction.StatusChanged("Session context compacted"));
+                CodingSessionView current = requireCurrentSession();
+                apply(new TerminalUiAction.StatusChanged("Compacting session context"));
+                submitEffect(
+                        () -> {
+                            CodingSessionView reconciled =
+                                    client.reconcile(current.summary().sessionId());
+                            var result = client.compact(reconciled.summary().sessionId(), argument);
+                            return () -> {
+                                apply(new TerminalUiAction.ContextChanged(result.safeIndicator()));
+                                apply(new TerminalUiAction.StatusChanged("Session context compacted"));
+                            };
+                        },
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case EXPORT -> {
-                CodingSessionView current = refresh();
-                var exported = client.export(current.summary().sessionId(), argument);
-                apply(new TerminalUiAction.ExportCompleted(exported.logicalPath(), exported.messageCount()));
-                apply(new TerminalUiAction.StatusChanged("Session exported"));
+                CodingSessionView current = requireCurrentSession();
+                apply(new TerminalUiAction.StatusChanged("Exporting session"));
+                submitEffect(
+                        () -> {
+                            CodingSessionView reconciled =
+                                    client.reconcile(current.summary().sessionId());
+                            var exported = client.export(reconciled.summary().sessionId(), argument);
+                            return () -> {
+                                apply(new TerminalUiAction.ExportCompleted(
+                                        exported.logicalPath(), exported.messageCount()));
+                                apply(new TerminalUiAction.StatusChanged("Session exported"));
+                            };
+                        },
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case MODEL -> {
-                CodingSessionView current = refresh();
-                modelOptions = client.models();
-                if (!argument.isBlank()) {
-                    client.selectModel(
-                            current.summary().sessionId(),
-                            argument,
-                            current.model().revision(),
-                            UUID.randomUUID().toString());
-                    load(client.open(current.summary().sessionId()));
-                    apply(new TerminalUiAction.StatusChanged("Model changed for future new Runs"));
-                } else if (modelOptions.isEmpty()) {
-                    apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
-                } else {
-                    int selected = java.util.stream.IntStream.range(0, modelOptions.size())
-                            .filter(index -> modelOptions
-                                    .get(index)
-                                    .id()
-                                    .equals(current.model().model().id()))
-                            .findFirst()
-                            .orElse(0);
-                    apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
-                            "model",
-                            "Model for future new Runs",
-                            modelOptions.stream()
-                                    .map(value -> value.displayName() + " · " + value.providerDisplayName())
-                                    .toList(),
-                            selected)));
-                }
+                CodingSessionView current = requireCurrentSession();
+                Optional<RunEventCursor> cursor = state.appliedCursor();
+                AgentRunId previousOutputRunId = outputRunId;
+                RunOutputCursor previousOutputCursor = outputCursor;
+                apply(new TerminalUiAction.StatusChanged("Loading models"));
+                submitEffect(
+                        () -> loadModels(current, argument, cursor, previousOutputRunId, previousOutputCursor),
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case SETTINGS, TRUST ->
                 apply(new TerminalUiAction.RecoverableFailure(TerminalCommandRouter.CAPABILITY_NOT_IMPLEMENTED));
@@ -500,39 +773,115 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private boolean cancelCurrentRunIfPresent() {
-        if (state.currentRunId().isEmpty() && state.session().isPresent()) {
-            refresh();
-        }
         if (state.currentRunId().isEmpty()) {
-            return false;
+            if (state.session().isEmpty()) return false;
+            AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+            Optional<RunEventCursor> cursor = state.appliedCursor();
+            AgentRunId previousOutputRunId = outputRunId;
+            RunOutputCursor previousOutputCursor = outputCursor;
+            apply(new TerminalUiAction.StatusChanged("Checking active run"));
+            submitEffect(
+                    () -> {
+                        LoadedSession loaded = readSession(
+                                client.reconcile(sessionId), cursor, previousOutputRunId, previousOutputCursor);
+                        return () -> {
+                            applyLoadedSession(loaded);
+                            if (state.currentRunId().isPresent()) {
+                                cancelCurrentRunIfPresent();
+                            } else {
+                                apply(new TerminalUiAction.StatusChanged("Idle"));
+                            }
+                        };
+                    },
+                    code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+            return true;
         }
         if (state.selector().isPresent()) {
+            discardPendingShell();
             apply(new TerminalUiAction.SelectorClosed());
             completionContext = null;
         }
         apply(new TerminalUiAction.StatusChanged("Cancelling"));
-        client.cancel(
-                state.session().orElseThrow().summary().sessionId(),
-                UUID.randomUUID().toString());
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        String idempotencyKey = UUID.randomUUID().toString();
+        submitControlEffect(
+                () -> {
+                    client.cancel(sessionId, idempotencyKey);
+                    return () -> {};
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
         return true;
     }
 
-    private CodingSessionView refresh() {
-        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
-        CodingSessionView reconciled = client.reconcile(sessionId);
-        load(reconciled);
-        replayAndTail();
-        return reconciled;
-    }
-
-    private void load(CodingSessionView view) {
-        apply(new TerminalUiAction.SessionLoaded(view, client.loadedResources()));
+    private LoadedSession readSession(
+            CodingSessionView view,
+            Optional<RunEventCursor> previousCursor,
+            AgentRunId previousOutputRunId,
+            RunOutputCursor previousOutputCursor) {
+        List<String> resources = client.loadedResources();
         List<PendingMessage> pending = client.restorableMessages(view.summary().sessionId(), 100).stream()
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
                 .toList();
-        apply(new TerminalUiAction.PendingChanged(pending));
-        view.pendingInteraction().ifPresent(this::openInteractionSelector);
+        if (view.activeRun().isEmpty()) {
+            return new LoadedSession(
+                    view, resources, pending, List.of(), null, null, null, RunOutputCursor.BEFORE_FIRST);
+        }
+        AgentRunId runId = view.activeRun().orElseThrow().runId();
+        RunEventCursor cursor = previousCursor
+                .filter(value -> value.runId().equals(runId))
+                .orElseGet(() -> RunEventCursor.beforeFirst(runId));
+        ArrayDeque<AgentRunEvent> events = new ArrayDeque<>(MAX_REPLAY_EVENTS);
+        boolean more;
+        do {
+            var page = client.events(runId, cursor, PAGE_SIZE);
+            for (AgentRunEvent event : page.items()) {
+                if (events.size() == MAX_REPLAY_EVENTS) events.removeFirst();
+                events.addLast(event);
+            }
+            cursor = page.nextCursor();
+            more = page.hasMore();
+        } while (more);
+        RunEventCursor subscribeAfter = cursor;
+        RunEventSubscription nextSubscription = client.subscribe(
+                runId, subscribeAfter, event -> pump.offer(new TerminalUiAction.RunEventReceived(event)));
+        RunOutputCursor nextOutputCursor =
+                runId.equals(previousOutputRunId) ? previousOutputCursor : RunOutputCursor.BEFORE_FIRST;
+        RunOutputSubscription nextOutputSubscription;
+        try {
+            nextOutputSubscription = client.subscribeOutput(
+                    runId, nextOutputCursor, event -> pump.offer(new TerminalUiAction.RunOutputReceived(event)));
+        } catch (RuntimeException exception) {
+            nextSubscription.close();
+            throw exception;
+        }
+        return new LoadedSession(
+                view,
+                resources,
+                pending,
+                List.copyOf(events),
+                nextSubscription,
+                nextOutputSubscription,
+                runId,
+                nextOutputCursor);
+    }
+
+    private void applyLoadedSession(LoadedSession loaded) {
+        RunEventSubscription previousSubscription = subscription;
+        RunOutputSubscription previousOutputSubscription = outputSubscription;
+        subscription = loaded.subscription();
+        outputSubscription = loaded.outputSubscription();
+        outputRunId = loaded.outputRunId();
+        outputCursor = loaded.outputCursor();
+        activeInteraction = null;
+        interactionHydrationInFlight = null;
+        apply(new TerminalUiAction.SessionLoaded(loaded.view(), loaded.resources()));
+        apply(new TerminalUiAction.PendingChanged(loaded.pending()));
+        for (AgentRunEvent event : loaded.events()) {
+            apply(new TerminalUiAction.RunEventReceived(event));
+        }
+        loaded.view().pendingInteraction().ifPresent(this::openInteractionSelector);
+        closeSubscriptionsInBackground(previousSubscription, previousOutputSubscription);
     }
 
     private void openRestoreSelector() {
@@ -541,7 +890,17 @@ public final class CodingTerminalController implements AutoCloseable {
             return;
         }
         AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
-        restoreOptions = client.restorableMessages(sessionId, 100);
+        apply(new TerminalUiAction.StatusChanged("Loading queued messages"));
+        submitEffect(
+                () -> {
+                    List<CodingQueuedMessage> found = client.restorableMessages(sessionId, 100);
+                    return () -> showRestoreOptions(found);
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void showRestoreOptions(List<CodingQueuedMessage> found) {
+        restoreOptions = List.copyOf(found);
         if (restoreOptions.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("RESTORABLE_QUEUE_EMPTY"));
             return;
@@ -556,6 +915,7 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openInteractionSelector(InteractionView interaction) {
+        activeInteraction = interaction;
         apply(new TerminalUiAction.InteractionPresented(interaction));
         if (state.selector().isPresent()
                 && state.selector().orElseThrow().kind().startsWith("interaction:")) {
@@ -579,6 +939,9 @@ public final class CodingTerminalController implements AutoCloseable {
     }
 
     private void openCompletionSelector(String buffer, int cursor) {
+        if (!state.editorBuffer().equals(buffer) || state.editorCursor() != cursor) {
+            apply(new TerminalUiAction.EditorChanged(buffer, cursor));
+        }
         int start = cursor;
         while (start > 0 && !Character.isWhitespace(buffer.charAt(start - 1))) {
             start--;
@@ -588,7 +951,29 @@ public final class CodingTerminalController implements AutoCloseable {
             end++;
         }
         String word = buffer.substring(start, cursor);
-        List<String> options = completions.suggestions(word);
+        CompletionContext requestedContext = new CompletionContext(buffer, start, end);
+        if (word.startsWith("@")) {
+            long requestId = completionRequestIds.incrementAndGet();
+            activeCompletionRequestId = requestId;
+            submitEffect(
+                    () -> {
+                        List<String> options = completions.suggestions(word, client.logicalPaths());
+                        return () -> showCompletionOptions(requestId, requestedContext, word, options);
+                    },
+                    code -> {
+                        if (requestId == activeCompletionRequestId) {
+                            apply(new TerminalUiAction.RecoverableFailure(code));
+                        }
+                    });
+            return;
+        }
+        showCompletionOptions(0, requestedContext, word, completions.suggestions(word, List.of()));
+    }
+
+    private void showCompletionOptions(
+            long requestId, CompletionContext requestedContext, String word, List<String> options) {
+        if (requestId != 0 && requestId != activeCompletionRequestId) return;
+        if (!state.editorBuffer().equals(requestedContext.buffer())) return;
         if (options.isEmpty()) {
             if (state.selector()
                     .filter(value -> "completion".equals(value.kind()))
@@ -598,7 +983,7 @@ public final class CodingTerminalController implements AutoCloseable {
             }
             return;
         }
-        completionContext = new CompletionContext(buffer, start, end);
+        completionContext = requestedContext;
         String title = word.startsWith("@") ? "Workspace paths" : "Commands";
         apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("completion", title, options, 0)));
     }
@@ -651,49 +1036,88 @@ public final class CodingTerminalController implements AutoCloseable {
             case "resume" -> {
                 AgentSessionId sessionId = resumeOptions.get(selected).sessionId();
                 apply(new TerminalUiAction.SelectorClosed());
-                open(sessionId);
+                apply(new TerminalUiAction.StatusChanged("Opening session"));
+                submitEffect(
+                        () -> {
+                            LoadedSession loaded = readSession(
+                                    client.open(sessionId), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST);
+                            return () -> applyLoadedSession(loaded);
+                        },
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case "restore" -> {
                 CodingQueuedMessage queued = restoreOptions.get(selected);
-                var restored = client.restore(queued.sessionId(), queued.followUpId(), queued.revision());
                 apply(new TerminalUiAction.SelectorClosed());
-                apply(new TerminalUiAction.EditorChanged(
-                        restored.message(), restored.message().length()));
-                refresh();
+                apply(new TerminalUiAction.StatusChanged("Restoring queued message"));
+                submitEffect(
+                        () -> {
+                            var restored = client.restore(queued.sessionId(), queued.followUpId(), queued.revision());
+                            return () -> {
+                                apply(new TerminalUiAction.EditorChanged(
+                                        restored.message(), restored.message().length()));
+                                scheduleReconcile();
+                            };
+                        },
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case "session" -> apply(new TerminalUiAction.SelectorClosed());
             case "model" -> {
                 CodingSessionView current = requireCurrentSession();
                 CodingModelOption option = modelOptions.get(selected);
-                client.selectModel(
-                        current.summary().sessionId(),
-                        option.id(),
-                        current.model().revision(),
-                        UUID.randomUUID().toString());
+                Optional<RunEventCursor> cursor = state.appliedCursor();
+                AgentRunId previousOutputRunId = outputRunId;
+                RunOutputCursor previousOutputCursor = outputCursor;
                 apply(new TerminalUiAction.SelectorClosed());
-                load(client.open(current.summary().sessionId()));
-                apply(new TerminalUiAction.StatusChanged("Model changed for future new Runs"));
+                apply(new TerminalUiAction.StatusChanged("Changing model"));
+                submitEffect(
+                        () -> selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor),
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case "archive-session" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) {
-                    CodingSessionView current = refresh();
-                    closeSubscription();
-                    client.archive(
-                            current.summary().sessionId(), current.summary().revision());
-                    load(client.open(current.summary().sessionId()));
-                    apply(new TerminalUiAction.StatusChanged("Session archived"));
+                    CodingSessionView current = requireCurrentSession();
+                    apply(new TerminalUiAction.StatusChanged("Archiving session"));
+                    submitEffect(
+                            () -> {
+                                CodingSessionView reconciled =
+                                        client.reconcile(current.summary().sessionId());
+                                client.archive(
+                                        reconciled.summary().sessionId(),
+                                        reconciled.summary().revision());
+                                LoadedSession loaded = readSession(
+                                        client.open(reconciled.summary().sessionId()),
+                                        Optional.empty(),
+                                        null,
+                                        RunOutputCursor.BEFORE_FIRST);
+                                return () -> {
+                                    applyLoadedSession(loaded);
+                                    apply(new TerminalUiAction.StatusChanged("Session archived"));
+                                };
+                            },
+                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
                 }
             }
             case "delete-session" -> {
                 apply(new TerminalUiAction.SelectorClosed());
                 if (selected == 0) {
-                    CodingSessionView current = refresh();
-                    closeSubscription();
-                    client.delete(
-                            current.summary().sessionId(), current.summary().revision());
-                    awaitingNewSessionMessage = true;
-                    apply(new TerminalUiAction.SessionCleared("Session deleted; enter the first message"));
+                    CodingSessionView current = requireCurrentSession();
+                    apply(new TerminalUiAction.StatusChanged("Deleting session"));
+                    submitEffect(
+                            () -> {
+                                CodingSessionView reconciled =
+                                        client.reconcile(current.summary().sessionId());
+                                client.delete(
+                                        reconciled.summary().sessionId(),
+                                        reconciled.summary().revision());
+                                return () -> {
+                                    detachSubscriptions();
+                                    awaitingNewSessionMessage = true;
+                                    apply(new TerminalUiAction.SessionCleared(
+                                            "Session deleted; enter the first message"));
+                                };
+                            },
+                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
                 }
             }
             case "shell-approval" -> {
@@ -701,10 +1125,15 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.SelectorClosed());
                 pendingShellPlan = null;
                 if (selected == 0) {
-                    completeShell(plan, true);
+                    scheduleShellExecution(plan, true);
                 } else {
-                    client.discardShell(plan.token());
                     apply(new TerminalUiAction.StatusChanged("Shell command denied"));
+                    submitEffect(
+                            () -> {
+                                client.discardShell(plan.token());
+                                return () -> {};
+                            },
+                            code -> apply(new TerminalUiAction.RecoverableFailure(code)));
                 }
             }
             case "active-exit" -> {
@@ -716,25 +1145,42 @@ public final class CodingTerminalController implements AutoCloseable {
                     apply(new TerminalUiAction.RecoverableFailure("SELECTOR_KIND_UNSUPPORTED"));
                     return;
                 }
-                InteractionView interaction = state.session()
-                        .flatMap(CodingSessionView::pendingInteraction)
+                InteractionView interaction = Optional.ofNullable(activeInteraction)
+                        .filter(value -> selector.kind()
+                                .equals("interaction:" + value.requestId().value()))
                         .orElseThrow();
                 InteractionAction action = interaction.allowedActions().get(selected);
-                var receipt =
-                        client.respond(interaction, action, UUID.randomUUID().toString());
-                if (receipt != null) {
-                    apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
-                }
                 apply(new TerminalUiAction.SelectorClosed());
-                refresh();
+                apply(new TerminalUiAction.StatusChanged("Approving"));
+                activeInteraction = null;
+                String idempotencyKey = UUID.randomUUID().toString();
+                submitControlEffect(
+                        () -> {
+                            var receipt = client.respond(interaction, action, idempotencyKey);
+                            return () -> {
+                                if (receipt != null) {
+                                    apply(new TerminalUiAction.InteractionReceiptReceived(receipt));
+                                }
+                            };
+                        },
+                        code -> {
+                            openInteractionSelector(interaction);
+                            apply(new TerminalUiAction.RecoverableFailure(code));
+                        });
             }
         }
     }
 
     private void discardPendingShell() {
         if (pendingShellPlan == null) return;
-        client.discardShell(pendingShellPlan.token());
+        String token = pendingShellPlan.token();
         pendingShellPlan = null;
+        submitEffect(
+                () -> {
+                    client.discardShell(token);
+                    return () -> {};
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
     }
 
     private CodingSessionView requireCurrentSession() {
@@ -748,40 +1194,92 @@ public final class CodingTerminalController implements AutoCloseable {
         return separator < 0 ? "" : value.substring(separator + 1).strip();
     }
 
-    private static boolean shouldReconcile(AgentRunEvent.Payload payload) {
-        if (payload instanceof RunEventPayloads.InteractionLifecycle) return true;
-        if (!(payload instanceof RunEventPayloads.RunLifecycle lifecycle)) return false;
-        return switch (lifecycle.status()) {
-            case "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT" -> true;
-            default -> false;
+    private void showResumeOptions(List<CodingSessionSummary> found) {
+        resumeOptions = List.copyOf(found);
+        var options = resumeOptions.stream()
+                .map(summary -> summary.sessionId().value() + " · " + summary.displayName() + " · "
+                        + summary.status().name())
+                .toList();
+        if (options.isEmpty()) {
+            apply(new TerminalUiAction.RecoverableFailure("SESSION_LIST_EMPTY"));
+        } else {
+            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("resume", "Resume session", options, 0)));
+        }
+    }
+
+    private Runnable loadModels(
+            CodingSessionView current,
+            String argument,
+            Optional<RunEventCursor> cursor,
+            AgentRunId previousOutputRunId,
+            RunOutputCursor previousOutputCursor) {
+        CodingSessionView reconciled = client.reconcile(current.summary().sessionId());
+        List<CodingModelOption> options = client.models();
+        if (!argument.isBlank()) {
+            return selectModel(reconciled, argument, cursor, previousOutputRunId, previousOutputCursor);
+        }
+        return () -> {
+            modelOptions = List.copyOf(options);
+            if (modelOptions.isEmpty()) {
+                apply(new TerminalUiAction.RecoverableFailure("MODEL_LIST_EMPTY"));
+                return;
+            }
+            int selected = java.util.stream.IntStream.range(0, modelOptions.size())
+                    .filter(index -> modelOptions
+                            .get(index)
+                            .id()
+                            .equals(reconciled.model().model().id()))
+                    .findFirst()
+                    .orElse(0);
+            apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                    "model",
+                    "Model for future new Runs",
+                    modelOptions.stream()
+                            .map(value -> value.displayName() + " · " + value.providerDisplayName())
+                            .toList(),
+                    selected)));
         };
     }
 
-    private void replayAndTail() {
-        closeSubscription();
-        if (state.currentRunId().isEmpty()) {
-            return;
-        }
-        var runId = state.currentRunId().orElseThrow();
-        RunEventCursor cursor = state.appliedCursor().orElseGet(() -> RunEventCursor.beforeFirst(runId));
-        boolean more;
-        do {
-            var page = client.events(runId, cursor, PAGE_SIZE);
-            for (var event : page.items()) {
-                apply(new TerminalUiAction.RunEventReceived(event));
-            }
-            cursor = page.nextCursor();
-            more = page.hasMore();
-        } while (more);
-        RunEventCursor subscribeAfter = state.appliedCursor().orElse(cursor);
-        subscription = client.subscribe(
-                runId, subscribeAfter, event -> pump.offer(new TerminalUiAction.RunEventReceived(event)));
-        if (!runId.equals(outputRunId)) {
-            outputRunId = runId;
-            outputCursor = RunOutputCursor.BEFORE_FIRST;
-        }
-        outputSubscription = client.subscribeOutput(
-                runId, outputCursor, event -> pump.offer(new TerminalUiAction.RunOutputReceived(event)));
+    private Runnable selectModel(
+            CodingSessionView current,
+            String modelId,
+            Optional<RunEventCursor> cursor,
+            AgentRunId previousOutputRunId,
+            RunOutputCursor previousOutputCursor) {
+        client.selectModel(
+                current.summary().sessionId(),
+                modelId,
+                current.model().revision(),
+                UUID.randomUUID().toString());
+        LoadedSession loaded = readSession(
+                client.open(current.summary().sessionId()), cursor, previousOutputRunId, previousOutputCursor);
+        return () -> {
+            applyLoadedSession(loaded);
+            apply(new TerminalUiAction.StatusChanged("Model changed for future new Runs"));
+        };
+    }
+
+    private void scheduleReconcile() {
+        if (reconcileInFlight || state.session().isEmpty()) return;
+        reconcileInFlight = true;
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        Optional<RunEventCursor> cursor = state.appliedCursor();
+        AgentRunId previousOutputRunId = outputRunId;
+        RunOutputCursor previousOutputCursor = outputCursor;
+        submitMaintenanceEffect(
+                () -> {
+                    LoadedSession loaded =
+                            readSession(client.reconcile(sessionId), cursor, previousOutputRunId, previousOutputCursor);
+                    return () -> {
+                        reconcileInFlight = false;
+                        applyLoadedSession(loaded);
+                    };
+                },
+                code -> {
+                    reconcileInFlight = false;
+                    apply(new TerminalUiAction.RecoverableFailure(code));
+                });
     }
 
     private void apply(TerminalUiAction action) {
@@ -794,6 +1292,14 @@ public final class CodingTerminalController implements AutoCloseable {
         }
         state = reducer.reduce(state, action);
         if (action instanceof TerminalUiAction.RunEventReceived received
+                && received.event().payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle
+                && !lifecycle.state().equals("PENDING")
+                && !lifecycle.state().equals("REQUESTED")
+                && activeInteraction != null
+                && activeInteraction.requestId().value().equals(lifecycle.requestId())) {
+            activeInteraction = null;
+        }
+        if (action instanceof TerminalUiAction.RunEventReceived received
                 && state.appliedCursor()
                         .filter(received.event().cursor()::equals)
                         .isPresent()
@@ -802,37 +1308,97 @@ public final class CodingTerminalController implements AutoCloseable {
         }
     }
 
-    private void acknowledgePendingCursor() {
-        if (pendingAcknowledgement == null || state.session().isEmpty()) return;
+    private void schedulePendingCursorAcknowledgement() {
+        if (acknowledgementInFlight
+                || pendingAcknowledgement == null
+                || state.session().isEmpty()) return;
         RunEventCursor requested = pendingAcknowledgement;
-        try {
-            RunEventCursor acknowledged = client.acknowledgeCursor(
-                    state.session().orElseThrow().summary().sessionId(), requested);
-            if (acknowledged.runId().equals(requested.runId())
-                    && acknowledged.exclusiveSequence().orElse(0L)
-                            >= requested.exclusiveSequence().orElse(0L)) {
-                pendingAcknowledgement = null;
-            }
-        } catch (RuntimeException ignored) {
-            // Cursor persistence is a replay checkpoint. Keep the newest cursor and retry on
-            // the next UI tick instead of stopping rendering or losing the polling command.
+        AgentSessionId sessionId = state.session().orElseThrow().summary().sessionId();
+        acknowledgementInFlight = true;
+        submitMaintenanceEffect(
+                () -> {
+                    RunEventCursor acknowledged = client.acknowledgeCursor(sessionId, requested);
+                    return () -> completeCursorAcknowledgement(requested, acknowledged);
+                },
+                ignored -> acknowledgementInFlight = false);
+    }
+
+    private void completeCursorAcknowledgement(RunEventCursor requested, RunEventCursor acknowledged) {
+        acknowledgementInFlight = false;
+        if (acknowledged.runId().equals(requested.runId())
+                && acknowledged.exclusiveSequence().orElse(0L)
+                        >= requested.exclusiveSequence().orElse(0L)
+                && pendingAcknowledgement != null
+                && pendingAcknowledgement.runId().equals(requested.runId())
+                && pendingAcknowledgement.exclusiveSequence().orElse(0L)
+                        <= acknowledged.exclusiveSequence().orElse(0L)) {
+            pendingAcknowledgement = null;
         }
     }
 
-    private void closeSubscription() {
-        if (subscription != null) {
-            subscription.close();
-            subscription = null;
+    private void detachSubscriptions() {
+        RunEventSubscription previous = subscription;
+        RunOutputSubscription previousOutput = outputSubscription;
+        subscription = null;
+        outputSubscription = null;
+        outputRunId = null;
+        outputCursor = RunOutputCursor.BEFORE_FIRST;
+        closeSubscriptionsInBackground(previous, previousOutput);
+    }
+
+    private void closeSubscriptionsInBackground(RunEventSubscription previous, RunOutputSubscription previousOutput) {
+        if (previous == null && previousOutput == null) return;
+        try {
+            maintenanceEffects.execute(() -> closeSubscriptions(previous, previousOutput));
+        } catch (RejectedExecutionException ignored) {
+            if (previous != null) deferredSubscriptionCloses.add(previous);
+            if (previousOutput != null) deferredSubscriptionCloses.add(previousOutput);
         }
-        if (outputSubscription != null) {
-            outputSubscription.close();
-            outputSubscription = null;
-        }
+    }
+
+    private static void closeSubscriptions(RunEventSubscription previous, RunOutputSubscription previousOutput) {
+        if (previous != null) previous.close();
+        if (previousOutput != null) previousOutput.close();
     }
 
     @Override
     public void close() {
-        closeSubscription();
+        closeSubscriptions(subscription, outputSubscription);
+        subscription = null;
+        outputSubscription = null;
+        if (ownedControlEffects != null) ownedControlEffects.shutdownNow();
+        if (ownedEffects != null) ownedEffects.shutdownNow();
+        if (ownedMaintenanceEffects != null) ownedMaintenanceEffects.shutdownNow();
+        AutoCloseable deferred;
+        while ((deferred = deferredSubscriptionCloses.poll()) != null) {
+            closeQuietly(deferred);
+        }
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+            // Best-effort cleanup during controller shutdown.
+        }
+    }
+
+    public record LoadedSession(
+            CodingSessionView view,
+            List<String> resources,
+            List<PendingMessage> pending,
+            List<AgentRunEvent> events,
+            RunEventSubscription subscription,
+            RunOutputSubscription outputSubscription,
+            AgentRunId outputRunId,
+            RunOutputCursor outputCursor) {
+        public LoadedSession {
+            view = Objects.requireNonNull(view, "view must not be null");
+            resources = List.copyOf(resources);
+            pending = List.copyOf(pending);
+            events = List.copyOf(events);
+            outputCursor = Objects.requireNonNull(outputCursor, "outputCursor must not be null");
+        }
     }
 
     private record CompletionContext(String buffer, int start, int end) {
@@ -841,6 +1407,15 @@ public final class CodingTerminalController implements AutoCloseable {
             if (start < 0 || end < start || end > buffer.length()) {
                 throw new IllegalArgumentException("completion range is invalid");
             }
+        }
+    }
+
+    private record InteractionHydrationRequest(AgentRunId runId, String requestId) {
+        private InteractionHydrationRequest {
+            Objects.requireNonNull(runId, "runId must not be null");
+            requestId = Objects.requireNonNull(requestId, "requestId must not be null")
+                    .strip();
+            if (requestId.isEmpty()) throw new IllegalArgumentException("requestId must not be blank");
         }
     }
 }
