@@ -236,11 +236,93 @@
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/InvalidateMemory"}}}},
         "responses": {"200": {"description": "Invalidated memory", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Memory"}}}}}
       }
+    },
+    "/api/v1/missions": {
+      "get": {
+        "operationId": "listMissions",
+        "parameters": [
+          {"name": "conversationId", "in": "query", "schema": {"type": "string"}},
+          {"name": "cursor", "in": "query", "schema": {"type": "string"}},
+          {"name": "size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}}
+        ],
+        "responses": {"200": {"description": "Owner-scoped Missions", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionPage"}}}}}
+      },
+      "post": {
+        "operationId": "createMission",
+        "parameters": [{"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateMission"}}}},
+        "responses": {
+          "202": {"description": "Mission planned", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "400": {"$ref": "#/components/responses/Error"},
+          "409": {"$ref": "#/components/responses/Error"},
+          "422": {"$ref": "#/components/responses/Error"},
+          "503": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "get": {
+        "operationId": "getMission",
+        "responses": {
+          "200": {"description": "Mission snapshot", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/snapshot": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "get": {
+        "operationId": "getMissionSnapshot",
+        "responses": {
+          "200": {"description": "Authoritative Mission snapshot", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/plan": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "put": {
+        "operationId": "replaceMissionPlan",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReplaceMissionPlan"}}}},
+        "responses": {
+          "200": {"description": "Replaced Mission plan", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "409": {"$ref": "#/components/responses/Error"},
+          "412": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/confirm": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "post": {
+        "operationId": "confirmMission",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {
+          "200": {"description": "Confirmed Mission", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "409": {"$ref": "#/components/responses/Error"},
+          "412": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
+    "/api/v1/missions/{missionId}/cancel": {
+      "parameters": [{"$ref": "#/components/parameters/MissionId"}],
+      "post": {
+        "operationId": "cancelMission",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": false, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CancelMission"}}}},
+        "responses": {
+          "200": {"description": "Cancelled Mission", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "409": {"$ref": "#/components/responses/Error"},
+          "412": {"$ref": "#/components/responses/Error"}
+        }
+      }
     }
   },
   "components": {
     "parameters": {
       "ConversationId": {"name": "conversationId", "in": "path", "required": true, "schema": {"type": "string"}},
+      "MissionId": {"name": "missionId", "in": "path", "required": true, "schema": {"type": "string"}},
       "RunId": {"name": "runId", "in": "path", "required": true, "schema": {"type": "string"}},
       "Limit": {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 500}},
       "IdempotencyKey": {"name": "Idempotency-Key", "in": "header", "required": true, "schema": {"type": "string", "maxLength": 128}},
@@ -555,6 +637,106 @@
         "type": "object",
         "required": ["reason"],
         "properties": {"reason": {"type": "string"}}
+      },
+      "CreateMission": {
+        "type": "object",
+        "required": ["conversationId", "objective", "acceptanceCriteria"],
+        "properties": {
+          "conversationId": {"type": "string"},
+          "objective": {"type": "string", "maxLength": 8000},
+          "acceptanceCriteria": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 1000}},
+          "constraints": {"$ref": "#/components/schemas/MissionConstraints"},
+          "selectedSkillId": {"type": "string"}
+        }
+      },
+      "MissionConstraints": {
+        "type": "object",
+        "properties": {
+          "maxTasks": {"type": "integer", "minimum": 1, "maximum": 16},
+          "maxDependencyDepth": {"type": "integer", "minimum": 1, "maximum": 8},
+          "deadlineAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ReplaceMissionPlan": {
+        "type": "object",
+        "properties": {
+          "plan": {"$ref": "#/components/schemas/MissionPlan"},
+          "regenerate": {"type": "boolean"}
+        }
+      },
+      "MissionPlan": {
+        "type": "object",
+        "required": ["tasks"],
+        "properties": {
+          "tasks": {"type": "array", "maxItems": 16, "items": {"$ref": "#/components/schemas/MissionTask"}}
+        }
+      },
+      "MissionTask": {
+        "type": "object",
+        "required": ["taskId", "ordinal", "title", "objective", "acceptanceCriteria", "dependsOn", "taskType", "requiredSkillIds", "resultSchemaId", "resultSchemaVersion", "state"],
+        "properties": {
+          "taskId": {"type": "string"},
+          "ordinal": {"type": "integer", "minimum": 1},
+          "title": {"type": "string", "maxLength": 200},
+          "objective": {"type": "string", "maxLength": 4000},
+          "acceptanceCriteria": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 1000}},
+          "dependsOn": {"type": "array", "items": {"type": "string"}},
+          "taskType": {"type": "string", "enum": ["GENERAL", "RESEARCH"]},
+          "requiredSkillIds": {"type": "array", "items": {"type": "string"}},
+          "resultSchemaId": {"type": "string"},
+          "resultSchemaVersion": {"type": "string"},
+          "state": {"type": "string", "enum": ["PLANNED", "WAITING_DEPENDENCY", "READY", "COMPLETED", "BLOCKED", "CANCELLED"]}
+        }
+      },
+      "MissionPlanRevision": {
+        "type": "object",
+        "required": ["revision", "schemaId", "schemaVersion", "tasks", "plannerSessionId", "plannerRunId", "createdAt"],
+        "properties": {
+          "revision": {"type": "integer", "minimum": 1},
+          "schemaId": {"type": "string", "const": "pa.mission-plan"},
+          "schemaVersion": {"type": "string", "const": "v1"},
+          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/MissionTask"}},
+          "plannerSessionId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "plannerRunId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "createdAt": {"type": "string", "format": "date-time"}
+        }
+      },
+      "MissionSnapshot": {
+        "type": "object",
+        "required": ["schemaVersion", "missionId", "conversationId", "objective", "acceptanceCriteria", "constraints", "state", "plan", "tasks", "blocker", "artifacts", "sources", "finalResult", "version", "createdAt", "updatedAt", "confirmedAt", "finishedAt", "pollAfterMs"],
+        "properties": {
+          "schemaVersion": {"type": "string", "const": "pa.mission-snapshot/v1"},
+          "missionId": {"type": "string"},
+          "conversationId": {"type": "string"},
+          "objective": {"type": "string"},
+          "acceptanceCriteria": {"type": "array", "items": {"type": "string"}},
+          "constraints": {"$ref": "#/components/schemas/MissionConstraints"},
+          "state": {"type": "string", "enum": ["PLANNING", "WAITING_CONFIRMATION", "RUNNING", "WAITING_USER", "SYNTHESIZING", "COMPLETED", "PARTIALLY_COMPLETED", "FAILED", "CANCELLED"]},
+          "plan": {"oneOf": [{"$ref": "#/components/schemas/MissionPlanRevision"}, {"type": "null"}]},
+          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/MissionTask"}},
+          "blocker": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "artifacts": {"type": "array", "items": {"type": "string"}},
+          "sources": {"type": "array", "items": {"type": "string"}},
+          "finalResult": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "version": {"type": "integer", "format": "int64"},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "updatedAt": {"type": "string", "format": "date-time"},
+          "confirmedAt": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+          "finishedAt": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+          "pollAfterMs": {"type": "integer", "format": "int64", "minimum": 0}
+        }
+      },
+      "MissionPage": {
+        "type": "object",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {"type": "array", "maxItems": 50, "items": {"$ref": "#/components/schemas/MissionSnapshot"}},
+          "nextCursor": {"oneOf": [{"type": "string"}, {"type": "null"}]}
+        }
+      },
+      "CancelMission": {
+        "type": "object",
+        "properties": {"reason": {"type": "string", "maxLength": 1000}}
       },
       "StreamEvent": {
         "type": "object",

@@ -6,6 +6,7 @@ import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
+import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.AgentRunViewSnapshot;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
@@ -27,6 +28,11 @@ public final class AgentRuns {
 
     AgentRuns(io.haifa.agent.runtime.api.AgentRuntime runtime) {
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
+    }
+
+    /** Starts one standard Run. Products remain responsible for trusted Session creation and request construction. */
+    public AgentRunSnapshot start(AgentRunRequest request) {
+        return runtime.start(Objects.requireNonNull(request, "request must not be null"));
     }
 
     public Optional<AgentRunSnapshot> find(AgentRunId runId) {

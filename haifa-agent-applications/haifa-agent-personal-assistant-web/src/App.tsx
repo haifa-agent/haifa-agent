@@ -48,6 +48,7 @@ import type {
   ImageInput,
   Memory,
   MemoryCandidate,
+  MissionSnapshot,
   Model,
   Run,
   TurnImage,
@@ -1205,6 +1206,209 @@ function TextPromptDialog({
   );
 }
 
+const missionTerminalStates = new Set([
+  "COMPLETED",
+  "PARTIALLY_COMPLETED",
+  "FAILED",
+  "CANCELLED",
+]);
+
+function missionStateLabel(state: string): string {
+  return {
+    PLANNING: "正在生成计划",
+    WAITING_CONFIRMATION: "等待确认",
+    RUNNING: "计划已确认",
+    WAITING_USER: "等待用户",
+    SYNTHESIZING: "正在整合",
+    COMPLETED: "已完成",
+    PARTIALLY_COMPLETED: "部分完成",
+    FAILED: "失败",
+    CANCELLED: "已取消",
+  }[state] ?? state;
+}
+
+function MissionDialog({
+  client,
+  conversation,
+  onClose,
+  onChanged,
+}: {
+  client: PersonalAssistantClient;
+  conversation: Conversation | null;
+  onClose(): void;
+  onChanged(mission: MissionSnapshot | null): void;
+}) {
+  const [missions, setMissions] = useState<MissionSnapshot[]>([]);
+  const [selected, setSelected] = useState<MissionSnapshot | null>(null);
+  const [objective, setObjective] = useState("");
+  const [criteria, setCriteria] = useState("");
+  const [editingPlan, setEditingPlan] = useState(false);
+  const [planJson, setPlanJson] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pollFailures = useRef(0);
+
+  const merge = useCallback((mission: MissionSnapshot) => {
+    setMissions((current) => {
+      const next = current.filter((value) => value.missionId !== mission.missionId);
+      return [mission, ...next].sort((left, right) =>
+        new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+    });
+    setSelected(mission);
+    onChanged(mission);
+  }, [onChanged]);
+
+  useEffect(() => {
+    if (!client.missions) {
+      setError("当前 Server 未发布 Mission 能力。");
+      return;
+    }
+    const controller = new AbortController();
+    setBusy(true);
+    client.missions(undefined, controller.signal)
+      .then((page) => {
+        setMissions(page.items);
+        const current = conversation
+          ? page.items.find((mission) => mission.conversationId === conversation.id)
+          : page.items[0];
+        setSelected(current ?? null);
+        onChanged(current ?? null);
+        setError(null);
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(safeError(reason));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setBusy(false);
+      });
+    return () => controller.abort();
+  }, [client, conversation, onChanged]);
+
+  useEffect(() => {
+    if (!selected || missionTerminalStates.has(selected.state) || !client.missionSnapshot) return;
+    const controller = new AbortController();
+    const baseDelay = document.hidden ? 10_000 : Math.max(2_000, selected.pollAfterMs || 5_000);
+    const retryDelay = Math.min(30_000, baseDelay * Math.max(1, 2 ** pollFailures.current));
+    const timer = window.setTimeout(() => {
+      client.missionSnapshot?.(selected.missionId, controller.signal)
+        .then((mission) => {
+          pollFailures.current = 0;
+          merge(mission);
+          setError(null);
+        })
+        .catch((reason) => {
+          if (!controller.signal.aborted) {
+            pollFailures.current += 1;
+            setError(safeError(reason));
+          }
+        });
+    }, retryDelay);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [client, merge, selected]);
+
+  const command = async (operation: () => Promise<MissionSnapshot>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      merge(await operation());
+    } catch (reason) {
+      setError(safeError(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createMission = (event: FormEvent) => {
+    event.preventDefault();
+    if (!conversation || !client.createMission || !objective.trim()) return;
+    const acceptanceCriteria = criteria.split("\n").map((value) => value.trim()).filter(Boolean);
+    void command(() => client.createMission!({
+      conversationId: conversation.id,
+      objective: objective.trim(),
+      acceptanceCriteria,
+    }, { idempotencyKey: crypto.randomUUID() })).then(() => {
+      setObjective("");
+      setCriteria("");
+    });
+  };
+
+  const beginEdit = () => {
+    if (!selected) return;
+    setPlanJson(JSON.stringify({ tasks: selected.tasks }, null, 2));
+    setEditingPlan(true);
+  };
+
+  const replacePlan = () => {
+    if (!selected || !client.replaceMissionPlan) return;
+    try {
+      const parsed = JSON.parse(planJson) as { tasks?: MissionSnapshot["tasks"] };
+      if (!Array.isArray(parsed.tasks)) throw new Error("计划必须包含 tasks 数组。");
+      const tasks = parsed.tasks;
+      void command(() => client.replaceMissionPlan!(selected, { plan: { tasks } }, {
+        idempotencyKey: crypto.randomUUID(),
+      })).then(() => setEditingPlan(false));
+    } catch (reason) {
+      setError(safeError(reason));
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop mission-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="mission-dialog" role="dialog" aria-modal="true" aria-labelledby="mission-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="mission-dialog-header">
+          <div><span className="eyebrow">LONG-RUNNING WORK</span><h2 id="mission-title">Mission</h2></div>
+          <button type="button" className="icon" aria-label="关闭 Mission" onClick={onClose}><X size={18} /></button>
+        </header>
+        {error && <div className="error-banner" role="alert"><CircleAlert size={16} /><span>{error}</span></div>}
+        <div className="mission-layout">
+          <aside className="mission-list" aria-label="Mission 列表">
+            <strong>Mission 列表</strong>
+            {missions.length === 0 && !busy && <p>还没有 Mission。</p>}
+            {missions.map((mission) => (
+              <button type="button" className={selected?.missionId === mission.missionId ? "active" : ""} key={mission.missionId} onClick={() => setSelected(mission)}>
+                <span>{mission.objective}</span><small>{missionStateLabel(mission.state)} · {mission.tasks.length} 个任务</small>
+              </button>
+            ))}
+          </aside>
+          <div className="mission-content">
+            {conversation && !missions.some((mission) => mission.conversationId === conversation.id && !missionTerminalStates.has(mission.state)) && (
+              <form className="mission-create" onSubmit={createMission}>
+                <h3>为“{conversation.displayName}”创建 Mission</h3>
+                <label>目标<textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={8000} rows={3} placeholder="描述要持续推进并最终交付的目标" /></label>
+                <label>验收标准<textarea value={criteria} onChange={(event) => setCriteria(event.target.value)} maxLength={4000} rows={3} placeholder="每行一条，可留空" /></label>
+                <button type="submit" className="button primary-button" disabled={busy || !objective.trim()}><Plus size={15} />创建并生成计划</button>
+              </form>
+            )}
+            {selected ? (
+              <article className="mission-detail">
+                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span><h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                {selected.acceptanceCriteria.length > 0 && <section><h4>验收标准</h4><ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section>}
+                <section><h4>执行计划 · revision {selected.plan?.revision ?? "-"}</h4>
+                  <ol className="mission-tasks">{selected.tasks.map((task) => <li key={task.taskId}><b>{task.ordinal}. {task.title}</b><span>{task.objective}</span>{task.dependsOn.length > 0 && <small>依赖：{task.dependsOn.join("、")}</small>}<em>{task.state}</em></li>)}</ol>
+                </section>
+                {editingPlan && <section className="mission-plan-editor"><label>完整计划 JSON<textarea value={planJson} onChange={(event) => setPlanJson(event.target.value)} rows={12} spellCheck={false} /></label><div><button type="button" className="button" onClick={() => setEditingPlan(false)}>取消编辑</button><button type="button" className="button primary-button" disabled={busy} onClick={replacePlan}>替换整个计划</button></div></section>}
+                <footer className="mission-actions">
+                  {selected.state === "WAITING_CONFIRMATION" && <>
+                    <button type="button" className="button" disabled={busy} onClick={() => void command(() => client.replaceMissionPlan!(selected, { regenerate: true }, { idempotencyKey: crypto.randomUUID() }))}>重新生成</button>
+                    <button type="button" className="button" disabled={busy} onClick={beginEdit}>编辑计划</button>
+                    <button type="button" className="button primary-button" disabled={busy} onClick={() => void command(() => client.confirmMission!(selected, { idempotencyKey: crypto.randomUUID() }))}><CheckCircle2 size={15} />确认计划</button>
+                  </>}
+                  {!missionTerminalStates.has(selected.state) && <button type="button" className="button danger" disabled={busy} onClick={() => void command(() => client.cancelMission!(selected, { idempotencyKey: crypto.randomUUID() }))}>取消 Mission</button>}
+                </footer>
+                {selected.state === "RUNNING" && <p className="mission-phase-note">计划已确认。Phase 1 不会启动后台 Task；执行与恢复能力将在 Phase 2 接入。</p>}
+              </article>
+            ) : <div className="empty"><h3>选择或创建 Mission</h3><p>Mission 用于需要拆解、持续运行并最终整合的大任务。</p></div>}
+          </div>
+        </div>
+        {busy && <div className="mission-loading" role="status">正在同步 Mission…</div>}
+      </section>
+    </div>
+  );
+}
+
 export default function App({ client = defaultClient }: { client?: PersonalAssistantClient }) {
   const [state, dispatch] = useReducer(appReducer, initialState, (value) => ({
     ...value,
@@ -1233,6 +1437,30 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
   >(null);
+  const [missionOpen, setMissionOpen] = useState(false);
+  const [conversationMission, setConversationMission] = useState<MissionSnapshot | null>(null);
+
+  const handleMissionChanged = useCallback((mission: MissionSnapshot | null) => {
+    if (!mission || mission.conversationId === state.selectedConversationId) {
+      setConversationMission(mission);
+    }
+  }, [state.selectedConversationId]);
+
+  useEffect(() => {
+    if (!state.selectedConversationId || !client.missions) {
+      setConversationMission(null);
+      return;
+    }
+    const controller = new AbortController();
+    client.missions(state.selectedConversationId, controller.signal)
+      .then((page) => {
+        if (!controller.signal.aborted) setConversationMission(page.items[0] ?? null);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setConversationMission(null);
+      });
+    return () => controller.abort();
+  }, [client, state.selectedConversationId]);
 
   const closeImageTools = useCallback(() => {
     setImageToolsOpen(false);
@@ -1855,6 +2083,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           }}>
             <Brain size={16} /> 记忆{state.memoryCandidates.length > 0 && <b>{state.memoryCandidates.length}</b>}
           </button>
+          {state.bootstrap?.capabilities.includes("mission") && (
+            <button className="button mission-button" onClick={() => setMissionOpen(true)}>
+              <CheckCircle2 size={16} /> Mission
+            </button>
+          )}
           <button className="icon mobile-only" aria-label="打开运行详情" onClick={openRunDetails}><PanelRight size={20} /></button>
         </div>
       </header>
@@ -1880,6 +2113,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>
             {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
           </div>
+          {conversationMission && (
+            <button type="button" className="conversation-mission-card" onClick={() => setMissionOpen(true)}>
+              <span><b>Mission</b>{missionStateLabel(conversationMission.state)}</span>
+              <strong>{conversationMission.objective}</strong>
+              <small>{conversationMission.tasks.length} 个计划任务 · 点击查看详情</small>
+            </button>
+          )}
           {state.error && (
             <div className="error-banner" role="alert">
               <CircleAlert size={17} /><span>{state.error}</span><button onClick={() => window.location.reload()}>重新加载</button>
@@ -2261,6 +2501,14 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           onApprove={(candidate) => memoryCommand("确认记忆", (key) => client.approveMemory(candidate, { idempotencyKey: key }))}
           onReject={(candidate) => setReasonTarget({ kind: "reject", candidate })}
           onInvalidate={(memory) => setReasonTarget({ kind: "invalidate", memory })}
+        />
+      )}
+      {missionOpen && (
+        <MissionDialog
+          client={client}
+          conversation={state.selectedConversation}
+          onClose={() => setMissionOpen(false)}
+          onChanged={handleMissionChanged}
         />
       )}
       {renameTarget && (

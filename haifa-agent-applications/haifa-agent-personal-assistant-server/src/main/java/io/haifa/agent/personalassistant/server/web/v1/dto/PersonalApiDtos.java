@@ -54,6 +54,66 @@ public final class PersonalApiDtos {
             long revision,
             ModelSelection model) {}
 
+    public record CreateMission(
+            String conversationId,
+            String objective,
+            List<String> acceptanceCriteria,
+            MissionConstraints constraints,
+            String selectedSkillId) {}
+
+    public record MissionConstraints(Integer maxTasks, Integer maxDependencyDepth, Instant deadlineAt) {}
+
+    public record ReplaceMissionPlan(MissionPlan plan, Boolean regenerate) {}
+
+    public record MissionPlan(List<MissionTask> tasks) {}
+
+    public record MissionTask(
+            String taskId,
+            Integer ordinal,
+            String title,
+            String objective,
+            List<String> acceptanceCriteria,
+            List<String> dependsOn,
+            String taskType,
+            List<String> requiredSkillIds,
+            String resultSchemaId,
+            String resultSchemaVersion,
+            String state) {}
+
+    public record MissionPlanRevision(
+            long revision,
+            String schemaId,
+            String schemaVersion,
+            List<MissionTask> tasks,
+            Optional<String> plannerSessionId,
+            Optional<String> plannerRunId,
+            Instant createdAt) {}
+
+    public record MissionSnapshot(
+            String schemaVersion,
+            String missionId,
+            String conversationId,
+            String objective,
+            List<String> acceptanceCriteria,
+            MissionConstraints constraints,
+            String state,
+            Optional<MissionPlanRevision> plan,
+            List<MissionTask> tasks,
+            Optional<String> blocker,
+            List<String> artifacts,
+            List<String> sources,
+            Optional<String> finalResult,
+            long version,
+            Instant createdAt,
+            Instant updatedAt,
+            Optional<Instant> confirmedAt,
+            Optional<Instant> finishedAt,
+            long pollAfterMs) {}
+
+    public record MissionPage(List<MissionSnapshot> items, Optional<String> nextCursor) {}
+
+    public record CancelMission(String reason) {}
+
     public record Turn(
             String id,
             String role,

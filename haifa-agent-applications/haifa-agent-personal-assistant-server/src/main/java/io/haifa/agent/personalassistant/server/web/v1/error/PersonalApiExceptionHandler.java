@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.server.web.v1.error;
 
+import io.haifa.agent.personalassistant.application.mission.MissionException;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import io.haifa.agent.sdk.api.HaifaAgentException;
 import java.util.UUID;
@@ -17,6 +18,32 @@ import org.springframework.web.server.ServerWebInputException;
 @RestControllerAdvice
 public final class PersonalApiExceptionHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(PersonalApiExceptionHandler.class);
+
+    @ExceptionHandler(MissionException.class)
+    ResponseEntity<PersonalApiDtos.Error> mission(MissionException exception, ServerWebExchange exchange) {
+        String code = exception.code();
+        HttpStatus status;
+        if (code.contains("NOT_FOUND")) {
+            status = HttpStatus.NOT_FOUND;
+        } else if (code.contains("PRECONDITION") || code.contains("REVISION_STALE")) {
+            status = HttpStatus.PRECONDITION_FAILED;
+        } else if (code.contains("CAPACITY")) {
+            status = HttpStatus.TOO_MANY_REQUESTS;
+        } else if (code.contains("UNAVAILABLE")) {
+            status = HttpStatus.SERVICE_UNAVAILABLE;
+        } else if (code.contains("PLANNER") || code.contains("RESULT_INVALID")) {
+            status = HttpStatus.UNPROCESSABLE_ENTITY;
+        } else if (code.contains("CONFLICT")
+                || code.contains("ACTIVE")
+                || code.contains("FROZEN")
+                || code.contains("STATE")) {
+            status = HttpStatus.CONFLICT;
+        } else {
+            status = HttpStatus.BAD_REQUEST;
+        }
+        return ResponseEntity.status(status)
+                .body(new PersonalApiDtos.Error(code, exception.getMessage(), correlation(exchange)));
+    }
 
     @ExceptionHandler(HaifaAgentException.class)
     ResponseEntity<PersonalApiDtos.Error> sdk(HaifaAgentException exception) {

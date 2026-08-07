@@ -2,9 +2,13 @@ package io.haifa.agent.personalassistant.application;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
+import io.haifa.agent.core.run.AgentRunBudget;
+import io.haifa.agent.core.run.AgentRunLimits;
+import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpConfiguration;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
+import io.haifa.agent.personalassistant.application.mission.SdkMissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.policy.PersonalWebAllowPolicy;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender;
@@ -18,11 +22,13 @@ import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
+import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -77,6 +83,14 @@ public final class PersonalAssistantAssembler {
                     .publicToolPolicyDecorator(PersonalWebAllowPolicy.decorator(
                             tools.tool().catalog(), dependencies.web(), dependencies.policy(), dependencies.clock()))
                     .modelImageResolver(dependencies.imageResolver())
+                    .runProfile(new ProductRunProfile(
+                            SdkMissionRuntimeAccess.PLANNER_RUN_PROFILE,
+                            "1.0.0",
+                            dependencies.modelCatalog().defaultModelId(),
+                            AgentRunType.CHAT,
+                            new AgentRunBudget(32_000, 8_000, 32_000, 0, 1, 0, "USD", 0),
+                            new AgentRunLimits(2, 0, 1, 120_000, 120_000),
+                            Map.of("response_format", Map.of("type", "json_object"))))
                     .contribute(dependencies.model())
                     .contribute(dependencies.persistence())
                     .contribute(dependencies.conversation())
@@ -98,7 +112,15 @@ public final class PersonalAssistantAssembler {
                     dependencies.modelCatalog(),
                     dependencies.modelPreferences(),
                     new PersonalQuestionRecommender(dependencies.model()),
-                    dependencies.execution());
+                    dependencies.execution(),
+                    new SdkMissionRuntimeAccess(
+                            agent,
+                            dependencies.persistence(),
+                            dependencies.tenant(),
+                            dependencies.principal(),
+                            dependencies.clock()::instant,
+                            dependencies.modelCatalog(),
+                            dependencies.modelCatalog().defaultModelId()));
         } catch (RuntimeException | Error exception) {
             try {
                 dependencies.execution().close();

@@ -20,6 +20,18 @@ sequence，订阅统一可关闭。进程重启后不恢复未完成 Delta；终
 Personal Assistant 的纯 Java 产品应用层。它只通过 Phase 20 SDK、Conversation Service 和公共
 Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Controller。
 
+## Personal Mission Phase 1
+
+`mission` 产品包提供显式长任务的纯 Java 聚合与用例：创建规划中 Mission、生成或整体替换有序
+Task DAG、确认并冻结计划、取消、查询 Snapshot，以及命令幂等和 expected revision。一个可信
+owner 的同一 Conversation 同时只能存在一个非终态 Mission；计划确认后 objective、验收标准、Task
+定义和依赖不可再修改。
+
+Planner 有确定性 Stub 和一次性 Runtime Run 两种实现。Runtime Planner 使用独立的 ephemeral
+Planner Session、命名 Run Profile 和严格 `pa.mission-plan/v1` JSON；能力、Schema、约束或 allowlist
+校验失败时 fail closed，不从自由文本提取 JSON，也不回退模型。Phase 1 只创建和确认计划，不调度
+Task、不创建 Attempt，也不提供 Deep Research、Pause/Resume、Verifier 或 Repair。
+
 Personal Run View 在兼容 `errorCode` 之外提供类型化执行错误：code、默认安全 message、
 category、retryability、安全 details、diagnosticId 和 occurredAt。应用层只投影 Runtime
 权威事实，不创建产品私有错误码。
@@ -31,6 +43,7 @@ category、retryability、安全 details、diagnosticId 和 occurredAt。应用�
 - Run 查询、取消、最终结果、权威 Usage 与安全 Activity；
 - Interaction 查询与响应；
 - Memory Candidate review 和 Memory invalidate；
+- Personal Mission create/list/get/replace/regenerate/confirm/cancel 和安全 Snapshot；
 - Personal Product Profile；
 - 一个确定性产品 Tool、版本化内置 Skill、可信只读本地 Skill Source；
 - 从公共 `haifa-agent-web` 模块显式装配 Aliyun IQS `web.search` / `web.fetch` 和短生命周期凭据；

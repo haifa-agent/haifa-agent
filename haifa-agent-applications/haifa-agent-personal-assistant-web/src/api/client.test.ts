@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MissionSnapshot } from "./generated";
 import { HttpPersonalAssistantClient } from "./client";
 
 afterEach(() => {
@@ -53,6 +54,43 @@ describe("HttpPersonalAssistantClient deployment boundary", () => {
     expect(init?.headers).toMatchObject({
       "Idempotency-Key": "recommendation-1",
       "X-Haifa-CSRF": "1",
+    });
+  });
+
+  it("sends Mission commands with the frozen idempotency and revision headers", async () => {
+    const mission = {
+      missionId: "mission/1",
+      version: 7,
+      state: "WAITING_CONFIRMATION",
+    } as unknown as MissionSnapshot;
+    const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => ({ json: async () => mission, ok: true, status: 200 }) as Response,
+    );
+    vi.stubGlobal("fetch", fetch);
+
+    await new HttpPersonalAssistantClient().confirmMission(mission, {
+      idempotencyKey: "confirm-1",
+    });
+
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:20001/api/v1/missions/mission%2F1/confirm");
+    expect(init?.method).toBe("POST");
+    expect(init?.headers).toMatchObject({
+      "Idempotency-Key": "confirm-1",
+      "If-Match": "7",
+      "X-Haifa-CSRF": "1",
+    });
+  });
+
+  it("rejects JSON responses larger than the browser safety limit", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      text: async () => `"${"x".repeat(2 * 1024 * 1024)}"`,
+      ok: true,
+      status: 200,
+    }) as Response));
+
+    await expect(new HttpPersonalAssistantClient().bootstrap()).rejects.toMatchObject({
+      code: "RESPONSE_TOO_LARGE",
     });
   });
 });

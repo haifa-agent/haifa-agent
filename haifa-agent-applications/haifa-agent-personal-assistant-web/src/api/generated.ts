@@ -223,6 +223,84 @@ export interface InvalidateMemory {
   reason: string;
 }
 
+export interface CreateMission {
+  conversationId: string;
+  objective: string;
+  acceptanceCriteria: Array<string>;
+  constraints?: MissionConstraints;
+  selectedSkillId?: string;
+}
+
+export interface MissionConstraints {
+  maxTasks?: number;
+  maxDependencyDepth?: number;
+  deadlineAt?: string;
+}
+
+export interface ReplaceMissionPlan {
+  plan?: MissionPlan;
+  regenerate?: boolean;
+}
+
+export interface MissionPlan {
+  tasks: Array<MissionTask>;
+}
+
+export interface MissionTask {
+  taskId: string;
+  ordinal: number;
+  title: string;
+  objective: string;
+  acceptanceCriteria: Array<string>;
+  dependsOn: Array<string>;
+  taskType: "GENERAL" | "RESEARCH";
+  requiredSkillIds: Array<string>;
+  resultSchemaId: string;
+  resultSchemaVersion: string;
+  state: "PLANNED" | "WAITING_DEPENDENCY" | "READY" | "COMPLETED" | "BLOCKED" | "CANCELLED";
+}
+
+export interface MissionPlanRevision {
+  revision: number;
+  schemaId: string;
+  schemaVersion: string;
+  tasks: Array<MissionTask>;
+  plannerSessionId: string | null;
+  plannerRunId: string | null;
+  createdAt: string;
+}
+
+export interface MissionSnapshot {
+  schemaVersion: string;
+  missionId: string;
+  conversationId: string;
+  objective: string;
+  acceptanceCriteria: Array<string>;
+  constraints: MissionConstraints;
+  state: "PLANNING" | "WAITING_CONFIRMATION" | "RUNNING" | "WAITING_USER" | "SYNTHESIZING" | "COMPLETED" | "PARTIALLY_COMPLETED" | "FAILED" | "CANCELLED";
+  plan: MissionPlanRevision | null;
+  tasks: Array<MissionTask>;
+  blocker: string | null;
+  artifacts: Array<string>;
+  sources: Array<string>;
+  finalResult: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt: string | null;
+  finishedAt: string | null;
+  pollAfterMs: number;
+}
+
+export interface MissionPage {
+  items: Array<MissionSnapshot>;
+  nextCursor: string | null;
+}
+
+export interface CancelMission {
+  reason?: string;
+}
+
 export interface StreamEvent {
   eventId: string;
   type: string;
@@ -240,4 +318,4 @@ export interface ApiError {
   correlationId: string;
 }
 
-export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory";
+export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "replaceMissionPlan" | "confirmMission" | "cancelMission";
