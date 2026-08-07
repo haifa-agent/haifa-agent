@@ -139,6 +139,7 @@ final class LocalCodingAgent implements AutoCloseable {
     private final CodingSessionService codingSessions;
     private final TrustedProjectResourceCatalog resources;
     private final Optional<CodingShellService> shell;
+    private final Optional<CliExecutionPlatform> executionPlatform;
     private final CodingSessionExportService exporter;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Set<AgentRunId> startedRuns = ConcurrentHashMap.newKeySet();
@@ -158,6 +159,7 @@ final class LocalCodingAgent implements AutoCloseable {
             CodingSessionService codingSessions,
             TrustedProjectResourceCatalog resources,
             Optional<CodingShellService> shell,
+            Optional<CliExecutionPlatform> executionPlatform,
             CodingSessionExportService exporter) {
         this.identifiers = identifiers;
         this.time = time;
@@ -173,6 +175,7 @@ final class LocalCodingAgent implements AutoCloseable {
         this.codingSessions = codingSessions;
         this.resources = resources;
         this.shell = shell;
+        this.executionPlatform = executionPlatform;
         this.exporter = exporter;
     }
 
@@ -289,6 +292,7 @@ final class LocalCodingAgent implements AutoCloseable {
         TenantRef tenant = new TenantRef("local");
         ProjectPersistenceAssembly persistence =
                 ProjectPersistenceAssembly.open(configuration.persistence(), clock, identifiers, continuationProtector);
+        var executionResources = new java.util.ArrayList<CliExecutionPlatform>();
         try {
             validateSkillWorkspaceIsolation(
                     workspaceRoot, configuration.skills().localDirectories());
@@ -402,9 +406,11 @@ final class LocalCodingAgent implements AutoCloseable {
                             time,
                             clock,
                             policy,
+                            workspaceId,
                             workspaceRoot,
                             output)
                     : null;
+            if (executionPlatform != null) executionResources.add(executionPlatform);
             var provider = new ProjectToolExecutor(
                     (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
                             workspaceId, effectiveCapabilities),
@@ -578,6 +584,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     codingSessions,
                     resources,
                     Optional.ofNullable(shell),
+                    Optional.ofNullable(executionPlatform),
                     new CliCodingSessionExportService(
                             workspaceRoot,
                             codingSessions,
@@ -586,6 +593,13 @@ final class LocalCodingAgent implements AutoCloseable {
             runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
             return agent;
         } catch (RuntimeException | Error exception) {
+            executionResources.forEach(resource -> {
+                try {
+                    resource.close();
+                } catch (RuntimeException closeFailure) {
+                    exception.addSuppressed(closeFailure);
+                }
+            });
             try {
                 persistence.close();
             } catch (RuntimeException closeFailure) {
@@ -773,6 +787,12 @@ final class LocalCodingAgent implements AutoCloseable {
         RuntimeException failure = awaitTerminalAttempts();
         try {
             mcpPlatform.close();
+        } catch (RuntimeException exception) {
+            if (failure == null) failure = exception;
+            else failure.addSuppressed(exception);
+        }
+        try {
+            executionPlatform.ifPresent(CliExecutionPlatform::close);
         } catch (RuntimeException exception) {
             if (failure == null) failure = exception;
             else failure.addSuppressed(exception);

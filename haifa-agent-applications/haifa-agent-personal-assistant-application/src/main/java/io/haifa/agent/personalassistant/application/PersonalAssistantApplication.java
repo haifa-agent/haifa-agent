@@ -67,6 +67,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final Set<String> mcpToolAliases;
     private final PersonalModelCatalog models;
     private final PersonalModelPreferenceStore modelPreferences;
+    private final AutoCloseable executionLifecycle;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
     public PersonalAssistantApplication(
@@ -76,7 +77,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             PersonalCapabilityRegistry capabilities,
             PersonalModelCatalog models,
             PersonalModelPreferenceStore modelPreferences,
-            PersonalQuestionRecommender questionRecommender) {
+            PersonalQuestionRecommender questionRecommender,
+            AutoCloseable executionLifecycle) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -84,6 +86,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.models = Objects.requireNonNull(models);
         this.modelPreferences = Objects.requireNonNull(modelPreferences);
         this.questionRecommender = Objects.requireNonNull(questionRecommender);
+        this.executionLifecycle = Objects.requireNonNull(executionLifecycle);
         this.mcpToolAliases = mcp.aliases();
     }
 
@@ -444,6 +447,15 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             agent.close();
         } catch (RuntimeException exception) {
             failure = exception;
+        }
+        try {
+            executionLifecycle.close();
+        } catch (Exception exception) {
+            RuntimeException normalized = exception instanceof RuntimeException runtime
+                    ? runtime
+                    : new IllegalStateException("Personal execution resources could not be closed", exception);
+            if (failure == null) failure = normalized;
+            else failure.addSuppressed(normalized);
         }
         try {
             mcp.close();

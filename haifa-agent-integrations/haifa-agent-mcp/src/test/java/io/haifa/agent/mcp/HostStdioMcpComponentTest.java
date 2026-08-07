@@ -14,9 +14,6 @@ import io.haifa.agent.execution.api.ManagedProcessRequest;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.DefaultExecutionBroker;
-import io.haifa.agent.execution.core.manifest.ManifestBudget;
-import io.haifa.agent.execution.core.manifest.ManifestDiffService;
-import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.mcp.client.SdkMcpStdioClientFactory;
@@ -37,9 +34,7 @@ import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
-import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
-import io.haifa.agent.project.provider.local.SensitivePathPolicy;
 import io.haifa.agent.project.store.InMemoryWorkspaceBindingStore;
 import io.haifa.agent.project.store.InMemoryWorkspaceStore;
 import io.haifa.agent.project.workspace.Workspace;
@@ -135,9 +130,6 @@ class HostStdioMcpComponentTest {
                         WorkspaceRevision.initial(binding.rootFingerprint()),
                         NOW)
                 .activate(NOW));
-        var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var manifests = new WorkspaceManifestService(
-                workspaces, files, new ManifestBudget(100, 1024 * 1024, 1024 * 1024), "mcp-host-test-v1");
         var changeSets = new InMemoryFileChangeSetStore();
         var ids = new AtomicInteger();
         var changeSetService = new FileChangeSetService(changeSets, () -> "change-" + ids.incrementAndGet(), () -> NOW);
@@ -163,8 +155,7 @@ class HostStdioMcpComponentTest {
                 ignored -> host,
                 workspaces,
                 bindings,
-                manifests,
-                new ManifestDiffService(),
+                ignoredWorkspace -> java.util.List::of,
                 observed);
         return new Fixture(workspaceId, broker);
     }

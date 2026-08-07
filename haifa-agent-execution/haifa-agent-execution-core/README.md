@@ -9,10 +9,11 @@ Decision 不能覆盖 Broker 既有的 Frozen Capability、Workspace、Profile�
 deadline、输出和审计硬边界。
 
 实现 `ExecutionBroker`、内存 Journal/输出存储、可替换的 `WorkspaceChangeObserver` 及 `FileChangeSet`
-对账。Broker 不再强制每次执行前后都完整扫描 Workspace；产品装配可使用增量 Watcher、Git 或其他
-候选观察策略，旧 Manifest 实现只作为兼容 Adapter。进程启动前观察基线失败仍以稳定错误
-`WORKSPACE_MANIFEST_UNAVAILABLE` 明确拒绝，不产生 Execution 记录，也不进入结果未知状态；进程启动后
-对账失败才映射为 `MANIFEST_UNCERTAIN`。
+对账。公共 `LocalIncrementalWorkspaceChangeObserver` 显式绑定一个 `WorkspaceId` 与规范化物理根，首次使用
+建立基线，正常窗口只处理 WatchService 候选；overflow 或状态不确定时仅在该 Workspace 内重同步。产品
+只提供 Workspace 内逻辑路径的 ignore policy，不扫描 HOME、AppData、XDG 或其它宿主安装目录。进程启动前观察基线失败以稳定错误
+`WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 明确拒绝，不产生 Execution 记录，也不进入结果未知状态；进程启动后
+观察收敛失败映射为 `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`。
 
 Broker 负责 capability、policy、profile、环境租约、Sandbox 生命周期、输出脱敏与审计编排，但不复制 Agent Run 状态机，也不依赖具体 Sandbox Provider。一次性执行的展示 observer 经过有界异步分发，不阻塞进程管道；环境值脱敏支持 secret 跨 chunk，observer 异常不影响进程收尾和 Execution Journal。Provider 只在 `ProcessBuilder.start()` 成功后发出 `onStarted`，上层据此记录真实 DISPATCHED 边界。
 

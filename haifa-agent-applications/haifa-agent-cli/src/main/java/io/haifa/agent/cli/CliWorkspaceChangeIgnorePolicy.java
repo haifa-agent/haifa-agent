@@ -1,7 +1,6 @@
 package io.haifa.agent.cli;
 
-import io.haifa.agent.execution.core.manifest.WorkspaceManifestIgnorePolicy;
-import io.haifa.agent.project.filesystem.FileMetadata;
+import io.haifa.agent.execution.core.change.WorkspaceChangeIgnorePolicy;
 import io.haifa.agent.project.filesystem.FileType;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -18,8 +17,8 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
-/** Frozen CLI policy for generated directories that should not enter execution manifests. */
-final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnorePolicy {
+/** Frozen Coding Agent policy for generated directories excluded from execution change observation. */
+final class CliWorkspaceChangeIgnorePolicy implements WorkspaceChangeIgnorePolicy {
     private static final long MAX_GITIGNORE_BYTES = 64 * 1024;
     private static final Set<String> STANDARD_DIRECTORY_NAMES = Set.of(
             ".git",
@@ -39,39 +38,33 @@ final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnoreP
     private final List<DirectoryRule> rules;
     private final String version;
 
-    private CliWorkspaceManifestIgnorePolicy(List<DirectoryRule> rules) {
+    private CliWorkspaceChangeIgnorePolicy(List<DirectoryRule> rules) {
         this.rules = rules.stream()
                 .distinct()
                 .sorted(Comparator.comparing(DirectoryRule::identity))
                 .toList();
-        this.version = "cli-workspace-manifest-v3-sha256-"
+        this.version = "cli-workspace-change-v1-sha256-"
                 + sha256(this.rules.stream()
                                 .map(DirectoryRule::identity)
                                 .reduce("", (left, right) -> left + "\n" + right))
                         .substring(0, 16);
     }
 
-    static CliWorkspaceManifestIgnorePolicy load(Path workspaceRoot) {
+    static CliWorkspaceChangeIgnorePolicy load(Path workspaceRoot) {
         Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null");
         List<DirectoryRule> rules = new ArrayList<>();
         STANDARD_DIRECTORY_NAMES.forEach(name -> rules.add(DirectoryRule.unanchored(name)));
         rules.addAll(
                 readRootGitignore(workspaceRoot.toAbsolutePath().normalize().resolve(".gitignore")));
-        return new CliWorkspaceManifestIgnorePolicy(rules);
+        return new CliWorkspaceChangeIgnorePolicy(rules);
     }
 
-    @Override
-    public String version() {
+    String version() {
         return version;
     }
 
     @Override
-    public boolean ignores(FileMetadata metadata) {
-        Objects.requireNonNull(metadata, "metadata must not be null");
-        return ignores(metadata.path().projectPath(), metadata.type());
-    }
-
-    boolean ignores(io.haifa.agent.project.path.ProjectPath path, FileType type) {
+    public boolean ignores(io.haifa.agent.project.path.ProjectPath path, FileType type) {
         Objects.requireNonNull(path, "path must not be null");
         Objects.requireNonNull(type, "type must not be null");
         List<String> segments = path.segments().stream()
@@ -91,14 +84,14 @@ final class CliWorkspaceManifestIgnorePolicy implements WorkspaceManifestIgnoreP
             List<DirectoryRule> ignored = lines.stream()
                     .map(String::strip)
                     .filter(line -> !line.isEmpty() && !line.startsWith("#") && !line.startsWith("!"))
-                    .map(CliWorkspaceManifestIgnorePolicy::directoryRule)
+                    .map(CliWorkspaceChangeIgnorePolicy::directoryRule)
                     .flatMap(java.util.Optional::stream)
                     .toList();
             List<DirectoryRule> reIncluded = lines.stream()
                     .map(String::strip)
                     .filter(line -> line.startsWith("!") && line.length() > 1)
                     .map(line -> line.substring(1))
-                    .map(CliWorkspaceManifestIgnorePolicy::reIncludedPath)
+                    .map(CliWorkspaceChangeIgnorePolicy::reIncludedPath)
                     .flatMap(java.util.Optional::stream)
                     .toList();
             return ignored.stream()

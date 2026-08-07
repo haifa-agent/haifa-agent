@@ -56,6 +56,41 @@ class ProductProfileTest {
                 .hasMessageContaining("disabled execution");
     }
 
+    @Test
+    void strictEnterpriseProfileDoesNotAssembleExecutionShellOrTerminalCapabilities() {
+        ProductCapabilityId terminal = new ProductCapabilityId("terminal");
+        ProductProfile enterprise = ProductProfile.create(
+                new ProductId("strict-enterprise-sdk"),
+                new ProductVersion("1.0.0"),
+                new AgentDefinitionId("strict-enterprise-agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                "strict-enterprise",
+                "1.0.0",
+                "Operate only through explicitly contributed business capabilities.",
+                new AgentRunBudget(1_000, 1_000, 1_000, 2, 2, 0, "USD", 100),
+                new AgentRunLimits(2, 0, 1, 10_000, 10_000),
+                new ProductPolicies(
+                        ProductMemoryPolicy.safeDefault(),
+                        ProductArtifactPolicy.disabled(),
+                        ProductExecutionPolicy.disabled()),
+                Map.of(
+                        ProductCapabilities.EXECUTION,
+                        ProductCapabilityRequirement.none(ProductCapabilities.EXECUTION),
+                        ProductCapabilities.SHELL,
+                        ProductCapabilityRequirement.none(ProductCapabilities.SHELL),
+                        terminal,
+                        ProductCapabilityRequirement.none(terminal)),
+                Set.of("memory.search"),
+                Set.of(),
+                Set.of());
+
+        assertThat(enterprise.policies().execution().enabled()).isFalse();
+        assertThat(enterprise.requirement(ProductCapabilities.EXECUTION).mode()).isEqualTo(ProductCapabilityMode.NONE);
+        assertThat(enterprise.requirement(ProductCapabilities.SHELL).mode()).isEqualTo(ProductCapabilityMode.NONE);
+        assertThat(enterprise.requirement(terminal).mode()).isEqualTo(ProductCapabilityMode.NONE);
+        assertThat(enterprise.allowedTools()).doesNotContain("execution.run", "execution_run", "shell", "terminal");
+    }
+
     private static ProductProfile profile(ProductPolicies policies, ProductCapabilityRequirement extraRequirement) {
         return ProductProfile.create(
                 new ProductId("profile-test"),

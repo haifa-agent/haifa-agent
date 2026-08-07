@@ -65,6 +65,14 @@ public record TerminalRecovery(Category category, String code, String action) {
                     "WORKSPACE_MANIFEST_UNAVAILABLE",
                     "Fix or ignore the inaccessible workspace path, then retry the command."),
             entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
+                    "Restore workspace access, then retry the command."),
+            entry(
+                    Category.USER_ACTION_REQUIRED,
+                    "WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED",
+                    "Inspect the workspace and command outcome before retrying."),
+            entry(
                     Category.TERMINAL_FAILURE,
                     "TERMINAL_FAILURE",
                     "Restart the terminal; the session remains recoverable."));

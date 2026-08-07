@@ -18,6 +18,11 @@ import io.haifa.agent.execution.api.ManagedProcessRequest;
 import io.haifa.agent.execution.api.ProcessInputChunk;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObserver;
+import io.haifa.agent.execution.core.change.WorkspaceChangeIgnorePolicy;
+import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
+import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
+import io.haifa.agent.execution.core.change.WorkspaceChangeObserverException;
 import io.haifa.agent.execution.core.manifest.ManifestBudget;
 import io.haifa.agent.execution.core.manifest.ManifestDiffService;
 import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
@@ -215,20 +220,40 @@ class ExecutionCoreTest {
     }
 
     @Test
-    void rejectsUnavailablePreExecutionManifestBeforeOpeningTheProcess() throws Exception {
-        for (int index = 0; index < 101; index++) {
-            Files.writeString(root.resolve("file-" + index + ".txt"), "data");
-        }
+    void rejectsUnavailablePreExecutionObserverBeforeOpeningTheProcess() {
         Fixture fixture = fixture();
         AtomicInteger processStarts = new AtomicInteger();
-        DefaultExecutionBroker broker =
-                fixture.broker(fakeProvider(processStarts::incrementAndGet, new byte[0]), ignored -> {});
+        SandboxProvider provider = fakeProvider(processStarts::incrementAndGet, new byte[0]);
+        WorkspaceChangeObserver unavailable = ignored -> {
+            throw WorkspaceChangeObserverException.resyncFailed(new IllegalStateException("observer unavailable"));
+        };
+        DefaultExecutionBroker broker = fixture.broker(provider, ignored -> {}, fixture.profile(provider), unavailable);
 
         assertThatThrownBy(() -> broker.execute(fixture.request(
-                        "manifest-failure", "manifest-failure-key", Set.of("execution.run"), List.of("fake"))))
+                        "observer-failure", "observer-failure-key", Set.of("execution.run"), List.of("fake"))))
                 .isInstanceOfSatisfying(ExecutionPreflightException.class, exception -> assertThat(exception.code())
-                        .isEqualTo("WORKSPACE_MANIFEST_UNAVAILABLE"));
+                        .isEqualTo("WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE"));
         assertThat(processStarts).hasValue(0);
+    }
+
+    @Test
+    void reportsPostExecutionObserverConvergenceFailureSeparately() {
+        Fixture fixture = fixture();
+        SandboxProvider provider = fakeProvider(() -> {}, new byte[0]);
+        WorkspaceChangeObserver failingCompletion = ignored -> new WorkspaceChangeObservation() {
+            @Override
+            public List<io.haifa.agent.project.changeset.FileChange> complete() {
+                throw new IllegalStateException("observer resync failed");
+            }
+        };
+        DefaultExecutionBroker broker =
+                fixture.broker(provider, ignored -> {}, fixture.profile(provider), failingCompletion);
+
+        var result = broker.execute(
+                fixture.request("observer-resync", "observer-resync-key", Set.of("execution.run"), List.of("fake")));
+
+        assertThat(result.status()).isEqualTo(ExecutionStatus.UNKNOWN);
+        assertThat(result.failure().code()).isEqualTo("WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED");
     }
 
     @Test
@@ -346,7 +371,14 @@ class ExecutionCoreTest {
         var changeSetService = new FileChangeSetService(changeSets, () -> "change-" + ids.incrementAndGet(), () -> NOW);
         var observed = new ObservedFileChangeService(workspaces, changeSets, changeSetService, () -> NOW);
         return new Fixture(
-                workspaceId, workspaces, bindings, manifests, changeSets, observed, new InMemoryExecutionOutputStore());
+                workspaceId,
+                root,
+                workspaces,
+                bindings,
+                manifests,
+                changeSets,
+                observed,
+                new InMemoryExecutionOutputStore());
     }
 
     private static SandboxProvider fakeProvider(Runnable effect, byte[] stdout) {
@@ -497,6 +529,7 @@ class ExecutionCoreTest {
 
     private record Fixture(
             WorkspaceId workspaceId,
+            Path root,
             InMemoryWorkspaceStore workspaces,
             InMemoryWorkspaceBindingStore bindings,
             WorkspaceManifestService manifests,
@@ -504,7 +537,11 @@ class ExecutionCoreTest {
             ObservedFileChangeService observed,
             InMemoryExecutionOutputStore outputs) {
         DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy) {
-            SandboxProfile profile = new SandboxProfile(
+            return broker(provider, policy, profile(provider));
+        }
+
+        SandboxProfile profile(SandboxProvider provider) {
+            return new SandboxProfile(
                     new SandboxProfileRef("test", "1"),
                     provider.providerId(),
                     provider.configurationDigest(),
@@ -514,10 +551,21 @@ class ExecutionCoreTest {
                     NetworkPolicy.ALLOW,
                     io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
                     new SandboxCapabilities(true, false, false, false, false));
-            return broker(provider, policy, profile);
         }
 
         DefaultExecutionBroker broker(SandboxProvider provider, ExecutionPolicy policy, SandboxProfile profile) {
+            return broker(
+                    provider,
+                    policy,
+                    profile,
+                    new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none()));
+        }
+
+        DefaultExecutionBroker broker(
+                SandboxProvider provider,
+                ExecutionPolicy policy,
+                SandboxProfile profile,
+                WorkspaceChangeObserver workspaceChanges) {
             return new DefaultExecutionBroker(
                     new InMemoryExecutionStore(),
                     outputs,
@@ -527,8 +575,7 @@ class ExecutionCoreTest {
                     ignored -> provider,
                     workspaces,
                     bindings,
-                    manifests,
-                    new ManifestDiffService(),
+                    workspaceChanges,
                     observed);
         }
 

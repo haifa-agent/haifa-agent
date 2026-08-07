@@ -29,3 +29,15 @@ Host Guarded 是 Coding Agent 在 macOS、Linux、Windows 上的默认可信本�
 临时 Server。需要 OS 原生文件与网络边界的一次性命令时，macOS/Linux 可显式选择独立
 `local-native` Provider；Windows 当前没有同等级能力。Host 的 Managed Process 能力不会因此扩展到
 Local Native，Coding 产品也仍不开放长期 Server、后台任务或 PTY。
+
+## Trusted execution environment
+
+`HostExecutionEnvironmentResolver` 在产品装配边界一次性解析受控环境租约。Host Guarded 使用真实 OS 用户
+HOME（Windows 按 `HOME`、`USERPROFILE`、`HOMEDRIVE + HOMEPATH`、JVM `user.home` 顺序；POSIX 按
+`HOME`、JVM `user.home` 顺序），且拒绝落入应用数据、Workspace 或 Scratch 的候选。Windows 保留命令
+解析与 Known Folder 变量，Linux/macOS 保留最小 POSIX 环境，Linux XDG 目录仅接受宿主已提供的安全绝对目录。
+
+所有模式都会过滤凭据、代理凭据和会改变解释器依赖边界的 `PYTHONHOME`、`PYTHONPATH`、
+`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等变量。Provider-isolated 输入不包含宿主
+HOME、AppData、XDG 或 TMP；Local Native 只使用 Provider 自己建立的隔离 HOME/TMP。环境值不进入 Tool
+Schema、Approval 文案或普通诊断输出。

@@ -13,11 +13,9 @@ import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ExecutionStore;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
-import io.haifa.agent.execution.core.change.ManifestWorkspaceChangeObserver;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
 import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
-import io.haifa.agent.execution.core.manifest.ManifestDiffService;
-import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
+import io.haifa.agent.execution.core.change.WorkspaceChangeObserverException;
 import io.haifa.agent.project.changeset.ObservedFileChangeService;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
@@ -52,31 +50,6 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     private final WorkspaceChangeObserver workspaceChanges;
     private final ObservedFileChangeService observedChanges;
     private final ConcurrentHashMap<ExecutionId, SandboxSession> active = new ConcurrentHashMap<>();
-
-    public DefaultExecutionBroker(
-            ExecutionStore executions,
-            ExecutionOutputStore outputs,
-            EnvironmentLeaseResolver environments,
-            ExecutionPolicy policy,
-            SandboxResolver profiles,
-            SandboxProviderResolver providers,
-            WorkspaceStore workspaces,
-            WorkspaceBindingStore bindings,
-            WorkspaceManifestService manifests,
-            ManifestDiffService manifestDiff,
-            ObservedFileChangeService observedChanges) {
-        this(
-                executions,
-                outputs,
-                environments,
-                policy,
-                profiles,
-                providers,
-                workspaces,
-                bindings,
-                new ManifestWorkspaceChangeObserver(manifests, manifestDiff),
-                observedChanges);
-    }
 
     public DefaultExecutionBroker(
             ExecutionStore executions,
@@ -171,10 +144,11 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                                     changes)
                             .id();
                 }
-            } catch (RuntimeException manifestFailure) {
+            } catch (RuntimeException observationFailure) {
                 status = ExecutionStatus.UNKNOWN;
                 failure = new ExecutionFailure(
-                        "MANIFEST_UNCERTAIN", "post-execution file changes could not be fully audited");
+                        WorkspaceChangeObserverException.RESYNC_FAILED,
+                        "post-execution workspace changes could not be fully observed");
             }
             ExecutionResult result = new ExecutionResult(
                     request.id(),
@@ -362,8 +336,15 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             if (!closed.compareAndSet(false, true)) return;
             try {
                 process.close();
-            } finally {
+                exit.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
                 changeObservation.cancel();
+                throw new IllegalStateException("managed execution close was interrupted", exception);
+            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException exception) {
+                changeObservation.cancel();
+                throw new IllegalStateException("managed execution did not settle during close", exception);
+            } finally {
                 sandbox.close();
                 active.remove(request.id());
             }
@@ -397,10 +378,11 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                                     changes)
                             .id();
                 }
-            } catch (RuntimeException manifestFailure) {
+            } catch (RuntimeException observationFailure) {
                 status = ExecutionStatus.UNKNOWN;
                 executionFailure = new ExecutionFailure(
-                        "MANIFEST_UNCERTAIN", "post-execution file changes could not be fully audited");
+                        WorkspaceChangeObserverException.RESYNC_FAILED,
+                        "post-execution workspace changes could not be fully observed");
             }
             ExecutionResult result = new ExecutionResult(
                     request.id(),
@@ -444,8 +426,8 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
             return workspaceChanges.begin(request.workspaceId());
         } catch (RuntimeException exception) {
             throw new ExecutionPreflightException(
-                    "WORKSPACE_MANIFEST_UNAVAILABLE",
-                    "workspace change baseline could not be established before execution",
+                    WorkspaceChangeObserverException.UNAVAILABLE,
+                    "workspace change observation could not be established before execution",
                     exception);
         }
     }

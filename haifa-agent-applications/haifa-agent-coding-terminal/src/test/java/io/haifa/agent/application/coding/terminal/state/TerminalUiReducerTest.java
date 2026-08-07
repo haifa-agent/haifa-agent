@@ -394,6 +394,9 @@ class TerminalUiReducerTest {
                 .isEqualTo(TerminalRecovery.Category.RETRYABLE);
         assertThat(TerminalRecovery.fromCode("TOOL_RESULT_PERSISTENCE_FAILED").category())
                 .isEqualTo(TerminalRecovery.Category.RETRYABLE);
+        assertThat(TerminalRecovery.fromCode("WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE")
+                        .category())
+                .isEqualTo(TerminalRecovery.Category.USER_ACTION_REQUIRED);
         assertThat(TerminalRecovery.fromCode("MODIFIED_ENTER_UNAVAILABLE").category())
                 .isEqualTo(TerminalRecovery.Category.TERMINAL_CAPABILITY);
         TerminalRecovery windows = TerminalRecovery.fromCode("WINDOWS_TERMINAL_MODIFIED_ENTER_REMAP");

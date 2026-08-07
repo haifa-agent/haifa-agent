@@ -307,11 +307,8 @@ public final class ProjectExecutionToolOperations {
                     sandboxProfileRef,
                     scratchSpace);
         } catch (ExecutionPreflightException exception) {
-            if ("WORKSPACE_MANIFEST_UNAVAILABLE".equals(exception.code())) {
-                throw new ToolInvocationException(
-                        exception.code(), ToolDispatchState.NOT_DISPATCHED, exception.getMessage(), exception);
-            }
-            throw exception;
+            throw new ToolInvocationException(
+                    exception.code(), ToolDispatchState.NOT_DISPATCHED, exception.getMessage(), exception);
         } finally {
             complete.set(true);
             cancellation.interrupt();

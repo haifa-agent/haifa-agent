@@ -1,5 +1,15 @@
 # Haifa Agent Local Native Sandbox
 
+Local Native 使用 `PROVIDER_ISOLATED` HOME/TMP 语义。Execution 环境租约不得包含宿主 `HOME`、
+`USERPROFILE`、AppData、XDG user directory 或 Scratch/TMP 名称，即使 Profile 误将名称列入 allowlist，
+Provider 也会在创建进程前 fail closed。Linux bubblewrap 在隔离命名空间内提供 `/tmp/haifa-home` 与
+`/tmp`；macOS Seatbelt 使用 owner-only Control 目录中的 HOME/TMP。隔离 HOME 不可建立时返回
+`SANDBOX_ISOLATED_HOME_UNAVAILABLE`，且不会回退
+Host Guarded，Windows 仍明确返回 `SANDBOX_ADAPTER_UNAVAILABLE`。
+
+这些 Provider 管理目录不属于 Workspace Change Observer 范围；本模块不持久化包缓存，也不记录包管理器
+或安装目录清单。
+
 `local-native` 是 macOS/Linux 显式可选严格模式的一次性命令 Sandbox Provider，不是 Coding Agent
 三端默认配置。公共 Provider 身份不包含 OS 品牌；模块内部
 在 macOS 使用 Seatbelt，在 Linux 使用 bubblewrap。Windows 当前明确返回
