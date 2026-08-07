@@ -12,6 +12,7 @@ import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
 import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
+import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObserver;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.policy.api.PolicyDigest;
@@ -22,6 +23,7 @@ import io.haifa.agent.project.provider.local.LocalWorkspaceFileService;
 import io.haifa.agent.project.provider.local.LocalWorkspaceLocationStore;
 import io.haifa.agent.project.store.WorkspaceBindingStore;
 import io.haifa.agent.project.store.WorkspaceStore;
+import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.sandbox.api.NetworkPolicy;
 import io.haifa.agent.sandbox.api.SandboxCapabilities;
 import io.haifa.agent.sandbox.api.SandboxException;
@@ -30,6 +32,7 @@ import io.haifa.agent.sandbox.api.SandboxPreflight;
 import io.haifa.agent.sandbox.api.SandboxProfile;
 import io.haifa.agent.sandbox.api.SandboxProvider;
 import io.haifa.agent.sandbox.api.SandboxWorkspaceAccess;
+import io.haifa.agent.sandbox.host.HostExecutionEnvironmentResolver;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
 import io.haifa.agent.sandbox.localnative.LocalNativePathGrant;
@@ -45,21 +48,24 @@ import java.util.Objects;
 import java.util.Set;
 
 /** Owns the CLI's trusted local execution assembly without exposing provider controls to the model. */
-final class CliExecutionPlatform {
+final class CliExecutionPlatform implements AutoCloseable {
     private final ProjectExecutionToolOperations operations;
     private final SandboxProfile profile;
     private final String shellDisplayName;
     private final String securitySummary;
+    private final LocalIncrementalWorkspaceChangeObserver workspaceChanges;
 
     private CliExecutionPlatform(
             ProjectExecutionToolOperations operations,
             SandboxProfile profile,
             String shellDisplayName,
-            String securitySummary) {
+            String securitySummary,
+            LocalIncrementalWorkspaceChangeObserver workspaceChanges) {
         this.operations = operations;
         this.profile = profile;
         this.shellDisplayName = shellDisplayName;
         this.securitySummary = securitySummary;
+        this.workspaceChanges = workspaceChanges;
     }
 
     static CliExecutionPlatform create(
@@ -74,6 +80,7 @@ final class CliExecutionPlatform {
             TimeProvider time,
             Clock clock,
             CodingAgentPolicyAssembly policy,
+            WorkspaceId workspaceId,
             Path workspaceRoot,
             PrintStream output) {
         Objects.requireNonNull(configuration, "configuration must not be null");
@@ -95,8 +102,16 @@ final class CliExecutionPlatform {
             throw new IllegalArgumentException(
                     "SANDBOX_ADAPTER_UNAVAILABLE: configured execution provider is unavailable");
         }
-        Map<String, String> environment = CliExecutionEnvironment.resolve(configuration, selected.providerId());
-        SandboxProfile profile = profile(configuration, selected, environment.keySet());
+        var resolvedEnvironment = CliExecutionEnvironment.resolve(
+                configuration,
+                selected.providerId(),
+                localConfiguration.controlRoot(),
+                workspaceRoot,
+                localConfiguration.controlRoot().resolve("host-scratch"));
+        Map<String, String> environment = resolvedEnvironment.environment();
+        var ignorePolicy = CliWorkspaceChangeIgnorePolicy.load(workspaceRoot);
+        SandboxProfile profile =
+                profile(configuration, selected, resolvedEnvironment.allowedEnvironmentNames(), ignorePolicy.version());
         var profileRegistry = new ImmutableSandboxProfileRegistry(List.of(profile));
         var providerRegistry = new ImmutableSandboxProviderRegistry(configuredProviders.values());
         SandboxPreflight preflight;
@@ -107,8 +122,7 @@ final class CliExecutionPlatform {
         }
         ExecutionEnvironmentRef environmentRef = new ExecutionEnvironmentRef(
                 List.of("cli-execution-" + profile.contentDigest().value()));
-        var ignorePolicy = CliWorkspaceManifestIgnorePolicy.load(workspaceRoot);
-        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceRoot, ignorePolicy);
+        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(workspaceId, workspaceRoot, ignorePolicy);
         var observedChanges = new ObservedFileChangeService(workspaces, changeSets, changeSetService, time);
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
@@ -139,7 +153,7 @@ final class CliExecutionPlatform {
                 CodingToolchainEnvironmentProfile.defaultScratchSpace());
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
-        return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary);
+        return new CliExecutionPlatform(operations, profile, shell.displayName(), securitySummary, workspaceChanges);
     }
 
     ProjectExecutionToolOperations operations() {
@@ -160,6 +174,11 @@ final class CliExecutionPlatform {
 
     String profileDigest() {
         return profile.ref().value() + "@" + profile.ref().version();
+    }
+
+    @Override
+    public void close() {
+        workspaceChanges.close();
     }
 
     static String policyResourceDigest(String command, String workdir, String profileDigest) {
@@ -213,15 +232,29 @@ final class CliExecutionPlatform {
     }
 
     static SandboxProfile profile(CliConfiguration.Execution configuration, SandboxProvider provider) {
-        Map<String, String> environment = CliExecutionEnvironment.resolve(configuration, provider.providerId());
-        return profile(configuration, provider, environment.keySet());
+        Path boundary = Path.of(System.getProperty("java.io.tmpdir"), "haifa-cli-profile-boundary")
+                .toAbsolutePath()
+                .normalize();
+        var environment = CliExecutionEnvironment.resolve(
+                configuration,
+                provider.providerId(),
+                boundary,
+                boundary.resolve("workspace"),
+                boundary.resolve("scratch"));
+        return profile(
+                configuration, provider, environment.allowedEnvironmentNames(), "cli-workspace-change-unbound-v1");
     }
 
     private static SandboxProfile profile(
-            CliConfiguration.Execution configuration, SandboxProvider provider, Set<String> inheritedEnvironment) {
+            CliConfiguration.Execution configuration,
+            SandboxProvider provider,
+            Set<String> inheritedEnvironment,
+            String workspaceChangePolicyVersion) {
         NetworkPolicy network = NetworkPolicy.valueOf(configuration.network().toUpperCase(java.util.Locale.ROOT));
         List<String> identityFields = new java.util.ArrayList<>();
-        identityFields.add("cli-execution-v1");
+        identityFields.add("cli-execution-v2");
+        identityFields.add(HostExecutionEnvironmentResolver.POLICY_VERSION);
+        identityFields.add(workspaceChangePolicyVersion);
         identityFields.add(provider.providerId());
         identityFields.add(provider.configurationDigest().value());
         identityFields.add(network.name());
@@ -235,7 +268,7 @@ final class CliExecutionPlatform {
                 .map(CliConfiguration.ExtraPathPolicy::id)
                 .sorted()
                 .forEach(value -> identityFields.add("path-policy:" + value));
-        String version = "1-"
+        String version = "2-"
                 + io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(identityFields)
                         .value()
                         .substring("sha256:".length());

@@ -81,6 +81,45 @@ public final class TerminalUiReducer {
                     Optional.empty(),
                     state.exitRequested());
         }
+        if (action instanceof TerminalUiAction.HistoryLoaded loaded) {
+            if (state.session()
+                    .map(value -> value.summary().sessionId())
+                    .filter(loaded.history().sessionId()::equals)
+                    .isEmpty()) {
+                return state;
+            }
+            List<TranscriptItem> transcript = new ArrayList<>();
+            if (loaded.history().earlierHistoryAvailable()) {
+                transcript.add(new TranscriptItem(
+                        "history-earlier",
+                        TranscriptItem.Kind.RESOURCE,
+                        "Earlier history",
+                        "Earlier history is not loaded or has been compacted.",
+                        "RESTORED",
+                        false));
+            }
+            loaded.history().items().stream()
+                    .map(TerminalUiReducer::historyItem)
+                    .forEach(transcript::add);
+            return copy(
+                    state,
+                    state.loadedResources(),
+                    transcript,
+                    state.pending(),
+                    state.status(),
+                    state.editorBuffer(),
+                    state.editorCursor(),
+                    state.selector(),
+                    state.footer(),
+                    state.columns(),
+                    state.rows(),
+                    state.session(),
+                    state.currentRunId(),
+                    state.appliedCursor(),
+                    state.seenEventIds(),
+                    state.recoverableError(),
+                    state.exitRequested());
+        }
         if (action instanceof TerminalUiAction.ResourcesChanged resources) {
             return copy(
                     state,
@@ -489,6 +528,17 @@ public final class TerminalUiReducer {
 
     private static boolean isInternalCheckpoint(RunEventPayloads.ResourceAvailable payload) {
         return "checkpoint".equalsIgnoreCase(payload.kind());
+    }
+
+    private static TranscriptItem historyItem(
+            io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem item) {
+        TranscriptItem.Kind kind =
+                switch (item.kind()) {
+                    case USER -> TranscriptItem.Kind.USER;
+                    case ASSISTANT -> TranscriptItem.Kind.ASSISTANT;
+                    case ERROR -> TranscriptItem.Kind.ERROR;
+                };
+        return new TranscriptItem(item.id(), kind, item.title(), item.body(), item.status(), false);
     }
 
     private static TerminalUiState output(TerminalUiState state, AgentRunOutputEvent event) {

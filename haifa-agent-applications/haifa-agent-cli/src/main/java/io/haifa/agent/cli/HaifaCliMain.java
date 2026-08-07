@@ -1,5 +1,6 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jCodingTerminal;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
@@ -42,12 +43,16 @@ public final class HaifaCliMain {
             Path workspace = parsed.workspace().orElseGet(() -> Path.of("."));
             if (!workspace.isAbsolute()) workspace = workspace.toAbsolutePath().normalize();
             CliConfiguration configuration = new CliConfigurationLoader().load(parsed, workspace);
-            boolean terminal = parsed.terminal() || parsed.message().isEmpty();
+            boolean terminal = parsed.resume().isPresent()
+                    || parsed.terminal()
+                    || parsed.message().isEmpty();
             try (CliTraceOutput trace = terminal
                     ? CliTraceOutput.openForTerminal(parsed.trace(), parsed.traceFile())
                     : CliTraceOutput.open(parsed.trace(), parsed.traceFile(), error)) {
                 if (terminal) {
-                    terminalRunner.run(workspace, configuration, output, trace);
+                    CodingTerminalStartup startup =
+                            parsed.resume().map(CliResumeRequest::startup).orElseGet(CodingTerminalStartup::empty);
+                    terminalRunner.run(workspace, configuration, startup, output, trace);
                     return 0;
                 }
                 try (LocalCodingAgent agent =
@@ -220,7 +225,11 @@ public final class HaifaCliMain {
 
     static String usage() {
         return """
-                Usage: haifa-cli [--terminal | -m <task>] [options]
+                Usage: haifa-coding [--terminal | -m <task>] [options]
+                       haifa-coding resume
+                       haifa-coding resume --last [<prompt>]
+                       haifa-coding resume <session-id> [<prompt>]
+                Resume is limited to the current workspace and does not take over an active Run.
                       --terminal             Start the interactive tui4j Coding Terminal
                   -m, --message <task>       One-shot coding task
                       --workspace <path>     Workspace root (default: current directory)

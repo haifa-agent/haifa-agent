@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -139,6 +140,18 @@ class RealEnvironmentTest(unittest.TestCase):
         arguments = real_environment.parser().parse_args(["--force"])
         with self.assertRaisesRegex(RuntimeError, "only be used with --stop"):
             real_environment.validate_arguments(arguments)
+
+    def test_rebuild_port_conflict_message_explains_stop_then_rebuild(self) -> None:
+        arguments = real_environment.parser().parse_args(["--rebuild"])
+        with mock.patch.object(real_environment, "port_open", return_value=True):
+            with self.assertRaises(RuntimeError) as failure:
+                real_environment.start_environment(arguments, real_environment.paths())
+
+        message = str(failure.exception)
+
+        self.assertIn("Stop the running environment first, then rebuild", message)
+        self.assertIn(r".\scripts\start-real-environment.ps1 -Stop", message)
+        self.assertIn(r".\scripts\start-real-environment.ps1 -Rebuild", message)
 
     def test_state_is_written_atomically_as_utf8_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

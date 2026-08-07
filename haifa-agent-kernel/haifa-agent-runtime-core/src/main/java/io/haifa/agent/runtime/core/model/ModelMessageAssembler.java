@@ -203,6 +203,13 @@ public final class ModelMessageAssembler {
             var correlations = mapped.stream()
                     .map(call -> call.providerCorrelationId().value())
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            var record = continuation.orElseThrow();
+            if (!record.providerId().equals(model.providerId().value())
+                    || !record.modelId().equals(model.providerModelId())
+                    || !record.configurationDigest().equals(model.configurationDigest())
+                    || !record.toolCorrelationIds().equals(correlations)) {
+                return List.of(ModelMessage.assistant(text, mapped));
+            }
             return List.of(
                     ModelMessage.assistant(text, mapped, state.resolveContinuation(message.id(), model, correlations)));
         }

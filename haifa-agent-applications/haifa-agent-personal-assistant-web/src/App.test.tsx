@@ -91,6 +91,7 @@ const run: Run = {
 };
 const activity: Activity = {
   activityId: "activity-1",
+  eventId: "event-activity-1",
   runId: run.id,
   kind: "TOOL",
   displayName: "checklist.verify",
@@ -98,12 +99,14 @@ const activity: Activity = {
   status: "SUCCEEDED",
   startedAt: "2026-07-28T01:00:00Z",
   completedAt: "2026-07-28T01:00:01Z",
+  occurredAt: "2026-07-28T01:00:01Z",
   safeResultSummary: "Completed",
   interactionRef: null,
   version: 5,
 };
 const modelActivity: Activity = {
   activityId: "model-activity-1",
+  eventId: "event-model-activity-1",
   runId: run.id,
   kind: "MODEL",
   displayName: "deepseek-chat",
@@ -111,6 +114,7 @@ const modelActivity: Activity = {
   status: "SUCCEEDED",
   startedAt: "2026-07-28T00:59:59Z",
   completedAt: "2026-07-28T01:00:00Z",
+  occurredAt: "2026-07-28T01:00:00Z",
   safeResultSummary: "Input 39,934 · Output 1,409",
   interactionRef: null,
   version: 3,
@@ -204,6 +208,51 @@ describe("Personal Assistant application", () => {
     expect(screen.queryByText("运行诊断")).toBeNull();
   });
 
+  it("scrolls the activity panel to the latest live event", async () => {
+    const activeConversation = { ...conversation, activeRunId: "run-live-activity" };
+    const activeRun = { ...run, id: "run-live-activity", status: "RUNNING", version: 1 };
+    const liveActivity = {
+      ...activity,
+      activityId: "activity-live",
+      runId: activeRun.id,
+      displayName: "workspace.inspect",
+      version: 1,
+    };
+    let emitActivity!: () => void;
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([activeConversation]);
+    vi.mocked(api.conversation).mockResolvedValue(activeConversation);
+    vi.mocked(api.run).mockResolvedValue(activeRun);
+    vi.mocked(api.activities).mockResolvedValue([]);
+    vi.mocked(api.streamRun).mockImplementation(async (_runId, handlers, signal) => {
+      handlers.onOpen?.();
+      emitActivity = () => handlers.onEvent({
+        eventId: "event-live-activity",
+        type: "activity.committed",
+        runId: activeRun.id,
+        occurredAt: "2026-07-28T01:00:01Z",
+        value: "SUCCEEDED",
+        activity: liveActivity,
+        source: "durable",
+        sequence: 1,
+      });
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+
+    const { container } = render(<App client={api} />);
+    await waitFor(() => expect(api.streamRun).toHaveBeenCalled());
+    const panel = container.querySelector<HTMLElement>(".activity-panel")!;
+    Object.defineProperty(panel, "scrollHeight", { configurable: true, value: 640 });
+    panel.scrollTop = 0;
+
+    await act(async () => emitActivity());
+
+    expect(await screen.findByText("workspace.inspect")).toBeTruthy();
+    expect(panel.scrollTop).toBe(640);
+  });
+
   it("renders a typed safe execution error and diagnostic id", async () => {
     const api = client();
     vi.mocked(api.run).mockResolvedValue({
@@ -223,7 +272,7 @@ describe("Personal Assistant application", () => {
 
     render(<App client={api} />);
 
-    expect(await screen.findByText(/\[RUN_BUDGET_EXCEEDED\] Run budget exceeded/)).toBeTruthy();
+    expect((await screen.findAllByText(/\[RUN_BUDGET_EXCEEDED\] Run budget exceeded/)).length).toBe(2);
     expect(screen.getByText(/诊断编号：diag-budget/)).toBeTruthy();
     expect(screen.getByText(/缩小任务范围后重新发起/)).toBeTruthy();
     expect(screen.queryByText(/java\.|Exception|stack/i)).toBeNull();
@@ -640,15 +689,154 @@ describe("Personal Assistant application", () => {
     vi.mocked(api.conversations).mockResolvedValue([active]);
     vi.mocked(api.conversation).mockResolvedValue(active);
     vi.mocked(api.run).mockResolvedValue(activeRun);
+    vi.mocked(api.activities).mockResolvedValue([]);
     const { container } = render(<App client={api} />);
 
     const composer = await screen.findByPlaceholderText("当前任务运行中");
     await waitFor(() => expect(composer.hasAttribute("disabled")).toBe(true));
-    expect(screen.getByText(/当前任务运行中，完成或停止后可继续输入/)).toBeTruthy();
+    expect(screen.getByText("任务运行中")).toBeTruthy();
+    const liveRunCard = container.querySelector(".live-run-card");
+    expect(liveRunCard?.querySelector(".live-run-copy")?.textContent).toBe("任务运行中");
+    expect(liveRunCard?.querySelector(".live-run-secondary .live-run-label")?.textContent).toBe("当前任务");
+    expect(liveRunCard?.querySelector(".live-run-secondary .live-run-progress")).toBeTruthy();
+    const detailsButton = screen.getByRole("button", { name: /查看运行详情/ });
+    expect(detailsButton.classList.contains("live-run-action-details")).toBe(true);
+    fireEvent.click(detailsButton);
+    const activityPanel = screen.getByLabelText("当前运行详情");
+    await waitFor(() => expect(document.activeElement).toBe(activityPanel));
+    expect(activityPanel.classList.contains("activity-panel-attention")).toBe(true);
     const cancelButton = screen.getByRole("button", { name: "停止当前任务" });
     expect(cancelButton.closest(".run-heading-row")).toBeTruthy();
     expect(cancelButton.querySelector("span")?.textContent).toBe("停止当前任务");
     expect(container.querySelector(".active-run-note button")).toBeNull();
+    expect(container.querySelector(".active-run-note")).toBeNull();
+  });
+
+  it("offers one-click resend when a failed run produced no assistant output", async () => {
+    const failedRun: Run = {
+      ...run,
+      id: "run-failed-without-output",
+      status: "FAILED",
+      output: "",
+      resultSummary: null,
+      errorCode: "MODEL_CALL_FAILED",
+    };
+    const failedTurn: Turn = {
+      id: "turn-failed-user",
+      role: "USER",
+      runId: failedRun.id,
+      sequence: 1,
+      text: "请重新处理这条消息",
+      images: [],
+      createdAt: "2026-07-28T01:00:00Z",
+    };
+    const api = client();
+    vi.mocked(api.turns).mockResolvedValue([failedTurn]);
+    vi.mocked(api.run).mockResolvedValue(failedRun);
+    vi.mocked(api.activities).mockResolvedValue([]);
+
+    render(<App client={api} />);
+
+    const resend = await screen.findByRole("button", { name: "重新发送上一条失败消息" });
+    fireEvent.click(resend);
+
+    await waitFor(() => expect(api.submitMessage).toHaveBeenCalledWith(
+      conversation,
+      failedTurn.text,
+      { idempotencyKey: expect.any(String) },
+    ));
+  });
+
+  it("shows the latest safe activity in the live run card", async () => {
+    const active = { ...conversation, activeRunId: "run-tool" };
+    const activeRun = { ...run, id: "run-tool", status: "RUNNING", version: 1 };
+    const startedActivity: Activity = {
+      ...activity,
+      activityId: "activity-tool-started",
+      runId: activeRun.id,
+      displayName: "workspace.inspect",
+      safeTargetSummary: "Repository source files",
+      safeResultSummary: "",
+      status: "STARTED",
+      startedAt: new Date(Date.now()).toISOString(),
+      completedAt: null,
+      version: 9,
+    };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(activeRun);
+    vi.mocked(api.activities).mockResolvedValue([startedActivity]);
+
+    const { container } = render(<App client={api} />);
+
+    await waitFor(() => expect(container.querySelector(".live-run-card")).toBeTruthy());
+    const liveCard = container.querySelector<HTMLElement>(".live-run-card")!;
+    expect(within(liveCard).getByText("正在运行 workspace.inspect")).toBeTruthy();
+    expect(within(liveCard).getByText("Repository source files")).toBeTruthy();
+    expect(within(liveCard).getByText("耗时 1秒")).toBeTruthy();
+  });
+
+  it("shows authoritative plan progress when the run has real todo data", async () => {
+    const active = { ...conversation, activeRunId: "run-plan" };
+    const plannedRun: Run = {
+      ...run,
+      id: "run-plan",
+      status: "RUNNING",
+      version: 3,
+      plan: {
+        id: "plan-1",
+        objective: "Inspect repository",
+        revision: 2,
+        updatedAt: "2026-07-28T01:00:00Z",
+        items: [
+          { id: "todo-1", title: "读取结构", priority: "HIGH", status: "COMPLETED" },
+          { id: "todo-2", title: "分析实现", priority: "HIGH", status: "IN_PROGRESS" },
+        ],
+      },
+    };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(plannedRun);
+    vi.mocked(api.activities).mockResolvedValue([]);
+
+    const { container } = render(<App client={api} />);
+
+    await waitFor(() => expect(container.querySelector(".live-run-progress")).toBeTruthy());
+    const progress = container.querySelector<HTMLElement>(".live-run-progress")!;
+    expect(within(progress).getByText("计划步骤 1/2 · 当前：分析实现")).toBeTruthy();
+    expect(progress.getAttribute("aria-label")).toContain("计划步骤 1/2");
+  });
+
+  it("shows answer generation as a higher-priority live state", async () => {
+    const active = { ...conversation, activeRunId: "run-answer" };
+    const activeRun = { ...run, id: "run-answer", status: "RUNNING", version: 1 };
+    const api = client();
+    vi.mocked(api.conversations).mockResolvedValue([active]);
+    vi.mocked(api.conversation).mockResolvedValue(active);
+    vi.mocked(api.run).mockResolvedValue(activeRun);
+    vi.mocked(api.activities).mockResolvedValue([]);
+    vi.mocked(api.streamRun).mockImplementation(async (_runId, handlers, signal) => {
+      handlers.onOpen?.();
+      handlers.onEvent({
+        eventId: "event-answer-started",
+        type: "answer.started",
+        runId: activeRun.id,
+        occurredAt: "2026-07-28T01:00:00Z",
+        value: "generation-1",
+        source: "transient",
+        sequence: 1,
+      });
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    });
+
+    render(<App client={api} />);
+
+    expect(await screen.findByText("正在生成回答")).toBeTruthy();
+    expect(screen.getByText("模型正在准备首段内容")).toBeTruthy();
   });
 
   it("shows the exact high-risk execution approval content", async () => {
@@ -685,8 +873,14 @@ describe("Personal Assistant application", () => {
     expect(screen.getByRole("button", { name: "批准" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
     expect(container.querySelector(".execution-risk-badge")).toBeTruthy();
-    expect(container.querySelector(".messages > .interaction-card")).toBeTruthy();
+    const interactionCard = container.querySelector<HTMLElement>(".messages > .interaction-card");
+    expect(interactionCard).toBeTruthy();
     expect(container.querySelector(".activity-panel .interaction-card")).toBeNull();
+    const liveCard = container.querySelector<HTMLElement>(".live-run-card");
+    expect(liveCard).toBeTruthy();
+    expect(within(liveCard!).getByText("需要你的审批")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /查看并处理/ }));
+    expect(document.activeElement).toBe(interactionCard);
   });
 
   it("renders an approval without waiting for the activities snapshot", async () => {

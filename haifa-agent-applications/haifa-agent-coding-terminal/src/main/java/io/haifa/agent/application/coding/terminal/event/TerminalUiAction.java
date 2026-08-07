@@ -2,6 +2,7 @@ package io.haifa.agent.application.coding.terminal.event;
 
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -11,6 +12,8 @@ import java.util.List;
 
 public sealed interface TerminalUiAction {
     record SessionLoaded(CodingSessionView view, List<String> resources) implements TerminalUiAction {}
+
+    record HistoryLoaded(CodingSessionHistoryPage history) implements TerminalUiAction {}
 
     record SessionCleared(String status) implements TerminalUiAction {}
 

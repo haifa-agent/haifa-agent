@@ -26,7 +26,9 @@ public record PersonalExecutionPlatform(
         ExecutionToolProvider provider,
         ExecutionPlatformContribution execution,
         ShellPlatformContribution shell,
-        ApprovalPlatformContribution approval) {
+        ApprovalPlatformContribution approval,
+        AutoCloseable lifecycle)
+        implements AutoCloseable {
     private static final int MAX_APPROVAL_PROMPT_LENGTH = 2_048;
     private static final int MAX_ARGS_SUMMARY_LENGTH = 256;
 
@@ -42,9 +44,19 @@ public record PersonalExecutionPlatform(
             SandboxProfile profile,
             ScriptRuntimeResolver runtimes,
             ApprovalVerificationService approvalVerification) {
+        return create(provider, profile, runtimes, approvalVerification, () -> {});
+    }
+
+    public static PersonalExecutionPlatform create(
+            ExecutionToolProvider provider,
+            SandboxProfile profile,
+            ScriptRuntimeResolver runtimes,
+            ApprovalVerificationService approvalVerification,
+            AutoCloseable lifecycle) {
         Objects.requireNonNull(provider);
         Objects.requireNonNull(profile);
         Objects.requireNonNull(runtimes);
+        Objects.requireNonNull(lifecycle);
         String profileIdentity = profile.ref().value() + "@" + profile.ref().version();
         ToolDefinition definition = ExecutionToolDefinitionFactory.create(
                 profileIdentity,
@@ -82,7 +94,19 @@ public record PersonalExecutionPlatform(
                                 ProductCapabilities.APPROVAL,
                                 SdkConfigurationDigest.sha256("personal-local-principal-approval-v1"),
                                 "Personal exact invocation approval verification"),
-                        approvalVerification));
+                        approvalVerification),
+                lifecycle);
+    }
+
+    @Override
+    public void close() {
+        try {
+            lifecycle.close();
+        } catch (RuntimeException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("Personal execution resources could not be closed", exception);
+        }
     }
 
     public String approvalPrompt(FrozenToolBinding binding, ToolCall call, boolean reauthentication) {

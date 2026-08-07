@@ -16,6 +16,8 @@ export type ConnectionState =
   | "reconnecting"
   | "disconnected";
 
+export type OutputPhase = "idle" | "starting" | "streaming";
+
 export interface CommandState {
   id: string;
   label: string;
@@ -34,6 +36,7 @@ export interface UiState {
   memoryCandidates: MemoryCandidate[];
   memories: Memory[];
   streamDraft: string;
+  outputPhase: OutputPhase;
   streamSequences: {
     durable: number;
     transient: number;

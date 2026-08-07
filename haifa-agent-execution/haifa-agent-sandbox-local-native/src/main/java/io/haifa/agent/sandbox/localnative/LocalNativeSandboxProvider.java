@@ -60,6 +60,22 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
             "AWS_SECRET_ACCESS_KEY",
             "AZURE_CLIENT_SECRET",
             "GOOGLE_APPLICATION_CREDENTIALS");
+    private static final Set<String> PROVIDER_MANAGED_ENVIRONMENT = Set.of(
+            "HOME",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "XDG_STATE_HOME",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "GOTMPDIR",
+            "GOCACHE");
 
     private final WorkspaceStore workspaces;
     private final WorkspaceBindingStore bindings;
@@ -242,6 +258,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                 throw failure("WORKSPACE_BIND_FAILED", "working directory belongs to another workspace");
             }
             validateCommand(execution);
+            validateRequestedEnvironment(execution.environment());
             Path cwd = resolveDirectory(execution.workingDirectory());
             Instant started = time.now();
             if (cancelRequested) {
@@ -451,15 +468,8 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
         private Map<String, String> validateEnvironment(
                 Map<String, String> requested, Path controls, ExecutionScratchSpaceSpec scratchSpace) {
             var safe = new java.util.LinkedHashMap<String, String>();
-            requested.forEach((name, value) -> {
-                String upper = name.toUpperCase(Locale.ROOT);
-                if (!profile.allowedEnvironmentNames().contains(name)
-                        || FORBIDDEN_ENVIRONMENT.contains(upper)
-                        || looksLikeSecretName(upper)) {
-                    throw failure("CAPABILITY_UNAVAILABLE", "environment lease contains a denied name");
-                }
-                safe.put(name, value);
-            });
+            validateRequestedEnvironment(requested);
+            safe.putAll(requested);
             if (adapter.adapterId().equals("linux-bubblewrap")) {
                 safe.put("HOME", "/tmp/haifa-home");
                 scratchSpace.rootEnvironmentNames().forEach(name -> safe.put(name, "/tmp"));
@@ -472,7 +482,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                     Files.createDirectory(home);
                     SecureFilePermissions.secureDirectory(home);
                 } catch (IOException exception) {
-                    throw failure("SANDBOX_PROVISION_FAILED", "sandbox home could not be created");
+                    throw failure("SANDBOX_ISOLATED_HOME_UNAVAILABLE", "sandbox home could not be created");
                 }
                 safe.put("HOME", home.toString());
                 Path scratchRoot = provisionScratch(controls, scratchSpace);
@@ -484,6 +494,18 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                                 scratchRoot.resolve(binding.relativeDirectory()).toString()));
             }
             return Map.copyOf(safe);
+        }
+
+        private void validateRequestedEnvironment(Map<String, String> requested) {
+            requested.forEach((name, value) -> {
+                String upper = name.toUpperCase(Locale.ROOT);
+                if (!profile.allowedEnvironmentNames().contains(name)
+                        || FORBIDDEN_ENVIRONMENT.contains(upper)
+                        || PROVIDER_MANAGED_ENVIRONMENT.contains(upper)
+                        || looksLikeSecretName(upper)) {
+                    throw failure("CAPABILITY_UNAVAILABLE", "environment lease contains a denied name");
+                }
+            });
         }
 
         private Path provisionScratch(Path controls, ExecutionScratchSpaceSpec scratchSpace) {

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class CliArgumentsTest {
@@ -63,5 +64,49 @@ class CliArgumentsTest {
                 .contains(CliTraceMode.DETAIL);
         assertThat(CliArguments.parse(new String[] {"--trace", "JsonL"}).trace())
                 .contains(CliTraceMode.JSONL);
+    }
+
+    @Test
+    void parsesEveryResumeCommandForm() {
+        assertThat(CliArguments.parse(new String[] {"resume"}).resume())
+                .contains(new CliResumeRequest(CliResumeRequest.Target.SELECTOR, Optional.empty(), Optional.empty()));
+        assertThat(CliArguments.parse(new String[] {"resume", "--last"}).resume())
+                .contains(new CliResumeRequest(CliResumeRequest.Target.LAST, Optional.empty(), Optional.empty()));
+        assertThat(CliArguments.parse(new String[] {"resume", "--last", "continue", "the", "work"})
+                        .resume())
+                .contains(new CliResumeRequest(
+                        CliResumeRequest.Target.LAST, Optional.empty(), Optional.of("continue the work")));
+        assertThat(CliArguments.parse(new String[] {"resume", "session-1"}).resume())
+                .contains(new CliResumeRequest(
+                        CliResumeRequest.Target.SESSION,
+                        Optional.of(new io.haifa.agent.core.session.AgentSessionId("session-1")),
+                        Optional.empty()));
+        assertThat(CliArguments.parse(new String[] {"resume", "session-1", "continue", "the", "work"})
+                        .resume())
+                .contains(new CliResumeRequest(
+                        CliResumeRequest.Target.SESSION,
+                        Optional.of(new io.haifa.agent.core.session.AgentSessionId("session-1")),
+                        Optional.of("continue the work")));
+    }
+
+    @Test
+    void resumeAcceptsLauncherOptionsBeforeTheCommandAndPromptDelimiter() {
+        CliArguments parsed = CliArguments.parse(
+                new String[] {"--config", "distribution.yaml", "resume", "--last", "--", "--fix", "the", "tests"});
+
+        assertThat(parsed.config()).contains(Path.of("distribution.yaml"));
+        assertThat(parsed.resume().orElseThrow().prompt()).contains("--fix the tests");
+    }
+
+    @Test
+    void rejectsAmbiguousResumeModesAndModelOverride() {
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"resume", "session-1", "--last"}))
+                .hasMessageContaining("--last cannot be used with a SESSION_ID");
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"resume", "--last", "--last"}))
+                .hasMessageContaining("may only be specified once");
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"resume", "--terminal"}))
+                .hasMessageContaining("resume cannot be used");
+        assertThatThrownBy(() -> CliArguments.parse(new String[] {"resume", "--model", "other"}))
+                .hasMessageContaining("cannot override the Session model");
     }
 }

@@ -98,17 +98,32 @@ public final class PersonalApiDtos {
             Optional<String> resultSummary,
             Optional<String> errorCode,
             Optional<ExecutionError> error,
+            Optional<Plan> plan,
             Usage usage) {}
+
+    public record Plan(String id, String objective, List<Todo> items, long revision, Instant updatedAt) {}
+
+    public record Todo(
+            String id,
+            String title,
+            String priority,
+            String status,
+            Optional<Instant> startedAt,
+            Optional<Instant> completedAt) {}
 
     public record Activity(
             String activityId,
+            String eventId,
+            Optional<String> parentActivityId,
             String runId,
             String kind,
             String displayName,
             String safeTargetSummary,
             String status,
-            Instant startedAt,
+            Optional<Instant> requestedAt,
+            Optional<Instant> startedAt,
             Optional<Instant> completedAt,
+            Instant occurredAt,
             String safeResultSummary,
             Optional<String> interactionRef,
             long version) {}

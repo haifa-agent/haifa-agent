@@ -11,9 +11,7 @@ import io.haifa.agent.execution.core.DefaultExecutionBroker;
 import io.haifa.agent.execution.core.ImmutableSandboxProfileRegistry;
 import io.haifa.agent.execution.core.ImmutableSandboxProviderRegistry;
 import io.haifa.agent.execution.core.PolicyDecisionExecutionPolicy;
-import io.haifa.agent.execution.core.manifest.ManifestBudget;
-import io.haifa.agent.execution.core.manifest.ManifestDiffService;
-import io.haifa.agent.execution.core.manifest.WorkspaceManifestService;
+import io.haifa.agent.execution.core.change.LocalIncrementalWorkspaceChangeObserver;
 import io.haifa.agent.execution.core.store.InMemoryExecutionOutputStore;
 import io.haifa.agent.execution.core.store.InMemoryExecutionStore;
 import io.haifa.agent.execution.core.tool.ExecutionInvocationScopeResolver.ExecutionInvocationScope;
@@ -44,15 +42,17 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.sandbox.api.SandboxConfigurationDigest;
 import io.haifa.agent.sandbox.api.SandboxProfile;
+import io.haifa.agent.sandbox.host.HostExecutionEnvironmentResolver;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.sandbox.host.HostShell;
+import io.haifa.agent.sandbox.host.ResolvedHostEnvironment;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -69,6 +69,9 @@ public final class PersonalExecutionRuntime {
             PolicyPlatformContribution policy,
             Clock clock) {
         Path workspaceRoot = prepare(dataDirectory.resolve("execution-workspace"));
+        Path scratchRoot = Path.of(System.getProperty("java.io.tmpdir"), "haifa-agent-host-scratch")
+                .toAbsolutePath()
+                .normalize();
         IdentifierGenerator identifiers = new UuidV7IdentifierGenerator();
         TimeProvider time = clock::instant;
         var workspaces = new InMemoryWorkspaceStore();
@@ -98,11 +101,26 @@ public final class PersonalExecutionRuntime {
                 .activate(time.now()));
 
         HostShell shell = HostShell.auto();
-        var host = new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell);
+        var host =
+                new HostGuardedSandboxProvider(workspaces, bindings, locations, identifiers, time, shell, scratchRoot);
         ScriptRuntimeResolver runtimes = ScriptRuntimeResolver.currentHost(
                 configuredPath(properties.pythonPath()), configuredPath(properties.powerShellPath()));
-        Set<String> environmentNames = environmentNames();
-        String profileVersion = "2-" + host.configurationDigest().value().substring("sha256:".length());
+        var resolvedEnvironment = resolveHostEnvironment(
+                System.getenv(),
+                System.getProperty("os.name", ""),
+                Path.of(System.getProperty("user.home", ".")),
+                dataDirectory,
+                workspaceRoot,
+                scratchRoot);
+        Map<String, String> environment = resolvedEnvironment.environment();
+        Set<String> environmentNames = resolvedEnvironment.allowedEnvironmentNames();
+        String profileVersion = "3-"
+                + SandboxConfigurationDigest.sha256Fields(List.of(
+                                host.configurationDigest().value(),
+                                HostExecutionEnvironmentResolver.POLICY_VERSION,
+                                PersonalWorkspaceChangeIgnorePolicy.VERSION))
+                        .value()
+                        .substring("sha256:".length());
         SandboxProfile profile = SandboxProfile.hostGuarded(
                 new SandboxProfileRef("personal-host-guarded", profileVersion),
                 host.configurationDigest(),
@@ -113,22 +131,19 @@ public final class PersonalExecutionRuntime {
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
         var changeSetStore = new InMemoryFileChangeSetStore();
         var changeSets = new FileChangeSetService(changeSetStore, identifiers, time);
+        var workspaceChanges = new LocalIncrementalWorkspaceChangeObserver(
+                workspaceId, workspaceRoot, new PersonalWorkspaceChangeIgnorePolicy());
         var broker = new DefaultExecutionBroker(
                 new InMemoryExecutionStore(),
                 new InMemoryExecutionOutputStore(),
-                ignored -> environment(environmentNames),
+                ignored -> environment,
                 new PolicyDecisionExecutionPolicy(
                         policy.decisions(), policy.snapshots(), policy.authorizationEvidence(), clock),
                 new ImmutableSandboxProfileRegistry(List.of(profile)),
                 new ImmutableSandboxProviderRegistry(List.of(host)),
                 workspaces,
                 bindings,
-                new WorkspaceManifestService(
-                        workspaces,
-                        files,
-                        new ManifestBudget(10_000, 256L * 1024 * 1024, 64L * 1024 * 1024),
-                        "personal-execution-v1"),
-                new ManifestDiffService(),
+                workspaceChanges,
                 new ObservedFileChangeService(workspaces, changeSetStore, changeSets, time));
         var configuration = new ExecutionToolConfiguration(
                 new ExecutionEnvironmentRef(
@@ -151,12 +166,22 @@ public final class PersonalExecutionRuntime {
                 configuration,
                 (resolvedWorkspaceId, inputPaths) -> inputPaths.forEach(path ->
                         files.stat(new io.haifa.agent.project.path.WorkspacePath(resolvedWorkspaceId, path), false)));
-        return PersonalExecutionPlatform.create(provider, profile, runtimes, (request, responder) -> {
-            boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
-                    && request.requester().principal().equals(responder.principal());
-            return new ApprovalVerification(
-                    samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
-        });
+        try {
+            return PersonalExecutionPlatform.create(
+                    provider,
+                    profile,
+                    runtimes,
+                    (request, responder) -> {
+                        boolean samePrincipal = request.requester().tenant().equals(responder.tenant())
+                                && request.requester().principal().equals(responder.principal());
+                        return new ApprovalVerification(
+                                samePrincipal, samePrincipal ? "LOCAL_PRINCIPAL_MATCH" : "LOCAL_PRINCIPAL_MISMATCH");
+                    },
+                    workspaceChanges);
+        } catch (RuntimeException | Error exception) {
+            workspaceChanges.close();
+            throw exception;
+        }
     }
 
     private static Optional<Path> configuredPath(String value) {
@@ -168,17 +193,21 @@ public final class PersonalExecutionRuntime {
         return Optional.of(path);
     }
 
-    private static Set<String> environmentNames() {
-        Set<String> candidates = Set.of("PATH", "SystemRoot", "ComSpec", "PATHEXT", "TMP", "TEMP", "HOME");
-        return candidates.stream()
-                .filter(name -> System.getenv(name) != null)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
-    }
-
-    private static Map<String, String> environment(Set<String> names) {
-        Map<String, String> values = new LinkedHashMap<>();
-        names.stream().sorted().forEach(name -> values.put(name, System.getenv(name)));
-        return Map.copyOf(values);
+    static ResolvedHostEnvironment resolveHostEnvironment(
+            Map<String, String> hostEnvironment,
+            String operatingSystem,
+            Path jvmUserHome,
+            Path applicationDataRoot,
+            Path workspaceRoot,
+            Path scratchRoot) {
+        return HostExecutionEnvironmentResolver.resolveHostUser(
+                hostEnvironment,
+                operatingSystem,
+                jvmUserHome,
+                applicationDataRoot,
+                workspaceRoot,
+                scratchRoot,
+                Set.of());
     }
 
     private static Path prepare(Path value) {

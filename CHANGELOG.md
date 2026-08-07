@@ -2,6 +2,9 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Coding Agent 新增顶层 `haifa-coding resume` 基础能力：支持选择、最近及指定 Session，并可在打开后
+  提交首条 Prompt；Terminal 从权威 Session Message Store 恢复最近 100 条安全用户可见历史，活动
+  Run 仅只读打开且禁止自动接管、恢复或重复提交。
 - 新增默认 `file.patch` 1.1：支持 Codex 风格上下文定位、多文件新增/删除/更新/移动，以及大文件流式
   转换、提交前哈希复核、同目录临时文件和原子替换；`file.write` 仅保留给整体替换的小文件。
 - CLI 执行审计从每条命令前后全量 Workspace Manifest 改为一次基线加 WatchService 候选增量哈希；仅在

@@ -3,6 +3,7 @@ import {
   Bot,
   Brain,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -13,6 +14,7 @@ import {
   Image as ImageIcon,
   Menu,
   MessageSquarePlus,
+  PauseCircle,
   Link,
   Paperclip,
   PanelRight,
@@ -23,6 +25,8 @@ import {
   ShieldCheck,
   Sparkles,
   Square,
+  Timer,
+  WifiOff,
   X,
   Zap,
 } from "lucide-react";
@@ -54,6 +58,7 @@ import {
   type PersonalAssistantClient,
 } from "./api/client";
 import { appReducer, initialState } from "./state/appReducer";
+import type { ConnectionState, OutputPhase } from "./types";
 import { renderMarkdown } from "./utils/markdownRenderer";
 
 const defaultClient = new HttpPersonalAssistantClient();
@@ -314,17 +319,24 @@ function statusLabel(status: string): string {
     ACTIVE: "活跃",
     ARCHIVED: "已归档",
     CREATED: "已创建",
+    PENDING: "准备中",
+    QUEUED: "排队中",
     RUNNING: "运行中",
+    SUSPENDING: "暂停中",
+    SUSPENDED: "已暂停",
     WAITING_FOR_INTERACTION: "等待回复",
     WAITING_FOR_APPROVAL: "等待确认",
     WAITING_INTERACTION: "等待回复",
     WAITING_APPROVAL: "等待确认",
+    COMPLETING: "整理结果中",
     COMPLETED: "已完成",
     FAILED: "失败",
     CANCELLED: "已停止",
     TIMEOUT: "已超时",
     STARTED: "进行中",
+    REQUESTED: "准备调用",
     SUCCEEDED: "已完成",
+    TIMED_OUT: "已超时",
     APPROVE: "批准",
     REJECT: "拒绝",
     SUBMIT: "提交",
@@ -476,6 +488,390 @@ function ActivityIcon({ kind }: { kind: Activity["kind"] }) {
   return <Cpu size={17} />;
 }
 
+type LiveRunTone = "active" | "attention" | "success" | "danger" | "muted";
+
+interface LiveRunPresentation {
+  tone: LiveRunTone;
+  label: string;
+  title: string;
+  detail?: string;
+  icon: "activity" | "approval" | "complete" | "error" | "pause" | "timer" | "connection" | "running";
+  action: "interaction" | "details" | null;
+}
+
+function latestActivity(activities: Activity[]): Activity | null {
+  return activities.reduce<Activity | null>(
+    (latest, activity) => (!latest || activity.version > latest.version ? activity : latest),
+    null,
+  );
+}
+
+const finishedActivityStatuses = new Set(["SUCCEEDED", "COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"]);
+const finishedTodoStatuses = new Set(["COMPLETED", "CANCELLED", "SKIPPED"]);
+
+function runPhaseLabel(
+  run: Run,
+  activities: Activity[],
+  outputPhase: OutputPhase,
+): string {
+  if (run.status === "WAITING_APPROVAL") return "等待审批";
+  if (run.status === "WAITING_INTERACTION") return "等待回复";
+  if (run.status === "COMPLETING") return "整理结果";
+  if (run.status === "COMPLETED") return "已完成";
+  if (["FAILED", "CANCELLED", "TIMEOUT"].includes(run.status)) return "已结束";
+  if (outputPhase !== "idle") return "生成回答";
+  const active = [...activities]
+    .reverse()
+    .find((activity) => !finishedActivityStatuses.has(activity.status.toUpperCase()));
+  if (active?.kind === "MODEL") return "模型处理";
+  if (active?.kind === "MCP") return "调用 MCP";
+  if (active?.kind === "SKILL") return "加载 Skill";
+  if (active) return "执行工具";
+  if (["PENDING", "QUEUED"].includes(run.status)) return "准备任务";
+  return "运行任务";
+}
+
+function formatElapsedTime(seconds: number): string {
+  if (seconds < 60) return `${seconds}秒`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return `${minutes}分${String(remainingSeconds).padStart(2, "0")}秒`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}时${String(minutes % 60).padStart(2, "0")}分${String(remainingSeconds).padStart(2, "0")}秒`;
+}
+
+function useActivityElapsed(startedAt?: string | null): string | null {
+  const [clock, setClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    setClock(Date.now());
+    if (!startedAt) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+
+  if (!startedAt) return null;
+  const started = Date.parse(startedAt);
+  if (!Number.isFinite(started)) return null;
+  const seconds = Math.max(1, Math.floor((clock - started) / 1_000) + 1);
+  return `耗时 ${formatElapsedTime(seconds)}`;
+}
+
+function RunProgress({
+  run,
+  activities,
+  outputPhase,
+}: {
+  run: Run;
+  activities: Activity[];
+  outputPhase: OutputPhase;
+}) {
+  const phase = runPhaseLabel(run, activities, outputPhase);
+  const finishedActivities = activities.filter((activity) =>
+    finishedActivityStatuses.has(activity.status.toUpperCase()),
+  ).length;
+  const activeActivities = activities.length - finishedActivities;
+  const plan = run.plan;
+  const terminal = terminalStatuses.has(run.status);
+  const timedActivity = [...activities]
+    .reverse()
+    .find((activity) => activity.startedAt && !finishedActivityStatuses.has(activity.status.toUpperCase()));
+  const elapsed = useActivityElapsed(timedActivity?.startedAt);
+
+  if (plan?.items.length) {
+    const finishedSteps = plan.items.filter((item) => finishedTodoStatuses.has(item.status)).length;
+    const current = terminal
+      ? undefined
+      : plan.items.find((item) => ["IN_PROGRESS", "BLOCKED"].includes(item.status))
+        ?? plan.items.find((item) => item.status === "PENDING");
+    const progress = Math.round((finishedSteps / plan.items.length) * 100);
+    return (
+      <div className="live-run-progress" aria-label={`运行阶段：${phase}；计划步骤 ${finishedSteps}/${plan.items.length}`}>
+        <span className="live-run-phase">{phase}</span>
+        <span className="live-run-progress-track" aria-hidden="true">
+          <span style={{ width: `${progress}%` }} />
+        </span>
+        {elapsed && <span className="live-run-elapsed">{elapsed}</span>}
+        <small>
+          计划步骤 {finishedSteps}/{plan.items.length}
+          {current ? ` · ${current.status === "BLOCKED" ? "受阻" : "当前"}：${current.title}` : ""}
+        </small>
+      </div>
+    );
+  }
+
+  return (
+    <div className="live-run-progress" aria-label={`运行阶段：${phase}`}>
+      <span className="live-run-phase">{phase}</span>
+      {elapsed && <span className="live-run-elapsed">{elapsed}</span>}
+      <small>
+        {terminal
+          ? `本次共观察 ${activities.length} 个活动`
+          : activities.length
+          ? `已结束活动 ${finishedActivities} · 当前活动 ${activeActivities} · 已观察 ${activities.length}`
+          : "等待首个可观察活动"}
+      </small>
+    </div>
+  );
+}
+
+function activityPresentation(activity: Activity): LiveRunPresentation {
+  const status = activity.status.toUpperCase();
+  const name = activity.displayName;
+  const detail = ["SUCCEEDED", "COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"].includes(status)
+    ? activity.safeResultSummary || activity.safeTargetSummary
+    : activity.safeTargetSummary;
+  const kindLabel = activity.kind === "MODEL"
+    ? "模型"
+    : activity.kind === "SKILL"
+      ? "Skill"
+      : activity.kind === "MCP"
+        ? "MCP"
+        : "工具";
+
+  if (status === "REQUESTED") {
+    return {
+      tone: "active",
+      label: `${kindLabel}活动`,
+      title: `准备调用 ${name}`,
+      detail,
+      icon: "activity",
+      action: "details",
+    };
+  }
+  if (status === "STARTED") {
+    const verb = activity.kind === "MODEL" ? "正在请求" : activity.kind === "MCP" ? "正在调用" : "正在运行";
+    return {
+      tone: "active",
+      label: `${kindLabel}活动`,
+      title: `${verb} ${name}`,
+      detail,
+      icon: "activity",
+      action: "details",
+    };
+  }
+  if (["SUCCEEDED", "COMPLETED"].includes(status)) {
+    return {
+      tone: "success",
+      label: `${kindLabel}活动`,
+      title: activity.kind === "MODEL" ? "模型响应已返回" : `${name} 已完成`,
+      detail,
+      icon: "complete",
+      action: "details",
+    };
+  }
+  if (status === "FAILED") {
+    return {
+      tone: "danger",
+      label: `${kindLabel}活动`,
+      title: activity.kind === "MODEL" ? "模型调用失败" : `${name} 执行失败`,
+      detail,
+      icon: "error",
+      action: "details",
+    };
+  }
+  if (status === "TIMED_OUT") {
+    return {
+      tone: "danger",
+      label: `${kindLabel}活动`,
+      title: `${name} 执行超时`,
+      detail,
+      icon: "timer",
+      action: "details",
+    };
+  }
+  if (status === "CANCELLED") {
+    return {
+      tone: "muted",
+      label: `${kindLabel}活动`,
+      title: `${name} 已取消`,
+      detail,
+      icon: "pause",
+      action: "details",
+    };
+  }
+  return {
+    tone: "active",
+    label: `${kindLabel}活动`,
+    title: `${name} 有新的运行动态`,
+    detail,
+    icon: "activity",
+    action: "details",
+  };
+}
+
+function runPresentation(
+  run: Run,
+  activity: Activity | null,
+  interaction: Interaction | null,
+  outputPhase: OutputPhase,
+  connection: ConnectionState,
+): LiveRunPresentation {
+  if (["WAITING_APPROVAL", "WAITING_INTERACTION"].includes(run.status)) {
+    const approval = run.status === "WAITING_APPROVAL";
+    return {
+      tone: approval && interaction?.safePrompt.includes("Risks: HIGH") ? "danger" : "attention",
+      label: approval ? "等待审批" : "等待回复",
+      title: approval ? "需要你的审批" : "需要你的回复",
+      detail: interaction?.title ?? (approval ? "审批详情正在加载" : "交互详情正在加载"),
+      icon: "approval",
+      action: interaction ? "interaction" : null,
+    };
+  }
+  if (run.status === "FAILED") {
+    return {
+      tone: "danger",
+      label: "任务未完成",
+      title: "任务执行失败",
+      detail: run.error ? `[${run.error.code}] ${run.error.message}` : run.errorCode ?? undefined,
+      icon: "error",
+      action: "details",
+    };
+  }
+  if (run.status === "TIMEOUT") {
+    return {
+      tone: "danger",
+      label: "任务未完成",
+      title: "任务已超时",
+      detail: run.error ? executionErrorGuidance(run.error) : "可以查看运行详情确认停止位置",
+      icon: "timer",
+      action: "details",
+    };
+  }
+  if (run.status === "CANCELLED") {
+    return {
+      tone: "muted",
+      label: "任务已结束",
+      title: "任务已停止",
+      detail: "当前执行已按请求停止",
+      icon: "pause",
+      action: "details",
+    };
+  }
+  if (run.status === "COMPLETED") {
+    return {
+      tone: "success",
+      label: "任务已结束",
+      title: "任务已完成",
+      detail: `模型调用 ${number.format(run.usage.modelCalls)} 次 · 工具调用 ${number.format(run.usage.toolCalls)} 次 · ${number.format(run.usage.totalTokens)} Token`,
+      icon: "complete",
+      action: "details",
+    };
+  }
+  if (["reconnecting", "disconnected"].includes(connection)) {
+    return {
+      tone: "attention",
+      label: "连接状态",
+      title: "正在恢复运行连接",
+      detail: "暂时无法接收最新动态，任务不一定已经停止",
+      icon: "connection",
+      action: "details",
+    };
+  }
+  if (outputPhase !== "idle") {
+    return {
+      tone: "active",
+      label: "生成回答",
+      title: "正在生成回答",
+      detail: outputPhase === "starting" ? "模型正在准备首段内容" : "回答内容正在实时生成",
+      icon: "running",
+      action: "details",
+    };
+  }
+  if (activity) return activityPresentation(activity);
+
+  const statusFallback: Record<string, Omit<LiveRunPresentation, "action">> = {
+    PENDING: { tone: "muted", label: "准备任务", title: "正在创建任务", icon: "running" },
+    QUEUED: { tone: "muted", label: "准备任务", title: "任务已进入队列", icon: "running" },
+    RUNNING: { tone: "active", label: "当前任务", title: "任务运行中", icon: "running" },
+    SUSPENDING: { tone: "attention", label: "任务控制", title: "正在暂停任务", icon: "pause" },
+    SUSPENDED: { tone: "attention", label: "任务控制", title: "任务已暂停", icon: "pause" },
+    COMPLETING: { tone: "active", label: "整理结果", title: "正在整理结果", icon: "running" },
+  };
+  return { ...(statusFallback[run.status] ?? statusFallback.RUNNING), action: "details" };
+}
+
+function LiveRunCard({
+  run,
+  activities,
+  interaction,
+  outputPhase,
+  connection,
+  onOpenDetails,
+  onOpenInteraction,
+}: {
+  run: Run | null;
+  activities: Activity[];
+  interaction: Interaction | null;
+  outputPhase: OutputPhase;
+  connection: ConnectionState;
+  onOpenDetails(): void;
+  onOpenInteraction(): void;
+}) {
+  const latest = latestActivity(activities);
+  const [suppressedActivityId, setSuppressedActivityId] = useState<string | null>(null);
+  const [completedHidden, setCompletedHidden] = useState(false);
+
+  useEffect(() => {
+    setCompletedHidden(false);
+    if (run?.status !== "COMPLETED") return;
+    const timer = window.setTimeout(() => setCompletedHidden(true), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [run?.id, run?.status, run?.version]);
+
+  useEffect(() => {
+    setSuppressedActivityId(null);
+    if (!latest || latest.status !== "SUCCEEDED" || run?.status !== "RUNNING") return;
+    const timer = window.setTimeout(() => setSuppressedActivityId(latest.activityId), 1_500);
+    return () => window.clearTimeout(timer);
+  }, [latest?.activityId, latest?.status, run?.status]);
+
+  if (!run || completedHidden) return null;
+  const visibleActivity = latest?.activityId === suppressedActivityId ? null : latest;
+  const presentation = runPresentation(run, visibleActivity, interaction, outputPhase, connection);
+  const primaryAction = presentation.action === "interaction" ? onOpenInteraction : onOpenDetails;
+  const actionLabel = presentation.action === "interaction" ? "查看并处理" : "查看运行详情";
+
+  const icon = presentation.icon === "activity" && visibleActivity
+    ? <ActivityIcon kind={visibleActivity.kind} />
+    : presentation.icon === "approval"
+      ? <ShieldCheck size={18} />
+      : presentation.icon === "complete"
+        ? <CheckCircle2 size={18} />
+        : presentation.icon === "error"
+          ? <CircleAlert size={18} />
+          : presentation.icon === "pause"
+            ? <PauseCircle size={18} />
+            : presentation.icon === "timer"
+              ? <Timer size={18} />
+              : presentation.icon === "connection"
+                ? <WifiOff size={18} />
+                : <RefreshCw className="spin" size={18} />;
+
+  return (
+    <section className={`live-run-card tone-${presentation.tone}`} aria-live="polite" aria-atomic="true">
+      <span className="live-run-icon" aria-hidden="true">{icon}</span>
+      <div className="live-run-copy">
+        <strong>{presentation.title}</strong>
+      </div>
+      <div className="live-run-secondary">
+        <span className="live-run-label">{presentation.label}</span>
+        {presentation.detail && <span className="live-run-detail">{presentation.detail}</span>}
+        <RunProgress run={run} activities={activities} outputPhase={outputPhase} />
+      </div>
+      {presentation.action && (
+        <button
+          type="button"
+          className={`live-run-action${presentation.action === "details" ? " live-run-action-details" : ""}`}
+          onClick={primaryAction}
+        >
+          {actionLabel}<ChevronRight size={15} aria-hidden="true" />
+        </button>
+      )}
+    </section>
+  );
+}
+
 function InteractionCard({
   interaction,
   pending,
@@ -501,7 +897,7 @@ function InteractionCard({
   }, [interaction.id]);
 
   return (
-    <section className="interaction-card" aria-labelledby={titleId}>
+    <section className="interaction-card" aria-labelledby={titleId} tabIndex={-1}>
       <header className="interaction-heading">
         <span className="interaction-icon"><ShieldCheck size={20} /></span>
         <div>
@@ -596,6 +992,7 @@ function InteractionCard({
 
 function ActivityPanel({
   open,
+  focusRequest,
   run,
   activities,
   pending,
@@ -603,16 +1000,42 @@ function ActivityPanel({
   onCancel,
 }: {
   open: boolean;
+  focusRequest: number;
   run: Run | null;
   activities: Activity[];
   pending: boolean;
   onClose(): void;
   onCancel(): void;
 }) {
+  const panelRef = useRef<HTMLElement>(null);
+  const [attention, setAttention] = useState(false);
+
+  useEffect(() => {
+    if (!activities.length || !panelRef.current) return;
+    panelRef.current.scrollTop = panelRef.current.scrollHeight;
+  }, [activities]);
+
+  useEffect(() => {
+    if (!focusRequest || !panelRef.current) return;
+    const panel = panelRef.current;
+    panel.focus({ preventScroll: true });
+    if (typeof panel.scrollIntoView === "function") {
+      panel.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    }
+    setAttention(true);
+    const timer = window.setTimeout(() => setAttention(false), 1_200);
+    return () => window.clearTimeout(timer);
+  }, [focusRequest]);
+
   return (
     <>
       {open && <button className="scrim right" aria-label="关闭运行详情" onClick={onClose} />}
-      <aside className={`activity-panel ${open ? "drawer-open" : ""}`} aria-label="当前运行详情">
+      <aside
+        ref={panelRef}
+        className={`activity-panel ${open ? "drawer-open" : ""}${attention ? " activity-panel-attention" : ""}`}
+        aria-label="当前运行详情"
+        tabIndex={-1}
+      >
         <div className="panel-heading">
           <div>
             <span className="eyebrow">CURRENT RUN</span>
@@ -638,14 +1061,15 @@ function ActivityPanel({
           <h3>安全活动</h3>
           <div className="activity-list">
             {activities.map((activity) => (
-              <article className="activity-card" key={activity.activityId}>
+              <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`} key={activity.activityId}>
                 <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
                   <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
                 </div>
                 <strong>{activity.displayName}</strong>
                 {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
                 {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
-                <time>{formatTime(activity.startedAt)}</time>
+                {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
+                <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
               </article>
             ))}
             {!activities.length && <p className="muted">当前运行尚无 Model、Tool、Skill 或 MCP 活动。</p>}
@@ -801,6 +1225,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [imageToolsOpen, setImageToolsOpen] = useState(false);
   const [imageUrlInputOpen, setImageUrlInputOpen] = useState(false);
   const [draggingImages, setDraggingImages] = useState(false);
+  const [activityFocusRequest, setActivityFocusRequest] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageToolsRef = useRef<HTMLDivElement>(null);
@@ -1007,8 +1432,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                   event.value === "PENDING",
                   controller.signal,
                 ).catch(() => undefined);
-              } else if (event.type === "activity.committed" && !event.activity) {
-                void loadActivities(runId, controller.signal).catch(() => undefined);
+              } else if (event.type === "activity.committed") {
+                if (!event.activity) {
+                  void loadActivities(runId, controller.signal).catch(() => undefined);
+                }
+                void loadRun(runId, controller.signal).catch(() => undefined);
               }
             },
           }, controller.signal);
@@ -1108,10 +1536,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     }
   }, []);
 
-  const submitMessage = (value: string) => {
-    const message = value.trim() || (pendingImages.length > 1
+  const submitMessage = (value: string, retryImages?: TurnImage[]) => {
+    const imageCount = retryImages?.length ?? pendingImages.length;
+    const message = value.trim() || (imageCount > 1
       ? "请分别解释这些图片"
-      : pendingImages.length === 1
+      : imageCount === 1
         ? "请解释这张图片"
         : "");
     if (!message || state.pending || state.selectedConversation?.activeRunId) return;
@@ -1120,7 +1549,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     recommendationRequestGeneration.current += 1;
     setRecommendedQuestions(null);
     void execute("提交消息", async () => {
-      const images = sentImages.map(({ kind, url, imageId }) => ({ kind, url, imageId }));
+      const images: ImageInput[] = retryImages
+        ? retryImages.flatMap((image): ImageInput[] => {
+          if (image.kind === "url" && image.url) return [{ kind: "url", url: image.url }];
+          if (image.imageId) return [{ kind: "upload", imageId: image.imageId }];
+          return [];
+        })
+        : sentImages.map(({ kind, url, imageId }) => ({ kind, url, imageId }));
       const conversation = state.selectedConversation
         ? images.length
           ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images)
@@ -1139,10 +1574,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               { idempotencyKey: key },
               newModelId || state.bootstrap?.defaultModelId,
             );
-      dispatch({ type: "setComposer", value: "" });
-      sentImages.forEach((image) => revokePreview(image.previewUrl));
-      setPendingImages([]);
-      closeImageTools();
+      if (!retryImages) {
+        dispatch({ type: "setComposer", value: "" });
+        sentImages.forEach((image) => revokePreview(image.previewUrl));
+        setPendingImages([]);
+        closeImageTools();
+      }
       if (state.selectedConversationId !== conversation.id) {
         selectConversation(conversation.id, "replace");
       } else {
@@ -1375,6 +1812,22 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
   const runActive = Boolean(state.selectedConversation?.activeRunId) && !isTerminal(state.run);
   const composerDisabled = Boolean(state.pending) || runActive;
+  const failedRunHasOutput = Boolean(
+    state.run?.output?.trim()
+      || state.streamDraft.trim()
+      || state.turns.some((turn) =>
+        turn.runId === state.run?.id
+        && turn.role.toLowerCase() === "assistant"
+        && turn.text.trim()),
+  );
+  const failedUserTurn = state.run?.status === "FAILED" && !failedRunHasOutput
+    ? [...state.turns].reverse().find((turn) =>
+      turn.runId === state.run?.id && turn.role.toLowerCase() === "user")
+    : undefined;
+  const openRunDetails = useCallback(() => {
+    dispatch({ type: "toggleActivity", open: true });
+    setActivityFocusRequest((value) => value + 1);
+  }, []);
   const dropImages = (event: DragEvent<HTMLFormElement>) => {
     event.preventDefault();
     setDraggingImages(false);
@@ -1402,7 +1855,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           }}>
             <Brain size={16} /> 记忆{state.memoryCandidates.length > 0 && <b>{state.memoryCandidates.length}</b>}
           </button>
-          <button className="icon mobile-only" aria-label="打开运行详情" onClick={() => dispatch({ type: "toggleActivity", open: true })}><PanelRight size={20} /></button>
+          <button className="icon mobile-only" aria-label="打开运行详情" onClick={openRunDetails}><PanelRight size={20} /></button>
         </div>
       </header>
 
@@ -1482,6 +1935,22 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               </>
             )}
           </div>
+          <LiveRunCard
+            run={state.run}
+            activities={state.activities}
+            interaction={state.interaction}
+            outputPhase={state.outputPhase}
+            connection={state.connection}
+            onOpenDetails={openRunDetails}
+            onOpenInteraction={() => {
+              const card = document.querySelector<HTMLElement>(".interaction-card");
+              if (!card) return;
+              if (typeof card.scrollIntoView === "function") {
+                card.scrollIntoView({ behavior: "smooth", block: "center" });
+              }
+              card.focus({ preventScroll: true });
+            }}
+          />
           {state.interactionError && (
             <div className="error-banner" role="alert">
               <CircleAlert size={17} /><span>{state.interactionError}</span>
@@ -1597,11 +2066,6 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 </div>
                 <footer><span>↑↓ 选择</span><span>Enter 确认</span></footer>
               </section>
-            )}
-            {runActive && (
-              <div className="active-run-note">
-                <span><RefreshCw className="spin" size={15} /> 当前任务运行中，完成或停止后可继续输入。</span>
-              </div>
             )}
             <input
               ref={fileInputRef}
@@ -1759,6 +2223,18 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               />
             </label>
             <span className="image-input-hint">{imageCapable ? "支持上传、URL 和拖放图片" : ""}</span>
+            {failedUserTurn && (
+              <button
+                type="button"
+                className="retry-send-button"
+                aria-label="重新发送上一条失败消息"
+                title="重新发送上一条失败消息"
+                disabled={composerDisabled}
+                onClick={() => submitMessage(failedUserTurn.text, failedUserTurn.images)}
+              >
+                <RefreshCw size={16} aria-hidden="true" />
+              </button>
+            )}
             <Button type="submit" className="send-button" aria-label="发送消息" busy={Boolean(state.pending)} disabled={composerDisabled || (!state.composer.trim() && !pendingImages.length)}>
               <Send size={18} />
             </Button>
@@ -1767,6 +2243,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
         <ActivityPanel
           open={state.activityOpen}
+          focusRequest={activityFocusRequest}
           run={state.run}
           activities={state.activities}
           pending={Boolean(state.pending)}

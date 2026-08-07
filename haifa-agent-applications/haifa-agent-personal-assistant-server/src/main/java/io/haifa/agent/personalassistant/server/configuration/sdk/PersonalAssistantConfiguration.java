@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
+import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
 import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
@@ -80,8 +81,9 @@ public class PersonalAssistantConfiguration {
                         : Optional.of(Path.of(properties.trustedScriptManifest())
                                 .toAbsolutePath()
                                 .normalize());
+        PersonalExecutionPlatform execution = null;
         try {
-            var execution = PersonalExecutionRuntime.create(
+            execution = PersonalExecutionRuntime.create(
                     dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock);
             var web = PersonalWebPlatform.create(
                     tenant,
@@ -125,7 +127,18 @@ public class PersonalAssistantConfiguration {
                     personalClock,
                     imageStore));
         } catch (RuntimeException | Error exception) {
-            sqlite.persistence().close();
+            if (execution != null) {
+                try {
+                    execution.close();
+                } catch (RuntimeException closeFailure) {
+                    exception.addSuppressed(closeFailure);
+                }
+            }
+            try {
+                sqlite.persistence().close();
+            } catch (RuntimeException closeFailure) {
+                exception.addSuppressed(closeFailure);
+            }
             throw exception;
         }
     }

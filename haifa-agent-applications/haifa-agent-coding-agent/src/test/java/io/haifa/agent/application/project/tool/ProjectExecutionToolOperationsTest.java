@@ -366,21 +366,21 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void mapsPreExecutionManifestFailureAsKnownNotDispatchedFailure() {
+    void mapsPreExecutionObserverFailureAsKnownNotDispatchedFailure() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 throw new ExecutionPreflightException(
-                        "WORKSPACE_MANIFEST_UNAVAILABLE",
-                        "workspace manifest could not be captured before execution",
-                        new IllegalStateException("manifest failed"));
+                        "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
+                        "workspace change observation could not be established before execution",
+                        new IllegalStateException("observer failed"));
             }
         };
 
         assertThatThrownBy(() -> operations(broker, 1024, 2000)
                         .execute(invocation(Map.of("command", "representative command"), () -> false), access()))
                 .isInstanceOfSatisfying(ToolInvocationException.class, exception -> {
-                    assertThat(exception.failureCode()).isEqualTo("WORKSPACE_MANIFEST_UNAVAILABLE");
+                    assertThat(exception.failureCode()).isEqualTo("WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE");
                     assertThat(exception.dispatchState())
                             .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
                 });

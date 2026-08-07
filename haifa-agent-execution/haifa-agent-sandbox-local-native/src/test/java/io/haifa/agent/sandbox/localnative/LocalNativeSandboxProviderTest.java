@@ -121,6 +121,45 @@ class LocalNativeSandboxProviderTest {
     }
 
     @Test
+    void rejectsHostHomeEvenWhenAProfileAccidentallyAllowsItsName() throws Exception {
+        Path workspaceRoot = temporary.resolve("workspace-host-home");
+        java.nio.file.Files.createDirectory(workspaceRoot);
+        Fixture fixture = fixture(workspaceRoot);
+        LocalNativeSandboxConfiguration configuration = configuration();
+        LocalNativeSandboxProvider provider = new LocalNativeSandboxProvider(
+                fixture.workspaces(),
+                fixture.bindings(),
+                fixture.locations(),
+                () -> "session-host-home",
+                Instant::now,
+                configuration,
+                new ScratchProbeAdapter());
+        SandboxProfile profile = new SandboxProfile(
+                new SandboxProfileRef("local-native-host-home-test", "1"),
+                LocalNativeSandboxProvider.PROVIDER_ID,
+                configuration.digest(),
+                Set.of("tool"),
+                Set.of("HOME"),
+                false,
+                NetworkPolicy.DENY,
+                new SandboxFilesystemPolicy(SandboxWorkspaceAccess.READ_WRITE, true, Set.of()),
+                new SandboxCapabilities(true, true, true, false, false));
+
+        try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId(), false))) {
+            var execution = new SandboxExecution(
+                    ExecutionCommand.direct(List.of("tool")),
+                    WorkspacePath.root(fixture.workspaceId()),
+                    Map.of("HOME", temporary.resolve("host-home").toString()),
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2));
+
+            assertThatThrownBy(() -> session.execute(execution))
+                    .isInstanceOf(LocalNativeSandboxException.class)
+                    .extracting(exception -> ((LocalNativeSandboxException) exception).code())
+                    .isEqualTo("CAPABILITY_UNAVAILABLE");
+        }
+    }
+
+    @Test
     void provisionsWritableCodingScratchBindingsAndCleansThemAfterExecution() throws Exception {
         Path workspaceRoot = temporary.resolve("workspace-scratch");
         java.nio.file.Files.createDirectory(workspaceRoot);

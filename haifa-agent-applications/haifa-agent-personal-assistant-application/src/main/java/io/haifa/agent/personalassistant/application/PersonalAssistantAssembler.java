@@ -97,9 +97,19 @@ public final class PersonalAssistantAssembler {
                     PersonalCapabilityRegistry.create(tools, mcp),
                     dependencies.modelCatalog(),
                     dependencies.modelPreferences(),
-                    new PersonalQuestionRecommender(dependencies.model()));
+                    new PersonalQuestionRecommender(dependencies.model()),
+                    dependencies.execution());
         } catch (RuntimeException | Error exception) {
-            mcp.close();
+            try {
+                dependencies.execution().close();
+            } catch (RuntimeException closeFailure) {
+                exception.addSuppressed(closeFailure);
+            }
+            try {
+                mcp.close();
+            } catch (RuntimeException closeFailure) {
+                exception.addSuppressed(closeFailure);
+            }
             throw exception;
         }
     }

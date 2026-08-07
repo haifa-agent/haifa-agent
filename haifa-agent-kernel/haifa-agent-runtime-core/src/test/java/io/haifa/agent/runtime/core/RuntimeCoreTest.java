@@ -517,26 +517,27 @@ class RuntimeCoreTest {
     @Test
     void preservesKnownNotDispatchedToolFailureThroughTheAttemptBoundary() {
         ToolRequest request = toolRequest(
-                "manifest-unavailable", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+                "observer-unavailable", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(request))),
                 builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
                     throw new io.haifa.agent.tool.api.ToolInvocationException(
-                            "WORKSPACE_MANIFEST_UNAVAILABLE",
+                            "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
                             io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
-                            "workspace manifest could not be captured before execution");
+                            "workspace change observation could not be established before execution");
                 }));
 
-        var failed = fixture.runtime.start(request("manifest-unavailable"));
+        var failed = fixture.runtime.start(request("observer-unavailable"));
         fixture.scheduler.runAll();
 
         assertThat(fixture.runtime.find(failed.runId()).orElseThrow()).satisfies(run -> {
             assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
-            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.WORKSPACE_MANIFEST_UNAVAILABLE);
+            assertThat(run.error().orElseThrow().code())
+                    .isEqualTo(AgentErrorCode.WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE);
         });
         assertThat(fixture.store.toolCalls(failed.runId())).singleElement().satisfies(call -> assertThat(
                         call.error().orElseThrow().error().code())
-                .isEqualTo(AgentErrorCode.WORKSPACE_MANIFEST_UNAVAILABLE));
+                .isEqualTo(AgentErrorCode.WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE));
     }
 
     @Test
@@ -637,6 +638,15 @@ class RuntimeCoreTest {
                 List.of(new TodoItem(
                         new TodoItemId("todo-1"), "verify", "verify output", TodoPriority.HIGH, List.of())),
                 Instant.parse("2026-07-21T00:00:00Z")));
+
+        var plan = fixture.runtime.plan(accepted.runId()).orElseThrow();
+        assertThat(plan.id()).isEqualTo("plan-1");
+        assertThat(plan.runId()).isEqualTo(accepted.runId().value());
+        assertThat(plan.items()).singleElement().satisfies(item -> {
+            assertThat(item.id()).isEqualTo("todo-1");
+            assertThat(item.title()).isEqualTo("verify");
+            assertThat(item.status()).isEqualTo("PENDING");
+        });
         fixture.scheduler.runAll();
 
         var run = fixture.store.find(accepted.runId()).orElseThrow();

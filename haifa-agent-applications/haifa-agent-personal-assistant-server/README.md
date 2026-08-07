@@ -1,5 +1,9 @@
 # Haifa Personal Assistant Server
 
+The v1 Run response includes an optional authoritative Plan/Todo projection. Activity responses
+use stable operation IDs plus durable event IDs, parent correlation, event time, and optional
+requested/started/completed lifecycle timestamps. Existing Runs without a plan omit `plan` or return `null`.
+
 The public activities endpoint projects bounded durable Model, Tool, Skill, and MCP
 events. Model activities never include prompts, assistant text, endpoints, credentials,
 or raw provider failures.
@@ -176,9 +180,11 @@ Provider 会启动可信主机进程、不能保证强隔离或断网，Server �
 $env:HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED='true'
 ```
 
-Personal 产品使用 Server 私有 Workspace，模型不能指定 cwd。默认单次 15 秒、最大 30 秒、
-64 KiB / 1000 行输出和最多 4 个并发进程；可执行文件从可信 Server 配置和当前 OS 解析。环境变量
-采用最小 allowlist，不把 Server 凭据注入子进程。每次调用仍必须经过 Runtime Interaction exact
+Personal 产品使用固定的 `personal-execution` Server 私有 Workspace，模型不能指定 cwd。默认单次 15 秒、最大 30 秒、
+64 KiB / 1000 行输出和最多 4 个并发进程；可执行文件从可信 Server 配置和当前 OS 解析。三端 Host Guarded
+复用公共 HOST_USER 环境解析器，显式提供真实用户 HOME，并保留 Windows `USERPROFILE/APPDATA/LOCALAPPDATA`
+等受信任目录；HOME 不安全时进程启动前 fail closed。PA 使用 Execution Core 公共增量 Observer，只观察私有
+Workspace 内逻辑变化，不扫描或记录 HOME、AppData、XDG 和包安装目录，也不把 Server 凭据注入子进程。每次调用仍必须经过 Runtime Interaction exact
 approval；开关只确认 Provider 部署风险，不构成某次调用授权。
 
 默认 MCP 模式为 `embedded-echo`，用于离线测试。连接已经单独启动的 loopback MCP 服务时，必须显式

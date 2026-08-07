@@ -1,7 +1,5 @@
-package io.haifa.agent.cli;
+package io.haifa.agent.execution.core.change;
 
-import io.haifa.agent.execution.core.change.WorkspaceChangeObservation;
-import io.haifa.agent.execution.core.change.WorkspaceChangeObserver;
 import io.haifa.agent.project.changeset.FileChange;
 import io.haifa.agent.project.changeset.FileChangeType;
 import io.haifa.agent.project.changeset.FileVersion;
@@ -33,53 +31,69 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Cross-platform execution observer that hashes the workspace once, then hashes only WatchService candidates.
  * Watch overflow or invalidation deliberately falls back to a fresh full snapshot instead of guessing.
  */
-final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeObserver, AutoCloseable {
+public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeObserver, AutoCloseable {
     private static final int MAX_ENTRIES = 1_000_000;
 
+    private final WorkspaceId workspaceId;
     private final Path root;
-    private final CliWorkspaceManifestIgnorePolicy ignores;
-    private final ReentrantLock window = new ReentrantLock();
+    private final WorkspaceChangeIgnorePolicy ignores;
+    private final FileVersionResolver versions;
+    private final Semaphore window = new Semaphore(1, true);
     private final Map<WatchKey, Path> watchedDirectories = new HashMap<>();
     private Map<ProjectPath, FileVersion> baseline = new LinkedHashMap<>();
     private WatchService watcher;
     private boolean initialized;
 
-    LocalIncrementalWorkspaceChangeObserver(Path root, CliWorkspaceManifestIgnorePolicy ignores) {
-        this.root = Objects.requireNonNull(root, "root must not be null")
-                .toAbsolutePath()
-                .normalize();
+    public LocalIncrementalWorkspaceChangeObserver(
+            WorkspaceId workspaceId, Path root, WorkspaceChangeIgnorePolicy ignores) {
+        this(workspaceId, root, ignores, LocalIncrementalWorkspaceChangeObserver::fileVersion);
+    }
+
+    LocalIncrementalWorkspaceChangeObserver(
+            WorkspaceId workspaceId, Path root, WorkspaceChangeIgnorePolicy ignores, FileVersionResolver versions) {
+        this.workspaceId = Objects.requireNonNull(workspaceId, "workspaceId must not be null");
+        this.root = normalizeRoot(root);
         this.ignores = Objects.requireNonNull(ignores, "ignores must not be null");
+        this.versions = Objects.requireNonNull(versions, "versions must not be null");
     }
 
     @Override
     public WorkspaceChangeObservation begin(WorkspaceId workspaceId) {
         Objects.requireNonNull(workspaceId, "workspaceId must not be null");
-        window.lock();
+        if (!this.workspaceId.equals(workspaceId)) {
+            throw new IllegalArgumentException("WORKSPACE_OBSERVER_BINDING_MISMATCH: unexpected workspace");
+        }
+        try {
+            window.acquire();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("workspace change observation was interrupted", exception);
+        }
         try {
             ensureInitialized();
             absorb(drain(false));
             return new Observation();
         } catch (RuntimeException exception) {
-            window.unlock();
-            throw exception;
+            window.release();
+            throw unavailable(exception);
         }
     }
 
     @Override
     public void close() {
-        window.lock();
+        window.acquireUninterruptibly();
         try {
             reset();
         } finally {
-            window.unlock();
+            window.release();
         }
     }
 
@@ -91,8 +105,10 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
             if (!closed.compareAndSet(false, true)) throw new IllegalStateException("observation already completed");
             try {
                 return apply(drain(true), true);
+            } catch (RuntimeException exception) {
+                throw WorkspaceChangeObserverException.resyncFailed(exception);
             } finally {
-                window.unlock();
+                window.release();
             }
         }
 
@@ -104,7 +120,7 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
             } catch (RuntimeException exception) {
                 reset();
             } finally {
-                window.unlock();
+                window.release();
             }
         }
     }
@@ -115,9 +131,21 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
             watcher = root.getFileSystem().newWatchService();
             baseline = scan(root, true);
             initialized = true;
-        } catch (IOException exception) {
+        } catch (IOException | RuntimeException exception) {
             reset();
             throw new IllegalStateException("workspace change observer is unavailable", exception);
+        }
+    }
+
+    private Map<ProjectPath, FileVersion> resynchronize() {
+        closeWatcher();
+        watchedDirectories.clear();
+        try {
+            watcher = root.getFileSystem().newWatchService();
+            return scan(root, true);
+        } catch (IOException | RuntimeException exception) {
+            reset();
+            throw new IllegalStateException("workspace change observer resynchronization failed", exception);
         }
     }
 
@@ -127,7 +155,7 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
 
     private List<FileChange> apply(CandidateBatch batch, boolean returnChanges) {
         if (batch.overflow()) {
-            Map<ProjectPath, FileVersion> after = scan(root, true);
+            Map<ProjectPath, FileVersion> after = resynchronize();
             List<FileChange> changes = diff(baseline, after);
             baseline = after;
             return returnChanges ? changes : List.of();
@@ -191,7 +219,10 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
                         paths.add(projectPath(changed));
                     }
                 }
-                if (!key.reset()) watchedDirectories.remove(key);
+                if (!key.reset()) {
+                    watchedDirectories.remove(key);
+                    overflow = true;
+                }
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
@@ -221,7 +252,7 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
                     if (attributes.isSymbolicLink()) return FileVisitResult.CONTINUE;
                     ProjectPath logical = projectPath(file);
                     FileType type = attributes.isRegularFile() ? FileType.FILE : FileType.OTHER;
-                    if (!ignores.ignores(logical, type)) add(values, logical, version(file, attributes));
+                    if (!ignores.ignores(logical, type)) add(values, logical, versions.resolve(file, attributes));
                     return FileVisitResult.CONTINUE;
                 }
             });
@@ -245,7 +276,7 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
         values.put(path, version);
     }
 
-    private FileVersion version(Path file, BasicFileAttributes initial) throws IOException {
+    private static FileVersion fileVersion(Path file, BasicFileAttributes initial) throws IOException {
         if (!initial.isRegularFile())
             return new FileVersion(FileType.OTHER, initial.size(), "metadata:OTHER:" + initial.size());
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -353,10 +384,35 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
         }
     }
 
+    private static Path normalizeRoot(Path root) {
+        Objects.requireNonNull(root, "root must not be null");
+        try {
+            Path normalized = root.toRealPath();
+            if (!Files.isDirectory(normalized, LinkOption.NOFOLLOW_LINKS)) {
+                throw WorkspaceChangeObserverException.unavailable(
+                        new IllegalArgumentException("workspace root is not a directory"));
+            }
+            return normalized;
+        } catch (IOException exception) {
+            throw WorkspaceChangeObserverException.unavailable(exception);
+        }
+    }
+
+    private static WorkspaceChangeObserverException unavailable(RuntimeException exception) {
+        return exception instanceof WorkspaceChangeObserverException observerFailure
+                        && observerFailure.code().equals(WorkspaceChangeObserverException.UNAVAILABLE)
+                ? observerFailure
+                : WorkspaceChangeObserverException.unavailable(exception);
+    }
+
     private void reset() {
         initialized = false;
         baseline = new LinkedHashMap<>();
         watchedDirectories.clear();
+        closeWatcher();
+    }
+
+    private void closeWatcher() {
         if (watcher != null) {
             try {
                 watcher.close();
@@ -368,4 +424,9 @@ final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeOb
     }
 
     private record CandidateBatch(Set<ProjectPath> paths, boolean overflow) {}
+
+    @FunctionalInterface
+    interface FileVersionResolver {
+        FileVersion resolve(Path file, BasicFileAttributes attributes) throws IOException;
+    }
 }

@@ -6,6 +6,7 @@ import io.haifa.agent.application.project.product.coding.CodingModelSelection;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportResult;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
@@ -39,6 +40,10 @@ public interface CodingSessionClient {
     CodingSessionView open(AgentSessionId sessionId);
 
     CodingSessionView reconcile(AgentSessionId sessionId);
+
+    default CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
+        return CodingSessionHistoryPage.empty(sessionId);
+    }
 
     default List<CodingModelOption> models() {
         return List.of();

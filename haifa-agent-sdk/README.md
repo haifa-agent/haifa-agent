@@ -1,5 +1,9 @@
 # Haifa Agent SDK
 
+`AgentRuns.plan(runId)` delegates the caller-scoped Runtime plan query and returns an immutable
+view only when an authoritative plan exists. Product UIs can therefore show real Todo progress
+without inferring steps from model text or activity counts.
+
 面向上层 Agent 产品的纯 Java 高层装配与应用边界。SDK 通过可信 `ProductProfile` 和类型化
 `ProductContribution` 确定性解析产品能力，构建唯一 `AgentRuntime`，并提供产品中立的
 Conversation Session 服务。

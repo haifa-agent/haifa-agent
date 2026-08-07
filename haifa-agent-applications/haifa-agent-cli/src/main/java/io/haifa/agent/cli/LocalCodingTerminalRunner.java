@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalApplication;
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.application.coding.terminal.session.LocalCodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
@@ -9,7 +10,6 @@ import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -31,6 +31,7 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
     public void run(
             Path workspace,
             CliConfiguration configuration,
+            CodingTerminalStartup startup,
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver) {
         Tui4jTerminalIo terminalIo = Objects.requireNonNull(terminalIoFactory.get(), "terminal IO must not be null");
@@ -42,6 +43,7 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
             var client = new LocalCodingSessionClient(
                     agent.projectId(),
                     agent.codingSessions(),
+                    agent.sessionHistory(),
                     agent.runtime(),
                     agent.identifiers(),
                     agent.time(),
@@ -53,7 +55,7 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
             new CodingTerminalApplication(
                             agent.projectId(),
                             client,
-                            Optional.empty(),
+                            startup,
                             terminalIo,
                             new TerminalWorkspaceContext(
                                     workspace.toAbsolutePath().normalize().toString(),

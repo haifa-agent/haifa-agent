@@ -46,6 +46,13 @@ export DEEPSEEK_API_KEY="<secret>"
 
 cd /path/to/any/project
 haifa-coding
+
+# 打开选择器、最近 Session 或指定 Session
+haifa-coding resume
+haifa-coding resume --last
+haifa-coding resume <SESSION_ID>
+haifa-coding resume <SESSION_ID> "继续修复测试"
+haifa-coding resume --last "继续前面的工作"
 ```
 
 也可以将其他绝对路径作为第一个参数，覆盖默认发布目录。
@@ -148,6 +155,11 @@ java -jar $jar --terminal --workspace D:\haifa-agent-config\workspaces\terminal-
 java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
   --config D:\haifa-agent-config\haifa-coding-terminal.yaml `
   -m "分析当前项目并修复一个小问题"
+
+# Session Resume；全局配置参数可以放在 resume 前面
+java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
+  --config D:\haifa-agent-config\haifa-coding-terminal.yaml `
+  resume --last "继续前面的工作"
 ```
 
 构建后也可以将 `bin` 目录加入 `PATH`，使用 `haifa-cli.ps1` 启动。
@@ -155,6 +167,12 @@ java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
 `--terminal` 与 `-m/--message` 不能同时使用。非交互、`dumb` 或不支持的终端会快速返回稳定的
 `TUI_UNAVAILABLE`。同一规范化且非符号链接的 Workspace 会生成带版本 namespace 的稳定
 Project/Workspace 身份；绝对路径不进入 Prompt、Client Event、JSONL 或普通错误输出。
+
+顶层 `resume` 仅恢复当前 Workspace 和调用方范围内的 Coding Session，不接管既有活动 Run。
+`resume` 打开现有选择器，`resume --last` 使用产品层稳定排序选择最近 Session，指定 ID 时重新执行
+产品授权。可选 Prompt 只在 Session 对账后为空闲状态时提交；若存在活动 Run，则保留 Prompt 草稿并
+显示 `RUN_TAKEOVER_NOT_SUPPORTED`。`--model` 与 `resume` 的组合在 P0 中拒绝，避免静默覆盖 Session
+下一 Run 的模型偏好。
 
 ## 真实联网编程配置
 
@@ -506,24 +524,26 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 写文件、删除文件、移动文件和 Shell 命令默认要求控制台确认。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。`--approval auto` 仅适用于用户明确信任的本地工作区，仍经过 Broker、Workspace capability、Profile、环境和审计；`--approval deny` 会在 Catalog freeze 前移除 `execution.run`，模型不可见，底层授权仍 fail closed。
 
-`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；默认不继承 API Key、`*_TOKEN`、`*_SECRET`、云凭据或代理凭据。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
+`execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
 CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该
 Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与
 Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。该环境指令同时说明 `PATH` 中任意非交互 CLI
 均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
 
-CLI 不再为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。启动后的首次执行建立一次基线，
+CLI 使用 Execution Core 公共增量 Observer，不再在产品内维护扫描算法，也不再为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。启动后的首次执行建立一次基线，
 后续通过 `WatchService` 收集执行窗口内的候选路径，只重新检查和哈希候选文件；事件溢出、Watcher
-失效或候选状态无法确认时才回退为全量重建，不能确认则保持 `MANIFEST_UNCERTAIN` 的 fail-closed 语义。
+失效或候选状态无法确认时才在授权 Workspace 内执行受限重同步，不能确认则以
+`WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED` fail closed。
 冻结的 ignore policy 排除标准构建/IDE 目录，并读取根
 `.gitignore` 中不含 glob 的目录规则。默认还忽略 `.pytest_cache`、`.mypy_cache`、`.ruff_cache`、`.tox`、
 `.venv` 和 `__pycache__`；`!` 只撤销可能包含该重新纳入目录的正向目录规则，不再清空其他无关规则。
-进程启动前基线不可用时仍使用稳定错误
-`WORKSPACE_MANIFEST_UNAVAILABLE` 且不标记 DISPATCHED；只有 OS 进程创建成功后才进入 DISPATCHED。
+进程启动前 Observer 不可用时使用稳定错误
+`WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 且不标记 DISPATCHED；只有 OS 进程创建成功后才进入 DISPATCHED。
 进程启动后的增量对账失败仍按结果不确定失败关闭。
 
-当前已包含 tui4j Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
+当前已包含 tui4j Terminal、顶层 `resume` 五种形式、最近 100 条安全可见历史、真实 `/resume` 搜索、
+Session 重命名/归档/逻辑删除、线性历史
 `/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久
 Follow-up、Cancel、Approval selector 和 SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护
 进程、Session Tree/Fork/Clone、模型登录或 Workflow Graph。模型切换只覆盖可信静态目录内的空闲

@@ -95,6 +95,16 @@ public enum AgentErrorCode {
             "Workspace manifest is unavailable",
             AgentErrorCategory.CONFIGURATION,
             Retryability.RETRYABLE_AFTER_INTERACTION),
+    WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE(
+            "WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE",
+            "Workspace change observation is unavailable",
+            AgentErrorCategory.CONFIGURATION,
+            Retryability.RETRYABLE_AFTER_INTERACTION),
+    WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED(
+            "WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED",
+            "Workspace changes could not be fully observed",
+            AgentErrorCategory.INTERNAL,
+            Retryability.RETRYABLE_AFTER_INTERACTION),
     REPEATED_TOOL_FAILURE(
             "REPEATED_TOOL_FAILURE",
             "Repeated Tool failures made no meaningful progress",

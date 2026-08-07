@@ -111,6 +111,12 @@ class PersonalAssistantWebFluxTest {
                             .toList())
                     .anySatisfy(activity -> {
                         assertThat(activity.path("kind").asText()).isEqualTo(vertical.kind());
+                        assertThat(activity.path("activityId").asText()).startsWith("tool:");
+                        assertThat(activity.path("eventId").asText()).isNotBlank();
+                        assertThat(activity.path("occurredAt").asText()).isNotBlank();
+                        assertThat(activity.path("requestedAt").asText()).isNotBlank();
+                        assertThat(activity.path("startedAt").asText()).isNotBlank();
+                        assertThat(activity.path("completedAt").asText()).isNotBlank();
                         assertThat(activity.path("safeResultSummary").asText()).isNotBlank();
                     });
             assertThat(java.util.stream.StreamSupport.stream(activities.spliterator(), false)
@@ -442,6 +448,14 @@ class PersonalAssistantWebFluxTest {
                 .jsonPath("$.openapi")
                 .isEqualTo("3.1.0")
                 .jsonPath("$.paths['/api/v1/runs/{runId}/stream'].get.responses['200'].content['text/event-stream']")
+                .exists()
+                .jsonPath("$.components.schemas.Run.properties.plan")
+                .exists()
+                .jsonPath("$.components.schemas.Plan.properties.items")
+                .exists()
+                .jsonPath("$.components.schemas.Activity.properties.eventId")
+                .exists()
+                .jsonPath("$.components.schemas.Activity.properties.parentActivityId")
                 .exists();
     }
 

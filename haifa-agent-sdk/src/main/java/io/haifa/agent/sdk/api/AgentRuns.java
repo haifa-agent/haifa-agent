@@ -1,6 +1,7 @@
 package io.haifa.agent.sdk.api;
 
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.runtime.api.AgentPlanView;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunHandle;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
@@ -34,6 +35,10 @@ public final class AgentRuns {
 
     public Optional<AgentRunViewSnapshot> view(AgentRunId runId) {
         return runtime.view(Objects.requireNonNull(runId, "runId must not be null"));
+    }
+
+    public Optional<AgentPlanView> plan(AgentRunId runId) {
+        return runtime.plan(Objects.requireNonNull(runId, "runId must not be null"));
     }
 
     public AgentRunHandle handle(AgentRunId runId) {
