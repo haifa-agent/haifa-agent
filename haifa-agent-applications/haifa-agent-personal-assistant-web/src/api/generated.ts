@@ -290,6 +290,27 @@ export interface MissionSnapshot {
   confirmedAt: string | null;
   finishedAt: string | null;
   pollAfterMs: number;
+  execution: MissionExecution;
+}
+
+export interface MissionExecution {
+  dispatcherStatus: "READY" | "NOT_READY" | "NOT_CONFIGURED";
+  recovering: boolean;
+  allTasksSettled: boolean;
+  completedTasks: number;
+  blockedTasks: number;
+  currentTaskId: string | null;
+  latestAttempt: MissionAttempt | null;
+}
+
+export interface MissionAttempt {
+  taskId: string;
+  attemptNo: number;
+  state: "CREATED" | "DISPATCH_PENDING" | "BOUND" | "SETTLEMENT_PENDING" | "SETTLED" | "FAILED" | "CANCELLED" | "OUTCOME_UNKNOWN";
+  sessionId: string | null;
+  runId: string | null;
+  failureCode: string | null;
+  updatedAt: string;
 }
 
 export interface MissionPage {
@@ -318,4 +339,4 @@ export interface ApiError {
   correlationId: string;
 }
 
-export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "replaceMissionPlan" | "confirmMission" | "cancelMission";
+export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";

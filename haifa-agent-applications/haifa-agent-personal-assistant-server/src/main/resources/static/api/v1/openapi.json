@@ -317,6 +317,21 @@
           "412": {"$ref": "#/components/responses/Error"}
         }
       }
+    },
+    "/api/v1/missions/{missionId}/tasks/{taskId}/retry": {
+      "parameters": [
+        {"$ref": "#/components/parameters/MissionId"},
+        {"name": "taskId", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "post": {
+        "operationId": "retryMissionTask",
+        "parameters": [{"$ref": "#/components/parameters/IfMatch"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "responses": {
+          "200": {"description": "Mission Task scheduled for retry", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MissionSnapshot"}}}},
+          "409": {"$ref": "#/components/responses/Error"},
+          "412": {"$ref": "#/components/responses/Error"}
+        }
+      }
     }
   },
   "components": {
@@ -703,7 +718,7 @@
       },
       "MissionSnapshot": {
         "type": "object",
-        "required": ["schemaVersion", "missionId", "conversationId", "objective", "acceptanceCriteria", "constraints", "state", "plan", "tasks", "blocker", "artifacts", "sources", "finalResult", "version", "createdAt", "updatedAt", "confirmedAt", "finishedAt", "pollAfterMs"],
+        "required": ["schemaVersion", "missionId", "conversationId", "objective", "acceptanceCriteria", "constraints", "state", "plan", "tasks", "blocker", "artifacts", "sources", "finalResult", "version", "createdAt", "updatedAt", "confirmedAt", "finishedAt", "pollAfterMs", "execution"],
         "properties": {
           "schemaVersion": {"type": "string", "const": "pa.mission-snapshot/v1"},
           "missionId": {"type": "string"},
@@ -723,7 +738,34 @@
           "updatedAt": {"type": "string", "format": "date-time"},
           "confirmedAt": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
           "finishedAt": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
-          "pollAfterMs": {"type": "integer", "format": "int64", "minimum": 0}
+          "pollAfterMs": {"type": "integer", "format": "int64", "minimum": 0},
+          "execution": {"$ref": "#/components/schemas/MissionExecution"}
+        }
+      },
+      "MissionExecution": {
+        "type": "object",
+        "required": ["dispatcherStatus", "recovering", "allTasksSettled", "completedTasks", "blockedTasks", "currentTaskId", "latestAttempt"],
+        "properties": {
+          "dispatcherStatus": {"type": "string", "enum": ["READY", "NOT_READY", "NOT_CONFIGURED"]},
+          "recovering": {"type": "boolean"},
+          "allTasksSettled": {"type": "boolean"},
+          "completedTasks": {"type": "integer", "minimum": 0},
+          "blockedTasks": {"type": "integer", "minimum": 0},
+          "currentTaskId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "latestAttempt": {"oneOf": [{"$ref": "#/components/schemas/MissionAttempt"}, {"type": "null"}]}
+        }
+      },
+      "MissionAttempt": {
+        "type": "object",
+        "required": ["taskId", "attemptNo", "state", "sessionId", "runId", "failureCode", "updatedAt"],
+        "properties": {
+          "taskId": {"type": "string"},
+          "attemptNo": {"type": "integer", "minimum": 1},
+          "state": {"type": "string", "enum": ["CREATED", "DISPATCH_PENDING", "BOUND", "SETTLEMENT_PENDING", "SETTLED", "FAILED", "CANCELLED", "OUTCOME_UNKNOWN"]},
+          "sessionId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "runId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "failureCode": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "updatedAt": {"type": "string", "format": "date-time"}
         }
       },
       "MissionPage": {

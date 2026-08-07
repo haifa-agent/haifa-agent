@@ -1246,6 +1246,8 @@ function MissionDialog({
   const [planJson, setPlanJson] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [missionInteraction, setMissionInteraction] = useState<Interaction | null>(null);
+  const [missionInteractionText, setMissionInteractionText] = useState("");
   const pollFailures = useRef(0);
 
   const merge = useCallback((mission: MissionSnapshot) => {
@@ -1309,6 +1311,21 @@ function MissionDialog({
     };
   }, [client, merge, selected]);
 
+  useEffect(() => {
+    const runId = selected?.execution.latestAttempt?.runId;
+    if (selected?.state !== "WAITING_USER" || !runId) {
+      setMissionInteraction(null);
+      return;
+    }
+    const controller = new AbortController();
+    client.interaction(runId, controller.signal)
+      .then(setMissionInteraction)
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(safeError(reason));
+      });
+    return () => controller.abort();
+  }, [client, selected]);
+
   const command = async (operation: () => Promise<MissionSnapshot>) => {
     setBusy(true);
     setError(null);
@@ -1355,6 +1372,25 @@ function MissionDialog({
     }
   };
 
+  const respondToMissionInteraction = (action: string) => {
+    if (!missionInteraction || !selected) return;
+    setBusy(true);
+    setError(null);
+    client.respondToInteraction(
+      missionInteraction,
+      action,
+      missionInteractionText,
+      { idempotencyKey: crypto.randomUUID() },
+    ).then(() => client.missionSnapshot?.(selected.missionId))
+      .then((mission) => {
+        if (mission) merge(mission);
+        setMissionInteraction(null);
+        setMissionInteractionText("");
+      })
+      .catch((reason) => setError(safeError(reason)))
+      .finally(() => setBusy(false));
+  };
+
   return (
     <div className="dialog-backdrop mission-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="mission-dialog" role="dialog" aria-modal="true" aria-labelledby="mission-title" onMouseDown={(event) => event.stopPropagation()}>
@@ -1386,9 +1422,16 @@ function MissionDialog({
               <article className="mission-detail">
                 <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span><h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
                 {selected.acceptanceCriteria.length > 0 && <section><h4>验收标准</h4><ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section>}
-                <section><h4>执行计划 · revision {selected.plan?.revision ?? "-"}</h4>
-                  <ol className="mission-tasks">{selected.tasks.map((task) => <li key={task.taskId}><b>{task.ordinal}. {task.title}</b><span>{task.objective}</span>{task.dependsOn.length > 0 && <small>依赖：{task.dependsOn.join("、")}</small>}<em>{task.state}</em></li>)}</ol>
+                <section className="mission-execution-summary" aria-label="Mission 执行状态">
+                  <span>Dispatcher：{selected.execution.dispatcherStatus}</span>
+                  <span>已完成 {selected.execution.completedTasks}/{selected.tasks.length}</span>
+                  {selected.execution.currentTaskId && <span>当前任务：{selected.execution.currentTaskId}</span>}
+                  {selected.execution.recovering && <span>正在恢复执行状态</span>}
                 </section>
+                <section><h4>执行计划 · revision {selected.plan?.revision ?? "-"}</h4>
+                  <ol className="mission-tasks">{selected.tasks.map((task) => <li key={task.taskId}><b>{task.ordinal}. {task.title}</b><span>{task.objective}</span>{task.dependsOn.length > 0 && <small>依赖：{task.dependsOn.join("、")}</small>}<em>{task.state}</em>{task.state === "BLOCKED" && client.retryMissionTask && <button type="button" className="button mission-task-retry" disabled={busy} onClick={() => void command(() => client.retryMissionTask!(selected, task.taskId, { idempotencyKey: crypto.randomUUID() }))}>重试任务</button>}</li>)}</ol>
+                </section>
+                {missionInteraction && <section className="mission-interaction"><h4>{missionInteraction.title}</h4><p>{missionInteraction.safePrompt}</p>{missionInteraction.inputType !== "NONE" && <textarea value={missionInteractionText} maxLength={missionInteraction.maximumCharacters} onChange={(event) => setMissionInteractionText(event.target.value)} rows={3} /> }<div>{missionInteraction.allowedActions.map((action) => <button key={action} type="button" className="button" disabled={busy} onClick={() => respondToMissionInteraction(action)}>{action}</button>)}</div></section>}
                 {editingPlan && <section className="mission-plan-editor"><label>完整计划 JSON<textarea value={planJson} onChange={(event) => setPlanJson(event.target.value)} rows={12} spellCheck={false} /></label><div><button type="button" className="button" onClick={() => setEditingPlan(false)}>取消编辑</button><button type="button" className="button primary-button" disabled={busy} onClick={replacePlan}>替换整个计划</button></div></section>}
                 <footer className="mission-actions">
                   {selected.state === "WAITING_CONFIRMATION" && <>
@@ -1398,7 +1441,7 @@ function MissionDialog({
                   </>}
                   {!missionTerminalStates.has(selected.state) && <button type="button" className="button danger" disabled={busy} onClick={() => void command(() => client.cancelMission!(selected, { idempotencyKey: crypto.randomUUID() }))}>取消 Mission</button>}
                 </footer>
-                {selected.state === "RUNNING" && <p className="mission-phase-note">计划已确认。Phase 1 不会启动后台 Task；执行与恢复能力将在 Phase 2 接入。</p>}
+                {selected.state === "RUNNING" && <p className="mission-phase-note">Mission 正在后台串行执行；关闭页面或重启服务后可从持久化状态继续恢复。</p>}
               </article>
             ) : <div className="empty"><h3>选择或创建 Mission</h3><p>Mission 用于需要拆解、持续运行并最终整合的大任务。</p></div>}
           </div>

@@ -152,6 +152,20 @@ public final class PersonalMissionController {
         return changed(missions.cancel(change(missionId, ifMatch, idempotencyKey)));
     }
 
+    @PostMapping("/{missionId}/tasks/{taskId}/retry")
+    ResponseEntity<PersonalApiDtos.MissionSnapshot> retry(
+            @PathVariable String missionId,
+            @PathVariable String taskId,
+            @RequestHeader(value = "If-Match", required = false) String ifMatch,
+            @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return changed(missions.retry(new MissionApplicationService.RetryMissionTask(
+                key(idempotencyKey),
+                ownerScope(),
+                text(missionId, "missionId", 256),
+                text(taskId, "taskId", 64),
+                revision(ifMatch))));
+    }
+
     private ResponseEntity<PersonalApiDtos.MissionSnapshot> response(String missionId) {
         return missions.find(text(missionId, "missionId", 256), ownerScope())
                 .map(mapper::mission)

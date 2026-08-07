@@ -4,6 +4,7 @@ import io.haifa.agent.personalassistant.application.PersonalAssistantApplication
 import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
 
@@ -14,17 +15,43 @@ public final class PersonalApiMapper {
                 value.constraints().maxTasks(),
                 value.constraints().maxDependencyDepth(),
                 value.constraints().deadlineAt().orElse(null));
+        Map<String, io.haifa.agent.personalassistant.application.mission.MissionTaskState> states =
+                value.execution().tasks().stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                io.haifa.agent.personalassistant.application.mission.MissionExecutionSnapshot
+                                                .TaskExecution::taskId,
+                                io.haifa.agent.personalassistant.application.mission.MissionExecutionSnapshot
+                                                .TaskExecution::state));
         var plan = value.plan()
                 .map(revision -> new PersonalApiDtos.MissionPlanRevision(
                         revision.revisionNo(),
                         revision.schemaId(),
                         revision.schemaVersion(),
-                        revision.tasks().stream().map(this::missionTask).toList(),
+                        revision.tasks().stream()
+                                .map(task -> missionTask(task, states.get(task.taskId())))
+                                .toList(),
                         revision.plannerSessionId(),
                         revision.plannerRunId(),
                         revision.createdAt()));
         List<PersonalApiDtos.MissionTask> tasks =
                 plan.map(PersonalApiDtos.MissionPlanRevision::tasks).orElseGet(List::of);
+        var execution = new PersonalApiDtos.MissionExecution(
+                value.execution().dispatcherStatus(),
+                value.execution().recovering(),
+                value.execution().allTasksSettled(),
+                value.execution().completedTasks(),
+                value.execution().blockedTasks(),
+                value.execution().currentTaskId(),
+                value.execution()
+                        .latestAttempt()
+                        .map(attempt -> new PersonalApiDtos.MissionAttempt(
+                                attempt.taskId(),
+                                attempt.attemptNo(),
+                                attempt.state().name(),
+                                attempt.sessionId(),
+                                attempt.runId(),
+                                attempt.failureCode(),
+                                attempt.updatedAt())));
         return new PersonalApiDtos.MissionSnapshot(
                 value.schemaVersion(),
                 value.missionId(),
@@ -44,11 +71,13 @@ public final class PersonalApiMapper {
                 value.updatedAt(),
                 value.confirmedAt(),
                 value.finishedAt(),
-                value.pollAfterMillis());
+                value.pollAfterMillis(),
+                execution);
     }
 
     private PersonalApiDtos.MissionTask missionTask(
-            io.haifa.agent.personalassistant.application.mission.MissionTask value) {
+            io.haifa.agent.personalassistant.application.mission.MissionTask value,
+            io.haifa.agent.personalassistant.application.mission.MissionTaskState executionState) {
         return new PersonalApiDtos.MissionTask(
                 value.taskId(),
                 value.ordinal(),
@@ -60,7 +89,7 @@ public final class PersonalApiMapper {
                 value.requiredSkillIds().stream().sorted().toList(),
                 value.resultSchemaId(),
                 value.resultSchemaVersion(),
-                value.state().name());
+                (executionState == null ? value.state() : executionState).name());
     }
 
     public PersonalApiDtos.Conversation conversation(PersonalAssistantApplication.ConversationView value) {

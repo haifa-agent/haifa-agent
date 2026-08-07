@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.application.mission.MissionApplicationService;
+import io.haifa.agent.personalassistant.application.mission.MissionConstraints;
+import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.server.admin.PersonalAdminQueryService;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
 import io.haifa.agent.store.sqlite.SqliteStoreFoundation;
@@ -23,6 +26,37 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 
 class PersonalAssistantRestartTest {
+    @Test
+    void confirmedMissionResumesAcrossServerRestartAndSettlesThreeDependentTasks() throws Exception {
+        Path data = Files.createTempDirectory("haifa-personal-mission-restart-");
+        String missionId;
+        try (ConfigurableApplicationContext first = start(data, freePort(22801))) {
+            MissionApplicationService missions = first.getBean(MissionApplicationService.class);
+            MissionSnapshot created = missions.create(new MissionApplicationService.CreateMission(
+                    "mission-restart-create",
+                    "local/public-user",
+                    "conversation-mission-restart",
+                    "Produce a restart-safe result",
+                    java.util.List.of("first", "second", "third"),
+                    MissionConstraints.DEFAULT));
+            missionId = created.missionId();
+            missions.confirm(new MissionApplicationService.ChangeMission(
+                    "mission-restart-confirm", "local/public-user", missionId, created.version()));
+        }
+
+        try (ConfigurableApplicationContext second = start(data, freePort(22901))) {
+            MissionApplicationService missions = second.getBean(MissionApplicationService.class);
+            MissionSnapshot completed = awaitMissionSettled(missions, missionId);
+            assertThat(completed.execution().allTasksSettled()).isTrue();
+            assertThat(completed.execution().completedTasks()).isEqualTo(3);
+            assertThat(completed.execution().tasks())
+                    .extracting(
+                            io.haifa.agent.personalassistant.application.mission.MissionExecutionSnapshot.TaskExecution
+                                    ::latestAttemptNo)
+                    .containsExactly(1, 1, 1);
+        }
+    }
+
     @Test
     void conversationRunUsageAndActivitiesRecoverFromTheSameSqliteDatabase() throws Exception {
         Path data = Files.createTempDirectory("haifa-personal-restart-");
@@ -173,6 +207,18 @@ class PersonalAssistantRestartTest {
             Thread.sleep(25);
         } while (System.nanoTime() < deadline);
         throw new AssertionError("run did not become terminal");
+    }
+
+    private static MissionSnapshot awaitMissionSettled(MissionApplicationService missions, String missionId)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(45).toNanos();
+        MissionSnapshot latest;
+        do {
+            latest = missions.find(missionId, "local/public-user").orElseThrow();
+            if (latest.execution().allTasksSettled()) return latest;
+            Thread.sleep(100);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("mission did not settle after restart");
     }
 
     private static int freePort(int start) {

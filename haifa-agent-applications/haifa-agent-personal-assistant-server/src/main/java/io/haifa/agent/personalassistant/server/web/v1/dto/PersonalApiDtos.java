@@ -108,7 +108,26 @@ public final class PersonalApiDtos {
             Instant updatedAt,
             Optional<Instant> confirmedAt,
             Optional<Instant> finishedAt,
-            long pollAfterMs) {}
+            long pollAfterMs,
+            MissionExecution execution) {}
+
+    public record MissionExecution(
+            String dispatcherStatus,
+            boolean recovering,
+            boolean allTasksSettled,
+            int completedTasks,
+            int blockedTasks,
+            Optional<String> currentTaskId,
+            Optional<MissionAttempt> latestAttempt) {}
+
+    public record MissionAttempt(
+            String taskId,
+            int attemptNo,
+            String state,
+            Optional<String> sessionId,
+            Optional<String> runId,
+            Optional<String> failureCode,
+            Instant updatedAt) {}
 
     public record MissionPage(List<MissionSnapshot> items, Optional<String> nextCursor) {}
 

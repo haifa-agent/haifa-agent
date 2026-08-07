@@ -7,6 +7,7 @@ public record IdempotencyRow(
         String operation,
         String idempotencyKey,
         String runId,
+        String requestDigest,
         boolean commandApplied,
         String resultSchemaVersion,
         byte[] resultPayload,

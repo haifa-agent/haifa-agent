@@ -46,7 +46,7 @@ class SqliteMissionStoreTest {
                 MissionConstraints.DEFAULT);
 
         MissionSnapshot created = first.create(command);
-        assertThat(firstStore.schemaVersion()).isEqualTo(1);
+        assertThat(firstStore.schemaVersion()).isEqualTo(2);
 
         SqliteMissionStore restartedStore = new SqliteMissionStore(database, new ObjectMapper());
         MissionApplicationService restarted = service(restartedStore, ids);
@@ -141,6 +141,45 @@ class SqliteMissionStoreTest {
                 .extracting(MissionSnapshot::missionId)
                 .containsExactly(third.missionId(), second.missionId());
         assertThat(secondPage).extracting(MissionSnapshot::missionId).containsExactly(first.missionId());
+    }
+
+    @Test
+    void dispatchIntentRecoversAfterStaleClaimAndSettlesOneTask() {
+        SqliteMissionStore store = new SqliteMissionStore(directory.resolve("dispatch.sqlite"), new ObjectMapper());
+        store.registerDispatcher("process", "instance", CLOCK.instant());
+        AtomicInteger ids = new AtomicInteger();
+        MissionApplicationService service = new MissionApplicationService(
+                store,
+                store,
+                new DeterministicMissionPlanner(),
+                MissionPlanValidator.phaseOne(),
+                () -> "mission-" + ids.incrementAndGet(),
+                CLOCK,
+                store);
+        MissionSnapshot created = service.create(create("create-1", "conversation-1", "Execute one durable task"));
+        MissionSnapshot confirmed = service.confirm(new MissionApplicationService.ChangeMission(
+                "confirm-1", "local/public-user", created.missionId(), created.version()));
+
+        var claimed = store.prepareAndClaimNext(
+                        "dispatcher-a", CLOCK.instant(), CLOCK.instant().minusSeconds(30))
+                .orElseThrow();
+        assertThat(store.prepareAndClaimNext(
+                        "dispatcher-b", CLOCK.instant(), CLOCK.instant().minusSeconds(30)))
+                .isEmpty();
+        var reclaimed = store.prepareAndClaimNext(
+                        "dispatcher-b",
+                        CLOCK.instant().plusSeconds(31),
+                        CLOCK.instant().plusSeconds(1))
+                .orElseThrow();
+        assertThat(reclaimed.dispatchKey()).isEqualTo(claimed.dispatchKey());
+
+        store.bind(reclaimed, "session-1", "run-1", CLOCK.instant().plusSeconds(31));
+        var attempt = store.activeAttempts().getFirst();
+        store.settleCompleted(attempt, "sha256:result", "done", CLOCK.instant().plusSeconds(32));
+        var execution = store.snapshot(confirmed.missionId());
+        assertThat(execution.completedTasks()).isEqualTo(1);
+        assertThat(execution.allTasksSettled()).isTrue();
+        assertThat(store.activeAttempts()).isEmpty();
     }
 
     private static String createConcurrently(
