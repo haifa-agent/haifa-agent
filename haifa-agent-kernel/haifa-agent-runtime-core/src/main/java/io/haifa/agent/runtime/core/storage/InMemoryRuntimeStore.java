@@ -79,7 +79,7 @@ public final class InMemoryRuntimeStore
     private final java.util.Set<String> publishedOutbox = new java.util.HashSet<>();
     private final java.util.Set<String> consumedOutbox = new java.util.HashSet<>();
     private final Map<AgentRunId, List<StoredCheckpoint>> checkpoints = new HashMap<>();
-    private final Map<String, AgentRunId> idempotentRuns = new HashMap<>();
+    private final Map<String, RunStartIdempotencyBinding> idempotentRuns = new HashMap<>();
     private final java.util.Set<String> appliedCommands = new java.util.HashSet<>();
     private final Map<String, RuntimeCommandResult> commandResults = new HashMap<>();
     private final Map<AgentRunId, List<AgentMessage>> messages = new HashMap<>();
@@ -357,13 +357,17 @@ public final class InMemoryRuntimeStore
     }
 
     @Override
-    public synchronized Optional<AgentRunId> findRun(String callerScope, String operation, String key) {
+    public synchronized Optional<RunStartIdempotencyBinding> findRunBinding(
+            String callerScope, String operation, String key) {
         return Optional.ofNullable(idempotentRuns.get(idempotencyKey(callerScope, operation, key)));
     }
 
     @Override
-    public synchronized AgentRunId recordRun(String callerScope, String operation, String key, AgentRunId runId) {
-        return idempotentRuns.computeIfAbsent(idempotencyKey(callerScope, operation, key), ignored -> runId);
+    public synchronized RunStartIdempotencyBinding recordRunBinding(RunStartIdempotencyBinding binding) {
+        Objects.requireNonNull(binding, "binding must not be null");
+        return idempotentRuns.computeIfAbsent(
+                idempotencyKey(binding.callerScope(), binding.operation(), binding.idempotencyKey()),
+                ignored -> binding);
     }
 
     @Override

@@ -5,12 +5,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.personalassistant.application.mission.MissionCommandBinding;
 import io.haifa.agent.personalassistant.application.mission.MissionCommandReservation;
 import io.haifa.agent.personalassistant.application.mission.MissionConstraints;
+import io.haifa.agent.personalassistant.application.mission.MissionDispatchIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
+import io.haifa.agent.personalassistant.application.mission.MissionExecutionSnapshot;
+import io.haifa.agent.personalassistant.application.mission.MissionExecutionStore;
 import io.haifa.agent.personalassistant.application.mission.MissionListCursor;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanRevision;
 import io.haifa.agent.personalassistant.application.mission.MissionState;
 import io.haifa.agent.personalassistant.application.mission.MissionStore;
 import io.haifa.agent.personalassistant.application.mission.MissionTask;
+import io.haifa.agent.personalassistant.application.mission.MissionTaskAttempt;
+import io.haifa.agent.personalassistant.application.mission.MissionTaskAttemptState;
+import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
 import io.haifa.agent.personalassistant.application.mission.MissionUnitOfWork;
 import io.haifa.agent.personalassistant.application.mission.PersonalMission;
 import io.haifa.agent.store.sqlite.migration.SqlScriptParser;
@@ -33,8 +39,8 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 /** Product-owned SQLite migration, Store and UoW. It deliberately does not modify public Runtime mappings. */
-public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork {
-    private static final int SCHEMA_VERSION = 1;
+public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork, MissionExecutionStore {
+    private static final int SCHEMA_VERSION = 2;
     private static final String MIGRATION =
             """
             CREATE TABLE personal_mission (
@@ -227,6 +233,14 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 heartbeat_at_ms INTEGER NOT NULL,
                 schema_version INTEGER NOT NULL
             );
+            """;
+    private static final String MIGRATION_V2 =
+            """
+            CREATE UNIQUE INDEX uq_personal_mission_active_attempt_global
+                ON personal_mission_task_attempt((1))
+                WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING');
+            CREATE INDEX ix_personal_mission_task_ready_fifo
+                ON personal_mission_task(state, updated_at_ms, mission_id, task_id);
             """;
 
     private final String jdbcUrl;
@@ -424,6 +438,245 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         }
     }
 
+    public void registerDispatcher(String processId, String instanceId, Instant now) {
+        execute(() -> {
+            try (var statement = current()
+                    .prepareStatement(
+                            "INSERT INTO personal_mission_dispatcher_owner(owner_name,process_id,instance_id,started_at_ms,heartbeat_at_ms,schema_version) VALUES ('pa-mission',?,?,?,?,?) ON CONFLICT(owner_name) DO UPDATE SET process_id=excluded.process_id,instance_id=excluded.instance_id,started_at_ms=excluded.started_at_ms,heartbeat_at_ms=excluded.heartbeat_at_ms,schema_version=excluded.schema_version")) {
+                statement.setString(1, processId);
+                statement.setString(2, instanceId);
+                statement.setLong(3, now.toEpochMilli());
+                statement.setLong(4, now.toEpochMilli());
+                statement.setInt(5, SCHEMA_VERSION);
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    public void heartbeatDispatcher(String instanceId, Instant now) {
+        execute(() -> {
+            try (var statement = current()
+                    .prepareStatement(
+                            "UPDATE personal_mission_dispatcher_owner SET heartbeat_at_ms=? WHERE owner_name='pa-mission' AND instance_id=?")) {
+                statement.setLong(1, now.toEpochMilli());
+                statement.setString(2, instanceId);
+                if (statement.executeUpdate() != 1) {
+                    throw new MissionException(
+                            "MISSION_DISPATCHER_OWNERSHIP_LOST", "Mission dispatcher ownership was lost");
+                }
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public Optional<MissionDispatchIntent> prepareAndClaimNext(String dispatcherId, Instant now, Instant staleBefore) {
+        return execute(() -> prepareAndClaimNextInTransaction(dispatcherId, now, staleBefore));
+    }
+
+    @Override
+    public void bind(MissionDispatchIntent intent, String sessionId, String runId, Instant now) {
+        execute(() -> {
+            try (var attempt = current()
+                            .prepareStatement(
+                                    """
+                    UPDATE personal_mission_task_attempt
+                    SET state='BOUND', session_id=?, run_id=?, started_at_ms=?, updated_at_ms=?, version=version+1
+                    WHERE mission_id=? AND task_id=? AND attempt_no=?
+                      AND state IN ('DISPATCH_PENDING','BOUND')
+                      AND (session_id IS NULL OR session_id=?) AND (run_id IS NULL OR run_id=?)
+                    """);
+                    var outbox = current()
+                            .prepareStatement(
+                                    """
+                    UPDATE personal_mission_outbox SET state='COMPLETED', completed_at_ms=?
+                    WHERE outbox_id=? AND state IN ('CLAIMED','COMPLETED')
+                    """)) {
+                attempt.setString(1, sessionId);
+                attempt.setString(2, runId);
+                attempt.setLong(3, now.toEpochMilli());
+                attempt.setLong(4, now.toEpochMilli());
+                attempt.setString(5, intent.missionId());
+                attempt.setString(6, intent.taskId());
+                attempt.setInt(7, intent.attemptNo());
+                attempt.setString(8, sessionId);
+                attempt.setString(9, runId);
+                if (attempt.executeUpdate() != 1) {
+                    throw new MissionException(
+                            "MISSION_BINDING_CONFLICT", "Task Run binding conflicts with persisted state");
+                }
+                outbox.setLong(1, now.toEpochMilli());
+                outbox.setString(2, intent.outboxId());
+                outbox.executeUpdate();
+                touchMission(intent.missionId(), now);
+                appendEvent(intent.missionId(), "MISSION_TASK_BOUND", now);
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void failDispatch(MissionDispatchIntent intent, String failureCode, boolean retryable, Instant now) {
+        execute(() -> {
+            MissionTaskAttempt attempt = requireAttempt(intent.missionId(), intent.taskId(), intent.attemptNo());
+            settleFailedInTransaction(attempt, failureCode, retryable, now);
+            completeOutbox(intent.outboxId(), now);
+            return null;
+        });
+    }
+
+    @Override
+    public List<MissionTaskAttempt> activeAttempts() {
+        return execute(() -> {
+            try (var statement = current()
+                            .prepareStatement(
+                                    """
+                    SELECT * FROM personal_mission_task_attempt
+                    WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING')
+                    ORDER BY created_at_ms, mission_id, task_id
+                    """);
+                    var result = statement.executeQuery()) {
+                List<MissionTaskAttempt> values = new ArrayList<>();
+                while (result.next()) values.add(readAttempt(result));
+                return List.copyOf(values);
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+        });
+    }
+
+    @Override
+    public MissionState missionState(String missionId) {
+        return execute(() -> {
+            try (var statement = current().prepareStatement("SELECT state FROM personal_mission WHERE mission_id=?")) {
+                statement.setString(1, missionId);
+                try (var result = statement.executeQuery()) {
+                    if (!result.next()) throw new MissionException("MISSION_NOT_FOUND", "Mission is unavailable");
+                    return enumValue(MissionState.class, result.getString(1), "mission state");
+                }
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+        });
+    }
+
+    @Override
+    public void waitingForUser(MissionTaskAttempt attempt, Instant now) {
+        execute(() -> {
+            try {
+                updateMissionState(attempt.missionId(), "WAITING_USER", now, "state IN ('RUNNING','WAITING_USER')");
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void settleCompleted(MissionTaskAttempt attempt, String resultDigest, String resultJson, Instant now) {
+        execute(() -> {
+            if (!settleAttempt(attempt, MissionTaskAttemptState.SETTLED, resultDigest, null, now)) return null;
+            try (var statement = current()
+                    .prepareStatement(
+                            "UPDATE personal_mission_task SET state='COMPLETED',result_json=?,result_digest=?,block_code=NULL,updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=?")) {
+                statement.setString(1, resultJson);
+                statement.setString(2, resultDigest);
+                statement.setLong(3, now.toEpochMilli());
+                statement.setString(4, attempt.missionId());
+                statement.setString(5, attempt.taskId());
+                statement.executeUpdate();
+                updateMissionState(attempt.missionId(), "RUNNING", now, "state IN ('RUNNING','WAITING_USER')");
+                appendEvent(attempt.missionId(), "MISSION_TASK_COMPLETED", now);
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void settleFailed(MissionTaskAttempt attempt, String failureCode, boolean retryable, Instant now) {
+        execute(() -> {
+            settleFailedInTransaction(attempt, failureCode, retryable, now);
+            return null;
+        });
+    }
+
+    @Override
+    public void settleCancelled(MissionTaskAttempt attempt, Instant now) {
+        execute(() -> {
+            if (!settleAttempt(attempt, MissionTaskAttemptState.CANCELLED, null, null, now)) return null;
+            try (var statement = current()
+                    .prepareStatement(
+                            "UPDATE personal_mission_task SET state='CANCELLED',updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=?")) {
+                statement.setLong(1, now.toEpochMilli());
+                statement.setString(2, attempt.missionId());
+                statement.setString(3, attempt.taskId());
+                statement.executeUpdate();
+                appendEvent(attempt.missionId(), "MISSION_TASK_CANCELLED", now);
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void cancelMission(String missionId, Instant now) {
+        execute(() -> {
+            try (var statement = current()
+                    .prepareStatement(
+                            "UPDATE personal_mission_task SET state='CANCELLED',updated_at_ms=?,version=version+1 WHERE mission_id=? AND state NOT IN ('COMPLETED','CANCELLED')")) {
+                statement.setLong(1, now.toEpochMilli());
+                statement.setString(2, missionId);
+                statement.executeUpdate();
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public MissionExecutionSnapshot snapshot(String missionId) {
+        return execute(() -> executionSnapshot(missionId));
+    }
+
+    @Override
+    public void retryBlocked(String missionId, String ownerScope, String taskId, Instant now) {
+        execute(() -> {
+            try (var statement = current()
+                    .prepareStatement(
+                            """
+                    UPDATE personal_mission_task SET state='READY',block_code=NULL,updated_at_ms=?,version=version+1
+                    WHERE mission_id=? AND task_id=? AND state='BLOCKED'
+                      AND EXISTS (SELECT 1 FROM personal_mission m WHERE m.mission_id=? AND m.owner_scope=? AND m.state='WAITING_USER')
+                    """)) {
+                statement.setLong(1, now.toEpochMilli());
+                statement.setString(2, missionId);
+                statement.setString(3, taskId);
+                statement.setString(4, missionId);
+                statement.setString(5, ownerScope);
+                if (statement.executeUpdate() != 1) {
+                    throw new MissionException(
+                            "MISSION_TASK_NOT_RETRYABLE", "Mission Task is not blocked and retryable");
+                }
+                updateMissionState(missionId, "RUNNING", now, "state='WAITING_USER'");
+                appendEvent(missionId, "MISSION_TASK_RETRY_REQUESTED", now);
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
     private void migrate() {
         try (Connection connection = DriverManager.getConnection(jdbcUrl)) {
             configure(connection);
@@ -431,41 +684,436 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.execute(
                         "CREATE TABLE IF NOT EXISTS personal_schema_history(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, installed_at_ms INTEGER NOT NULL)");
             }
-            String checksum = sha256(MIGRATION);
-            try (var query =
-                    connection.prepareStatement("SELECT checksum FROM personal_schema_history WHERE version=?")) {
-                query.setInt(1, SCHEMA_VERSION);
-                try (var result = query.executeQuery()) {
-                    if (result.next()) {
-                        if (!checksum.equals(result.getString(1))) {
-                            throw new MissionException(
-                                    "MISSION_SCHEMA_DRIFT", "Personal Mission migration checksum changed");
-                        }
-                        return;
+            applyMigration(connection, 1, MIGRATION);
+            applyMigration(connection, 2, MIGRATION_V2);
+        } catch (SQLException exception) {
+            throw failure(exception);
+        }
+    }
+
+    private void applyMigration(Connection connection, int version, String script) throws SQLException {
+        String checksum = sha256(script);
+        try (var query = connection.prepareStatement("SELECT checksum FROM personal_schema_history WHERE version=?")) {
+            query.setInt(1, version);
+            try (var result = query.executeQuery()) {
+                if (result.next()) {
+                    if (!checksum.equals(result.getString(1))) {
+                        throw new MissionException(
+                                "MISSION_SCHEMA_DRIFT", "Personal Mission migration checksum changed");
                     }
+                    return;
                 }
             }
-            connection.setAutoCommit(false);
-            try {
-                for (String sql : SqlScriptParser.parse(MIGRATION)) {
-                    try (var statement = connection.createStatement()) {
-                        statement.execute(sql);
+        }
+        connection.setAutoCommit(false);
+        try {
+            for (String sql : SqlScriptParser.parse(script)) {
+                try (var statement = connection.createStatement()) {
+                    statement.execute(sql);
+                }
+            }
+            try (var insert = connection.prepareStatement(
+                    "INSERT INTO personal_schema_history(version, checksum, installed_at_ms) VALUES (?, ?, ?)")) {
+                insert.setInt(1, version);
+                insert.setString(2, checksum);
+                insert.setLong(3, System.currentTimeMillis());
+                insert.executeUpdate();
+            }
+            connection.commit();
+        } catch (SQLException | RuntimeException failure) {
+            rollback(connection, failure);
+            throw failure;
+        } finally {
+            connection.setAutoCommit(true);
+        }
+    }
+
+    private Optional<MissionDispatchIntent> prepareAndClaimNextInTransaction(
+            String dispatcherId, Instant now, Instant staleBefore) {
+        try {
+            expireDeadlines(now);
+            if (!hasActiveAttempt()) {
+                refreshReadyTasks(now);
+                createNextAttempt(now);
+            }
+            try (var select = current()
+                    .prepareStatement(
+                            """
+                    SELECT o.outbox_id,o.mission_id,o.task_id,o.attempt_no,o.payload_digest,
+                           a.dispatch_key,m.owner_scope,t.objective,t.acceptance_json,
+                           t.result_schema_id,t.result_schema_version
+                    FROM personal_mission_outbox o
+                    JOIN personal_mission_task_attempt a
+                      ON a.mission_id=o.mission_id AND a.task_id=o.task_id AND a.attempt_no=o.attempt_no
+                    JOIN personal_mission_task t ON t.mission_id=o.mission_id AND t.task_id=o.task_id
+                    JOIN personal_mission m ON m.mission_id=o.mission_id
+                    WHERE (o.state='PENDING' AND o.available_at_ms<=?)
+                       OR (o.state='CLAIMED' AND o.claimed_at_ms<?)
+                    ORDER BY o.available_at_ms,o.mission_id,o.task_id,o.outbox_id LIMIT 1
+                    """)) {
+                select.setLong(1, now.toEpochMilli());
+                select.setLong(2, staleBefore.toEpochMilli());
+                try (var result = select.executeQuery()) {
+                    if (!result.next()) return Optional.empty();
+                    String outboxId = result.getString("outbox_id");
+                    try (var claim = current()
+                            .prepareStatement(
+                                    "UPDATE personal_mission_outbox SET state='CLAIMED',claimed_at_ms=?,claim_owner=? WHERE outbox_id=? AND (state='PENDING' OR (state='CLAIMED' AND claimed_at_ms<?))")) {
+                        claim.setLong(1, now.toEpochMilli());
+                        claim.setString(2, dispatcherId);
+                        claim.setString(3, outboxId);
+                        claim.setLong(4, staleBefore.toEpochMilli());
+                        if (claim.executeUpdate() != 1) return Optional.empty();
                     }
+                    return Optional.of(new MissionDispatchIntent(
+                            outboxId,
+                            result.getString("mission_id"),
+                            result.getString("owner_scope"),
+                            result.getString("task_id"),
+                            result.getInt("attempt_no"),
+                            result.getString("dispatch_key"),
+                            result.getString("payload_digest"),
+                            result.getString("objective"),
+                            jsonList(result.getString("acceptance_json")),
+                            result.getString("result_schema_id"),
+                            result.getString("result_schema_version"),
+                            now));
                 }
-                try (var insert = connection.prepareStatement(
-                        "INSERT INTO personal_schema_history(version, checksum, installed_at_ms) VALUES (?, ?, ?)")) {
-                    insert.setInt(1, SCHEMA_VERSION);
-                    insert.setString(2, checksum);
-                    insert.setLong(3, System.currentTimeMillis());
-                    insert.executeUpdate();
-                }
-                connection.commit();
-            } catch (SQLException | RuntimeException failure) {
-                rollback(connection, failure);
-                throw failure;
             }
         } catch (SQLException exception) {
             throw failure(exception);
+        }
+    }
+
+    private void expireDeadlines(Instant now) throws SQLException {
+        try (var tasks = current()
+                        .prepareStatement(
+                                """
+                UPDATE personal_mission_task SET state='CANCELLED',block_code='MISSION_DEADLINE_EXCEEDED',
+                  updated_at_ms=?,version=version+1
+                WHERE state NOT IN ('COMPLETED','BLOCKED','CANCELLED') AND mission_id IN (
+                  SELECT mission_id FROM personal_mission WHERE state IN ('RUNNING','WAITING_USER') AND deadline_at_ms<=?)
+                """);
+                var missions = current()
+                        .prepareStatement(
+                                """
+                UPDATE personal_mission SET state='FAILED',failure_code='MISSION_DEADLINE_EXCEEDED',
+                  updated_at_ms=?,finished_at_ms=?,version=version+1
+                WHERE state IN ('RUNNING','WAITING_USER') AND deadline_at_ms<=?
+                """)) {
+            tasks.setLong(1, now.toEpochMilli());
+            tasks.setLong(2, now.toEpochMilli());
+            tasks.executeUpdate();
+            missions.setLong(1, now.toEpochMilli());
+            missions.setLong(2, now.toEpochMilli());
+            missions.setLong(3, now.toEpochMilli());
+            missions.executeUpdate();
+        }
+    }
+
+    private boolean hasActiveAttempt() throws SQLException {
+        try (var statement = current()
+                        .prepareStatement(
+                                "SELECT 1 FROM personal_mission_task_attempt WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING') LIMIT 1");
+                var result = statement.executeQuery()) {
+            return result.next();
+        }
+    }
+
+    private void refreshReadyTasks(Instant now) throws SQLException {
+        try (var ready = current()
+                        .prepareStatement(
+                                """
+                UPDATE personal_mission_task AS t SET state='READY',updated_at_ms=?,version=version+1
+                WHERE state IN ('PLANNED','WAITING_DEPENDENCY')
+                  AND EXISTS (SELECT 1 FROM personal_mission m WHERE m.mission_id=t.mission_id AND m.state='RUNNING')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM personal_mission_task_dependency d
+                    JOIN personal_mission_task dependency
+                      ON dependency.mission_id=d.mission_id AND dependency.task_id=d.depends_on_task_id
+                    WHERE d.mission_id=t.mission_id AND d.task_id=t.task_id AND dependency.state<>'COMPLETED')
+                """);
+                var waiting = current()
+                        .prepareStatement(
+                                """
+                UPDATE personal_mission_task AS t SET state='WAITING_DEPENDENCY',updated_at_ms=?,version=version+1
+                WHERE state='PLANNED'
+                  AND EXISTS (SELECT 1 FROM personal_mission m WHERE m.mission_id=t.mission_id AND m.state='RUNNING')
+                  AND EXISTS (
+                    SELECT 1 FROM personal_mission_task_dependency d
+                    JOIN personal_mission_task dependency
+                      ON dependency.mission_id=d.mission_id AND dependency.task_id=d.depends_on_task_id
+                    WHERE d.mission_id=t.mission_id AND d.task_id=t.task_id AND dependency.state<>'COMPLETED')
+                """)) {
+            ready.setLong(1, now.toEpochMilli());
+            ready.executeUpdate();
+            waiting.setLong(1, now.toEpochMilli());
+            waiting.executeUpdate();
+        }
+    }
+
+    private void createNextAttempt(Instant now) throws SQLException {
+        try (var select = current()
+                        .prepareStatement(
+                                """
+                SELECT t.mission_id,t.task_id,t.latest_attempt_no,t.objective,t.acceptance_json,
+                       t.result_schema_id,t.result_schema_version
+                FROM personal_mission_task t JOIN personal_mission m ON m.mission_id=t.mission_id
+                WHERE t.state='READY' AND m.state='RUNNING'
+                ORDER BY COALESCE(m.started_at_ms,m.confirmed_at_ms),t.mission_id,t.ordinal,t.task_id LIMIT 1
+                """);
+                var result = select.executeQuery()) {
+            if (!result.next()) return;
+            String missionId = result.getString("mission_id");
+            String taskId = result.getString("task_id");
+            int attemptNo = result.getInt("latest_attempt_no") + 1;
+            String dispatchKey = "mission:" + missionId + ":task:" + taskId + ":attempt:" + attemptNo;
+            String payloadDigest = sha256(result.getString("objective") + "\u0000"
+                    + result.getString("acceptance_json") + "\u0000"
+                    + result.getString("result_schema_id") + "\u0000"
+                    + result.getString("result_schema_version"));
+            try (var attempt = current()
+                            .prepareStatement(
+                                    """
+                    INSERT INTO personal_mission_task_attempt(
+                      mission_id,task_id,attempt_no,attempt_kind,dispatch_key,dispatch_payload_digest,state,
+                      version,created_at_ms,updated_at_ms) VALUES (?,?,?,'AUTO',?,?,'DISPATCH_PENDING',0,?,?)
+                    """);
+                    var task = current()
+                            .prepareStatement(
+                                    "UPDATE personal_mission_task SET latest_attempt_no=?,updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=? AND state='READY'");
+                    var outbox = current()
+                            .prepareStatement(
+                                    """
+                    INSERT INTO personal_mission_outbox(
+                      outbox_id,mission_id,task_id,attempt_no,intent_type,payload_json,payload_digest,state,
+                      available_at_ms,created_at_ms) VALUES (?,?,?,?,'START_TASK','{}',?,'PENDING',?,?)
+                    """)) {
+                attempt.setString(1, missionId);
+                attempt.setString(2, taskId);
+                attempt.setInt(3, attemptNo);
+                attempt.setString(4, dispatchKey);
+                attempt.setString(5, payloadDigest);
+                attempt.setLong(6, now.toEpochMilli());
+                attempt.setLong(7, now.toEpochMilli());
+                attempt.executeUpdate();
+                task.setInt(1, attemptNo);
+                task.setLong(2, now.toEpochMilli());
+                task.setString(3, missionId);
+                task.setString(4, taskId);
+                task.executeUpdate();
+                outbox.setString(1, dispatchKey);
+                outbox.setString(2, missionId);
+                outbox.setString(3, taskId);
+                outbox.setInt(4, attemptNo);
+                outbox.setString(5, payloadDigest);
+                outbox.setLong(6, now.toEpochMilli());
+                outbox.setLong(7, now.toEpochMilli());
+                outbox.executeUpdate();
+                touchMission(missionId, now);
+                appendEvent(missionId, "MISSION_TASK_DISPATCH_PENDING", now);
+            }
+        }
+    }
+
+    private void settleFailedInTransaction(
+            MissionTaskAttempt attempt, String failureCode, boolean retryable, Instant now) {
+        MissionTaskAttemptState terminal = failureCode.endsWith("OUTCOME_UNKNOWN")
+                ? MissionTaskAttemptState.OUTCOME_UNKNOWN
+                : MissionTaskAttemptState.FAILED;
+        if (!settleAttempt(attempt, terminal, null, failureCode, now)) return;
+        boolean autoRetry = retryable && attempt.attemptNo() < 2;
+        try (var task = current()
+                .prepareStatement(
+                        "UPDATE personal_mission_task SET state=?,block_code=?,updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=?")) {
+            task.setString(1, autoRetry ? "READY" : "BLOCKED");
+            task.setString(2, autoRetry ? null : failureCode);
+            task.setLong(3, now.toEpochMilli());
+            task.setString(4, attempt.missionId());
+            task.setString(5, attempt.taskId());
+            task.executeUpdate();
+            updateMissionState(
+                    attempt.missionId(),
+                    autoRetry ? "RUNNING" : "WAITING_USER",
+                    now,
+                    "state IN ('RUNNING','WAITING_USER')");
+            appendEvent(attempt.missionId(), autoRetry ? "MISSION_TASK_RETRY_SCHEDULED" : "MISSION_TASK_BLOCKED", now);
+        } catch (SQLException exception) {
+            throw failure(exception);
+        }
+    }
+
+    private boolean settleAttempt(
+            MissionTaskAttempt attempt,
+            MissionTaskAttemptState target,
+            String resultDigest,
+            String failureCode,
+            Instant now) {
+        try (var statement = current()
+                .prepareStatement(
+                        "UPDATE personal_mission_task_attempt SET state=?,result_digest=?,failure_code=?,settled_at_ms=?,updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=? AND attempt_no=? AND state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING')")) {
+            statement.setString(1, target.name());
+            statement.setString(2, resultDigest);
+            statement.setString(3, failureCode);
+            statement.setLong(4, now.toEpochMilli());
+            statement.setLong(5, now.toEpochMilli());
+            statement.setString(6, attempt.missionId());
+            statement.setString(7, attempt.taskId());
+            statement.setInt(8, attempt.attemptNo());
+            return statement.executeUpdate() == 1;
+        } catch (SQLException exception) {
+            throw failure(exception);
+        }
+    }
+
+    private MissionExecutionSnapshot executionSnapshot(String missionId) {
+        try (var tasks = current()
+                        .prepareStatement(
+                                "SELECT task_id,ordinal,state,latest_attempt_no,result_digest,block_code FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal");
+                var latest = current()
+                        .prepareStatement(
+                                "SELECT * FROM personal_mission_task_attempt WHERE mission_id=? ORDER BY created_at_ms DESC,task_id DESC,attempt_no DESC LIMIT 1")) {
+            tasks.setString(1, missionId);
+            List<MissionExecutionSnapshot.TaskExecution> values = new ArrayList<>();
+            int completed = 0;
+            int blocked = 0;
+            String currentTask = null;
+            try (var result = tasks.executeQuery()) {
+                while (result.next()) {
+                    MissionTaskState state = enumValue(MissionTaskState.class, result.getString("state"), "task state");
+                    if (state == MissionTaskState.COMPLETED) completed++;
+                    if (state == MissionTaskState.BLOCKED) blocked++;
+                    if ((state == MissionTaskState.READY || state == MissionTaskState.WAITING_DEPENDENCY)
+                            && currentTask == null) {
+                        currentTask = result.getString("task_id");
+                    }
+                    values.add(new MissionExecutionSnapshot.TaskExecution(
+                            result.getString("task_id"),
+                            result.getInt("ordinal"),
+                            state,
+                            result.getInt("latest_attempt_no"),
+                            findLatestRunId(missionId, result.getString("task_id")),
+                            Optional.ofNullable(result.getString("result_digest")),
+                            Optional.ofNullable(result.getString("block_code"))));
+                }
+            }
+            latest.setString(1, missionId);
+            Optional<MissionTaskAttempt> attempt;
+            try (var result = latest.executeQuery()) {
+                attempt = result.next() ? Optional.of(readAttempt(result)) : Optional.empty();
+            }
+            if (attempt.filter(value -> value.state().active()).isPresent())
+                currentTask = attempt.orElseThrow().taskId();
+            boolean settled = !values.isEmpty()
+                    && values.stream()
+                            .allMatch(value -> value.state() == MissionTaskState.COMPLETED
+                                    || value.state() == MissionTaskState.BLOCKED
+                                    || value.state() == MissionTaskState.CANCELLED);
+            DispatcherHealth health = dispatcherHealth();
+            return new MissionExecutionSnapshot(
+                    health.status(),
+                    health.recovering(),
+                    settled,
+                    completed,
+                    blocked,
+                    Optional.ofNullable(currentTask),
+                    values,
+                    attempt);
+        } catch (SQLException exception) {
+            throw failure(exception);
+        }
+    }
+
+    private DispatcherHealth dispatcherHealth() throws SQLException {
+        try (var statement = current()
+                        .prepareStatement(
+                                "SELECT heartbeat_at_ms FROM personal_mission_dispatcher_owner WHERE owner_name='pa-mission'");
+                var result = statement.executeQuery()) {
+            if (!result.next()) return new DispatcherHealth("NOT_READY", true);
+            long age = Math.max(0, System.currentTimeMillis() - result.getLong(1));
+            return age <= 10_000 ? new DispatcherHealth("READY", false) : new DispatcherHealth("NOT_READY", true);
+        }
+    }
+
+    private Optional<String> findLatestRunId(String missionId, String taskId) throws SQLException {
+        try (var statement = current()
+                .prepareStatement(
+                        "SELECT run_id FROM personal_mission_task_attempt WHERE mission_id=? AND task_id=? AND run_id IS NOT NULL ORDER BY attempt_no DESC LIMIT 1")) {
+            statement.setString(1, missionId);
+            statement.setString(2, taskId);
+            try (var result = statement.executeQuery()) {
+                return result.next() ? Optional.of(result.getString(1)) : Optional.empty();
+            }
+        }
+    }
+
+    private MissionTaskAttempt requireAttempt(String missionId, String taskId, int attemptNo) {
+        try (var statement = current()
+                .prepareStatement(
+                        "SELECT * FROM personal_mission_task_attempt WHERE mission_id=? AND task_id=? AND attempt_no=?")) {
+            statement.setString(1, missionId);
+            statement.setString(2, taskId);
+            statement.setInt(3, attemptNo);
+            try (var result = statement.executeQuery()) {
+                if (!result.next())
+                    throw new MissionException("MISSION_ATTEMPT_NOT_FOUND", "Task attempt is unavailable");
+                return readAttempt(result);
+            }
+        } catch (SQLException exception) {
+            throw failure(exception);
+        }
+    }
+
+    private MissionTaskAttempt readAttempt(ResultSet result) throws SQLException {
+        return new MissionTaskAttempt(
+                result.getString("mission_id"),
+                result.getString("task_id"),
+                result.getInt("attempt_no"),
+                result.getString("attempt_kind"),
+                result.getString("dispatch_key"),
+                result.getString("dispatch_payload_digest"),
+                enumValue(MissionTaskAttemptState.class, result.getString("state"), "attempt state"),
+                Optional.ofNullable(result.getString("session_id")),
+                Optional.ofNullable(result.getString("run_id")),
+                Optional.ofNullable(result.getString("result_digest")),
+                Optional.ofNullable(result.getString("failure_code")),
+                result.getLong("version"),
+                Instant.ofEpochMilli(result.getLong("created_at_ms")),
+                Instant.ofEpochMilli(result.getLong("updated_at_ms")),
+                optionalInstant(result, "started_at_ms"),
+                optionalInstant(result, "settled_at_ms"));
+    }
+
+    private void completeOutbox(String outboxId, Instant now) {
+        try (var statement = current()
+                .prepareStatement(
+                        "UPDATE personal_mission_outbox SET state='COMPLETED',completed_at_ms=? WHERE outbox_id=?")) {
+            statement.setLong(1, now.toEpochMilli());
+            statement.setString(2, outboxId);
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw failure(exception);
+        }
+    }
+
+    private void updateMissionState(String missionId, String state, Instant now, String predicate) throws SQLException {
+        try (var statement = current()
+                .prepareStatement(
+                        "UPDATE personal_mission SET state=?,updated_at_ms=?,version=version+1 WHERE mission_id=? AND "
+                                + predicate)) {
+            statement.setString(1, state);
+            statement.setLong(2, now.toEpochMilli());
+            statement.setString(3, missionId);
+            statement.executeUpdate();
+        }
+    }
+
+    private void touchMission(String missionId, Instant now) throws SQLException {
+        try (var statement = current()
+                .prepareStatement("UPDATE personal_mission SET updated_at_ms=?,version=version+1 WHERE mission_id=?")) {
+            statement.setLong(1, now.toEpochMilli());
+            statement.setString(2, missionId);
+            statement.executeUpdate();
         }
     }
 
@@ -814,4 +1462,6 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             tasks = List.copyOf(tasks);
         }
     }
+
+    private record DispatcherHealth(String status, boolean recovering) {}
 }

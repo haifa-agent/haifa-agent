@@ -32,6 +32,7 @@ import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
+import io.haifa.agent.runtime.core.storage.RunStartIdempotencyBinding;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import java.time.Instant;
 import java.util.List;
@@ -94,6 +95,19 @@ class SqliteOperationalAdaptersTest {
         assertThatThrownBy(() -> reopened.idempotency()
                         .recordRun("tenant:principal", "start", "key", new io.haifa.agent.core.run.AgentRunId("other")))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void startIdempotencyBindingPersistsRequestDigest(@TempDir java.nio.file.Path directory) {
+        SqliteStoreFoundation first = SqliteTestSupport.foundation(directory);
+        var run = SqliteAggregateTestData.prepareRun(first);
+        var binding = new RunStartIdempotencyBinding(
+                "tenant:principal", "start", "digest-key", Optional.of("digest-value"), run.id());
+
+        assertThat(first.idempotency().recordRunBinding(binding)).isEqualTo(binding);
+        SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory);
+        assertThat(reopened.idempotency().findRunBinding("tenant:principal", "start", "digest-key"))
+                .contains(binding);
     }
 
     @Test

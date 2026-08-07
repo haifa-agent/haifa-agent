@@ -91,6 +91,14 @@ public final class PersonalAssistantAssembler {
                             new AgentRunBudget(32_000, 8_000, 32_000, 0, 1, 0, "USD", 0),
                             new AgentRunLimits(2, 0, 1, 120_000, 120_000),
                             Map.of("response_format", Map.of("type", "json_object"))))
+                    .runProfile(new ProductRunProfile(
+                            SdkMissionRuntimeAccess.TASK_RUN_PROFILE,
+                            "1.0.0",
+                            dependencies.modelCatalog().defaultModelId(),
+                            AgentRunType.CHAT,
+                            new AgentRunBudget(64_000, 16_000, 64_000, 16, 8, 0, "USD", 0),
+                            new AgentRunLimits(16, 0, 1, 600_000, 120_000),
+                            Map.of()))
                     .contribute(dependencies.model())
                     .contribute(dependencies.persistence())
                     .contribute(dependencies.conversation())

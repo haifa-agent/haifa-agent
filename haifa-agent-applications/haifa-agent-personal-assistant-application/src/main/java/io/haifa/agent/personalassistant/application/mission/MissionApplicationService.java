@@ -14,6 +14,7 @@ public final class MissionApplicationService {
     private final MissionPlanValidator validator;
     private final MissionIdGenerator ids;
     private final Clock clock;
+    private final MissionExecutionStore execution;
 
     public MissionApplicationService(
             MissionStore store,
@@ -22,12 +23,24 @@ public final class MissionApplicationService {
             MissionPlanValidator validator,
             MissionIdGenerator ids,
             Clock clock) {
+        this(store, unitOfWork, planner, validator, ids, clock, MissionExecutionStore.unavailable());
+    }
+
+    public MissionApplicationService(
+            MissionStore store,
+            MissionUnitOfWork unitOfWork,
+            MissionPlanner planner,
+            MissionPlanValidator validator,
+            MissionIdGenerator ids,
+            Clock clock,
+            MissionExecutionStore execution) {
         this.store = Objects.requireNonNull(store);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
         this.planner = Objects.requireNonNull(planner);
         this.validator = Objects.requireNonNull(validator);
         this.ids = Objects.requireNonNull(ids);
         this.clock = Objects.requireNonNull(clock);
+        this.execution = Objects.requireNonNull(execution);
     }
 
     public MissionSnapshot create(CreateMission command) {
@@ -78,8 +91,7 @@ public final class MissionApplicationService {
                 return null;
             });
         }
-        return unitOfWork.execute(
-                () -> require(binding.missionId(), command.ownerScope()).snapshot());
+        return unitOfWork.execute(() -> snapshot(require(binding.missionId(), command.ownerScope())));
     }
 
     public MissionSnapshot replacePlan(ReplaceMissionPlan command) {
@@ -101,14 +113,14 @@ public final class MissionApplicationService {
             if (!binding.missionId().equals(command.missionId())) {
                 throw new MissionException("MISSION_IDEMPOTENCY_CONFLICT", "command belongs to another Mission");
             }
-            if (!reservation.created()) return mission.snapshot();
+            if (!reservation.created()) return snapshot(mission);
             if (mission.version() != command.expectedVersion()) {
                 throw new MissionException("MISSION_REVISION_STALE", "Mission revision is stale");
             }
             long expected = mission.version();
             mission.proposePlan(command.tasks(), Optional.empty(), Optional.empty(), validator, now());
             store.save(mission, expected);
-            return mission.snapshot();
+            return snapshot(mission);
         });
     }
 
@@ -136,7 +148,7 @@ public final class MissionApplicationService {
             }
             return new Regeneration(mission, true);
         });
-        if (!reservation.execute()) return reservation.mission().snapshot();
+        if (!reservation.execute()) return snapshot(reservation.mission());
 
         PersonalMission mission = reservation.mission();
         MissionPlanner.PlanningResult planned = planner.plan(new MissionPlanner.PlanningRequest(
@@ -150,10 +162,10 @@ public final class MissionApplicationService {
         return unitOfWork.execute(() -> {
             PersonalMission current = require(command.missionId(), command.ownerScope());
             if (current.version() != command.expectedVersion()) {
-                return current.snapshot();
+                return snapshot(current);
             }
             store.save(mission, command.expectedVersion());
-            return mission.snapshot();
+            return snapshot(mission);
         });
     }
 
@@ -162,11 +174,14 @@ public final class MissionApplicationService {
     }
 
     public MissionSnapshot cancel(ChangeMission command) {
-        return change(command, "cancel", mission -> mission.cancel(now()));
+        return change(command, "cancel", mission -> {
+            mission.cancel(now());
+            execution.cancelMission(mission.missionId(), now());
+        });
     }
 
     public Optional<MissionSnapshot> find(String missionId, String ownerScope) {
-        return unitOfWork.execute(() -> store.find(missionId, ownerScope).map(PersonalMission::snapshot));
+        return unitOfWork.execute(() -> store.find(missionId, ownerScope).map(this::snapshot));
     }
 
     public List<MissionSnapshot> list(String ownerScope, Optional<String> conversationId, int limit) {
@@ -179,8 +194,25 @@ public final class MissionApplicationService {
             throw new MissionException("MISSION_LIMIT_EXCEEDED", "Mission query size must be 1 to 51");
         }
         return unitOfWork.execute(() -> store.list(ownerScope, conversationId, cursor, limit).stream()
-                .map(PersonalMission::snapshot)
+                .map(this::snapshot)
                 .toList());
+    }
+
+    public MissionSnapshot retry(RetryMissionTask command) {
+        Objects.requireNonNull(command);
+        String digest =
+                MissionValues.digest(command.missionId(), command.taskId(), Long.toString(command.expectedVersion()));
+        return unitOfWork.execute(() -> {
+            PersonalMission mission = require(command.missionId(), command.ownerScope());
+            MissionCommandReservation reservation = store.reserveCommand(new MissionCommandBinding(
+                    command.ownerScope(), "retry-task", command.idempotencyKey(), digest, command.missionId(), now()));
+            if (!reservation.created()) return snapshot(mission);
+            if (mission.version() != command.expectedVersion()) {
+                throw new MissionException("MISSION_REVISION_STALE", "Mission revision is stale");
+            }
+            execution.retryBlocked(command.missionId(), command.ownerScope(), command.taskId(), now());
+            return snapshot(require(command.missionId(), command.ownerScope()));
+        });
     }
 
     private MissionSnapshot change(
@@ -191,15 +223,19 @@ public final class MissionApplicationService {
             PersonalMission mission = require(command.missionId(), command.ownerScope());
             MissionCommandReservation reservation = store.reserveCommand(new MissionCommandBinding(
                     command.ownerScope(), operation, command.idempotencyKey(), digest, command.missionId(), now()));
-            if (!reservation.created()) return mission.snapshot();
+            if (!reservation.created()) return snapshot(mission);
             if (mission.version() != command.expectedVersion()) {
                 throw new MissionException("MISSION_REVISION_STALE", "Mission revision is stale");
             }
             long expected = mission.version();
             behavior.accept(mission);
             store.save(mission, expected);
-            return mission.snapshot();
+            return snapshot(mission);
         });
+    }
+
+    private MissionSnapshot snapshot(PersonalMission mission) {
+        return mission.snapshot().withExecution(execution.snapshot(mission.missionId()));
     }
 
     private PersonalMission require(String missionId, String ownerScope) {
@@ -268,6 +304,19 @@ public final class MissionApplicationService {
             missionId = MissionValues.text(missionId, "missionId", 256);
             if (expectedVersion < 0)
                 throw new MissionException("MISSION_REVISION_STALE", "expectedVersion must not be negative");
+        }
+    }
+
+    public record RetryMissionTask(
+            String idempotencyKey, String ownerScope, String missionId, String taskId, long expectedVersion) {
+        public RetryMissionTask {
+            idempotencyKey = MissionValues.text(idempotencyKey, "idempotencyKey", 128);
+            ownerScope = MissionValues.text(ownerScope, "ownerScope", 256);
+            missionId = MissionValues.text(missionId, "missionId", 256);
+            taskId = MissionValues.text(taskId, "taskId", 64);
+            if (expectedVersion < 0) {
+                throw new MissionException("MISSION_REVISION_STALE", "expectedVersion must not be negative");
+            }
         }
     }
 }

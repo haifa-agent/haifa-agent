@@ -19,7 +19,8 @@ public record MissionSnapshot(
         Instant updatedAt,
         Optional<Instant> confirmedAt,
         Optional<Instant> finishedAt,
-        long pollAfterMillis) {
+        long pollAfterMillis,
+        MissionExecutionSnapshot execution) {
     public static final String SCHEMA_VERSION = "pa.mission-snapshot/v1";
 
     static MissionSnapshot from(PersonalMission mission) {
@@ -43,6 +44,26 @@ public record MissionSnapshot(
                 mission.updatedAt(),
                 mission.confirmedAt(),
                 mission.finishedAt(),
-                poll);
+                poll,
+                MissionExecutionSnapshot.unavailable());
+    }
+
+    public MissionSnapshot withExecution(MissionExecutionSnapshot value) {
+        return new MissionSnapshot(
+                schemaVersion,
+                missionId,
+                conversationId,
+                objective,
+                acceptanceCriteria,
+                constraints,
+                state,
+                plan,
+                version,
+                createdAt,
+                updatedAt,
+                confirmedAt,
+                finishedAt,
+                pollAfterMillis,
+                value);
     }
 }

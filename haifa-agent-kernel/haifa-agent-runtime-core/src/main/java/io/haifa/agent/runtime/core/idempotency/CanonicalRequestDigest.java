@@ -4,7 +4,10 @@ import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.ArtifactRefPart;
 import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
+import io.haifa.agent.core.content.ImageUrlContentPart;
+import io.haifa.agent.core.content.StoredImageContentPart;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.InteractionResponseSubmission;
 import io.haifa.agent.runtime.api.RunInputSubmission;
 import java.nio.charset.StandardCharsets;
@@ -14,6 +17,28 @@ import java.security.NoSuchAlgorithmException;
 /** Stable length-prefixed request digest for in-memory idempotency bindings. */
 public final class CanonicalRequestDigest {
     private CanonicalRequestDigest() {}
+
+    public static String agentRun(AgentRunRequest request) {
+        Digester digest = new Digester();
+        digest.add("agent-run-start-v1");
+        digest.add(request.agentDefinitionId().value());
+        digest.add(request.requestedDefinitionVersion().map(Object::toString).orElse(""));
+        digest.add(request.productProfileId());
+        digest.add(request.sessionId().value());
+        digest.add(request.project().map(project -> project.projectId()).orElse(""));
+        digest.add(request.objective());
+        addContents(digest, request.inputs());
+        digest.add(request.overrides().schemaId());
+        digest.add(request.overrides().schemaVersion());
+        request.overrides().values().entrySet().stream()
+                .sorted(java.util.Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    digest.add(entry.getKey());
+                    digest.add(entry.getValue().getClass().getName());
+                    digest.add(entry.getValue().toString());
+                });
+        return digest.finish();
+    }
 
     public static String interactionResponse(InteractionResponseSubmission submission) {
         Digester digest = new Digester();
@@ -59,6 +84,15 @@ public final class CanonicalRequestDigest {
                 digest.add(artifact.artifact().version());
                 digest.add(artifact.artifact().title());
                 digest.add(artifact.summary());
+            } else if (content instanceof ImageUrlContentPart image) {
+                digest.add(image.url().toASCIIString());
+            } else if (content instanceof StoredImageContentPart image) {
+                digest.add(image.storeId());
+                digest.add(image.imageId());
+                digest.add(image.mediaType());
+                digest.add(Long.toString(image.sizeBytes()));
+                digest.add(image.sha256());
+                digest.add(image.originalFilename());
             } else {
                 throw new IllegalArgumentException("tool protocol content is not valid public input");
             }

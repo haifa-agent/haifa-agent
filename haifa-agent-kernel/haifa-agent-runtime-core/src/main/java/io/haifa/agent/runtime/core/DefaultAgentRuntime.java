@@ -61,6 +61,7 @@ import io.haifa.agent.runtime.core.event.RuntimeEventSubscriptions;
 import io.haifa.agent.runtime.core.execution.AttemptExecutor;
 import io.haifa.agent.runtime.core.execution.ExecutionOwnershipPort;
 import io.haifa.agent.runtime.core.execution.ExecutionScheduler;
+import io.haifa.agent.runtime.core.idempotency.CanonicalRequestDigest;
 import io.haifa.agent.runtime.core.input.RunInputPort;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRecord;
@@ -73,6 +74,7 @@ import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.ExecutionAttemptRepository;
 import io.haifa.agent.runtime.core.storage.IdempotencyRepository;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
+import io.haifa.agent.runtime.core.storage.RunStartIdempotencyBinding;
 import io.haifa.agent.runtime.core.storage.RunStateRepository;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeOutboxPublisher;
@@ -187,9 +189,11 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         Objects.requireNonNull(request, "request must not be null");
         var caller = callers.current();
         String callerScope = callerScope(caller);
-        Optional<AgentRunId> existing = persistenceRetries.execute(
-                () -> idempotency.findRun(callerScope, "start", request.idempotencyKey()), persistenceRetry.policy());
-        if (existing.isPresent()) return snapshot(existing.orElseThrow());
+        String requestDigest = CanonicalRequestDigest.agentRun(request);
+        Optional<RunStartIdempotencyBinding> existing = persistenceRetries.execute(
+                () -> idempotency.findRunBinding(callerScope, "start", request.idempotencyKey()),
+                persistenceRetry.policy());
+        if (existing.isPresent()) return snapshot(requireMatchingStart(existing.orElseThrow(), requestDigest));
 
         var bootstrap = bootstrapper.bootstrap(request, caller);
         var definition = bootstrap.definition();
@@ -199,13 +203,15 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AtomicBoolean created = new AtomicBoolean();
         AgentRun run = persistenceRetries.execute(
                 () -> unitOfWork.execute(() -> {
-                    Optional<AgentRunId> raced = idempotency.findRun(callerScope, "start", request.idempotencyKey());
-                    if (raced.isPresent()) return requireRun(raced.orElseThrow());
+                    Optional<RunStartIdempotencyBinding> raced =
+                            idempotency.findRunBinding(callerScope, "start", request.idempotencyKey());
+                    if (raced.isPresent()) return requireRun(requireMatchingStart(raced.orElseThrow(), requestDigest));
                     state.saveConfiguration(bootstrap.configuration());
                     runs.insert(generated);
-                    AgentRunId recorded =
-                            idempotency.recordRun(callerScope, "start", request.idempotencyKey(), generatedId);
-                    if (!recorded.equals(generatedId)) return requireRun(recorded);
+                    RunStartIdempotencyBinding recorded = idempotency.recordRunBinding(new RunStartIdempotencyBinding(
+                            callerScope, "start", request.idempotencyKey(), Optional.of(requestDigest), generatedId));
+                    AgentRunId recordedRunId = requireMatchingStart(recorded, requestDigest);
+                    if (!recordedRunId.equals(generatedId)) return requireRun(recordedRunId);
                     created.set(true);
                     appendInitialMessage(generated, request);
                     var event = events.append(
@@ -234,6 +240,16 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         AgentRunSnapshot accepted = AgentRunSnapshot.from(run, state.output(run.id()));
         if (created.get()) submitActive(run);
         return accepted;
+    }
+
+    private static AgentRunId requireMatchingStart(RunStartIdempotencyBinding binding, String requestDigest) {
+        if (binding.requestDigest().isEmpty()
+                || !binding.requestDigest().orElseThrow().equals(requestDigest)) {
+            throw new io.haifa.agent.runtime.api.RuntimeContractException(
+                    io.haifa.agent.runtime.api.RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT,
+                    "The start idempotency key is already bound to a different request");
+        }
+        return binding.runId();
     }
 
     @Override

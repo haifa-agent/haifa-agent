@@ -190,6 +190,15 @@ const mission: MissionSnapshot = {
   confirmedAt: null,
   finishedAt: null,
   pollAfterMs: 5000,
+  execution: {
+    dispatcherStatus: "READY",
+    recovering: false,
+    allTasksSettled: false,
+    completedTasks: 0,
+    blockedTasks: 0,
+    currentTaskId: null,
+    latestAttempt: null,
+  },
 };
 
 function client(): PersonalAssistantClient {
@@ -276,6 +285,50 @@ describe("Personal Assistant application", () => {
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     ));
     expect((await screen.findAllByText("计划已确认")).length).toBeGreaterThan(0);
+  });
+
+  it("shows execution progress and retries a blocked Mission task", async () => {
+    const blocked = {
+      ...mission,
+      state: "WAITING_USER" as const,
+      version: 4,
+      tasks: [{ ...missionTask, state: "BLOCKED" as const }],
+      execution: {
+        ...mission.execution,
+        completedTasks: 0,
+        blockedTasks: 1,
+        currentTaskId: "task-1",
+        latestAttempt: {
+          taskId: "task-1",
+          attemptNo: 2,
+          state: "FAILED" as const,
+          sessionId: "session-1",
+          runId: "run-1",
+          failureCode: "TASK_RUN_FAILED",
+          updatedAt: "2026-08-08T00:00:01Z",
+        },
+      },
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [blocked], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => blocked),
+      interaction: vi.fn(async () => null),
+      retryMissionTask: vi.fn(async () => ({ ...blocked, state: "RUNNING" as const, version: 5 })),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /交付一份可验收的计划/ }));
+    expect(await within(dialog).findByText("已完成 0/1")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "重试任务" }));
+    await waitFor(() => expect(api.retryMissionTask).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: "mission-1", version: 4 }),
+      "task-1",
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    ));
   });
 
   it("scrolls the activity panel to the latest live event", async () => {

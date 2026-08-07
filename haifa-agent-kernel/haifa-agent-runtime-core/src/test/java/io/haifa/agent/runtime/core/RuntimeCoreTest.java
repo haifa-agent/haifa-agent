@@ -385,6 +385,26 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void startRejectsReuseOfIdempotencyKeyForDifferentRequest() {
+        Fixture fixture = fixture(model(finalDecision("done")));
+        fixture.runtime.start(request("same-key"));
+        AgentRunRequest changed = new AgentRunRequest(
+                "same-key",
+                new AgentDefinitionId("test-agent"),
+                Optional.empty(),
+                "test-profile",
+                new AgentSessionId("session-1"),
+                Optional.empty(),
+                "different objective",
+                List.of(),
+                RuntimeOverrides.NONE);
+
+        assertThatThrownBy(() -> fixture.runtime.start(changed))
+                .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT));
+    }
+
+    @Test
     void storeEnforcesOptimisticLocking() {
         Fixture fixture = fixture(model(finalDecision("done")));
         var accepted = fixture.runtime.start(request("optimistic-lock"));

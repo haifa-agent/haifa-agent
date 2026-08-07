@@ -36,6 +36,7 @@ public final class PersonalApiExceptionHandler {
         } else if (code.contains("CONFLICT")
                 || code.contains("ACTIVE")
                 || code.contains("FROZEN")
+                || code.contains("RETRYABLE")
                 || code.contains("STATE")) {
             status = HttpStatus.CONFLICT;
         } else {

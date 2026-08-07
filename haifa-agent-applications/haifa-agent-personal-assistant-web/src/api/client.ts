@@ -112,6 +112,11 @@ export interface PersonalAssistantClient {
   ): Promise<MissionSnapshot>;
   confirmMission?(mission: MissionSnapshot, options?: CommandOptions): Promise<MissionSnapshot>;
   cancelMission?(mission: MissionSnapshot, options?: CommandOptions): Promise<MissionSnapshot>;
+  retryMissionTask?(
+    mission: MissionSnapshot,
+    taskId: string,
+    options?: CommandOptions,
+  ): Promise<MissionSnapshot>;
   streamRun(
     runId: string,
     handlers: StreamHandlers,
@@ -458,6 +463,18 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
   cancelMission(mission: MissionSnapshot, options: CommandOptions = {}) {
     return this.request<MissionSnapshot>(
       `/missions/${encoded(mission.missionId)}/cancel`,
+      {
+        method: "POST",
+        headers: commandHeaders(mission.version, options.idempotencyKey),
+        body: "{}",
+      },
+      options.signal,
+    );
+  }
+
+  retryMissionTask(mission: MissionSnapshot, taskId: string, options: CommandOptions = {}) {
+    return this.request<MissionSnapshot>(
+      `/missions/${encoded(mission.missionId)}/tasks/${encoded(taskId)}/retry`,
       {
         method: "POST",
         headers: commandHeaders(mission.version, options.idempotencyKey),
