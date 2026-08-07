@@ -1,0 +1,48 @@
+package io.haifa.agent.personalassistant.application.mission;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+
+/** Product query model; adapters map it to versioned wire DTOs. */
+public record MissionSnapshot(
+        String schemaVersion,
+        String missionId,
+        String conversationId,
+        String objective,
+        List<String> acceptanceCriteria,
+        MissionConstraints constraints,
+        MissionState state,
+        Optional<MissionPlanRevision> plan,
+        long version,
+        Instant createdAt,
+        Instant updatedAt,
+        Optional<Instant> confirmedAt,
+        Optional<Instant> finishedAt,
+        long pollAfterMillis) {
+    public static final String SCHEMA_VERSION = "pa.mission-snapshot/v1";
+
+    static MissionSnapshot from(PersonalMission mission) {
+        long poll =
+                switch (mission.state()) {
+                    case PLANNING, RUNNING, SYNTHESIZING -> 2_000;
+                    case WAITING_CONFIRMATION, WAITING_USER -> 5_000;
+                    default -> 0;
+                };
+        return new MissionSnapshot(
+                SCHEMA_VERSION,
+                mission.missionId(),
+                mission.conversationId(),
+                mission.objective(),
+                mission.acceptanceCriteria(),
+                mission.constraints(),
+                mission.state(),
+                mission.activePlan(),
+                mission.version(),
+                mission.createdAt(),
+                mission.updatedAt(),
+                mission.confirmedAt(),
+                mission.finishedAt(),
+                poll);
+    }
+}

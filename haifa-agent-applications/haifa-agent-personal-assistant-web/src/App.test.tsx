@@ -7,6 +7,7 @@ import type {
   Interaction,
   Memory,
   MemoryCandidate,
+  MissionSnapshot,
   Run,
   Turn,
 } from "./api/generated";
@@ -148,6 +149,48 @@ const bootstrap: Bootstrap = {
   defaultModelId: model.id,
   models: [model],
 };
+const missionTask: MissionSnapshot["tasks"][number] = {
+  taskId: "task-1",
+  ordinal: 1,
+  title: "准备交付",
+  objective: "整理明确的交付内容",
+  acceptanceCriteria: ["可验收"],
+  dependsOn: [],
+  taskType: "GENERAL",
+  requiredSkillIds: [],
+  resultSchemaId: "pa.task-result",
+  resultSchemaVersion: "v1",
+  state: "PLANNED",
+};
+const mission: MissionSnapshot = {
+  schemaVersion: "pa.mission-snapshot/v1",
+  missionId: "mission-1",
+  conversationId: conversation.id,
+  objective: "交付一份可验收的计划",
+  acceptanceCriteria: ["计划明确"],
+  constraints: { maxTasks: 8, maxDependencyDepth: 4 },
+  state: "WAITING_CONFIRMATION",
+  plan: {
+    revision: 1,
+    schemaId: "pa.mission-plan",
+    schemaVersion: "v1",
+    tasks: [missionTask],
+    plannerSessionId: null,
+    plannerRunId: null,
+    createdAt: "2026-08-08T00:00:00Z",
+  },
+  tasks: [missionTask],
+  blocker: null,
+  artifacts: [],
+  sources: [],
+  finalResult: null,
+  version: 1,
+  createdAt: "2026-08-08T00:00:00Z",
+  updatedAt: "2026-08-08T00:00:00Z",
+  confirmedAt: null,
+  finishedAt: null,
+  pollAfterMs: 5000,
+};
 
 function client(): PersonalAssistantClient {
   return {
@@ -206,6 +249,33 @@ describe("Personal Assistant application", () => {
     expect(screen.queryByText("Steer")).toBeNull();
     expect(screen.queryByText("Run Diagnostics")).toBeNull();
     expect(screen.queryByText("运行诊断")).toBeNull();
+  });
+
+  it("opens the explicit Mission workspace and confirms a fixed plan", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [mission], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => mission),
+      confirmMission: vi.fn(async () => ({ ...mission, state: "RUNNING" as const, version: 2 })),
+      cancelMission: vi.fn(async () => ({ ...mission, state: "CANCELLED" as const, version: 2 })),
+      replaceMissionPlan: vi.fn(async () => ({ ...mission, version: 2 })),
+      createMission: vi.fn(async () => mission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+
+    expect(await screen.findByText("交付一份可验收的计划")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /交付一份可验收的计划/ }));
+    expect(await within(dialog).findByText(/准备交付/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /确认计划/ }));
+    await waitFor(() => expect(api.confirmMission).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: "mission-1", version: 1 }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    ));
+    expect((await screen.findAllByText("计划已确认")).length).toBeGreaterThan(0);
   });
 
   it("scrolls the activity panel to the latest live event", async () => {

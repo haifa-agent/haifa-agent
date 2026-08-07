@@ -147,6 +147,70 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void missionApiCreatesSnapshotsConfirmsAndEnforcesRevision() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Mission API","message":"Prepare the workspace"}
+                """);
+        String conversationId = conversation.path("id").asText();
+        String key = "mission-create-" + IDS.incrementAndGet();
+        String request =
+                """
+                {"conversationId":%s,"objective":"Deliver an accepted plan","acceptanceCriteria":["Plan is explicit"],"constraints":{"maxTasks":4,"maxDependencyDepth":3}}
+                """
+                        .formatted(mapper.writeValueAsString(conversationId));
+
+        JsonNode mission = missionCreate(key, request);
+        assertThat(mission.path("schemaVersion").asText()).isEqualTo("pa.mission-snapshot/v1");
+        assertThat(mission.path("state").asText()).isEqualTo("WAITING_CONFIRMATION");
+        assertThat(mission.path("tasks").isArray()).isTrue();
+        assertThat(mission.path("tasks").size()).isPositive();
+        assertThat(mission.path("artifacts").size()).isZero();
+        assertThat(mission.path("sources").size()).isZero();
+        String missionId = mission.path("missionId").asText();
+
+        JsonNode duplicate = missionCreate(key, request);
+        assertThat(duplicate.path("missionId").asText()).isEqualTo(missionId);
+
+        JsonNode snapshot = get("/api/v1/missions/" + missionId + "/snapshot");
+        assertThat(snapshot.path("version").asLong())
+                .isEqualTo(mission.path("version").asLong());
+        JsonNode page = get("/api/v1/missions?conversationId=" + conversationId + "&size=20");
+        assertThat(page.path("items").size()).isEqualTo(1);
+
+        byte[] confirmedBody = web.post()
+                .uri("/api/v1/missions/" + missionId + "/confirm")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-confirm-" + IDS.incrementAndGet())
+                .header("If-Match", '"' + Long.toString(snapshot.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        JsonNode confirmed = mapper.readTree(confirmedBody);
+        assertThat(confirmed.path("state").asText()).isEqualTo("RUNNING");
+
+        web.post()
+                .uri("/api/v1/missions/" + missionId + "/cancel")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-cancel-" + IDS.incrementAndGet())
+                .header("If-Match", '"' + Long.toString(snapshot.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus()
+                .isEqualTo(412)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MISSION_REVISION_STALE");
+    }
+
+    @Test
     void uploadedImageFlowsThroughTheConversationAndRemainsAnOpaqueTurnReference() throws Exception {
         byte[] png = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1};
         String uploadBody = web.post()
@@ -456,6 +520,12 @@ class PersonalAssistantWebFluxTest {
                 .jsonPath("$.components.schemas.Activity.properties.eventId")
                 .exists()
                 .jsonPath("$.components.schemas.Activity.properties.parentActivityId")
+                .exists()
+                .jsonPath("$.paths['/api/v1/missions'].post")
+                .exists()
+                .jsonPath("$.paths['/api/v1/missions/{missionId}/snapshot'].get")
+                .exists()
+                .jsonPath("$.components.schemas.MissionSnapshot.properties.tasks")
                 .exists();
     }
 
@@ -490,6 +560,19 @@ class PersonalAssistantWebFluxTest {
                 .isOk()
                 .expectHeader()
                 .valueEquals("Access-Control-Allow-Origin", "http://127.0.0.1:20000");
+
+        web.options()
+                .uri("/api/v1/missions/mission-1/plan")
+                .header("Origin", "http://[::1]:20000")
+                .header("Access-Control-Request-Method", "PUT")
+                .header("Access-Control-Request-Headers", "Content-Type,X-Haifa-CSRF,Idempotency-Key,If-Match")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectHeader()
+                .valueEquals("Access-Control-Allow-Origin", "http://[::1]:20000")
+                .expectHeader()
+                .valueEquals("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,OPTIONS");
     }
 
     private JsonNode post(String uri, String json) throws Exception {
@@ -507,6 +590,22 @@ class PersonalAssistantWebFluxTest {
                 .exchange()
                 .expectStatus()
                 .is2xxSuccessful()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        return mapper.readTree(body);
+    }
+
+    private JsonNode missionCreate(String idempotencyKey, String json) throws Exception {
+        byte[] body = web.post()
+                .uri("/api/v1/missions")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(json)
+                .exchange()
+                .expectStatus()
+                .isAccepted()
                 .expectBody()
                 .returnResult()
                 .getResponseBody();

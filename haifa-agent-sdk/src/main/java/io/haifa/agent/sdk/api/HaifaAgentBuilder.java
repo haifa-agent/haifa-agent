@@ -34,6 +34,7 @@ import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
 import io.haifa.agent.sdk.product.ProductContribution;
 import io.haifa.agent.sdk.product.ProductProfile;
+import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import java.util.ArrayList;
@@ -55,6 +56,7 @@ public final class HaifaAgentBuilder {
     private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
             java.util.function.UnaryOperator.identity();
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
+    private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
 
     HaifaAgentBuilder() {}
 
@@ -95,6 +97,14 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder modelImageResolver(ModelImageResolver value) {
         modelImageResolver = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    public HaifaAgentBuilder runProfile(ProductRunProfile value) {
+        ProductRunProfile profile = Objects.requireNonNull(value, "value must not be null");
+        if (runProfiles.putIfAbsent(profile.id(), profile) != null) {
+            throw new IllegalArgumentException("run profile IDs must be unique");
+        }
         return this;
     }
 
@@ -173,14 +183,32 @@ public final class HaifaAgentBuilder {
                             Set.of(),
                             profile.instructions(),
                             List.of()))
-                    .profiles((id, overrides) -> new ResolvedProfile(
-                            id,
-                            profile.runProfileVersion(),
-                            AgentRunType.CHAT,
-                            profile.budget(),
-                            profile.limits(),
-                            resolveModelSnapshot(model, profile, id),
-                            resolvedCapabilities(resolution)));
+                    .profiles((id, overrides) -> {
+                        ProductRunProfile selected = runProfiles.get(id);
+                        if (selected == null) {
+                            return new ResolvedProfile(
+                                    id,
+                                    profile.runProfileVersion(),
+                                    AgentRunType.CHAT,
+                                    profile.budget(),
+                                    profile.limits(),
+                                    resolveModelSnapshot(model, profile, id),
+                                    resolvedCapabilities(resolution));
+                        }
+                        var snapshot = java.util.Optional.ofNullable(
+                                        model.snapshots().get(selected.modelId()))
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                        "MODEL_SELECTION_REQUIRED: Run Profile model is unavailable"));
+                        return new ResolvedProfile(
+                                selected.id(),
+                                selected.version(),
+                                selected.runType(),
+                                selected.budget(),
+                                selected.limits(),
+                                snapshot,
+                                resolvedCapabilities(resolution),
+                                selected.modelRequestOptions());
+                    });
             model.adapters()
                     .forEach((coordinate, adapter) ->
                             runtimeBuilder.registerChatModel(coordinate.type(), coordinate.version(), adapter));

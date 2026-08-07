@@ -1,11 +1,68 @@
 package io.haifa.agent.personalassistant.server.web.v1.mapper;
 
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
+import java.util.List;
+import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 @Component
 public final class PersonalApiMapper {
+    public PersonalApiDtos.MissionSnapshot mission(MissionSnapshot value) {
+        var constraints = new PersonalApiDtos.MissionConstraints(
+                value.constraints().maxTasks(),
+                value.constraints().maxDependencyDepth(),
+                value.constraints().deadlineAt().orElse(null));
+        var plan = value.plan()
+                .map(revision -> new PersonalApiDtos.MissionPlanRevision(
+                        revision.revisionNo(),
+                        revision.schemaId(),
+                        revision.schemaVersion(),
+                        revision.tasks().stream().map(this::missionTask).toList(),
+                        revision.plannerSessionId(),
+                        revision.plannerRunId(),
+                        revision.createdAt()));
+        List<PersonalApiDtos.MissionTask> tasks =
+                plan.map(PersonalApiDtos.MissionPlanRevision::tasks).orElseGet(List::of);
+        return new PersonalApiDtos.MissionSnapshot(
+                value.schemaVersion(),
+                value.missionId(),
+                value.conversationId(),
+                value.objective(),
+                value.acceptanceCriteria(),
+                constraints,
+                value.state().name(),
+                plan,
+                tasks,
+                Optional.empty(),
+                List.of(),
+                List.of(),
+                Optional.empty(),
+                value.version(),
+                value.createdAt(),
+                value.updatedAt(),
+                value.confirmedAt(),
+                value.finishedAt(),
+                value.pollAfterMillis());
+    }
+
+    private PersonalApiDtos.MissionTask missionTask(
+            io.haifa.agent.personalassistant.application.mission.MissionTask value) {
+        return new PersonalApiDtos.MissionTask(
+                value.taskId(),
+                value.ordinal(),
+                value.title(),
+                value.objective(),
+                value.acceptanceCriteria(),
+                value.dependsOn(),
+                value.taskType(),
+                value.requiredSkillIds().stream().sorted().toList(),
+                value.resultSchemaId(),
+                value.resultSchemaVersion(),
+                value.state().name());
+    }
+
     public PersonalApiDtos.Conversation conversation(PersonalAssistantApplication.ConversationView value) {
         return new PersonalApiDtos.Conversation(
                 value.id(),

@@ -20,6 +20,7 @@ import io.haifa.agent.runtime.core.bootstrap.CapabilityResolutionErrorCode;
 import io.haifa.agent.runtime.core.bootstrap.CapabilityResolutionException;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.DefaultCapabilityResolver;
+import io.haifa.agent.runtime.core.bootstrap.EffectiveCapability;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedCapability;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
@@ -98,6 +99,34 @@ class BootstrapCapabilityTest {
             assertThat(value.bindingRef()).isEqualTo("workspace-binding-1");
         });
         assertThat(first.configuration().reference()).isNotEqualTo(secondSnapshot.reference());
+    }
+
+    @Test
+    void modelRequestOptionsAreFrozenAndChangeTheConfigurationDigest() {
+        var definition = definition(List.of());
+        var capabilities = List.<EffectiveCapability>of();
+        var base = profile(Map.of());
+        var responseFormat = new java.util.LinkedHashMap<String, Object>();
+        responseFormat.put("type", "json_object");
+        var structured = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                Map.of("response_format", responseFormat));
+        responseFormat.put("type", "mutated");
+
+        var plainSnapshot =
+                new ContentAddressedSnapshotFactory().create(request(false), definition, base, CALLER, capabilities);
+        var structuredSnapshot = new ContentAddressedSnapshotFactory()
+                .create(request(false), definition, structured, CALLER, capabilities);
+
+        assertThat(structuredSnapshot.modelRequestOptions())
+                .containsEntry("response_format", Map.of("type", "json_object"));
+        assertThat(structuredSnapshot.reference()).isNotEqualTo(plainSnapshot.reference());
     }
 
     @Test

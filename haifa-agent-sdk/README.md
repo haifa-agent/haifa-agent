@@ -4,6 +4,11 @@
 view only when an authoritative plan exists. Product UIs can therefore show real Todo progress
 without inferring steps from model text or activity counts.
 
+Products may register trusted `ProductRunProfile` values for bounded one-shot internal work such as Mission
+planning. A named profile freezes its model, Run type, budget, limits, version, and provider-neutral structured
+request options into the ordinary Runtime configuration snapshot. `AgentRuns.start(request)` still enters the
+single Runtime start path; a profile is selection data, not a second executor or product-specific Run state machine.
+
 面向上层 Agent 产品的纯 Java 高层装配与应用边界。SDK 通过可信 `ProductProfile` 和类型化
 `ProductContribution` 确定性解析产品能力，构建唯一 `AgentRuntime`，并提供产品中立的
 Conversation Session 服务。
@@ -46,6 +51,8 @@ try (HaifaAgent agent = HaifaAgents.builder()
 - Tool 和 Skill 只有在 Profile 明确允许且冻结 Catalog 中存在时才进入 Runtime。MCP 先由 Integration
   完成连接、发现、schema/risk 映射和逐项 allowlist，再作为统一 Tool Catalog 的一部分注入；SDK
   不提供绕过 Tool Pipeline 的 MCP 执行通道。
+- 命名 `ProductRunProfile` 只由可信产品装配注册，ID 冲突和未知 Profile fail closed；模型请求选项
+  只接受非空 JSON-compatible 标量、Map 和 List，并在配置摘要与物理模型调用中保持一致。
 
 ## Conversation 公共边界
 

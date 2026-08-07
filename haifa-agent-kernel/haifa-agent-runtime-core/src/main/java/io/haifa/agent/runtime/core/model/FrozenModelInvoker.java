@@ -102,7 +102,7 @@ public final class FrozenModelInvoker {
                 context.tools(),
                 Math.toIntExact(context.budget().outputReserve()),
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
-                Map.of());
+                binding.configuration().modelRequestOptions());
         appendLifecycle(binding, run, callId, iteration, attempt, "model.call.started", "STARTED", 0, 0, "", "NONE");
         output.started(run.id(), callId.value(), attempt, iteration);
         AgentChatResponse response;

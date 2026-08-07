@@ -1,0 +1,177 @@
+package io.haifa.agent.personalassistant.server.mission;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.personalassistant.application.mission.DeterministicMissionPlanner;
+import io.haifa.agent.personalassistant.application.mission.MissionApplicationService;
+import io.haifa.agent.personalassistant.application.mission.MissionConstraints;
+import io.haifa.agent.personalassistant.application.mission.MissionException;
+import io.haifa.agent.personalassistant.application.mission.MissionListCursor;
+import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
+import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
+import io.haifa.agent.personalassistant.application.mission.MissionState;
+import java.nio.file.Path;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class SqliteMissionStoreTest {
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-08-08T00:00:00Z"), ZoneOffset.UTC);
+
+    @TempDir
+    Path directory;
+
+    @Test
+    void migratesPersistsRestartsAndKeepsCommandsIdempotent() {
+        Path database = directory.resolve("personal.sqlite");
+        AtomicInteger ids = new AtomicInteger();
+        SqliteMissionStore firstStore = new SqliteMissionStore(database, new ObjectMapper());
+        MissionApplicationService first = service(firstStore, ids);
+        var command = new MissionApplicationService.CreateMission(
+                "create-1",
+                "local/public-user",
+                "conversation-1",
+                "Prepare a release brief",
+                List.of("Architecture is covered", "Tests are covered"),
+                MissionConstraints.DEFAULT);
+
+        MissionSnapshot created = first.create(command);
+        assertThat(firstStore.schemaVersion()).isEqualTo(1);
+
+        SqliteMissionStore restartedStore = new SqliteMissionStore(database, new ObjectMapper());
+        MissionApplicationService restarted = service(restartedStore, ids);
+        MissionSnapshot restored =
+                restarted.find(created.missionId(), "local/public-user").orElseThrow();
+        assertThat(restored).isEqualTo(created);
+        assertThat(restarted.create(command).missionId()).isEqualTo(created.missionId());
+
+        MissionSnapshot confirmed = restarted.confirm(new MissionApplicationService.ChangeMission(
+                "confirm-1", "local/public-user", created.missionId(), restored.version()));
+        assertThat(confirmed.state()).isEqualTo(MissionState.RUNNING);
+        SqliteMissionStore confirmedRestart = new SqliteMissionStore(database, new ObjectMapper());
+        assertThat(confirmedRestart
+                        .execute(() -> confirmedRestart.find(created.missionId(), "local/public-user"))
+                        .orElseThrow()
+                        .snapshot()
+                        .state())
+                .isEqualTo(MissionState.RUNNING);
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath())) {
+            assertThat(connection
+                            .createStatement()
+                            .executeUpdate(
+                                    "UPDATE personal_mission_task SET state='READY', version=version+1 WHERE mission_id='"
+                                            + created.missionId() + "'"))
+                    .isPositive();
+            assertThatThrownBy(() -> connection
+                            .createStatement()
+                            .executeUpdate("UPDATE personal_mission_task SET title='mutated' WHERE mission_id='"
+                                    + created.missionId() + "'"))
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("MISSION_PLAN_FROZEN");
+            assertThatThrownBy(() -> connection
+                            .createStatement()
+                            .executeUpdate("DELETE FROM personal_mission_task_dependency WHERE mission_id='"
+                                    + created.missionId() + "'"))
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("MISSION_PLAN_FROZEN");
+        } catch (SQLException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    @Test
+    void enforcesOneActiveMissionAtDatabaseBoundary() {
+        SqliteMissionStore store = new SqliteMissionStore(directory.resolve("unique.sqlite"), new ObjectMapper());
+        MissionApplicationService service = service(store, new AtomicInteger());
+        service.create(create("create-1", "conversation-1", "First objective"));
+
+        assertThatThrownBy(() -> service.create(create("create-2", "conversation-1", "Second objective")))
+                .isInstanceOf(MissionException.class)
+                .extracting(value -> ((MissionException) value).code())
+                .isEqualTo("MISSION_ACTIVE_EXISTS");
+    }
+
+    @Test
+    void concurrentClientsCreateAtMostOneActiveMission() throws Exception {
+        SqliteMissionStore store = new SqliteMissionStore(directory.resolve("concurrent.sqlite"), new ObjectMapper());
+        MissionApplicationService service = service(store, new AtomicInteger());
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() ->
+                    createConcurrently(start, service, create("concurrent-1", "conversation-1", "First objective")));
+            var second = executor.submit(() ->
+                    createConcurrently(start, service, create("concurrent-2", "conversation-1", "Second objective")));
+            start.countDown();
+            assertThat(List.of(first.get(), second.get()))
+                    .containsExactlyInAnyOrder("CREATED", "MISSION_ACTIVE_EXISTS");
+        }
+        assertThat(service.list("local/public-user", java.util.Optional.of("conversation-1"), 10))
+                .hasSize(1);
+    }
+
+    @Test
+    void usesUpdatedTimeAndMissionIdForStableKeysetPagination() {
+        SqliteMissionStore store = new SqliteMissionStore(directory.resolve("pagination.sqlite"), new ObjectMapper());
+        MissionApplicationService service = service(store, new AtomicInteger());
+        MissionSnapshot first = service.create(create("create-1", "conversation-1", "First objective"));
+        MissionSnapshot second = service.create(create("create-2", "conversation-2", "Second objective"));
+        MissionSnapshot third = service.create(create("create-3", "conversation-3", "Third objective"));
+
+        List<MissionSnapshot> firstPage =
+                service.list("local/public-user", java.util.Optional.empty(), java.util.Optional.empty(), 2);
+        MissionSnapshot boundary = firstPage.getLast();
+        List<MissionSnapshot> secondPage = service.list(
+                "local/public-user",
+                java.util.Optional.empty(),
+                java.util.Optional.of(new MissionListCursor(boundary.updatedAt(), boundary.missionId())),
+                2);
+
+        assertThat(firstPage)
+                .extracting(MissionSnapshot::missionId)
+                .containsExactly(third.missionId(), second.missionId());
+        assertThat(secondPage).extracting(MissionSnapshot::missionId).containsExactly(first.missionId());
+    }
+
+    private static String createConcurrently(
+            CountDownLatch start, MissionApplicationService service, MissionApplicationService.CreateMission command)
+            throws InterruptedException {
+        start.await();
+        try {
+            service.create(command);
+            return "CREATED";
+        } catch (MissionException exception) {
+            return exception.code();
+        }
+    }
+
+    private static MissionApplicationService service(SqliteMissionStore store, AtomicInteger ids) {
+        return new MissionApplicationService(
+                store,
+                store,
+                new DeterministicMissionPlanner(),
+                MissionPlanValidator.phaseOne(),
+                () -> "mission-" + ids.incrementAndGet(),
+                CLOCK);
+    }
+
+    private static MissionApplicationService.CreateMission create(String key, String conversationId, String objective) {
+        return new MissionApplicationService.CreateMission(
+                key,
+                "local/public-user",
+                conversationId,
+                objective,
+                List.of("Result is complete"),
+                MissionConstraints.DEFAULT);
+    }
+}

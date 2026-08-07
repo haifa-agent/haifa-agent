@@ -55,6 +55,13 @@ for (const required of [
   "rejectMemoryCandidate",
   "listMemories",
   "invalidateMemory",
+  "listMissions",
+  "createMission",
+  "getMission",
+  "getMissionSnapshot",
+  "replaceMissionPlan",
+  "confirmMission",
+  "cancelMission",
 ]) {
   if (!operationIds.includes(required)) failures.push(`missing operationId: ${required}`);
 }

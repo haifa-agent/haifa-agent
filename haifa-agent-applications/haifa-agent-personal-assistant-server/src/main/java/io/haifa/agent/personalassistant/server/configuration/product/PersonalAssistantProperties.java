@@ -17,6 +17,7 @@ public record PersonalAssistantProperties(
         String defaultModelId,
         boolean allowInsecureLoopbackModel,
         Web web,
+        Mission mission,
         Mcp mcp,
         Execution execution,
         String localSkillRoot,
@@ -27,8 +28,8 @@ public record PersonalAssistantProperties(
         if (continuationKeyBase64 == null || continuationKeyBase64.isBlank()) {
             throw new IllegalArgumentException("HAIFA_PERSONAL_CONTINUATION_KEY is required");
         }
-        if (caller == null || web == null || mcp == null || execution == null) {
-            throw new IllegalArgumentException("caller, web, mcp, and execution configuration are required");
+        if (caller == null || web == null || mission == null || mcp == null || execution == null) {
+            throw new IllegalArgumentException("caller, web, mission, mcp, and execution configuration are required");
         }
         if (modelProviders == null || modelProviders.isEmpty()) {
             throw new IllegalArgumentException("modelProviders must not be empty");
@@ -50,6 +51,24 @@ public record PersonalAssistantProperties(
         }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
         trustedScriptManifest = trustedScriptManifest == null ? "" : trustedScriptManifest.trim();
+    }
+
+    public record Mission(String plannerMode, int maxTasks, int maxDependencyDepth, int maxAcceptanceCriteria) {
+        public Mission {
+            plannerMode = text(plannerMode, "mission.plannerMode").toLowerCase(java.util.Locale.ROOT);
+            if (!plannerMode.equals("runtime") && !plannerMode.equals("deterministic-stub")) {
+                throw new IllegalArgumentException("mission.plannerMode must be runtime or deterministic-stub");
+            }
+            if (maxTasks < 1 || maxTasks > 16) {
+                throw new IllegalArgumentException("mission.maxTasks must be between 1 and 16");
+            }
+            if (maxDependencyDepth < 1 || maxDependencyDepth > 8) {
+                throw new IllegalArgumentException("mission.maxDependencyDepth must be between 1 and 8");
+            }
+            if (maxAcceptanceCriteria < 1 || maxAcceptanceCriteria > 20) {
+                throw new IllegalArgumentException("mission.maxAcceptanceCriteria must be between 1 and 20");
+            }
+        }
     }
 
     public record Web(

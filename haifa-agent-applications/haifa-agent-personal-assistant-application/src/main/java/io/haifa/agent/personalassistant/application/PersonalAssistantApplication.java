@@ -15,6 +15,7 @@ import io.haifa.agent.memory.api.MemoryRef;
 import io.haifa.agent.memory.api.MemoryStatus;
 import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
+import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender.RecommendationTurn;
@@ -68,6 +69,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final PersonalModelCatalog models;
     private final PersonalModelPreferenceStore modelPreferences;
     private final AutoCloseable executionLifecycle;
+    private final MissionRuntimeAccess missionRuntime;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
     public PersonalAssistantApplication(
@@ -78,7 +80,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             PersonalModelCatalog models,
             PersonalModelPreferenceStore modelPreferences,
             PersonalQuestionRecommender questionRecommender,
-            AutoCloseable executionLifecycle) {
+            AutoCloseable executionLifecycle,
+            MissionRuntimeAccess missionRuntime) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -87,7 +90,12 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.modelPreferences = Objects.requireNonNull(modelPreferences);
         this.questionRecommender = Objects.requireNonNull(questionRecommender);
         this.executionLifecycle = Objects.requireNonNull(executionLifecycle);
+        this.missionRuntime = Objects.requireNonNull(missionRuntime);
         this.mcpToolAliases = mcp.aliases();
+    }
+
+    public MissionRuntimeAccess missionRuntime() {
+        return missionRuntime;
     }
 
     public ConversationView start(String idempotencyKey, String displayName, String message) {

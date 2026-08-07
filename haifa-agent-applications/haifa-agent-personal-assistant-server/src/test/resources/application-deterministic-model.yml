@@ -45,6 +45,11 @@ haifa:
       timeout-millis: 30000
       search-maximum-response-bytes: 2097152
       fetch-maximum-response-bytes: 4194304
+    mission:
+      planner-mode: deterministic-stub
+      max-tasks: 8
+      max-dependency-depth: 4
+      max-acceptance-criteria: 20
     mcp:
       mode: embedded-echo
       address: 127.0.0.1

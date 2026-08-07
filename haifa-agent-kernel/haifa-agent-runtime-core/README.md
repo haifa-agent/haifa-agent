@@ -123,6 +123,10 @@ AgentLoop，Run 终态后清理。有效模型决策仍由 `DecisionExecutor` �
 领域语义写入 `session_message`；完整正文不复制到 `runtime_event`。Provider 要求 Tool reasoning 连续性时，
 只有冻结 profile 显式声明后 adapter 才把 Tool Call reasoning 交给受保护 continuation。
 
+Runtime 配置快照还可冻结 provider-neutral `modelRequestOptions`。该结构会递归复制并规范化 Map/List，
+参与配置内容摘要，并由 `FrozenModelInvoker` 原样传给 `AgentChatRequest`；Run 启动后外部可变对象或后续
+产品配置变化都不能改变该 Run 的结构化输出等模型调用语义。
+
 纯 Java 的 Agent 执行内核，负责 Bootstrap、`AgentRunExecutionAttempt`、AgentLoop、工具管线、完成门禁、检查点、恢复、控制命令以及线程安全的内存存储实现。
 
 - 依赖方向：`runtime-core -> context/model-api/runtime-api/tool-api/skill-api/credential-api -> core -> common`；Runtime 不依赖 Tool Core、Skill Core 或 Provider Integration。

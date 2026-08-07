@@ -99,9 +99,21 @@ Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
 端口冲突会使启动失败，不会自动换端口。
 
+## Personal Mission Phase 1
+
+Server 提供 `/api/v1/missions` 的 create/list/get/snapshot、确认前完整计划 replace/regenerate、confirm
+和 cancel。写操作要求 `Idempotency-Key`，计划变更和确认要求 `If-Match`；owner、Conversation 和
+Planner Profile 均从可信 Server 上下文解析，浏览器不能注入 Skill、Provider、Credential 或路径。
+
+Mission 使用独立的 Personal SQLite schema history。Mission、Plan revision、Task、Dependency、Event、
+Outbox 和 Command 在同一产品 UoW 中提交；数据库约束保证一个 Conversation 最多一个活动 Mission，
+触发器冻结已确认计划定义。Phase 1 会预建 Attempt/Dispatcher ownership 表以兼容后续迁移，但不会写入
+虚假 Attempt、启动 Dispatcher 或执行 Task。
+
 Server 负责：
 
 - 显式装配 Product Profile、Model、SQLite、Policy、Memory、Tool、Skill 和 MCP；
+- 装配 Personal Mission Store、Planner、Application Service 与版本化 HTTP/OpenAPI；
 - 按配置启用公共 `haifa-agent-web` 的 Aliyun IQS Search/Fetch，并把环境变量凭据绑定到
   Runtime `CredentialBroker`，不把 Key 放入 Profile、Tool Definition 或日志；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；

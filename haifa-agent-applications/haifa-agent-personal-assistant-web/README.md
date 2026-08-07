@@ -38,6 +38,8 @@ JAR 的构建或静态资源打包。
 ## 能力
 
 - 新建、搜索、选择、重命名、归档和恢复 Conversation；
+- 显式 Mission 入口、列表、创建、确认前整体计划替换/重新生成、确认、取消、Snapshot polling 和
+  Conversation 摘要卡片；Phase 1 明确提示确认后尚不执行 Task；
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
 - 输入框 `/` 命令菜单，以及按模型厂商、模型两级完成的新会话选择或已有会话切换；
@@ -55,7 +57,8 @@ JAR 的构建或静态资源打包。
 - 桌面三栏布局和移动端互斥抽屉。
 
 生产代码没有 Mock Client、Fixture fallback、Follow-up/Steer、Preference 编辑、复杂进度投影或
-Deep Research 界面。
+Deep Research 界面。Mission 页面不暴露 Dispatcher、Attempt、Pause/Resume、Verifier、Repair 或
+浏览器指定 Skill 的入口。
 
 ## 本机 Run Diagnostics
 

@@ -1,11 +1,16 @@
 package io.haifa.agent.personalassistant.server.configuration.sdk;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
+import io.haifa.agent.personalassistant.application.mission.DeterministicMissionPlanner;
+import io.haifa.agent.personalassistant.application.mission.MissionApplicationService;
+import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
+import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
 import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
@@ -13,6 +18,8 @@ import io.haifa.agent.personalassistant.server.configuration.model.PersonalModel
 import io.haifa.agent.personalassistant.server.configuration.model.SqlitePersonalModelPreferenceStore;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
+import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
+import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
@@ -146,6 +153,28 @@ public class PersonalAssistantConfiguration {
     @Bean
     PersonalImageStore personalImageStore(PersonalAssistantProperties properties) {
         return new PersonalImageStore(prepare(properties.dataDirectory()));
+    }
+
+    @Bean
+    SqliteMissionStore personalMissionStore(PersonalAssistantProperties properties, ObjectMapper mapper) {
+        return new SqliteMissionStore(properties.dataDirectory().resolve("personal-assistant.sqlite"), mapper);
+    }
+
+    @Bean
+    MissionPlanner personalMissionPlanner(
+            PersonalAssistantProperties properties, PersonalAssistantApplication application, ObjectMapper mapper) {
+        return switch (properties.mission().plannerMode()) {
+            case "deterministic-stub" -> new DeterministicMissionPlanner();
+            case "runtime" -> new RuntimeMissionPlanner(application.missionRuntime(), mapper);
+            default -> throw new IllegalStateException("unsupported Mission Planner mode");
+        };
+    }
+
+    @Bean
+    MissionApplicationService missionApplicationService(SqliteMissionStore store, MissionPlanner planner, Clock clock) {
+        var validator = new MissionPlanValidator(Set.of("GENERAL"), Set.of(), Set.of("pa.task-result@v1"));
+        var ids = new UuidV7IdentifierGenerator();
+        return new MissionApplicationService(store, store, planner, validator, ids::nextValue, clock);
     }
 
     private static String resolveCredential(PersonalAssistantProperties.Web web) {
