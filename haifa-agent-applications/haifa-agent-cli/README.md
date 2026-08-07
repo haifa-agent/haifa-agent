@@ -46,6 +46,13 @@ export DEEPSEEK_API_KEY="<secret>"
 
 cd /path/to/any/project
 haifa-coding
+
+# 打开选择器、最近 Session 或指定 Session
+haifa-coding resume
+haifa-coding resume --last
+haifa-coding resume <SESSION_ID>
+haifa-coding resume <SESSION_ID> "继续修复测试"
+haifa-coding resume --last "继续前面的工作"
 ```
 
 也可以将其他绝对路径作为第一个参数，覆盖默认发布目录。
@@ -148,6 +155,11 @@ java -jar $jar --terminal --workspace D:\haifa-agent-config\workspaces\terminal-
 java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
   --config D:\haifa-agent-config\haifa-coding-terminal.yaml `
   -m "分析当前项目并修复一个小问题"
+
+# Session Resume；全局配置参数可以放在 resume 前面
+java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
+  --config D:\haifa-agent-config\haifa-coding-terminal.yaml `
+  resume --last "继续前面的工作"
 ```
 
 构建后也可以将 `bin` 目录加入 `PATH`，使用 `haifa-cli.ps1` 启动。
@@ -155,6 +167,12 @@ java -jar $jar --workspace D:\haifa-agent-config\workspaces\terminal-manual `
 `--terminal` 与 `-m/--message` 不能同时使用。非交互、`dumb` 或不支持的终端会快速返回稳定的
 `TUI_UNAVAILABLE`。同一规范化且非符号链接的 Workspace 会生成带版本 namespace 的稳定
 Project/Workspace 身份；绝对路径不进入 Prompt、Client Event、JSONL 或普通错误输出。
+
+顶层 `resume` 仅恢复当前 Workspace 和调用方范围内的 Coding Session，不接管既有活动 Run。
+`resume` 打开现有选择器，`resume --last` 使用产品层稳定排序选择最近 Session，指定 ID 时重新执行
+产品授权。可选 Prompt 只在 Session 对账后为空闲状态时提交；若存在活动 Run，则保留 Prompt 草稿并
+显示 `RUN_TAKEOVER_NOT_SUPPORTED`。`--model` 与 `resume` 的组合在 P0 中拒绝，避免静默覆盖 Session
+下一 Run 的模型偏好。
 
 ## 真实联网编程配置
 
@@ -524,7 +542,8 @@ CLI 使用 Execution Core 公共增量 Observer，不再在产品内维护扫描
 `WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 且不标记 DISPATCHED；只有 OS 进程创建成功后才进入 DISPATCHED。
 进程启动后的增量对账失败仍按结果不确定失败关闭。
 
-当前已包含 tui4j Terminal、真实 `/resume` 搜索、Session 重命名/归档/逻辑删除、线性历史
+当前已包含 tui4j Terminal、顶层 `resume` 五种形式、最近 100 条安全可见历史、真实 `/resume` 搜索、
+Session 重命名/归档/逻辑删除、线性历史
 `/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久
 Follow-up、Cancel、Approval selector 和 SQLite Session/Queue/Cursor 恢复。尚未包含 PTY、后台守护
 进程、Session Tree/Fork/Clone、模型登录或 Workflow Graph。模型切换只覆盖可信静态目录内的空闲

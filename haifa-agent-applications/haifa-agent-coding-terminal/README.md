@@ -181,10 +181,14 @@ Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、s
 - Escape 是活动 Run 的全局取消键：裸 Escape 不得被当作 EOF；即使 Selector 打开或
   本地 Run 状态尚未刷新，也先关闭 Selector、reconcile 后向产品取消接口发送命令并显示 Cancelling。
   空闲时 Escape 只关闭 Selector；Ctrl+C 仍先清空非空 Editor，空 Editor 时取消活动 Run；
-- `/resume` 选择并打开真实 Session；
+- `/resume` 选择并打开真实 Session；顶层 `haifa-coding resume`、`resume --last` 和
+  `resume <SESSION_ID>` 复用同一产品客户端与打开流程；
 - `/resume <query>` 搜索 Session，`/rename [name]`（兼容 `/name`）使用 revision 重命名，
   `/archive` 与 `/delete`
   在同一内联 Selector 中确认；删除只隐藏产品 Session，不删除 Runtime/Artifact 事实；
+- 切换或启动恢复 Session 时，通过 `CodingSessionClient` 加载最近 100 条 `USER_VISIBLE` 历史投影，
+  只显示安全 User/Assistant 正文及失败摘要；更早历史显示有界占位，不回放 Tool、Prompt、reasoning
+  或 JSONL；
 - `/compact` 复用 Runtime 的 ConversationSummary/Compression，保留原始消息；自定义压缩指令
   当前返回 `COMPACTION_INSTRUCTION_NOT_SUPPORTED`；
 - `/reload` 重新发现 Workspace 根 `AGENTS.md`，只影响后续新 Run；当前 Run 不热替换；

@@ -93,6 +93,11 @@ protector 编码并校验 digest，不进入 JSONL 或普通日志；`NONE` 明�
 提供加密与完整性保护。`MEMORY` 与 `SQLITE` 通过同一
 `CodingSessionStore` 端口提供相同行为。
 
+`CodingSessionHistoryService` 是 Resume 使用的最小只读产品边界。它先通过 `CodingSessionService`
+重新执行调用方与 Project 作用域校验，再从 Runtime `SessionMessageRepository` 读取有界消息窗口，
+仅投影 `USER_VISIBLE` 的 User/Assistant 正文并执行凭据脱敏；无 Assistant 结果的失败 Run 只提供安全
+状态摘要。默认最多扫描 2,000 条、返回最近 100 条，JSONL 不参与查询或恢复。
+
 tui4j Terminal UI 与富 Tool/Execution/Resource 客户端事件已进入独立
 `haifa-agent-coding-terminal` 模块，避免产品 façade 依赖终端实现。`CodingShellService` 与
 `CodingSessionExportService` 只定义产品边界；CLI 生产装配分别复用既有

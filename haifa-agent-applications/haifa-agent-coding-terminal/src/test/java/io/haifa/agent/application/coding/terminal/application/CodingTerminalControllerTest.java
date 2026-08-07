@@ -11,6 +11,8 @@ import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryItem;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
@@ -63,6 +65,80 @@ class CodingTerminalControllerTest {
         assertThat(client.opened).containsExactly(SESSION_ID);
         assertThat(controller.state().session()).contains(client.view);
         assertThat(controller.state().selector()).isEmpty();
+    }
+
+    @Test
+    void startupResumeSelectorUsesTheExistingBoundedSessionPicker() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.summaries = List.of(client.view.summary());
+        var controller = controller(client);
+
+        controller.start(CodingTerminalStartup.selectSession());
+
+        assertThat(client.listLimit).isEqualTo(50);
+        assertThat(controller.state().selector()).isPresent();
+        assertThat(controller.state().selector().orElseThrow().options().getFirst())
+                .contains("session", "ACTIVE", "session-1");
+    }
+
+    @Test
+    void startupLastOpensTheMostRecentSessionBeforeSubmittingThePrompt() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.summaries = List.of(client.view.summary());
+        var controller = controller(client);
+
+        controller.start(CodingTerminalStartup.lastSession(Optional.of("continue the work")));
+
+        assertThat(client.listLimit).isEqualTo(1);
+        assertThat(client.opened).containsExactly(SESSION_ID);
+        assertThat(client.submittedMessages).containsExactly("continue the work");
+        assertThat(controller.state().session()).isPresent();
+    }
+
+    @Test
+    void startupPromptDoesNotTakeOverAnActiveRun() {
+        FakeClient client = new FakeClient(activeView());
+        var controller = controller(client);
+
+        controller.start(CodingTerminalStartup.session(SESSION_ID, Optional.of("do not steer this")));
+
+        assertThat(client.submittedMessages).isEmpty();
+        assertThat(client.steeredMessages).isEmpty();
+        assertThat(controller.state().editorBuffer()).isEqualTo("do not steer this");
+        assertThat(controller.state().recoverableError()).contains("RUN_TAKEOVER_NOT_SUPPORTED");
+    }
+
+    @Test
+    void openingASessionRestoresTheSafeHistoryProjection() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        client.history = new CodingSessionHistoryPage(
+                SESSION_ID,
+                List.of(
+                        new CodingSessionHistoryItem(
+                                "history-1",
+                                CodingSessionHistoryItem.Kind.USER,
+                                "You",
+                                "previous question",
+                                "COMPLETED",
+                                1,
+                                Instant.EPOCH),
+                        new CodingSessionHistoryItem(
+                                "history-2",
+                                CodingSessionHistoryItem.Kind.ASSISTANT,
+                                "Assistant",
+                                "previous answer",
+                                "COMPLETED",
+                                2,
+                                Instant.EPOCH)),
+                true);
+        var controller = controller(client);
+
+        controller.open(SESSION_ID);
+
+        assertThat(controller.state().transcript())
+                .extracting(value -> value.body())
+                .containsExactly(
+                        "Earlier history is not loaded or has been compacted.", "previous question", "previous answer");
     }
 
     @Test
@@ -629,10 +705,12 @@ class CodingTerminalControllerTest {
         private CodingSessionView view;
         private CodingSessionView reconciledView;
         private List<CodingSessionSummary> summaries = List.of();
+        private CodingSessionHistoryPage history = CodingSessionHistoryPage.empty(SESSION_ID);
         private List<CodingQueuedMessage> restorable = List.of();
         private List<String> logicalPaths = List.of();
         private ProjectProductException submitFailure;
         private int submitAttempts;
+        private int listLimit;
         private final List<String> submittedMessages = new ArrayList<>();
         private final List<String> steeredMessages = new ArrayList<>();
         private final List<AgentSessionId> opened = new ArrayList<>();
@@ -666,7 +744,13 @@ class CodingTerminalControllerTest {
 
         @Override
         public List<CodingSessionSummary> list(ProjectId projectId, int limit) {
+            listLimit = limit;
             return summaries;
+        }
+
+        @Override
+        public CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
+            return history;
         }
 
         @Override

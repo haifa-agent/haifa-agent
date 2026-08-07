@@ -8,6 +8,8 @@ import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportResult;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportService;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryService;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
@@ -38,6 +40,7 @@ import java.util.function.Supplier;
 public final class LocalCodingSessionClient implements CodingSessionClient {
     private final ProjectId projectId;
     private final CodingSessionService sessions;
+    private final java.util.Optional<CodingSessionHistoryService> history;
     private final AgentRuntime runtime;
     private final IdentifierGenerator identifiers;
     private final TimeProvider time;
@@ -56,6 +59,28 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
         this(
                 projectId,
                 sessions,
+                null,
+                runtime,
+                identifiers,
+                time,
+                List::of,
+                List::of,
+                List::of,
+                java.util.Optional.empty(),
+                null);
+    }
+
+    public LocalCodingSessionClient(
+            ProjectId projectId,
+            CodingSessionService sessions,
+            CodingSessionHistoryService history,
+            AgentRuntime runtime,
+            IdentifierGenerator identifiers,
+            TimeProvider time) {
+        this(
+                projectId,
+                sessions,
+                history,
                 runtime,
                 identifiers,
                 time,
@@ -76,6 +101,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
         this(
                 projectId,
                 sessions,
+                null,
                 runtime,
                 identifiers,
                 time,
@@ -89,6 +115,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public LocalCodingSessionClient(
             ProjectId projectId,
             CodingSessionService sessions,
+            CodingSessionHistoryService history,
             AgentRuntime runtime,
             IdentifierGenerator identifiers,
             TimeProvider time,
@@ -99,6 +126,7 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
             CodingSessionExportService exporter) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.sessions = Objects.requireNonNull(sessions, "sessions must not be null");
+        this.history = java.util.Optional.ofNullable(history);
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -143,6 +171,13 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public CodingSessionView reconcile(AgentSessionId sessionId) {
         requireScoped(sessionId);
         return scoped(sessions.reconcileSession(sessionId));
+    }
+
+    @Override
+    public CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
+        requireScoped(sessionId);
+        return history.map(value -> value.recent(sessionId, limit))
+                .orElseGet(() -> CodingSessionHistoryPage.empty(sessionId));
     }
 
     @Override

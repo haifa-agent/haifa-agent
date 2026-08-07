@@ -53,7 +53,11 @@ class LocalCodingProductAssemblyTest {
                 () -> new Tui4jTerminalIo(Optional.empty(), Optional.empty(), List.of("TERM=dumb"), false, false));
 
         assertThatThrownBy(() -> runner.run(
-                        workspace, memoryConfiguration(), new PrintStream(new ByteArrayOutputStream()), ignored -> {}))
+                        workspace,
+                        memoryConfiguration(),
+                        io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup.empty(),
+                        new PrintStream(new ByteArrayOutputStream()),
+                        ignored -> {}))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("TUI_UNAVAILABLE");
         assertThat(assemblyCalls).hasValue(0);
@@ -81,7 +85,12 @@ class LocalCodingProductAssemblyTest {
                 },
                 () -> Tui4jTerminalIo.streams(terminalInput, terminalOutput, List.of("TERM=xterm-256color")));
 
-        runner.run(workspace, configuration, new PrintStream(new ByteArrayOutputStream()), ignored -> {});
+        runner.run(
+                workspace,
+                configuration,
+                io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup.empty(),
+                new PrintStream(new ByteArrayOutputStream()),
+                ignored -> {});
         awaitNoActiveRun(assembled.get());
 
         assertThat(modelCalls).hasValue(2);
@@ -121,7 +130,12 @@ class LocalCodingProductAssemblyTest {
                 .name("phase-three-terminal-smoke")
                 .start(() -> {
                     try {
-                        runner.run(workspace, configuration, new PrintStream(applicationOutput), ignored -> {});
+                        runner.run(
+                                workspace,
+                                configuration,
+                                io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup.empty(),
+                                new PrintStream(applicationOutput),
+                                ignored -> {});
                     } catch (Throwable throwable) {
                         runnerFailure.set(throwable);
                     }
@@ -257,6 +271,9 @@ class LocalCodingProductAssemblyTest {
             assertThat(dispatchedRunId).isNotEqualTo(firstRunId);
             assertThat(reopened.eventCursor()).isEmpty();
             assertThat(client.restorableMessages(sessionId, 10)).isEmpty();
+            assertThat(client.history(sessionId, 100).items())
+                    .extracting(value -> value.body())
+                    .contains("first task", "answer-2", "queued task");
 
             awaitTerminal(second, dispatchedRunId);
             assertThat(client.reconcile(sessionId).activeRun()).isEmpty();
@@ -270,6 +287,7 @@ class LocalCodingProductAssemblyTest {
             LocalCodingSessionClient client = client(wrongWorkspace);
             assertThat(client.list(wrongWorkspace.projectId(), 10)).isEmpty();
             assertThatThrownBy(() -> client.open(sessionId)).hasMessageContaining("Session is unavailable");
+            assertThatThrownBy(() -> client.history(sessionId, 100)).hasMessageContaining("Session is unavailable");
             assertThatThrownBy(() -> client.events(firstRunId, RunEventCursor.beforeFirst(firstRunId), 10))
                     .hasMessageContaining("Session is unavailable");
         }
@@ -289,7 +307,12 @@ class LocalCodingProductAssemblyTest {
 
     private static LocalCodingSessionClient client(LocalCodingAgent agent) {
         return new LocalCodingSessionClient(
-                agent.projectId(), agent.codingSessions(), agent.runtime(), agent.identifiers(), agent.time());
+                agent.projectId(),
+                agent.codingSessions(),
+                agent.sessionHistory(),
+                agent.runtime(),
+                agent.identifiers(),
+                agent.time());
     }
 
     private static io.haifa.agent.runtime.api.RunEventPage awaitEvents(

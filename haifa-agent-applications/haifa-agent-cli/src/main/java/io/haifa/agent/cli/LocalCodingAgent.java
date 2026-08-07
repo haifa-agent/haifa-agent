@@ -9,6 +9,7 @@ import io.haifa.agent.application.project.product.ProjectProductService;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportService;
+import io.haifa.agent.application.project.product.coding.CodingSessionHistoryService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
@@ -137,6 +138,7 @@ final class LocalCodingAgent implements AutoCloseable {
     private final Clock clock;
     private final ProjectId projectId;
     private final CodingSessionService codingSessions;
+    private final CodingSessionHistoryService sessionHistory;
     private final TrustedProjectResourceCatalog resources;
     private final Optional<CodingShellService> shell;
     private final Optional<CliExecutionPlatform> executionPlatform;
@@ -157,6 +159,7 @@ final class LocalCodingAgent implements AutoCloseable {
             Clock clock,
             ProjectId projectId,
             CodingSessionService codingSessions,
+            CodingSessionHistoryService sessionHistory,
             TrustedProjectResourceCatalog resources,
             Optional<CodingShellService> shell,
             Optional<CliExecutionPlatform> executionPlatform,
@@ -173,6 +176,7 @@ final class LocalCodingAgent implements AutoCloseable {
         this.clock = clock;
         this.projectId = projectId;
         this.codingSessions = codingSessions;
+        this.sessionHistory = sessionHistory;
         this.resources = resources;
         this.shell = shell;
         this.executionPlatform = executionPlatform;
@@ -554,6 +558,11 @@ final class LocalCodingAgent implements AutoCloseable {
                     identifiers,
                     clock,
                     new CliCodingModelCatalog(configuration));
+            var sessionHistory = new CodingSessionHistoryService(
+                    codingSessions,
+                    persistence.ports().state(),
+                    runtime,
+                    webPlatform.credentialBroker().redactor());
             CodingShellService shell = executionPlatform == null
                     ? null
                     : new CliCodingShellService(
@@ -582,6 +591,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     clock,
                     projectId,
                     codingSessions,
+                    sessionHistory,
                     resources,
                     Optional.ofNullable(shell),
                     Optional.ofNullable(executionPlatform),
@@ -678,6 +688,10 @@ final class LocalCodingAgent implements AutoCloseable {
 
     CodingSessionService codingSessions() {
         return codingSessions;
+    }
+
+    CodingSessionHistoryService sessionHistory() {
+        return sessionHistory;
     }
 
     List<String> loadedResources() {

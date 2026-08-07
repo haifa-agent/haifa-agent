@@ -46,6 +46,7 @@ import java.util.function.Supplier;
 /** Single-threaded application controller. Runtime callbacks only enqueue actions. */
 public final class CodingTerminalController implements AutoCloseable {
     private static final int PAGE_SIZE = 200;
+    private static final int HISTORY_LIMIT = 100;
     private static final int MAX_REPLAY_EVENTS = 2_000;
     private static final int CONTROL_COMPLETION_QUEUE_CAPACITY = 64;
     private static final int COMPLETION_QUEUE_CAPACITY = 256;
@@ -254,6 +255,48 @@ public final class CodingTerminalController implements AutoCloseable {
     /** Loads the initial session before the TUI event loop starts; interactive session changes use background effects. */
     public void open(AgentSessionId sessionId) {
         applyLoadedSession(readSession(client.open(sessionId), Optional.empty(), null, RunOutputCursor.BEFORE_FIRST));
+    }
+
+    /** Applies a bounded startup Resume intent before the TUI event loop starts. */
+    public void start(CodingTerminalStartup startup) {
+        Objects.requireNonNull(startup, "startup must not be null");
+        try {
+            switch (startup.mode()) {
+                case EMPTY -> {
+                    return;
+                }
+                case SELECTOR -> showResumeOptions(client.list(projectId, 50));
+                case LAST -> {
+                    List<CodingSessionSummary> sessions = client.list(projectId, 1);
+                    if (sessions.isEmpty()) {
+                        apply(new TerminalUiAction.RecoverableFailure("SESSION_LIST_EMPTY"));
+                        return;
+                    }
+                    openForResume(sessions.getFirst().sessionId(), startup.prompt());
+                }
+                case SESSION -> openForResume(startup.sessionId().orElseThrow(), startup.prompt());
+            }
+        } catch (ProjectProductException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+        } catch (IllegalArgumentException
+                | IllegalStateException
+                | SecurityException
+                | UnsupportedOperationException exception) {
+            apply(new TerminalUiAction.RecoverableFailure(safeFailureCode(exception)));
+        }
+    }
+
+    private void openForResume(AgentSessionId sessionId, Optional<String> prompt) {
+        open(sessionId);
+        if (prompt.isEmpty()) return;
+        String text = prompt.orElseThrow();
+        if (state.currentRunId().isPresent()) {
+            apply(new TerminalUiAction.EditorChanged(text, text.length()));
+            apply(new TerminalUiAction.RecoverableFailure("RUN_TAKEOVER_NOT_SUPPORTED"));
+            return;
+        }
+        PreparedMessageSubmission submission = beginMessageSubmission(text, false);
+        completeMessageSubmission(executeMessageSubmission(submission));
     }
 
     public void drainEvents() {
@@ -819,13 +862,14 @@ public final class CodingTerminalController implements AutoCloseable {
             AgentRunId previousOutputRunId,
             RunOutputCursor previousOutputCursor) {
         List<String> resources = client.loadedResources();
+        var history = client.history(view.summary().sessionId(), HISTORY_LIMIT);
         List<PendingMessage> pending = client.restorableMessages(view.summary().sessionId(), 100).stream()
                 .map(value -> new PendingMessage(
                         value.followUpId(), PendingMessage.Kind.FOLLOW_UP, value.summary(), value.revision()))
                 .toList();
         if (view.activeRun().isEmpty()) {
             return new LoadedSession(
-                    view, resources, pending, List.of(), null, null, null, RunOutputCursor.BEFORE_FIRST);
+                    view, resources, history, pending, List.of(), null, null, null, RunOutputCursor.BEFORE_FIRST);
         }
         AgentRunId runId = view.activeRun().orElseThrow().runId();
         RunEventCursor cursor = previousCursor
@@ -858,6 +902,7 @@ public final class CodingTerminalController implements AutoCloseable {
         return new LoadedSession(
                 view,
                 resources,
+                history,
                 pending,
                 List.copyOf(events),
                 nextSubscription,
@@ -869,6 +914,11 @@ public final class CodingTerminalController implements AutoCloseable {
     private void applyLoadedSession(LoadedSession loaded) {
         RunEventSubscription previousSubscription = subscription;
         RunOutputSubscription previousOutputSubscription = outputSubscription;
+        boolean sameSession = state.session()
+                .map(value -> value.summary()
+                        .sessionId()
+                        .equals(loaded.view().summary().sessionId()))
+                .orElse(false);
         subscription = loaded.subscription();
         outputSubscription = loaded.outputSubscription();
         outputRunId = loaded.outputRunId();
@@ -876,6 +926,7 @@ public final class CodingTerminalController implements AutoCloseable {
         activeInteraction = null;
         interactionHydrationInFlight = null;
         apply(new TerminalUiAction.SessionLoaded(loaded.view(), loaded.resources()));
+        if (!sameSession) apply(new TerminalUiAction.HistoryLoaded(loaded.history()));
         apply(new TerminalUiAction.PendingChanged(loaded.pending()));
         for (AgentRunEvent event : loaded.events()) {
             apply(new TerminalUiAction.RunEventReceived(event));
@@ -1197,14 +1248,25 @@ public final class CodingTerminalController implements AutoCloseable {
     private void showResumeOptions(List<CodingSessionSummary> found) {
         resumeOptions = List.copyOf(found);
         var options = resumeOptions.stream()
-                .map(summary -> summary.sessionId().value() + " · " + summary.displayName() + " · "
-                        + summary.status().name())
+                .map(summary -> summary.displayName() + " · " + resumeStatus(summary) + " · " + summary.lastActivityAt()
+                        + " · " + shortSessionId(summary.sessionId()))
                 .toList();
         if (options.isEmpty()) {
             apply(new TerminalUiAction.RecoverableFailure("SESSION_LIST_EMPTY"));
         } else {
             apply(new TerminalUiAction.SelectorOpened(new TerminalSelector("resume", "Resume session", options, 0)));
         }
+    }
+
+    private static String resumeStatus(CodingSessionSummary summary) {
+        return summary.activeRunStatus()
+                .map(value -> summary.status().name() + "/" + value.name())
+                .orElseGet(() -> summary.status().name());
+    }
+
+    private static String shortSessionId(AgentSessionId sessionId) {
+        String value = sessionId.value();
+        return value.length() <= 12 ? value : value.substring(0, 12);
     }
 
     private Runnable loadModels(
@@ -1386,6 +1448,7 @@ public final class CodingTerminalController implements AutoCloseable {
     public record LoadedSession(
             CodingSessionView view,
             List<String> resources,
+            io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage history,
             List<PendingMessage> pending,
             List<AgentRunEvent> events,
             RunEventSubscription subscription,
@@ -1395,6 +1458,7 @@ public final class CodingTerminalController implements AutoCloseable {
         public LoadedSession {
             view = Objects.requireNonNull(view, "view must not be null");
             resources = List.copyOf(resources);
+            history = Objects.requireNonNull(history, "history must not be null");
             pending = List.copyOf(pending);
             events = List.copyOf(events);
             outputCursor = Objects.requireNonNull(outputCursor, "outputCursor must not be null");

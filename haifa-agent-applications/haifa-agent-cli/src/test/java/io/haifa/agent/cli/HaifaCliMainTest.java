@@ -2,6 +2,7 @@ package io.haifa.agent.cli;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.AgentRunOutputEvent;
 import io.haifa.agent.runtime.api.AgentRunOutputEventType;
@@ -45,7 +46,7 @@ class HaifaCliMainTest {
     @Test
     void explicitAndDefaultTerminalUseTheSameLaunchBoundary() {
         AtomicInteger launches = new AtomicInteger();
-        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launches.incrementAndGet());
+        var main = new HaifaCliMain((workspace, configuration, startup, output, trace) -> launches.incrementAndGet());
 
         assertThat(main.run(new String[] {"--terminal"}, output(), output())).isZero();
         assertThat(main.run(new String[0], output(), output())).isZero();
@@ -55,7 +56,8 @@ class HaifaCliMainTest {
     @Test
     void defaultTerminalUsesTheProcessWorkingDirectoryAsItsWorkspace() {
         AtomicReference<Path> launchedWorkspace = new AtomicReference<>();
-        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launchedWorkspace.set(workspace));
+        var main = new HaifaCliMain(
+                (workspace, configuration, startup, output, trace) -> launchedWorkspace.set(workspace));
 
         assertThat(main.run(new String[0], output(), output())).isZero();
 
@@ -65,7 +67,7 @@ class HaifaCliMainTest {
     @Test
     void helpDoesNotInitializeTheTerminalApplication() {
         AtomicInteger launches = new AtomicInteger();
-        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launches.incrementAndGet());
+        var main = new HaifaCliMain((workspace, configuration, startup, output, trace) -> launches.incrementAndGet());
         ByteArrayOutputStream standardOutput = new ByteArrayOutputStream();
 
         int exit = main.run(
@@ -73,13 +75,13 @@ class HaifaCliMainTest {
 
         assertThat(exit).isZero();
         assertThat(launches).hasValue(0);
-        assertThat(standardOutput.toString(StandardCharsets.UTF_8)).contains("Usage: haifa-cli");
+        assertThat(standardOutput.toString(StandardCharsets.UTF_8)).contains("Usage: haifa-coding");
     }
 
     @Test
     void terminalAndMessageConflictFailsBeforeLaunch() {
         AtomicInteger launches = new AtomicInteger();
-        var main = new HaifaCliMain((workspace, configuration, output, trace) -> launches.incrementAndGet());
+        var main = new HaifaCliMain((workspace, configuration, startup, output, trace) -> launches.incrementAndGet());
         ByteArrayOutputStream error = new ByteArrayOutputStream();
 
         int exit = main.run(
@@ -90,6 +92,19 @@ class HaifaCliMainTest {
         assertThat(exit).isEqualTo(1);
         assertThat(launches).hasValue(0);
         assertThat(error.toString(StandardCharsets.UTF_8)).contains("--terminal cannot be used with -m/--message");
+    }
+
+    @Test
+    void resumePassesTheTypedStartupIntentToTheTerminalBoundary() {
+        AtomicReference<CodingTerminalStartup> startup = new AtomicReference<>();
+        var main = new HaifaCliMain((workspace, configuration, requested, output, trace) -> startup.set(requested));
+
+        int exit = main.run(new String[] {"resume", "session-1", "continue", "the", "work"}, output(), output());
+
+        assertThat(exit).isZero();
+        assertThat(startup.get().mode()).isEqualTo(CodingTerminalStartup.Mode.SESSION);
+        assertThat(startup.get().sessionId()).contains(new io.haifa.agent.core.session.AgentSessionId("session-1"));
+        assertThat(startup.get().prompt()).contains("continue the work");
     }
 
     private static PrintStream output() {

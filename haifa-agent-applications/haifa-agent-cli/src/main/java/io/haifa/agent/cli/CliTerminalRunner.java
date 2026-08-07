@@ -1,5 +1,6 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import java.io.PrintStream;
 import java.nio.file.Path;
@@ -11,6 +12,7 @@ interface CliTerminalRunner {
     void run(
             Path workspace,
             CliConfiguration configuration,
+            CodingTerminalStartup startup,
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver);
 }

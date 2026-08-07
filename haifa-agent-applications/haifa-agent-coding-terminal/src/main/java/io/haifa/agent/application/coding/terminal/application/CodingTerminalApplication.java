@@ -20,13 +20,20 @@ public final class CodingTerminalApplication {
 
     private final ProjectId projectId;
     private final CodingSessionClient client;
-    private final Optional<AgentSessionId> resumeSession;
+    private final CodingTerminalStartup startup;
     private final Tui4jTerminalIo terminalIo;
     private final TerminalWorkspaceContext workspace;
 
     public CodingTerminalApplication(
             ProjectId projectId, CodingSessionClient client, Optional<AgentSessionId> resumeSession) {
-        this(projectId, client, resumeSession, Tui4jTerminalIo.system(), TerminalWorkspaceContext.empty());
+        this(
+                projectId,
+                client,
+                resumeSession
+                        .map(value -> CodingTerminalStartup.session(value, Optional.empty()))
+                        .orElseGet(CodingTerminalStartup::empty),
+                Tui4jTerminalIo.system(),
+                TerminalWorkspaceContext.empty());
     }
 
     public CodingTerminalApplication(
@@ -34,7 +41,14 @@ public final class CodingTerminalApplication {
             CodingSessionClient client,
             Optional<AgentSessionId> resumeSession,
             Tui4jTerminalIo terminalIo) {
-        this(projectId, client, resumeSession, terminalIo, TerminalWorkspaceContext.empty());
+        this(
+                projectId,
+                client,
+                resumeSession
+                        .map(value -> CodingTerminalStartup.session(value, Optional.empty()))
+                        .orElseGet(CodingTerminalStartup::empty),
+                terminalIo,
+                TerminalWorkspaceContext.empty());
     }
 
     public CodingTerminalApplication(
@@ -43,9 +57,25 @@ public final class CodingTerminalApplication {
             Optional<AgentSessionId> resumeSession,
             Tui4jTerminalIo terminalIo,
             TerminalWorkspaceContext workspace) {
+        this(
+                projectId,
+                client,
+                resumeSession
+                        .map(value -> CodingTerminalStartup.session(value, Optional.empty()))
+                        .orElseGet(CodingTerminalStartup::empty),
+                terminalIo,
+                workspace);
+    }
+
+    public CodingTerminalApplication(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingTerminalStartup startup,
+            Tui4jTerminalIo terminalIo,
+            TerminalWorkspaceContext workspace) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.client = Objects.requireNonNull(client, "client must not be null");
-        this.resumeSession = Objects.requireNonNull(resumeSession, "resumeSession must not be null");
+        this.startup = Objects.requireNonNull(startup, "startup must not be null");
         this.terminalIo = Objects.requireNonNull(terminalIo, "terminalIo must not be null");
         this.workspace = Objects.requireNonNull(workspace, "workspace must not be null");
     }
@@ -59,7 +89,7 @@ public final class CodingTerminalApplication {
                 new TerminalUiReducer(),
                 TerminalUiState.initial(DEFAULT_COLUMNS, DEFAULT_ROWS, workspace));
         try (controller) {
-            resumeSession.ifPresent(controller::open);
+            controller.start(startup);
             new Tui4jCodingTerminal(controller, pump, terminalIo).run();
         }
     }
