@@ -56,6 +56,7 @@ import type {
 import {
   HttpPersonalAssistantClient,
   PersonalAssistantApiError,
+  missionArtifactUrl,
   type PersonalAssistantClient,
 } from "./api/client";
 import { appReducer, initialState } from "./state/appReducer";
@@ -1227,6 +1228,35 @@ function missionStateLabel(state: string): string {
   }[state] ?? state;
 }
 
+function parseMissionFinalResult(value: string | null): {
+  directAnswer?: string;
+  completionKind?: string;
+  completedItems?: string[];
+  failedItems?: string[];
+  unverifiedClaims?: string[];
+  residualRisks?: string[];
+  unresolvedQuestions?: string[];
+} | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const strings = (field: string): string[] => Array.isArray(parsed[field])
+      ? parsed[field].filter((item): item is string => typeof item === "string")
+      : [];
+    return {
+      directAnswer: typeof parsed.directAnswer === "string" ? parsed.directAnswer : undefined,
+      completionKind: typeof parsed.completionKind === "string" ? parsed.completionKind : undefined,
+      completedItems: strings("completedItems"),
+      failedItems: strings("failedItems"),
+      unverifiedClaims: strings("unverifiedClaims"),
+      residualRisks: strings("residualRisks"),
+      unresolvedQuestions: strings("unresolvedQuestions"),
+    };
+  } catch {
+    return { directAnswer: value };
+  }
+}
+
 function MissionDialog({
   client,
   conversation,
@@ -1242,6 +1272,15 @@ function MissionDialog({
   const [selected, setSelected] = useState<MissionSnapshot | null>(null);
   const [objective, setObjective] = useState("");
   const [criteria, setCriteria] = useState("");
+  const [mode, setMode] = useState<"STANDARD" | "DEEP_RESEARCH">("STANDARD");
+  const [researchQuestion, setResearchQuestion] = useState("");
+  const [researchScope, setResearchScope] = useState("");
+  const [researchTimeRange, setResearchTimeRange] = useState("");
+  const [researchRegion, setResearchRegion] = useState("");
+  const [researchAudience, setResearchAudience] = useState("");
+  const [researchSources, setResearchSources] = useState("");
+  const [researchExclusions, setResearchExclusions] = useState("");
+  const [researchDelivery, setResearchDelivery] = useState("Markdown report");
   const [editingPlan, setEditingPlan] = useState(false);
   const [planJson, setPlanJson] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1342,13 +1381,28 @@ function MissionDialog({
     event.preventDefault();
     if (!conversation || !client.createMission || !objective.trim()) return;
     const acceptanceCriteria = criteria.split("\n").map((value) => value.trim()).filter(Boolean);
+    const deepResearch = mode === "DEEP_RESEARCH";
     void command(() => client.createMission!({
       conversationId: conversation.id,
       objective: objective.trim(),
       acceptanceCriteria,
+      mode,
+      selectedSkillId: deepResearch ? "deep-research" : undefined,
+      researchBrief: deepResearch ? {
+        question: researchQuestion.trim() || objective.trim(),
+        scope: researchScope.trim(),
+        timeRange: researchTimeRange.trim(),
+        region: researchRegion.trim(),
+        audience: researchAudience.trim(),
+        sourcePreferences: researchSources.split("\n").map((value) => value.trim()).filter(Boolean),
+        exclusions: researchExclusions.split("\n").map((value) => value.trim()).filter(Boolean),
+        deliveryFormat: researchDelivery.trim(),
+      } : undefined,
     }, { idempotencyKey: crypto.randomUUID() })).then(() => {
       setObjective("");
       setCriteria("");
+      setResearchQuestion("");
+      setResearchScope("");
     });
   };
 
@@ -1413,14 +1467,23 @@ function MissionDialog({
             {conversation && !missions.some((mission) => mission.conversationId === conversation.id && !missionTerminalStates.has(mission.state)) && (
               <form className="mission-create" onSubmit={createMission}>
                 <h3>为“{conversation.displayName}”创建 Mission</h3>
+                <label>任务模式<select value={mode} onChange={(event) => setMode(event.target.value as "STANDARD" | "DEEP_RESEARCH")}><option value="STANDARD">标准 Mission</option><option value="DEEP_RESEARCH">Deep Research</option></select></label>
                 <label>目标<textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={8000} rows={3} placeholder="描述要持续推进并最终交付的目标" /></label>
                 <label>验收标准<textarea value={criteria} onChange={(event) => setCriteria(event.target.value)} maxLength={4000} rows={3} placeholder="每行一条，可留空" /></label>
+                {mode === "DEEP_RESEARCH" && <fieldset className="research-brief"><legend>Research brief</legend>
+                  <label>研究问题<textarea value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} maxLength={8000} rows={2} placeholder="留空时使用 Mission 目标" /></label>
+                  <label>范围<textarea value={researchScope} onChange={(event) => setResearchScope(event.target.value)} maxLength={2000} rows={2} /></label>
+                  <div className="research-brief-grid"><label>时间范围<input value={researchTimeRange} onChange={(event) => setResearchTimeRange(event.target.value)} maxLength={256} /></label><label>地区<input value={researchRegion} onChange={(event) => setResearchRegion(event.target.value)} maxLength={256} /></label><label>受众<input value={researchAudience} onChange={(event) => setResearchAudience(event.target.value)} maxLength={256} /></label><label>交付格式<input value={researchDelivery} onChange={(event) => setResearchDelivery(event.target.value)} maxLength={256} /></label></div>
+                  <label>来源偏好<textarea value={researchSources} onChange={(event) => setResearchSources(event.target.value)} rows={2} placeholder="每行一项" /></label>
+                  <label>排除项<textarea value={researchExclusions} onChange={(event) => setResearchExclusions(event.target.value)} rows={2} placeholder="每行一项" /></label>
+                </fieldset>}
                 <button type="submit" className="button primary-button" disabled={busy || !objective.trim()}><Plus size={15} />创建并生成计划</button>
               </form>
             )}
             {selected ? (
               <article className="mission-detail">
-                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span><h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span>{selected.mode === "DEEP_RESEARCH" && <span className="mission-mode">Deep Research · deep-research@1.0.0</span>}<h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                {selected.researchBrief && <section className="research-brief-summary"><h4>Research brief</h4><p><b>问题：</b>{selected.researchBrief.question}</p>{selected.researchBrief.scope && <p><b>范围：</b>{selected.researchBrief.scope}</p>}<p><b>时间 / 地区 / 受众：</b>{[selected.researchBrief.timeRange, selected.researchBrief.region, selected.researchBrief.audience].filter(Boolean).join(" · ") || "未限定"}</p></section>}
                 {selected.acceptanceCriteria.length > 0 && <section><h4>验收标准</h4><ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section>}
                 <section className="mission-execution-summary" aria-label="Mission 执行状态">
                   <span>Dispatcher：{selected.execution.dispatcherStatus}</span>
@@ -1431,6 +1494,9 @@ function MissionDialog({
                 <section><h4>执行计划 · revision {selected.plan?.revision ?? "-"}</h4>
                   <ol className="mission-tasks">{selected.tasks.map((task) => <li key={task.taskId}><b>{task.ordinal}. {task.title}</b><span>{task.objective}</span>{task.dependsOn.length > 0 && <small>依赖：{task.dependsOn.join("、")}</small>}<em>{task.state}</em>{task.state === "BLOCKED" && client.retryMissionTask && <button type="button" className="button mission-task-retry" disabled={busy} onClick={() => void command(() => client.retryMissionTask!(selected, task.taskId, { idempotencyKey: crypto.randomUUID() }))}>重试任务</button>}</li>)}</ol>
                 </section>
+                {selected.finalResult && (() => { const result = parseMissionFinalResult(selected.finalResult); return <section className="research-result"><h4>最终报告{result?.completionKind && ` · ${result.completionKind}`}</h4>{result?.directAnswer && <p className="research-answer">{result.directAnswer}</p>}{(result?.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result!.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result?.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result!.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result?.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result!.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result?.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result!.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result?.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result!.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</section>; })()}
+                {selected.sources.length > 0 && <section className="research-sources"><h4>来源与引用</h4><ol>{selected.sources.map((source) => <li key={source}><a href={source} target="_blank" rel="noreferrer">{source}</a></li>)}</ol></section>}
+                {selected.artifacts.length > 0 && <section className="research-artifacts"><h4>交付文件</h4><ul>{selected.artifacts.map((artifact) => <li key={artifact}><a href={missionArtifactUrl(selected.missionId, artifact)} target="_blank" rel="noreferrer"><code>{artifact}</code></a></li>)}</ul></section>}
                 {missionInteraction && <section className="mission-interaction"><h4>{missionInteraction.title}</h4><p>{missionInteraction.safePrompt}</p>{missionInteraction.inputType !== "NONE" && <textarea value={missionInteractionText} maxLength={missionInteraction.maximumCharacters} onChange={(event) => setMissionInteractionText(event.target.value)} rows={3} /> }<div>{missionInteraction.allowedActions.map((action) => <button key={action} type="button" className="button" disabled={busy} onClick={() => respondToMissionInteraction(action)}>{action}</button>)}</div></section>}
                 {editingPlan && <section className="mission-plan-editor"><label>完整计划 JSON<textarea value={planJson} onChange={(event) => setPlanJson(event.target.value)} rows={12} spellCheck={false} /></label><div><button type="button" className="button" onClick={() => setEditingPlan(false)}>取消编辑</button><button type="button" className="button primary-button" disabled={busy} onClick={replacePlan}>替换整个计划</button></div></section>}
                 <footer className="mission-actions">
@@ -1441,7 +1507,7 @@ function MissionDialog({
                   </>}
                   {!missionTerminalStates.has(selected.state) && <button type="button" className="button danger" disabled={busy} onClick={() => void command(() => client.cancelMission!(selected, { idempotencyKey: crypto.randomUUID() }))}>取消 Mission</button>}
                 </footer>
-                {selected.state === "RUNNING" && <p className="mission-phase-note">Mission 正在后台串行执行；关闭页面或重启服务后可从持久化状态继续恢复。</p>}
+                {(selected.state === "RUNNING" || selected.state === "SYNTHESIZING") && <p className="mission-phase-note">Mission 正在后台{selected.state === "SYNTHESIZING" ? "整合最终结果" : "串行执行"}；关闭页面或重启服务后可从持久化状态继续恢复。</p>}
               </article>
             ) : <div className="empty"><h3>选择或创建 Mission</h3><p>Mission 用于需要拆解、持续运行并最终整合的大任务。</p></div>}
           </div>

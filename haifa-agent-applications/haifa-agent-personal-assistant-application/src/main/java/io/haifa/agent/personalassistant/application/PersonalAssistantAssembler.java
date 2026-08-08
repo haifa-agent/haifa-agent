@@ -1,5 +1,9 @@
 package io.haifa.agent.personalassistant.application;
 
+import io.haifa.agent.artifact.ArtifactService;
+import io.haifa.agent.artifact.InMemoryArtifactPayloadStore;
+import io.haifa.agent.artifact.InMemoryArtifactStore;
+import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
@@ -19,9 +23,15 @@ import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.ModelImageResolver;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
+import io.haifa.agent.sdk.api.SdkConfigurationDigest;
+import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
 import io.haifa.agent.sdk.contribution.MemoryPlatformContribution;
 import io.haifa.agent.sdk.contribution.ModelContribution;
 import io.haifa.agent.sdk.contribution.PolicyPlatformContribution;
+import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
+import io.haifa.agent.sdk.product.ProductCapabilities;
+import io.haifa.agent.sdk.product.ProductContributionCoordinate;
+import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
@@ -69,7 +79,8 @@ public final class PersonalAssistantAssembler {
                     dependencies.web().credential().coordinate(),
                     dependencies.execution().execution().coordinate(),
                     dependencies.execution().shell().coordinate(),
-                    dependencies.execution().approval().coordinate());
+                    dependencies.execution().approval().coordinate(),
+                    dependencies.artifact().coordinate());
             var profile = PersonalAssistantProfile.create(
                     coordinates,
                     skills.aliases(),
@@ -98,12 +109,21 @@ public final class PersonalAssistantAssembler {
                             AgentRunType.CHAT,
                             new AgentRunBudget(64_000, 16_000, 64_000, 16, 8, 0, "USD", 0),
                             new AgentRunLimits(16, 0, 1, 600_000, 120_000),
-                            Map.of()))
+                            Map.of("response_format", Map.of("type", "json_object"))))
+                    .runProfile(new ProductRunProfile(
+                            SdkMissionRuntimeAccess.SYNTHESIS_RUN_PROFILE,
+                            "1.0.0",
+                            dependencies.modelCatalog().defaultModelId(),
+                            AgentRunType.CHAT,
+                            new AgentRunBudget(64_000, 16_000, 64_000, 0, 1, 0, "USD", 0),
+                            new AgentRunLimits(2, 0, 1, 120_000, 120_000),
+                            Map.of("response_format", Map.of("type", "json_object"))))
                     .contribute(dependencies.model())
                     .contribute(dependencies.persistence())
                     .contribute(dependencies.conversation())
                     .contribute(dependencies.memory())
                     .contribute(dependencies.policy())
+                    .contribute(dependencies.artifact())
                     .contribute(tools.tool())
                     .contribute(tools.skill())
                     .contribute(tools.mcp())
@@ -128,7 +148,9 @@ public final class PersonalAssistantAssembler {
                             dependencies.principal(),
                             dependencies.clock()::instant,
                             dependencies.modelCatalog(),
-                            dependencies.modelCatalog().defaultModelId()));
+                            dependencies.modelCatalog().defaultModelId()),
+                    dependencies.artifact().service(),
+                    skills.bindingReferences());
         } catch (RuntimeException | Error exception) {
             try {
                 dependencies.execution().close();
@@ -155,6 +177,7 @@ public final class PersonalAssistantAssembler {
             SdkConversationContribution conversation,
             MemoryPlatformContribution memory,
             PolicyPlatformContribution policy,
+            ArtifactPlatformContribution artifact,
             PersonalExecutionPlatform execution,
             PersonalWebPlatform web,
             PersonalMcpConfiguration mcp,
@@ -189,6 +212,7 @@ public final class PersonalAssistantAssembler {
                     conversation,
                     memory,
                     policy,
+                    defaultArtifact(clock),
                     execution,
                     web,
                     mcp,
@@ -226,6 +250,7 @@ public final class PersonalAssistantAssembler {
                     conversation,
                     memory,
                     policy,
+                    defaultArtifact(clock),
                     execution,
                     web,
                     mcp,
@@ -247,6 +272,7 @@ public final class PersonalAssistantAssembler {
             Objects.requireNonNull(conversation);
             Objects.requireNonNull(memory);
             Objects.requireNonNull(policy);
+            Objects.requireNonNull(artifact);
             Objects.requireNonNull(execution);
             Objects.requireNonNull(web);
             Objects.requireNonNull(mcp);
@@ -277,6 +303,21 @@ public final class PersonalAssistantAssembler {
                     return List.of(option);
                 }
             };
+        }
+
+        private static ArtifactPlatformContribution defaultArtifact(Clock clock) {
+            return new ArtifactPlatformContribution(
+                    new SdkContributionMetadata(
+                            new ProductContributionCoordinate("haifa-personal-in-memory-artifact", "1.0.0"),
+                            ProductCapabilities.ARTIFACT,
+                            SdkConfigurationDigest.sha256("personal-in-memory-artifact-v1"),
+                            ProductProviderSuitability.DEVELOPMENT,
+                            "Personal Assistant in-memory Artifact storage"),
+                    new ArtifactService(
+                            new InMemoryArtifactStore(),
+                            new InMemoryArtifactPayloadStore(),
+                            new UuidV7IdentifierGenerator(),
+                            clock::instant));
         }
     }
 }

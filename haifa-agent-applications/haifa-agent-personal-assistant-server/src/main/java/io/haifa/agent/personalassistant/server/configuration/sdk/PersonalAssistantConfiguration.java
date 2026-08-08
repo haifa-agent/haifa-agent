@@ -19,6 +19,7 @@ import io.haifa.agent.personalassistant.server.configuration.model.PersonalModel
 import io.haifa.agent.personalassistant.server.configuration.model.SqlitePersonalModelPreferenceStore;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
+import io.haifa.agent.personalassistant.server.mission.MissionArtifactPublisher;
 import io.haifa.agent.personalassistant.server.mission.MissionDispatcher;
 import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
 import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
@@ -94,16 +95,19 @@ public class PersonalAssistantConfiguration {
         try {
             execution = PersonalExecutionRuntime.create(
                     dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock);
-            var web = PersonalWebPlatform.create(
-                    tenant,
-                    principal,
-                    properties.web().enabled(),
-                    resolveCredential(properties.web()),
-                    Duration.ofMillis(properties.web().timeoutMillis()),
-                    properties.web().searchMaximumResponseBytes(),
-                    properties.web().fetchMaximumResponseBytes(),
-                    mapper,
-                    personalClock);
+            var web = "deterministic-stub".equals(properties.mission().plannerMode())
+                            && !properties.web().enabled()
+                    ? PersonalWebPlatform.deterministicStub()
+                    : PersonalWebPlatform.create(
+                            tenant,
+                            principal,
+                            properties.web().enabled(),
+                            resolveCredential(properties.web()),
+                            Duration.ofMillis(properties.web().timeoutMillis()),
+                            properties.web().searchMaximumResponseBytes(),
+                            properties.web().fetchMaximumResponseBytes(),
+                            mapper,
+                            personalClock);
             var models = PersonalModelFactory.createPlatform(
                     properties.modelProviders(),
                     properties.defaultModelId(),
@@ -125,6 +129,7 @@ public class PersonalAssistantConfiguration {
                     sqlite.conversation(),
                     sqlite.memory(),
                     sqlite.policy(),
+                    sqlite.artifact(),
                     execution,
                     web,
                     mcpRuntime.configuration(),
@@ -173,10 +178,25 @@ public class PersonalAssistantConfiguration {
     }
 
     @Bean
-    MissionApplicationService missionApplicationService(SqliteMissionStore store, MissionPlanner planner, Clock clock) {
-        var validator = new MissionPlanValidator(Set.of("GENERAL"), Set.of(), Set.of("pa.task-result@v1"));
+    MissionApplicationService missionApplicationService(
+            SqliteMissionStore store, MissionPlanner planner, Clock clock, PersonalAssistantApplication application) {
+        var validator = new MissionPlanValidator(
+                Set.of("GENERAL", "RESEARCH"),
+                Set.of("deep-research"),
+                Set.of("pa.task-result@v1", "pa.research-task-result@v1"));
         var ids = new UuidV7IdentifierGenerator();
-        return new MissionApplicationService(store, store, planner, validator, ids::nextValue, clock, store);
+        return new MissionApplicationService(
+                store,
+                store,
+                planner,
+                validator,
+                ids::nextValue,
+                clock,
+                store,
+                application
+                        .skillBindingReference("deep-research")
+                        .map(binding -> java.util.Map.of("deep-research", binding))
+                        .orElseGet(java.util.Map::of));
     }
 
     @Bean(initMethod = "start", destroyMethod = "close")
@@ -184,9 +204,15 @@ public class PersonalAssistantConfiguration {
             SqliteMissionStore store,
             PersonalAssistantApplication application,
             PersonalAssistantProperties properties,
-            Clock clock) {
+            Clock clock,
+            ObjectMapper mapper) {
         String dispatcherId = "pa-mission-" + ProcessHandle.current().pid();
-        var coordinator = new MissionExecutionCoordinator(store, application.missionRuntime(), clock, dispatcherId);
+        var coordinator = new MissionExecutionCoordinator(
+                store,
+                application.missionRuntime(),
+                clock,
+                dispatcherId,
+                new MissionArtifactPublisher(application.artifacts(), mapper));
         return new MissionDispatcher(store, coordinator, clock, properties.dataDirectory());
     }
 

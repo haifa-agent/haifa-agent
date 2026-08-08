@@ -352,14 +352,102 @@ public final class PersonalModelFactory {
         @Override
         public AgentChatResponse invoke(io.haifa.agent.model.api.AgentChatRequest request) {
             long current = sequence.incrementAndGet();
-            if (request.messages().getLast().role() == ModelMessageRole.TOOL) {
-                return response(current, "The requested capability completed.", List.of(), ModelFinishReason.STOP);
-            }
             String prompt = request.messages().stream()
                     .filter(message -> message.role() == ModelMessageRole.USER)
                     .map(io.haifa.agent.model.api.ModelMessage::content)
                     .reduce((left, right) -> right)
                     .orElse("");
+            String visibleContext = request.messages().stream()
+                    .map(io.haifa.agent.model.api.ModelMessage::content)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            if (prompt.contains("[mission-synthesis]")) {
+                boolean partial = !prompt.contains("Failed or cancelled Task items: []");
+                String result = prompt.contains("Mission mode: DEEP_RESEARCH")
+                        ? "{\"schemaVersion\":\"pa.research-final-result/v1\","
+                                + "\"reportArtifactRef\":null,\"sourcesArtifactRef\":null,"
+                                + "\"claimEvidenceArtifactRef\":null,\"resultArtifactRef\":null,"
+                                + "\"unresolvedArtifactRef\":null,"
+                                + "\"directAnswer\":\"The researched finding is supported by two independently fetched fixtures.\","
+                                + "\"completedItems\":[\"Research tasks and citation checks completed\"],"
+                                + "\"failedItems\":" + (partial ? "[\"One or more Research tasks\"]" : "[]")
+                                + ",\"artifactRefs\":[],"
+                                + "\"sourceRefs\":[\"source-1\",\"source-2\"],\"unverifiedClaims\":[],"
+                                + "\"unresolvedQuestions\":[\"External freshness was not evaluated.\"],"
+                                + "\"residualRisks\":[\"Offline acceptance evidence is intentionally bounded.\"],"
+                                + "\"completionKind\":\"" + (partial ? "PARTIAL" : "COMPLETE") + "\"}"
+                        : "{\"schemaVersion\":\"pa.mission-final-result/v1\","
+                                + "\"directAnswer\":\"All Mission tasks completed successfully.\","
+                                + "\"completedItems\":[\"Settled Mission tasks\"],\"failedItems\":"
+                                + (partial ? "[\"One or more Mission tasks\"]" : "[]") + ","
+                                + "\"artifactRefs\":[],\"sourceRefs\":[],\"unverifiedClaims\":[],"
+                                + "\"unresolvedQuestions\":[],\"residualRisks\":[],"
+                                + "\"completionKind\":\"" + (partial ? "PARTIAL" : "COMPLETE") + "\"}";
+                return response(current, result, List.of(), ModelFinishReason.STOP);
+            }
+            if (prompt.contains("Task type: RESEARCH") || visibleContext.contains("Task type: RESEARCH")) {
+                long toolResults = request.messages().stream()
+                        .filter(message -> message.role() == ModelMessageRole.TOOL)
+                        .count();
+                if (toolResults == 0) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.SKILL_LOAD_ALIAS,
+                            Map.of("skill", PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS));
+                }
+                if (toolResults == 1) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_SEARCH_ALIAS,
+                            Map.of("query", "deterministic deep research evidence", "maxResults", 2));
+                }
+                if (toolResults == 2) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_FETCH_ALIAS,
+                            Map.of("url", "https://research.stub/source-1", "maxCharacters", 4000));
+                }
+                if (toolResults == 3) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_FETCH_ALIAS,
+                            Map.of("url", "https://research.stub/source-2", "maxCharacters", 4000));
+                }
+                return response(
+                        current,
+                        """
+                        {"schemaVersion":"pa.research-task-result/v1",
+                        "brief":"Bounded deterministic research task",
+                        "queries":[{"query":"deterministic deep research evidence","phase":"DISCOVER"},
+                        {"query":"independent deterministic research corroboration","phase":"CROSS_CHECK"}],
+                        "sources":[
+                        {"sourceId":"source-1","locator":"https://research.stub/source-1",
+                        "normalizedLocator":"https://research.stub/source-1",
+                        "locatorDigest":"sha256:1d0076d5314fa605319d168505842186fb1f6d3f534ee25bc2a9fc79a8b97980",
+                        "title":"Primary research fixture","safetyType":"DEVELOPMENT_STUB",
+                        "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z",
+                        "status":"FETCHED","excerpt":"Primary evidence supports the fixture finding.",
+                        "contentDigest":"sha256:9f00cea97901fba126e5aecc2f4a33adb3763cbdef57aa21ebf816f94198437b"},
+                        {"sourceId":"source-2","locator":"https://research.stub/source-2",
+                        "normalizedLocator":"https://research.stub/source-2",
+                        "locatorDigest":"sha256:abe06c90ad15ca62760beee68928ade4e5ff04b28d3077a63dccbe599e2d7da5",
+                        "title":"Independent research fixture","safetyType":"DEVELOPMENT_STUB",
+                        "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z",
+                        "status":"FETCHED","excerpt":"Independent evidence corroborates the primary finding.",
+                        "contentDigest":"sha256:2badb1b783b31c475f4112dba70fd85edbd4721e5c0b326ab83cb292a36be30a"}],
+                        "claims":[{"claimId":"claim-1","claim":"The primary finding is independently corroborated.",
+                        "supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],
+                        "limitations":"Offline fixtures do not establish external freshness.","unverified":false,
+                        "quotedSpans":[]}],"artifactRefs":[],
+                        "unresolvedQuestions":["The offline fixture cannot establish external freshness."],
+                        "stopReason":"SUFFICIENT_EVIDENCE",
+                        "limitsUsed":{"searchCalls":1,"fetchCalls":2,"sources":2,"contentBytes":164}}
+                        """,
+                        List.of(),
+                        ModelFinishReason.STOP);
+            }
+            if (request.messages().getLast().role() == ModelMessageRole.TOOL) {
+                return response(current, "The requested capability completed.", List.of(), ModelFinishReason.STOP);
+            }
             String alias;
             Map<String, Object> arguments;
             if (prompt.contains("CPU使用率") || prompt.contains("[execution-cpu]")) {
@@ -441,6 +529,15 @@ public final class PersonalModelFactory {
             } else {
                 return response(current, "Personal Assistant is ready.", List.of(), ModelFinishReason.STOP);
             }
+            return response(
+                    current,
+                    "",
+                    List.of(new ModelToolCall(
+                            new ProviderToolCallCorrelationId("personal-call-" + current), alias, arguments)),
+                    ModelFinishReason.TOOL_CALLS);
+        }
+
+        private AgentChatResponse tool(long current, String alias, Map<String, Object> arguments) {
             return response(
                     current,
                     "",

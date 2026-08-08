@@ -15,6 +15,9 @@ public final class PersonalMission {
     private final List<String> acceptanceCriteria;
     private final MissionConstraints constraints;
     private final Optional<String> selectedSkillId;
+    private final Optional<String> selectedSkillBinding;
+    private final MissionMode mode;
+    private final Optional<ResearchBrief> researchBrief;
     private final Instant createdAt;
     private final Instant deadlineAt;
     private final List<MissionPlanRevision> revisions;
@@ -36,6 +39,19 @@ public final class PersonalMission {
         constraints = Objects.requireNonNull(value.constraints());
         selectedSkillId = Objects.requireNonNull(value.selectedSkillId())
                 .map(item -> MissionValues.text(item, "selectedSkillId", 128));
+        selectedSkillBinding = Objects.requireNonNull(value.selectedSkillBinding())
+                .map(item -> MissionValues.text(item, "selectedSkillBinding", 1_024));
+        mode = Objects.requireNonNull(value.mode());
+        researchBrief = Objects.requireNonNull(value.researchBrief());
+        if (mode == MissionMode.DEEP_RESEARCH
+                && (researchBrief.isEmpty()
+                        || !selectedSkillId.orElse("").equals("deep-research")
+                        || selectedSkillBinding.isEmpty())) {
+            throw new MissionException("MISSION_PERSISTENCE_INVALID", "Deep Research binding is incomplete");
+        }
+        if (mode == MissionMode.STANDARD && researchBrief.isPresent()) {
+            throw new MissionException("MISSION_PERSISTENCE_INVALID", "Standard Mission has a research brief");
+        }
         state = Objects.requireNonNull(value.state());
         activePlanRevisionNo = value.activePlanRevisionNo().orElse(null);
         confirmedPlanRevisionNo = value.confirmedPlanRevisionNo().orElse(null);
@@ -64,6 +80,32 @@ public final class PersonalMission {
             MissionConstraints constraints,
             Optional<String> selectedSkillId,
             Instant at) {
+        return create(
+                missionId,
+                conversationId,
+                ownerScope,
+                objective,
+                acceptanceCriteria,
+                constraints,
+                selectedSkillId,
+                Optional.empty(),
+                MissionMode.STANDARD,
+                Optional.empty(),
+                at);
+    }
+
+    public static PersonalMission create(
+            String missionId,
+            String conversationId,
+            String ownerScope,
+            String objective,
+            List<String> acceptanceCriteria,
+            MissionConstraints constraints,
+            Optional<String> selectedSkillId,
+            Optional<String> selectedSkillBinding,
+            MissionMode mode,
+            Optional<ResearchBrief> researchBrief,
+            Instant at) {
         Instant now = MissionValues.millisecond(at, "at");
         return new PersonalMission(new Persistence(
                 missionId,
@@ -73,6 +115,9 @@ public final class PersonalMission {
                 acceptanceCriteria,
                 constraints,
                 selectedSkillId,
+                selectedSkillBinding,
+                mode,
+                researchBrief,
                 MissionState.PLANNING,
                 Optional.empty(),
                 Optional.empty(),
@@ -150,6 +195,9 @@ public final class PersonalMission {
                 acceptanceCriteria,
                 constraints,
                 selectedSkillId,
+                selectedSkillBinding,
+                mode,
+                researchBrief,
                 state,
                 Optional.ofNullable(activePlanRevisionNo),
                 Optional.ofNullable(confirmedPlanRevisionNo),
@@ -234,6 +282,18 @@ public final class PersonalMission {
         return selectedSkillId;
     }
 
+    Optional<String> selectedSkillBinding() {
+        return selectedSkillBinding;
+    }
+
+    MissionMode mode() {
+        return mode;
+    }
+
+    Optional<ResearchBrief> researchBrief() {
+        return researchBrief;
+    }
+
     MissionState state() {
         return state;
     }
@@ -273,6 +333,9 @@ public final class PersonalMission {
             List<String> acceptanceCriteria,
             MissionConstraints constraints,
             Optional<String> selectedSkillId,
+            Optional<String> selectedSkillBinding,
+            MissionMode mode,
+            Optional<ResearchBrief> researchBrief,
             MissionState state,
             Optional<Integer> activePlanRevisionNo,
             Optional<Integer> confirmedPlanRevisionNo,
@@ -286,6 +349,47 @@ public final class PersonalMission {
         public Persistence {
             acceptanceCriteria = List.copyOf(acceptanceCriteria);
             revisions = List.copyOf(revisions);
+        }
+
+        public Persistence(
+                String missionId,
+                String conversationId,
+                String ownerScope,
+                String objective,
+                List<String> acceptanceCriteria,
+                MissionConstraints constraints,
+                Optional<String> selectedSkillId,
+                MissionState state,
+                Optional<Integer> activePlanRevisionNo,
+                Optional<Integer> confirmedPlanRevisionNo,
+                Optional<String> failureCode,
+                long version,
+                Instant createdAt,
+                Instant updatedAt,
+                Optional<Instant> confirmedAt,
+                Optional<Instant> finishedAt,
+                List<MissionPlanRevision> revisions) {
+            this(
+                    missionId,
+                    conversationId,
+                    ownerScope,
+                    objective,
+                    acceptanceCriteria,
+                    constraints,
+                    selectedSkillId,
+                    Optional.empty(),
+                    MissionMode.STANDARD,
+                    Optional.empty(),
+                    state,
+                    activePlanRevisionNo,
+                    confirmedPlanRevisionNo,
+                    failureCode,
+                    version,
+                    createdAt,
+                    updatedAt,
+                    confirmedAt,
+                    finishedAt,
+                    revisions);
         }
     }
 }

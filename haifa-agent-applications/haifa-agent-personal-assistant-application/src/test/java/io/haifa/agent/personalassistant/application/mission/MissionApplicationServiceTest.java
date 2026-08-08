@@ -7,6 +7,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -91,6 +94,55 @@ class MissionApplicationServiceTest {
                 .isInstanceOf(MissionException.class)
                 .extracting(value -> ((MissionException) value).code())
                 .isEqualTo("MISSION_REVISION_STALE");
+    }
+
+    @Test
+    void deepResearchIsExplicitAndFreezesTheBundledSkillIntoResearchTasks() {
+        InMemoryMissionStore store = new InMemoryMissionStore();
+        MissionApplicationService service = new MissionApplicationService(
+                store,
+                store,
+                new DeterministicMissionPlanner(),
+                new MissionPlanValidator(
+                        Set.of("GENERAL", "RESEARCH"),
+                        Set.of("deep-research"),
+                        Set.of("pa.task-result@v1", "pa.research-task-result@v1")),
+                () -> "research-mission",
+                CLOCK,
+                MissionExecutionStore.unavailable(),
+                Map.of(
+                        "deep-research",
+                        "product/classpath:personal-assistant-bundled@1/deep-research@1.0.0#sha256:test"));
+        ResearchBrief brief = new ResearchBrief(
+                "What does the evidence show?",
+                "bounded",
+                "2025-2026",
+                "global",
+                "technical",
+                List.of("primary sources"),
+                List.of("opinion"),
+                "Markdown report");
+
+        MissionSnapshot snapshot = service.create(new MissionApplicationService.CreateMission(
+                "research-1",
+                "local/public-user",
+                "conversation-research",
+                "Research a bounded question",
+                List.of("Every material claim is cited"),
+                MissionConstraints.DEFAULT,
+                MissionMode.DEEP_RESEARCH,
+                Optional.of(brief)));
+
+        assertThat(snapshot.mode()).isEqualTo(MissionMode.DEEP_RESEARCH);
+        assertThat(snapshot.researchBrief()).contains(brief);
+        assertThat(snapshot.selectedSkillId()).contains("deep-research");
+        assertThat(snapshot.selectedSkillBinding()).hasValueSatisfying(binding -> assertThat(binding)
+                .contains("personal-assistant-bundled", "deep-research@1.0.0", "#sha256:"));
+        assertThat(snapshot.plan().orElseThrow().tasks()).allSatisfy(task -> {
+            assertThat(task.taskType()).isEqualTo("RESEARCH");
+            assertThat(task.requiredSkillIds()).containsExactly("deep-research");
+            assertThat(task.resultSchemaId()).isEqualTo("pa.research-task-result");
+        });
     }
 
     private static MissionApplicationService.CreateMission command(String key, String conversation, String objective) {

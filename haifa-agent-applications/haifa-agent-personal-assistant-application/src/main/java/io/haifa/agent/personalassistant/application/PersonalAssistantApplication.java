@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.application;
 
+import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
@@ -70,6 +71,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final PersonalModelPreferenceStore modelPreferences;
     private final AutoCloseable executionLifecycle;
     private final MissionRuntimeAccess missionRuntime;
+    private final ArtifactService artifacts;
+    private final Map<String, String> skillBindingReferences;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
     public PersonalAssistantApplication(
@@ -81,7 +84,9 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             PersonalModelPreferenceStore modelPreferences,
             PersonalQuestionRecommender questionRecommender,
             AutoCloseable executionLifecycle,
-            MissionRuntimeAccess missionRuntime) {
+            MissionRuntimeAccess missionRuntime,
+            ArtifactService artifacts,
+            Map<String, String> skillBindingReferences) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -91,11 +96,21 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.questionRecommender = Objects.requireNonNull(questionRecommender);
         this.executionLifecycle = Objects.requireNonNull(executionLifecycle);
         this.missionRuntime = Objects.requireNonNull(missionRuntime);
+        this.artifacts = Objects.requireNonNull(artifacts);
+        this.skillBindingReferences = Map.copyOf(skillBindingReferences);
         this.mcpToolAliases = mcp.aliases();
+    }
+
+    public ArtifactService artifacts() {
+        return artifacts;
     }
 
     public MissionRuntimeAccess missionRuntime() {
         return missionRuntime;
+    }
+
+    public Optional<String> skillBindingReference(String alias) {
+        return Optional.ofNullable(skillBindingReferences.get(Objects.requireNonNull(alias)));
     }
 
     public ConversationView start(String idempotencyKey, String displayName, String message) {

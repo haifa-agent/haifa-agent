@@ -18,9 +18,18 @@ public interface MissionRuntimeAccess {
 
     default void cancelTask(String runId) {}
 
+    default SynthesisRunResult runSynthesis(MissionSynthesisIntent intent) {
+        throw new MissionException("MISSION_SYNTHESIS_UNAVAILABLE", "Mission Synthesis is unavailable");
+    }
+
+    default void appendFinalMessage(
+            String conversationId, String missionId, String synthesisRunId, String finalMessage) {}
+
     record PlannerRunResult(String sessionId, String runId, String structuredOutput) {}
 
     record TaskRunBinding(String sessionId, String runId) {}
+
+    record SynthesisRunResult(String sessionId, String runId, String structuredOutput) {}
 
     record TaskRunObservation(
             String runId,

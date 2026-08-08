@@ -3,6 +3,7 @@ package io.haifa.agent.personalassistant.application.mission;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -15,6 +16,7 @@ public final class MissionApplicationService {
     private final MissionIdGenerator ids;
     private final Clock clock;
     private final MissionExecutionStore execution;
+    private final Map<String, String> skillBindingReferences;
 
     public MissionApplicationService(
             MissionStore store,
@@ -23,7 +25,7 @@ public final class MissionApplicationService {
             MissionPlanValidator validator,
             MissionIdGenerator ids,
             Clock clock) {
-        this(store, unitOfWork, planner, validator, ids, clock, MissionExecutionStore.unavailable());
+        this(store, unitOfWork, planner, validator, ids, clock, MissionExecutionStore.unavailable(), Map.of());
     }
 
     public MissionApplicationService(
@@ -34,6 +36,18 @@ public final class MissionApplicationService {
             MissionIdGenerator ids,
             Clock clock,
             MissionExecutionStore execution) {
+        this(store, unitOfWork, planner, validator, ids, clock, execution, Map.of());
+    }
+
+    public MissionApplicationService(
+            MissionStore store,
+            MissionUnitOfWork unitOfWork,
+            MissionPlanner planner,
+            MissionPlanValidator validator,
+            MissionIdGenerator ids,
+            Clock clock,
+            MissionExecutionStore execution,
+            Map<String, String> skillBindingReferences) {
         this.store = Objects.requireNonNull(store);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
         this.planner = Objects.requireNonNull(planner);
@@ -41,6 +55,7 @@ public final class MissionApplicationService {
         this.ids = Objects.requireNonNull(ids);
         this.clock = Objects.requireNonNull(clock);
         this.execution = Objects.requireNonNull(execution);
+        this.skillBindingReferences = Map.copyOf(skillBindingReferences);
     }
 
     public MissionSnapshot create(CreateMission command) {
@@ -50,7 +65,9 @@ public final class MissionApplicationService {
                 command.conversationId(),
                 command.objective(),
                 String.join("\u0000", command.acceptanceCriteria()),
-                command.constraints().toString());
+                command.constraints().toString(),
+                command.mode().name(),
+                command.researchBrief().map(Object::toString).orElse(""));
         String proposedMissionId = ids.nextId();
         MissionCommandBinding binding = unitOfWork.execute(() -> {
             MissionCommandBinding reserved = store.reserveCommand(new MissionCommandBinding(
@@ -69,7 +86,12 @@ public final class MissionApplicationService {
                         command.objective(),
                         command.acceptanceCriteria(),
                         command.constraints(),
-                        Optional.empty(),
+                        command.mode() == MissionMode.DEEP_RESEARCH ? Optional.of("deep-research") : Optional.empty(),
+                        command.mode() == MissionMode.DEEP_RESEARCH
+                                ? Optional.of(requireSkillBinding("deep-research"))
+                                : Optional.empty(),
+                        command.mode(),
+                        command.researchBrief(),
                         now));
             }
             return reserved;
@@ -81,7 +103,9 @@ public final class MissionApplicationService {
                     mission.objective(),
                     mission.acceptanceCriteria(),
                     mission.constraints(),
-                    mission.persistence().revisions().size() + 1));
+                    mission.persistence().revisions().size() + 1,
+                    mission.mode(),
+                    mission.researchBrief()));
             validatePlannerSchema(planned);
             mission.proposePlan(planned.tasks(), planned.plannerSessionId(), planned.plannerRunId(), validator, now());
             long expected = mission.version() - 1;
@@ -156,7 +180,9 @@ public final class MissionApplicationService {
                 mission.objective(),
                 mission.acceptanceCriteria(),
                 mission.constraints(),
-                mission.persistence().revisions().size() + 1));
+                mission.persistence().revisions().size() + 1,
+                mission.mode(),
+                mission.researchBrief()));
         validatePlannerSchema(planned);
         mission.proposePlan(planned.tasks(), planned.plannerSessionId(), planned.plannerRunId(), validator, now());
         return unitOfWork.execute(() -> {
@@ -247,6 +273,12 @@ public final class MissionApplicationService {
         return Instant.ofEpochMilli(clock.instant().toEpochMilli());
     }
 
+    private String requireSkillBinding(String alias) {
+        return Optional.ofNullable(skillBindingReferences.get(alias))
+                .orElseThrow(() -> new MissionException(
+                        "MISSION_SKILL_BINDING_UNAVAILABLE", "Mission Skill binding is unavailable"));
+    }
+
     private static void validatePlannerSchema(MissionPlanner.PlanningResult planned) {
         if (!MissionPlanRevision.SCHEMA_ID.equals(planned.schemaId())
                 || !MissionPlanRevision.SCHEMA_VERSION.equals(planned.schemaVersion())) {
@@ -262,7 +294,9 @@ public final class MissionApplicationService {
             String conversationId,
             String objective,
             List<String> acceptanceCriteria,
-            MissionConstraints constraints) {
+            MissionConstraints constraints,
+            MissionMode mode,
+            Optional<ResearchBrief> researchBrief) {
         public CreateMission {
             idempotencyKey = MissionValues.text(idempotencyKey, "idempotencyKey", 128);
             ownerScope = MissionValues.text(ownerScope, "ownerScope", 256);
@@ -270,6 +304,32 @@ public final class MissionApplicationService {
             objective = MissionValues.text(objective, "objective", 8_000);
             acceptanceCriteria = MissionValues.texts(acceptanceCriteria, "acceptanceCriteria", 20, 1_000);
             constraints = Objects.requireNonNull(constraints);
+            mode = Objects.requireNonNull(mode);
+            researchBrief = Objects.requireNonNull(researchBrief);
+            if (mode == MissionMode.DEEP_RESEARCH && researchBrief.isEmpty()) {
+                throw new MissionException("MISSION_RESEARCH_BRIEF_REQUIRED", "Deep Research requires a brief");
+            }
+            if (mode == MissionMode.STANDARD && researchBrief.isPresent()) {
+                throw new MissionException("MISSION_RESEARCH_BRIEF_FORBIDDEN", "Standard Mission cannot carry a brief");
+            }
+        }
+
+        public CreateMission(
+                String idempotencyKey,
+                String ownerScope,
+                String conversationId,
+                String objective,
+                List<String> acceptanceCriteria,
+                MissionConstraints constraints) {
+            this(
+                    idempotencyKey,
+                    ownerScope,
+                    conversationId,
+                    objective,
+                    acceptanceCriteria,
+                    constraints,
+                    MissionMode.STANDARD,
+                    Optional.empty());
         }
     }
 

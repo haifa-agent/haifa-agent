@@ -30,6 +30,18 @@ public interface MissionExecutionStore {
 
     void retryBlocked(String missionId, String ownerScope, String taskId, Instant now);
 
+    default Optional<MissionSynthesisIntent> claimSynthesis(Instant now) {
+        return Optional.empty();
+    }
+
+    default void settleSynthesis(
+            MissionSynthesisIntent intent,
+            MissionRuntimeAccess.SynthesisRunResult synthesis,
+            MissionPublishedResult published,
+            Instant now) {}
+
+    default void failSynthesis(MissionSynthesisIntent intent, String failureCode, Instant now) {}
+
     static MissionExecutionStore unavailable() {
         return new MissionExecutionStore() {
             @Override

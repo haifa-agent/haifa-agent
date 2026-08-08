@@ -59,7 +59,19 @@ public final class PersonalApiDtos {
             String objective,
             List<String> acceptanceCriteria,
             MissionConstraints constraints,
-            String selectedSkillId) {}
+            String mode,
+            String selectedSkillId,
+            ResearchBrief researchBrief) {}
+
+    public record ResearchBrief(
+            String question,
+            String scope,
+            String timeRange,
+            String region,
+            String audience,
+            List<String> sourcePreferences,
+            List<String> exclusions,
+            String deliveryFormat) {}
 
     public record MissionConstraints(Integer maxTasks, Integer maxDependencyDepth, Instant deadlineAt) {}
 
@@ -96,6 +108,10 @@ public final class PersonalApiDtos {
             String objective,
             List<String> acceptanceCriteria,
             MissionConstraints constraints,
+            String mode,
+            Optional<ResearchBrief> researchBrief,
+            Optional<String> selectedSkillId,
+            Optional<String> selectedSkillBinding,
             String state,
             Optional<MissionPlanRevision> plan,
             List<MissionTask> tasks,

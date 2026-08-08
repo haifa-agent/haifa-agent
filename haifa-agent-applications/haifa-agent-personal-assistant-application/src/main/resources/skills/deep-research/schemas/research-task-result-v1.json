@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pa.research-task-result/v1",
+  "type": "object",
+  "required": [
+    "schemaVersion", "brief", "queries", "sources", "claims", "artifactRefs",
+    "unresolvedQuestions", "stopReason", "limitsUsed"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "pa.research-task-result/v1" },
+    "brief": { "type": "string", "minLength": 1, "maxLength": 8000 },
+    "queries": {
+      "type": "array", "minItems": 1, "maxItems": 20,
+      "items": {
+        "type": "object", "required": ["query", "phase"], "additionalProperties": false,
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 2048 },
+          "phase": { "enum": ["DISCOVER", "DEEPEN", "CROSS_CHECK"] }
+        }
+      }
+    },
+    "sources": {
+      "type": "array", "maxItems": 24,
+      "items": {
+        "type": "object",
+        "required": [
+          "sourceId", "locator", "normalizedLocator", "locatorDigest", "title", "safetyType",
+          "fetchedAt", "publishedAt", "status", "excerpt", "contentDigest"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sourceId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$" },
+          "locator": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "normalizedLocator": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "locatorDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 1024 },
+          "safetyType": { "enum": ["PUBLIC_WEB", "DEVELOPMENT_STUB"] },
+          "fetchedAt": { "type": ["string", "null"], "format": "date-time" },
+          "publishedAt": { "type": ["string", "null"], "format": "date-time" },
+          "status": { "enum": ["FETCHED", "INACCESSIBLE", "STALE", "UNKNOWN", "CONFLICT", "UNDATED", "UNSAFE"] },
+          "excerpt": { "type": "string", "maxLength": 4096 },
+          "contentDigest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" }
+        }
+      }
+    },
+    "claims": {
+      "type": "array", "maxItems": 40,
+      "items": {
+        "type": "object",
+        "required": [
+          "claimId", "claim", "supportingSourceIds", "opposingSourceIds", "limitations",
+          "unverified", "quotedSpans"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "claimId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,127}$" },
+          "claim": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "supportingSourceIds": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
+          "opposingSourceIds": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
+          "limitations": { "type": "string", "maxLength": 2000 },
+          "unverified": { "type": "boolean" },
+          "quotedSpans": {
+            "type": "array", "maxItems": 20,
+            "items": {
+              "type": "object", "required": ["sourceId", "text"], "additionalProperties": false,
+              "properties": {
+                "sourceId": { "type": "string" },
+                "text": { "type": "string", "minLength": 1, "maxLength": 320 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "artifactRefs": { "type": "array", "maxItems": 8, "items": { "type": "object" } },
+    "unresolvedQuestions": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
+    "stopReason": {
+      "enum": [
+        "SUFFICIENT_EVIDENCE", "SOURCE_LIMIT", "CONTENT_LIMIT", "TIME_LIMIT", "TOOL_LIMIT",
+        "NO_MORE_SAFE_SOURCES", "CANCELLED"
+      ]
+    },
+    "limitsUsed": {
+      "type": "object", "required": ["searchCalls", "fetchCalls", "sources", "contentBytes"],
+      "additionalProperties": false,
+      "properties": {
+        "searchCalls": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "fetchCalls": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "sources": { "type": "integer", "minimum": 0, "maximum": 24 },
+        "contentBytes": { "type": "integer", "minimum": 0, "maximum": 2097152 }
+      }
+    }
+  },
+  "additionalProperties": false
+}

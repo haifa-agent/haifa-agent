@@ -12,9 +12,35 @@ public interface MissionPlanner {
             String objective,
             List<String> acceptanceCriteria,
             MissionConstraints constraints,
-            int revisionNo) {
+            int revisionNo,
+            MissionMode mode,
+            Optional<ResearchBrief> researchBrief) {
         public PlanningRequest {
             acceptanceCriteria = List.copyOf(acceptanceCriteria);
+            mode = java.util.Objects.requireNonNull(mode);
+            researchBrief = java.util.Objects.requireNonNull(researchBrief);
+            if (mode == MissionMode.DEEP_RESEARCH && researchBrief.isEmpty()) {
+                throw new MissionException("MISSION_RESEARCH_BRIEF_REQUIRED", "Deep Research requires a brief");
+            }
+            if (mode == MissionMode.STANDARD && researchBrief.isPresent()) {
+                throw new MissionException("MISSION_RESEARCH_BRIEF_FORBIDDEN", "Standard Mission cannot carry a brief");
+            }
+        }
+
+        public PlanningRequest(
+                String missionId,
+                String objective,
+                List<String> acceptanceCriteria,
+                MissionConstraints constraints,
+                int revisionNo) {
+            this(
+                    missionId,
+                    objective,
+                    acceptanceCriteria,
+                    constraints,
+                    revisionNo,
+                    MissionMode.STANDARD,
+                    Optional.empty());
         }
     }
 

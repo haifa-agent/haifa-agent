@@ -15,6 +15,14 @@ Runtime Migration V5 新增产品中立的 `sdk_conversation` 与 `sdk_conversat
 - `SqliteSdkContributions` 基于同一个 `SqliteStoreFoundation` 显式提供 Runtime Persistence 与
   Conversation 两个 SDK Contribution，SDK 不反向依赖本模块。
 
+## V7 Artifact foundation
+
+Runtime migration V7 adds framework-neutral Artifact metadata with immutable version/provenance
+and payload-integrity references. The SQLite product contribution pairs it with opaque files below
+the application-owned `artifacts/` directory: no-follow path resolution, owner-only permissions,
+atomic publication, SHA-256 verification on read, a 1 MiB single-payload limit, and an explicit
+JSON/Markdown media allowlist. Artifact payload bytes do not enter SQLite or JSONL.
+
 ## V4 Interaction / Run Input / Runtime Journal
 
 Runtime Migration V4 在不修改 V1～V3 的前提下完成 11 号能力 Task 02：

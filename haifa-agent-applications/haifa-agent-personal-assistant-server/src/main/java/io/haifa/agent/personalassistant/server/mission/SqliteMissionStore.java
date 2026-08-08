@@ -11,8 +11,11 @@ import io.haifa.agent.personalassistant.application.mission.MissionExecutionSnap
 import io.haifa.agent.personalassistant.application.mission.MissionExecutionStore;
 import io.haifa.agent.personalassistant.application.mission.MissionListCursor;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanRevision;
+import io.haifa.agent.personalassistant.application.mission.MissionPublishedResult;
+import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionState;
 import io.haifa.agent.personalassistant.application.mission.MissionStore;
+import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionTask;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskAttempt;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskAttemptState;
@@ -40,7 +43,7 @@ import java.util.function.Supplier;
 
 /** Product-owned SQLite migration, Store and UoW. It deliberately does not modify public Runtime mappings. */
 public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork, MissionExecutionStore {
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 5;
     private static final String MIGRATION =
             """
             CREATE TABLE personal_mission (
@@ -242,6 +245,22 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             CREATE INDEX ix_personal_mission_task_ready_fifo
                 ON personal_mission_task(state, updated_at_ms, mission_id, task_id);
             """;
+    private static final String MIGRATION_V3 =
+            """
+            ALTER TABLE personal_mission ADD COLUMN mode TEXT NOT NULL DEFAULT 'STANDARD'
+                CHECK(mode IN ('STANDARD','DEEP_RESEARCH'));
+            ALTER TABLE personal_mission ADD COLUMN research_brief_json TEXT;
+            """;
+    private static final String MIGRATION_V4 =
+            """
+            ALTER TABLE personal_mission ADD COLUMN artifact_refs_json TEXT NOT NULL DEFAULT '[]';
+            ALTER TABLE personal_mission ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]';
+            ALTER TABLE personal_mission ADD COLUMN final_result_json TEXT;
+            """;
+    private static final String MIGRATION_V5 =
+            """
+            ALTER TABLE personal_mission ADD COLUMN selected_skill_binding TEXT;
+            """;
 
     private final String jdbcUrl;
     private final ObjectMapper mapper;
@@ -320,9 +339,9 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         """
                 INSERT INTO personal_mission(
                     mission_id, conversation_id, owner_scope, objective, acceptance_json, constraints_json,
-                    selected_skill_id, state, active_plan_revision_no, confirmed_plan_revision_no, failure_code,
+                    selected_skill_id, selected_skill_binding, mode, research_brief_json, state, active_plan_revision_no, confirmed_plan_revision_no, failure_code,
                     version, created_at_ms, updated_at_ms, confirmed_at_ms, finished_at_ms, deadline_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
             bindMission(statement, value);
             statement.executeUpdate();
@@ -657,6 +676,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             """
                     UPDATE personal_mission_task SET state='READY',block_code=NULL,updated_at_ms=?,version=version+1
                     WHERE mission_id=? AND task_id=? AND state='BLOCKED'
+                      AND latest_attempt_no < 3
                       AND EXISTS (SELECT 1 FROM personal_mission m WHERE m.mission_id=? AND m.owner_scope=? AND m.state='WAITING_USER')
                     """)) {
                 statement.setLong(1, now.toEpochMilli());
@@ -677,6 +697,130 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         });
     }
 
+    @Override
+    public Optional<MissionSynthesisIntent> claimSynthesis(Instant now) {
+        return execute(() -> {
+            try {
+                cancelDependentsOfExhaustedTasks(now);
+                try (var select = current()
+                        .prepareStatement(
+                                """
+                    SELECT mission_id,conversation_id,owner_scope,mode,objective
+                    FROM personal_mission m
+                    WHERE state IN ('RUNNING','WAITING_USER','SYNTHESIZING')
+                      AND NOT EXISTS (SELECT 1 FROM personal_mission_task t
+                        WHERE t.mission_id=m.mission_id
+                          AND t.state NOT IN ('COMPLETED','BLOCKED','CANCELLED'))
+                      AND NOT EXISTS (SELECT 1 FROM personal_mission_task t
+                        WHERE t.mission_id=m.mission_id AND t.state='BLOCKED' AND t.latest_attempt_no < 3)
+                      AND EXISTS (SELECT 1 FROM personal_mission_task t WHERE t.mission_id=m.mission_id)
+                    ORDER BY created_at_ms,mission_id LIMIT 1
+                    """)) {
+                    try (var result = select.executeQuery()) {
+                        if (!result.next()) return Optional.empty();
+                        String missionId = result.getString("mission_id");
+                        updateMissionState(missionId, "SYNTHESIZING", now, "state IN ('RUNNING','WAITING_USER')");
+                        List<String> taskResults = new ArrayList<>();
+                        List<String> failedItems = new ArrayList<>();
+                        try (var tasks = current()
+                                .prepareStatement(
+                                        "SELECT task_id,state,result_json,block_code FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal")) {
+                            tasks.setString(1, missionId);
+                            try (var rows = tasks.executeQuery()) {
+                                while (rows.next()) {
+                                    String taskResult = rows.getString("result_json");
+                                    if (taskResult != null) {
+                                        taskResults.add(taskResult);
+                                    } else {
+                                        String code = rows.getString("block_code");
+                                        failedItems.add(rows.getString("task_id") + ":" + rows.getString("state")
+                                                + (code == null ? "" : ":" + code));
+                                    }
+                                }
+                            }
+                        }
+                        return Optional.of(new MissionSynthesisIntent(
+                                missionId,
+                                result.getString("conversation_id"),
+                                result.getString("owner_scope"),
+                                enumValue(
+                                        io.haifa.agent.personalassistant.application.mission.MissionMode.class,
+                                        result.getString("mode"),
+                                        "Mission mode"),
+                                result.getString("objective"),
+                                taskResults,
+                                failedItems));
+                    }
+                }
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+        });
+    }
+
+    @Override
+    public void settleSynthesis(
+            MissionSynthesisIntent intent,
+            MissionRuntimeAccess.SynthesisRunResult synthesis,
+            MissionPublishedResult published,
+            Instant now) {
+        execute(() -> {
+            String terminalState = "PARTIAL".equals(published.completionKind()) ? "PARTIALLY_COMPLETED" : "COMPLETED";
+            try (var statement = current()
+                    .prepareStatement(
+                            """
+                    UPDATE personal_mission SET state=?,synthesis_session_id=?,synthesis_run_id=?,
+                      final_artifact_id=?,final_message_key=?,artifact_refs_json=?,sources_json=?,final_result_json=?,
+                      failure_code=NULL,updated_at_ms=?,finished_at_ms=?,version=version+1
+                      WHERE mission_id=? AND state='SYNTHESIZING'
+                    """)) {
+                statement.setString(1, terminalState);
+                statement.setString(2, synthesis.sessionId());
+                statement.setString(3, synthesis.runId());
+                statement.setString(4, published.finalArtifactId());
+                statement.setString(5, "mission:" + intent.missionId() + ":final-message:v1");
+                statement.setString(6, json(published.artifactIds()));
+                statement.setString(7, json(published.sources()));
+                statement.setString(8, published.structuredResult());
+                statement.setLong(9, now.toEpochMilli());
+                statement.setLong(10, now.toEpochMilli());
+                statement.setString(11, intent.missionId());
+                statement.executeUpdate();
+                appendEvent(
+                        intent.missionId(),
+                        "PARTIALLY_COMPLETED".equals(terminalState)
+                                ? "MISSION_SYNTHESIS_PARTIALLY_COMPLETED"
+                                : "MISSION_SYNTHESIS_COMPLETED",
+                        now);
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public void failSynthesis(MissionSynthesisIntent intent, String failureCode, Instant now) {
+        execute(() -> {
+            try (var statement = current()
+                    .prepareStatement(
+                            """
+                    UPDATE personal_mission SET state='FAILED',failure_code=?,updated_at_ms=?,finished_at_ms=?,
+                      version=version+1 WHERE mission_id=? AND state='SYNTHESIZING'
+                    """)) {
+                statement.setString(1, failureCode);
+                statement.setLong(2, now.toEpochMilli());
+                statement.setLong(3, now.toEpochMilli());
+                statement.setString(4, intent.missionId());
+                statement.executeUpdate();
+                appendEvent(intent.missionId(), "MISSION_SYNTHESIS_FAILED", now);
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
     private void migrate() {
         try (Connection connection = DriverManager.getConnection(jdbcUrl)) {
             configure(connection);
@@ -686,6 +830,9 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             }
             applyMigration(connection, 1, MIGRATION);
             applyMigration(connection, 2, MIGRATION_V2);
+            applyMigration(connection, 3, MIGRATION_V3);
+            applyMigration(connection, 4, MIGRATION_V4);
+            applyMigration(connection, 5, MIGRATION_V5);
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -741,7 +888,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             """
                     SELECT o.outbox_id,o.mission_id,o.task_id,o.attempt_no,o.payload_digest,
                            a.dispatch_key,m.owner_scope,t.objective,t.acceptance_json,
-                           t.result_schema_id,t.result_schema_version
+                           t.task_type,t.skill_ids_json,t.result_schema_id,t.result_schema_version
                     FROM personal_mission_outbox o
                     JOIN personal_mission_task_attempt a
                       ON a.mission_id=o.mission_id AND a.task_id=o.task_id AND a.attempt_no=o.attempt_no
@@ -775,6 +922,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             result.getString("payload_digest"),
                             result.getString("objective"),
                             jsonList(result.getString("acceptance_json")),
+                            result.getString("task_type"),
+                            jsonList(result.getString("skill_ids_json")),
                             result.getString("result_schema_id"),
                             result.getString("result_schema_version"),
                             now));
@@ -782,6 +931,32 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             }
         } catch (SQLException exception) {
             throw failure(exception);
+        }
+    }
+
+    private void cancelDependentsOfExhaustedTasks(Instant now) throws SQLException {
+        try (var statement = current()
+                .prepareStatement(
+                        """
+                WITH RECURSIVE descendants(mission_id, task_id) AS (
+                  SELECT mission_id, task_id FROM personal_mission_task
+                  WHERE state='BLOCKED' AND latest_attempt_no >= 3
+                  UNION
+                  SELECT dependency.mission_id, dependency.task_id
+                  FROM personal_mission_task_dependency dependency
+                  JOIN descendants parent
+                    ON parent.mission_id=dependency.mission_id
+                   AND parent.task_id=dependency.depends_on_task_id
+                )
+                UPDATE personal_mission_task AS task
+                SET state='CANCELLED',block_code='MISSION_DEPENDENCY_BLOCKED',updated_at_ms=?,version=version+1
+                WHERE state IN ('PLANNED','WAITING_DEPENDENCY','READY')
+                  AND EXISTS (
+                    SELECT 1 FROM descendants value
+                    WHERE value.mission_id=task.mission_id AND value.task_id=task.task_id)
+                """)) {
+            statement.setLong(1, now.toEpochMilli());
+            statement.executeUpdate();
         }
     }
 
@@ -972,7 +1147,10 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 "SELECT task_id,ordinal,state,latest_attempt_no,result_digest,block_code FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal");
                 var latest = current()
                         .prepareStatement(
-                                "SELECT * FROM personal_mission_task_attempt WHERE mission_id=? ORDER BY created_at_ms DESC,task_id DESC,attempt_no DESC LIMIT 1")) {
+                                "SELECT * FROM personal_mission_task_attempt WHERE mission_id=? ORDER BY created_at_ms DESC,task_id DESC,attempt_no DESC LIMIT 1");
+                var delivery = current()
+                        .prepareStatement(
+                                "SELECT artifact_refs_json,sources_json,final_result_json FROM personal_mission WHERE mission_id=?")) {
             tasks.setString(1, missionId);
             List<MissionExecutionSnapshot.TaskExecution> values = new ArrayList<>();
             int completed = 0;
@@ -1010,6 +1188,17 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                     || value.state() == MissionTaskState.BLOCKED
                                     || value.state() == MissionTaskState.CANCELLED);
             DispatcherHealth health = dispatcherHealth();
+            delivery.setString(1, missionId);
+            List<String> artifacts = List.of();
+            List<String> sources = List.of();
+            Optional<String> finalResult = Optional.empty();
+            try (var result = delivery.executeQuery()) {
+                if (result.next()) {
+                    artifacts = jsonList(result.getString("artifact_refs_json"));
+                    sources = jsonList(result.getString("sources_json"));
+                    finalResult = Optional.ofNullable(result.getString("final_result_json"));
+                }
+            }
             return new MissionExecutionSnapshot(
                     health.status(),
                     health.recovering(),
@@ -1018,7 +1207,10 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     blocked,
                     Optional.ofNullable(currentTask),
                     values,
-                    attempt);
+                    attempt,
+                    artifacts,
+                    sources,
+                    finalResult);
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -1133,6 +1325,16 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         constraints.maxDependencyDepth(),
                         Optional.ofNullable(constraints.deadlineAtMs()).map(Instant::ofEpochMilli)),
                 Optional.ofNullable(result.getString("selected_skill_id")),
+                Optional.ofNullable(result.getString("selected_skill_binding")),
+                enumValue(
+                        io.haifa.agent.personalassistant.application.mission.MissionMode.class,
+                        result.getString("mode"),
+                        "Mission mode"),
+                Optional.ofNullable(result.getString("research_brief_json"))
+                        .map(encoded -> json(
+                                encoded,
+                                io.haifa.agent.personalassistant.application.mission.ResearchBrief.class,
+                                "research brief")),
                 enumValue(MissionState.class, result.getString("state"), "Mission state"),
                 optionalInteger(result, "active_plan_revision_no"),
                 optionalInteger(result, "confirmed_plan_revision_no"),
@@ -1315,17 +1517,22 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 .map(Instant::toEpochMilli)
                                 .orElse(null))));
         nullableString(statement, 7, value.selectedSkillId());
-        statement.setString(8, value.state().name());
-        nullableInteger(statement, 9, value.activePlanRevisionNo());
-        nullableInteger(statement, 10, value.confirmedPlanRevisionNo());
-        nullableString(statement, 11, value.failureCode());
-        statement.setLong(12, value.version());
-        statement.setLong(13, value.createdAt().toEpochMilli());
-        statement.setLong(14, value.updatedAt().toEpochMilli());
-        nullableInstant(statement, 15, value.confirmedAt());
-        nullableInstant(statement, 16, value.finishedAt());
+        nullableString(statement, 8, value.selectedSkillBinding());
+        statement.setString(9, value.mode().name());
+        if (value.researchBrief().isPresent())
+            statement.setString(10, json(value.researchBrief().orElseThrow()));
+        else statement.setNull(10, java.sql.Types.VARCHAR);
+        statement.setString(11, value.state().name());
+        nullableInteger(statement, 12, value.activePlanRevisionNo());
+        nullableInteger(statement, 13, value.confirmedPlanRevisionNo());
+        nullableString(statement, 14, value.failureCode());
+        statement.setLong(15, value.version());
+        statement.setLong(16, value.createdAt().toEpochMilli());
+        statement.setLong(17, value.updatedAt().toEpochMilli());
+        nullableInstant(statement, 18, value.confirmedAt());
+        nullableInstant(statement, 19, value.finishedAt());
         statement.setLong(
-                17,
+                20,
                 value.constraints()
                         .deadlineAt()
                         .orElse(value.createdAt().plusSeconds(30 * 60L))

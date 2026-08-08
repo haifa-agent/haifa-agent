@@ -40,6 +40,8 @@ JAR 的构建或静态资源打包。
 - 新建、搜索、选择、重命名、归档和恢复 Conversation；
 - 显式 Mission 入口、列表、创建、确认前整体计划替换/重新生成、确认、取消、Snapshot polling、
   Dispatcher/Task 执行摘要、blocked Task 重试、Task Run Interaction 回复和 Conversation 摘要卡片；
+- 显式 Standard / Deep Research 模式、完整 Research Brief、冻结 Skill 绑定展示，以及最终报告、完成/未完成项、
+  未验证结论、剩余风险、未决问题、来源链接和五类交付文件；
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
 - 输入框 `/` 命令菜单，以及按模型厂商、模型两级完成的新会话选择或已有会话切换；
@@ -57,7 +59,8 @@ JAR 的构建或静态资源打包。
 - 桌面三栏布局和移动端互斥抽屉。
 
 生产代码没有 Mock Client、Fixture fallback、Follow-up/Steer、Preference 编辑、复杂进度投影或
-Deep Research 界面。Mission 页面只显示安全 Dispatcher 状态与最新 Attempt 摘要，不暴露内部 payload；
+Mission 页面只显示安全 Dispatcher 状态与最新 Attempt 摘要，不暴露内部 payload；Deep Research 只允许浏览器选择
+固定产品别名 `deep-research`，不接受路径、版本或摘要注入；
 Pause/Resume、Verifier、Repair 和浏览器指定 Skill 的入口仍未提供。
 
 ## 本机 Run Diagnostics

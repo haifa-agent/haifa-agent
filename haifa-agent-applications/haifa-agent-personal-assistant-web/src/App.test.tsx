@@ -169,6 +169,10 @@ const mission: MissionSnapshot = {
   objective: "交付一份可验收的计划",
   acceptanceCriteria: ["计划明确"],
   constraints: { maxTasks: 8, maxDependencyDepth: 4 },
+  mode: "STANDARD",
+  researchBrief: null,
+  selectedSkillId: null,
+  selectedSkillBinding: null,
   state: "WAITING_CONFIRMATION",
   plan: {
     revision: 1,
@@ -329,6 +333,43 @@ describe("Personal Assistant application", () => {
       "task-1",
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     ));
+  });
+
+  it("renders a partial Deep Research delivery with evidence and artifacts", async () => {
+    const delivered: MissionSnapshot = {
+      ...mission,
+      mode: "DEEP_RESEARCH",
+      selectedSkillId: "deep-research",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@1.0.0#sha256:test",
+      state: "PARTIALLY_COMPLETED",
+      sources: ["https://research.stub/source-1"],
+      artifacts: ["artifact-report"],
+      finalResult: JSON.stringify({
+        directAnswer: "Bounded evidence summary",
+        completionKind: "PARTIAL",
+        completedItems: ["Primary evidence checked"],
+        failedItems: ["Secondary evidence unavailable"],
+        unverifiedClaims: ["claim-unverified"],
+        residualRisks: ["Evidence may change"],
+        unresolvedQuestions: ["When will the dataset refresh?"],
+      }),
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect(await within(dialog).findByText("Bounded evidence summary")).toBeTruthy();
+    expect(within(dialog).getByText("Secondary evidence unavailable")).toBeTruthy();
+    expect(within(dialog).getByText("claim-unverified")).toBeTruthy();
+    expect(within(dialog).getByText("https://research.stub/source-1")).toBeTruthy();
+    expect(within(dialog).getByText("artifact-report")).toBeTruthy();
   });
 
   it("scrolls the activity panel to the latest live event", async () => {
