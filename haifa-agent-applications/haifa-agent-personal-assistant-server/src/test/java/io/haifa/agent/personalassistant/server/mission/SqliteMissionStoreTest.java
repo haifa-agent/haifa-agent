@@ -10,6 +10,8 @@ import io.haifa.agent.personalassistant.application.mission.MissionConstraints;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
 import io.haifa.agent.personalassistant.application.mission.MissionListCursor;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
+import io.haifa.agent.personalassistant.application.mission.MissionPublishedResult;
+import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.application.mission.MissionState;
 import java.nio.file.Path;
@@ -46,7 +48,7 @@ class SqliteMissionStoreTest {
                 MissionConstraints.DEFAULT);
 
         MissionSnapshot created = first.create(command);
-        assertThat(firstStore.schemaVersion()).isEqualTo(2);
+        assertThat(firstStore.schemaVersion()).isEqualTo(5);
 
         SqliteMissionStore restartedStore = new SqliteMissionStore(database, new ObjectMapper());
         MissionApplicationService restarted = service(restartedStore, ids);
@@ -180,6 +182,67 @@ class SqliteMissionStoreTest {
         assertThat(execution.completedTasks()).isEqualTo(1);
         assertThat(execution.allTasksSettled()).isTrue();
         assertThat(store.activeAttempts()).isEmpty();
+    }
+
+    @Test
+    void exhaustedUserRetryCancelsDependentsAndSettlesPartialSynthesis() {
+        SqliteMissionStore store = new SqliteMissionStore(directory.resolve("partial.sqlite"), new ObjectMapper());
+        store.registerDispatcher("process", "instance", CLOCK.instant());
+        MissionApplicationService service = new MissionApplicationService(
+                store,
+                store,
+                new DeterministicMissionPlanner(),
+                MissionPlanValidator.phaseOne(),
+                () -> "mission-partial",
+                CLOCK,
+                store);
+        MissionSnapshot created = service.create(new MissionApplicationService.CreateMission(
+                "create-partial",
+                "local/public-user",
+                "conversation-partial",
+                "Produce a bounded partial result",
+                List.of("first", "dependent second"),
+                MissionConstraints.DEFAULT));
+        service.confirm(new MissionApplicationService.ChangeMission(
+                "confirm-partial", "local/public-user", created.missionId(), created.version()));
+
+        var firstIntent = store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant())
+                .orElseThrow();
+        store.bind(firstIntent, "session-1", "run-1", CLOCK.instant());
+        store.settleFailed(store.activeAttempts().getFirst(), "TRANSIENT", true, CLOCK.instant());
+        var secondIntent = store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant())
+                .orElseThrow();
+        store.bind(secondIntent, "session-2", "run-2", CLOCK.instant());
+        store.settleFailed(store.activeAttempts().getFirst(), "TRANSIENT", true, CLOCK.instant());
+
+        MissionSnapshot blocked =
+                service.find(created.missionId(), "local/public-user").orElseThrow();
+        service.retry(new MissionApplicationService.RetryMissionTask(
+                "retry-partial", "local/public-user", created.missionId(), "task-1", blocked.version()));
+        var thirdIntent = store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant())
+                .orElseThrow();
+        store.bind(thirdIntent, "session-3", "run-3", CLOCK.instant());
+        store.settleFailed(store.activeAttempts().getFirst(), "FINAL_FAILURE", false, CLOCK.instant());
+
+        var synthesis = store.claimSynthesis(CLOCK.instant()).orElseThrow();
+        assertThat(synthesis.taskResults()).isEmpty();
+        assertThat(synthesis.failedItems())
+                .containsExactly("task-1:BLOCKED:FINAL_FAILURE", "task-2:CANCELLED:MISSION_DEPENDENCY_BLOCKED");
+        store.settleSynthesis(
+                synthesis,
+                new MissionRuntimeAccess.SynthesisRunResult("synthesis-session", "synthesis-run", "{}"),
+                new MissionPublishedResult(
+                        "artifact-final", List.of("artifact-final"), List.of(), "{}", "Partial result", "PARTIAL"),
+                CLOCK.instant());
+
+        assertThat(store.missionState(created.missionId())).isEqualTo(MissionState.PARTIALLY_COMPLETED);
+        assertThat(store.snapshot(created.missionId()).tasks())
+                .extracting(
+                        io.haifa.agent.personalassistant.application.mission.MissionExecutionSnapshot.TaskExecution
+                                ::state)
+                .containsExactly(
+                        io.haifa.agent.personalassistant.application.mission.MissionTaskState.BLOCKED,
+                        io.haifa.agent.personalassistant.application.mission.MissionTaskState.CANCELLED);
     }
 
     private static String createConcurrently(

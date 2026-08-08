@@ -280,6 +280,19 @@
         }
       }
     },
+    "/api/v1/missions/{missionId}/artifacts/{artifactId}": {
+      "parameters": [
+        {"$ref": "#/components/parameters/MissionId"},
+        {"name": "artifactId", "in": "path", "required": true, "schema": {"type": "string"}}
+      ],
+      "get": {
+        "operationId": "downloadMissionArtifact",
+        "responses": {
+          "200": {"description": "Owner-scoped immutable Mission Artifact", "content": {"application/json": {}, "text/markdown": {}}},
+          "404": {"$ref": "#/components/responses/Error"}
+        }
+      }
+    },
     "/api/v1/missions/{missionId}/plan": {
       "parameters": [{"$ref": "#/components/parameters/MissionId"}],
       "put": {
@@ -661,7 +674,23 @@
           "objective": {"type": "string", "maxLength": 8000},
           "acceptanceCriteria": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 1000}},
           "constraints": {"$ref": "#/components/schemas/MissionConstraints"},
-          "selectedSkillId": {"type": "string"}
+          "mode": {"type": "string", "enum": ["STANDARD", "DEEP_RESEARCH"], "default": "STANDARD"},
+          "selectedSkillId": {"type": "string"},
+          "researchBrief": {"$ref": "#/components/schemas/ResearchBrief"}
+        }
+      },
+      "ResearchBrief": {
+        "type": "object",
+        "required": ["question", "sourcePreferences", "exclusions"],
+        "properties": {
+          "question": {"type": "string", "maxLength": 8000},
+          "scope": {"type": "string", "maxLength": 2000},
+          "timeRange": {"type": "string", "maxLength": 256},
+          "region": {"type": "string", "maxLength": 256},
+          "audience": {"type": "string", "maxLength": 256},
+          "sourcePreferences": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 256}},
+          "exclusions": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 256}},
+          "deliveryFormat": {"type": "string", "maxLength": 256}
         }
       },
       "MissionConstraints": {
@@ -718,7 +747,7 @@
       },
       "MissionSnapshot": {
         "type": "object",
-        "required": ["schemaVersion", "missionId", "conversationId", "objective", "acceptanceCriteria", "constraints", "state", "plan", "tasks", "blocker", "artifacts", "sources", "finalResult", "version", "createdAt", "updatedAt", "confirmedAt", "finishedAt", "pollAfterMs", "execution"],
+        "required": ["schemaVersion", "missionId", "conversationId", "objective", "acceptanceCriteria", "constraints", "mode", "researchBrief", "selectedSkillId", "selectedSkillBinding", "state", "plan", "tasks", "blocker", "artifacts", "sources", "finalResult", "version", "createdAt", "updatedAt", "confirmedAt", "finishedAt", "pollAfterMs", "execution"],
         "properties": {
           "schemaVersion": {"type": "string", "const": "pa.mission-snapshot/v1"},
           "missionId": {"type": "string"},
@@ -726,6 +755,10 @@
           "objective": {"type": "string"},
           "acceptanceCriteria": {"type": "array", "items": {"type": "string"}},
           "constraints": {"$ref": "#/components/schemas/MissionConstraints"},
+          "mode": {"type": "string", "enum": ["STANDARD", "DEEP_RESEARCH"]},
+          "researchBrief": {"oneOf": [{"$ref": "#/components/schemas/ResearchBrief"}, {"type": "null"}]},
+          "selectedSkillId": {"oneOf": [{"type": "string"}, {"type": "null"}]},
+          "selectedSkillBinding": {"oneOf": [{"type": "string"}, {"type": "null"}]},
           "state": {"type": "string", "enum": ["PLANNING", "WAITING_CONFIRMATION", "RUNNING", "WAITING_USER", "SYNTHESIZING", "COMPLETED", "PARTIALLY_COMPLETED", "FAILED", "CANCELLED"]},
           "plan": {"oneOf": [{"$ref": "#/components/schemas/MissionPlanRevision"}, {"type": "null"}]},
           "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/MissionTask"}},

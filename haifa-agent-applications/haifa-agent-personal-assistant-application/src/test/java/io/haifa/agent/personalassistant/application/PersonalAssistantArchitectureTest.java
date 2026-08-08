@@ -35,7 +35,9 @@ class PersonalAssistantArchitectureTest {
                 .check(classes);
         assertThat(classes.stream()
                         .map(value -> value.getSimpleName())
-                        .filter(name -> name.contains("Research")
+                        .filter(name -> name.contains("ResearchAgent")
+                                || name.contains("ResearchRun")
+                                || name.contains("ResearchBackend")
                                 || name.contains("Verifier")
                                 || name.contains("Repair")
                                 || name.contains("MissionInput")

@@ -5,8 +5,6 @@ const forbidden = [
   ["MockPersonalAssistantClient", "production Mock client"],
   ["enqueueFollowUp", "Follow-up"],
   ["steerRun", "Steer"],
-  ["Artifact", "Artifact"],
-  ["Deep Research", "Deep Research"],
   ["View JSON", "internal JSON viewer"],
 ];
 const files = [];
@@ -35,4 +33,4 @@ if (failures.length) {
   console.error(failures.join("\n"));
   process.exit(1);
 }
-console.log(`Linted ${files.length} production TypeScript files with Phase 2 scope guards.`);
+console.log(`Linted ${files.length} production TypeScript files with Phase 3 scope guards.`);

@@ -14,10 +14,43 @@ public record MissionDispatchIntent(
         String payloadDigest,
         String objective,
         List<String> acceptanceCriteria,
+        String taskType,
+        List<String> requiredSkillIds,
         String resultSchemaId,
         String resultSchemaVersion,
         Instant claimedAt) {
     public MissionDispatchIntent {
         acceptanceCriteria = List.copyOf(acceptanceCriteria);
+        requiredSkillIds = List.copyOf(requiredSkillIds);
+    }
+
+    public MissionDispatchIntent(
+            String outboxId,
+            String missionId,
+            String ownerScope,
+            String taskId,
+            int attemptNo,
+            String dispatchKey,
+            String payloadDigest,
+            String objective,
+            List<String> acceptanceCriteria,
+            String resultSchemaId,
+            String resultSchemaVersion,
+            Instant claimedAt) {
+        this(
+                outboxId,
+                missionId,
+                ownerScope,
+                taskId,
+                attemptNo,
+                dispatchKey,
+                payloadDigest,
+                objective,
+                acceptanceCriteria,
+                "GENERAL",
+                List.of(),
+                resultSchemaId,
+                resultSchemaVersion,
+                claimedAt);
     }
 }

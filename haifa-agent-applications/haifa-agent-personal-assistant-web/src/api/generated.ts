@@ -228,7 +228,20 @@ export interface CreateMission {
   objective: string;
   acceptanceCriteria: Array<string>;
   constraints?: MissionConstraints;
+  mode?: "STANDARD" | "DEEP_RESEARCH";
   selectedSkillId?: string;
+  researchBrief?: ResearchBrief;
+}
+
+export interface ResearchBrief {
+  question: string;
+  scope?: string;
+  timeRange?: string;
+  region?: string;
+  audience?: string;
+  sourcePreferences: Array<string>;
+  exclusions: Array<string>;
+  deliveryFormat?: string;
 }
 
 export interface MissionConstraints {
@@ -277,6 +290,10 @@ export interface MissionSnapshot {
   objective: string;
   acceptanceCriteria: Array<string>;
   constraints: MissionConstraints;
+  mode: "STANDARD" | "DEEP_RESEARCH";
+  researchBrief: ResearchBrief | null;
+  selectedSkillId: string | null;
+  selectedSkillBinding: string | null;
   state: "PLANNING" | "WAITING_CONFIRMATION" | "RUNNING" | "WAITING_USER" | "SYNTHESIZING" | "COMPLETED" | "PARTIALLY_COMPLETED" | "FAILED" | "CANCELLED";
   plan: MissionPlanRevision | null;
   tasks: Array<MissionTask>;
@@ -339,4 +356,4 @@ export interface ApiError {
   correlationId: string;
 }
 
-export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";
+export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";

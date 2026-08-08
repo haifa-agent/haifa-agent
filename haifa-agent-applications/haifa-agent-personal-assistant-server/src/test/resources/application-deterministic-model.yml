@@ -36,7 +36,7 @@ haifa:
             display-name: Personal test
             provider-model-id: personal-test
             style: deterministic-chat
-            capabilities: [TEXT_CHAT, TOOL_CALLING, IMAGE_INPUT]
+            capabilities: [TEXT_CHAT, TOOL_CALLING, IMAGE_INPUT, STRUCTURED_OUTPUT]
             context-window: 8192
             max-output-tokens: 1024
     web:

@@ -99,7 +99,14 @@ Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
 端口冲突会使启动失败，不会自动换端口。
 
-## Personal Mission Phase 1–2
+## Personal Mission Phase 1–3
+
+Phase 3 adds product schema V5 for the frozen Mission-level Skill binding and uses shared Runtime
+schema V7 Artifact metadata plus an application-owned, no-follow payload directory. Deep Research
+uses only the approved `web.search` / `web.fetch` pipeline, validates canonical source identities,
+citation closure, quote bounds and structured synthesis, then publishes exactly five owner-only,
+hash-verified Artifacts and one idempotent final Conversation message. The deterministic offline
+Stub exercises the same Tool/Skill/Runtime path; it is not a production network provider.
 
 Server 提供 `/api/v1/missions` 的 create/list/get/snapshot、确认前完整计划 replace/regenerate、confirm
 、cancel 和 blocked Task retry。写操作要求 `Idempotency-Key`，计划变更、确认和重试要求 `If-Match`；owner、Conversation 和

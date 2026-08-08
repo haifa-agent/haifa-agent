@@ -16,7 +16,6 @@ for (const token of [
   "localhost:5173",
   "Follow-up",
   "Steer",
-  "Deep Research",
   "View JSON",
 ]) {
   if (bundle.includes(token)) failures.push(`production bundle contains deferred surface: ${token}`);

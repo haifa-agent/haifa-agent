@@ -1,0 +1,69 @@
+package io.haifa.agent.personalassistant.server.mission;
+
+import io.haifa.agent.personalassistant.application.mission.MissionException;
+import java.net.IDN;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Locale;
+import java.util.Set;
+
+/** Deterministic canonicalization used before source identity and citation checks. */
+final class ResearchSourceLocator {
+    private static final Set<String> TRACKING_KEYS = Set.of("gclid", "fbclid", "mc_cid", "mc_eid");
+
+    private ResearchSourceLocator() {}
+
+    static Normalized normalize(String value) {
+        if (value == null || value.isBlank() || value.length() > 4096) throw invalid();
+        try {
+            URI input = URI.create(value.trim()).normalize();
+            if (!"https".equalsIgnoreCase(input.getScheme())
+                    || input.getRawUserInfo() != null
+                    || input.getHost() == null
+                    || (input.getPort() != -1 && input.getPort() != 443)) {
+                throw invalid();
+            }
+            String host = IDN.toASCII(input.getHost(), IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
+            if (host.isBlank()) throw invalid();
+            String path = input.getRawPath();
+            if (path == null || path.isBlank()) path = "/";
+            String query = normalizeQuery(input.getRawQuery());
+            URI normalized = new URI("https", null, host, -1, path, query, null).normalize();
+            String external = normalized.toASCIIString();
+            return new Normalized(external, "sha256:" + sha256(external));
+        } catch (IllegalArgumentException | URISyntaxException exception) {
+            throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", "Source locator is invalid", exception);
+        }
+    }
+
+    private static String normalizeQuery(String query) {
+        if (query == null || query.isBlank()) return null;
+        return java.util.Arrays.stream(query.split("&", -1))
+                .filter(ResearchSourceLocator::notTracking)
+                .collect(java.util.stream.Collectors.joining("&"));
+    }
+
+    private static boolean notTracking(String parameter) {
+        String key = parameter.split("=", 2)[0].toLowerCase(Locale.ROOT);
+        return !key.startsWith("utm_") && !TRACKING_KEYS.contains(key);
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required", exception);
+        }
+    }
+
+    private static MissionException invalid() {
+        return new MissionException("MISSION_RESULT_SCHEMA_INVALID", "Source locator is invalid");
+    }
+
+    record Normalized(String locator, String digest) {}
+}

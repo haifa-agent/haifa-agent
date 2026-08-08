@@ -7,7 +7,10 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.mission.MissionApplicationService;
 import io.haifa.agent.personalassistant.application.mission.MissionConstraints;
+import io.haifa.agent.personalassistant.application.mission.MissionMode;
 import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
+import io.haifa.agent.personalassistant.application.mission.MissionState;
+import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.server.admin.PersonalAdminQueryService;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
 import io.haifa.agent.store.sqlite.SqliteStoreFoundation;
@@ -26,6 +29,78 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 
 class PersonalAssistantRestartTest {
+    @Test
+    void deepResearchMissionPublishesStableArtifactsAndFinalConversationMessageAcrossRestart() throws Exception {
+        Path data = Files.createTempDirectory("haifa-personal-deep-research-");
+        String conversationId;
+        String missionId;
+        MissionSnapshot completed;
+        try (ConfigurableApplicationContext first = start(data, freePort(23001))) {
+            PersonalAssistantApplication application = first.getBean(PersonalAssistantApplication.class);
+            var conversation = application.start("research-conversation", "Research", "Prepare a research workspace");
+            conversationId = conversation.id();
+            assertThat(awaitTerminal(application, conversation.activeRunId().orElseThrow())
+                            .status())
+                    .isEqualTo("COMPLETED");
+
+            MissionApplicationService missions = first.getBean(MissionApplicationService.class);
+            MissionSnapshot created = missions.create(new MissionApplicationService.CreateMission(
+                    "research-mission-create",
+                    "local/public-user",
+                    conversationId,
+                    "Assess the evidence for durable long-running personal assistant research",
+                    java.util.List.of("cite every material claim", "list unresolved questions"),
+                    MissionConstraints.DEFAULT,
+                    MissionMode.DEEP_RESEARCH,
+                    java.util.Optional.of(new ResearchBrief(
+                            "What evidence supports durable long-running personal assistant research?",
+                            "Architecture and product delivery",
+                            "Current",
+                            "Global",
+                            "Product and architecture leads",
+                            java.util.List.of("primary sources"),
+                            java.util.List.of("unsupported claims"),
+                            "Markdown report"))));
+            missionId = created.missionId();
+            missions.confirm(new MissionApplicationService.ChangeMission(
+                    "research-mission-confirm", "local/public-user", missionId, created.version()));
+            completed = awaitMissionCompleted(missions, missionId);
+
+            assertThat(completed.mode()).isEqualTo(MissionMode.DEEP_RESEARCH);
+            assertThat(completed.selectedSkillId()).contains("deep-research");
+            assertThat(completed.selectedSkillBinding()).hasValueSatisfying(binding -> assertThat(binding)
+                    .contains("product", "personal-assistant-bundled@1", "deep-research@1.0.0#sha256:"));
+            assertThat(completed.execution().artifacts()).hasSize(5);
+            assertThat(completed.execution().sources()).hasSize(2);
+            assertThat(completed.execution().finalResult()).hasValueSatisfying(result -> assertThat(result)
+                    .contains("pa.research-final-result/v1", "directAnswer", "completionKind", "unresolvedQuestions")
+                    .doesNotContain("reveal credentials", "ignore the research brief"));
+            assertThat(application.turns(conversationId, 100)).anySatisfy(turn -> assertThat(turn.text())
+                    .contains("# Research report")
+                    .doesNotContain("reveal credentials", "ignore the research brief"));
+        }
+
+        try (var artifactFiles = Files.list(data.resolve("artifacts"))) {
+            assertThat(artifactFiles.filter(Files::isRegularFile)).hasSize(5);
+        }
+        try (ConfigurableApplicationContext second = start(data, freePort(23101))) {
+            PersonalAssistantApplication application = second.getBean(PersonalAssistantApplication.class);
+            MissionSnapshot recovered = second.getBean(MissionApplicationService.class)
+                    .find(missionId, "local/public-user")
+                    .orElseThrow();
+
+            assertThat(recovered.state()).isEqualTo(MissionState.COMPLETED);
+            assertThat(recovered.execution().artifacts())
+                    .containsExactlyElementsOf(completed.execution().artifacts());
+            assertThat(recovered.execution().sources())
+                    .containsExactlyElementsOf(completed.execution().sources());
+            assertThat(recovered.selectedSkillBinding()).isEqualTo(completed.selectedSkillBinding());
+            assertThat(application.turns(conversationId, 100))
+                    .filteredOn(turn -> turn.text().contains("# Research report"))
+                    .hasSize(1);
+        }
+    }
+
     @Test
     void confirmedMissionResumesAcrossServerRestartAndSettlesThreeDependentTasks() throws Exception {
         Path data = Files.createTempDirectory("haifa-personal-mission-restart-");
@@ -206,7 +281,7 @@ class PersonalAssistantRestartTest {
             if (Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT").contains(latest.status())) return latest;
             Thread.sleep(25);
         } while (System.nanoTime() < deadline);
-        throw new AssertionError("run did not become terminal");
+        throw new AssertionError("run did not become terminal: " + latest);
     }
 
     private static MissionSnapshot awaitMissionSettled(MissionApplicationService missions, String missionId)
@@ -218,7 +293,23 @@ class PersonalAssistantRestartTest {
             if (latest.execution().allTasksSettled()) return latest;
             Thread.sleep(100);
         } while (System.nanoTime() < deadline);
-        throw new AssertionError("mission did not settle after restart");
+        throw new AssertionError("mission did not settle after restart: " + latest);
+    }
+
+    private static MissionSnapshot awaitMissionCompleted(MissionApplicationService missions, String missionId)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(120).toNanos();
+        MissionSnapshot latest;
+        do {
+            latest = missions.find(missionId, "local/public-user").orElseThrow();
+            if (latest.state() == MissionState.COMPLETED) return latest;
+            if (latest.state() == MissionState.FAILED) {
+                throw new AssertionError(
+                        "deep research mission failed: " + latest.execution().finalResult());
+            }
+            Thread.sleep(100);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("deep research mission did not complete: " + latest);
     }
 
     private static int freePort(int start) {

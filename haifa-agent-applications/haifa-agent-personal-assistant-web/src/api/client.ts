@@ -26,6 +26,10 @@ const API_ROOT = (import.meta.env.VITE_PERSONAL_ASSISTANT_API_BASE_URL?.trim() |
   .replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 12_000;
 
+export function missionArtifactUrl(missionId: string, artifactId: string): string {
+  return `${API_ROOT}/missions/${encoded(missionId)}/artifacts/${encoded(artifactId)}`;
+}
+
 export class PersonalAssistantApiError extends Error {
   constructor(
     readonly status: number,

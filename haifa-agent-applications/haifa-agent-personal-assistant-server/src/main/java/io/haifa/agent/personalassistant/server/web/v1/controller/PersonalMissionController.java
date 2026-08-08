@@ -5,8 +5,10 @@ import io.haifa.agent.personalassistant.application.mission.MissionApplicationSe
 import io.haifa.agent.personalassistant.application.mission.MissionConstraints;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
 import io.haifa.agent.personalassistant.application.mission.MissionListCursor;
+import io.haifa.agent.personalassistant.application.mission.MissionMode;
 import io.haifa.agent.personalassistant.application.mission.MissionTask;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
+import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
@@ -18,6 +20,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -61,10 +66,19 @@ public final class PersonalMissionController {
         if (application.conversation(conversationId).isEmpty()) {
             throw new MissionException("MISSION_NOT_FOUND", "Mission is unavailable");
         }
-        if (request.selectedSkillId() != null && !request.selectedSkillId().isBlank()) {
+        MissionMode mode =
+                request.mode() == null || request.mode().isBlank() ? MissionMode.STANDARD : parseMode(request.mode());
+        if (mode == MissionMode.STANDARD
+                && request.selectedSkillId() != null
+                && !request.selectedSkillId().isBlank()) {
             throw new MissionException(
                     "MISSION_SKILL_SELECTION_FORBIDDEN", "Browser-selected Mission Skills are not accepted");
         }
+        if (mode == MissionMode.DEEP_RESEARCH && !"deep-research".equals(request.selectedSkillId())) {
+            throw new MissionException(
+                    "MISSION_SKILL_SELECTION_REQUIRED", "Deep Research requires the deep-research Skill");
+        }
+        Optional<ResearchBrief> brief = researchBrief(mode, request.researchBrief());
         List<String> criteria = request.acceptanceCriteria() == null ? List.of() : request.acceptanceCriteria();
         if (criteria.size() > properties.mission().maxAcceptanceCriteria()) {
             throw new MissionException("MISSION_LIMIT_EXCEEDED", "acceptanceCriteria exceeds the product limit");
@@ -75,7 +89,9 @@ public final class PersonalMissionController {
                 conversationId,
                 text(request.objective(), "objective", 8_000),
                 criteria,
-                constraints(request.constraints()));
+                constraints(request.constraints()),
+                mode,
+                brief);
         var body = mapper.mission(missions.create(command));
         return ResponseEntity.accepted()
                 .location(URI.create("/api/v1/missions/" + body.missionId()))
@@ -111,6 +127,29 @@ public final class PersonalMissionController {
     @GetMapping("/{missionId}/snapshot")
     ResponseEntity<PersonalApiDtos.MissionSnapshot> snapshot(@PathVariable String missionId) {
         return response(missionId);
+    }
+
+    @GetMapping("/{missionId}/artifacts/{artifactId}")
+    ResponseEntity<byte[]> artifact(@PathVariable String missionId, @PathVariable String artifactId) {
+        String safeMissionId = text(missionId, "missionId", 256);
+        if (missions.find(safeMissionId, ownerScope()).isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        var artifact = application.artifacts().findByProject("mission-" + safeMissionId).stream()
+                .filter(value -> value.id().value().equals(text(artifactId, "artifactId", 256)))
+                .findFirst();
+        if (artifact.isEmpty()) return ResponseEntity.notFound().build();
+        var value = artifact.orElseThrow();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(value.payload().mediaType()))
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.inline()
+                                .filename(value.title(), StandardCharsets.UTF_8)
+                                .build()
+                                .toString())
+                .header("X-Content-Type-Options", "nosniff")
+                .body(application.artifacts().load(value));
     }
 
     @PutMapping("/{missionId}/plan")
@@ -199,6 +238,35 @@ public final class PersonalMissionController {
             throw new MissionException("MISSION_DEADLINE_INVALID", "Mission deadline must be in the future");
         }
         return new MissionConstraints(maxTasks, maxDepth, Optional.ofNullable(deadline));
+    }
+
+    private static MissionMode parseMode(String value) {
+        try {
+            return MissionMode.valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            throw new MissionException("MISSION_MODE_INVALID", "Mission mode is unsupported", exception);
+        }
+    }
+
+    private static Optional<ResearchBrief> researchBrief(MissionMode mode, PersonalApiDtos.ResearchBrief value) {
+        if (mode == MissionMode.STANDARD) {
+            if (value != null) {
+                throw new MissionException("MISSION_RESEARCH_BRIEF_FORBIDDEN", "Standard Mission cannot carry a brief");
+            }
+            return Optional.empty();
+        }
+        if (value == null) {
+            throw new MissionException("MISSION_RESEARCH_BRIEF_REQUIRED", "Deep Research requires a brief");
+        }
+        return Optional.of(new ResearchBrief(
+                value.question(),
+                value.scope(),
+                value.timeRange(),
+                value.region(),
+                value.audience(),
+                value.sourcePreferences() == null ? List.of() : value.sourcePreferences(),
+                value.exclusions() == null ? List.of() : value.exclusions(),
+                value.deliveryFormat()));
     }
 
     private MissionTask task(PersonalApiDtos.MissionTask value) {

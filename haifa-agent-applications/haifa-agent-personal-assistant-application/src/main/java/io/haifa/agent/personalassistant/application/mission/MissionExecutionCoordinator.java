@@ -11,13 +11,24 @@ public final class MissionExecutionCoordinator {
     private final MissionRuntimeAccess runtime;
     private final Clock clock;
     private final String dispatcherId;
+    private final MissionResultPublisher publisher;
 
     public MissionExecutionCoordinator(
             MissionExecutionStore store, MissionRuntimeAccess runtime, Clock clock, String dispatcherId) {
+        this(store, runtime, clock, dispatcherId, MissionResultPublisher.unavailable());
+    }
+
+    public MissionExecutionCoordinator(
+            MissionExecutionStore store,
+            MissionRuntimeAccess runtime,
+            Clock clock,
+            String dispatcherId,
+            MissionResultPublisher publisher) {
         this.store = Objects.requireNonNull(store);
         this.runtime = Objects.requireNonNull(runtime);
         this.clock = Objects.requireNonNull(clock);
         this.dispatcherId = MissionValues.text(dispatcherId, "dispatcherId", 256);
+        this.publisher = Objects.requireNonNull(publisher);
     }
 
     /** Performs one bounded reconciliation and dispatch cycle. Safe to invoke again after any process crash. */
@@ -60,6 +71,18 @@ public final class MissionExecutionCoordinator {
                     // recoverable, and the stable Runtime idempotency key returns the same Run next cycle.
                     store.bind(intent, binding.sessionId(), binding.runId(), now());
                 });
+
+        store.claimSynthesis(now()).ifPresent(intent -> {
+            try {
+                MissionRuntimeAccess.SynthesisRunResult synthesis = runtime.runSynthesis(intent);
+                MissionPublishedResult published = publisher.publish(intent, synthesis);
+                runtime.appendFinalMessage(
+                        intent.conversationId(), intent.missionId(), synthesis.runId(), published.finalMessage());
+                store.settleSynthesis(intent, synthesis, published, now());
+            } catch (RuntimeException failure) {
+                store.failSynthesis(intent, safeCode(failure), now());
+            }
+        });
     }
 
     private Instant now() {

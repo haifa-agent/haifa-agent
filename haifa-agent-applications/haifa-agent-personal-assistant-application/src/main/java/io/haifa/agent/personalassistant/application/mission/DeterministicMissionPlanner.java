@@ -17,6 +17,7 @@ public final class DeterministicMissionPlanner implements MissionPlanner {
             String taskId = "task-" + (index + 1);
             List<String> criteria = List.of(request.acceptanceCriteria()
                     .get(Math.min(index, request.acceptanceCriteria().size() - 1)));
+            boolean research = request.mode() == MissionMode.DEEP_RESEARCH;
             tasks.add(new MissionTask(
                     taskId,
                     index + 1,
@@ -24,9 +25,9 @@ public final class DeterministicMissionPlanner implements MissionPlanner {
                     request.objective() + " — " + criteria.getFirst(),
                     criteria,
                     index == 0 ? List.of() : List.of("task-" + index),
-                    "GENERAL",
-                    Set.of(),
-                    "pa.task-result",
+                    research ? "RESEARCH" : "GENERAL",
+                    research ? Set.of("deep-research") : Set.of(),
+                    research ? "pa.research-task-result" : "pa.task-result",
                     "v1",
                     MissionTaskState.PLANNED));
         }
