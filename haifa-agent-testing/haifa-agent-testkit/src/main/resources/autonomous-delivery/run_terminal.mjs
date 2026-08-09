@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const DRIVER_PROTOCOL_VERSION = "1.2.0";
@@ -11,6 +12,8 @@ const RUN_TERMINAL_STATES = ["IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOU
 const RECORDING_COLUMNS = 132;
 const RECORDING_ROWS = 42;
 const MAX_RECORDED_OUTPUT_BYTES = 1024 * 1024;
+const STATUS_ROW_SEQUENCE = `\u001b[${RECORDING_ROWS - 6};1H`;
+const ANSI_CSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
 function fail(message, terminal) {
   if (terminal) terminal.kill();
@@ -38,37 +41,46 @@ function loadPty() {
   fail(`A compatible Node PTY module is required.\n${failures.join("\n")}`);
 }
 
-function waitForMarker(state, marker, label, timeoutMillis) {
-  return new Promise((resolve, reject) => {
-    const deadline = Date.now() + timeoutMillis;
-    const poll = () => {
-      const markerIndex = state.output.indexOf(marker, state.markerOffset);
-      if (markerIndex >= 0) {
-        state.markerOffset = markerIndex + marker.length;
-        resolve();
-      } else if (state.exited) {
-        reject(new Error(`UNEXPECTED EOF waiting for ${label}`));
-      } else if (Date.now() >= deadline) {
-        reject(new Error(`TIMEOUT waiting for ${label}`));
-      } else {
-        setTimeout(poll, 50);
-      }
-    };
-    poll();
-  });
+export function findStatusMarker(output, offset, markers) {
+  let searchOffset = offset;
+  while (searchOffset < output.length) {
+    const rowIndex = output.indexOf(STATUS_ROW_SEQUENCE, searchOffset);
+    if (rowIndex < 0) return null;
+    const nextRowIndex = output.indexOf(
+      STATUS_ROW_SEQUENCE,
+      rowIndex + STATUS_ROW_SEQUENCE.length,
+    );
+    const maximumEnd = Math.min(output.length, rowIndex + 512);
+    const segmentEnd = nextRowIndex < 0 ? maximumEnd : Math.min(nextRowIndex, maximumEnd);
+    const visibleStatus = output
+      .slice(rowIndex + STATUS_ROW_SEQUENCE.length, segmentEnd)
+      .replace(ANSI_CSI_PATTERN, "")
+      .trimStart();
+    const marker = markers.find(
+      (candidate) =>
+        visibleStatus === candidate ||
+        visibleStatus.startsWith(`${candidate} `) ||
+        visibleStatus.startsWith(`${candidate}\r`) ||
+        visibleStatus.startsWith(`${candidate}\n`),
+    );
+    if (marker) {
+      return {
+        marker,
+        nextOffset: rowIndex + STATUS_ROW_SEQUENCE.length,
+      };
+    }
+    searchOffset = rowIndex + STATUS_ROW_SEQUENCE.length;
+  }
+  return null;
 }
 
-function waitForAnyMarker(state, markers, label, timeoutMillis) {
+function waitForStatusMarker(state, markers, label, timeoutMillis) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMillis;
     const poll = () => {
-      const matches = markers
-        .map((marker) => ({ marker, index: state.output.indexOf(marker, state.markerOffset) }))
-        .filter((match) => match.index >= 0)
-        .sort((left, right) => left.index - right.index);
-      if (matches.length > 0) {
-        const match = matches[0];
-        state.markerOffset = match.index + match.marker.length;
+      const match = findStatusMarker(state.output, state.markerOffset, markers);
+      if (match) {
+        state.markerOffset = match.nextOffset;
         resolve(match.marker);
       } else if (state.exited) {
         reject(new Error(`UNEXPECTED EOF waiting for ${label}`));
@@ -234,7 +246,7 @@ async function main() {
   const timeoutMillis = timeoutSeconds * 1000;
   const startedAt = Date.now();
   try {
-    await waitForMarker(state, "IDLE", "terminal startup", timeoutMillis);
+    await waitForStatusMarker(state, ["IDLE"], "terminal startup", timeoutMillis);
     terminalStates.push({ state: "IDLE", atSeconds: recorder.elapsedSeconds() });
     await new Promise((resolve) => setTimeout(resolve, 500));
     const prompt = fs.readFileSync(promptFile, "utf8").trim();
@@ -244,9 +256,9 @@ async function main() {
       characters: Array.from(prompt).length,
     });
     await typeAndSend(terminal, prompt);
-    await waitForMarker(state, "RUNNING", "run start", timeoutMillis);
+    await waitForStatusMarker(state, ["RUNNING"], "run start", timeoutMillis);
     terminalStates.push({ state: "RUNNING", atSeconds: recorder.elapsedSeconds() });
-    const terminalState = await waitForAnyMarker(
+    const terminalState = await waitForStatusMarker(
       state,
       RUN_TERMINAL_STATES,
       "autonomous run completion",
@@ -298,4 +310,6 @@ async function main() {
   process.exit(payload.acceptancePassed ? 0 : 40);
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}
