@@ -222,7 +222,7 @@ Linux/macOS：
 ```bash
 ./mvnw test
 ./mvnw -pl :haifa-agent-runtime-core -am test
-./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
 
 # 唯一可执行制品；无 -m 时默认启动 tui4j Terminal
 ./mvnw -pl :haifa-agent-cli -am package
@@ -234,7 +234,7 @@ Windows PowerShell：
 ```powershell
 .\mvnw.cmd test
 .\mvnw.cmd -pl :haifa-agent-runtime-core -am test
-.\mvnw.cmd --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @('-Pci-fast', 'clean', 'verify')
 
 # 唯一可执行制品；无 -m 时默认启动 tui4j Terminal
 .\mvnw.cmd -pl :haifa-agent-cli -am package

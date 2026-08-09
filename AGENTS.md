@@ -145,14 +145,19 @@ Linux/macOS 使用 `./mvnw`；Windows PowerShell 使用 `.\mvnw.cmd`。
 # 应用 Spotless 格式化
 ./mvnw spotless:apply
 
-# 与 GitHub Actions 一致的最终验证
-./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+# 本地最终验证；统一入口记录指标并使用资源感知的固定并发
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
 
 # 发布配置验证；必须通过 -pl 指定受影响模块，并用 -am 补齐其依赖
 ./mvnw -pl :haifa-agent-runtime-core -am -Prelease verify
 ```
 
 `ci-fast` 默认跳过集成测试。仅在任务明确需要时使用 `-Pci-integration` 或 `-DskipITs=false`。
+
+本地 Maven 开发优先使用 `build-support/scripts/invoke-haifa-maven.ps1`（Windows）或对应的 `.sh`
+入口。L0/L1 默认串行，L2/L3 默认 `-T 4`；不要按本机 CPU 数直接使用 `-T 1C`。入口把脱敏指标
+写入 `local-tmp/maven-build-metrics/`，并原样返回 Maven 退出码。精确语法和分层矩阵见
+[`build-support/README.md`](build-support/README.md)。
 
 运行 `-Prelease verify` 时必须使用 `-pl` 指定本次任务的受影响模块；禁止不带 `-pl` 直接执行全仓 Release 验证，以免产生不必要的长时间构建。
 
@@ -165,6 +170,6 @@ Linux/macOS 使用 `./mvnw`；Windows PowerShell 使用 `.\mvnw.cmd`。
 - 修改范围与任务一致，未覆盖用户已有改动；
 - 模块依赖方向和纯 Java 边界未被破坏；
 - 受影响测试通过，架构测试未被绕过；
-- `-Pci-fast clean verify` 通过，或已明确说明无法运行的原因；
+- 同一 Git SHA 的 L3 `-Pci-fast clean verify` 通过，或已明确说明无法运行的原因；
 - 文档、日志和测试输出不包含秘密或敏感原文；
 - 最终说明列出修改文件、验证命令和任何剩余风险。

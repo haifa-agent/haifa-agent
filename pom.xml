@@ -360,6 +360,7 @@
                     <version>${maven.surefire.plugin.version}</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
+                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
                         <reportsDirectory>${haifa.surefire.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*Test.java</include>
@@ -373,6 +374,7 @@
                     <version>${maven.failsafe.plugin.version}</version>
                     <configuration>
                         <skipITs>${skipITs}</skipITs>
+                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
                         <reportsDirectory>${haifa.failsafe.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*IT.java</include>
