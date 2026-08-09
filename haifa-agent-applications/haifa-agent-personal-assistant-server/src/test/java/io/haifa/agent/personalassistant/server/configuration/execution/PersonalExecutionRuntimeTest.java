@@ -40,9 +40,9 @@ class PersonalExecutionRuntimeTest {
                 .normalize();
         assertThat(Path.of(resolved.environment().get("HOME"))).isEqualTo(userProfile.toRealPath());
         assertThat(resolved.environment())
-                .containsEntry("USERPROFILE", userProfile.toString())
-                .containsEntry("APPDATA", appData.toString())
-                .containsEntry("LOCALAPPDATA", localAppData.toString());
+                .containsEntry("USERPROFILE", userProfile.toRealPath().toString())
+                .containsEntry("APPDATA", appData.toRealPath().toString())
+                .containsEntry("LOCALAPPDATA", localAppData.toRealPath().toString());
         assertThat(pythonUserSite.startsWith(workspace)).isFalse();
         assertThat(workspace.resolve("~")).doesNotExist();
     }

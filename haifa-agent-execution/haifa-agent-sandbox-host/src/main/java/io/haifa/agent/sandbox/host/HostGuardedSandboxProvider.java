@@ -763,8 +763,8 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
             ExecutionOutputObserver observer,
             io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy overflowPolicy,
             java.util.concurrent.atomic.AtomicBoolean outputLimitExceeded) {
+        var output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximum);
         try (input) {
-            var output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximum);
             byte[] buffer = new byte[8192];
             int count;
             while ((count = input.read(buffer)) >= 0) {
@@ -785,7 +785,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
         } catch (IOException exception) {
             notifyObserver(
                     observer, new io.haifa.agent.execution.api.ProcessOutputChunk(channel, new byte[0], true, true));
-            return new BoundedBytes(new byte[0], true);
+            return new BoundedBytes(output.bytes(), true);
         }
     }
 
