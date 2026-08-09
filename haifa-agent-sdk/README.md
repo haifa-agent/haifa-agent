@@ -8,6 +8,8 @@ Products may register trusted `ProductRunProfile` values for bounded one-shot in
 planning. A named profile freezes its model, Run type, budget, limits, version, and provider-neutral structured
 request options into the ordinary Runtime configuration snapshot. `AgentRuns.start(request)` still enters the
 single Runtime start path; a profile is selection data, not a second executor or product-specific Run state machine.
+Profiles may also freeze an optional Tool allowlist. An absent allowlist inherits the Agent definition, an explicit
+empty allowlist freezes no Tools, and a non-empty allowlist must be a subset of the Agent definition.
 
 面向上层 Agent 产品的纯 Java 高层装配与应用边界。SDK 通过可信 `ProductProfile` 和类型化
 `ProductContribution` 确定性解析产品能力，构建唯一 `AgentRuntime`，并提供产品中立的

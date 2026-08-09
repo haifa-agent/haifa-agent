@@ -25,6 +25,7 @@ const DEFAULT_API_ROOT = "http://127.0.0.1:20001/api/v1";
 const API_ROOT = (import.meta.env.VITE_PERSONAL_ASSISTANT_API_BASE_URL?.trim() || DEFAULT_API_ROOT)
   .replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 12_000;
+const MISSION_PLANNING_TIMEOUT_MS = 190_000;
 
 export function missionArtifactUrl(missionId: string, artifactId: string): string {
   return `${API_ROOT}/missions/${encoded(missionId)}/artifacts/${encoded(artifactId)}`;
@@ -141,11 +142,14 @@ function encoded(value: string): string {
   return encodeURIComponent(value);
 }
 
-function boundedSignal(parent?: AbortSignal): { signal: AbortSignal; dispose: () => void } {
+function boundedSignal(
+  parent?: AbortSignal,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): { signal: AbortSignal; dispose: () => void } {
   const controller = new AbortController();
   const timer = window.setTimeout(
     () => controller.abort(new DOMException("Request timed out", "TimeoutError")),
-    DEFAULT_TIMEOUT_MS,
+    timeoutMs,
   );
   const abort = () => controller.abort(parent?.reason);
   parent?.addEventListener("abort", abort, { once: true });
@@ -165,8 +169,9 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     path: string,
     init: RequestInit = {},
     parentSignal?: AbortSignal,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
   ): Promise<T> {
-    const bounded = boundedSignal(parentSignal);
+    const bounded = boundedSignal(parentSignal, timeoutMs);
     try {
       const response = await fetch(`${API_ROOT}${path}`, {
         ...init,
@@ -425,6 +430,7 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
         body: JSON.stringify(request),
       },
       options.signal,
+      MISSION_PLANNING_TIMEOUT_MS,
     );
   }
 
@@ -449,6 +455,7 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
         body: JSON.stringify(request),
       },
       options.signal,
+      MISSION_PLANNING_TIMEOUT_MS,
     );
   }
 

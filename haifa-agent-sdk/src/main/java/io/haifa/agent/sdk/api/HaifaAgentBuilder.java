@@ -207,7 +207,8 @@ public final class HaifaAgentBuilder {
                                 selected.limits(),
                                 snapshot,
                                 resolvedCapabilities(resolution),
-                                selected.modelRequestOptions());
+                                selected.modelRequestOptions(),
+                                selected.allowedTools());
                     });
             model.adapters()
                     .forEach((coordinate, adapter) ->

@@ -12,6 +12,8 @@ import java.util.Map;
 import java.util.Objects;
 
 public final class WebFetchToolProvider implements ToolProvider {
+    static final int DEFAULT_MAX_CHARACTERS = 20_000;
+
     private final WebFetchProvider provider;
     private final WebUrlPolicy urlPolicy;
     private final ToolProviderId id;
@@ -36,17 +38,19 @@ public final class WebFetchToolProvider implements ToolProvider {
             throw WebToolProviderSupport.invalid("web fetch provider received a different tool");
         }
         Map<String, Object> arguments = request.arguments().values();
-        var decision = urlPolicy.evaluate(WebToolProviderSupport.uri(arguments, "url"));
-        if (!decision.allowed()) {
-            throw new ToolInvocationException(
-                    WebFailureCode.WEB_URL_DENIED.name(),
-                    ToolDispatchState.NOT_DISPATCHED,
-                    "web URL was denied by policy: " + decision.denialCode().orElse("URL_DENIED"));
-        }
-        WebContentFormat preferred = WebToolProviderSupport.enumValue(
-                arguments, "preferredFormat", WebContentFormat.class, WebContentFormat.MARKDOWN);
-        int maxCharacters = arguments.get("maxCharacters") instanceof Number value ? value.intValue() : 200_000;
+        String requestedUrl = String.valueOf(arguments.getOrDefault("url", ""));
         try {
+            var decision = urlPolicy.evaluate(WebToolProviderSupport.uri(arguments, "url"));
+            if (!decision.allowed()) {
+                throw new ToolInvocationException(
+                        WebFailureCode.WEB_URL_DENIED.name(),
+                        ToolDispatchState.NOT_DISPATCHED,
+                        "web URL was denied by policy: " + decision.denialCode().orElse("URL_DENIED"));
+            }
+            WebContentFormat preferred = WebToolProviderSupport.enumValue(
+                    arguments, "preferredFormat", WebContentFormat.class, WebContentFormat.MARKDOWN);
+            int maxCharacters =
+                    arguments.get("maxCharacters") instanceof Number value ? value.intValue() : DEFAULT_MAX_CHARACTERS;
             var response = provider.fetch(
                     new WebFetchRequest(decision.normalizedUrl(), preferred, maxCharacters),
                     WebToolProviderSupport.context(request));
@@ -68,6 +72,7 @@ public final class WebFetchToolProvider implements ToolProvider {
             data.put("contentSha256", response.contentSha256());
             data.put("truncated", response.truncated());
             data.put("untrustedExternalContent", true);
+            data.put("sourceAvailable", true);
             return new ToolResult(
                     true,
                     "Fetched untrusted external content through the configured web provider.",
@@ -76,7 +81,16 @@ public final class WebFetchToolProvider implements ToolProvider {
                     List.of(),
                     response.truncated());
         } catch (WebProviderException exception) {
+            if (WebToolProviderSupport.isRecoverableFetchFailure(exception.failureCode(), exception.dispatchState())) {
+                return WebToolProviderSupport.unavailableSource(
+                        requestedUrl, exception.failureCode().name());
+            }
             throw WebToolProviderSupport.map(exception);
+        } catch (ToolInvocationException exception) {
+            if (WebToolProviderSupport.isRecoverableFetchFailure(exception)) {
+                return WebToolProviderSupport.unavailableSource(requestedUrl, exception.failureCode());
+            }
+            throw exception;
         }
     }
 }

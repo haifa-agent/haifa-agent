@@ -8,6 +8,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 /** Trusted named Run profile with frozen model invocation options. */
 public record ProductRunProfile(
@@ -17,7 +19,19 @@ public record ProductRunProfile(
         AgentRunType runType,
         AgentRunBudget budget,
         AgentRunLimits limits,
-        Map<String, Object> modelRequestOptions) {
+        Map<String, Object> modelRequestOptions,
+        Optional<Set<String>> allowedTools) {
+    public ProductRunProfile(
+            String id,
+            String version,
+            String modelId,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            Map<String, Object> modelRequestOptions) {
+        this(id, version, modelId, runType, budget, limits, modelRequestOptions, Optional.empty());
+    }
+
     public ProductRunProfile {
         id = ProductValues.text(id, "id", 128);
         version = ProductValues.text(version, "version", 64);
@@ -27,6 +41,14 @@ public record ProductRunProfile(
         limits = Objects.requireNonNull(limits, "limits must not be null");
         modelRequestOptions =
                 freezeMap(Objects.requireNonNull(modelRequestOptions, "modelRequestOptions must not be null"));
+        allowedTools = Objects.requireNonNull(allowedTools, "allowedTools must not be null")
+                .map(ProductRunProfile::freezeToolAliases);
+    }
+
+    private static Set<String> freezeToolAliases(Set<String> aliases) {
+        return aliases.stream()
+                .map(alias -> ProductValues.text(alias, "allowedTools alias", 128))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     private static Map<String, Object> freezeMap(Map<?, ?> source) {

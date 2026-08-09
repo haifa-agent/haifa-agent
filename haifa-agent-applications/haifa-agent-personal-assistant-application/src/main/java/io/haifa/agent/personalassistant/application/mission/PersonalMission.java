@@ -186,6 +186,16 @@ public final class PersonalMission {
         changed(at);
     }
 
+    public void failPlanning(String code, Instant at) {
+        if (state != MissionState.PLANNING) {
+            throw new MissionException("MISSION_STATE_CONFLICT", "Mission is not being planned");
+        }
+        failureCode = MissionValues.text(code, "failureCode", 128);
+        state = MissionState.FAILED;
+        finishedAt = MissionValues.millisecond(at, "finishedAt");
+        changed(at);
+    }
+
     public Persistence persistence() {
         return new Persistence(
                 missionId,
@@ -323,6 +333,10 @@ public final class PersonalMission {
 
     Optional<Instant> finishedAt() {
         return Optional.ofNullable(finishedAt);
+    }
+
+    Optional<String> failureCode() {
+        return Optional.ofNullable(failureCode);
     }
 
     public record Persistence(

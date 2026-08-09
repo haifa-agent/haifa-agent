@@ -97,11 +97,11 @@ public record PersonalAssistantProperties(
             if (maxWallClockMillis < 1 || maxWallClockMillis > 30 * 60_000L) {
                 throw new IllegalArgumentException("mission.maxWallClockMillis must not exceed 30 minutes");
             }
-            if (maxModelTokens < 1 || maxModelTokens > 200_000) {
-                throw new IllegalArgumentException("mission.maxModelTokens must be between 1 and 200000");
+            if (maxModelTokens < 1 || maxModelTokens > 2_000_000) {
+                throw new IllegalArgumentException("mission.maxModelTokens must be between 1 and 2000000");
             }
-            if (maxToolCalls < 1 || maxToolCalls > 100) {
-                throw new IllegalArgumentException("mission.maxToolCalls must be between 1 and 100");
+            if (maxToolCalls < 1 || maxToolCalls > 200) {
+                throw new IllegalArgumentException("mission.maxToolCalls must be between 1 and 200");
             }
             if (maxArtifacts < 5 || maxArtifacts > 8) {
                 throw new IllegalArgumentException("mission.maxArtifacts must be between 5 and 8");

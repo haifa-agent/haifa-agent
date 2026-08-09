@@ -89,6 +89,21 @@ class MissionArtifactPublisherTest {
     }
 
     @Test
+    void serverOwnsCanonicalSourceIdentityInsteadOfTrustingModelHashes() throws Exception {
+        ObjectNode task = validTask();
+        ObjectNode source = (ObjectNode) task.path("sources").get(0);
+        source.put("locator", "https://RESEARCH.stub:443/a/../source-1?utm_source=model#fragment");
+        source.put("normalizedLocator", "https://untrusted.invalid/model-value");
+        source.put("locatorDigest", "sha256:" + "0".repeat(64));
+
+        AtomicInteger ids = new AtomicInteger();
+        var published = publisher(new InMemoryArtifactStore(), () -> "artifact-" + ids.incrementAndGet())
+                .publish(intent(task), synthesis(validFinal()));
+
+        assertThat(published.sources()).contains("https://research.stub/source-1");
+    }
+
+    @Test
     void rejectsSynthesisThatOmitsUnverifiedClaimOrInventsArtifactReference() throws Exception {
         ObjectNode task = validTask();
         ((ObjectNode) task.path("claims").get(0)).put("unverified", true);

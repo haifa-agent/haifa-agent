@@ -39,6 +39,10 @@ class PersonalSkillPlatformTest {
         assertThat(binding.coordinate().declaredVersion())
                 .hasValueSatisfying(version -> assertThat(version.value()).isEqualTo("1.0.0"));
         assertThat(binding.coordinate().source().sourceId()).isEqualTo("personal-assistant-bundled");
+        assertThat(binding.metadata().toolHints())
+                .extracting(value -> value.value())
+                .containsExactlyInAnyOrder(
+                        "web_search", "web_fetch", "utility_wikipedia_search", "utility_wikipedia_summary");
         assertThat(platform.bindingReferences().get("deep-research"))
                 .isEqualTo(binding.coordinate().externalForm())
                 .contains("product", "personal-assistant-bundled@1", "deep-research@1.0.0#sha256:");
@@ -50,6 +54,7 @@ class PersonalSkillPlatformTest {
                         "schemas/research-task-result-v1.json",
                         "schemas/research-final-result-v1.json",
                         "templates/report.md");
+        assertThat(platform.load("deep-research", TENANT, PRINCIPAL)).isEqualTo(content);
     }
 
     @Test

@@ -205,6 +205,48 @@ class BootstrapCapabilityTest {
     }
 
     @Test
+    void runProfileToolAllowlistNarrowsTheFrozenAgentTools() {
+        var readBinding = TestToolPlatform.binding("read", "1.0.0", "read.input", false);
+        var writeBinding = TestToolPlatform.binding("write", "1.0.0", "write.input", true);
+        var definition = new ResolvedDefinition(
+                new AgentDefinitionId("agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                Set.of("read", "write"),
+                Set.of(),
+                "Complete the objective.");
+        var base = profile(Map.of());
+        var readOnly = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                base.modelRequestOptions(),
+                Optional.of(Set.of("read")));
+        var factory = new ContentAddressedSnapshotFactory(
+                new ToolCatalogSnapshot(readBinding.catalogDigest(), List.of(readBinding, writeBinding)));
+
+        var snapshot = factory.create(request(false), definition, readOnly, CALLER, List.of());
+
+        assertThat(snapshot.toolBindings()).containsExactly(readBinding);
+        var invalid = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                base.modelRequestOptions(),
+                Optional.of(Set.of("outside-agent")));
+        assertThatThrownBy(() -> factory.create(request(false), definition, invalid, CALLER, List.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("subset");
+    }
+
+    @Test
     void skillBindingIsFrozenActivatedIdempotentlyAndUnavailableAliasesAreDenied() {
         var source = BaseSkills.source();
         var visibility = new SkillVisibilityContext(

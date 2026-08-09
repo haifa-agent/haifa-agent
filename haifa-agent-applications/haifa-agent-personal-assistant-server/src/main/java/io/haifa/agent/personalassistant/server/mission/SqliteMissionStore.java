@@ -300,7 +300,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         if (maxAutoAttempts < 1 || maxTotalAttempts < maxAutoAttempts || maxTotalAttempts > 3) {
             throw new IllegalArgumentException("Mission Attempt limits are invalid");
         }
-        if (maxModelTokens < 1 || maxModelTokens > 200_000 || maxToolCalls < 1 || maxToolCalls > 100) {
+        if (maxModelTokens < 1 || maxModelTokens > 2_000_000 || maxToolCalls < 1 || maxToolCalls > 200) {
             throw new IllegalArgumentException("Mission usage limits are invalid");
         }
         try {

@@ -109,6 +109,11 @@ its first reconciliation, and a successful Artifact integrity check. Shutdown st
 waits for the bounded convergence window, and leaves durable work recoverable when the window
 expires.
 
+The default Mission-wide model-token budget is 1,500,000 (configurable up to 2,000,000). It covers a bounded
+multi-task Deep Research run, one automatic task retry, and its final synthesis. The independent Tool-call budget
+defaults to 180 (configurable up to 200)
+and does not widen any stage's explicit Tool allowlist.
+
 Phase 3 adds product schema V5 for the frozen Mission-level Skill binding and uses shared Runtime
 schema V7 Artifact metadata plus an application-owned, no-follow payload directory. Deep Research
 uses only the approved `web.search` / `web.fetch` pipeline, validates canonical source identities,

@@ -206,7 +206,6 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             }
             JsonNode taskSources = requiredArray(task, "sources", maxSources);
             if (limits.get("sources").intValue() != taskSources.size()
-                    || limits.get("searchCalls").intValue() < 1
                     || limits.get("fetchCalls").intValue()
                             < java.util.stream.StreamSupport.stream(taskSources.spliterator(), false)
                                     .filter(source -> "FETCHED"
@@ -246,10 +245,9 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         stableId(source, "sourceId");
         String locator = requiredText(source, "locator", 4_096);
         ResearchSourceLocator.Normalized normalized = ResearchSourceLocator.normalize(locator);
-        if (!normalized.locator().equals(requiredText(source, "normalizedLocator", 4_096))
-                || !normalized.digest().equals(requiredText(source, "locatorDigest", 80))) {
-            invalid("Source locator identity is inconsistent");
-        }
+        ObjectNode canonical = (ObjectNode) source;
+        canonical.put("normalizedLocator", normalized.locator());
+        canonical.put("locatorDigest", normalized.digest());
         requiredText(source, "title", 1_024);
         if (!SOURCE_SAFETY_TYPES.contains(requiredText(source, "safetyType", 64))) {
             invalid("Source safety type is invalid");

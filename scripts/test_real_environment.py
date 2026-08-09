@@ -153,6 +153,20 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertIn(r".\scripts\start-real-environment.ps1 -Stop", message)
         self.assertIn(r".\scripts\start-real-environment.ps1 -Rebuild", message)
 
+    def test_backend_build_uses_the_repository_unit_test_skip_property(self) -> None:
+        self.assertEqual(
+            (
+                "-pl",
+                ":haifa-agent-personal-assistant-server",
+                "-am",
+                "-DskipUnitTests=true",
+                "clean",
+                "package",
+            ),
+            real_environment.backend_build_arguments(True),
+        )
+        self.assertNotIn("-DskipTests", real_environment.backend_build_arguments(False))
+
     def test_state_is_written_atomically_as_utf8_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "state.json"

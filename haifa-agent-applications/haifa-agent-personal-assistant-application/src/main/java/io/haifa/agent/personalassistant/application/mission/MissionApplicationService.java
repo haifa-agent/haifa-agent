@@ -104,22 +104,28 @@ public final class MissionApplicationService {
         });
         PersonalMission mission = unitOfWork.execute(() -> require(binding.missionId(), command.ownerScope()));
         if (mission.state() == MissionState.PLANNING) {
-            MissionPlanner.PlanningResult planned = planner.plan(new MissionPlanner.PlanningRequest(
-                    mission.missionId(),
-                    mission.objective(),
-                    mission.acceptanceCriteria(),
-                    mission.constraints(),
-                    mission.persistence().revisions().size() + 1,
-                    mission.mode(),
-                    mission.researchBrief()));
-            validatePlannerSchema(planned);
-            mission.proposePlan(planned.tasks(), planned.plannerSessionId(), planned.plannerRunId(), validator, now());
-            long expected = mission.version() - 1;
-            unitOfWork.execute(() -> {
-                PersonalMission current = require(binding.missionId(), command.ownerScope());
-                if (current.state() == MissionState.PLANNING) store.save(mission, expected);
-                return null;
-            });
+            try {
+                MissionPlanner.PlanningResult planned = planner.plan(new MissionPlanner.PlanningRequest(
+                        mission.missionId(),
+                        mission.objective(),
+                        mission.acceptanceCriteria(),
+                        mission.constraints(),
+                        mission.persistence().revisions().size() + 1,
+                        mission.mode(),
+                        mission.researchBrief()));
+                validatePlannerSchema(planned);
+                mission.proposePlan(
+                        planned.tasks(), planned.plannerSessionId(), planned.plannerRunId(), validator, now());
+                long expected = mission.version() - 1;
+                unitOfWork.execute(() -> {
+                    PersonalMission current = require(binding.missionId(), command.ownerScope());
+                    if (current.state() == MissionState.PLANNING) store.save(mission, expected);
+                    return null;
+                });
+            } catch (RuntimeException failure) {
+                failPlanning(binding.missionId(), command.ownerScope(), planningFailureCode(failure));
+                throw failure;
+            }
         }
         return unitOfWork.execute(() -> snapshot(require(binding.missionId(), command.ownerScope())));
     }
@@ -273,6 +279,22 @@ public final class MissionApplicationService {
     private PersonalMission require(String missionId, String ownerScope) {
         return store.find(missionId, ownerScope)
                 .orElseThrow(() -> new MissionException("MISSION_NOT_FOUND", "Mission is unavailable"));
+    }
+
+    private void failPlanning(String missionId, String ownerScope, String failureCode) {
+        unitOfWork.execute(() -> {
+            PersonalMission current = require(missionId, ownerScope);
+            if (current.state() == MissionState.PLANNING) {
+                long expected = current.version();
+                current.failPlanning(failureCode, now());
+                store.save(current, expected);
+            }
+            return null;
+        });
+    }
+
+    private static String planningFailureCode(RuntimeException failure) {
+        return failure instanceof MissionException missionFailure ? missionFailure.code() : "MISSION_PLANNER_FAILED";
     }
 
     private Instant now() {

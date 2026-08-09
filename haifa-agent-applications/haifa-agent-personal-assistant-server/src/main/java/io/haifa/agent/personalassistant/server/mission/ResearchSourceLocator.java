@@ -42,9 +42,10 @@ final class ResearchSourceLocator {
 
     private static String normalizeQuery(String query) {
         if (query == null || query.isBlank()) return null;
-        return java.util.Arrays.stream(query.split("&", -1))
+        String normalized = java.util.Arrays.stream(query.split("&", -1))
                 .filter(ResearchSourceLocator::notTracking)
                 .collect(java.util.stream.Collectors.joining("&"));
+        return normalized.isBlank() ? null : normalized;
     }
 
     private static boolean notTracking(String parameter) {

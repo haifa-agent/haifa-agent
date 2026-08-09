@@ -37,10 +37,12 @@ import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /** Explicit Composition helper; no classpath scanning or Bean ordering participates in product assembly. */
 public final class PersonalAssistantAssembler {
@@ -87,6 +89,12 @@ public final class PersonalAssistantAssembler {
                     mcp.aliases(),
                     dependencies.web().aliases(),
                     tools.trustedScriptToolAliases());
+            Set<String> plannerTools = new LinkedHashSet<>(dependencies.web().aliases());
+            mcp.aliases().stream()
+                    .filter(alias ->
+                            alias.equals("utility_wikipedia_search") || alias.equals("utility_wikipedia_summary"))
+                    .forEach(plannerTools::add);
+            Set<String> researchTaskTools = new LinkedHashSet<>(plannerTools);
             var agent = HaifaAgents.builder(profile)
                     .callerProvider(dependencies.callers())
                     .timeProvider(dependencies.clock()::instant)
@@ -99,17 +107,36 @@ public final class PersonalAssistantAssembler {
                             "1.0.0",
                             dependencies.modelCatalog().defaultModelId(),
                             AgentRunType.CHAT,
-                            new AgentRunBudget(32_000, 8_000, 32_000, 0, 1, 0, "USD", 0),
-                            new AgentRunLimits(2, 0, 1, 120_000, 120_000),
-                            Map.of("response_format", Map.of("type", "json_object"))))
+                            new AgentRunBudget(64_000, 8_000, 64_000, 8, 5, 0, "USD", 0),
+                            new AgentRunLimits(8, 0, 1, 180_000, 120_000),
+                            Map.of("response_format", Map.of("type", "json_object")),
+                            java.util.Optional.of(Set.copyOf(plannerTools))))
                     .runProfile(new ProductRunProfile(
                             SdkMissionRuntimeAccess.TASK_RUN_PROFILE,
                             "1.0.0",
                             dependencies.modelCatalog().defaultModelId(),
                             AgentRunType.CHAT,
-                            new AgentRunBudget(64_000, 16_000, 64_000, 16, 8, 0, "USD", 0),
-                            new AgentRunLimits(16, 0, 1, 600_000, 120_000),
-                            Map.of("response_format", Map.of("type", "json_object"))))
+                            new AgentRunBudget(
+                                    192_000,
+                                    32_000,
+                                    192_000,
+                                    SdkMissionRuntimeAccess.TASK_MAX_TOOL_CALLS,
+                                    12,
+                                    0,
+                                    "USD",
+                                    0),
+                            new AgentRunLimits(24, 0, 1, 600_000, 240_000),
+                            Map.of(),
+                            java.util.Optional.of(Set.copyOf(researchTaskTools))))
+                    .runProfile(new ProductRunProfile(
+                            SdkMissionRuntimeAccess.TASK_NORMALIZER_RUN_PROFILE,
+                            "1.0.0",
+                            dependencies.modelCatalog().defaultModelId(),
+                            AgentRunType.CHAT,
+                            new AgentRunBudget(64_000, 8_192, 64_000, 0, 2, 0, "USD", 0),
+                            new AgentRunLimits(2, 0, 1, 120_000, 120_000),
+                            Map.of("response_format", Map.of("type", "json_object")),
+                            java.util.Optional.of(Set.of())))
                     .runProfile(new ProductRunProfile(
                             SdkMissionRuntimeAccess.SYNTHESIS_RUN_PROFILE,
                             "1.0.0",
@@ -117,7 +144,8 @@ public final class PersonalAssistantAssembler {
                             AgentRunType.CHAT,
                             new AgentRunBudget(64_000, 16_000, 64_000, 0, 1, 0, "USD", 0),
                             new AgentRunLimits(2, 0, 1, 120_000, 120_000),
-                            Map.of("response_format", Map.of("type", "json_object"))))
+                            Map.of("response_format", Map.of("type", "json_object")),
+                            java.util.Optional.of(Set.of())))
                     .contribute(dependencies.model())
                     .contribute(dependencies.persistence())
                     .contribute(dependencies.conversation())
@@ -148,7 +176,11 @@ public final class PersonalAssistantAssembler {
                             dependencies.principal(),
                             dependencies.clock()::instant,
                             dependencies.modelCatalog(),
-                            dependencies.modelCatalog().defaultModelId()),
+                            dependencies.modelCatalog().defaultModelId(),
+                            skills.load(
+                                    PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS,
+                                    dependencies.tenant(),
+                                    dependencies.principal())),
                     dependencies.artifact().service(),
                     skills.bindingReferences());
         } catch (RuntimeException | Error exception) {

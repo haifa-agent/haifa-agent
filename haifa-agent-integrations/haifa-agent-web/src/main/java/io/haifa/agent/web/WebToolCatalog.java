@@ -186,6 +186,9 @@ public final class WebToolCatalog {
                         objectSchema(resultProperties, List.of("rank", "title", "url", "snippet"))));
         properties.put("truncated", Map.of("type", "boolean"));
         properties.put("untrustedExternalContent", Map.of("type", "boolean", "const", true));
+        properties.put("searchResultsAvailable", Map.of("type", "boolean"));
+        properties.put("failureCode", Map.of("type", "string"));
+        properties.put("retryWithRefinedQuery", Map.of("type", "boolean"));
         return objectSchema(properties, List.of("query", "results", "truncated", "untrustedExternalContent"));
     }
 
@@ -193,7 +196,17 @@ public final class WebToolCatalog {
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("url", Map.of("type", "string", "minLength", 1, "maxLength", 4096));
         properties.put("preferredFormat", Map.of("type", "string", "enum", List.of("markdown", "text")));
-        properties.put("maxCharacters", Map.of("type", "integer", "minimum", 1, "maximum", 1_000_000));
+        properties.put(
+                "maxCharacters",
+                Map.of(
+                        "type",
+                        "integer",
+                        "minimum",
+                        1,
+                        "maximum",
+                        1_000_000,
+                        "default",
+                        WebFetchToolProvider.DEFAULT_MAX_CHARACTERS));
         return objectSchema(properties, List.of("url"));
     }
 
@@ -209,6 +222,9 @@ public final class WebToolCatalog {
         properties.put("contentSha256", Map.of("type", "string", "minLength", 64, "maxLength", 64));
         properties.put("truncated", Map.of("type", "boolean"));
         properties.put("untrustedExternalContent", Map.of("type", "boolean", "const", true));
+        properties.put("sourceAvailable", Map.of("type", "boolean"));
+        properties.put("failureCode", Map.of("type", "string"));
+        properties.put("retryWithAnotherSource", Map.of("type", "boolean"));
         return objectSchema(
                 properties,
                 List.of(

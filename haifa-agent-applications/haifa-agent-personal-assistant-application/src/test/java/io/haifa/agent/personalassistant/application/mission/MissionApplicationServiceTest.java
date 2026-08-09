@@ -17,6 +17,32 @@ class MissionApplicationServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-08-08T00:00:00Z"), ZoneOffset.UTC);
 
     @Test
+    void plannerFailureConvergesThePersistedMissionToFailed() {
+        InMemoryMissionStore store = new InMemoryMissionStore();
+        MissionApplicationService service = new MissionApplicationService(
+                store,
+                store,
+                request -> {
+                    throw new MissionException("MODEL_RESPONSE_INVALID", "planner response was invalid");
+                },
+                MissionPlanValidator.phaseOne(),
+                () -> "mission-failed",
+                CLOCK);
+
+        assertThatThrownBy(() -> service.create(command("create-failed", "conversation-failed", "Research")))
+                .isInstanceOf(MissionException.class)
+                .extracting(value -> ((MissionException) value).code())
+                .isEqualTo("MODEL_RESPONSE_INVALID");
+
+        MissionSnapshot failed =
+                service.find("mission-failed", "local/public-user").orElseThrow();
+        assertThat(failed.state()).isEqualTo(MissionState.FAILED);
+        assertThat(failed.failureCode()).contains("MODEL_RESPONSE_INVALID");
+        assertThat(failed.finishedAt()).contains(CLOCK.instant());
+        assertThat(store.findActive("conversation-failed", "local/public-user")).isEmpty();
+    }
+
+    @Test
     void createReplaceConfirmAndCancelAreIdempotent() {
         InMemoryMissionStore store = new InMemoryMissionStore();
         AtomicInteger ids = new AtomicInteger();
