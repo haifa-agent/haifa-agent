@@ -8,9 +8,13 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.BasicFileAttributeView;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -37,12 +41,27 @@ class SecureFilePermissionsTest {
     @Test
     void failsClosedWhenTheFrozenDirectoryIdentityChanges() throws Exception {
         Path root = Files.createDirectory(directory.resolve("root"));
+        BasicFileAttributes originalAttributes = attributes(root);
         var originalFileStore = Files.getFileStore(root);
         var strategy = SecureFilePermissions.strategyForDirectory(root);
         strategy.secureDirectory(root);
 
         Files.move(root, directory.resolve("original"));
         Files.createDirectory(root);
+        BasicFileAttributes replacementAttributes = attributes(root);
+        if (sameIdentity(originalAttributes, replacementAttributes)) {
+            BasicFileAttributeView view = Files.getFileAttributeView(root, BasicFileAttributeView.class);
+            if (view != null) {
+                view.setTimes(
+                        null,
+                        null,
+                        FileTime.fromMillis(originalAttributes.creationTime().toMillis() + 2_000));
+                replacementAttributes = attributes(root);
+            }
+        }
+        Assumptions.assumeFalse(
+                sameIdentity(originalAttributes, replacementAttributes),
+                "filesystem cannot expose a distinct replacement directory identity");
 
         if (System.getProperty("os.name", "").startsWith("Mac")) {
             assertThat(Files.getFileStore(root)).isEqualTo(originalFileStore);
@@ -56,6 +75,15 @@ class SecureFilePermissionsTest {
         assertThatThrownBy(() -> strategy.secureExistingFiles(List.of(replacementFile)))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("identity changed");
+    }
+
+    private static BasicFileAttributes attributes(Path path) throws IOException {
+        return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+    }
+
+    private static boolean sameIdentity(BasicFileAttributes first, BasicFileAttributes second) {
+        return Objects.equals(first.fileKey(), second.fileKey())
+                && first.creationTime().equals(second.creationTime());
     }
 
     @Test
