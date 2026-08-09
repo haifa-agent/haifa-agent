@@ -28,7 +28,8 @@ public final class ProgressLedger {
             }
             String family = firstText(data, "operationFamily").orElse("UNKNOWN");
             String status = firstText(data, "status").orElse("");
-            if ((family.equals("TEST") || family.equals("BUILD")) && status.equals("SUCCEEDED")) {
+            if ((family.equals("TEST") || family.equals("BUILD") || family.equals("DIFF"))
+                    && status.equals("SUCCEEDED")) {
                 changed |= addDigest(ProgressEvidence.Type.VALIDATION_ADVANCE, validationDigest(call, family, status));
             }
         } else if (call.status() == ToolCallStatus.FAILED) {

@@ -180,16 +180,23 @@ class AutonomousDeliveryRecoveryControlTest {
     void distinctSuccessfulValidationCommandsAdvanceProgressWithoutRewardingExactRepeats() {
         var ledger = new ProgressLedger();
 
-        assertThat(ledger.observe(successfulValidation("validation-1", "python -m unittest")))
+        assertThat(ledger.observe(successfulValidation("validation-1", "TEST", "python -m unittest")))
                 .isTrue();
-        assertThat(ledger.observe(successfulValidation("validation-2", "python -m unittest")))
+        assertThat(ledger.observe(successfulValidation("validation-2", "TEST", "python -m unittest")))
                 .isFalse();
-        assertThat(ledger.observe(successfulValidation("validation-3", "python acceptance.py")))
+        assertThat(ledger.observe(successfulValidation("validation-3", "DIFF", "git diff --check")))
+                .isTrue();
+        assertThat(ledger.observe(successfulValidation("validation-4", "DIFF", "git diff --check")))
+                .isFalse();
+        assertThat(ledger.observe(successfulValidation("validation-5", "TEST", "python acceptance.py")))
                 .isTrue();
 
         assertThat(ledger.evidence())
                 .extracting(ProgressEvidence::type)
-                .containsExactly(ProgressEvidence.Type.VALIDATION_ADVANCE, ProgressEvidence.Type.VALIDATION_ADVANCE);
+                .containsExactly(
+                        ProgressEvidence.Type.VALIDATION_ADVANCE,
+                        ProgressEvidence.Type.VALIDATION_ADVANCE,
+                        ProgressEvidence.Type.VALIDATION_ADVANCE);
     }
 
     @Test
@@ -356,8 +363,8 @@ class AutonomousDeliveryRecoveryControlTest {
         return call;
     }
 
-    private static ToolCall successfulValidation(String id, String command) {
-        ToolCall call = requested(id, Map.of("operationFamily", "TEST", "command", command, "workdir", "."));
+    private static ToolCall successfulValidation(String id, String operationFamily, String command) {
+        ToolCall call = requested(id, Map.of("operationFamily", operationFamily, "command", command, "workdir", "."));
         call.beginValidation();
         call.beginPolicyCheck();
         call.start(NOW.plusSeconds(1));
@@ -365,7 +372,7 @@ class AutonomousDeliveryRecoveryControlTest {
                 new ToolResult(
                         true,
                         "bounded success",
-                        Map.of("operationFamily", "TEST", "status", "SUCCEEDED"),
+                        Map.of("operationFamily", operationFamily, "status", "SUCCEEDED"),
                         List.of(),
                         List.of(),
                         false),
