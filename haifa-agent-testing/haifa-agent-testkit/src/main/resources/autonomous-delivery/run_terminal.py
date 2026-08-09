@@ -18,6 +18,7 @@ RUN_TERMINAL_STATES = ("IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT")
 RECORDING_COLUMNS = 132
 RECORDING_ROWS = 42
 MAX_RECORDED_OUTPUT_BYTES = 1024 * 1024
+MAX_TERMINAL_TRANSITION_WAIT_SECONDS = 120
 STATUS_ROW_SEQUENCE = f"\x1b[{RECORDING_ROWS - 6};1H".encode("ascii")
 ANSI_CSI_PATTERN = rb"\x1b\[[0-?]*[ -/]*[@-~]"
 
@@ -144,6 +145,7 @@ def main() -> int:
         timeout_value,
     ) = sys.argv[1:]
     timeout = int(timeout_value)
+    transition_timeout = min(timeout, MAX_TERMINAL_TRANSITION_WAIT_SECONDS)
     prompt = Path(prompt_file).read_text("utf-8").strip()
     started_at = time.time()
     recorder = AsciicastRecorder()
@@ -176,7 +178,7 @@ def main() -> int:
     )
     child.logfile_read = recorder
 
-    wait_for(child, "IDLE", "terminal startup", timeout)
+    wait_for(child, "IDLE", "terminal startup", transition_timeout)
     terminal_states.append({"state": "IDLE", "atSeconds": recorder.elapsed_seconds()})
     time.sleep(0.5)
     input_timeline.append(
@@ -187,7 +189,7 @@ def main() -> int:
         }
     )
     type_and_send(child, prompt)
-    wait_for(child, "RUNNING", "run start", timeout)
+    wait_for(child, "RUNNING", "run start", transition_timeout)
     terminal_states.append({"state": "RUNNING", "atSeconds": recorder.elapsed_seconds()})
     terminal_state = wait_for_any(child, RUN_TERMINAL_STATES, "autonomous run completion", timeout)
     terminal_states.append({"state": terminal_state, "atSeconds": recorder.elapsed_seconds()})

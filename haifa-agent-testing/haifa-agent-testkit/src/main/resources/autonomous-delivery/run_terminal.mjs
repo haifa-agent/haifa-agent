@@ -12,6 +12,7 @@ const RUN_TERMINAL_STATES = ["IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOU
 const RECORDING_COLUMNS = 132;
 const RECORDING_ROWS = 42;
 const MAX_RECORDED_OUTPUT_BYTES = 1024 * 1024;
+const MAX_TERMINAL_TRANSITION_WAIT_MILLIS = 120_000;
 const STATUS_ROW_SEQUENCE = `\u001b[${RECORDING_ROWS - 6};1H`;
 const ANSI_CSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
@@ -244,9 +245,10 @@ async function main() {
   });
 
   const timeoutMillis = timeoutSeconds * 1000;
+  const transitionTimeoutMillis = Math.min(timeoutMillis, MAX_TERMINAL_TRANSITION_WAIT_MILLIS);
   const startedAt = Date.now();
   try {
-    await waitForStatusMarker(state, ["IDLE"], "terminal startup", timeoutMillis);
+    await waitForStatusMarker(state, ["IDLE"], "terminal startup", transitionTimeoutMillis);
     terminalStates.push({ state: "IDLE", atSeconds: recorder.elapsedSeconds() });
     await new Promise((resolve) => setTimeout(resolve, 500));
     const prompt = fs.readFileSync(promptFile, "utf8").trim();
@@ -256,7 +258,7 @@ async function main() {
       characters: Array.from(prompt).length,
     });
     await typeAndSend(terminal, prompt);
-    await waitForStatusMarker(state, ["RUNNING"], "run start", timeoutMillis);
+    await waitForStatusMarker(state, ["RUNNING"], "run start", transitionTimeoutMillis);
     terminalStates.push({ state: "RUNNING", atSeconds: recorder.elapsedSeconds() });
     const terminalState = await waitForStatusMarker(
       state,

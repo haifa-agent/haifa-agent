@@ -103,6 +103,8 @@ Contract、共享父子进程树主动收敛，以及 Manifest 后的 Evidence F
 避免模型正文或工具输出中的同名词误触发结算，也避免失败 Run 继续等待完整 Case 超时。Java Contract 复核录像格式、事件顺序、大小与摘要。Campaign 和 Fixture 私有目录复用
 `SecureFilePermissions`：POSIX 使用 owner-only 权限，Windows 使用当前用户独占 ACL；证据发布后
 递归复核 POSIX 只读权限或 Windows ACL/DOS 只读属性。平台脚本不复制 Case、预算、Oracle 或 Gate。
+Driver 对首屏 `IDLE` 和提交后的 `RUNNING` 转换各设置 120 秒上限；进入 `RUNNING` 后才使用 Suite 的
+完整 Case 墙钟预算，避免 PTY 启动故障占满长任务预算。
 
 `phase-1-gate --execute` 串行驱动生产 Coding Terminal，为每个 Case/Repeat 创建独立 Workspace、
 SQLite、JSONL Transcript、Trace 与会话录像，并在 Workspace 外执行固定 Acceptance。Harness 从

@@ -14,6 +14,7 @@ class TerminalDriverScriptContractTest {
         String driver = resource("autonomous-delivery/run_terminal.mjs");
 
         assertTrue(driver.contains("STATUS_ROW_SEQUENCE"));
+        assertTrue(driver.contains("MAX_TERMINAL_TRANSITION_WAIT_MILLIS = 120_000"));
         assertTrue(driver.contains("findStatusMarker"));
         assertTrue(driver.contains("visibleStatus.startsWith"));
         assertFalse(driver.contains("state.output.indexOf(marker"));
@@ -24,6 +25,7 @@ class TerminalDriverScriptContractTest {
         String driver = resource("autonomous-delivery/run_terminal.py");
 
         assertTrue(driver.contains("STATUS_ROW_SEQUENCE"));
+        assertTrue(driver.contains("MAX_TERMINAL_TRANSITION_WAIT_SECONDS = 120"));
         assertTrue(driver.contains("status_pattern"));
         assertFalse(driver.contains("expect_exact(marker.encode"));
     }
