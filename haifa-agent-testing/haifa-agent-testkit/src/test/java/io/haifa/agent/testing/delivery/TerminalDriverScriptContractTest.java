@@ -10,14 +10,16 @@ import org.junit.jupiter.api.Test;
 
 class TerminalDriverScriptContractTest {
     @Test
-    void windowsDriverRecognizesStatesOnlyOnTheTuiStatusRow() throws IOException {
+    void windowsDriverRecognizesStatesOnlyFromTheRenderedTuiFooter() throws IOException {
         String driver = resource("autonomous-delivery/run_terminal.mjs");
 
-        assertTrue(driver.contains("STATUS_ROW_SEQUENCE"));
+        assertTrue(driver.contains("class VirtualScreen"));
         assertTrue(driver.contains("MAX_TERMINAL_TRANSITION_WAIT_MILLIS = 120_000"));
         assertTrue(driver.contains("findStatusMarker"));
-        assertTrue(driver.contains("visibleStatus.startsWith"));
+        assertTrue(driver.contains("state.screen.text()"));
+        assertTrue(driver.contains(".at(-1)"));
         assertFalse(driver.contains("state.output.indexOf(marker"));
+        assertFalse(driver.contains("STATUS_ROW_SEQUENCE"));
     }
 
     @Test
