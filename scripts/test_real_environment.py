@@ -145,7 +145,8 @@ class RealEnvironmentTest(unittest.TestCase):
             real_environment.validate_arguments(arguments)
 
     def test_default_model_can_select_a_configured_deepseek_api_style(self) -> None:
-        with mock.patch.dict(real_environment.os.environ, {}, clear=True):
+        with mock.patch.dict(real_environment.os.environ):
+            real_environment.os.environ.pop("HAIFA_PERSONAL_DEFAULT_MODEL_ID", None)
             default_arguments = real_environment.parser().parse_args([])
         chat_arguments = real_environment.parser().parse_args(
             ["--default-model-id", "deepseek-chat-flash"]
