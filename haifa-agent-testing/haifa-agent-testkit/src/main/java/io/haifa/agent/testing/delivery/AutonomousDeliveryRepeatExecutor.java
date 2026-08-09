@@ -132,8 +132,9 @@ final class AutonomousDeliveryRepeatExecutor {
         String after = workspaceDigest(workspace);
         Files.writeString(repeat.resolve("workspace-after.sha256"), after + "\n", StandardOpenOption.CREATE_NEW);
         runGit(toolchains, workspace, repeat.resolve("workspace.diff"), "diff", "--binary", "--no-ext-diff");
-        AutonomousDeliveryRuntimeEvidenceReader.Evidence authoritative =
-                new AutonomousDeliveryRuntimeEvidenceReader(json).read(repeat.resolve("runtime.db"));
+        AutonomousDeliveryRuntimeEvidenceReader.Evidence authoritative = new AutonomousDeliveryRuntimeEvidenceReader(
+                        json)
+                .readOrUnavailable(repeat.resolve("runtime.db"), driverExit != 0 && driverEvidence == null);
         long wallTimeMillis = Math.round(wallSeconds * 1000.0);
         int iterations = maximumIteration(repeat.resolve("trace-detail.jsonl"));
         boolean withinBudget = authoritative.modelCalls() <= suite.budget().maxModelCalls()

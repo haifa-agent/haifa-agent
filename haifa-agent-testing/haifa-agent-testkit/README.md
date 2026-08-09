@@ -104,7 +104,8 @@ Contract、共享父子进程树主动收敛，以及 Manifest 后的 Evidence F
 `SecureFilePermissions`：POSIX 使用 owner-only 权限，Windows 使用当前用户独占 ACL；证据发布后
 递归复核 POSIX 只读权限或 Windows ACL/DOS 只读属性。平台脚本不复制 Case、预算、Oracle 或 Gate。
 Driver 对首屏 `IDLE` 和提交后的 `RUNNING` 转换各设置 120 秒上限；进入 `RUNNING` 后才使用 Suite 的
-完整 Case 墙钟预算，避免 PTY 启动故障占满长任务预算。
+完整 Case 墙钟预算，避免 PTY 启动故障占满长任务预算。Driver 在生成 Result Evidence 前失败且 SQLite
+尚无 Run 时，Repeat 以 `NOT_STARTED` 的零用量证据 fail closed，而不是让 `IOException` 中断整个批次。
 
 `phase-1-gate --execute` 串行驱动生产 Coding Terminal，为每个 Case/Repeat 创建独立 Workspace、
 SQLite、JSONL Transcript、Trace 与会话录像，并在 Workspace 外执行固定 Acceptance。Harness 从
