@@ -43,6 +43,7 @@ class RealEnvironmentTest(unittest.TestCase):
 
         environment = real_environment.backend_environment(
             "deepseek-secret",
+            "deepseek-responses-flash",
             ("http://127.0.0.1:30000/v1", "openai-secret", "gpt-test"),
             "aliyun-secret",
             "continuation-secret",
@@ -104,6 +105,7 @@ class RealEnvironmentTest(unittest.TestCase):
 
         environment = real_environment.backend_environment(
             "deepseek-secret",
+            "deepseek-chat-flash",
             None,
             "aliyun-secret",
             "continuation-secret",
@@ -113,6 +115,7 @@ class RealEnvironmentTest(unittest.TestCase):
         )
 
         self.assertEqual("deepseek", environment["HAIFA_PERSONAL_MODELPROVIDERS_0_ID"])
+        self.assertEqual("deepseek-chat-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
         self.assertFalse(any(name.startswith("OPENAI_") for name in environment))
         self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_1_") for name in environment))
 
@@ -140,6 +143,16 @@ class RealEnvironmentTest(unittest.TestCase):
         arguments = real_environment.parser().parse_args(["--force"])
         with self.assertRaisesRegex(RuntimeError, "only be used with --stop"):
             real_environment.validate_arguments(arguments)
+
+    def test_default_model_can_select_a_configured_deepseek_api_style(self) -> None:
+        with mock.patch.dict(real_environment.os.environ, {}, clear=True):
+            default_arguments = real_environment.parser().parse_args([])
+        chat_arguments = real_environment.parser().parse_args(
+            ["--default-model-id", "deepseek-chat-flash"]
+        )
+
+        self.assertEqual("deepseek-responses-flash", default_arguments.default_model_id)
+        self.assertEqual("deepseek-chat-flash", chat_arguments.default_model_id)
 
     def test_rebuild_port_conflict_message_explains_stop_then_rebuild(self) -> None:
         arguments = real_environment.parser().parse_args(["--rebuild"])
