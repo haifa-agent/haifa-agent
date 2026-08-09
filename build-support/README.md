@@ -17,6 +17,17 @@
 Windows 下 Surefire/Failsafe 的 fork JVM 显式允许 manifest-only JAR 引用不同盘符上的绝对
 classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktree 分盘时并行 fork 丢失 Reactor 类。
 
+最终门禁按同一 Git SHA 聚合，而不是在一个命令中重复执行：
+
+| Gate | Profile | 测试范围 | 前置条件 |
+| --- | --- | --- | --- |
+| Unit | `ci-fast` | Unit、Contract、Architecture；Spotless | 无，必须先执行 |
+| Integration | `ci-integration-only` | Failsafe `*IT`、`*LiveIT`、`*E2E` | 同一 SHA 的 Unit PASS |
+| Artifact | `release-artifacts` | 编译、打包、Source、Javadoc、制品 smoke | 同一 SHA 的 Unit PASS |
+
+`ci-integration` 继续保留给独立或旧调用方，语义仍是 Unit + Integration。`integration-only` 和
+`release-artifacts` 不能脱离同 SHA 聚合门禁单独证明交付完成。
+
 Windows 示例：
 
 ```powershell

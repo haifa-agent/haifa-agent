@@ -223,6 +223,9 @@ Linux/macOS：
 ./mvnw test
 ./mvnw -pl :haifa-agent-runtime-core -am test
 ./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-integration-only verify
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- \
+  -pl :haifa-agent-cli -am -Prelease-artifacts verify
 
 # 唯一可执行制品；无 -m 时默认启动 tui4j Terminal
 ./mvnw -pl :haifa-agent-cli -am package
@@ -235,6 +238,9 @@ Windows PowerShell：
 .\mvnw.cmd test
 .\mvnw.cmd -pl :haifa-agent-runtime-core -am test
 .\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @('-Pci-fast', 'clean', 'verify')
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @('-Pci-integration-only', 'verify')
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @( `
+  '-pl', ':haifa-agent-cli', '-am', '-Prelease-artifacts', 'verify')
 
 # 唯一可执行制品；无 -m 时默认启动 tui4j Terminal
 .\mvnw.cmd -pl :haifa-agent-cli -am package
