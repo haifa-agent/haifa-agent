@@ -16,13 +16,33 @@ public interface MissionExecutionStore {
 
     MissionState missionState(String missionId);
 
+    default boolean deadlineExceeded(String missionId, Instant now) {
+        return false;
+    }
+
+    default void expireForPartialSynthesis(String missionId, Instant now) {}
+
     void waitingForUser(MissionTaskAttempt attempt, Instant now);
 
     void settleCompleted(MissionTaskAttempt attempt, String resultDigest, String resultJson, Instant now);
 
+    default void settleCompleted(
+            MissionTaskAttempt attempt, String resultDigest, String resultJson, MissionUsage usage, Instant now) {
+        settleCompleted(attempt, resultDigest, resultJson, now);
+    }
+
     void settleFailed(MissionTaskAttempt attempt, String failureCode, boolean retryable, Instant now);
 
+    default void settleFailed(
+            MissionTaskAttempt attempt, String failureCode, boolean retryable, MissionUsage usage, Instant now) {
+        settleFailed(attempt, failureCode, retryable, now);
+    }
+
     void settleCancelled(MissionTaskAttempt attempt, Instant now);
+
+    default void settleCancelled(MissionTaskAttempt attempt, MissionUsage usage, Instant now) {
+        settleCancelled(attempt, now);
+    }
 
     default void cancelMission(String missionId, Instant now) {}
 

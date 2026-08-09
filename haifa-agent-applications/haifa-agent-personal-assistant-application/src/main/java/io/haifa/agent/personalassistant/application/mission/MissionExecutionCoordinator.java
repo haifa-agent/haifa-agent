@@ -33,13 +33,24 @@ public final class MissionExecutionCoordinator {
 
     /** Performs one bounded reconciliation and dispatch cycle. Safe to invoke again after any process crash. */
     public void tick() {
+        tick(true);
+    }
+
+    /** Reconciliation always runs; capacity or maintenance gates may independently stop new dispatch claims. */
+    public void tick(boolean allowNewDispatch) {
         Instant now = now();
         for (MissionTaskAttempt attempt : store.activeAttempts()) {
             if (attempt.state() != MissionTaskAttemptState.BOUND
                     || attempt.runId().isEmpty()) continue;
             if (store.missionState(attempt.missionId()).terminal()) {
                 runtime.cancelTask(attempt.runId().orElseThrow());
-                store.settleCancelled(attempt, now);
+                store.settleCancelled(attempt, MissionUsage.NONE, now);
+                continue;
+            }
+            if (store.deadlineExceeded(attempt.missionId(), now)) {
+                runtime.cancelTask(attempt.runId().orElseThrow());
+                store.settleCancelled(attempt, MissionUsage.NONE, now);
+                store.expireForPartialSynthesis(attempt.missionId(), now);
                 continue;
             }
             MissionRuntimeAccess.TaskRunObservation observation =
@@ -49,28 +60,36 @@ public final class MissionExecutionCoordinator {
                 case WAITING_USER -> store.waitingForUser(attempt, now);
                 case COMPLETED -> {
                     String result = observation.result().orElse("");
-                    store.settleCompleted(attempt, MissionValues.digest(result), result, now);
+                    store.settleCompleted(attempt, MissionValues.digest(result), result, observation.usage(), now);
                 }
                 case FAILED ->
-                    store.settleFailed(attempt, observation.failureCode().orElse("TASK_RUN_FAILED"), true, now);
-                case CANCELLED -> store.settleCancelled(attempt, now);
-                case OUTCOME_UNKNOWN -> store.settleFailed(attempt, "TASK_RUN_OUTCOME_UNKNOWN", false, now);
+                    store.settleFailed(
+                            attempt,
+                            observation.failureCode().orElse("TASK_RUN_FAILED"),
+                            true,
+                            observation.usage(),
+                            now);
+                case CANCELLED -> store.settleCancelled(attempt, observation.usage(), now);
+                case OUTCOME_UNKNOWN ->
+                    store.settleFailed(attempt, "TASK_RUN_OUTCOME_UNKNOWN", false, observation.usage(), now);
             }
         }
 
-        store.prepareAndClaimNext(dispatcherId, now, now.minus(30, ChronoUnit.SECONDS))
-                .ifPresent(intent -> {
-                    MissionRuntimeAccess.TaskRunBinding binding;
-                    try {
-                        binding = runtime.startTask(intent);
-                    } catch (RuntimeException failure) {
-                        store.failDispatch(intent, safeCode(failure), false, now());
-                        return;
-                    }
-                    // Deliberately outside the start catch: a failed product bind leaves the claimed Outbox
-                    // recoverable, and the stable Runtime idempotency key returns the same Run next cycle.
-                    store.bind(intent, binding.sessionId(), binding.runId(), now());
-                });
+        if (allowNewDispatch) {
+            store.prepareAndClaimNext(dispatcherId, now, now.minus(30, ChronoUnit.SECONDS))
+                    .ifPresent(intent -> {
+                        MissionRuntimeAccess.TaskRunBinding binding;
+                        try {
+                            binding = runtime.startTask(intent);
+                        } catch (RuntimeException failure) {
+                            store.failDispatch(intent, safeCode(failure), false, now());
+                            return;
+                        }
+                        // Deliberately outside the start catch: a failed product bind leaves the claimed Outbox
+                        // recoverable, and the stable Runtime idempotency key returns the same Run next cycle.
+                        store.bind(intent, binding.sessionId(), binding.runId(), now());
+                    });
+        }
 
         store.claimSynthesis(now()).ifPresent(intent -> {
             try {

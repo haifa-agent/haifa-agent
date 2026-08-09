@@ -10,6 +10,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionTask;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
+import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
 import java.net.URI;
@@ -43,18 +44,21 @@ public final class PersonalMissionController {
     private final PersonalAssistantProperties properties;
     private final PersonalApiMapper mapper;
     private final Clock clock;
+    private final MissionOperationsService operations;
 
     public PersonalMissionController(
             MissionApplicationService missions,
             PersonalAssistantApplication application,
             PersonalAssistantProperties properties,
             PersonalApiMapper mapper,
-            Clock clock) {
+            Clock clock,
+            MissionOperationsService operations) {
         this.missions = missions;
         this.application = application;
         this.properties = properties;
         this.mapper = mapper;
         this.clock = clock;
+        this.operations = operations;
     }
 
     @PostMapping
@@ -62,6 +66,7 @@ public final class PersonalMissionController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PersonalApiDtos.CreateMission request) {
         if (request == null) throw new MissionException("MISSION_REQUEST_INVALID", "Mission request is required");
+        operations.requireAdmission();
         String conversationId = text(request.conversationId(), "conversationId", 256);
         if (application.conversation(conversationId).isEmpty()) {
             throw new MissionException("MISSION_NOT_FOUND", "Mission is unavailable");
@@ -91,7 +96,8 @@ public final class PersonalMissionController {
                 criteria,
                 constraints(request.constraints()),
                 mode,
-                brief);
+                brief,
+                request.constraints() == null || request.constraints().deadlineAt() == null);
         var body = mapper.mission(missions.create(command));
         return ResponseEntity.accepted()
                 .location(URI.create("/api/v1/missions/" + body.missionId()))
@@ -227,7 +233,11 @@ public final class PersonalMissionController {
     private MissionConstraints constraints(PersonalApiDtos.MissionConstraints requested) {
         int productTasks = properties.mission().maxTasks();
         int productDepth = properties.mission().maxDependencyDepth();
-        if (requested == null) return new MissionConstraints(productTasks, productDepth, Optional.empty());
+        Instant maximumDeadline =
+                clock.instant().plusMillis(properties.mission().maxWallClockMillis());
+        if (requested == null) {
+            return new MissionConstraints(productTasks, productDepth, Optional.of(maximumDeadline));
+        }
         int maxTasks = requested.maxTasks() == null ? productTasks : requested.maxTasks();
         int maxDepth = requested.maxDependencyDepth() == null ? productDepth : requested.maxDependencyDepth();
         if (maxTasks > productTasks || maxDepth > productDepth) {
@@ -237,7 +247,11 @@ public final class PersonalMissionController {
         if (deadline != null && !deadline.isAfter(clock.instant())) {
             throw new MissionException("MISSION_DEADLINE_INVALID", "Mission deadline must be in the future");
         }
-        return new MissionConstraints(maxTasks, maxDepth, Optional.ofNullable(deadline));
+        if (deadline != null && deadline.isAfter(maximumDeadline)) {
+            throw new MissionException(
+                    "MISSION_LIMIT_EXCEEDED", "Mission deadline may only narrow the product wall-clock limit");
+        }
+        return new MissionConstraints(maxTasks, maxDepth, Optional.of(deadline == null ? maximumDeadline : deadline));
     }
 
     private static MissionMode parseMode(String value) {

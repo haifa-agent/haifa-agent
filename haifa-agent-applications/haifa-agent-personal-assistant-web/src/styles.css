@@ -68,9 +68,12 @@
 .mission-interaction p { margin: 0; color: #5d6475; }
 .mission-interaction textarea { width: 100%; resize: vertical; }
 .mission-interaction div { display: flex; gap: 8px; flex-wrap: wrap; }
-.mission-loading { padding: 7px 18px; border-top: 1px solid #e8ebf2; color: #6f7890; font-size: 12px; }
+.mission-loading, .mission-sync-status { min-height: 32px; padding: 7px 18px; border-top: 1px solid #e8ebf2; color: #566079; font-size: 12px; }
+.mission-sync-status { display: flex; align-items: center; gap: 6px; }
+.mission-sync-status.sync-offline, .mission-sync-status.sync-stale { color: #8a4b16; background: #fff8ee; }
+.mission-sync-status.sync-recovering, .mission-sync-status.sync-syncing, .mission-sync-status.sync-loading { color: #315a9d; background: #f5f8ff; }
 @media (max-width: 760px) {
-  .mission-backdrop { padding: 0; }
+  .dialog-backdrop.mission-backdrop { padding: 0; }
   .mission-dialog { width: 100vw; height: 100vh; max-height: none; border: 0; border-radius: 0; }
   .mission-layout { grid-template-columns: 1fr; }
   .mission-list { max-height: 170px; border-right: 0; border-bottom: 1px solid #e7eaf2; }
@@ -80,10 +83,11 @@
 
 * { box-sizing: border-box; }
 html, body, #root { min-width: 320px; min-height: 100%; margin: 0; }
+html { overflow-x: clip; }
 body { overflow: hidden; }
 button, input, textarea { font: inherit; }
 button { color: inherit; }
-button:focus-visible, input:focus-visible, textarea:focus-visible {
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 3px solid rgb(76 111 255 / 28%);
   outline-offset: 2px;
 }

@@ -132,7 +132,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     .filter(value -> !value.isBlank())
                     .orElseThrow(() -> new MissionException(
                             "MISSION_PLAN_SCHEMA_INVALID", "Mission Planner returned no structured output"));
-            return new PlannerRunResult(sessionId.value(), terminal.runId().value(), output);
+            return new PlannerRunResult(sessionId.value(), terminal.runId().value(), output, usage(terminal.usage()));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new MissionException("MISSION_PLANNER_INTERRUPTED", "Mission Planner was interrupted", exception);
@@ -211,18 +211,24 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         var snapshot = agent.runs().find(new io.haifa.agent.core.run.AgentRunId(runId));
         if (snapshot.isEmpty()) {
             return new TaskRunObservation(
-                    runId, TaskRunState.OUTCOME_UNKNOWN, Optional.empty(), Optional.of("RUN_NOT_FOUND"));
+                    runId,
+                    TaskRunState.OUTCOME_UNKNOWN,
+                    Optional.empty(),
+                    Optional.of("RUN_NOT_FOUND"),
+                    MissionUsage.NONE);
         }
         var value = snapshot.orElseThrow();
+        MissionUsage usage = usage(value.usage());
         return switch (value.status()) {
             case WAITING_APPROVAL, WAITING_INTERACTION ->
-                new TaskRunObservation(runId, TaskRunState.WAITING_USER, Optional.empty(), Optional.empty());
+                new TaskRunObservation(runId, TaskRunState.WAITING_USER, Optional.empty(), Optional.empty(), usage);
             case COMPLETED ->
                 new TaskRunObservation(
                         runId,
                         TaskRunState.COMPLETED,
                         value.result().map(result -> result.summary()).or(() -> value.output()),
-                        Optional.empty());
+                        Optional.empty(),
+                        usage);
             case FAILED, TIMEOUT ->
                 new TaskRunObservation(
                         runId,
@@ -230,9 +236,11 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         Optional.empty(),
                         value.error()
                                 .map(error -> error.code().wireCode())
-                                .or(() -> Optional.of(value.status().name())));
-            case CANCELLED -> new TaskRunObservation(runId, TaskRunState.CANCELLED, Optional.empty(), Optional.empty());
-            default -> new TaskRunObservation(runId, TaskRunState.ACTIVE, Optional.empty(), Optional.empty());
+                                .or(() -> Optional.of(value.status().name())),
+                        usage);
+            case CANCELLED ->
+                new TaskRunObservation(runId, TaskRunState.CANCELLED, Optional.empty(), Optional.empty(), usage);
+            default -> new TaskRunObservation(runId, TaskRunState.ACTIVE, Optional.empty(), Optional.empty(), usage);
         };
     }
 
@@ -308,7 +316,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     .filter(value -> !value.isBlank())
                     .orElseThrow(() -> new MissionException(
                             "MISSION_SYNTHESIS_SCHEMA_INVALID", "Mission Synthesis returned no result"));
-            return new SynthesisRunResult(sessionId.value(), terminal.runId().value(), output);
+            return new SynthesisRunResult(sessionId.value(), terminal.runId().value(), output, usage(terminal.usage()));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new MissionException("MISSION_SYNTHESIS_INTERRUPTED", "Mission Synthesis was interrupted", exception);
@@ -356,6 +364,11 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     "MODEL_STRUCTURED_OUTPUT_UNAVAILABLE", operation + " requires structured output");
         }
         return model;
+    }
+
+    private static MissionUsage usage(io.haifa.agent.core.run.AgentRunUsage value) {
+        return new MissionUsage(
+                Math.addExact(value.inputTokens(), value.outputTokens()), value.modelCalls(), value.toolCalls());
     }
 
     private static String prompt(MissionPlanner.PlanningRequest request) {

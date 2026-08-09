@@ -58,6 +58,11 @@ JAR 的构建或静态资源打包。
 - 执行 REQUESTED / STARTED / SUCCEEDED / FAILED / TIMED_OUT 安全活动及有界结果摘要；
 - 桌面三栏布局和移动端互斥抽屉。
 
+Mission 同步状态显式区分 loading、current、syncing、stale、recovering 和 offline。浏览器离线时保留
+最后一次安全快照、停止把陈旧数据呈现为 current，并在重新联网后自动恢复 polling；终态变化通过
+`aria-live` 宣告。Mission 抽屉支持 `Escape` 关闭、键盘焦点约束和关闭后的焦点恢复，交互控件具有
+可见焦点样式，桌面与移动布局使用同一套状态和操作语义。
+
 生产代码没有 Mock Client、Fixture fallback、Follow-up/Steer、Preference 编辑、复杂进度投影或
 Mission 页面只显示安全 Dispatcher 状态与最新 Attempt 摘要，不暴露内部 payload；Deep Research 只允许浏览器选择
 固定产品别名 `deep-research`，不接受路径、版本或摘要注入；

@@ -354,6 +354,8 @@ export interface ApiError {
   code: string;
   message: string;
   correlationId: string;
+  diagnosticId: string;
+  actions: Array<string>;
 }
 
 export type OperationId = "bootstrap" | "listModels" | "uploadImage" | "listConversations" | "createConversation" | "getConversation" | "updateConversation" | "listTurns" | "selectConversationModel" | "submitMessage" | "recommendQuestions" | "getRun" | "cancelRun" | "listSafeActivities" | "getPendingInteraction" | "respondToInteraction" | "streamRun" | "listMemoryCandidates" | "approveMemoryCandidate" | "rejectMemoryCandidate" | "listMemories" | "invalidateMemory" | "listMissions" | "createMission" | "getMission" | "getMissionSnapshot" | "downloadMissionArtifact" | "replaceMissionPlan" | "confirmMission" | "cancelMission" | "retryMissionTask";

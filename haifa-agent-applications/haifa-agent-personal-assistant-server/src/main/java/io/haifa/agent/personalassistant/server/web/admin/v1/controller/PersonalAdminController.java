@@ -3,6 +3,7 @@ package io.haifa.agent.personalassistant.server.web.admin.v1.controller;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalCapabilityRegistry;
 import io.haifa.agent.personalassistant.server.admin.PersonalAdminQueryService;
+import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
 import io.haifa.agent.personalassistant.server.web.admin.v1.dto.PersonalAdminDtos;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -18,10 +19,15 @@ import org.springframework.web.bind.annotation.RestController;
 public final class PersonalAdminController {
     private final PersonalAdminQueryService queries;
     private final PersonalAssistantApplication application;
+    private final MissionOperationsService missionOperations;
 
-    public PersonalAdminController(PersonalAdminQueryService queries, PersonalAssistantApplication application) {
+    public PersonalAdminController(
+            PersonalAdminQueryService queries,
+            PersonalAssistantApplication application,
+            MissionOperationsService missionOperations) {
         this.queries = queries;
         this.application = application;
+        this.missionOperations = missionOperations;
     }
 
     @GetMapping({"", "/"})
@@ -65,6 +71,52 @@ public final class PersonalAdminController {
                 value.registrations().stream()
                         .map(PersonalAdminController::capability)
                         .toList());
+    }
+
+    @GetMapping("/missions/operations")
+    PersonalAdminDtos.MissionOperations missionOperations() {
+        var value = missionOperations.snapshot();
+        var dispatcher = value.dispatcher();
+        var store = value.store();
+        var capacity = value.capacity();
+        return new PersonalAdminDtos.MissionOperations(
+                dispatcher.status(),
+                dispatcher.ready(),
+                dispatcher.maintenancePaused(),
+                dispatcher.recoveryCount(),
+                dispatcher.lastReconcileLatencyMillis(),
+                dispatcher.lastReconcileAtMillis(),
+                value.schemaVersion(),
+                store.missionStates(),
+                store.activeMissions(),
+                store.activeAttempts(),
+                store.unsettledAttempts(),
+                store.pendingOutbox(),
+                store.oldestOutboxAgeMillis(),
+                store.blockedTasks(),
+                store.outcomeUnknownAttempts(),
+                store.budgetExhaustedTasks(),
+                store.modelTokens(),
+                store.modelCalls(),
+                store.toolCalls(),
+                store.duplicatePrevented(),
+                capacity.databaseBytes(),
+                capacity.artifactBytes(),
+                capacity.artifactFiles(),
+                capacity.databaseWarning(),
+                capacity.artifactWarning(),
+                capacity.blockerCode(),
+                "No automatic Event, Session, or Artifact GC; use documented quiescent maintenance.");
+    }
+
+    @GetMapping("/missions/upgrade-readiness")
+    PersonalAdminDtos.UpgradeReadiness upgradeReadiness() {
+        var value = missionOperations.upgradeReadiness();
+        return new PersonalAdminDtos.UpgradeReadiness(
+                value.ready(),
+                value.blockerCodes(),
+                value.schemaVersion(),
+                value.ready() ? "CREATE_BACKUP_THEN_UPGRADE" : "WAIT_OR_CANCEL_ACTIVE_MISSIONS");
     }
 
     private static PersonalAdminDtos.Capability capability(PersonalCapabilityRegistry.CapabilityRegistration value) {

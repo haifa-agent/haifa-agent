@@ -282,5 +282,13 @@ public final class PersonalApiDtos {
             String source,
             long sequence) {}
 
-    public record Error(String code, String message, String correlationId) {}
+    public record Error(String code, String message, String correlationId, String diagnosticId, List<String> actions) {
+        public Error(String code, String message, String correlationId) {
+            this(code, message, correlationId, correlationId, List.of());
+        }
+
+        public Error {
+            actions = List.copyOf(actions == null ? List.of() : actions);
+        }
+    }
 }

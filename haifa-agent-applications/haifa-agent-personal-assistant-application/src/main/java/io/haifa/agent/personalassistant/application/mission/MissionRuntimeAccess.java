@@ -25,17 +25,46 @@ public interface MissionRuntimeAccess {
     default void appendFinalMessage(
             String conversationId, String missionId, String synthesisRunId, String finalMessage) {}
 
-    record PlannerRunResult(String sessionId, String runId, String structuredOutput) {}
+    record PlannerRunResult(String sessionId, String runId, String structuredOutput, MissionUsage usage) {
+        public PlannerRunResult(String sessionId, String runId, String structuredOutput) {
+            this(sessionId, runId, structuredOutput, MissionUsage.NONE);
+        }
+
+        public PlannerRunResult {
+            usage = java.util.Objects.requireNonNull(usage);
+        }
+    }
 
     record TaskRunBinding(String sessionId, String runId) {}
 
-    record SynthesisRunResult(String sessionId, String runId, String structuredOutput) {}
+    record SynthesisRunResult(String sessionId, String runId, String structuredOutput, MissionUsage usage) {
+        public SynthesisRunResult(String sessionId, String runId, String structuredOutput) {
+            this(sessionId, runId, structuredOutput, MissionUsage.NONE);
+        }
+
+        public SynthesisRunResult {
+            usage = java.util.Objects.requireNonNull(usage);
+        }
+    }
 
     record TaskRunObservation(
             String runId,
             TaskRunState state,
             java.util.Optional<String> result,
-            java.util.Optional<String> failureCode) {}
+            java.util.Optional<String> failureCode,
+            MissionUsage usage) {
+        public TaskRunObservation(
+                String runId,
+                TaskRunState state,
+                java.util.Optional<String> result,
+                java.util.Optional<String> failureCode) {
+            this(runId, state, result, failureCode, MissionUsage.NONE);
+        }
+
+        public TaskRunObservation {
+            usage = java.util.Objects.requireNonNull(usage);
+        }
+    }
 
     enum TaskRunState {
         ACTIVE,

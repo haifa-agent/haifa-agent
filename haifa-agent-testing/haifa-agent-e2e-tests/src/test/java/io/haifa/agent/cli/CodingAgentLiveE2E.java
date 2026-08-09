@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
@@ -13,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.reflect.Method;
+import java.net.URI;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -724,19 +728,26 @@ class CodingAgentLiveE2E {
                 credentialEnvironmentName = "DASHSCOPE_API_KEY";
                 String modelId = System.getenv().getOrDefault("HAIFA_BAILIAN_MODEL_ID", "qwen-plus");
                 String region = System.getenv().getOrDefault("HAIFA_BAILIAN_REGION", "cn-beijing");
+                String workspaceId = requiredEnvironment("HAIFA_BAILIAN_WORKSPACE_ID");
+                URI endpoint =
+                        URI.create("https://" + workspaceId + "." + region + ".maas.aliyuncs.com/compatible-mode/v1");
                 yield new CliConfiguration.Model(
                         provider,
                         "Alibaba Cloud Bailian",
                         modelId,
+                        endpoint,
                         null,
                         "env://" + credentialEnvironmentName,
-                        "aliyun-bailian-openai-chat",
-                        "1.0",
+                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                        OpenAiCompatibleDialects.ALIYUN_BAILIAN,
                         true,
-                        requiredEnvironment("HAIFA_BAILIAN_WORKSPACE_ID"),
+                        workspaceId,
                         region,
                         modelId,
-                        modelId);
+                        modelId,
+                        Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                        131_072,
+                        8_192);
             }
             default ->
                 throw new IllegalStateException("HAIFA_CLI_LIVE_E2E_PROVIDER must be deepseek or aliyun-bailian");

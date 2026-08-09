@@ -20,7 +20,13 @@ sequence，订阅统一可关闭。进程重启后不恢复未完成 Delta；终
 Personal Assistant 的纯 Java 产品应用层。它只通过 Phase 20 SDK、Conversation Service 和公共
 Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Controller。
 
-## Personal Mission Phase 1–3
+## Personal Mission Phase 1–4
+
+Phase 4 makes Mission usage authoritative at the product boundary. Model tokens, model calls, and
+Tool calls are settled exactly once from Runtime results. Frozen per-Mission token, Tool-call,
+Task, retry, execution-time, and wall-clock limits stop new work deterministically; an active Task
+that reaches its execution or Mission deadline is cancelled and enters the existing bounded
+partial-synthesis path instead of being silently abandoned.
 
 Phase 3 adds an explicit `DEEP_RESEARCH` Mission mode with a frozen Research Brief and the
 bundled `deep-research@1.0.0` Skill. The Mission persists the full resolved Skill coordinate

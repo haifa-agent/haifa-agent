@@ -99,7 +99,15 @@ Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
 端口冲突会使启动失败，不会自动换端口。
 
-## Personal Mission Phase 1–3
+## Personal Mission Phase 1–4
+
+Phase 4 advances the Personal Mission schema to V6 and persists authoritative model-token,
+model-call, and Tool-call usage. Configured upper bounds are validated at startup and admission
+stops only new Mission dispatch when the SQLite or Artifact store reaches its stop threshold;
+running work remains observable and can converge. Readiness requires the single Dispatcher owner,
+its first reconciliation, and a successful Artifact integrity check. Shutdown stops admission,
+waits for the bounded convergence window, and leaves durable work recoverable when the window
+expires.
 
 Phase 3 adds product schema V5 for the frozen Mission-level Skill binding and uses shared Runtime
 schema V7 Artifact metadata plus an application-owned, no-follow payload directory. Deep Research
@@ -117,6 +125,29 @@ Outbox 和 Command 在同一产品 UoW 中提交；数据库约束保证一个 C
 触发器冻结已确认计划定义。Phase 2 用部分唯一索引保证全局最多一个活动 Task Attempt；OS 文件锁与
 Dispatcher ownership heartbeat 使同一数据目录只能有一个 Dispatcher。产品 UoW 与 Runtime UoW 通过
 稳定 dispatch key 和带请求摘要的 Runtime start 幂等绑定恢复，不宣称分布式 HA。
+
+只读运维事实由 `/v1/admin/missions/operations` 和
+`/v1/admin/missions/upgrade-readiness` 提供；Actuator readiness 也包含 Personal Mission
+Dispatcher、首次 reconciliation、容量和 Artifact 完整性状态。升级前必须使 active Mission、待发
+Outbox 和未结算 Attempt 全部归零。MVP 不自动删除 Mission、Task、Run、Source 或 Artifact；容量告警后
+由运维人员先完成备份和校验，再按明确的维护流程处理数据。
+
+离线备份、校验和恢复通过可执行 Server JAR 运行。备份要求 Server 已停止、Dispatcher 文件锁可获取且
+Mission Store 处于 quiescent 状态；恢复目标必须是全新目录。`product-digest` 取自启动接口的
+`assemblyDigest`，`skill-binding` 使用 Mission 快照中冻结的完整 Deep Research Skill binding：
+
+```powershell
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+  mission-maintenance backup <data-dir> <backup-dir> <product-digest> "<skill-binding>"
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+  mission-maintenance verify <backup-dir> - <product-digest> "<skill-binding>"
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+  mission-maintenance restore <backup-dir> <fresh-data-dir> <product-digest> "<skill-binding>"
+```
+
+备份清单绑定产品摘要、Skill binding、Schema 版本和每个数据库/Artifact 文件的 SHA-256。校验与恢复会
+检查清单、哈希、SQLite integrity/foreign keys、Run/Session 引用和 Artifact 引用；任何漂移均 fail
+closed。该命令不是在线热备、在线恢复、自动迁移或回滚机制。
 
 Server 负责：
 
