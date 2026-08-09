@@ -14,8 +14,10 @@ import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
+import io.haifa.agent.project.mutation.MutationErrorCode;
 import io.haifa.agent.project.mutation.MutationResult;
 import io.haifa.agent.project.mutation.WorkspaceMutationCapabilities;
+import io.haifa.agent.project.mutation.WorkspaceMutationException;
 import io.haifa.agent.project.mutation.WorkspaceMutationProvider;
 import io.haifa.agent.project.mutation.WriteFileRequest;
 import io.haifa.agent.project.path.ProjectPath;
@@ -113,6 +115,25 @@ class LocalFileToolOperationsTest {
         assertThat(Files.readString(root.resolve("source.txt"))).isEqualTo("anchor\nnew\n");
     }
 
+    @Test
+    void returnsKnownToolFailureWhenWorkspaceMutationIsRejected() {
+        Fixture fixture = fixture();
+
+        var result = fixture.operations.execute(
+                "file.create",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "existing.txt", "content", "replacement")));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.summary()).isEqualTo("Workspace mutation failed: TARGET_EXISTS (path=existing.txt)");
+        assertThat(result.structuredData())
+                .containsEntry("errorCode", "TARGET_EXISTS")
+                .containsEntry("path", "existing.txt");
+    }
+
     private Fixture fixture() {
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
@@ -165,7 +186,8 @@ class LocalFileToolOperationsTest {
 
             @Override
             public MutationResult create(CreateFileRequest request) {
-                throw new AssertionError("not used");
+                throw new WorkspaceMutationException(
+                        MutationErrorCode.TARGET_EXISTS, request.path(), "logical target already exists");
             }
 
             @Override

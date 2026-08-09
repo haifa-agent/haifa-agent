@@ -141,7 +141,7 @@ class PhaseFiveApplicationTest {
                 ArtifactView.class)) {
             assertThat(view.getRecordComponents())
                     .extracting(RecordComponent::getType)
-                    .doesNotContain(java.nio.file.Path.class, byte[].class);
+                    .noneMatch(type -> type.equals(java.nio.file.Path.class) || type.equals(byte[].class));
         }
     }
 

@@ -60,6 +60,17 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
         }
     }
 
+    Evidence readOrUnavailable(Path database, boolean driverFailedBeforeEvidence) throws IOException {
+        try {
+            return read(database);
+        } catch (IOException exception) {
+            if (!driverFailedBeforeEvidence) {
+                throw exception;
+            }
+            return Evidence.unavailable();
+        }
+    }
+
     private RunFacts readRun(Connection connection) throws SQLException, IOException {
         try (PreparedStatement statement = connection.prepareStatement(
                         """
@@ -200,6 +211,10 @@ final class AutonomousDeliveryRuntimeEvidenceReader {
             List<Map<String, Object>> failureClusters,
             List<Map<String, Object>> progress,
             boolean terminalStateObserved) {
+        static Evidence unavailable() {
+            return new Evidence("NOT_STARTED", 0, 0, 0, 0, 0, 0, 0, false, false, 0, 0, 0, List.of(), List.of(), false);
+        }
+
         boolean scratchSatisfied() {
             return scratchCleanupFailures == 0 && scratchProvisionedCount == executionCalls;
         }

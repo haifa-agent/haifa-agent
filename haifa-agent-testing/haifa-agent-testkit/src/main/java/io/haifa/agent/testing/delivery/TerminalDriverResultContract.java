@@ -16,13 +16,15 @@ import java.util.Set;
 
 /** Shared result contract for the POSIX pexpect and Windows Node PTY drivers. */
 final class TerminalDriverResultContract {
-    static final String PROTOCOL_VERSION = "1.1.0";
+    static final String PROTOCOL_VERSION = "1.2.0";
     private static final int SCHEMA_VERSION = 2;
     private static final String RECORDING_FORMAT = "asciicast-v2";
     private static final String RECORDING_FILE = "session.cast";
     private static final String RECORDING_ENCODING = "UTF-8";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> BACKENDS = Set.of("unix-pty", "conpty");
+    private static final Set<String> RUN_TERMINAL_STATES =
+            Set.of("IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
 
     private TerminalDriverResultContract() {}
 
@@ -62,17 +64,20 @@ final class TerminalDriverResultContract {
     }
 
     private static void validateStateTimeline(JsonNode timeline, List<String> violations) {
-        List<String> expected = List.of("IDLE", "RUNNING", "IDLE");
-        if (!timeline.isArray() || timeline.size() != expected.size()) {
+        if (!timeline.isArray() || timeline.size() != 3) {
             violations.add("INVALID_terminalStates");
             return;
         }
         double previousTime = -1;
-        for (int index = 0; index < expected.size(); index++) {
+        for (int index = 0; index < 3; index++) {
             JsonNode observation = timeline.get(index);
             double time = observation.path("atSeconds").asDouble(-1);
+            String state = observation.path("state").asText();
+            boolean expectedState = index == 0
+                    ? "IDLE".equals(state)
+                    : index == 1 ? "RUNNING".equals(state) : RUN_TERMINAL_STATES.contains(state);
             if (!observation.isObject()
-                    || !expected.get(index).equals(observation.path("state").asText())
+                    || !expectedState
                     || !observation.path("atSeconds").isNumber()
                     || time < 0
                     || time < previousTime) {

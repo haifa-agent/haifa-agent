@@ -177,6 +177,29 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     @Test
+    void distinctSuccessfulValidationCommandsAdvanceProgressWithoutRewardingExactRepeats() {
+        var ledger = new ProgressLedger();
+
+        assertThat(ledger.observe(successfulValidation("validation-1", "TEST", "python -m unittest")))
+                .isTrue();
+        assertThat(ledger.observe(successfulValidation("validation-2", "TEST", "python -m unittest")))
+                .isFalse();
+        assertThat(ledger.observe(successfulValidation("validation-3", "DIFF", "git diff --check")))
+                .isTrue();
+        assertThat(ledger.observe(successfulValidation("validation-4", "DIFF", "git diff --check")))
+                .isFalse();
+        assertThat(ledger.observe(successfulValidation("validation-5", "TEST", "python acceptance.py")))
+                .isTrue();
+
+        assertThat(ledger.evidence())
+                .extracting(ProgressEvidence::type)
+                .containsExactly(
+                        ProgressEvidence.Type.VALIDATION_ADVANCE,
+                        ProgressEvidence.Type.VALIDATION_ADVANCE,
+                        ProgressEvidence.Type.VALIDATION_ADVANCE);
+    }
+
+    @Test
     void outcomeUnknownCancellationAndPolicyDenialKeepTheirSafetyDirectives() {
         var classifier = new ToolOutcomeClassifier();
 
@@ -279,9 +302,14 @@ class AutonomousDeliveryRecoveryControlTest {
 
         var afterDelivery = new AgentLoopContext(1, List.of("inspect-a", "inspect-b", "inspect-c"));
         assertThat(afterDelivery.observeInteractions(List.of("interaction-1"))).isPresent();
-        afterDelivery.recordProgress("stable-delivery-state");
-        afterDelivery.recordProgress("stable-delivery-state");
-        afterDelivery.recordProgress("stable-delivery-state");
+        String stableDeliveryState = afterDelivery.progressSignatures().getLast();
+        afterDelivery.recordProgress(stableDeliveryState);
+        afterDelivery.recordProgress(stableDeliveryState);
+
+        assertThatCode(() -> new LoopDetectionGuard(3).check(null, afterDelivery))
+                .doesNotThrowAnyException();
+
+        afterDelivery.recordProgress(stableDeliveryState);
 
         assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, afterDelivery))
                 .isInstanceOf(IllegalStateException.class)
@@ -330,6 +358,23 @@ class AutonomousDeliveryRecoveryControlTest {
                         Map.of("fileChangeSetId", "change-1", "operationFamily", "TEST", "status", "SUCCEEDED"),
                         List.of(),
                         List.of(new ArtifactRef("artifact-1", "test-report", "1", "Test report")),
+                        false),
+                NOW.plusSeconds(2));
+        return call;
+    }
+
+    private static ToolCall successfulValidation(String id, String operationFamily, String command) {
+        ToolCall call = requested(id, Map.of("operationFamily", operationFamily, "command", command, "workdir", "."));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW.plusSeconds(1));
+        call.complete(
+                new ToolResult(
+                        true,
+                        "bounded success",
+                        Map.of("operationFamily", operationFamily, "status", "SUCCEEDED"),
+                        List.of(),
+                        List.of(),
                         false),
                 NOW.plusSeconds(2));
         return call;
