@@ -133,17 +133,24 @@ testing 位于 Reactor 末端，可按测试需要依赖产品模块；产品模
 
 ## 构建与验证命令
 
-Linux/macOS 使用 `./mvnw`；Windows PowerShell 使用 `.\mvnw.cmd`。
+Linux/macOS 的 Maven Wrapper 为 `./mvnw`，Windows PowerShell 为 `.\mvnw.cmd`。日常命令优先通过
+仓库统一入口调用 Wrapper，以获得固定并发、超时分类和构建指标。
 
 ```bash
-# 快速单元测试
-./mvnw test
+# 精确测试类及必要依赖；L1 默认串行，适合编辑内循环
+./build-support/scripts/invoke-haifa-maven.sh --layer L1 -- \
+  -pl :haifa-agent-runtime-core -am \
+  -Dtest=RuntimeCoreTest -Dsurefire.failIfNoSpecifiedTests=false test
 
-# 受影响模块及其依赖；将 artifactId 替换为目标模块
-./mvnw -pl :haifa-agent-runtime-core -am test
+# 受影响模块完整测试；L2 固定 -T 4
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- \
+  -pl :haifa-agent-runtime-core -am test
+
+# 全仓 Unit/Contract/Architecture；增量运行、不 clean
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- test
 
 # 应用 Spotless 格式化
-./mvnw spotless:apply
+./build-support/scripts/invoke-haifa-maven.sh --layer L0 -- spotless:apply
 
 # 本地最终验证；统一入口记录指标并使用资源感知的固定并发
 ./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
@@ -156,7 +163,8 @@ Linux/macOS 使用 `./mvnw`；Windows PowerShell 使用 `.\mvnw.cmd`。
   -pl :haifa-agent-cli -am -Prelease-artifacts verify
 
 # 发布配置验证；必须通过 -pl 指定受影响模块，并用 -am 补齐其依赖
-./mvnw -pl :haifa-agent-runtime-core -am -Prelease verify
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- \
+  -pl :haifa-agent-runtime-core -am -Prelease verify
 ```
 
 `ci-fast` 运行 Unit/Contract/Architecture 并跳过 Integration。`ci-integration` 保留为兼容入口，仍会
@@ -164,7 +172,8 @@ Linux/macOS 使用 `./mvnw`；Windows PowerShell 使用 `.\mvnw.cmd`。
 Unit/Integration，只验证打包、Source、Javadoc 和制品 smoke，不能单独作为代码正确性门禁。
 
 本地 Maven 开发优先使用 `build-support/scripts/invoke-haifa-maven.ps1`（Windows）或对应的 `.sh`
-入口。L0/L1 默认串行，L2/L3 默认 `-T 4`；不要按本机 CPU 数直接使用 `-T 1C`。入口把脱敏指标
+入口。精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。L0/L1 默认串行，
+L2/L3 默认 `-T 4`；不要按本机 CPU 数直接使用 `-T 1C`。入口把脱敏指标
 写入 `local-tmp/maven-build-metrics/`，并原样返回 Maven 退出码。精确语法和分层矩阵见
 [`build-support/README.md`](build-support/README.md)。
 
