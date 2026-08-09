@@ -15,6 +15,7 @@ import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
 import io.haifa.agent.project.mutation.MutationContext;
 import io.haifa.agent.project.mutation.MutationPrecondition;
+import io.haifa.agent.project.mutation.WorkspaceMutationException;
 import io.haifa.agent.project.mutation.WorkspaceMutationProvider;
 import io.haifa.agent.project.mutation.WriteFileRequest;
 import io.haifa.agent.project.patch.ApplyPatchParser;
@@ -102,6 +103,11 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             String summary = "Workspace file operation failed: "
                     + exception.code().name() + (logicalPath == null ? "" : " (path=" + logicalPath + ")");
             return failure(summary, data);
+        } catch (WorkspaceMutationException exception) {
+            String logicalPath = exception.path().projectPath().toString();
+            return failure(
+                    "Workspace mutation failed: " + exception.code().name() + " (path=" + logicalPath + ")",
+                    Map.of("errorCode", exception.code().name(), "path", logicalPath));
         } catch (IllegalArgumentException exception) {
             return failure("Workspace file arguments are invalid", Map.of("errorCode", "INVALID_ARGUMENT"));
         }
