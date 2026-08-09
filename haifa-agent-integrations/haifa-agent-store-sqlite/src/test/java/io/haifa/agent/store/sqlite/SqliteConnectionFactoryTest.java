@@ -65,6 +65,8 @@ class SqliteConnectionFactoryTest {
     void detectsThePermissionStrategyOnceAndRevalidatesExistingFilesOnEveryOpen() throws Exception {
         SqliteStoreConfiguration configuration = SqliteTestSupport.configuration(directory);
         AtomicInteger detections = new AtomicInteger();
+        AtomicInteger standaloneRootValidations = new AtomicInteger();
+        AtomicInteger securedBatches = new AtomicInteger();
         Map<Path, AtomicInteger> securedFiles = new HashMap<>();
         SqliteConnectionFactory.PermissionStrategyDetector detector = root -> {
             detections.incrementAndGet();
@@ -72,6 +74,7 @@ class SqliteConnectionFactoryTest {
             return new SecureFilePermissions.PermissionStrategy() {
                 @Override
                 public void validateRoot() throws java.io.IOException {
+                    standaloneRootValidations.incrementAndGet();
                     delegate.validateRoot();
                 }
 
@@ -86,6 +89,15 @@ class SqliteConnectionFactoryTest {
                             .computeIfAbsent(value, ignored -> new AtomicInteger())
                             .incrementAndGet();
                     delegate.secureFile(value);
+                }
+
+                @Override
+                public void secureExistingFiles(java.util.List<Path> values) throws java.io.IOException {
+                    securedBatches.incrementAndGet();
+                    values.stream().filter(Files::exists).forEach(value -> securedFiles
+                            .computeIfAbsent(value, ignored -> new AtomicInteger())
+                            .incrementAndGet());
+                    delegate.secureExistingFiles(values);
                 }
             };
         };
@@ -111,6 +123,8 @@ class SqliteConnectionFactoryTest {
         }
 
         assertThat(detections).hasValue(1);
+        assertThat(standaloneRootValidations).hasValue(0);
+        assertThat(securedBatches).hasValueGreaterThanOrEqualTo(4);
         factory.close();
     }
 

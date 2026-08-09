@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.AclEntry;
 import java.nio.file.attribute.AclEntryFlag;
@@ -15,6 +16,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.UserPrincipal;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -51,11 +53,12 @@ public final class SecureFilePermissions {
      * conclusion that a file remains safe.
      */
     public static PermissionStrategy strategyForDirectory(Path directory) throws IOException {
-        Path root = normalizeAndRequireType(directory, true);
-        StorageIdentity rootIdentity = storageIdentity(root);
+        ValidatedTarget validatedRoot = normalizeAndRequireType(directory, true);
+        Path root = validatedRoot.path();
+        StorageIdentity rootIdentity = storageIdentity(validatedRoot);
         FileStore store = Files.getFileStore(root);
         if (store.supportsFileAttributeView("posix")) {
-            return new DefaultPermissionStrategy(root, rootIdentity, true, null);
+            return new DefaultPermissionStrategy(root, rootIdentity, macOsFileStore(store), true, null);
         }
         AclFileAttributeView acl =
                 Files.getFileAttributeView(root, AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
@@ -63,7 +66,7 @@ public final class SecureFilePermissions {
         UserPrincipal current = root.getFileSystem()
                 .getUserPrincipalLookupService()
                 .lookupPrincipalByName(System.getProperty("user.name"));
-        return new DefaultPermissionStrategy(root, rootIdentity, false, current);
+        return new DefaultPermissionStrategy(root, rootIdentity, macOsFileStore(store), false, current);
     }
 
     public interface PermissionStrategy {
@@ -72,10 +75,31 @@ public final class SecureFilePermissions {
         void secureDirectory(Path directory) throws IOException;
 
         void secureFile(Path file) throws IOException;
+
+        /**
+         * Secures every currently existing file in one bounded operation. The built-in strategy
+         * validates the frozen directory identity once for the batch; the compatibility default
+         * retains per-file validation. Symbolic links, directories, and files outside the frozen
+         * root still fail closed.
+         */
+        default void secureExistingFiles(List<Path> files) throws IOException {
+            Objects.requireNonNull(files, "files must not be null");
+            boolean existingFile = false;
+            for (Path file : files) {
+                Path target = Objects.requireNonNull(file, "file must not be null")
+                        .toAbsolutePath()
+                        .normalize();
+                if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                    existingFile = true;
+                    secureFile(target);
+                }
+            }
+            if (!existingFile) validateRoot();
+        }
     }
 
     private record DefaultPermissionStrategy(
-            Path root, StorageIdentity rootIdentity, boolean posix, UserPrincipal current)
+            Path root, StorageIdentity rootIdentity, FileStore macOsFileStore, boolean posix, UserPrincipal current)
             implements PermissionStrategy {
         private DefaultPermissionStrategy {
             root = root.toAbsolutePath().normalize();
@@ -83,7 +107,7 @@ public final class SecureFilePermissions {
 
         @Override
         public void secureDirectory(Path directory) throws IOException {
-            Path target = normalizeAndRequireType(directory, true);
+            Path target = normalizeAndRequireType(directory, true).path();
             if (!target.equals(root)) throw new IOException("secure directory is outside the frozen permission root");
             requireRootIdentity();
             apply(target, true);
@@ -96,17 +120,44 @@ public final class SecureFilePermissions {
 
         @Override
         public void secureFile(Path file) throws IOException {
-            Path target = normalizeAndRequireType(file, false);
+            requireRootIdentity();
+            secureFileUnderValidatedRoot(file);
+        }
+
+        @Override
+        public void secureExistingFiles(List<Path> files) throws IOException {
+            Objects.requireNonNull(files, "files must not be null");
+            requireRootIdentity();
+            for (Path file : files) {
+                Path target = Objects.requireNonNull(file, "file must not be null")
+                        .toAbsolutePath()
+                        .normalize();
+                if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) continue;
+                try {
+                    secureFileUnderValidatedRoot(target);
+                } catch (NoSuchFileException ignored) {
+                    // SQLite sidecars may disappear between discovery and permission repair.
+                } catch (IOException exception) {
+                    if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) continue;
+                    throw exception;
+                }
+            }
+        }
+
+        private void secureFileUnderValidatedRoot(Path file) throws IOException {
+            Path target = normalizeAndRequireType(file, false).path();
             if (!root.equals(target.getParent())) {
                 throw new IOException("secure file is outside the frozen permission root");
             }
-            requireRootIdentity();
             apply(target, false);
         }
 
         private void requireRootIdentity() throws IOException {
-            Path currentRoot = normalizeAndRequireType(root, true);
+            ValidatedTarget currentRoot = normalizeAndRequireType(root, true);
             if (!rootIdentity.equals(storageIdentity(currentRoot))) {
+                throw new IOException("secure storage directory identity changed");
+            }
+            if (macOsFileStore != null && !macOsFileStore.equals(Files.getFileStore(currentRoot.path()))) {
                 throw new IOException("secure storage directory identity changed");
             }
         }
@@ -120,24 +171,35 @@ public final class SecureFilePermissions {
         }
     }
 
-    private static Path normalizeAndRequireType(Path path, boolean directory) throws IOException {
+    private static ValidatedTarget normalizeAndRequireType(Path path, boolean directory) throws IOException {
         Path target = path.toAbsolutePath().normalize();
-        if (Files.isSymbolicLink(target)
-                || !Files.exists(target, LinkOption.NOFOLLOW_LINKS)
-                || directory != Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) {
+        BasicFileAttributes attributes;
+        try {
+            attributes = Files.readAttributes(target, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        } catch (NoSuchFileException exception) {
+            throw new IOException("secure storage target has an invalid type", exception);
+        }
+        if (attributes.isSymbolicLink() || directory != attributes.isDirectory()) {
             throw new IOException("secure storage target has an invalid type");
         }
-        return target;
+        return new ValidatedTarget(target, attributes);
     }
 
-    private static StorageIdentity storageIdentity(Path path) throws IOException {
-        BasicFileAttributes attributes =
-                Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+    private static StorageIdentity storageIdentity(ValidatedTarget target) throws IOException {
+        Object fileKey = target.attributes().fileKey();
+        Path fallbackRealPath = fileKey == null ? target.path().toRealPath(LinkOption.NOFOLLOW_LINKS) : null;
         return new StorageIdentity(
-                path.toRealPath(LinkOption.NOFOLLOW_LINKS), attributes.fileKey(), attributes.creationTime());
+                fallbackRealPath, fileKey, target.attributes().creationTime());
     }
 
-    private record StorageIdentity(Path realPath, Object fileKey, java.nio.file.attribute.FileTime creationTime) {}
+    private static FileStore macOsFileStore(FileStore store) {
+        return System.getProperty("os.name", "").startsWith("Mac") ? store : null;
+    }
+
+    private record ValidatedTarget(Path path, BasicFileAttributes attributes) {}
+
+    private record StorageIdentity(
+            Path fallbackRealPath, Object fileKey, java.nio.file.attribute.FileTime creationTime) {}
 
     private static void applyPosix(Path target, boolean directory) throws IOException {
         Set<PosixFilePermission> expected = directory ? POSIX_DIRECTORY : POSIX_FILE;

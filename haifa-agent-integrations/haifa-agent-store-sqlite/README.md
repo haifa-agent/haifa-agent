@@ -77,7 +77,9 @@ worker ID 驱动。
 - 初始化会把数据库目录设为 POSIX `0700` 或 Windows 当前用户独占 ACL，并对主文件、WAL、SHM
   和 rollback journal 应用文件 `0600`/等价 ACL；无法复核时分类为 `FILE_PERMISSION_FAILED`。
 - 每个 `SqliteConnectionFactory` 只探测一次受信数据库目录的 FileStore/权限视图；后续调用仍以
-  no-follow 方式检查冻结的目录身份和每个现存文件的类型，并逐次应用、读取和验证权限。
+  no-follow 方式检查冻结的目录身份和每个现存文件的类型，并逐次应用、读取和验证权限。每轮
+  DB/WAL/SHM/Journal 安全处理只验证一次目录身份，再在同一个有界批次中处理当前存在的文件；
+  macOS 使用 file key、创建时间和 FileStore 复核目录身份，不在连接热路径调用 real path。
   Factory 关闭或重建会丢弃策略；策略不跨数据库目录、进程或 Factory 共享。
 - 默认不开启 SQL 日志；Mapper XML 禁止 `${}`，所有值只能使用 `#{}`。
 - `SqliteStoreFoundation.persistencePorts(protector)` 组合完整持久化端口；Model Continuation 必须注入可跨实例恢复的 protector。

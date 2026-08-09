@@ -52,9 +52,9 @@ class HostExecutionEnvironmentResolverTest {
 
         assertThat(result.environment())
                 .containsEntry("HOME", profile.toRealPath().toString())
-                .containsEntry("UserProfile", profile.toString())
-                .containsEntry("APPDATA", appData.toString())
-                .containsEntry("LOCALAPPDATA", localAppData.toString())
+                .containsEntry("UserProfile", profile.toRealPath().toString())
+                .containsEntry("APPDATA", appData.toRealPath().toString())
+                .containsEntry("LOCALAPPDATA", localAppData.toRealPath().toString())
                 .doesNotContainKeys("DEEPSEEK_API_KEY", "PYTHONUSERBASE");
         assertThat(result.allowedEnvironmentNames())
                 .isEqualTo(result.environment().keySet());
@@ -169,12 +169,12 @@ class HostExecutionEnvironmentResolverTest {
     }
 
     @Test
-    void macUsesPosixHomeAndMacCommandFallbacks() {
+    void macUsesPosixHomeAndMacCommandFallbacks() throws Exception {
         var result = HostExecutionEnvironmentResolver.resolveHostUser(
                 Map.of("HOME", home.toString()), "Mac OS X", home, applicationData, workspace, scratch, Set.of());
 
         assertThat(result.environment())
-                .containsEntry("HOME", home.toAbsolutePath().normalize().toString())
+                .containsEntry("HOME", home.toRealPath().toString())
                 .containsEntry("SHELL", "/bin/zsh")
                 .containsEntry("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin");
     }
