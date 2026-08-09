@@ -211,6 +211,26 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void missionOperationsExposeReadinessAndQuiescentUpgradeFacts() throws Exception {
+        JsonNode operations = get("/v1/admin/missions/operations");
+        assertThat(operations.path("dispatcherStatus").asText()).isEqualTo("READY");
+        assertThat(operations.path("ready").asBoolean()).isTrue();
+        assertThat(operations.path("schemaVersion").asInt()).isEqualTo(6);
+        assertThat(operations.path("capacityBlockerCode").asText()).isEqualTo("NONE");
+        assertThat(operations.path("retentionBoundary").asText()).contains("No automatic");
+
+        JsonNode upgrade = get("/v1/admin/missions/upgrade-readiness");
+        assertThat(upgrade.path("blockerCodes").isArray()).isTrue();
+        assertThat(upgrade.path("requiredAction").asText())
+                .isEqualTo(
+                        upgrade.path("ready").asBoolean()
+                                ? "CREATE_BACKUP_THEN_UPGRADE"
+                                : "WAIT_OR_CANCEL_ACTIVE_MISSIONS");
+
+        get("/actuator/health/readiness");
+    }
+
+    @Test
     void uploadedImageFlowsThroughTheConversationAndRemainsAnOpaqueTurnReference() throws Exception {
         byte[] png = new byte[] {(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1};
         String uploadBody = web.post()

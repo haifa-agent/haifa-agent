@@ -52,10 +52,37 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
 
     private final ArtifactService artifacts;
     private final ObjectMapper mapper;
+    private final int maxSources;
+    private final int maxTotalContentBytes;
+    private final int maxArtifacts;
+    private final long maxTotalArtifactBytes;
 
     public MissionArtifactPublisher(ArtifactService artifacts, ObjectMapper mapper) {
+        this(artifacts, mapper, 24, 2_097_152, 8, 4L * 1024 * 1024);
+    }
+
+    public MissionArtifactPublisher(
+            ArtifactService artifacts,
+            ObjectMapper mapper,
+            int maxSources,
+            int maxTotalContentBytes,
+            int maxArtifacts,
+            long maxTotalArtifactBytes) {
         this.artifacts = java.util.Objects.requireNonNull(artifacts);
         this.mapper = java.util.Objects.requireNonNull(mapper).copy();
+        if (maxSources < 2 || maxSources > 24 || maxTotalContentBytes < 1 || maxTotalContentBytes > 2_097_152) {
+            throw new IllegalArgumentException("Research limits are invalid");
+        }
+        if (maxArtifacts < 5
+                || maxArtifacts > 8
+                || maxTotalArtifactBytes < 1
+                || maxTotalArtifactBytes > 4L * 1024 * 1024) {
+            throw new IllegalArgumentException("Artifact limits are invalid");
+        }
+        this.maxSources = maxSources;
+        this.maxTotalContentBytes = maxTotalContentBytes;
+        this.maxArtifacts = maxArtifacts;
+        this.maxTotalArtifactBytes = maxTotalArtifactBytes;
     }
 
     @Override
@@ -177,7 +204,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             if (!requiredArray(task, "artifactRefs", 8).isEmpty()) {
                 invalid("Task result cannot invent Artifact references");
             }
-            JsonNode taskSources = requiredArray(task, "sources", 24);
+            JsonNode taskSources = requiredArray(task, "sources", maxSources);
             if (limits.get("sources").intValue() != taskSources.size()
                     || limits.get("searchCalls").intValue() < 1
                     || limits.get("fetchCalls").intValue()
@@ -278,7 +305,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         String answer = requiredText(value, "directAnswer", 24_000);
         List<String> completed = textArray(value, "completedItems", 40);
         List<String> failed = textArray(value, "failedItems", 40);
-        List<String> sourceRefs = textArray(value, "sourceRefs", 24);
+        List<String> sourceRefs = textArray(value, "sourceRefs", maxSources);
         List<String> unverified = textArray(value, "unverifiedClaims", 40);
         List<String> unresolved = textArray(value, "unresolvedQuestions", 20);
         List<String> risks = textArray(value, "residualRisks", 20);
@@ -332,6 +359,12 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         }
         if (existing.size() > 1) {
             throw new MissionException("MISSION_ARTIFACT_CONFLICT", "Mission Artifact identity is ambiguous");
+        }
+        List<Artifact> all = artifacts.findByProject(projectId);
+        long existingBytes =
+                all.stream().mapToLong(value -> value.payload().byteCount()).sum();
+        if (all.size() >= maxArtifacts || Math.addExact(existingBytes, bytes.length) > maxTotalArtifactBytes) {
+            throw new MissionException("MISSION_ARTIFACT_LIMIT_EXCEEDED", "Mission Artifact capacity is exhausted");
         }
         String[] owner = intent.ownerScope().split("/", 2);
         String principal = owner.length == 2 ? owner[1] : intent.ownerScope();
@@ -447,12 +480,12 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         if (unique.isEmpty()) invalid("Research queries are unavailable");
     }
 
-    private static void validateLimits(JsonNode limits) {
+    private void validateLimits(JsonNode limits) {
         if (limits.size() != 4) invalid("limitsUsed shape is invalid");
         boundedInteger(limits, "searchCalls", 100);
         boundedInteger(limits, "fetchCalls", 100);
-        boundedInteger(limits, "sources", 24);
-        boundedInteger(limits, "contentBytes", 2_097_152);
+        boundedInteger(limits, "sources", maxSources);
+        boundedInteger(limits, "contentBytes", maxTotalContentBytes);
     }
 
     private static void boundedInteger(JsonNode value, String field, int maximum) {

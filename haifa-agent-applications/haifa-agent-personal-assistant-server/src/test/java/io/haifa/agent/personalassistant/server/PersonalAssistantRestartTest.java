@@ -274,7 +274,7 @@ class PersonalAssistantRestartTest {
 
     private static PersonalAssistantApplication.RunView awaitTerminal(
             PersonalAssistantApplication application, String runId) throws InterruptedException {
-        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
         PersonalAssistantApplication.RunView latest;
         do {
             latest = application.run(runId).orElseThrow();

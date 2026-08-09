@@ -246,6 +246,7 @@ function client(): PersonalAssistantClient {
 describe("Personal Assistant application", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/");
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   });
 
   it("renders authoritative run usage and safe activity", async () => {
@@ -370,6 +371,64 @@ describe("Personal Assistant application", () => {
     expect(within(dialog).getByText("claim-unverified")).toBeTruthy();
     expect(within(dialog).getByText("https://research.stub/source-1")).toBeTruthy();
     expect(within(dialog).getByText("artifact-report")).toBeTruthy();
+  });
+
+  it("announces offline Mission state and restores focus when Escape closes the dialog", async () => {
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    const running = { ...mission, state: "RUNNING" as const };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [running], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => running),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    const open = await screen.findByRole("button", { name: "Mission" });
+    fireEvent.click(open);
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect(within(dialog).getByRole("status").textContent).toContain("当前离线");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Mission" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(open));
+  });
+
+  it("retries the Mission list after a reachable browser loses and regains the Server", async () => {
+    vi.useFakeTimers();
+    try {
+      let dialogAttempts = 0;
+      const missions = vi.fn(async (conversationId?: string) => {
+        if (conversationId) return { items: [], nextCursor: null };
+        if (dialogAttempts++ === 0) throw new TypeError("Failed to fetch");
+        return { items: [], nextCursor: null };
+      });
+      const api = {
+        ...client(),
+        bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+        missions,
+      } satisfies PersonalAssistantClient;
+
+      render(<App client={api} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Mission" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const dialog = screen.getByRole("dialog", { name: "Mission" });
+      expect(within(dialog).getByRole("status").textContent).toContain("暂时无法同步");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(missions).toHaveBeenCalledTimes(3);
+      expect(within(dialog).getByRole("status").textContent).toContain("Mission 状态已同步");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("scrolls the activity panel to the latest live event", async () => {

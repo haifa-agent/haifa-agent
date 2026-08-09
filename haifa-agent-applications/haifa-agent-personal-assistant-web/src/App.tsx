@@ -33,6 +33,7 @@ import {
 import {
   type FormEvent,
   type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   useCallback,
   useEffect,
@@ -1287,17 +1288,46 @@ function MissionDialog({
   const [error, setError] = useState<string | null>(null);
   const [missionInteraction, setMissionInteraction] = useState<Interaction | null>(null);
   const [missionInteractionText, setMissionInteractionText] = useState("");
+  const [syncStatus, setSyncStatus] = useState<"loading" | "current" | "syncing" | "stale" | "recovering" | "offline">(
+    navigator.onLine ? "loading" : "offline",
+  );
+  const [terminalAnnouncement, setTerminalAnnouncement] = useState("");
+  const [reconnectEpoch, setReconnectEpoch] = useState(0);
   const pollFailures = useRef(0);
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const merge = useCallback((mission: MissionSnapshot) => {
+    setSelected((current) => {
+      if (current?.missionId === mission.missionId
+        && !missionTerminalStates.has(current.state)
+        && missionTerminalStates.has(mission.state)) {
+        setTerminalAnnouncement(`Mission 已更新为${missionStateLabel(mission.state)}`);
+      }
+      return mission;
+    });
     setMissions((current) => {
       const next = current.filter((value) => value.missionId !== mission.missionId);
       return [mission, ...next].sort((left, right) =>
         new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
     });
-    setSelected(mission);
     onChanged(mission);
   }, [onChanged]);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus({ preventScroll: true });
+    const online = () => {
+      setSyncStatus("recovering");
+      setReconnectEpoch((value) => value + 1);
+    };
+    const offline = () => setSyncStatus("offline");
+    window.addEventListener("online", online);
+    window.addEventListener("offline", offline);
+    return () => {
+      window.removeEventListener("online", online);
+      window.removeEventListener("offline", offline);
+    };
+  }, []);
 
   useEffect(() => {
     if (!client.missions) {
@@ -1305,7 +1335,9 @@ function MissionDialog({
       return;
     }
     const controller = new AbortController();
+    let retryTimer: number | undefined;
     setBusy(true);
+    setSyncStatus(navigator.onLine ? "loading" : "offline");
     client.missions(undefined, controller.signal)
       .then((page) => {
         setMissions(page.items);
@@ -1314,33 +1346,54 @@ function MissionDialog({
           : page.items[0];
         setSelected(current ?? null);
         onChanged(current ?? null);
+        setSyncStatus(navigator.onLine ? "current" : "offline");
         setError(null);
       })
       .catch((reason) => {
-        if (!controller.signal.aborted) setError(safeError(reason));
+        if (!controller.signal.aborted) {
+          setError(safeError(reason));
+          setSyncStatus(navigator.onLine ? "stale" : "offline");
+          if (navigator.onLine) {
+            retryTimer = window.setTimeout(() => {
+              setSyncStatus("recovering");
+              setReconnectEpoch((value) => value + 1);
+            }, 2_000);
+          }
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setBusy(false);
       });
-    return () => controller.abort();
-  }, [client, conversation, onChanged]);
+    return () => {
+      controller.abort();
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [client, conversation, onChanged, reconnectEpoch]);
 
   useEffect(() => {
     if (!selected || missionTerminalStates.has(selected.state) || !client.missionSnapshot) return;
+    if (!navigator.onLine) {
+      setSyncStatus("offline");
+      return;
+    }
     const controller = new AbortController();
     const baseDelay = document.hidden ? 10_000 : Math.max(2_000, selected.pollAfterMs || 5_000);
     const retryDelay = Math.min(30_000, baseDelay * Math.max(1, 2 ** pollFailures.current));
     const timer = window.setTimeout(() => {
+      setSyncStatus(pollFailures.current > 0 ? "recovering" : "syncing");
       client.missionSnapshot?.(selected.missionId, controller.signal)
         .then((mission) => {
           pollFailures.current = 0;
           merge(mission);
           setError(null);
+          setSyncStatus("current");
         })
         .catch((reason) => {
           if (!controller.signal.aborted) {
             pollFailures.current += 1;
             setError(safeError(reason));
+            setSyncStatus(navigator.onLine ? "stale" : "offline");
+            if (navigator.onLine) setReconnectEpoch((value) => value + 1);
           }
         });
     }, retryDelay);
@@ -1348,7 +1401,38 @@ function MissionDialog({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [client, merge, selected]);
+  }, [client, merge, reconnectEpoch, selected]);
+
+  const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab" || !dialogRef.current) return;
+    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  const syncStatusLabel = {
+    loading: "正在加载 Mission",
+    current: "Mission 状态已同步",
+    syncing: "正在同步 Mission",
+    stale: "暂时无法同步，正在显示上次保存的状态",
+    recovering: "网络已恢复，正在重新同步 Mission",
+    offline: "当前离线，正在显示上次保存的状态",
+  }[syncStatus];
 
   useEffect(() => {
     const runId = selected?.execution.latestAttempt?.runId;
@@ -1447,10 +1531,10 @@ function MissionDialog({
 
   return (
     <div className="dialog-backdrop mission-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="mission-dialog" role="dialog" aria-modal="true" aria-labelledby="mission-title" onMouseDown={(event) => event.stopPropagation()}>
+      <section ref={dialogRef} className="mission-dialog" role="dialog" aria-modal="true" aria-labelledby="mission-title" onKeyDown={handleDialogKeyDown} onMouseDown={(event) => event.stopPropagation()}>
         <header className="mission-dialog-header">
           <div><span className="eyebrow">LONG-RUNNING WORK</span><h2 id="mission-title">Mission</h2></div>
-          <button type="button" className="icon" aria-label="关闭 Mission" onClick={onClose}><X size={18} /></button>
+          <button ref={closeButtonRef} type="button" className="icon" aria-label="关闭 Mission" onClick={onClose}><X size={18} /></button>
         </header>
         {error && <div className="error-banner" role="alert"><CircleAlert size={16} /><span>{error}</span></div>}
         <div className="mission-layout">
@@ -1512,7 +1596,10 @@ function MissionDialog({
             ) : <div className="empty"><h3>选择或创建 Mission</h3><p>Mission 用于需要拆解、持续运行并最终整合的大任务。</p></div>}
           </div>
         </div>
-        {busy && <div className="mission-loading" role="status">正在同步 Mission…</div>}
+        <div className={`mission-sync-status sync-${syncStatus}`} role="status" aria-live="polite" aria-atomic="true">
+          {syncStatus === "offline" && <WifiOff size={14} aria-hidden="true" />}{syncStatusLabel}
+        </div>
+        <div className="sr-only" aria-live="assertive">{terminalAnnouncement}</div>
       </section>
     </div>
   );
@@ -2146,6 +2233,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     dispatch({ type: "toggleMemory", open: false });
     window.setTimeout(() => previousFocus.current?.focus(), 0);
   }, []);
+  const closeMission = useCallback(() => {
+    setMissionOpen(false);
+    window.setTimeout(() => previousFocus.current?.focus(), 0);
+  }, []);
 
   const runActive = Boolean(state.selectedConversation?.activeRunId) && !isTerminal(state.run);
   const composerDisabled = Boolean(state.pending) || runActive;
@@ -2193,7 +2284,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             <Brain size={16} /> 记忆{state.memoryCandidates.length > 0 && <b>{state.memoryCandidates.length}</b>}
           </button>
           {state.bootstrap?.capabilities.includes("mission") && (
-            <button className="button mission-button" onClick={() => setMissionOpen(true)}>
+            <button className="button mission-button" onClick={(event) => {
+              previousFocus.current = event.currentTarget;
+              setMissionOpen(true);
+            }}>
               <CheckCircle2 size={16} /> Mission
             </button>
           )}
@@ -2616,7 +2710,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         <MissionDialog
           client={client}
           conversation={state.selectedConversation}
-          onClose={() => setMissionOpen(false)}
+          onClose={closeMission}
           onChanged={handleMissionChanged}
         />
       )}

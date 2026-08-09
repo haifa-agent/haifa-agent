@@ -14,6 +14,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionPublishedResu
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.application.mission.MissionState;
+import io.haifa.agent.personalassistant.application.mission.MissionUsage;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -48,7 +49,7 @@ class SqliteMissionStoreTest {
                 MissionConstraints.DEFAULT);
 
         MissionSnapshot created = first.create(command);
-        assertThat(firstStore.schemaVersion()).isEqualTo(5);
+        assertThat(firstStore.schemaVersion()).isEqualTo(6);
 
         SqliteMissionStore restartedStore = new SqliteMissionStore(database, new ObjectMapper());
         MissionApplicationService restarted = service(restartedStore, ids);
@@ -243,6 +244,96 @@ class SqliteMissionStoreTest {
                 .containsExactly(
                         io.haifa.agent.personalassistant.application.mission.MissionTaskState.BLOCKED,
                         io.haifa.agent.personalassistant.application.mission.MissionTaskState.CANCELLED);
+    }
+
+    @Test
+    void countsAuthoritativeUsageOnceAndStopsNewWorkAtBudget() {
+        Path database = directory.resolve("budget.sqlite");
+        SqliteMissionStore store = new SqliteMissionStore(database, new ObjectMapper(), 2, 3, 10, 10);
+        store.registerDispatcher("process", "instance", CLOCK.instant());
+        MissionApplicationService service = service(store, new AtomicInteger());
+        MissionSnapshot created = service.create(new MissionApplicationService.CreateMission(
+                "create-budget",
+                "local/public-user",
+                "conversation-budget",
+                "Produce a bounded result",
+                List.of("first", "second"),
+                MissionConstraints.DEFAULT));
+        service.confirm(new MissionApplicationService.ChangeMission(
+                "confirm-budget", "local/public-user", created.missionId(), created.version()));
+
+        var intent = store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant())
+                .orElseThrow();
+        store.bind(intent, "session-budget", "run-budget", CLOCK.instant());
+        var attempt = store.activeAttempts().getFirst();
+        MissionUsage usage = new MissionUsage(10, 1, 2);
+        store.settleCompleted(attempt, "sha256:result", "done", usage, CLOCK.instant());
+        store.settleCompleted(attempt, "sha256:result", "done", usage, CLOCK.instant());
+
+        assertThat(store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant()))
+                .isEmpty();
+        var operations = store.operationalSnapshot(CLOCK.instant());
+        assertThat(operations.modelTokens()).isEqualTo(10);
+        assertThat(operations.modelCalls()).isEqualTo(1);
+        assertThat(operations.toolCalls()).isEqualTo(2);
+        assertThat(operations.budgetExhaustedTasks()).isEqualTo(1);
+        assertThat(store.claimSynthesis(CLOCK.instant()).orElseThrow().failedItems())
+                .containsExactly("task-2:BLOCKED:MISSION_BUDGET_EXHAUSTED");
+    }
+
+    @Test
+    void deadlineCancelsRemainingWorkButStillAllowsPartialSynthesis() throws SQLException {
+        Path database = directory.resolve("deadline.sqlite");
+        SqliteMissionStore store = new SqliteMissionStore(database, new ObjectMapper());
+        store.registerDispatcher("process", "instance", CLOCK.instant());
+        MissionApplicationService service = service(store, new AtomicInteger());
+        MissionSnapshot created = service.create(new MissionApplicationService.CreateMission(
+                "create-deadline",
+                "local/public-user",
+                "conversation-deadline",
+                "Produce the evidence available before timeout",
+                List.of("first", "second"),
+                MissionConstraints.DEFAULT));
+        service.confirm(new MissionApplicationService.ChangeMission(
+                "confirm-deadline", "local/public-user", created.missionId(), created.version()));
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+                var statement = connection.prepareStatement(
+                        "UPDATE personal_mission SET deadline_at_ms=? WHERE mission_id=?")) {
+            statement.setLong(1, CLOCK.instant().toEpochMilli());
+            statement.setString(2, created.missionId());
+            statement.executeUpdate();
+        }
+
+        assertThat(store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant()))
+                .isEmpty();
+        var synthesis = store.claimSynthesis(CLOCK.instant()).orElseThrow();
+        assertThat(synthesis.failedItems())
+                .containsExactly(
+                        "task-1:CANCELLED:MISSION_DEADLINE_EXCEEDED", "task-2:CANCELLED:MISSION_DEADLINE_EXCEEDED");
+        store.settleSynthesis(
+                synthesis,
+                new MissionRuntimeAccess.SynthesisRunResult("session", "run", "{}"),
+                new MissionPublishedResult("artifact", List.of("artifact"), List.of(), "{}", "Partial", "PARTIAL"),
+                CLOCK.instant());
+        assertThat(store.missionState(created.missionId())).isEqualTo(MissionState.PARTIALLY_COMPLETED);
+    }
+
+    @Test
+    void rejectsDatabaseFromNewerPersonalSchema() throws SQLException {
+        Path database = directory.resolve("newer.sqlite");
+        new SqliteMissionStore(database, new ObjectMapper());
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+                var statement = connection.prepareStatement(
+                        "INSERT INTO personal_schema_history(version,checksum,installed_at_ms) VALUES (?,?,?)")) {
+            statement.setInt(1, 7);
+            statement.setString(2, "future");
+            statement.setLong(3, CLOCK.instant().toEpochMilli());
+            statement.executeUpdate();
+        }
+        assertThatThrownBy(() -> new SqliteMissionStore(database, new ObjectMapper()))
+                .isInstanceOf(MissionException.class)
+                .extracting(value -> ((MissionException) value).code())
+                .isEqualTo("MISSION_SCHEMA_NEWER_THAN_APPLICATION");
     }
 
     private static String createConcurrently(

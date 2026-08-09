@@ -65,7 +65,13 @@ public final class MissionApplicationService {
                 command.conversationId(),
                 command.objective(),
                 String.join("\u0000", command.acceptanceCriteria()),
-                command.constraints().toString(),
+                command.defaultDeadlineApplied()
+                        ? new MissionConstraints(
+                                        command.constraints().maxTasks(),
+                                        command.constraints().maxDependencyDepth(),
+                                        Optional.empty())
+                                .toString()
+                        : command.constraints().toString(),
                 command.mode().name(),
                 command.researchBrief().map(Object::toString).orElse(""));
         String proposedMissionId = ids.nextId();
@@ -296,7 +302,8 @@ public final class MissionApplicationService {
             List<String> acceptanceCriteria,
             MissionConstraints constraints,
             MissionMode mode,
-            Optional<ResearchBrief> researchBrief) {
+            Optional<ResearchBrief> researchBrief,
+            boolean defaultDeadlineApplied) {
         public CreateMission {
             idempotencyKey = MissionValues.text(idempotencyKey, "idempotencyKey", 128);
             ownerScope = MissionValues.text(ownerScope, "ownerScope", 256);
@@ -312,6 +319,31 @@ public final class MissionApplicationService {
             if (mode == MissionMode.STANDARD && researchBrief.isPresent()) {
                 throw new MissionException("MISSION_RESEARCH_BRIEF_FORBIDDEN", "Standard Mission cannot carry a brief");
             }
+            if (defaultDeadlineApplied && constraints.deadlineAt().isEmpty()) {
+                throw new MissionException(
+                        "MISSION_DEADLINE_INVALID", "A defaulted Mission deadline must be materialized");
+            }
+        }
+
+        public CreateMission(
+                String idempotencyKey,
+                String ownerScope,
+                String conversationId,
+                String objective,
+                List<String> acceptanceCriteria,
+                MissionConstraints constraints,
+                MissionMode mode,
+                Optional<ResearchBrief> researchBrief) {
+            this(
+                    idempotencyKey,
+                    ownerScope,
+                    conversationId,
+                    objective,
+                    acceptanceCriteria,
+                    constraints,
+                    mode,
+                    researchBrief,
+                    false);
         }
 
         public CreateMission(
@@ -329,7 +361,8 @@ public final class MissionApplicationService {
                     acceptanceCriteria,
                     constraints,
                     MissionMode.STANDARD,
-                    Optional.empty());
+                    Optional.empty(),
+                    false);
         }
     }
 

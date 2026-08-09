@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.server.mission;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,6 +26,9 @@ class MissionDispatcherTest {
         try (var first = new MissionDispatcher(store, coordinator, Clock.systemUTC(), directory);
                 var second = new MissionDispatcher(store, coordinator, Clock.systemUTC(), directory)) {
             first.start();
+            assertThat(first.ready()).isTrue();
+            assertThat(first.snapshot().status()).isEqualTo("READY");
+            assertThat(first.snapshot().lastReconcileAtMillis()).isPositive();
             assertThatThrownBy(second::start)
                     .isInstanceOf(MissionException.class)
                     .extracting(value -> ((MissionException) value).code())

@@ -256,6 +256,7 @@
           "400": {"$ref": "#/components/responses/Error"},
           "409": {"$ref": "#/components/responses/Error"},
           "422": {"$ref": "#/components/responses/Error"},
+          "429": {"$ref": "#/components/responses/Error"},
           "503": {"$ref": "#/components/responses/Error"}
         }
       }
@@ -829,11 +830,13 @@
       },
       "ApiError": {
         "type": "object",
-        "required": ["code", "message", "correlationId"],
+        "required": ["code", "message", "correlationId", "diagnosticId", "actions"],
         "properties": {
           "code": {"type": "string"},
           "message": {"type": "string"},
-          "correlationId": {"type": "string"}
+          "correlationId": {"type": "string"},
+          "diagnosticId": {"type": "string"},
+          "actions": {"type": "array", "maxItems": 4, "items": {"type": "string"}}
         }
       }
     }

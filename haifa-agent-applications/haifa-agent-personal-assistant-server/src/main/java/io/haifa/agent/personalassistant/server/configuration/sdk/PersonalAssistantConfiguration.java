@@ -20,6 +20,7 @@ import io.haifa.agent.personalassistant.server.configuration.model.SqlitePersona
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
 import io.haifa.agent.personalassistant.server.mission.MissionArtifactPublisher;
+import io.haifa.agent.personalassistant.server.mission.MissionCapacityMonitor;
 import io.haifa.agent.personalassistant.server.mission.MissionDispatcher;
 import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
 import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
@@ -164,7 +165,19 @@ public class PersonalAssistantConfiguration {
 
     @Bean
     SqliteMissionStore personalMissionStore(PersonalAssistantProperties properties, ObjectMapper mapper) {
-        return new SqliteMissionStore(properties.dataDirectory().resolve("personal-assistant.sqlite"), mapper);
+        var limits = properties.mission();
+        return new SqliteMissionStore(
+                properties.dataDirectory().resolve("personal-assistant.sqlite"),
+                mapper,
+                limits.maxAutoAttemptsPerTask(),
+                Math.min(3, limits.maxAutoAttemptsPerTask() + 1),
+                limits.maxModelTokens(),
+                limits.maxToolCalls());
+    }
+
+    @Bean
+    MissionCapacityMonitor missionCapacityMonitor(PersonalAssistantProperties properties) {
+        return new MissionCapacityMonitor(properties.dataDirectory(), properties.mission());
     }
 
     @Bean
@@ -205,15 +218,29 @@ public class PersonalAssistantConfiguration {
             PersonalAssistantApplication application,
             PersonalAssistantProperties properties,
             Clock clock,
-            ObjectMapper mapper) {
+            ObjectMapper mapper,
+            MissionCapacityMonitor capacity) {
         String dispatcherId = "pa-mission-" + ProcessHandle.current().pid();
         var coordinator = new MissionExecutionCoordinator(
                 store,
                 application.missionRuntime(),
                 clock,
                 dispatcherId,
-                new MissionArtifactPublisher(application.artifacts(), mapper));
-        return new MissionDispatcher(store, coordinator, clock, properties.dataDirectory());
+                new MissionArtifactPublisher(
+                        application.artifacts(),
+                        mapper,
+                        properties.research().maxSources(),
+                        properties.research().maxTotalContentBytes(),
+                        properties.mission().maxArtifacts(),
+                        properties.mission().maxTotalArtifactBytes()));
+        return new MissionDispatcher(
+                store,
+                coordinator,
+                clock,
+                properties.dataDirectory(),
+                capacity,
+                properties.mission().dispatcherPollMillis(),
+                properties.mission().dispatcherShutdownTimeoutMillis());
     }
 
     private static String resolveCredential(PersonalAssistantProperties.Web web) {

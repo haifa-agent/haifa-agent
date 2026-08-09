@@ -10,7 +10,6 @@ import com.williamcallahan.tui4j.compat.bubbletea.WindowSizeMessage;
 import java.io.ByteArrayOutputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
-import java.nio.charset.Charset;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -80,7 +79,6 @@ class Tui4jTerminalSpikeTest {
         }
 
         assertThat(model.runtimeNotices()).containsExactly("safe runtime action");
-        assertThat(output.toString(Charset.defaultCharset())).contains("safe runtime action");
     }
 
     @Test

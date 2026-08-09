@@ -21,6 +21,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionTaskAttempt;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskAttemptState;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
 import io.haifa.agent.personalassistant.application.mission.MissionUnitOfWork;
+import io.haifa.agent.personalassistant.application.mission.MissionUsage;
 import io.haifa.agent.personalassistant.application.mission.PersonalMission;
 import io.haifa.agent.store.sqlite.migration.SqlScriptParser;
 import java.io.IOException;
@@ -36,14 +37,17 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 /** Product-owned SQLite migration, Store and UoW. It deliberately does not modify public Runtime mappings. */
 public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork, MissionExecutionStore {
-    private static final int SCHEMA_VERSION = 5;
+    private static final int SCHEMA_VERSION = 6;
     private static final String MIGRATION =
             """
             CREATE TABLE personal_mission (
@@ -261,21 +265,61 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             """
             ALTER TABLE personal_mission ADD COLUMN selected_skill_binding TEXT;
             """;
+    private static final String MIGRATION_V6 =
+            """
+            ALTER TABLE personal_mission ADD COLUMN usage_model_tokens INTEGER NOT NULL DEFAULT 0
+                CHECK(usage_model_tokens >= 0);
+            ALTER TABLE personal_mission ADD COLUMN usage_model_calls INTEGER NOT NULL DEFAULT 0
+                CHECK(usage_model_calls >= 0);
+            ALTER TABLE personal_mission ADD COLUMN usage_tool_calls INTEGER NOT NULL DEFAULT 0
+                CHECK(usage_tool_calls >= 0);
+            """;
 
     private final String jdbcUrl;
+    private final Path database;
     private final ObjectMapper mapper;
+    private final int maxAutoAttempts;
+    private final int maxTotalAttempts;
+    private final long maxModelTokens;
+    private final long maxToolCalls;
+    private final AtomicLong duplicatePrevented = new AtomicLong();
     private final ThreadLocal<Connection> transaction = new ThreadLocal<>();
 
     public SqliteMissionStore(Path database, ObjectMapper mapper) {
+        this(database, mapper, 2, 3, 200_000, 100);
+    }
+
+    public SqliteMissionStore(
+            Path database,
+            ObjectMapper mapper,
+            int maxAutoAttempts,
+            int maxTotalAttempts,
+            long maxModelTokens,
+            long maxToolCalls) {
         Path normalized = database.toAbsolutePath().normalize();
+        if (maxAutoAttempts < 1 || maxTotalAttempts < maxAutoAttempts || maxTotalAttempts > 3) {
+            throw new IllegalArgumentException("Mission Attempt limits are invalid");
+        }
+        if (maxModelTokens < 1 || maxModelTokens > 200_000 || maxToolCalls < 1 || maxToolCalls > 100) {
+            throw new IllegalArgumentException("Mission usage limits are invalid");
+        }
         try {
             Files.createDirectories(normalized.getParent());
         } catch (IOException exception) {
             throw new MissionException("MISSION_STORE_FAILED", "Mission data directory is unavailable", exception);
         }
+        this.database = normalized;
         jdbcUrl = "jdbc:sqlite:" + normalized;
         this.mapper = mapper.copy();
+        this.maxAutoAttempts = maxAutoAttempts;
+        this.maxTotalAttempts = maxTotalAttempts;
+        this.maxModelTokens = maxModelTokens;
+        this.maxToolCalls = maxToolCalls;
         migrate();
+    }
+
+    Path database() {
+        return database;
     }
 
     @Override
@@ -318,6 +362,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             statement.setString(5, proposal.missionId());
             statement.setLong(6, proposal.createdAt().toEpochMilli());
             boolean created = statement.executeUpdate() == 1;
+            if (!created) duplicatePrevented.incrementAndGet();
             MissionCommandBinding binding = findCommand(
                             proposal.ownerScope(), proposal.operation(), proposal.idempotencyKey())
                     .orElseThrow();
@@ -457,6 +502,93 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         }
     }
 
+    public OperationalSnapshot operationalSnapshot(Instant now) {
+        return execute(() -> {
+            try {
+                Map<String, Long> states = new LinkedHashMap<>();
+                try (var statement = current()
+                                .prepareStatement(
+                                        "SELECT state,COUNT(*) FROM personal_mission GROUP BY state ORDER BY state");
+                        var result = statement.executeQuery()) {
+                    while (result.next()) states.put(result.getString(1), result.getLong(2));
+                }
+                long activeMissions = scalar(
+                        "SELECT COUNT(*) FROM personal_mission WHERE state NOT IN ('COMPLETED','PARTIALLY_COMPLETED','FAILED','CANCELLED')");
+                long activeAttempts = scalar(
+                        "SELECT COUNT(*) FROM personal_mission_task_attempt WHERE state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING')");
+                long unsettledAttempts = scalar(
+                        "SELECT COUNT(*) FROM personal_mission_task_attempt WHERE state NOT IN ('SETTLED','FAILED','OUTCOME_UNKNOWN','CANCELLED')");
+                long pendingOutbox =
+                        scalar("SELECT COUNT(*) FROM personal_mission_outbox WHERE state IN ('PENDING','CLAIMED')");
+                long blockedTasks = scalar("SELECT COUNT(*) FROM personal_mission_task WHERE state='BLOCKED'");
+                long outcomeUnknown =
+                        scalar("SELECT COUNT(*) FROM personal_mission_task_attempt WHERE state='OUTCOME_UNKNOWN'");
+                long budgetExhausted = scalar(
+                        "SELECT COUNT(*) FROM personal_mission_task WHERE block_code='MISSION_BUDGET_EXHAUSTED'");
+                long modelTokens = scalar("SELECT COALESCE(SUM(usage_model_tokens),0) FROM personal_mission");
+                long modelCalls = scalar("SELECT COALESCE(SUM(usage_model_calls),0) FROM personal_mission");
+                long toolCalls = scalar("SELECT COALESCE(SUM(usage_tool_calls),0) FROM personal_mission");
+                Optional<Long> oldestAge = Optional.empty();
+                try (var statement = current()
+                                .prepareStatement(
+                                        "SELECT MIN(created_at_ms) FROM personal_mission_outbox WHERE state IN ('PENDING','CLAIMED')");
+                        var result = statement.executeQuery()) {
+                    if (result.next()) {
+                        long value = result.getLong(1);
+                        if (!result.wasNull()) oldestAge = Optional.of(Math.max(0, now.toEpochMilli() - value));
+                    }
+                }
+                return new OperationalSnapshot(
+                        Map.copyOf(states),
+                        activeMissions,
+                        activeAttempts,
+                        unsettledAttempts,
+                        pendingOutbox,
+                        oldestAge,
+                        blockedTasks,
+                        outcomeUnknown,
+                        budgetExhausted,
+                        modelTokens,
+                        modelCalls,
+                        toolCalls,
+                        duplicatePrevented.get());
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+        });
+    }
+
+    public void requireQuiescent(Instant now) {
+        OperationalSnapshot snapshot = operationalSnapshot(now);
+        if (snapshot.activeMissions() != 0 || snapshot.unsettledAttempts() != 0 || snapshot.pendingOutbox() != 0) {
+            throw new MissionException(
+                    "MISSION_NOT_QUIESCENT",
+                    "Active Mission, unsettled Attempt, or pending Outbox prevents maintenance");
+        }
+    }
+
+    private long scalar(String sql) throws SQLException {
+        try (var statement = current().prepareStatement(sql);
+                var result = statement.executeQuery()) {
+            return result.next() ? result.getLong(1) : 0;
+        }
+    }
+
+    public record OperationalSnapshot(
+            Map<String, Long> missionStates,
+            long activeMissions,
+            long activeAttempts,
+            long unsettledAttempts,
+            long pendingOutbox,
+            Optional<Long> oldestOutboxAgeMillis,
+            long blockedTasks,
+            long outcomeUnknownAttempts,
+            long budgetExhaustedTasks,
+            long modelTokens,
+            long modelCalls,
+            long toolCalls,
+            long duplicatePrevented) {}
+
     public void registerDispatcher(String processId, String instanceId, Instant now) {
         execute(() -> {
             try (var statement = current()
@@ -587,6 +719,35 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
     }
 
     @Override
+    public boolean deadlineExceeded(String missionId, Instant now) {
+        return execute(() -> {
+            try (var statement = current()
+                    .prepareStatement(
+                            "SELECT 1 FROM personal_mission WHERE mission_id=? AND state IN ('RUNNING','WAITING_USER') AND deadline_at_ms<=?")) {
+                statement.setString(1, missionId);
+                statement.setLong(2, now.toEpochMilli());
+                try (var result = statement.executeQuery()) {
+                    return result.next();
+                }
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+        });
+    }
+
+    @Override
+    public void expireForPartialSynthesis(String missionId, Instant now) {
+        execute(() -> {
+            try {
+                expireMissionForPartialSynthesis(missionId, now);
+            } catch (SQLException exception) {
+                throw failure(exception);
+            }
+            return null;
+        });
+    }
+
+    @Override
     public void waitingForUser(MissionTaskAttempt attempt, Instant now) {
         execute(() -> {
             try {
@@ -600,8 +761,15 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
 
     @Override
     public void settleCompleted(MissionTaskAttempt attempt, String resultDigest, String resultJson, Instant now) {
+        settleCompleted(attempt, resultDigest, resultJson, MissionUsage.NONE, now);
+    }
+
+    @Override
+    public void settleCompleted(
+            MissionTaskAttempt attempt, String resultDigest, String resultJson, MissionUsage usage, Instant now) {
         execute(() -> {
             if (!settleAttempt(attempt, MissionTaskAttemptState.SETTLED, resultDigest, null, now)) return null;
+            addUsage(attempt.missionId(), usage, now);
             try (var statement = current()
                     .prepareStatement(
                             "UPDATE personal_mission_task SET state='COMPLETED',result_json=?,result_digest=?,block_code=NULL,updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=?")) {
@@ -622,16 +790,30 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
 
     @Override
     public void settleFailed(MissionTaskAttempt attempt, String failureCode, boolean retryable, Instant now) {
+        settleFailed(attempt, failureCode, retryable, MissionUsage.NONE, now);
+    }
+
+    @Override
+    public void settleFailed(
+            MissionTaskAttempt attempt, String failureCode, boolean retryable, MissionUsage usage, Instant now) {
         execute(() -> {
-            settleFailedInTransaction(attempt, failureCode, retryable, now);
+            if (settleFailedInTransaction(attempt, failureCode, retryable, now)) {
+                addUsage(attempt.missionId(), usage, now);
+            }
             return null;
         });
     }
 
     @Override
     public void settleCancelled(MissionTaskAttempt attempt, Instant now) {
+        settleCancelled(attempt, MissionUsage.NONE, now);
+    }
+
+    @Override
+    public void settleCancelled(MissionTaskAttempt attempt, MissionUsage usage, Instant now) {
         execute(() -> {
             if (!settleAttempt(attempt, MissionTaskAttemptState.CANCELLED, null, null, now)) return null;
+            addUsage(attempt.missionId(), usage, now);
             try (var statement = current()
                     .prepareStatement(
                             "UPDATE personal_mission_task SET state='CANCELLED',updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=?")) {
@@ -676,14 +858,16 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             """
                     UPDATE personal_mission_task SET state='READY',block_code=NULL,updated_at_ms=?,version=version+1
                     WHERE mission_id=? AND task_id=? AND state='BLOCKED'
-                      AND latest_attempt_no < 3
+                      AND latest_attempt_no < ?
+                      AND block_code<>'MISSION_BUDGET_EXHAUSTED'
                       AND EXISTS (SELECT 1 FROM personal_mission m WHERE m.mission_id=? AND m.owner_scope=? AND m.state='WAITING_USER')
                     """)) {
                 statement.setLong(1, now.toEpochMilli());
                 statement.setString(2, missionId);
                 statement.setString(3, taskId);
-                statement.setString(4, missionId);
-                statement.setString(5, ownerScope);
+                statement.setInt(4, maxTotalAttempts);
+                statement.setString(5, missionId);
+                statement.setString(6, ownerScope);
                 if (statement.executeUpdate() != 1) {
                     throw new MissionException(
                             "MISSION_TASK_NOT_RETRYABLE", "Mission Task is not blocked and retryable");
@@ -712,10 +896,12 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         WHERE t.mission_id=m.mission_id
                           AND t.state NOT IN ('COMPLETED','BLOCKED','CANCELLED'))
                       AND NOT EXISTS (SELECT 1 FROM personal_mission_task t
-                        WHERE t.mission_id=m.mission_id AND t.state='BLOCKED' AND t.latest_attempt_no < 3)
+                        WHERE t.mission_id=m.mission_id AND t.state='BLOCKED'
+                          AND t.latest_attempt_no < ? AND t.block_code<>'MISSION_BUDGET_EXHAUSTED')
                       AND EXISTS (SELECT 1 FROM personal_mission_task t WHERE t.mission_id=m.mission_id)
                     ORDER BY created_at_ms,mission_id LIMIT 1
                     """)) {
+                    select.setInt(1, maxTotalAttempts);
                     try (var result = select.executeQuery()) {
                         if (!result.next()) return Optional.empty();
                         String missionId = result.getString("mission_id");
@@ -785,7 +971,11 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setLong(9, now.toEpochMilli());
                 statement.setLong(10, now.toEpochMilli());
                 statement.setString(11, intent.missionId());
-                statement.executeUpdate();
+                if (statement.executeUpdate() != 1) {
+                    duplicatePrevented.incrementAndGet();
+                    return null;
+                }
+                addUsage(intent.missionId(), synthesis.usage(), now);
                 appendEvent(
                         intent.missionId(),
                         "PARTIALLY_COMPLETED".equals(terminalState)
@@ -828,11 +1018,21 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.execute(
                         "CREATE TABLE IF NOT EXISTS personal_schema_history(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, installed_at_ms INTEGER NOT NULL)");
             }
+            try (var statement = connection.createStatement();
+                    var result =
+                            statement.executeQuery("SELECT COALESCE(MAX(version),0) FROM personal_schema_history")) {
+                if (result.next() && result.getInt(1) > SCHEMA_VERSION) {
+                    throw new MissionException(
+                            "MISSION_SCHEMA_NEWER_THAN_APPLICATION",
+                            "Personal Mission schema is newer than this application");
+                }
+            }
             applyMigration(connection, 1, MIGRATION);
             applyMigration(connection, 2, MIGRATION_V2);
             applyMigration(connection, 3, MIGRATION_V3);
             applyMigration(connection, 4, MIGRATION_V4);
             applyMigration(connection, 5, MIGRATION_V5);
+            applyMigration(connection, 6, MIGRATION_V6);
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -879,6 +1079,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             String dispatcherId, Instant now, Instant staleBefore) {
         try {
             expireDeadlines(now);
+            exhaustBudgets(now);
             if (!hasActiveAttempt()) {
                 refreshReadyTasks(now);
                 createNextAttempt(now);
@@ -940,7 +1141,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         """
                 WITH RECURSIVE descendants(mission_id, task_id) AS (
                   SELECT mission_id, task_id FROM personal_mission_task
-                  WHERE state='BLOCKED' AND latest_attempt_no >= 3
+                  WHERE state='BLOCKED' AND latest_attempt_no >= ?
                   UNION
                   SELECT dependency.mission_id, dependency.task_id
                   FROM personal_mission_task_dependency dependency
@@ -955,34 +1156,96 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     SELECT 1 FROM descendants value
                     WHERE value.mission_id=task.mission_id AND value.task_id=task.task_id)
                 """)) {
-            statement.setLong(1, now.toEpochMilli());
+            statement.setInt(1, maxTotalAttempts);
+            statement.setLong(2, now.toEpochMilli());
             statement.executeUpdate();
         }
     }
 
+    private void exhaustBudgets(Instant now) throws SQLException {
+        List<String> exhausted = new ArrayList<>();
+        try (var statement = current()
+                .prepareStatement(
+                        """
+                SELECT mission_id FROM personal_mission m
+                WHERE state IN ('RUNNING','WAITING_USER')
+                  AND (usage_model_tokens>=? OR usage_tool_calls>=?)
+                  AND EXISTS (SELECT 1 FROM personal_mission_task t WHERE t.mission_id=m.mission_id
+                    AND t.state NOT IN ('COMPLETED','BLOCKED','CANCELLED'))
+                ORDER BY created_at_ms,mission_id
+                """)) {
+            statement.setLong(1, maxModelTokens);
+            statement.setLong(2, maxToolCalls);
+            try (var result = statement.executeQuery()) {
+                while (result.next()) exhausted.add(result.getString(1));
+            }
+        }
+        for (String missionId : exhausted) {
+            try (var tasks = current()
+                            .prepareStatement(
+                                    """
+                    UPDATE personal_mission_task
+                    SET state='BLOCKED',block_code='MISSION_BUDGET_EXHAUSTED',updated_at_ms=?,version=version+1
+                    WHERE mission_id=? AND state NOT IN ('COMPLETED','BLOCKED','CANCELLED')
+                    """);
+                    var mission = current()
+                            .prepareStatement(
+                                    """
+                    UPDATE personal_mission SET state='WAITING_USER',failure_code='MISSION_BUDGET_EXHAUSTED',
+                      updated_at_ms=?,version=version+1 WHERE mission_id=? AND state IN ('RUNNING','WAITING_USER')
+                    """)) {
+                tasks.setLong(1, now.toEpochMilli());
+                tasks.setString(2, missionId);
+                tasks.executeUpdate();
+                mission.setLong(1, now.toEpochMilli());
+                mission.setString(2, missionId);
+                mission.executeUpdate();
+                appendEvent(missionId, "MISSION_BUDGET_EXHAUSTED", now);
+            }
+        }
+    }
+
     private void expireDeadlines(Instant now) throws SQLException {
+        List<String> expired = new ArrayList<>();
+        try (var statement = current()
+                .prepareStatement(
+                        """
+                SELECT mission_id FROM personal_mission m
+                WHERE state IN ('RUNNING','WAITING_USER') AND deadline_at_ms<=?
+                  AND NOT EXISTS (SELECT 1 FROM personal_mission_task_attempt a
+                    WHERE a.mission_id=m.mission_id
+                      AND a.state IN ('CREATED','DISPATCH_PENDING','BOUND','SETTLEMENT_PENDING'))
+                ORDER BY created_at_ms,mission_id
+                """)) {
+            statement.setLong(1, now.toEpochMilli());
+            try (var result = statement.executeQuery()) {
+                while (result.next()) expired.add(result.getString(1));
+            }
+        }
+        for (String missionId : expired) expireMissionForPartialSynthesis(missionId, now);
+    }
+
+    private void expireMissionForPartialSynthesis(String missionId, Instant now) throws SQLException {
         try (var tasks = current()
                         .prepareStatement(
                                 """
                 UPDATE personal_mission_task SET state='CANCELLED',block_code='MISSION_DEADLINE_EXCEEDED',
                   updated_at_ms=?,version=version+1
-                WHERE state NOT IN ('COMPLETED','BLOCKED','CANCELLED') AND mission_id IN (
-                  SELECT mission_id FROM personal_mission WHERE state IN ('RUNNING','WAITING_USER') AND deadline_at_ms<=?)
+                WHERE mission_id=? AND state NOT IN ('COMPLETED','BLOCKED')
                 """);
-                var missions = current()
+                var mission = current()
                         .prepareStatement(
                                 """
-                UPDATE personal_mission SET state='FAILED',failure_code='MISSION_DEADLINE_EXCEEDED',
-                  updated_at_ms=?,finished_at_ms=?,version=version+1
-                WHERE state IN ('RUNNING','WAITING_USER') AND deadline_at_ms<=?
+                UPDATE personal_mission SET state='WAITING_USER',failure_code='MISSION_DEADLINE_EXCEEDED',
+                  updated_at_ms=?,version=version+1
+                WHERE mission_id=? AND state IN ('RUNNING','WAITING_USER')
                 """)) {
             tasks.setLong(1, now.toEpochMilli());
-            tasks.setLong(2, now.toEpochMilli());
+            tasks.setString(2, missionId);
             tasks.executeUpdate();
-            missions.setLong(1, now.toEpochMilli());
-            missions.setLong(2, now.toEpochMilli());
-            missions.setLong(3, now.toEpochMilli());
-            missions.executeUpdate();
+            mission.setLong(1, now.toEpochMilli());
+            mission.setString(2, missionId);
+            if (mission.executeUpdate() == 1) appendEvent(missionId, "MISSION_DEADLINE_EXCEEDED", now);
         }
     }
 
@@ -1091,13 +1354,13 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         }
     }
 
-    private void settleFailedInTransaction(
+    private boolean settleFailedInTransaction(
             MissionTaskAttempt attempt, String failureCode, boolean retryable, Instant now) {
         MissionTaskAttemptState terminal = failureCode.endsWith("OUTCOME_UNKNOWN")
                 ? MissionTaskAttemptState.OUTCOME_UNKNOWN
                 : MissionTaskAttemptState.FAILED;
-        if (!settleAttempt(attempt, terminal, null, failureCode, now)) return;
-        boolean autoRetry = retryable && attempt.attemptNo() < 2;
+        if (!settleAttempt(attempt, terminal, null, failureCode, now)) return false;
+        boolean autoRetry = retryable && attempt.attemptNo() < maxAutoAttempts;
         try (var task = current()
                 .prepareStatement(
                         "UPDATE personal_mission_task SET state=?,block_code=?,updated_at_ms=?,version=version+1 WHERE mission_id=? AND task_id=?")) {
@@ -1113,6 +1376,29 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     now,
                     "state IN ('RUNNING','WAITING_USER')");
             appendEvent(attempt.missionId(), autoRetry ? "MISSION_TASK_RETRY_SCHEDULED" : "MISSION_TASK_BLOCKED", now);
+        } catch (SQLException exception) {
+            throw failure(exception);
+        }
+        return true;
+    }
+
+    private void addUsage(String missionId, MissionUsage usage, Instant now) {
+        try (var statement = current()
+                .prepareStatement(
+                        """
+                UPDATE personal_mission
+                SET usage_model_tokens=usage_model_tokens+?,usage_model_calls=usage_model_calls+?,
+                    usage_tool_calls=usage_tool_calls+?,updated_at_ms=?
+                WHERE mission_id=?
+                """)) {
+            statement.setLong(1, usage.modelTokens());
+            statement.setLong(2, usage.modelCalls());
+            statement.setLong(3, usage.toolCalls());
+            statement.setLong(4, now.toEpochMilli());
+            statement.setString(5, missionId);
+            if (statement.executeUpdate() != 1) {
+                throw new MissionException("MISSION_NOT_FOUND", "Mission is unavailable");
+            }
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -1135,7 +1421,9 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             statement.setString(6, attempt.missionId());
             statement.setString(7, attempt.taskId());
             statement.setInt(8, attempt.attemptNo());
-            return statement.executeUpdate() == 1;
+            boolean updated = statement.executeUpdate() == 1;
+            if (!updated) duplicatePrevented.incrementAndGet();
+            return updated;
         } catch (SQLException exception) {
             throw failure(exception);
         }

@@ -11,6 +11,25 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
+logging:
+  level:
+    io.haifa.agent.personalassistant: WARN
+    io.haifa.agent.storage.sqlite: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: personalAssistant,personalMission
+
 haifa:
   personal:
     data-directory: ./target/personal-assistant-test
@@ -50,6 +69,24 @@ haifa:
       max-tasks: 8
       max-dependency-depth: 4
       max-acceptance-criteria: 20
+      global-active-task-runs: 1
+      max-auto-attempts-per-task: 2
+      max-wall-clock-millis: 1800000
+      max-model-tokens: 200000
+      max-tool-calls: 100
+      max-artifacts: 8
+      max-total-artifact-bytes: 4194304
+      dispatcher-poll-millis: 500
+      dispatcher-shutdown-timeout-millis: 20000
+      recovery-batch-size: 100
+      db-warning-bytes: 536870912
+      db-stop-bytes: 1073741824
+      artifact-warning-bytes: 1073741824
+      artifact-stop-bytes: 2147483648
+    research:
+      max-sources: 24
+      max-source-content-bytes: 262144
+      max-total-content-bytes: 2097152
     mcp:
       mode: embedded-echo
       address: 127.0.0.1

@@ -29,7 +29,7 @@ public final class PersonalApiExceptionHandler {
             status = HttpStatus.PRECONDITION_FAILED;
         } else if (code.contains("CAPACITY")) {
             status = HttpStatus.TOO_MANY_REQUESTS;
-        } else if (code.contains("UNAVAILABLE")) {
+        } else if (code.contains("UNAVAILABLE") || code.contains("NOT_READY")) {
             status = HttpStatus.SERVICE_UNAVAILABLE;
         } else if (code.contains("PLANNER") || code.contains("RESULT_INVALID")) {
             status = HttpStatus.UNPROCESSABLE_ENTITY;
@@ -42,8 +42,10 @@ public final class PersonalApiExceptionHandler {
         } else {
             status = HttpStatus.BAD_REQUEST;
         }
+        String diagnosticId = correlation(exchange);
         return ResponseEntity.status(status)
-                .body(new PersonalApiDtos.Error(code, exception.getMessage(), correlation(exchange)));
+                .body(new PersonalApiDtos.Error(
+                        code, exception.getMessage(), diagnosticId, diagnosticId, actions(status)));
     }
 
     @ExceptionHandler(HaifaAgentException.class)
@@ -110,6 +112,15 @@ public final class PersonalApiExceptionHandler {
         return existing == null || existing.isBlank()
                 ? UUID.randomUUID().toString()
                 : existing.substring(0, Math.min(128, existing.length()));
+    }
+
+    private static java.util.List<String> actions(HttpStatus status) {
+        return switch (status) {
+            case TOO_MANY_REQUESTS -> java.util.List.of("WAIT_OR_CONTACT_ADMIN");
+            case SERVICE_UNAVAILABLE -> java.util.List.of("RETRY_AFTER_READINESS");
+            case PRECONDITION_FAILED, CONFLICT -> java.util.List.of("REFRESH_AND_RETRY");
+            default -> java.util.List.of("REVIEW_REQUEST");
+        };
     }
 
     private static String origin(Exception exception) {
