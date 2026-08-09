@@ -23,14 +23,22 @@ import org.slf4j.LoggerFactory;
 public final class SqliteConnectionFactory implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger(SqliteConnectionFactory.class);
     private static final long SLOW_OPERATION_MILLIS = 50;
-
     private final SqliteStoreConfiguration configuration;
+    private final PermissionStrategyDetector permissionStrategyDetector;
     private final Set<WeakReference<Connection>> openedConnections = ConcurrentHashMap.newKeySet();
+    private SecureFilePermissions.PermissionStrategy permissionStrategy;
     private volatile boolean initialized;
     private volatile boolean closed;
 
     public SqliteConnectionFactory(SqliteStoreConfiguration configuration) {
+        this(configuration, SecureFilePermissions::strategyForDirectory);
+    }
+
+    SqliteConnectionFactory(
+            SqliteStoreConfiguration configuration, PermissionStrategyDetector permissionStrategyDetector) {
         this.configuration = Objects.requireNonNull(configuration, "configuration must not be null");
+        this.permissionStrategyDetector =
+                Objects.requireNonNull(permissionStrategyDetector, "permissionStrategyDetector must not be null");
     }
 
     public synchronized void initialize() {
@@ -51,7 +59,7 @@ public final class SqliteConnectionFactory implements AutoCloseable {
             if (!"wal".equals(journalMode.toLowerCase(Locale.ROOT))) {
                 throw pragmaFailure("SQLite WAL mode is unavailable");
             }
-            validateConnectionPragmas(connection, true);
+            validateConnectionPragmas(connection, false);
             secureDatabaseFiles();
             initialized = true;
         } catch (SQLException exception) {
@@ -71,7 +79,7 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         long rawMillis = elapsedMillis(started);
         try {
             long phaseStarted = System.nanoTime();
-            validateConnectionPragmas(connection, true);
+            validateConnectionPragmas(connection, false);
             long validateMillis = elapsedMillis(phaseStarted);
             phaseStarted = System.nanoTime();
             secureDatabaseFiles();
@@ -118,6 +126,7 @@ public final class SqliteConnectionFactory implements AutoCloseable {
             }
         }
         openedConnections.clear();
+        permissionStrategy = null;
         if (failure != null) throw failure;
     }
 
@@ -147,10 +156,7 @@ public final class SqliteConnectionFactory implements AutoCloseable {
                 statement.execute("PRAGMA busy_timeout=" + configuration.busyTimeoutMillis());
             }
             long pragmaMillis = elapsedMillis(phaseStarted);
-            phaseStarted = System.nanoTime();
-            secureDatabaseFiles();
-            long secureMillis = elapsedMillis(phaseStarted);
-            logRawConnection(driverMillis, pragmaMillis, secureMillis, elapsedMillis(started));
+            logRawConnection(driverMillis, pragmaMillis, elapsedMillis(started));
             return connection;
         } catch (RuntimeException exception) {
             closeFailedConnection(connection, exception);
@@ -174,7 +180,9 @@ public final class SqliteConnectionFactory implements AutoCloseable {
 
     private void secureDatabaseDirectory() {
         try {
-            SecureFilePermissions.secureDirectory(configuration.databasePath().getParent());
+            Path directory = configuration.databasePath().getParent();
+            permissionStrategy = permissionStrategyDetector.detect(directory);
+            permissionStrategy.secureDirectory(directory);
         } catch (IOException exception) {
             throw new SqliteStoreException(
                     SqliteStoreFailure.FILE_PERMISSION_FAILED,
@@ -184,6 +192,16 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     }
 
     private void secureDatabaseFiles() {
+        SecureFilePermissions.PermissionStrategy strategy =
+                Objects.requireNonNull(permissionStrategy, "SQLite permission strategy must be initialized");
+        try {
+            strategy.validateRoot();
+        } catch (IOException exception) {
+            throw new SqliteStoreException(
+                    SqliteStoreFailure.FILE_PERMISSION_FAILED,
+                    "Unable to validate the SQLite directory identity",
+                    exception);
+        }
         Path database = configuration.databasePath();
         secureFileIfPresent(database);
         secureFileIfPresent(database.resolveSibling(database.getFileName() + "-wal"));
@@ -191,15 +209,16 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         secureFileIfPresent(database.resolveSibling(database.getFileName() + "-journal"));
     }
 
-    private static void secureFileIfPresent(Path path) {
-        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+    private void secureFileIfPresent(Path path) {
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) return;
         try {
-            SecureFilePermissions.secureFile(path);
+            Objects.requireNonNull(permissionStrategy).secureFile(normalized);
         } catch (NoSuchFileException ignored) {
             // WAL/SHM files may disappear between the existence check and ACL update when another
             // connection checkpoints. The secured parent directory governs any replacement file.
         } catch (IOException exception) {
-            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+            if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) return;
             throw new SqliteStoreException(
                     SqliteStoreFailure.FILE_PERMISSION_FAILED,
                     "Unable to apply secure SQLite file permissions",
@@ -257,20 +276,18 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
     }
 
-    private static void logRawConnection(long driverMillis, long pragmaMillis, long secureMillis, long totalMillis) {
+    private static void logRawConnection(long driverMillis, long pragmaMillis, long totalMillis) {
         if (totalMillis >= SLOW_OPERATION_MILLIS) {
             LOGGER.info(
-                    "event=sqlite.connection.raw driverMs={} pragmaMs={} secureFilesMs={} totalMs={}",
+                    "event=sqlite.connection.raw driverMs={} pragmaMs={} totalMs={}",
                     driverMillis,
                     pragmaMillis,
-                    secureMillis,
                     totalMillis);
         } else {
             LOGGER.debug(
-                    "event=sqlite.connection.raw driverMs={} pragmaMs={} secureFilesMs={} totalMs={}",
+                    "event=sqlite.connection.raw driverMs={} pragmaMs={} totalMs={}",
                     driverMillis,
                     pragmaMillis,
-                    secureMillis,
                     totalMillis);
         }
     }
@@ -300,5 +317,10 @@ public final class SqliteConnectionFactory implements AutoCloseable {
         if (closed) {
             throw new SqliteStoreException(SqliteStoreFailure.CONNECTION_FAILED, "SQLite connection factory is closed");
         }
+    }
+
+    @FunctionalInterface
+    interface PermissionStrategyDetector {
+        SecureFilePermissions.PermissionStrategy detect(Path directory) throws IOException;
     }
 }

@@ -1,6 +1,7 @@
 package io.haifa.agent.store.sqlite;
 
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Objects;
 
@@ -21,7 +22,9 @@ public record SqliteStoreConfiguration(Path databasePath, int busyTimeoutMillis,
         if (!Files.isWritable(parent)) {
             throw invalid("databasePath parent must be writable");
         }
-        if (Files.exists(databasePath) && !Files.isRegularFile(databasePath)) {
+        if (Files.exists(databasePath, LinkOption.NOFOLLOW_LINKS)
+                && (Files.isSymbolicLink(databasePath)
+                        || !Files.isRegularFile(databasePath, LinkOption.NOFOLLOW_LINKS))) {
             throw invalid("databasePath must identify a regular file");
         }
         if (busyTimeoutMillis < 1) {

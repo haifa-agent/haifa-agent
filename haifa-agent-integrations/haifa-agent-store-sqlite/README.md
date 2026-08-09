@@ -76,6 +76,9 @@ worker ID 驱动。
 - 数据库路径由调用方提供，必须是父目录已存在且可写的绝对文件路径。
 - 初始化会把数据库目录设为 POSIX `0700` 或 Windows 当前用户独占 ACL，并对主文件、WAL、SHM
   和 rollback journal 应用文件 `0600`/等价 ACL；无法复核时分类为 `FILE_PERMISSION_FAILED`。
+- 每个 `SqliteConnectionFactory` 只探测一次受信数据库目录的 FileStore/权限视图；后续调用仍以
+  no-follow 方式检查冻结的目录身份和每个现存文件的类型，并逐次应用、读取和验证权限。
+  Factory 关闭或重建会丢弃策略；策略不跨数据库目录、进程或 Factory 共享。
 - 默认不开启 SQL 日志；Mapper XML 禁止 `${}`，所有值只能使用 `#{}`。
 - `SqliteStoreFoundation.persistencePorts(protector)` 组合完整持久化端口；Model Continuation 必须注入可跨实例恢复的 protector。
 
@@ -182,6 +185,8 @@ Runtime Port、唯一 worker ID 与安全 busy retry。持久 payload protection
 - SQLite 连接与 UoW 输出 `sqlite.connection.raw`、`sqlite.connection.open`、`sqlite.uow` 日志；
   总耗时达到 50ms 时使用 INFO，快速操作使用 DEBUG。UoW 日志区分连接/Session 准备、
   `BEGIN IMMEDIATE` 写锁获取、事务工作、flush 和 commit。
+- 初始化取得 WAL 模式的同一条 PRAGMA 响应后不再重复查询；一次 `openConnection()` 只执行一轮
+  DB/WAL/SHM/Journal 安全处理，并继续逐连接验证 `foreign_keys` 与 `busy_timeout`。
 - 日志不输出数据库路径、SQL 参数、Payload 正文、Hash 值或凭据，可直接由应用的 SLF4J
   实现（例如 Spring Boot Logback）采集。
 
