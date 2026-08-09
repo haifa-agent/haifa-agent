@@ -28,6 +28,21 @@ classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktr
 `ci-integration` 继续保留给独立或旧调用方，语义仍是 Unit + Integration。`integration-only` 和
 `release-artifacts` 不能脱离同 SHA 聚合门禁单独证明交付完成。
 
+## 只读影响范围建议
+
+`scripts/suggest_maven_scope.py` 读取当前 worktree（含未跟踪文件）与 `HEAD` 的 Git diff，并从 Maven
+POM 构建内部依赖/消费者图，输出直接模块、上游编译依赖、下游消费者、高风险扩大原因和 L1/L2
+建议命令：
+
+```powershell
+python .\build-support\scripts\suggest_maven_scope.py --pretty
+python .\build-support\scripts\suggest_maven_scope.py --base HEAD~1 --head HEAD --pretty
+```
+
+输出固定标记 `advisoryOnly=true`。根 POM/Wrapper/Workflow、公共 API、Core/Runtime、SQLite、安全、
+Architecture/Contract 或测试选择变化会保守扩大到全量最终门禁。脚本不执行 Maven、不修改文件、
+不自动跳过同 SHA 的最终 Gate；独立 `docs/`、`test-config/` 仓库不会进入根仓模块图。
+
 Windows 示例：
 
 ```powershell
