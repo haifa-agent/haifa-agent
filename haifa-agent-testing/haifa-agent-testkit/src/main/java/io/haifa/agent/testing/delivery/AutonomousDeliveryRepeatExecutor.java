@@ -118,6 +118,7 @@ final class AutonomousDeliveryRepeatExecutor {
                 "HAIFA_SQLITE_DATABASE_PATH", repeat.resolve("runtime.db").toString());
         environment.put("HAIFA_TRANSCRIPT_ROOT", transcripts.toString());
         environment.put("TERM", "xterm-256color");
+        configurePythonUtf8(environment);
         Process process = builder.start();
         ProcessTreeCleanup.Tracker processTracker = ProcessTreeCleanup.track(process);
         boolean finished = process.waitFor(suite.budget().maxWallTimeMillis() + 120_000, TimeUnit.MILLISECONDS);
@@ -191,6 +192,11 @@ final class AutonomousDeliveryRepeatExecutor {
                                 phaseThree.atomicity()),
                         selectedSecrets);
         return collected.summary();
+    }
+
+    static void configurePythonUtf8(Map<String, String> environment) {
+        environment.put("PYTHONUTF8", "1");
+        environment.put("PYTHONIOENCODING", "utf-8");
     }
 
     static boolean gateEligible(
