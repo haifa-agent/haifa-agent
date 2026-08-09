@@ -6,7 +6,8 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const DRIVER_PROTOCOL_VERSION = "1.1.0";
+const DRIVER_PROTOCOL_VERSION = "1.2.0";
+const RUN_TERMINAL_STATES = ["IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"];
 const RECORDING_COLUMNS = 132;
 const RECORDING_ROWS = 42;
 const MAX_RECORDED_OUTPUT_BYTES = 1024 * 1024;
@@ -45,6 +46,30 @@ function waitForMarker(state, marker, label, timeoutMillis) {
       if (markerIndex >= 0) {
         state.markerOffset = markerIndex + marker.length;
         resolve();
+      } else if (state.exited) {
+        reject(new Error(`UNEXPECTED EOF waiting for ${label}`));
+      } else if (Date.now() >= deadline) {
+        reject(new Error(`TIMEOUT waiting for ${label}`));
+      } else {
+        setTimeout(poll, 50);
+      }
+    };
+    poll();
+  });
+}
+
+function waitForAnyMarker(state, markers, label, timeoutMillis) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMillis;
+    const poll = () => {
+      const matches = markers
+        .map((marker) => ({ marker, index: state.output.indexOf(marker, state.markerOffset) }))
+        .filter((match) => match.index >= 0)
+        .sort((left, right) => left.index - right.index);
+      if (matches.length > 0) {
+        const match = matches[0];
+        state.markerOffset = match.index + match.marker.length;
+        resolve(match.marker);
       } else if (state.exited) {
         reject(new Error(`UNEXPECTED EOF waiting for ${label}`));
       } else if (Date.now() >= deadline) {
@@ -221,8 +246,13 @@ async function main() {
     await typeAndSend(terminal, prompt);
     await waitForMarker(state, "RUNNING", "run start", timeoutMillis);
     terminalStates.push({ state: "RUNNING", atSeconds: recorder.elapsedSeconds() });
-    await waitForMarker(state, "IDLE", "autonomous run completion", timeoutMillis);
-    terminalStates.push({ state: "IDLE", atSeconds: recorder.elapsedSeconds() });
+    const terminalState = await waitForAnyMarker(
+      state,
+      RUN_TERMINAL_STATES,
+      "autonomous run completion",
+      timeoutMillis,
+    );
+    terminalStates.push({ state: terminalState, atSeconds: recorder.elapsedSeconds() });
   } catch (error) {
     fail(error.message, terminal);
   }

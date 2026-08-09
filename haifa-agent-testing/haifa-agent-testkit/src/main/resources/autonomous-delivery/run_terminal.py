@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pexpect
 
-DRIVER_PROTOCOL_VERSION = "1.1.0"
+DRIVER_PROTOCOL_VERSION = "1.2.0"
+RUN_TERMINAL_STATES = ("IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT")
 RECORDING_COLUMNS = 132
 RECORDING_ROWS = 42
 MAX_RECORDED_OUTPUT_BYTES = 1024 * 1024
@@ -28,6 +29,16 @@ def fail(message: str, child: pexpect.spawn | None = None) -> None:
 def wait_for(child: pexpect.spawn, marker: str, label: str, timeout: int) -> None:
     try:
         child.expect_exact(marker.encode("utf-8"), timeout=timeout)
+    except pexpect.TIMEOUT:
+        fail(f"TIMEOUT waiting for {label}", child)
+    except pexpect.EOF:
+        fail(f"UNEXPECTED EOF waiting for {label}", child)
+
+
+def wait_for_any(child: pexpect.spawn, markers: tuple[str, ...], label: str, timeout: int) -> str:
+    try:
+        index = child.expect_exact([marker.encode("utf-8") for marker in markers], timeout=timeout)
+        return markers[index]
     except pexpect.TIMEOUT:
         fail(f"TIMEOUT waiting for {label}", child)
     except pexpect.EOF:
@@ -164,8 +175,8 @@ def main() -> int:
     type_and_send(child, prompt)
     wait_for(child, "RUNNING", "run start", timeout)
     terminal_states.append({"state": "RUNNING", "atSeconds": recorder.elapsed_seconds()})
-    wait_for(child, "IDLE", "autonomous run completion", timeout)
-    terminal_states.append({"state": "IDLE", "atSeconds": recorder.elapsed_seconds()})
+    terminal_state = wait_for_any(child, RUN_TERMINAL_STATES, "autonomous run completion", timeout)
+    terminal_states.append({"state": terminal_state, "atSeconds": recorder.elapsed_seconds()})
     completed_at = time.time()
 
     acceptance = subprocess.run(

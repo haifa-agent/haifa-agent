@@ -96,10 +96,11 @@ Phase 1～3 实际范围。
 共同 `status` 和 `nativeStatus`，因此 TIMEOUT、SKIPPED、NOT_RUN 或 `gatePassed=false` 不会被
 抹平成 PASS。投影只使用相对 Evidence Reference，不写 Host 绝对路径。
 
-跨平台公共内核还包括显式 Host Profile、精确 Toolchain、Python/Node PTY Driver `1.1.0` Result
+跨平台公共内核还包括显式 Host Profile、精确 Toolchain、Python/Node PTY Driver `1.2.0` Result
 Contract、共享父子进程树主动收敛，以及 Manifest 后的 Evidence Finalizer。Driver 共同生成结构化
 `session.cast`（asciicast v2）、状态/输入动作时间线和绑定 SHA-256 的录像元数据；普通诊断输出进入
-`driver.log`，Java Contract 复核录像格式、事件顺序、大小与摘要。Campaign 和 Fixture 私有目录复用
+`driver.log`，并把 `IDLE` 或 `COMPLETED`、`FAILED`、`CANCELLED`、`TIMEOUT` 视为 Run 收敛终态，
+避免失败 Run 继续等待完整 Case 超时。Java Contract 复核录像格式、事件顺序、大小与摘要。Campaign 和 Fixture 私有目录复用
 `SecureFilePermissions`：POSIX 使用 owner-only 权限，Windows 使用当前用户独占 ACL；证据发布后
 递归复核 POSIX 只读权限或 Windows ACL/DOS 只读属性。平台脚本不复制 Case、预算、Oracle 或 Gate。
 
