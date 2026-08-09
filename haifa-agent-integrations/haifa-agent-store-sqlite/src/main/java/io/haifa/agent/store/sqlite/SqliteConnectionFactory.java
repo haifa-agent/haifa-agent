@@ -3,15 +3,13 @@ package io.haifa.agent.store.sqlite;
 import io.haifa.agent.common.io.SecureFilePermissions;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
-import java.nio.file.Files;
-import java.nio.file.LinkOption;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -194,34 +192,17 @@ public final class SqliteConnectionFactory implements AutoCloseable {
     private void secureDatabaseFiles() {
         SecureFilePermissions.PermissionStrategy strategy =
                 Objects.requireNonNull(permissionStrategy, "SQLite permission strategy must be initialized");
-        try {
-            strategy.validateRoot();
-        } catch (IOException exception) {
-            throw new SqliteStoreException(
-                    SqliteStoreFailure.FILE_PERMISSION_FAILED,
-                    "Unable to validate the SQLite directory identity",
-                    exception);
-        }
         Path database = configuration.databasePath();
-        secureFileIfPresent(database);
-        secureFileIfPresent(database.resolveSibling(database.getFileName() + "-wal"));
-        secureFileIfPresent(database.resolveSibling(database.getFileName() + "-shm"));
-        secureFileIfPresent(database.resolveSibling(database.getFileName() + "-journal"));
-    }
-
-    private void secureFileIfPresent(Path path) {
-        Path normalized = path.toAbsolutePath().normalize();
-        if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) return;
         try {
-            Objects.requireNonNull(permissionStrategy).secureFile(normalized);
-        } catch (NoSuchFileException ignored) {
-            // WAL/SHM files may disappear between the existence check and ACL update when another
-            // connection checkpoints. The secured parent directory governs any replacement file.
+            strategy.secureExistingFiles(List.of(
+                    database,
+                    database.resolveSibling(database.getFileName() + "-wal"),
+                    database.resolveSibling(database.getFileName() + "-shm"),
+                    database.resolveSibling(database.getFileName() + "-journal")));
         } catch (IOException exception) {
-            if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) return;
             throw new SqliteStoreException(
                     SqliteStoreFailure.FILE_PERMISSION_FAILED,
-                    "Unable to apply secure SQLite file permissions",
+                    "Unable to validate and secure SQLite database files",
                     exception);
         }
     }

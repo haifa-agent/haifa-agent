@@ -37,13 +37,23 @@ class SecureFilePermissionsTest {
     @Test
     void failsClosedWhenTheFrozenDirectoryIdentityChanges() throws Exception {
         Path root = Files.createDirectory(directory.resolve("root"));
+        var originalFileStore = Files.getFileStore(root);
         var strategy = SecureFilePermissions.strategyForDirectory(root);
         strategy.secureDirectory(root);
 
         Files.move(root, directory.resolve("original"));
         Files.createDirectory(root);
 
+        if (System.getProperty("os.name", "").startsWith("Mac")) {
+            assertThat(Files.getFileStore(root)).isEqualTo(originalFileStore);
+        }
+
         assertThatThrownBy(strategy::validateRoot)
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("identity changed");
+
+        Path replacementFile = Files.writeString(root.resolve("replacement.db"), "replacement");
+        assertThatThrownBy(() -> strategy.secureExistingFiles(List.of(replacementFile)))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("identity changed");
     }
@@ -63,19 +73,26 @@ class SecureFilePermissionsTest {
         assertThatThrownBy(() -> strategy.secureFile(link))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("invalid type");
+        assertThatThrownBy(() -> strategy.secureExistingFiles(List.of(link)))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("invalid type");
     }
 
     @Test
     void repairsPermissionsChangedAfterTheStrategyWasDetected() throws Exception {
         Path root = Files.createDirectory(directory.resolve("root"));
         Path file = Files.writeString(root.resolve("state.db"), "state");
+        Path sidecar = Files.writeString(root.resolve("state.db-wal"), "wal");
         var strategy = SecureFilePermissions.strategyForDirectory(root);
-        strategy.secureFile(file);
+        strategy.secureExistingFiles(List.of(file, sidecar));
 
         if (Files.getFileStore(root).supportsFileAttributeView("posix")) {
             Files.setPosixFilePermissions(file, EnumSet.allOf(PosixFilePermission.class));
-            strategy.secureFile(file);
+            Files.setPosixFilePermissions(sidecar, EnumSet.allOf(PosixFilePermission.class));
+            strategy.secureExistingFiles(List.of(file, sidecar, root.resolve("missing-journal")));
             assertThat(Files.getPosixFilePermissions(file, LinkOption.NOFOLLOW_LINKS))
+                    .isEqualTo(Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+            assertThat(Files.getPosixFilePermissions(sidecar, LinkOption.NOFOLLOW_LINKS))
                     .isEqualTo(Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
             return;
         }
@@ -84,7 +101,7 @@ class SecureFilePermissionsTest {
                 Files.getFileAttributeView(file, AclFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
         List<java.nio.file.attribute.AclEntry> expected = acl.getAcl();
         acl.setAcl(List.of());
-        strategy.secureFile(file);
+        strategy.secureExistingFiles(List.of(file, sidecar, root.resolve("missing-journal")));
         assertThat(acl.getAcl()).isEqualTo(expected);
     }
 }
