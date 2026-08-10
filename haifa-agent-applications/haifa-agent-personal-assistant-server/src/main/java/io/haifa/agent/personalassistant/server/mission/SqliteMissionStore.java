@@ -312,7 +312,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         }
         this.database = normalized;
         jdbcUrl = "jdbc:sqlite:" + normalized;
-        this.mapper = mapper.copy();
+        this.mapper = mapper.copy().findAndRegisterModules();
         this.maxAutoAttempts = maxAutoAttempts;
         this.maxTotalAttempts = maxTotalAttempts;
         this.maxModelTokens = maxModelTokens;
