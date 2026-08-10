@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.application.mission;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -24,7 +25,7 @@ class MissionExecutionCoordinatorTest {
     @Test
     void stopsAfterTheFirstQualityApprovedCandidate() {
         var revisions = new AtomicInteger();
-        var delivery = MissionExecutionCoordinator.publishWithBoundedResearchRevisions(
+        var delivery = MissionExecutionCoordinator.publishWithBoundedSynthesisRecovery(
                 publisher(0),
                 runtime(revisions),
                 intent(2, 1_000),
@@ -40,7 +41,7 @@ class MissionExecutionCoordinatorTest {
     void supportsOneAndTwoBoundedRevisionsWithCumulativeUsage() {
         for (int failuresBeforePass : List.of(1, 2)) {
             var revisions = new AtomicInteger();
-            var delivery = MissionExecutionCoordinator.publishWithBoundedResearchRevisions(
+            var delivery = MissionExecutionCoordinator.publishWithBoundedSynthesisRecovery(
                     publisher(failuresBeforePass),
                     runtime(revisions),
                     intent(2, 1_000),
@@ -58,7 +59,7 @@ class MissionExecutionCoordinatorTest {
     void revisionAndBudgetExhaustionPublishPartialDegradedResult() {
         for (MissionSynthesisIntent request : List.of(intent(2, 1_000), intent(2, 100))) {
             var revisions = new AtomicInteger();
-            var delivery = MissionExecutionCoordinator.publishWithBoundedResearchRevisions(
+            var delivery = MissionExecutionCoordinator.publishWithBoundedSynthesisRecovery(
                     publisher(3),
                     runtime(revisions),
                     request,
@@ -92,6 +93,145 @@ class MissionExecutionCoordinatorTest {
         }
     }
 
+    @Test
+    void repairsInvalidStandardSynthesisExactlyOnceAndAccumulatesUsage() {
+        var repairs = new AtomicInteger();
+        var publications = new AtomicInteger();
+        MissionRuntimeAccess runtime = new MissionRuntimeAccess() {
+            @Override
+            public PlannerRunResult runPlanner(MissionPlanner.PlanningRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public SynthesisRunResult repairSynthesis(
+                    MissionSynthesisIntent intent,
+                    SynthesisRunResult invalid,
+                    String violationCode,
+                    String violationMessage,
+                    int repairAttemptNo) {
+                repairs.incrementAndGet();
+                assertThat(violationCode).isEqualTo("MISSION_RESULT_SCHEMA_INVALID");
+                assertThat(violationMessage).isEqualTo("directAnswer is invalid");
+                assertThat(repairAttemptNo).isEqualTo(1);
+                return synthesis("repaired", 25);
+            }
+        };
+        MissionResultPublisher publisher = new MissionResultPublisher() {
+            @Override
+            public MissionPublishedResult publish(
+                    MissionSynthesisIntent intent, MissionRuntimeAccess.SynthesisRunResult synthesis) {
+                if (publications.incrementAndGet() == 1) {
+                    throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", "directAnswer is invalid");
+                }
+                return published("COMPLETE", synthesis.structuredOutput());
+            }
+        };
+
+        var delivery = MissionExecutionCoordinator.publishWithBoundedSynthesisRecovery(
+                publisher, runtime, standardIntent(), synthesis("invalid", 100), MissionExecutionCoordinatorTest::now);
+
+        assertThat(repairs).hasValue(1);
+        assertThat(publications).hasValue(2);
+        assertThat(delivery.synthesis().structuredOutput()).isEqualTo("repaired");
+        assertThat(delivery.synthesis().usage()).isEqualTo(new MissionUsage(125, 2, 0));
+    }
+
+    @Test
+    void stopsAfterTheSingleStandardRepairAndDoesNotRepairOtherPublicationFailures() {
+        var repairs = new AtomicInteger();
+        MissionRuntimeAccess runtime = new MissionRuntimeAccess() {
+            @Override
+            public PlannerRunResult runPlanner(MissionPlanner.PlanningRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public SynthesisRunResult repairSynthesis(
+                    MissionSynthesisIntent intent,
+                    SynthesisRunResult invalid,
+                    String violationCode,
+                    String violationMessage,
+                    int repairAttemptNo) {
+                repairs.incrementAndGet();
+                return synthesis("still-invalid", 10);
+            }
+        };
+        MissionResultPublisher invalidPublisher = (intent, synthesis) -> {
+            throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", "directAnswer is invalid");
+        };
+
+        assertThatThrownBy(() -> MissionExecutionCoordinator.publishWithBoundedSynthesisRecovery(
+                        invalidPublisher,
+                        runtime,
+                        standardIntent(),
+                        synthesis("invalid", 100),
+                        MissionExecutionCoordinatorTest::now))
+                .isInstanceOf(MissionException.class)
+                .hasMessage("directAnswer is invalid");
+        assertThat(repairs).hasValue(1);
+
+        MissionResultPublisher conflictPublisher = (intent, synthesis) -> {
+            throw new MissionException("MISSION_ARTIFACT_CONFLICT", "artifact conflict");
+        };
+        assertThatThrownBy(() -> MissionExecutionCoordinator.publishWithBoundedSynthesisRecovery(
+                        conflictPublisher,
+                        runtime,
+                        standardIntent(),
+                        synthesis("valid", 100),
+                        MissionExecutionCoordinatorTest::now))
+                .isInstanceOf(MissionException.class)
+                .hasMessage("artifact conflict");
+        assertThat(repairs).hasValue(1);
+    }
+
+    @Test
+    void reclaimsStandardSynthesisAfterTransientRepairTimeout() {
+        var store = new RecoveryStore(standardIntent(), Interruption.PUBLICATION);
+        var repairAttempts = new AtomicInteger();
+        MissionRuntimeAccess runtime = new MissionRuntimeAccess() {
+            @Override
+            public PlannerRunResult runPlanner(MissionPlanner.PlanningRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public SynthesisRunResult runSynthesis(MissionSynthesisIntent intent) {
+                return synthesis("invalid", 100);
+            }
+
+            @Override
+            public SynthesisRunResult repairSynthesis(
+                    MissionSynthesisIntent intent,
+                    SynthesisRunResult invalid,
+                    String violationCode,
+                    String violationMessage,
+                    int repairAttemptNo) {
+                if (repairAttempts.incrementAndGet() == 1) {
+                    throw new MissionException("MISSION_SYNTHESIS_REPAIR_TIMEOUT", "injected repair timeout");
+                }
+                return synthesis("repaired", 25);
+            }
+        };
+        MissionResultPublisher publisher = (intent, synthesis) -> {
+            if ("invalid".equals(synthesis.structuredOutput())) {
+                throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", "directAnswer is invalid");
+            }
+            return published("COMPLETE", synthesis.structuredOutput());
+        };
+        var coordinator = new MissionExecutionCoordinator(
+                store, runtime, Clock.fixed(now(), ZoneOffset.UTC), "dispatcher-1", publisher);
+
+        coordinator.tick(false);
+        assertThat(store.failed).isZero();
+        assertThat(store.settled).isFalse();
+
+        coordinator.tick(false);
+        assertThat(store.failed).isZero();
+        assertThat(store.settled).isTrue();
+        assertThat(repairAttempts).hasValue(2);
+    }
+
     private static Instant now() {
         return Instant.parse("2026-08-10T00:00:00Z");
     }
@@ -108,6 +248,21 @@ class MissionExecutionCoordinatorTest {
                 List.of("evidence-task"),
                 revisions,
                 remainingTokens,
+                Optional.of(Instant.parse("2026-08-10T01:00:00Z")));
+    }
+
+    private static MissionSynthesisIntent standardIntent() {
+        return new MissionSynthesisIntent(
+                "mission-standard",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Standard objective",
+                List.of("{\"result\":\"settled\"}"),
+                List.of(),
+                List.of("task-1"),
+                0,
+                1_000,
                 Optional.of(Instant.parse("2026-08-10T01:00:00Z")));
     }
 

@@ -41,6 +41,7 @@ import io.haifa.agent.tool.api.ToolSchema;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import io.haifa.agent.web.DefaultWebUrlPolicy;
 import java.net.URI;
+import java.text.Normalizer;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -69,9 +70,12 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     private static final DefaultWebUrlPolicy PUBLIC_WEB_URL_POLICY = new DefaultWebUrlPolicy();
     private static final Pattern PUBLIC_URL = Pattern.compile("https?://[^\\s<>\\\"'\\]\\[)]+");
     private static final Pattern SHA256_DIGEST = Pattern.compile("sha256:[a-f0-9]{64}");
+    private static final Pattern STABLE_EVIDENCE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
     public static final String SYNTHESIS_RUN_PROFILE = "personal-mission-synthesis";
     public static final String RESEARCH_SYNTHESIS_RUN_PROFILE = "personal-mission-research-synthesis";
     public static final String SYNTHESIS_PROTOCOL_VERSION = "v5";
+    public static final String STANDARD_SYNTHESIS_PROTOCOL_VERSION = "v2";
+    public static final String STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION = "v1";
     private static final int SYNTHESIS_MAX_UNVERIFIED_CLAIMS = 320;
     public static final long TASK_MAX_TOOL_CALLS = MissionTaskRunInput.PRIMARY_RESEARCH_TOOL_CALL_HARD_LIMIT;
     public static final long TASK_RESEARCH_TOOL_CALL_TARGET =
@@ -704,13 +708,26 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
     private static String namespacedStableId(String taskId, String value) {
         if (value == null || value.isBlank()) return "";
-        if (taskId == null || taskId.isBlank()) return value;
-        String prefix = taskId + "--";
-        if (value.startsWith(prefix)) return value;
-        String candidate = prefix + value;
+        String stableTaskId = stableEvidenceToken(taskId);
+        String rawPrefix = taskId == null || taskId.isBlank() ? "" : taskId + "--";
+        String rawValue =
+                !rawPrefix.isEmpty() && value.startsWith(rawPrefix) ? value.substring(rawPrefix.length()) : value;
+        String stableValue = stableEvidenceToken(rawValue);
+        if (stableValue.isBlank()) {
+            stableValue = "id-" + digest(value).substring("sha256:".length(), "sha256:".length() + 16);
+        }
+        String candidate = stableTaskId.isBlank() ? stableValue : stableTaskId + "--" + stableValue;
         if (candidate.length() <= 128) return candidate;
         String suffix = digest(candidate).substring("sha256:".length(), "sha256:".length() + 16);
         return candidate.substring(0, 128 - suffix.length() - 1) + "-" + suffix;
+    }
+
+    private static String stableEvidenceToken(String value) {
+        if (value == null || value.isBlank()) return "";
+        String ascii = Normalizer.normalize(value, Normalizer.Form.NFKD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase(java.util.Locale.ROOT);
+        return ascii.replaceAll("[^a-z0-9]+", "-").replaceAll("(^-+|-+$)", "");
     }
 
     private static void canonicalizeInstant(JsonNode source, String field, boolean allowDateOnly) {
@@ -748,7 +765,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         if (limits.path("fetchCalls").asInt(-1) < fetched) return false;
         LinkedHashSet<String> sourceIds = new LinkedHashSet<>();
         for (JsonNode source : sources) {
-            if (!sourceIds.add(source.path("sourceId").asText())) return false;
+            String sourceId = source.path("sourceId").asText();
+            if (!STABLE_EVIDENCE_ID.matcher(sourceId).matches() || !sourceIds.add(sourceId)) return false;
             String locator = source.path("locator").asText();
             if (!publicHttpLocator(locator)) return false;
             if (!nullOrInstant(source.get("fetchedAt")) || !nullOrInstant(source.get("publishedAt"))) return false;
@@ -760,7 +778,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
         LinkedHashSet<String> claimIds = new LinkedHashSet<>();
         for (JsonNode claim : root.path("claims")) {
-            if (!claimIds.add(claim.path("claimId").asText())) return false;
+            String claimId = claim.path("claimId").asText();
+            if (!STABLE_EVIDENCE_ID.matcher(claimId).matches() || !claimIds.add(claimId)) return false;
             LinkedHashSet<String> references = new LinkedHashSet<>();
             claim.path("supportingSourceIds").forEach(value -> references.add(value.asText()));
             claim.path("opposingSourceIds").forEach(value -> references.add(value.asText()));
@@ -963,34 +982,78 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         return runSynthesisAttempt(intent, previous, quality, revisionAttempt);
     }
 
+    @Override
+    public SynthesisRunResult repairSynthesis(
+            MissionSynthesisIntent intent,
+            SynthesisRunResult invalid,
+            String violationCode,
+            String violationMessage,
+            int repairAttemptNo) {
+        Objects.requireNonNull(intent);
+        Objects.requireNonNull(invalid);
+        Objects.requireNonNull(violationCode);
+        Objects.requireNonNull(violationMessage);
+        if (intent.mode() != MissionMode.STANDARD || repairAttemptNo != 1) {
+            throw new MissionException("MISSION_SYNTHESIS_REPAIR_INVALID", "Synthesis repair request is invalid");
+        }
+        requireStructuredOutput("Mission Synthesis repair");
+        AgentSessionId sessionId = synthesisSession(intent, STANDARD_SYNTHESIS_PROTOCOL_VERSION);
+        String dispatchKey = standardSynthesisRepairDispatchKey(intent.missionId(), invalid.runId(), repairAttemptNo);
+        var started = agent.runs()
+                .start(new AgentRunRequest(
+                        dispatchKey,
+                        new AgentDefinitionId("personal-assistant"),
+                        Optional.of(new AgentDefinitionVersion(1, 0, 0)),
+                        SYNTHESIS_RUN_PROFILE,
+                        sessionId,
+                        Optional.empty(),
+                        standardSynthesisRepairPrompt(
+                                intent,
+                                invalid.runId(),
+                                invalid.structuredOutput(),
+                                violationCode,
+                                violationMessage,
+                                repairAttemptNo),
+                        List.of(),
+                        RuntimeOverrides.NONE));
+        try {
+            var terminal = agent.runs()
+                    .await(started.runId(), Duration.ofSeconds(120))
+                    .orElseThrow(() -> new MissionException(
+                            "MISSION_SYNTHESIS_REPAIR_TIMEOUT", "Mission Synthesis repair timed out"));
+            if (terminal.status() != AgentRunStatus.COMPLETED) {
+                String failure = terminal.error()
+                        .map(error -> error.code().wireCode())
+                        .orElse(terminal.status().name());
+                throw new MissionException("MISSION_SYNTHESIS_REPAIR_FAILED", failure);
+            }
+            String output = terminal.result()
+                    .map(result -> result.summary())
+                    .or(() -> terminal.output())
+                    .filter(value -> !value.isBlank())
+                    .orElseThrow(() -> new MissionException(
+                            "MISSION_SYNTHESIS_REPAIR_FAILED", "Mission Synthesis repair returned no result"));
+            return new SynthesisRunResult(sessionId.value(), terminal.runId().value(), output, usage(terminal.usage()));
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new MissionException(
+                    "MISSION_SYNTHESIS_REPAIR_INTERRUPTED", "Mission Synthesis repair was interrupted", exception);
+        }
+    }
+
     private SynthesisRunResult runSynthesisAttempt(
             MissionSynthesisIntent intent,
             SynthesisRunResult previous,
             ReportQualityGate.Result quality,
             int revisionAttempt) {
         if (intent.mode() != MissionMode.DEEP_RESEARCH) requireStructuredOutput("Mission Synthesis");
-        String stable = digest(intent.missionId(), "synthesis", SYNTHESIS_PROTOCOL_VERSION);
-        AgentSessionId sessionId = new AgentSessionId("mission-synthesis-" + stable.substring("sha256:".length(), 38));
-        persistence.inTransaction(() -> {
-            if (persistence.runtimePersistence().sessions().find(sessionId).isEmpty()) {
-                persistence
-                        .runtimePersistence()
-                        .sessions()
-                        .insert(AgentSession.open(
-                                sessionId,
-                                tenant,
-                                principal,
-                                null,
-                                SessionScope.EPHEMERAL,
-                                time.now(),
-                                Map.of(
-                                        "productId", "haifa-personal-assistant",
-                                        "sessionKind", "MISSION_SYNTHESIS",
-                                        "missionId", intent.missionId())));
-            }
-            return null;
-        });
-        String dispatchKey = synthesisDispatchKey(intent.missionId(), revisionAttempt);
+        String protocolVersion = intent.mode() == MissionMode.DEEP_RESEARCH
+                ? SYNTHESIS_PROTOCOL_VERSION
+                : STANDARD_SYNTHESIS_PROTOCOL_VERSION;
+        AgentSessionId sessionId = synthesisSession(intent, protocolVersion);
+        String dispatchKey = intent.mode() == MissionMode.DEEP_RESEARCH
+                ? synthesisDispatchKey(intent.missionId(), revisionAttempt)
+                : standardSynthesisDispatchKey(intent.missionId());
         String prompt = intent.mode() == MissionMode.DEEP_RESEARCH
                 ? researchSynthesisPrompt(intent, previous, quality, revisionAttempt)
                 : standardSynthesisPrompt(intent);
@@ -1052,16 +1115,105 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
     }
 
-    private String standardSynthesisPrompt(MissionSynthesisIntent intent) {
+    private AgentSessionId synthesisSession(MissionSynthesisIntent intent, String protocolVersion) {
+        String stable = digest(intent.missionId(), "synthesis", protocolVersion);
+        AgentSessionId sessionId = new AgentSessionId("mission-synthesis-" + stable.substring("sha256:".length(), 38));
+        persistence.inTransaction(() -> {
+            if (persistence.runtimePersistence().sessions().find(sessionId).isEmpty()) {
+                persistence
+                        .runtimePersistence()
+                        .sessions()
+                        .insert(AgentSession.open(
+                                sessionId,
+                                tenant,
+                                principal,
+                                null,
+                                SessionScope.EPHEMERAL,
+                                time.now(),
+                                Map.of(
+                                        "productId", "haifa-personal-assistant",
+                                        "sessionKind", "MISSION_SYNTHESIS",
+                                        "missionId", intent.missionId())));
+            }
+            return null;
+        });
+        return sessionId;
+    }
+
+    static String standardSynthesisPrompt(MissionSynthesisIntent intent) {
         return """
                 [mission-synthesis]
-                Produce only one pa.mission-final-result/v1 JSON object. Do not invent Artifact references.
+                Produce exactly one JSON object matching pa.mission-final-result/v1. Return JSON only: no Markdown
+                fence, prose prefix, suffix, or second JSON value. Use this exact top-level shape and field names:
+                {"schemaVersion":"pa.mission-final-result/v1","directAnswer":"...",
+                "completedItems":["..."],"failedItems":[],"artifactRefs":[],"sourceRefs":["..."],
+                "unverifiedClaims":["..."],"unresolvedQuestions":["..."],"residualRisks":["..."],
+                "completionKind":"COMPLETE"}.
+
+                All listed fields are required. directAnswer must be a non-empty string. The seven item collections
+                must be JSON arrays of strings. artifactRefs must always be an empty JSON array because only code can
+                publish Artifacts. completionKind must be COMPLETE exactly when failedItems is empty and PARTIAL
+                exactly when failedItems is non-empty. Do not add result, missionId, missionObjective, missionMode,
+                sources, nested report wrappers, or any other top-level field. Preserve uncertainty in
+                unverifiedClaims, unresolvedQuestions, and residualRisks instead of claiming unsupported certainty.
+
+                Frozen Mission ID: %s
                 Mission mode: %s
                 Mission objective: %s
                 Authoritative settled Task results: %s
                 Failed or cancelled Task items: %s
                 """
-                .formatted(intent.mode(), intent.objective(), intent.taskResults(), intent.failedItems());
+                .formatted(
+                        intent.missionId(),
+                        intent.mode(),
+                        intent.objective(),
+                        intent.taskResults(),
+                        intent.failedItems());
+    }
+
+    static String standardSynthesisRepairPrompt(
+            MissionSynthesisIntent intent,
+            String invalidRunId,
+            String invalidOutput,
+            String violationCode,
+            String violationMessage,
+            int repairAttemptNo) {
+        if (repairAttemptNo != 1) throw new IllegalArgumentException("Only one synthesis repair is supported");
+        return """
+                [mission-synthesis]
+                This is the single bounded deterministic schema repair attempt. Convert the rejected output into
+                exactly one pa.mission-final-result/v1 JSON object. Return JSON only: no Markdown fence, prose prefix,
+                suffix, or second JSON value. Preserve supported content from the rejected output and authoritative
+                Task results, but do not invent facts, sources, failures, or Artifact references.
+
+                Required exact top-level shape:
+                {"schemaVersion":"pa.mission-final-result/v1","directAnswer":"...",
+                "completedItems":["..."],"failedItems":[],"artifactRefs":[],"sourceRefs":["..."],
+                "unverifiedClaims":["..."],"unresolvedQuestions":["..."],"residualRisks":["..."],
+                "completionKind":"COMPLETE"}.
+
+                All fields are required. directAnswer must be non-empty. The seven item collections must contain only
+                strings. artifactRefs must be empty. completionKind must be COMPLETE exactly when failedItems is empty
+                and PARTIAL exactly when failedItems is non-empty. Do not add any other top-level field.
+
+                Frozen Mission ID: %s
+                Mission objective: %s
+                Authoritative settled Task results: %s
+                Failed or cancelled Task items: %s
+                Rejected source Synthesis Run ID: %s
+                Deterministic validation failure: %s - %s
+                Rejected output:
+                %s
+                """
+                .formatted(
+                        intent.missionId(),
+                        intent.objective(),
+                        intent.taskResults(),
+                        intent.failedItems(),
+                        invalidRunId,
+                        violationCode,
+                        violationMessage,
+                        invalidOutput);
     }
 
     private String researchSynthesisPrompt(
@@ -1183,6 +1335,19 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
         String suffix = revisionAttempt == 0 ? "" : ":revision-" + revisionAttempt;
         return "mission:" + Objects.requireNonNull(missionId) + ":synthesis:" + SYNTHESIS_PROTOCOL_VERSION + suffix;
+    }
+
+    public static String standardSynthesisDispatchKey(String missionId) {
+        return "mission:" + Objects.requireNonNull(missionId) + ":synthesis:standard:"
+                + STANDARD_SYNTHESIS_PROTOCOL_VERSION;
+    }
+
+    public static String standardSynthesisRepairDispatchKey(
+            String missionId, String invalidRunId, int repairAttemptNo) {
+        if (repairAttemptNo != 1) throw new IllegalArgumentException("Only one synthesis repair is supported");
+        return standardSynthesisDispatchKey(missionId) + ":repair:"
+                + STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION + ":attempt-" + repairAttemptNo + ":source:"
+                + Objects.requireNonNull(invalidRunId);
     }
 
     static String canonicalizeResearchSynthesis(String value) {

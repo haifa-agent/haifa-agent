@@ -40,6 +40,15 @@ public interface MissionRuntimeAccess {
                 "MISSION_SYNTHESIS_REVISION_UNAVAILABLE", "Mission Synthesis revision is unavailable");
     }
 
+    default SynthesisRunResult repairSynthesis(
+            MissionSynthesisIntent intent,
+            SynthesisRunResult invalid,
+            String violationCode,
+            String violationMessage,
+            int repairAttemptNo) {
+        throw new MissionException("MISSION_SYNTHESIS_REPAIR_UNAVAILABLE", "Mission Synthesis repair is unavailable");
+    }
+
     default void appendFinalMessage(
             String conversationId, String missionId, String synthesisRunId, String finalMessage) {}
 

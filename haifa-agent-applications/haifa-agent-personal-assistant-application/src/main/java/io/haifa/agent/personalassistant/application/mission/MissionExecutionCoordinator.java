@@ -95,7 +95,7 @@ public final class MissionExecutionCoordinator {
             try {
                 synthesis = runtime.runSynthesis(intent);
                 PublishedSynthesis delivery =
-                        publishWithBoundedResearchRevisions(publisher, runtime, intent, synthesis, this::now);
+                        publishWithBoundedSynthesisRecovery(publisher, runtime, intent, synthesis, this::now);
                 synthesis = delivery.synthesis();
                 published = delivery.published();
             } catch (MissionException failure) {
@@ -120,14 +120,14 @@ public final class MissionExecutionCoordinator {
         });
     }
 
-    static PublishedSynthesis publishWithBoundedResearchRevisions(
+    static PublishedSynthesis publishWithBoundedSynthesisRecovery(
             MissionResultPublisher publisher,
             MissionRuntimeAccess runtime,
             MissionSynthesisIntent intent,
             MissionRuntimeAccess.SynthesisRunResult synthesis,
             java.util.function.Supplier<Instant> now) {
         if (intent.mode() != MissionMode.DEEP_RESEARCH) {
-            return new PublishedSynthesis(synthesis, publisher.publish(intent, synthesis));
+            return publishWithSingleStandardRepair(publisher, runtime, intent, synthesis);
         }
         MissionUsage cumulativeUsage = synthesis.usage();
         ReportQualityGate.Result quality = publisher.evaluate(intent, synthesis);
@@ -151,6 +151,27 @@ public final class MissionExecutionCoordinator {
         return new PublishedSynthesis(synthesis, published);
     }
 
+    private static PublishedSynthesis publishWithSingleStandardRepair(
+            MissionResultPublisher publisher,
+            MissionRuntimeAccess runtime,
+            MissionSynthesisIntent intent,
+            MissionRuntimeAccess.SynthesisRunResult synthesis) {
+        try {
+            return new PublishedSynthesis(synthesis, publisher.publish(intent, synthesis));
+        } catch (MissionException invalid) {
+            if (!"MISSION_RESULT_SCHEMA_INVALID".equals(invalid.code())) throw invalid;
+            MissionRuntimeAccess.SynthesisRunResult repaired =
+                    runtime.repairSynthesis(intent, synthesis, invalid.code(), invalid.getMessage(), 1);
+            repaired = new MissionRuntimeAccess.SynthesisRunResult(
+                    repaired.sessionId(),
+                    repaired.runId(),
+                    repaired.structuredOutput(),
+                    synthesis.usage().plus(repaired.usage()),
+                    repaired.degradationReasons());
+            return new PublishedSynthesis(repaired, publisher.publish(intent, repaired));
+        }
+    }
+
     private Instant now() {
         return Instant.ofEpochMilli(clock.instant().toEpochMilli());
     }
@@ -164,7 +185,10 @@ public final class MissionExecutionCoordinator {
     }
 
     private static boolean recoverableSynthesisFailure(String failureCode) {
-        return "MISSION_SYNTHESIS_TIMEOUT".equals(failureCode) || "MISSION_SYNTHESIS_INTERRUPTED".equals(failureCode);
+        return "MISSION_SYNTHESIS_TIMEOUT".equals(failureCode)
+                || "MISSION_SYNTHESIS_INTERRUPTED".equals(failureCode)
+                || "MISSION_SYNTHESIS_REPAIR_TIMEOUT".equals(failureCode)
+                || "MISSION_SYNTHESIS_REPAIR_INTERRUPTED".equals(failureCode);
     }
 
     static boolean retryableTaskFailure(String failureCode) {

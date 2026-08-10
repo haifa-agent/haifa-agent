@@ -23,6 +23,9 @@ class SdkMissionRuntimeAccessTest {
     @Test
     void synthesisProtocolVersionOwnsTheRunIdempotencyNamespace() {
         assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v5");
+        assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v2");
+        assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION)
+                .isEqualTo("v1");
         assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v3");
         assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v5");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1"))
@@ -31,6 +34,54 @@ class SdkMissionRuntimeAccessTest {
                 .isEqualTo("mission:mission-1:synthesis:v5:revision-1");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 2))
                 .isEqualTo("mission:mission-1:synthesis:v5:revision-2");
+        assertThat(SdkMissionRuntimeAccess.standardSynthesisDispatchKey("mission-1"))
+                .isEqualTo("mission:mission-1:synthesis:standard:v2");
+        assertThat(SdkMissionRuntimeAccess.standardSynthesisRepairDispatchKey("mission-1", "run-invalid", 1))
+                .isEqualTo("mission:mission-1:synthesis:standard:v2:repair:v1:attempt-1:source:run-invalid");
+    }
+
+    @Test
+    void standardSynthesisFreezesTheCompleteSchemaAndOneRepairContract() {
+        var intent = new MissionSynthesisIntent(
+                "mission-1",
+                "conversation-1",
+                "owner-1",
+                MissionMode.STANDARD,
+                "Summarize Ethereum upgrades",
+                List.of("{\"task\":\"settled\"}"),
+                List.of());
+
+        assertThat(SdkMissionRuntimeAccess.standardSynthesisPrompt(intent))
+                .contains(
+                        "exactly one JSON object",
+                        "pa.mission-final-result/v1",
+                        "\"directAnswer\"",
+                        "\"completedItems\"",
+                        "\"failedItems\"",
+                        "\"artifactRefs\":[]",
+                        "\"sourceRefs\"",
+                        "\"unverifiedClaims\"",
+                        "\"unresolvedQuestions\"",
+                        "\"residualRisks\"",
+                        "\"completionKind\"",
+                        "Frozen Mission ID: mission-1",
+                        "Do not add result, missionId, missionObjective, missionMode")
+                .contains("COMPLETE exactly when failedItems is empty", "PARTIAL", "failedItems is non-empty");
+
+        assertThat(SdkMissionRuntimeAccess.standardSynthesisRepairPrompt(
+                        intent,
+                        "run-invalid",
+                        "{\"schemaVersion\":\"pa.mission-final-result/v1\",\"result\":{}}",
+                        "MISSION_RESULT_SCHEMA_INVALID",
+                        "directAnswer is invalid",
+                        1))
+                .contains(
+                        "single bounded deterministic schema repair attempt",
+                        "Rejected source Synthesis Run ID: run-invalid",
+                        "MISSION_RESULT_SCHEMA_INVALID - directAnswer is invalid",
+                        "\"result\":{}",
+                        "artifactRefs must be empty",
+                        "Do not add any other top-level field");
     }
 
     @Test
@@ -462,6 +513,46 @@ class SdkMissionRuntimeAccessTest {
                         .get(0)
                         .asText())
                 .isEqualTo("narrative-comparison--official-1");
+    }
+
+    @Test
+    void normalizationConvertsUnicodeEvidenceIdsToTheStableAsciiContract() throws Exception {
+        String raw =
+                """
+                {
+                  "schemaVersion":"pa.research-task-result/v1","brief":"Ethereum upgrade evidence",
+                  "queries":[{"query":"Ethereum Hegota upgrade","phase":"CROSS_CHECK"}],
+                  "sources":[{
+                    "sourceId":"evidence-task--especificación-éip","locator":"https://eips.ethereum.org/EIPS/eip-7702",
+                    "normalizedLocator":"https://eips.ethereum.org/EIPS/eip-7702",
+                    "locatorDigest":"sha256:%s","title":"EIP-7702","safetyType":"PUBLIC_WEB",
+                    "fetchedAt":null,"publishedAt":"2024-05-07T00:00:00Z",
+                    "status":"UNKNOWN","excerpt":"","contentDigest":null
+                  }],
+                  "claims":[{
+                    "claimId":"evidence-task--hegotá-2026","claim":"The roadmap name contains an accented character.",
+                    "supportingSourceIds":["evidence-task--especificación-éip"],"opposingSourceIds":[],
+                    "limitations":"Roadmap timing remains uncertain","unverified":true,"quotedSpans":[]
+                  }],
+                  "artifactRefs":[],"unresolvedQuestions":[],"stopReason":"SUFFICIENT_EVIDENCE",
+                  "limitsUsed":{"searchCalls":1,"fetchCalls":0,"sources":1,"contentBytes":0}
+                }
+                """
+                        .formatted("0".repeat(64));
+
+        JsonNode canonical = new ObjectMapper()
+                .readTree(SdkMissionRuntimeAccess.canonicalizeResearchTaskResult(raw, "evidence-task"));
+
+        assertThat(canonical.path("sources").get(0).path("sourceId").asText())
+                .isEqualTo("evidence-task--especificacion-eip");
+        assertThat(canonical.path("claims").get(0).path("claimId").asText()).isEqualTo("evidence-task--hegota-2026");
+        assertThat(canonical
+                        .path("claims")
+                        .get(0)
+                        .path("supportingSourceIds")
+                        .get(0)
+                        .asText())
+                .isEqualTo("evidence-task--especificacion-eip");
     }
 
     @Test

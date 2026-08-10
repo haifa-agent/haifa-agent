@@ -54,9 +54,11 @@ with a hard safety ceiling of 32, and each fetch is capped at 8,000 characters. 
 calls and 384,000 total model tokens. The persisted Outbox payload and Attempt request digest identify the same
 immutable input across claim recovery and retry.
 
-Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Final publication
-canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the Mission-wide 24-source
-limit. The bounded final unverified-claim index supports the existing eight-Task by forty-claims-per-Task ceiling, so
+Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Unicode model IDs
+are normalized to lower-case ASCII kebab IDs there, and Claim source references are rewritten to the same identity.
+Final publication canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the
+Mission-wide 24-source limit. The bounded final unverified-claim index supports the existing eight-Task by
+forty-claims-per-Task ceiling, so
 strict citation closure never requires dropping an unverified claim merely to satisfy a smaller synthesis array.
 Only complete FETCHED metadata with a canonical `sha256:` content digest survives Task normalization; all other
 source states clear fetch-only metadata and dependent claims remain unverified. Synthesis uses stable initial,
@@ -74,6 +76,12 @@ Task deliberately does not combine that option with iterative Tool calls, and De
 separate Markdown Profile without JSON response formatting. The preloaded Skill still requires exactly one Task JSON
 object, while the final report uses stable section, Task and source markers validated by the product boundary.
 
+Standard Mission Synthesis freezes the complete `pa.mission-final-result/v1` field shape in its prompt. If the first
+candidate is rejected specifically by the deterministic final-result schema validator, the coordinator permits one
+stable-idempotency repair Run in the same ephemeral Synthesis Session and validates the repaired candidate again.
+Usage from that repair is cumulative; a second invalid candidate or any non-schema publication failure terminates
+without another model retry.
+
 `mission` 产品包提供显式长任务的纯 Java 聚合与用例：创建规划中 Mission、生成或整体替换有序
 Task DAG、确认并冻结计划、取消、查询 Snapshot，以及命令幂等和 expected revision。一个可信
 owner 的同一 Conversation 同时只能存在一个非终态 Mission；计划确认后 objective、验收标准、Task
@@ -85,7 +93,8 @@ Planner Session、命名 Run Profile 和严格 `pa.mission-plan/v1` JSON；能�
 校验失败时 fail closed，不从自由文本提取 JSON，也不回退模型。Phase 2 增加产品层 Task Attempt、
 Outbox/Saga 协调、确定性串行 ready 计算、稳定 dispatch key、Runtime 权威状态结算、取消、一次自动
 重试和用户显式重试。每个 Task Attempt 使用独立 ephemeral Session；它不创建 Conversation，也不进入
-Memory。Pause/Resume、Verifier 和 Repair 仍不在本阶段范围内；Deep Research 已按上述边界落地。
+Memory。Pause/Resume、Task Verifier 和 Task Repair 仍不在本阶段范围内；这里只提供上述最终 Synthesis
+Schema 的一次受限 repair，Deep Research 已按上述边界落地。
 
 Personal Run View 在兼容 `errorCode` 之外提供类型化执行错误：code、默认安全 message、
 category、retryability、安全 details、diagnosticId 和 occurredAt。应用层只投影 Runtime
