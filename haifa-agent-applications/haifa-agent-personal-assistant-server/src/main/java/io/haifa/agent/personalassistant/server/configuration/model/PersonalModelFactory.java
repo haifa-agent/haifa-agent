@@ -391,22 +391,16 @@ public final class PersonalModelFactory {
                 if (toolResults == 0) {
                     return tool(
                             current,
-                            PersonalAssistantProfile.SKILL_LOAD_ALIAS,
-                            Map.of("skill", PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS));
-                }
-                if (toolResults == 1) {
-                    return tool(
-                            current,
                             PersonalAssistantProfile.WEB_SEARCH_ALIAS,
                             Map.of("query", "deterministic deep research evidence", "maxResults", 2));
                 }
-                if (toolResults == 2) {
+                if (toolResults == 1) {
                     return tool(
                             current,
                             PersonalAssistantProfile.WEB_FETCH_ALIAS,
                             Map.of("url", "https://research.stub/source-1", "maxCharacters", 4000));
                 }
-                if (toolResults == 3) {
+                if (toolResults == 2) {
                     return tool(
                             current,
                             PersonalAssistantProfile.WEB_FETCH_ALIAS,

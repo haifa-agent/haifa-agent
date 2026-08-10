@@ -2,6 +2,7 @@ package io.haifa.agent.runtime.core.execution;
 
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
+import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.core.error.AgentError;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.run.AgentRun;
@@ -24,8 +25,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class AttemptExecutor {
+    private static final Logger LOGGER = LoggerFactory.getLogger(AttemptExecutor.class);
     private final ExecutionAttemptRepository attempts;
     private final AgentLoop loop;
     private final RunTransitionCoordinator transitions;
@@ -115,17 +119,30 @@ public final class AttemptExecutor {
     private AgentError safeError(RuntimeException error) {
         if (error instanceof AgentExecutionFailureException classified) return classified.error();
         RuntimeLimitExceededException budgetExceeded = findFailure(error, RuntimeLimitExceededException.class);
-        Map<String, Object> details = budgetExceeded == null
-                ? Map.of()
-                : Map.of(
-                        "resource", budgetExceeded.resource(),
-                        "limit", budgetExceeded.limit(),
-                        "used", budgetExceeded.used());
-        return new AgentError(
-                budgetExceeded == null ? AgentErrorCode.RUNTIME_EXECUTION_FAILED : AgentErrorCode.RUN_BUDGET_EXCEEDED,
-                details,
-                ids.nextValue(),
-                time.now());
+        ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
+        Map<String, Object> details;
+        if (budgetExceeded != null) {
+            details = Map.of(
+                    "resource", budgetExceeded.resource(),
+                    "limit", budgetExceeded.limit(),
+                    "used", budgetExceeded.used());
+        } else if (contextBuild != null) {
+            details = Map.of("contextFailure", contextBuild.failure().name());
+        } else {
+            details = Map.of();
+        }
+        return new AgentError(classifiedErrorCode(budgetExceeded, contextBuild), details, ids.nextValue(), time.now());
+    }
+
+    static AgentErrorCode classifiedErrorCode(
+            RuntimeLimitExceededException budgetExceeded, ContextBuildException contextBuild) {
+        if (budgetExceeded != null) return AgentErrorCode.RUN_BUDGET_EXCEEDED;
+        if (contextBuild == null) return AgentErrorCode.RUNTIME_EXECUTION_FAILED;
+        return switch (contextBuild.failure()) {
+            case RUN_INPUT_BUDGET_EXHAUSTED, RUN_OUTPUT_BUDGET_EXHAUSTED -> AgentErrorCode.RUN_BUDGET_EXCEEDED;
+            case MODEL_WINDOW_TOO_SMALL, REQUIRED_CONTEXT_TOO_LARGE -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
+            case UNSUPPORTED_CONTEXT_CONTENT -> AgentErrorCode.RUNTIME_EXECUTION_FAILED;
+        };
     }
 
     private static <T extends Throwable> T findFailure(Throwable error, Class<T> failureType) {
@@ -142,6 +159,15 @@ public final class AttemptExecutor {
     private void recordFailure(
             AgentRun run, AgentRunExecutionAttempt attempt, AgentError attemptError, RuntimeException error) {
         List<String> failureTypes = failureTypes(error);
+        ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
+        LOGGER.warn(
+                "event=runtime.failure runId={} attemptId={} errorCode={} diagnosticId={} failureTypes={} contextFailure={}",
+                run.id().value(),
+                attempt.attemptId().value(),
+                attemptError.code().wireCode(),
+                attemptError.diagnosticId() == null ? "" : attemptError.diagnosticId(),
+                failureTypes,
+                contextBuild == null ? "" : contextBuild.failure().name());
         RuntimeTraceEvent context = new RuntimeTraceEvent(
                 attempt.attemptId().value(),
                 run.id(),

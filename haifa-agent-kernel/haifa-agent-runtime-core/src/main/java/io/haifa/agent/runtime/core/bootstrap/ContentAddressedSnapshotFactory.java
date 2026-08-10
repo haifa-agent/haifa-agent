@@ -13,6 +13,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /** Deterministic content-addressed configuration snapshot suitable for adapters to persist. */
 public final class ContentAddressedSnapshotFactory implements ConfigurationSnapshotFactory {
@@ -58,7 +59,11 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
             ResolvedProfile profile,
             RuntimeCallerContext caller,
             List<EffectiveCapability> capabilities) {
-        List<FrozenToolBinding> frozenTools = definition.allowedTools().stream()
+        Set<String> effectiveAllowedTools = profile.allowedTools().orElse(definition.allowedTools());
+        if (!definition.allowedTools().containsAll(effectiveAllowedTools)) {
+            throw new IllegalStateException("run profile allowed tools must be a subset of the agent definition");
+        }
+        List<FrozenToolBinding> frozenTools = effectiveAllowedTools.stream()
                 .sorted()
                 .map(alias -> tools.bindings().stream()
                         .filter(binding -> binding.alias().value().equals(alias))

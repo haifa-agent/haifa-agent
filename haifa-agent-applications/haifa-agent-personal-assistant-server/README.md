@@ -21,7 +21,7 @@ Provider 是接入实例，持有共享 Endpoint、Credential、`native-streamin
 ```yaml
 haifa:
   personal:
-    default-model-id: deepseek-responses-flash
+    default-model-id: deepseek-chat-flash
     model-providers:
       - id: deepseek
         display-name: DeepSeek
@@ -85,8 +85,8 @@ DeepSeek Anthropic Messages 因 Base URL 与其余 Style 不同，在 Binding �
 Credential 与 `native-streaming` 仍只配置在 Provider。
 
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
-Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型
-仍是 `deepseek-responses-flash`。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
+Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型是显式关闭 thinking 的
+`deepseek-chat-flash`；Responses 与 Anthropic Messages 模型仍作为非默认的受信选项保留。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
 `IMAGE_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
@@ -109,6 +109,12 @@ its first reconciliation, and a successful Artifact integrity check. Shutdown st
 waits for the bounded convergence window, and leaves durable work recoverable when the window
 expires.
 
+The default Mission-wide model-token budget is 3,000,000 (configurable up to 4,000,000), and the independent
+Tool-call budget is 360 (configurable up to 400). These cover a bounded multi-task Deep Research run, one automatic
+task retry, and its final synthesis without widening any stage's explicit Tool allowlist.
+The default Mission wall-clock budget is two hours. It is a product hard limit for serial multi-Task research, while
+the deterministic acceptance profile keeps its explicit 30-minute test deadline.
+
 Phase 3 adds product schema V5 for the frozen Mission-level Skill binding and uses shared Runtime
 schema V7 Artifact metadata plus an application-owned, no-follow payload directory. Deep Research
 uses only the approved `web.search` / `web.fetch` pipeline, validates canonical source identities,
@@ -124,7 +130,9 @@ Mission 使用独立的 Personal SQLite schema history。Mission、Plan revision
 Outbox 和 Command 在同一产品 UoW 中提交；数据库约束保证一个 Conversation 最多一个活动 Mission，
 触发器冻结已确认计划定义。Phase 2 用部分唯一索引保证全局最多一个活动 Task Attempt；OS 文件锁与
 Dispatcher ownership heartbeat 使同一数据目录只能有一个 Dispatcher。产品 UoW 与 Runtime UoW 通过
-稳定 dispatch key 和带请求摘要的 Runtime start 幂等绑定恢复，不宣称分布式 HA。
+稳定 dispatch key 和带请求摘要的 Runtime start 幂等绑定恢复，不宣称分布式 HA。Task Outbox 保存完整
+且有界的冻结 Run Input；直接依赖结果及其 digest、Profile 和工具边界均进入同一个 payload digest，claim
+时校验 Outbox/Attempt/digest 一致性，下游不会只等待依赖完成却丢失依赖结果。
 
 只读运维事实由 `/v1/admin/missions/operations` 和
 `/v1/admin/missions/upgrade-readiness` 提供；Actuator readiness 也包含 Personal Mission

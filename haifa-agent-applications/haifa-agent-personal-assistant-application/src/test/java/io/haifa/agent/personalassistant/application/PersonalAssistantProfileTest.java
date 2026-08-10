@@ -8,6 +8,8 @@ import io.haifa.agent.personalassistant.application.product.PersonalAssistantPro
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityMode;
 import io.haifa.agent.sdk.product.ProductContributionCoordinate;
+import io.haifa.agent.tool.api.ToolDispatchState;
+import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +17,24 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class PersonalAssistantProfileTest {
+    @Test
+    void retriesOnlyExplicitTransientToolFailures() {
+        assertThat(PersonalAssistantAssembler.isTransientToolFailure(new ToolInvocationException(
+                        "MCP_CALL_DEADLINE_EXCEEDED", ToolDispatchState.OUTCOME_UNKNOWN, "deadline")))
+                .isTrue();
+        assertThat(PersonalAssistantAssembler.isTransientToolFailure(new ToolInvocationException(
+                        "MCP_CALL_OUTCOME_UNKNOWN", ToolDispatchState.OUTCOME_UNKNOWN, "unknown")))
+                .isTrue();
+        assertThat(PersonalAssistantAssembler.isTransientToolFailure(new ToolInvocationException(
+                        "MCP_SESSION_INVALID", ToolDispatchState.NOT_DISPATCHED, "session")))
+                .isTrue();
+        assertThat(PersonalAssistantAssembler.isTransientToolFailure(new ToolInvocationException(
+                        "MCP_AUTH_FLOW_UNSUPPORTED", ToolDispatchState.NOT_DISPATCHED, "auth")))
+                .isFalse();
+        assertThat(PersonalAssistantAssembler.isTransientToolFailure(new IllegalStateException("other")))
+                .isFalse();
+    }
+
     @Test
     void profileRequiresGovernedExecutionButStillDisablesCodingWorkspaceCapabilities() {
         ProductContributionCoordinate coordinate = new ProductContributionCoordinate("test", "1");
@@ -66,6 +86,12 @@ class PersonalAssistantProfileTest {
                 .contains(
                         "Treat the latest user message as the current objective",
                         "Do not resume or retry a previous failed or abandoned tool call");
+        assertThat(profile.budget().maxInputTokens()).isEqualTo(512_000);
+        assertThat(profile.budget().maxOutputTokens()).isEqualTo(128_000);
+        assertThat(profile.budget().maxCachedInputTokens()).isEqualTo(512_000);
+        assertThat(profile.budget().maxToolCalls()).isEqualTo(64);
+        assertThat(profile.budget().maxModelCalls()).isEqualTo(64);
+        assertThat(profile.limits().maxIterations()).isEqualTo(64);
     }
 
     @Test

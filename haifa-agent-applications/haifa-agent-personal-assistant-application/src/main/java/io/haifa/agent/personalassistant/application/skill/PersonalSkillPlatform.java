@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.trust.PersonalTrustedScriptManifest;
 import io.haifa.agent.skill.api.SkillAvailability;
 import io.haifa.agent.skill.api.SkillCatalog;
+import io.haifa.agent.skill.api.SkillContent;
 import io.haifa.agent.skill.api.SkillContentLoader;
 import io.haifa.agent.skill.api.SkillDiscoveryContext;
 import io.haifa.agent.skill.api.SkillOrigin;
@@ -62,6 +63,17 @@ public record PersonalSkillPlatform(
                 .collect(java.util.stream.Collectors.toUnmodifiableMap(
                         binding -> binding.alias().value(),
                         binding -> binding.coordinate().externalForm()));
+    }
+
+    /** Loads one already-selected Product Skill without exposing Skill discovery Tools to the model. */
+    public SkillContent load(String alias, TenantRef tenant, PrincipalRef principal) {
+        var binding = catalog.snapshot().bindings().stream()
+                .filter(candidate -> candidate.alias().value().equals(alias))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Skill alias is unavailable: " + alias));
+        var visibility = new SkillVisibilityContext(
+                tenant, principal, Optional.empty(), false, Set.of(SkillScope.PRODUCT, SkillScope.USER));
+        return contentLoader.load(binding, visibility);
     }
 
     public static PersonalSkillPlatform create(

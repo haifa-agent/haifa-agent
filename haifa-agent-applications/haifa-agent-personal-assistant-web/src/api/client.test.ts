@@ -4,6 +4,7 @@ import { HttpPersonalAssistantClient } from "./client";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("HttpPersonalAssistantClient deployment boundary", () => {
@@ -80,6 +81,25 @@ describe("HttpPersonalAssistantClient deployment boundary", () => {
       "If-Match": "7",
       "X-Haifa-CSRF": "1",
     });
+  });
+
+  it("allows synchronous Mission planning to use the Server planning window", async () => {
+    const timeout = vi.spyOn(window, "setTimeout");
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      json: async () => ({ missionId: "mission-1", state: "WAITING_CONFIRMATION" }),
+      ok: true,
+      status: 202,
+    }) as Response));
+
+    await new HttpPersonalAssistantClient().createMission({
+      conversationId: "conversation-1",
+      objective: "Research",
+      acceptanceCriteria: [],
+      constraints: {},
+      mode: "STANDARD",
+    });
+
+    expect(timeout).toHaveBeenCalledWith(expect.any(Function), 190_000);
   });
 
   it("rejects JSON responses larger than the browser safety limit", async () => {

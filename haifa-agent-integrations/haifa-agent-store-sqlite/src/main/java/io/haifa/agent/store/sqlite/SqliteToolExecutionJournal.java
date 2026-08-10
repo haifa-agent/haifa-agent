@@ -66,7 +66,13 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
 
     @Override
     public void recordDispatched(AgentRunId runId, RuntimeIdempotencyKey key) {
-        transition(runId, key, ToolJournalState.DISPATCHED, null, EnumSet.of(ToolJournalState.INTENT_RECORDED));
+        transition(
+                runId,
+                key,
+                ToolJournalState.DISPATCHED,
+                null,
+                EnumSet.of(ToolJournalState.INTENT_RECORDED),
+                EnumSet.of(ToolJournalState.ACKNOWLEDGED));
     }
 
     @Override
@@ -145,6 +151,16 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
             ToolJournalState target,
             ToolResult result,
             EnumSet<ToolJournalState> allowedSources) {
+        transition(runId, key, target, result, allowedSources, EnumSet.noneOf(ToolJournalState.class));
+    }
+
+    private void transition(
+            AgentRunId runId,
+            RuntimeIdempotencyKey key,
+            ToolJournalState target,
+            ToolResult result,
+            EnumSet<ToolJournalState> allowedSources,
+            EnumSet<ToolJournalState> alreadyAdvancedSources) {
         Objects.requireNonNull(runId, "runId must not be null");
         Objects.requireNonNull(key, "key must not be null");
         Objects.requireNonNull(target, "target must not be null");
@@ -161,6 +177,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                         || (result != null && decodeResult(current).equals(result))) return null;
                 throw new IllegalStateException("tool journal state has conflicting result");
             }
+            if (result == null && alreadyAdvancedSources.contains(currentState)) return null;
             if (!allowedSources.contains(currentState)) {
                 throw new IllegalStateException("illegal tool journal transition: " + currentState + " -> " + target);
             }

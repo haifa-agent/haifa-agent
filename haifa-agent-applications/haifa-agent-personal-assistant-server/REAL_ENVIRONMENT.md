@@ -239,6 +239,12 @@ macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚�
 ./scripts/start-real-environment.sh
 ```
 
+需要显式验证 DeepSeek Chat Completions 路径时，可选择已配置的 Chat 模型；默认仍使用 Responses：
+
+```bash
+./scripts/start-real-environment.sh --default-model-id deepseek-chat-flash
+```
+
 路径不同时显式覆盖：
 
 ```bash

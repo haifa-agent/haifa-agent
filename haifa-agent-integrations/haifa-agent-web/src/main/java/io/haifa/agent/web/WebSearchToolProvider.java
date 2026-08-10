@@ -32,11 +32,12 @@ public final class WebSearchToolProvider implements ToolProvider {
         if (!request.binding().definition().name().value().equals("web.search")) {
             throw WebToolProviderSupport.invalid("web search provider received a different tool");
         }
-        var webRequest =
-                WebToolProviderSupport.searchRequest(request.arguments().values());
-        WebToolProviderSupport.requireSupported(
-                webRequest, provider.descriptor().capabilities().supportedSearchOptions());
+        String requestedQuery = String.valueOf(request.arguments().values().getOrDefault("query", ""));
         try {
+            var webRequest =
+                    WebToolProviderSupport.searchRequest(request.arguments().values());
+            WebToolProviderSupport.requireSupported(
+                    webRequest, provider.descriptor().capabilities().supportedSearchOptions());
             var response = provider.search(webRequest, WebToolProviderSupport.context(request));
             List<Map<String, Object>> results = new ArrayList<>();
             response.results().forEach(result -> {
@@ -53,7 +54,8 @@ public final class WebSearchToolProvider implements ToolProvider {
                     "query", response.normalizedQuery(),
                     "results", List.copyOf(results),
                     "truncated", response.truncated(),
-                    "untrustedExternalContent", true);
+                    "untrustedExternalContent", true,
+                    "searchResultsAvailable", true);
             return new ToolResult(
                     true,
                     "Web search returned " + results.size() + " untrusted external result(s).",
@@ -62,6 +64,10 @@ public final class WebSearchToolProvider implements ToolProvider {
                     List.of(),
                     response.truncated());
         } catch (WebProviderException exception) {
+            if (WebToolProviderSupport.isRecoverableSearchFailure(exception.failureCode(), exception.dispatchState())) {
+                return WebToolProviderSupport.unavailableSearch(
+                        requestedQuery, exception.failureCode().name());
+            }
             throw WebToolProviderSupport.map(exception);
         }
     }

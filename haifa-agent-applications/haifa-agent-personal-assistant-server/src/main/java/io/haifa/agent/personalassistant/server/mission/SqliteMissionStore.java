@@ -19,6 +19,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionSynthesisInte
 import io.haifa.agent.personalassistant.application.mission.MissionTask;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskAttempt;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskAttemptState;
+import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
 import io.haifa.agent.personalassistant.application.mission.MissionUnitOfWork;
 import io.haifa.agent.personalassistant.application.mission.MissionUsage;
@@ -300,7 +301,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         if (maxAutoAttempts < 1 || maxTotalAttempts < maxAutoAttempts || maxTotalAttempts > 3) {
             throw new IllegalArgumentException("Mission Attempt limits are invalid");
         }
-        if (maxModelTokens < 1 || maxModelTokens > 200_000 || maxToolCalls < 1 || maxToolCalls > 100) {
+        if (maxModelTokens < 1 || maxModelTokens > 4_000_000 || maxToolCalls < 1 || maxToolCalls > 400) {
             throw new IllegalArgumentException("Mission usage limits are invalid");
         }
         try {
@@ -1087,13 +1088,11 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             try (var select = current()
                     .prepareStatement(
                             """
-                    SELECT o.outbox_id,o.mission_id,o.task_id,o.attempt_no,o.payload_digest,
-                           a.dispatch_key,m.owner_scope,t.objective,t.acceptance_json,
-                           t.task_type,t.skill_ids_json,t.result_schema_id,t.result_schema_version
+                    SELECT o.outbox_id,o.mission_id,o.task_id,o.attempt_no,o.payload_json,o.payload_digest,
+                           a.dispatch_key,a.dispatch_payload_digest,m.owner_scope
                     FROM personal_mission_outbox o
                     JOIN personal_mission_task_attempt a
                       ON a.mission_id=o.mission_id AND a.task_id=o.task_id AND a.attempt_no=o.attempt_no
-                    JOIN personal_mission_task t ON t.mission_id=o.mission_id AND t.task_id=o.task_id
                     JOIN personal_mission m ON m.mission_id=o.mission_id
                     WHERE (o.state='PENDING' AND o.available_at_ms<=?)
                        OR (o.state='CLAIMED' AND o.claimed_at_ms<?)
@@ -1104,6 +1103,14 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 try (var result = select.executeQuery()) {
                     if (!result.next()) return Optional.empty();
                     String outboxId = result.getString("outbox_id");
+                    String payload = result.getString("payload_json");
+                    String payloadDigest = result.getString("payload_digest");
+                    if (!payloadDigest.equals(result.getString("dispatch_payload_digest"))
+                            || !payloadDigest.equals(sha256(payload))) {
+                        throw new MissionException(
+                                "MISSION_DISPATCH_INPUT_CORRUPT", "Mission Task dispatch input digest is invalid");
+                    }
+                    MissionTaskRunInput runInput = json(payload, MissionTaskRunInput.class, "Task run input");
                     try (var claim = current()
                             .prepareStatement(
                                     "UPDATE personal_mission_outbox SET state='CLAIMED',claimed_at_ms=?,claim_owner=? WHERE outbox_id=? AND (state='PENDING' OR (state='CLAIMED' AND claimed_at_ms<?))")) {
@@ -1120,13 +1127,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             result.getString("task_id"),
                             result.getInt("attempt_no"),
                             result.getString("dispatch_key"),
-                            result.getString("payload_digest"),
-                            result.getString("objective"),
-                            jsonList(result.getString("acceptance_json")),
-                            result.getString("task_type"),
-                            jsonList(result.getString("skill_ids_json")),
-                            result.getString("result_schema_id"),
-                            result.getString("result_schema_version"),
+                            payloadDigest,
+                            runInput,
                             now));
                 }
             }
@@ -1295,7 +1297,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         .prepareStatement(
                                 """
                 SELECT t.mission_id,t.task_id,t.latest_attempt_no,t.objective,t.acceptance_json,
-                       t.result_schema_id,t.result_schema_version
+                       t.task_type,t.skill_ids_json,t.result_schema_id,t.result_schema_version,
+                       m.objective AS mission_objective,m.acceptance_json AS mission_acceptance_json
                 FROM personal_mission_task t JOIN personal_mission m ON m.mission_id=t.mission_id
                 WHERE t.state='READY' AND m.state='RUNNING'
                 ORDER BY COALESCE(m.started_at_ms,m.confirmed_at_ms),t.mission_id,t.ordinal,t.task_id LIMIT 1
@@ -1306,10 +1309,19 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             String taskId = result.getString("task_id");
             int attemptNo = result.getInt("latest_attempt_no") + 1;
             String dispatchKey = "mission:" + missionId + ":task:" + taskId + ":attempt:" + attemptNo;
-            String payloadDigest = sha256(result.getString("objective") + "\u0000"
-                    + result.getString("acceptance_json") + "\u0000"
-                    + result.getString("result_schema_id") + "\u0000"
-                    + result.getString("result_schema_version"));
+            List<MissionTaskRunInput.DependencyResult> dependencies = dependencyResults(missionId, taskId);
+            MissionTaskRunInput runInput = MissionTaskRunInput.create(
+                    result.getString("mission_objective"),
+                    jsonList(result.getString("mission_acceptance_json")),
+                    result.getString("objective"),
+                    jsonList(result.getString("acceptance_json")),
+                    result.getString("task_type"),
+                    jsonList(result.getString("skill_ids_json")),
+                    result.getString("result_schema_id"),
+                    result.getString("result_schema_version"),
+                    dependencies);
+            String payload = json(runInput);
+            String payloadDigest = sha256(payload);
             try (var attempt = current()
                             .prepareStatement(
                                     """
@@ -1325,7 +1337,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                     """
                     INSERT INTO personal_mission_outbox(
                       outbox_id,mission_id,task_id,attempt_no,intent_type,payload_json,payload_digest,state,
-                      available_at_ms,created_at_ms) VALUES (?,?,?,?,'START_TASK','{}',?,'PENDING',?,?)
+                      available_at_ms,created_at_ms) VALUES (?,?,?,?,'START_TASK',?,?,'PENDING',?,?)
                     """)) {
                 attempt.setString(1, missionId);
                 attempt.setString(2, taskId);
@@ -1344,14 +1356,53 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 outbox.setString(2, missionId);
                 outbox.setString(3, taskId);
                 outbox.setInt(4, attemptNo);
-                outbox.setString(5, payloadDigest);
-                outbox.setLong(6, now.toEpochMilli());
+                outbox.setString(5, payload);
+                outbox.setString(6, payloadDigest);
                 outbox.setLong(7, now.toEpochMilli());
+                outbox.setLong(8, now.toEpochMilli());
                 outbox.executeUpdate();
                 touchMission(missionId, now);
                 appendEvent(missionId, "MISSION_TASK_DISPATCH_PENDING", now);
             }
         }
+    }
+
+    private List<MissionTaskRunInput.DependencyResult> dependencyResults(String missionId, String taskId)
+            throws SQLException {
+        List<MissionTaskRunInput.DependencyResult> dependencies = new ArrayList<>();
+        try (var statement = current()
+                .prepareStatement(
+                        """
+                SELECT upstream.task_id,upstream.state,upstream.result_schema_id,upstream.result_schema_version,
+                       upstream.result_digest,upstream.result_json
+                FROM personal_mission_task_dependency dependency
+                JOIN personal_mission_task upstream
+                  ON upstream.mission_id=dependency.mission_id
+                 AND upstream.task_id=dependency.depends_on_task_id
+                WHERE dependency.mission_id=? AND dependency.task_id=?
+                ORDER BY upstream.ordinal
+                """)) {
+            statement.setString(1, missionId);
+            statement.setString(2, taskId);
+            try (var rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    String resultDigest = rows.getString("result_digest");
+                    String resultJson = rows.getString("result_json");
+                    if (!"COMPLETED".equals(rows.getString("state")) || resultDigest == null || resultJson == null) {
+                        throw new MissionException(
+                                "MISSION_DEPENDENCY_RESULT_MISSING",
+                                "A ready Mission Task dependency has no immutable result");
+                    }
+                    dependencies.add(new MissionTaskRunInput.DependencyResult(
+                            rows.getString("task_id"),
+                            rows.getString("result_schema_id"),
+                            rows.getString("result_schema_version"),
+                            resultDigest,
+                            resultJson));
+                }
+            }
+        }
+        return List.copyOf(dependencies);
     }
 
     private boolean settleFailedInTransaction(

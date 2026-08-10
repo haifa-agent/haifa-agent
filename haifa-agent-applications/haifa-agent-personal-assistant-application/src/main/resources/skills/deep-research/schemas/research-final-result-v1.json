@@ -19,7 +19,7 @@
     "failedItems": { "type": "array", "maxItems": 40, "items": { "type": "string" } },
     "artifactRefs": { "type": "array", "maxItems": 8, "items": { "type": "object" } },
     "sourceRefs": { "type": "array", "maxItems": 24, "items": { "type": "string" } },
-    "unverifiedClaims": { "type": "array", "maxItems": 40, "items": { "type": "string" } },
+    "unverifiedClaims": { "type": "array", "maxItems": 320, "items": { "type": "string" } },
     "unresolvedQuestions": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
     "residualRisks": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
     "completionKind": { "enum": ["COMPLETE", "PARTIAL"] }

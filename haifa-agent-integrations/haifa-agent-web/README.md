@@ -1,5 +1,15 @@
 # Haifa Agent Web Tools
 
+`web.search` and `web.fetch` report query/source-specific failures such as unusable provider responses, denied URLs,
+or unsupported media as successful structured negative results so a research Agent can refine the query or try
+another source without triggering the Runtime's repeated-failure termination guard. Because both Tools are read-only,
+provider timeouts and outcome-unknown transport failures are handled the same way; retrying another source cannot
+duplicate an external side effect. Authentication, quota, and cancellation failures remain typed invocation failures
+and still stop the Run.
+
+When `web.fetch` omits `maxCharacters`, the Tool defaults to 20,000 characters. Callers may request another bounded
+size explicitly; the conservative default prevents a handful of fetched pages from exhausting an Agent context.
+
 提供可由不同产品显式装配的 `web.search` 与 `web.fetch` 通用 Tool 能力。
 
 - `io.haifa.agent.web` 保存 Provider-neutral 契约、Provider Registry、URL 安全策略和 Tool Adapter。

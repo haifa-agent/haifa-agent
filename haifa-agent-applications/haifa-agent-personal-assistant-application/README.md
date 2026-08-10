@@ -35,10 +35,47 @@ runs in an isolated ephemeral Session through the existing Runtime Tool pipeline
 final-result schemas preserve source identity, claim-to-evidence closure, unresolved questions,
 partial completion, and five immutable research Artifacts; fetched content remains untrusted data.
 
+Mission stages use explicit Run Profile Tool boundaries. Planner and Research Task freeze only read-only Web
+Search/Fetch and Wikipedia MCP Tools; the explicitly selected Deep Research Product Skill is preloaded into each
+Research Task instead of asking the model to rediscover it. Synthesis freezes an empty Tool set. A zero Tool budget is
+not used as an implicit capability policy.
+
+The primary Research Task budget permits up to 40 calls to that read-only allowlist. Runtime enters a deterministic
+finalize-only turn after 24 completed Tool calls, caps each fetched page at 10,000 characters, and reserves context
+for the final result. The Profile also bounds the Run to 24 model calls and 384,000 total model tokens. This is a
+bounded execution limit, not permission to expose any additional Tool.
+
+Each Attempt also freezes a digest-bound Task Run Input containing the bounded Mission/Task objective, direct
+dependency result snapshots and digests, result schema, execution Profile, and research limits. A Task with completed
+dependencies uses the separate dependency-aware Profile: prior structured results are projected as valid JSON within
+a 48,000-character ceiling, repeated searches are prohibited, Runtime enters finalize-only after 16 completed calls
+with a hard safety ceiling of 32, and each fetch is capped at 8,000 characters. The Profile is bounded to 20 model
+calls and 384,000 total model tokens. The persisted Outbox payload and Attempt request digest identify the same
+immutable input across claim recovery and retry.
+
+Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Final publication
+canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the Mission-wide 24-source
+limit. The bounded final unverified-claim index supports the existing eight-Task by forty-claims-per-Task ceiling, so
+strict citation closure never requires dropping an unverified claim merely to satisfy a smaller synthesis array.
+Only complete FETCHED metadata with a canonical `sha256:` content digest survives Task normalization; all other
+source states clear fetch-only metadata and dependent claims remain unverified. Synthesis similarly normalizes
+representational drift into the exact final-result shape without trusting model-provided Artifact references.
+
+Research Task Runs use a 10-minute wall-clock limit and a 4-minute idle limit so a long final structured response can
+complete after multi-round evidence collection. Planner and Synthesis retain their narrower stage-specific limits.
+The Mission-wide deadline defaults to two hours and remains a hard upper bound; individual Task limits, Mission token
+and Tool budgets, cancellation, and capacity admission continue to bound resource use.
+
+Planner and Synthesis use the Provider's native JSON response format. Research Task deliberately does not combine
+that option with iterative Tool calls because supported OpenAI-compatible Providers may reject a later continuation;
+the preloaded Skill still requires exactly one JSON object and the product boundary strictly validates the declared
+Task result schema before accepting it.
+
 `mission` 产品包提供显式长任务的纯 Java 聚合与用例：创建规划中 Mission、生成或整体替换有序
 Task DAG、确认并冻结计划、取消、查询 Snapshot，以及命令幂等和 expected revision。一个可信
 owner 的同一 Conversation 同时只能存在一个非终态 Mission；计划确认后 objective、验收标准、Task
-定义和依赖不可再修改。
+定义和依赖不可再修改。Planner 抛出异常时，已创建的 Mission 原子收敛为 `FAILED` 并保留稳定失败码，
+不会永久停留在 `PLANNING` 或阻塞同一 Conversation 的后续 Mission。
 
 Planner 有确定性 Stub 和一次性 Runtime Run 两种实现。Runtime Planner 使用独立的 ephemeral
 Planner Session、命名 Run Profile 和严格 `pa.mission-plan/v1` JSON；能力、Schema、约束或 allowlist

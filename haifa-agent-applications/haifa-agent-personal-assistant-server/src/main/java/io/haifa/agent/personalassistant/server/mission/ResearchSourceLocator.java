@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.server.mission;
 
 import io.haifa.agent.personalassistant.application.mission.MissionException;
+import io.haifa.agent.web.DefaultWebUrlPolicy;
 import java.net.IDN;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -14,6 +15,7 @@ import java.util.Set;
 /** Deterministic canonicalization used before source identity and citation checks. */
 final class ResearchSourceLocator {
     private static final Set<String> TRACKING_KEYS = Set.of("gclid", "fbclid", "mc_cid", "mc_eid");
+    private static final DefaultWebUrlPolicy PUBLIC_WEB_URL_POLICY = new DefaultWebUrlPolicy();
 
     private ResearchSourceLocator() {}
 
@@ -21,18 +23,18 @@ final class ResearchSourceLocator {
         if (value == null || value.isBlank() || value.length() > 4096) throw invalid();
         try {
             URI input = URI.create(value.trim()).normalize();
-            if (!"https".equalsIgnoreCase(input.getScheme())
-                    || input.getRawUserInfo() != null
-                    || input.getHost() == null
-                    || (input.getPort() != -1 && input.getPort() != 443)) {
-                throw invalid();
-            }
-            String host = IDN.toASCII(input.getHost(), IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
+            var decision = PUBLIC_WEB_URL_POLICY.evaluate(input);
+            if (!decision.allowed()) throw invalid();
+            URI safe = decision.normalizedUrl();
+            String scheme = safe.getScheme().toLowerCase(Locale.ROOT);
+            String host = IDN.toASCII(safe.getHost(), IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
             if (host.isBlank()) throw invalid();
-            String path = input.getRawPath();
+            String path = safe.getRawPath();
             if (path == null || path.isBlank()) path = "/";
-            String query = normalizeQuery(input.getRawQuery());
-            URI normalized = new URI("https", null, host, -1, path, query, null).normalize();
+            String query = normalizeQuery(safe.getRawQuery());
+            int port = safe.getPort();
+            if (("http".equals(scheme) && port == 80) || ("https".equals(scheme) && port == 443)) port = -1;
+            URI normalized = new URI(scheme, null, host, port, path, query, null).normalize();
             String external = normalized.toASCIIString();
             return new Normalized(external, "sha256:" + sha256(external));
         } catch (IllegalArgumentException | URISyntaxException exception) {
@@ -42,9 +44,10 @@ final class ResearchSourceLocator {
 
     private static String normalizeQuery(String query) {
         if (query == null || query.isBlank()) return null;
-        return java.util.Arrays.stream(query.split("&", -1))
+        String normalized = java.util.Arrays.stream(query.split("&", -1))
                 .filter(ResearchSourceLocator::notTracking)
                 .collect(java.util.stream.Collectors.joining("&"));
+        return normalized.isBlank() ? null : normalized;
     }
 
     private static boolean notTracking(String parameter) {

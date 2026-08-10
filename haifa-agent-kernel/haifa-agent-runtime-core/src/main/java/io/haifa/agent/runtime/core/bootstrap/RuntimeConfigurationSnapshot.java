@@ -150,6 +150,7 @@ public record RuntimeConfigurationSnapshot(
         capabilities = List.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
         model = Objects.requireNonNull(model, "model must not be null");
         modelRequestOptions = ModelRequestOptions.freeze(Objects.requireNonNullElse(modelRequestOptions, Map.of()));
+        RuntimeControlOptions.validate(modelRequestOptions, budget);
     }
 
     public Set<String> allowedTools() {

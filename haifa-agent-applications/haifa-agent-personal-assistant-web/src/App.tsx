@@ -1449,13 +1449,22 @@ function MissionDialog({
     return () => controller.abort();
   }, [client, selected]);
 
-  const command = async (operation: () => Promise<MissionSnapshot>) => {
+  const command = async (operation: () => Promise<MissionSnapshot>): Promise<boolean> => {
     setBusy(true);
     setError(null);
     try {
       merge(await operation());
+      return true;
     } catch (reason) {
       setError(safeError(reason));
+      try {
+        const reconciled = await client.missions?.(conversation?.id);
+        const latest = reconciled?.items[0];
+        if (latest) merge(latest);
+      } catch {
+        // Preserve the command failure; normal polling/reopen can reconcile later.
+      }
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1482,11 +1491,13 @@ function MissionDialog({
         exclusions: researchExclusions.split("\n").map((value) => value.trim()).filter(Boolean),
         deliveryFormat: researchDelivery.trim(),
       } : undefined,
-    }, { idempotencyKey: crypto.randomUUID() })).then(() => {
-      setObjective("");
-      setCriteria("");
-      setResearchQuestion("");
-      setResearchScope("");
+    }, { idempotencyKey: crypto.randomUUID() })).then((succeeded) => {
+      if (succeeded) {
+        setObjective("");
+        setCriteria("");
+        setResearchQuestion("");
+        setResearchScope("");
+      }
     });
   };
 
@@ -1504,7 +1515,9 @@ function MissionDialog({
       const tasks = parsed.tasks;
       void command(() => client.replaceMissionPlan!(selected, { plan: { tasks } }, {
         idempotencyKey: crypto.randomUUID(),
-      })).then(() => setEditingPlan(false));
+      })).then((succeeded) => {
+        if (succeeded) setEditingPlan(false);
+      });
     } catch (reason) {
       setError(safeError(reason));
     }
@@ -1558,8 +1571,8 @@ function MissionDialog({
                   <label>研究问题<textarea value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} maxLength={8000} rows={2} placeholder="留空时使用 Mission 目标" /></label>
                   <label>范围<textarea value={researchScope} onChange={(event) => setResearchScope(event.target.value)} maxLength={2000} rows={2} /></label>
                   <div className="research-brief-grid"><label>时间范围<input value={researchTimeRange} onChange={(event) => setResearchTimeRange(event.target.value)} maxLength={256} /></label><label>地区<input value={researchRegion} onChange={(event) => setResearchRegion(event.target.value)} maxLength={256} /></label><label>受众<input value={researchAudience} onChange={(event) => setResearchAudience(event.target.value)} maxLength={256} /></label><label>交付格式<input value={researchDelivery} onChange={(event) => setResearchDelivery(event.target.value)} maxLength={256} /></label></div>
-                  <label>来源偏好<textarea value={researchSources} onChange={(event) => setResearchSources(event.target.value)} rows={2} placeholder="每行一项" /></label>
-                  <label>排除项<textarea value={researchExclusions} onChange={(event) => setResearchExclusions(event.target.value)} rows={2} placeholder="每行一项" /></label>
+                  <label>来源偏好（必填）<textarea required value={researchSources} onChange={(event) => setResearchSources(event.target.value)} rows={2} placeholder="至少一项，每行一项" /></label>
+                  <label>排除项（必填）<textarea required value={researchExclusions} onChange={(event) => setResearchExclusions(event.target.value)} rows={2} placeholder="至少一项，每行一项" /></label>
                 </fieldset>}
                 <button type="submit" className="button primary-button" disabled={busy || !objective.trim()}><Plus size={15} />创建并生成计划</button>
               </form>
@@ -1567,6 +1580,7 @@ function MissionDialog({
             {selected ? (
               <article className="mission-detail">
                 <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span>{selected.mode === "DEEP_RESEARCH" && <span className="mission-mode">Deep Research · deep-research@1.0.0</span>}<h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                {selected.blocker && <p className="error-banner" role="alert">Mission 失败：{selected.blocker}</p>}
                 {selected.researchBrief && <section className="research-brief-summary"><h4>Research brief</h4><p><b>问题：</b>{selected.researchBrief.question}</p>{selected.researchBrief.scope && <p><b>范围：</b>{selected.researchBrief.scope}</p>}<p><b>时间 / 地区 / 受众：</b>{[selected.researchBrief.timeRange, selected.researchBrief.region, selected.researchBrief.audience].filter(Boolean).join(" · ") || "未限定"}</p></section>}
                 {selected.acceptanceCriteria.length > 0 && <section><h4>验收标准</h4><ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section>}
                 <section className="mission-execution-summary" aria-label="Mission 执行状态">

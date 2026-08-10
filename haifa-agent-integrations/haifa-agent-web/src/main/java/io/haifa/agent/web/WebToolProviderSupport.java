@@ -1,5 +1,6 @@
 package io.haifa.agent.web;
 
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
@@ -79,6 +80,80 @@ final class WebToolProviderSupport {
     static ToolInvocationException invalid(String message) {
         return new ToolInvocationException(
                 WebFailureCode.WEB_INVALID_REQUEST.name(), ToolDispatchState.NOT_DISPATCHED, message);
+    }
+
+    static boolean isRecoverableFetchFailure(WebFailureCode code, WebDispatchState state) {
+        return switch (code) {
+            case WEB_INVALID_REQUEST,
+                    WEB_UNSUPPORTED_OPTION,
+                    WEB_URL_DENIED,
+                    WEB_DNS_DENIED,
+                    WEB_AUTH_FAILED,
+                    WEB_RESPONSE_TOO_LARGE,
+                    WEB_UNSUPPORTED_MEDIA_TYPE,
+                    WEB_PROVIDER_RESPONSE_INVALID,
+                    WEB_TIMEOUT,
+                    WEB_PROVIDER_FAILED -> true;
+            default -> false;
+        };
+    }
+
+    static boolean isRecoverableFetchFailure(ToolInvocationException failure) {
+        try {
+            WebFailureCode code = WebFailureCode.valueOf(failure.failureCode());
+            return switch (code) {
+                case WEB_INVALID_REQUEST, WEB_UNSUPPORTED_OPTION, WEB_URL_DENIED, WEB_DNS_DENIED, WEB_AUTH_FAILED ->
+                    true;
+                default -> false;
+            };
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    static boolean isRecoverableSearchFailure(WebFailureCode code, WebDispatchState state) {
+        return switch (code) {
+            case WEB_PROVIDER_RESPONSE_INVALID, WEB_TIMEOUT, WEB_PROVIDER_FAILED -> true;
+            default -> false;
+        };
+    }
+
+    static ToolResult unavailableSource(String requestedUrl, String failureCode) {
+        return new ToolResult(
+                true,
+                "This web source could not be fetched (" + failureCode + "). Try another citable source.",
+                Map.ofEntries(
+                        Map.entry("requestedUrl", requestedUrl),
+                        Map.entry("finalUrl", requestedUrl),
+                        Map.entry("content", ""),
+                        Map.entry("format", "text"),
+                        Map.entry("mediaType", "text/plain"),
+                        Map.entry("contentSha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+                        Map.entry("truncated", false),
+                        Map.entry("untrustedExternalContent", true),
+                        Map.entry("failureCode", failureCode),
+                        Map.entry("sourceAvailable", false),
+                        Map.entry("retryWithAnotherSource", true)),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    static ToolResult unavailableSearch(String query, String failureCode) {
+        return new ToolResult(
+                true,
+                "This web search returned no usable results (" + failureCode + "). Refine the query and retry.",
+                Map.of(
+                        "query", query,
+                        "results", List.of(),
+                        "truncated", false,
+                        "untrustedExternalContent", true,
+                        "failureCode", failureCode,
+                        "searchResultsAvailable", false,
+                        "retryWithRefinedQuery", true),
+                List.of(),
+                List.of(),
+                false);
     }
 
     private static void requireOption(boolean requested, WebSearchOption option, Set<WebSearchOption> supported) {

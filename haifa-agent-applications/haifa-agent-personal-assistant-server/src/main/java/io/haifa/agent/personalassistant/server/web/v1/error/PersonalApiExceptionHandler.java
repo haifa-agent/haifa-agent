@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.reactive.resource.NoResourceFoundException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.ServerWebInputException;
 
@@ -77,6 +78,24 @@ public final class PersonalApiExceptionHandler {
     ResponseEntity<PersonalApiDtos.Error> badRequest(ServerWebInputException exception, ServerWebExchange exchange) {
         return ResponseEntity.badRequest()
                 .body(new PersonalApiDtos.Error("INVALID_REQUEST", "The request is invalid.", correlation(exchange)));
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    ResponseEntity<PersonalApiDtos.Error> responseStatus(
+            ResponseStatusException exception, ServerWebExchange exchange) {
+        HttpStatus status = HttpStatus.valueOf(exception.getStatusCode().value());
+        String code =
+                switch (status) {
+                    case UNSUPPORTED_MEDIA_TYPE -> "UNSUPPORTED_MEDIA_TYPE";
+                    case METHOD_NOT_ALLOWED -> "METHOD_NOT_ALLOWED";
+                    case NOT_ACCEPTABLE -> "NOT_ACCEPTABLE";
+                    case NOT_FOUND -> "NOT_FOUND";
+                    default -> status.is4xxClientError() ? "INVALID_REQUEST" : "UPSTREAM_REQUEST_FAILED";
+                };
+        String message = status == HttpStatus.UNSUPPORTED_MEDIA_TYPE
+                ? "The request content type is not supported."
+                : "The request could not be accepted.";
+        return ResponseEntity.status(status).body(new PersonalApiDtos.Error(code, message, correlation(exchange)));
     }
 
     @ExceptionHandler(IllegalStateException.class)

@@ -121,6 +121,8 @@ class SqliteOperationalAdaptersTest {
         journal.recordIntent(run.id(), key);
         journal.recordDispatched(run.id(), key);
         journal.recordAcknowledged(run.id(), key);
+        journal.recordDispatched(run.id(), key);
+        assertThat(journal.state(run.id(), key)).contains(ToolJournalState.ACKNOWLEDGED);
         journal.recordPendingResult(run.id(), key, result);
         journal.recordPendingResult(run.id(), key, result);
         assertThat(journal.pendingResult(run.id(), key)).contains(result);

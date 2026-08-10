@@ -35,7 +35,10 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
 
     @Override
     public synchronized void recordDispatched(AgentRunId runId, RuntimeIdempotencyKey key) {
-        states.put(id(runId, key), ToolJournalState.DISPATCHED);
+        String id = id(runId, key);
+        if (states.get(id) != ToolJournalState.ACKNOWLEDGED) {
+            states.put(id, ToolJournalState.DISPATCHED);
+        }
     }
 
     @Override

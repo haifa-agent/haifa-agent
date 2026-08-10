@@ -10,7 +10,6 @@ import io.haifa.agent.personalassistant.application.mission.MissionTask;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
-import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import io.haifa.agent.personalassistant.server.web.v1.mapper.PersonalApiMapper;
 import java.net.URI;
@@ -44,21 +43,18 @@ public final class PersonalMissionController {
     private final PersonalAssistantProperties properties;
     private final PersonalApiMapper mapper;
     private final Clock clock;
-    private final MissionOperationsService operations;
 
     public PersonalMissionController(
             MissionApplicationService missions,
             PersonalAssistantApplication application,
             PersonalAssistantProperties properties,
             PersonalApiMapper mapper,
-            Clock clock,
-            MissionOperationsService operations) {
+            Clock clock) {
         this.missions = missions;
         this.application = application;
         this.properties = properties;
         this.mapper = mapper;
         this.clock = clock;
-        this.operations = operations;
     }
 
     @PostMapping
@@ -66,7 +62,6 @@ public final class PersonalMissionController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PersonalApiDtos.CreateMission request) {
         if (request == null) throw new MissionException("MISSION_REQUEST_INVALID", "Mission request is required");
-        operations.requireAdmission();
         String conversationId = text(request.conversationId(), "conversationId", 256);
         if (application.conversation(conversationId).isEmpty()) {
             throw new MissionException("MISSION_NOT_FOUND", "Mission is unavailable");

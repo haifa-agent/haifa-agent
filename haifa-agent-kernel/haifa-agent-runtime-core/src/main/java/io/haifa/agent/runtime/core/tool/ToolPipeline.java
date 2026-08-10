@@ -43,9 +43,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Sequential validate-authorize-policy-approve-execute-persist tool pipeline. */
 public final class ToolPipeline {
+    private static final Logger LOGGER = LoggerFactory.getLogger(ToolPipeline.class);
     private final ToolInvoker invoker;
     private final ToolSchemaValidator schemaValidator;
     private final CapabilityAuthorizer capabilityAuthorizer;
@@ -287,13 +290,33 @@ public final class ToolPipeline {
                 ToolSchemaValidationResult outputValidation =
                         schemaValidator.validate(definition.outputSchema(), rawResult.structuredData());
                 if (!outputValidation.valid()) {
+                    LOGGER.warn(
+                            "event=tool.output.invalid runId={} toolCallId={} tool={} validationErrors={}",
+                            run.id().value(),
+                            call.id().value(),
+                            definition.name().value(),
+                            outputValidation.errors());
                     throw new IllegalStateException(
                             "tool output failed schema validation: " + outputValidation.errors());
                 }
             } else {
                 validateFailureEnvelope(rawResult);
             }
-            journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
+            try {
+                journal.recordPendingResult(run.id(), request.idempotencyKey(), rawResult);
+            } catch (RuntimeException persistenceFailure) {
+                StackTraceElement location = persistenceFailure.getStackTrace().length == 0
+                        ? null
+                        : persistenceFailure.getStackTrace()[0];
+                LOGGER.warn(
+                        "event=tool.result-journal.failure runId={} toolCallId={} tool={} failureType={} failureLocation={}",
+                        run.id().value(),
+                        call.id().value(),
+                        definition.name().value(),
+                        persistenceFailure.getClass().getSimpleName(),
+                        location == null ? "" : location.getClassName() + "." + location.getMethodName());
+                throw new ToolResultPersistenceException(persistenceFailure);
+            }
             return new ToolPipelineOutcome.Completed(persistResult(run, call, request, rawResult, iteration));
         } catch (CancellationObservedException cancelled) {
             appendToolEvent(run, call, "tool.cancelled", "CANCELLED", "RUN_CANCELLED", "");
@@ -449,6 +472,15 @@ public final class ToolPipeline {
                             invocationFailure.dispatchState(),
                             detail == null || detail.isBlank() ? "tool provider invocation failed" : detail);
                 }
+                StackTraceElement location =
+                        exception.getStackTrace().length == 0 ? null : exception.getStackTrace()[0];
+                LOGGER.warn(
+                        "event=tool.provider.failure runId={} toolCallId={} tool={} failureType={} failureLocation={}",
+                        run.id().value(),
+                        call.id().value(),
+                        definition.name().value(),
+                        exception.getClass().getSimpleName(),
+                        location == null ? "" : location.getClassName() + "." + location.getMethodName());
                 throw new IllegalStateException(
                         detail == null || detail.isBlank()
                                 ? "tool provider invocation failed"

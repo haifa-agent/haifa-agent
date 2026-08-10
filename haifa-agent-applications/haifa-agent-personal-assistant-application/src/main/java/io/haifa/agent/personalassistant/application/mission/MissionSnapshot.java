@@ -23,6 +23,7 @@ public record MissionSnapshot(
         Instant updatedAt,
         Optional<Instant> confirmedAt,
         Optional<Instant> finishedAt,
+        Optional<String> failureCode,
         long pollAfterMillis,
         MissionExecutionSnapshot execution) {
     public static final String SCHEMA_VERSION = "pa.mission-snapshot/v1";
@@ -52,6 +53,7 @@ public record MissionSnapshot(
                 mission.updatedAt(),
                 mission.confirmedAt(),
                 mission.finishedAt(),
+                mission.failureCode(),
                 poll,
                 MissionExecutionSnapshot.unavailable());
     }
@@ -75,6 +77,7 @@ public record MissionSnapshot(
                 updatedAt,
                 confirmedAt,
                 finishedAt,
+                failureCode,
                 pollAfterMillis,
                 value);
     }

@@ -8,10 +8,12 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.tool.api.ToolCancellation;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProviderId;
+import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import io.haifa.agent.tool.core.ToolCatalogBuilder;
 import java.net.URI;
 import java.time.Instant;
@@ -157,6 +159,64 @@ class WebToolTest {
     }
 
     @Test
+    void fetchToolUsesAContextSafeDefaultWhenMaximumCharactersIsOmitted() {
+        int[] observedMaximum = new int[1];
+        WebFetchProvider provider = new WebFetchProvider() {
+            @Override
+            public WebProviderDescriptor descriptor() {
+                return WebToolTest.descriptor("aliyun", false);
+            }
+
+            @Override
+            public WebFetchResponse fetch(WebFetchRequest request, WebProviderInvocationContext context) {
+                observedMaximum[0] = request.maxCharacters();
+                context.observer().dispatched();
+                context.observer().acknowledged();
+                return new WebFetchResponse(
+                        request.url(),
+                        request.url(),
+                        Optional.empty(),
+                        "content",
+                        WebContentFormat.TEXT,
+                        "text/plain",
+                        Optional.empty(),
+                        "ed7002b439e9ac845f22357d822bac1444737f02b59d2f9cd2b25c44b7b0d808",
+                        false);
+            }
+        };
+        var contribution = new WebToolCatalog().fetch(provider, new DefaultWebUrlPolicy());
+        var catalog = new ToolCatalogBuilder()
+                .register(
+                        contribution.alias(),
+                        contribution.definition(),
+                        contribution.providerBindingReference(),
+                        contribution.provider())
+                .freeze();
+        var binding = catalog.snapshot().bindings().getFirst();
+
+        contribution
+                .provider()
+                .invoke(new ToolInvocationRequest(
+                        binding,
+                        new ToolCallId("call-default-limit"),
+                        new AgentRunId("run-default-limit"),
+                        new TenantRef("tenant-1"),
+                        new PrincipalRef("user-1", "user"),
+                        new ToolArguments(
+                                binding.definition().inputSchema().id(),
+                                binding.definition().inputSchema().version(),
+                                Map.of("url", "https://example.com/page")),
+                        Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
+                        Optional.empty(),
+                        (ToolCancellation) () -> false,
+                        List.of()));
+
+        assertThat(observedMaximum[0]).isEqualTo(WebFetchToolProvider.DEFAULT_MAX_CHARACTERS);
+        assertThat(((Map<?, ?>) inputProperties(contribution).get("maxCharacters")).get("default"))
+                .isEqualTo(WebFetchToolProvider.DEFAULT_MAX_CHARACTERS);
+    }
+
+    @Test
     void frozenFetchBindingIncludesUrlPolicyConfiguration() {
         var catalog = new WebToolCatalog();
         var defaultBinding =
@@ -167,6 +227,150 @@ class WebToolTest {
         assertThat(defaultBinding).startsWith("web:fetch:aliyun:sha256:");
         assertThat(restrictedBinding).startsWith("web:fetch:aliyun:sha256:");
         assertThat(restrictedBinding).isNotEqualTo(defaultBinding);
+    }
+
+    @Test
+    void unavailableFetchSourceReturnsASuccessfulNegativeResult() {
+        WebFetchProvider unavailable = new WebFetchProvider() {
+            @Override
+            public WebProviderDescriptor descriptor() {
+                return WebToolTest.descriptor("aliyun", false);
+            }
+
+            @Override
+            public WebFetchResponse fetch(WebFetchRequest request, WebProviderInvocationContext context) {
+                context.observer().dispatched();
+                context.observer().acknowledged();
+                throw new WebProviderException(
+                        WebFailureCode.WEB_PROVIDER_RESPONSE_INVALID,
+                        WebDispatchState.ACKNOWLEDGED,
+                        "source returned no usable content");
+            }
+        };
+        var invocation = fetchInvocation(
+                new WebToolCatalog().fetch(unavailable, new DefaultWebUrlPolicy()), "https://example.com/unavailable");
+
+        ToolResult result = invocation.contribution().provider().invoke(invocation.request());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("failureCode", "WEB_PROVIDER_RESPONSE_INVALID")
+                .containsEntry("retryWithAnotherSource", true);
+        assertThat(new JsonSchema202012Validator()
+                        .validate(invocation.contribution().definition().outputSchema(), result.structuredData())
+                        .valid())
+                .isTrue();
+    }
+
+    @Test
+    void fetchAuthenticationFailureLeavesTheSourceUnavailableWithoutAbortingResearch() {
+        WebFetchProvider unavailable = new WebFetchProvider() {
+            @Override
+            public WebProviderDescriptor descriptor() {
+                return WebToolTest.descriptor("aliyun", false);
+            }
+
+            @Override
+            public WebFetchResponse fetch(WebFetchRequest request, WebProviderInvocationContext context) {
+                throw new WebProviderException(
+                        WebFailureCode.WEB_AUTH_FAILED, WebDispatchState.ACKNOWLEDGED, "credential rejected");
+            }
+        };
+        var invocation = fetchInvocation(
+                new WebToolCatalog().fetch(unavailable, new DefaultWebUrlPolicy()), "https://example.com/private");
+
+        ToolResult result = invocation.contribution().provider().invoke(invocation.request());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("failureCode", "WEB_AUTH_FAILED")
+                .containsEntry("sourceAvailable", false)
+                .containsEntry("retryWithAnotherSource", true);
+    }
+
+    @Test
+    void readOnlyFetchOutcomeUnknownReturnsASuccessfulNegativeResult() {
+        WebFetchProvider unavailable = new WebFetchProvider() {
+            @Override
+            public WebProviderDescriptor descriptor() {
+                return WebToolTest.descriptor("aliyun", false);
+            }
+
+            @Override
+            public WebFetchResponse fetch(WebFetchRequest request, WebProviderInvocationContext context) {
+                context.observer().dispatched();
+                throw new WebProviderException(
+                        WebFailureCode.WEB_PROVIDER_FAILED,
+                        WebDispatchState.OUTCOME_UNKNOWN,
+                        "transport outcome is unknown");
+            }
+        };
+        var invocation = fetchInvocation(
+                new WebToolCatalog().fetch(unavailable, new DefaultWebUrlPolicy()), "https://example.com/unknown");
+
+        ToolResult result = invocation.contribution().provider().invoke(invocation.request());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("failureCode", "WEB_PROVIDER_FAILED")
+                .containsEntry("retryWithAnotherSource", true);
+        assertThat(new JsonSchema202012Validator()
+                        .validate(invocation.contribution().definition().outputSchema(), result.structuredData())
+                        .valid())
+                .isTrue();
+    }
+
+    @Test
+    void unusableSearchResponseReturnsASuccessfulNegativeResult() {
+        WebSearchProvider unavailable = new WebSearchProvider() {
+            @Override
+            public WebProviderDescriptor descriptor() {
+                return WebToolTest.descriptor("aliyun", true);
+            }
+
+            @Override
+            public WebSearchResponse search(WebSearchRequest request, WebProviderInvocationContext context) {
+                context.observer().dispatched();
+                context.observer().acknowledged();
+                throw new WebProviderException(
+                        WebFailureCode.WEB_PROVIDER_RESPONSE_INVALID,
+                        WebDispatchState.ACKNOWLEDGED,
+                        "provider returned an unusable result");
+            }
+        };
+        var invocation = searchInvocation(new WebToolCatalog().search(unavailable), "jingning hydropower");
+
+        ToolResult result = invocation.contribution().provider().invoke(invocation.request());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("failureCode", "WEB_PROVIDER_RESPONSE_INVALID")
+                .containsEntry("retryWithRefinedQuery", true);
+        assertThat(new JsonSchema202012Validator()
+                        .validate(invocation.contribution().definition().outputSchema(), result.structuredData())
+                        .valid())
+                .isTrue();
+    }
+
+    @Test
+    void searchAuthenticationFailureRemainsAnInfrastructureFailure() {
+        WebSearchProvider unavailable = new WebSearchProvider() {
+            @Override
+            public WebProviderDescriptor descriptor() {
+                return WebToolTest.descriptor("aliyun", true);
+            }
+
+            @Override
+            public WebSearchResponse search(WebSearchRequest request, WebProviderInvocationContext context) {
+                throw new WebProviderException(
+                        WebFailureCode.WEB_AUTH_FAILED, WebDispatchState.ACKNOWLEDGED, "credential rejected");
+            }
+        };
+        var invocation = searchInvocation(new WebToolCatalog().search(unavailable), "jingning hydropower");
+
+        assertThatThrownBy(() -> invocation.contribution().provider().invoke(invocation.request()))
+                .isInstanceOfSatisfying(ToolInvocationException.class, failure -> assertThat(failure.failureCode())
+                        .isEqualTo("WEB_AUTH_FAILED"));
     }
 
     @Test
@@ -262,6 +466,64 @@ class WebToolTest {
             }
         };
     }
+
+    private static FetchInvocation fetchInvocation(WebToolCatalogContribution contribution, String url) {
+        var catalog = new ToolCatalogBuilder()
+                .register(
+                        contribution.alias(),
+                        contribution.definition(),
+                        contribution.providerBindingReference(),
+                        contribution.provider())
+                .freeze();
+        var binding = catalog.snapshot().bindings().getFirst();
+        return new FetchInvocation(
+                contribution,
+                new ToolInvocationRequest(
+                        binding,
+                        new ToolCallId("call-fetch"),
+                        new AgentRunId("run-fetch"),
+                        new TenantRef("tenant-1"),
+                        new PrincipalRef("user-1", "user"),
+                        new ToolArguments(
+                                binding.definition().inputSchema().id(),
+                                binding.definition().inputSchema().version(),
+                                Map.of("url", url, "maxCharacters", 100)),
+                        Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
+                        Optional.empty(),
+                        (ToolCancellation) () -> false,
+                        List.of()));
+    }
+
+    private static SearchInvocation searchInvocation(WebToolCatalogContribution contribution, String query) {
+        var catalog = new ToolCatalogBuilder()
+                .register(
+                        contribution.alias(),
+                        contribution.definition(),
+                        contribution.providerBindingReference(),
+                        contribution.provider())
+                .freeze();
+        var binding = catalog.snapshot().bindings().getFirst();
+        return new SearchInvocation(
+                contribution,
+                new ToolInvocationRequest(
+                        binding,
+                        new ToolCallId("call-search"),
+                        new AgentRunId("run-search"),
+                        new TenantRef("tenant-1"),
+                        new PrincipalRef("user-1", "user"),
+                        new ToolArguments(
+                                binding.definition().inputSchema().id(),
+                                binding.definition().inputSchema().version(),
+                                Map.of("query", query)),
+                        Instant.ofEpochMilli(System.currentTimeMillis()).plusSeconds(30),
+                        Optional.empty(),
+                        (ToolCancellation) () -> false,
+                        List.of()));
+    }
+
+    private record FetchInvocation(WebToolCatalogContribution contribution, ToolInvocationRequest request) {}
+
+    private record SearchInvocation(WebToolCatalogContribution contribution, ToolInvocationRequest request) {}
 
     private static WebProviderDescriptor descriptor(String id, boolean search) {
         return descriptor(id, search ? Set.of() : null);

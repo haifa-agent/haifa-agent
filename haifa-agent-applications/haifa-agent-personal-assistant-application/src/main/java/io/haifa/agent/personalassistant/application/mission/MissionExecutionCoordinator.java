@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.application.mission;
 
+import io.haifa.agent.personalassistant.application.runtime.SdkMissionRuntimeAccess;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -62,13 +63,11 @@ public final class MissionExecutionCoordinator {
                     String result = observation.result().orElse("");
                     store.settleCompleted(attempt, MissionValues.digest(result), result, observation.usage(), now);
                 }
-                case FAILED ->
+                case FAILED -> {
+                    String failureCode = observation.failureCode().orElse("TASK_RUN_FAILED");
                     store.settleFailed(
-                            attempt,
-                            observation.failureCode().orElse("TASK_RUN_FAILED"),
-                            true,
-                            observation.usage(),
-                            now);
+                            attempt, failureCode, retryableTaskFailure(failureCode), observation.usage(), now);
+                }
                 case CANCELLED -> store.settleCancelled(attempt, observation.usage(), now);
                 case OUTCOME_UNKNOWN ->
                     store.settleFailed(attempt, "TASK_RUN_OUTCOME_UNKNOWN", false, observation.usage(), now);
@@ -94,7 +93,9 @@ public final class MissionExecutionCoordinator {
         store.claimSynthesis(now()).ifPresent(intent -> {
             try {
                 MissionRuntimeAccess.SynthesisRunResult synthesis = runtime.runSynthesis(intent);
-                MissionPublishedResult published = publisher.publish(intent, synthesis);
+                PublishedSynthesis delivery = publishWithResearchFallback(publisher, intent, synthesis);
+                synthesis = delivery.synthesis();
+                MissionPublishedResult published = delivery.published();
                 runtime.appendFinalMessage(
                         intent.conversationId(), intent.missionId(), synthesis.runId(), published.finalMessage());
                 store.settleSynthesis(intent, synthesis, published, now());
@@ -102,6 +103,26 @@ public final class MissionExecutionCoordinator {
                 store.failSynthesis(intent, safeCode(failure), now());
             }
         });
+    }
+
+    static PublishedSynthesis publishWithResearchFallback(
+            MissionResultPublisher publisher,
+            MissionSynthesisIntent intent,
+            MissionRuntimeAccess.SynthesisRunResult synthesis) {
+        try {
+            return new PublishedSynthesis(synthesis, publisher.publish(intent, synthesis));
+        } catch (MissionException failure) {
+            if (intent.mode() != MissionMode.DEEP_RESEARCH || !"MISSION_RESULT_SCHEMA_INVALID".equals(failure.code())) {
+                throw failure;
+            }
+            var fallback = new MissionRuntimeAccess.SynthesisRunResult(
+                    synthesis.sessionId(),
+                    synthesis.runId(),
+                    SdkMissionRuntimeAccess.conservativeResearchSynthesis(
+                            intent, failure.code(), synthesis.structuredOutput()),
+                    synthesis.usage());
+            return new PublishedSynthesis(fallback, publisher.publish(intent, fallback));
+        }
     }
 
     private Instant now() {
@@ -115,4 +136,10 @@ public final class MissionExecutionCoordinator {
         }
         return "MISSION_DISPATCH_FAILED";
     }
+
+    static boolean retryableTaskFailure(String failureCode) {
+        return !failureCode.startsWith("MISSION_TASK_NORMALIZATION_");
+    }
+
+    record PublishedSynthesis(MissionRuntimeAccess.SynthesisRunResult synthesis, MissionPublishedResult published) {}
 }

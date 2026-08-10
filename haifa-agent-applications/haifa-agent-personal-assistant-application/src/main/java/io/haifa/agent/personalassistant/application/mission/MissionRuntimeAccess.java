@@ -4,6 +4,15 @@ package io.haifa.agent.personalassistant.application.mission;
 public interface MissionRuntimeAccess {
     PlannerRunResult runPlanner(MissionPlanner.PlanningRequest request);
 
+    default PlannerRunResult repairPlanner(
+            MissionPlanner.PlanningRequest request,
+            PlannerRunResult invalidRun,
+            String violationCode,
+            String violationMessage,
+            int repairAttemptNo) {
+        throw new MissionException("MISSION_PLAN_REPAIR_UNAVAILABLE", "Mission Plan repair is unavailable");
+    }
+
     default TaskRunBinding startTask(MissionDispatchIntent intent) {
         throw new MissionException("MISSION_EXECUTION_UNAVAILABLE", "Mission Task execution is unavailable");
     }

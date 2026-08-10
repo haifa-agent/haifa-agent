@@ -105,8 +105,8 @@ public final class PersonalAssistantProfile {
                         + "authoritative runtime context. Treat the latest user message as the current objective. "
                         + "Do not resume or retry a previous failed or abandoned tool call unless the latest user "
                         + "message explicitly requests it. Keep answers concise and ask for clarification when needed.",
-                new AgentRunBudget(256_000, 64_000, 256_000, 32, 32, 0, "USD", 0),
-                new AgentRunLimits(32, 0, 1, 300_000, 120_000),
+                new AgentRunBudget(512_000, 128_000, 512_000, 64, 64, 0, "USD", 0),
+                new AgentRunLimits(64, 0, 1, 300_000, 120_000),
                 policies,
                 requirements,
                 allowedTools,

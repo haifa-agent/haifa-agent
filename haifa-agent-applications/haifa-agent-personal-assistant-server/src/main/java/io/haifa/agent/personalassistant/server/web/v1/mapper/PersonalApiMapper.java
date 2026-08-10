@@ -5,7 +5,6 @@ import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -75,7 +74,7 @@ public final class PersonalApiMapper {
                 value.state().name(),
                 plan,
                 tasks,
-                Optional.empty(),
+                value.failureCode(),
                 value.execution().artifacts(),
                 value.execution().sources(),
                 value.execution().finalResult(),
