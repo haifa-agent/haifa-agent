@@ -283,13 +283,52 @@ describe("Personal Assistant application", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mission" }));
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
     fireEvent.click(await within(dialog).findByRole("button", { name: /交付一份可验收的计划/ }));
-    expect(await within(dialog).findByText(/准备交付/)).toBeTruthy();
+    const taskButton = await within(dialog).findByRole("button", { name: /准备交付/ });
+    fireEvent.click(taskButton);
+    const taskDetail = within(dialog).getByRole("complementary", { name: "计划任务详情" });
+    expect(within(taskDetail).getByRole("heading", { name: "准备交付" })).toBeTruthy();
+    expect(within(taskDetail).getByText("整理明确的交付内容")).toBeTruthy();
+    expect(within(taskDetail).getByText("可验收")).toBeTruthy();
+    expect(within(taskDetail).getByText("pa.task-result · v1")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /确认计划/ }));
     await waitFor(() => expect(api.confirmMission).toHaveBeenCalledWith(
       expect.objectContaining({ missionId: "mission-1", version: 1 }),
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     ));
     expect((await screen.findAllByText("计划已确认")).length).toBeGreaterThan(0);
+  });
+
+  it("requires acceptance criteria before creating a Mission", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      createMission: vi.fn(async () => mission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    const objectiveInput = within(dialog).getByLabelText("目标");
+    const criteriaInput = within(dialog).getByLabelText("验收标准（必填，1～20 条）");
+    const createButton = within(dialog).getByRole("button", { name: "创建并生成计划" });
+
+    fireEvent.change(objectiveInput, { target: { value: "以太坊过去3年重要的技术迭代" } });
+    expect((criteriaInput as HTMLTextAreaElement).required).toBe(true);
+    expect((createButton as HTMLButtonElement).disabled).toBe(true);
+    expect(api.createMission).not.toHaveBeenCalled();
+
+    fireEvent.change(criteriaInput, { target: { value: "列出重要升级、时间及其技术影响" } });
+    await waitFor(() => expect((createButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(createButton);
+
+    await waitFor(() => expect(api.createMission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        objective: "以太坊过去3年重要的技术迭代",
+        acceptanceCriteria: ["列出重要升级、时间及其技术影响"],
+      }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    ));
   });
 
   it("shows execution progress and retries a blocked Mission task", async () => {
