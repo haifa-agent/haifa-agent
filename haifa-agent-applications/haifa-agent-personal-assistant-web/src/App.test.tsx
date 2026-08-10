@@ -373,6 +373,76 @@ describe("Personal Assistant application", () => {
     expect(within(dialog).getByText("artifact-report")).toBeTruthy();
   });
 
+  it("renders a degraded v2 delivery with report view download and copy actions", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const delivered: MissionSnapshot = {
+      ...mission,
+      mode: "DEEP_RESEARCH",
+      selectedSkillId: "deep-research",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.0.0#sha256:test",
+      state: "PARTIALLY_COMPLETED",
+      artifacts: ["artifact-report", "artifact-delivery"],
+      finalResult: JSON.stringify({
+        schemaVersion: "pa.research-delivery/v2",
+        completionKind: "PARTIAL",
+        degraded: true,
+        degradationReasons: ["REPORT_REQUIRED_SECTION_MISSING"],
+        affectedTaskIds: ["task-1"],
+        reportArtifactRef: { artifactId: "artifact-report", title: "research-report.md" },
+        qualityGate: { passed: false, failedChecks: ["REPORT_REQUIRED_SECTION_MISSING"] },
+      }),
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+      missionArtifact: vi.fn(async () => "# 完整研究报告\n\n正文"),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect(await within(dialog).findByText(/调研降级完成/)).toBeTruthy();
+    expect(within(dialog).getByText("报告缺少必要章节")).toBeTruthy();
+    expect(within(dialog).getByText((_content, element) => element?.tagName === "P"
+      && element.textContent?.includes("受影响任务：") === true
+      && element.textContent.includes("task-1"))).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "查看完整报告" }).getAttribute("href"))
+      .toContain("/missions/mission-1/artifacts/artifact-report");
+    expect(within(dialog).getByRole("link", { name: "下载 Markdown" }).getAttribute("download"))
+      .toBe("research-report.md");
+    fireEvent.click(within(dialog).getByRole("button", { name: /复制完整报告/ }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("# 完整研究报告\n\n正文"));
+    expect(await within(dialog).findByRole("button", { name: /已复制/ })).toBeTruthy();
+  });
+
+  it("fails closed for an unknown research delivery version", async () => {
+    const delivered: MissionSnapshot = {
+      ...mission,
+      state: "COMPLETED",
+      finalResult: JSON.stringify({
+        schemaVersion: "pa.research-delivery/v999",
+        completionKind: "COMPLETE",
+        directAnswer: "must not be rendered",
+      }),
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect(await within(dialog).findByText("最终报告版本不受支持")).toBeTruthy();
+    expect(within(dialog).queryByText("must not be rendered")).toBeNull();
+  });
+
   it("announces offline Mission state and restores focus when Escape closes the dialog", async () => {
     Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
     const running = { ...mission, state: "RUNNING" as const };
@@ -788,7 +858,7 @@ describe("Personal Assistant application", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(
       "Get-Process | Select-Object -First 1",
     ));
-    expect(screen.getByRole("button", { name: "代码已复制" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "代码已复制" })).toBeTruthy();
   });
 
   it("opens memory management without writing on page load", async () => {

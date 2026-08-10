@@ -1230,8 +1230,15 @@ function missionStateLabel(state: string): string {
 }
 
 function parseMissionFinalResult(value: string | null): {
+  schemaVersion?: string;
+  unsupportedVersion?: boolean;
   directAnswer?: string;
   completionKind?: string;
+  degraded?: boolean;
+  degradationReasons?: string[];
+  affectedTaskIds?: string[];
+  reportArtifactRef?: { artifactId: string; title?: string };
+  qualityGate?: { passed?: boolean; failedChecks?: string[] };
   completedItems?: string[];
   failedItems?: string[];
   unverifiedClaims?: string[];
@@ -1244,9 +1251,37 @@ function parseMissionFinalResult(value: string | null): {
     const strings = (field: string): string[] => Array.isArray(parsed[field])
       ? parsed[field].filter((item): item is string => typeof item === "string")
       : [];
+    const schemaVersion = typeof parsed.schemaVersion === "string" ? parsed.schemaVersion : undefined;
+    if (schemaVersion && !["pa.research-final-result/v1", "pa.research-delivery/v2"].includes(schemaVersion)) {
+      return { schemaVersion, unsupportedVersion: true };
+    }
     return {
+      schemaVersion,
       directAnswer: typeof parsed.directAnswer === "string" ? parsed.directAnswer : undefined,
       completionKind: typeof parsed.completionKind === "string" ? parsed.completionKind : undefined,
+      degraded: typeof parsed.degraded === "boolean" ? parsed.degraded : undefined,
+      degradationReasons: strings("degradationReasons"),
+      affectedTaskIds: strings("affectedTaskIds"),
+      reportArtifactRef: typeof parsed.reportArtifactRef === "object" && parsed.reportArtifactRef !== null
+        && typeof (parsed.reportArtifactRef as Record<string, unknown>).artifactId === "string"
+        ? {
+            artifactId: (parsed.reportArtifactRef as Record<string, unknown>).artifactId as string,
+            title: typeof (parsed.reportArtifactRef as Record<string, unknown>).title === "string"
+              ? (parsed.reportArtifactRef as Record<string, unknown>).title as string
+              : undefined,
+          }
+        : undefined,
+      qualityGate: typeof parsed.qualityGate === "object" && parsed.qualityGate !== null
+        ? {
+            passed: typeof (parsed.qualityGate as Record<string, unknown>).passed === "boolean"
+              ? (parsed.qualityGate as Record<string, unknown>).passed as boolean
+              : undefined,
+            failedChecks: Array.isArray((parsed.qualityGate as Record<string, unknown>).failedChecks)
+              ? ((parsed.qualityGate as Record<string, unknown>).failedChecks as unknown[])
+                  .filter((item): item is string => typeof item === "string")
+              : [],
+          }
+        : undefined,
       completedItems: strings("completedItems"),
       failedItems: strings("failedItems"),
       unverifiedClaims: strings("unverifiedClaims"),
@@ -1256,6 +1291,65 @@ function parseMissionFinalResult(value: string | null): {
   } catch {
     return { directAnswer: value };
   }
+}
+
+const degradationLabels: Record<string, string> = {
+  REPORT_EMPTY: "综合没有返回正文",
+  REPORT_TOO_LARGE: "报告超过安全大小限制",
+  REPORT_REQUIRED_SECTION_MISSING: "报告缺少必要章节",
+  REPORT_SECTION_EMPTY: "报告存在空章节",
+  REPORT_TASK_COVERAGE_MISSING: "部分研究任务未被报告覆盖",
+  REPORT_SOURCES_MISSING: "报告缺少可解析来源引用",
+  REPORT_CITATION_INVALID: "报告包含无法闭合的来源引用",
+  REPORT_ONLY_METADATA: "报告内容不足，仅包含执行元数据",
+  REPORT_SYNTHESIS_DEGRADED: "模型综合过程发生降级",
+};
+
+function MissionFinalResult({
+  client,
+  mission,
+}: {
+  client: PersonalAssistantClient;
+  mission: MissionSnapshot;
+}) {
+  const result = parseMissionFinalResult(mission.finalResult);
+  const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "failed">("idle");
+  if (!result) return null;
+  if (result.unsupportedVersion) {
+    return <section className="research-result" role="alert"><h4>最终报告版本不受支持</h4><p>为避免错误解释交付状态，当前客户端不会推断未知版本。请升级客户端后重试。</p><details><summary>技术详情</summary><code>{result.schemaVersion}</code></details></section>;
+  }
+  const v2 = result.schemaVersion === "pa.research-delivery/v2";
+  const reportId = result.reportArtifactRef?.artifactId;
+  const status = result.degraded
+    ? "调研降级完成"
+    : result.completionKind === "PARTIAL"
+      ? "调研部分完成"
+      : "调研已完成";
+  const copyReport = async () => {
+    if (!reportId || !client.missionArtifact) return;
+    setCopyState("copying");
+    try {
+      await navigator.clipboard.writeText(await client.missionArtifact(mission.missionId, reportId));
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  };
+  if (v2) {
+    return <section className="research-result" aria-label="Deep Research 最终交付">
+      <h4>{status} · {result.completionKind}</h4>
+      {result.degraded && <p className="warning-banner">最终综合未完全达到质量门禁，已保留可读报告和已收集证据。</p>}
+      {(result.degradationReasons?.length ?? 0) > 0 && <><h5>降级原因</h5><ul>{result.degradationReasons!.map((reason) => <li key={reason}>{degradationLabels[reason] ?? "综合质量检查未通过"}<details><summary>技术详情</summary><code>{reason}</code></details></li>)}</ul></>}
+      {(result.affectedTaskIds?.length ?? 0) > 0 && <p><b>受影响任务：</b>{result.affectedTaskIds!.join("、")}</p>}
+      {reportId && <div className="research-report-actions">
+        <a className="button" href={missionArtifactUrl(mission.missionId, reportId)} target="_blank" rel="noreferrer">查看完整报告</a>
+        <a className="button" href={missionArtifactUrl(mission.missionId, reportId)} download={result.reportArtifactRef?.title ?? "research-report.md"}>下载 Markdown</a>
+        <button type="button" className="button" disabled={copyState === "copying" || !client.missionArtifact} onClick={() => void copyReport()}><Copy size={14} />{copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制完整报告"}</button>
+      </div>}
+      {result.degraded && <p>下一步：查看已完成内容；如需重新调研，请按现有产品能力重新创建 Mission。</p>}
+    </section>;
+  }
+  return <section className="research-result"><h4>历史最终报告{result.completionKind && ` · ${result.completionKind}`}</h4>{result.directAnswer && <p className="research-answer">{result.directAnswer}</p>}{(result.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</section>;
 }
 
 function MissionDialog({
@@ -1579,7 +1673,7 @@ function MissionDialog({
             )}
             {selected ? (
               <article className="mission-detail">
-                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span>{selected.mode === "DEEP_RESEARCH" && <span className="mission-mode">Deep Research · deep-research@1.0.0</span>}<h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span>{selected.mode === "DEEP_RESEARCH" && <span className="mission-mode">Deep Research · {selected.selectedSkillBinding ?? "deep-research"}</span>}<h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
                 {selected.blocker && <p className="error-banner" role="alert">Mission 失败：{selected.blocker}</p>}
                 {selected.researchBrief && <section className="research-brief-summary"><h4>Research brief</h4><p><b>问题：</b>{selected.researchBrief.question}</p>{selected.researchBrief.scope && <p><b>范围：</b>{selected.researchBrief.scope}</p>}<p><b>时间 / 地区 / 受众：</b>{[selected.researchBrief.timeRange, selected.researchBrief.region, selected.researchBrief.audience].filter(Boolean).join(" · ") || "未限定"}</p></section>}
                 {selected.acceptanceCriteria.length > 0 && <section><h4>验收标准</h4><ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section>}
@@ -1592,7 +1686,7 @@ function MissionDialog({
                 <section><h4>执行计划 · revision {selected.plan?.revision ?? "-"}</h4>
                   <ol className="mission-tasks">{selected.tasks.map((task) => <li key={task.taskId}><b>{task.ordinal}. {task.title}</b><span>{task.objective}</span>{task.dependsOn.length > 0 && <small>依赖：{task.dependsOn.join("、")}</small>}<em>{task.state}</em>{task.state === "BLOCKED" && client.retryMissionTask && <button type="button" className="button mission-task-retry" disabled={busy} onClick={() => void command(() => client.retryMissionTask!(selected, task.taskId, { idempotencyKey: crypto.randomUUID() }))}>重试任务</button>}</li>)}</ol>
                 </section>
-                {selected.finalResult && (() => { const result = parseMissionFinalResult(selected.finalResult); return <section className="research-result"><h4>最终报告{result?.completionKind && ` · ${result.completionKind}`}</h4>{result?.directAnswer && <p className="research-answer">{result.directAnswer}</p>}{(result?.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result!.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result?.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result!.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result?.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result!.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result?.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result!.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result?.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result!.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</section>; })()}
+                {selected.finalResult && <MissionFinalResult client={client} mission={selected} />}
                 {selected.sources.length > 0 && <section className="research-sources"><h4>来源与引用</h4><ol>{selected.sources.map((source) => <li key={source}><a href={source} target="_blank" rel="noreferrer">{source}</a></li>)}</ol></section>}
                 {selected.artifacts.length > 0 && <section className="research-artifacts"><h4>交付文件</h4><ul>{selected.artifacts.map((artifact) => <li key={artifact}><a href={missionArtifactUrl(selected.missionId, artifact)} target="_blank" rel="noreferrer"><code>{artifact}</code></a></li>)}</ul></section>}
                 {missionInteraction && <section className="mission-interaction"><h4>{missionInteraction.title}</h4><p>{missionInteraction.safePrompt}</p>{missionInteraction.inputType !== "NONE" && <textarea value={missionInteractionText} maxLength={missionInteraction.maximumCharacters} onChange={(event) => setMissionInteractionText(event.target.value)} rows={3} /> }<div>{missionInteraction.allowedActions.map((action) => <button key={action} type="button" className="button" disabled={busy} onClick={() => respondToMissionInteraction(action)}>{action}</button>)}</div></section>}

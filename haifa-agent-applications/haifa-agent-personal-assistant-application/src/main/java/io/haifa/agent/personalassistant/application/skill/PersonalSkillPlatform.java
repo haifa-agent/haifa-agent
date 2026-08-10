@@ -184,8 +184,10 @@ public record PersonalSkillPlatform(
                 "references/research-method.md",
                 "references/source-quality.md",
                 "references/citation-rules.md",
+                "references/report-quality.md",
                 "schemas/research-task-result-v1.json",
                 "schemas/research-final-result-v1.json",
+                "schemas/research-delivery-v2.json",
                 "templates/report.md");
         SkillSource research = new ClasspathSkillSource(
                 PersonalSkillPlatform.class.getClassLoader(),

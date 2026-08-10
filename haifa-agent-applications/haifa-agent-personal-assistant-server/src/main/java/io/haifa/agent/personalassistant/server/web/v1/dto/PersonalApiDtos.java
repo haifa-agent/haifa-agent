@@ -101,6 +101,11 @@ public final class PersonalApiDtos {
             Optional<String> plannerRunId,
             Instant createdAt) {}
 
+    /**
+     * Mission read model. {@code finalResult} remains an encoded compatibility envelope: historical research
+     * missions use {@code pa.research-final-result/v1}, while newly published research deliveries use
+     * {@code pa.research-delivery/v2} and reference the separate Markdown report Artifact.
+     */
     public record MissionSnapshot(
             String schemaVersion,
             String missionId,

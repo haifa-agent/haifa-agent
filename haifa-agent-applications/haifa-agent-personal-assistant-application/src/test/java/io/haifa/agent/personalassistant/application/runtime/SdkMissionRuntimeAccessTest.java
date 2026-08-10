@@ -22,11 +22,15 @@ import org.junit.jupiter.api.Test;
 class SdkMissionRuntimeAccessTest {
     @Test
     void synthesisProtocolVersionOwnsTheRunIdempotencyNamespace() {
-        assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v4");
+        assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v5");
         assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v3");
         assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v5");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1"))
-                .isEqualTo("mission:mission-1:synthesis:v4");
+                .isEqualTo("mission:mission-1:synthesis:v5");
+        assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 1))
+                .isEqualTo("mission:mission-1:synthesis:v5:revision-1");
+        assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 2))
+                .isEqualTo("mission:mission-1:synthesis:v5:revision-2");
     }
 
     @Test

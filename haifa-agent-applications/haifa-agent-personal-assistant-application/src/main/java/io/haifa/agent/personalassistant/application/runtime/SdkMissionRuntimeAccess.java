@@ -30,6 +30,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.MissionUsage;
+import io.haifa.agent.personalassistant.application.mission.ReportQualityGate;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
@@ -69,7 +70,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     private static final Pattern PUBLIC_URL = Pattern.compile("https?://[^\\s<>\\\"'\\]\\[)]+");
     private static final Pattern SHA256_DIGEST = Pattern.compile("sha256:[a-f0-9]{64}");
     public static final String SYNTHESIS_RUN_PROFILE = "personal-mission-synthesis";
-    public static final String SYNTHESIS_PROTOCOL_VERSION = "v4";
+    public static final String RESEARCH_SYNTHESIS_RUN_PROFILE = "personal-mission-research-synthesis";
+    public static final String SYNTHESIS_PROTOCOL_VERSION = "v5";
     private static final int SYNTHESIS_MAX_UNVERIFIED_CLAIMS = 320;
     public static final long TASK_MAX_TOOL_CALLS = MissionTaskRunInput.PRIMARY_RESEARCH_TOOL_CALL_HARD_LIMIT;
     public static final long TASK_RESEARCH_TOOL_CALL_TARGET =
@@ -946,7 +948,27 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
     @Override
     public SynthesisRunResult runSynthesis(MissionSynthesisIntent intent) {
-        requireStructuredOutput("Mission Synthesis");
+        return runSynthesisAttempt(intent, null, null, 0);
+    }
+
+    @Override
+    public SynthesisRunResult reviseSynthesis(
+            MissionSynthesisIntent intent,
+            SynthesisRunResult previous,
+            ReportQualityGate.Result quality,
+            int revisionAttempt) {
+        if (intent.mode() != MissionMode.DEEP_RESEARCH || quality.passed()) {
+            throw new MissionException("MISSION_SYNTHESIS_REVISION_INVALID", "Synthesis revision request is invalid");
+        }
+        return runSynthesisAttempt(intent, previous, quality, revisionAttempt);
+    }
+
+    private SynthesisRunResult runSynthesisAttempt(
+            MissionSynthesisIntent intent,
+            SynthesisRunResult previous,
+            ReportQualityGate.Result quality,
+            int revisionAttempt) {
+        if (intent.mode() != MissionMode.DEEP_RESEARCH) requireStructuredOutput("Mission Synthesis");
         String stable = digest(intent.missionId(), "synthesis", SYNTHESIS_PROTOCOL_VERSION);
         AgentSessionId sessionId = new AgentSessionId("mission-synthesis-" + stable.substring("sha256:".length(), 38));
         persistence.inTransaction(() -> {
@@ -968,33 +990,18 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             }
             return null;
         });
-        String dispatchKey = synthesisDispatchKey(intent.missionId());
-        String prompt =
-                """
-                [mission-synthesis]
-                Produce only one JSON object. Standard Missions use pa.mission-final-result/v1; Deep Research uses
-                pa.research-final-result/v1 with directAnswer, completedItems, failedItems, artifactRefs, sourceRefs,
-                unverifiedClaims, residualRisks, unresolvedQuestions, completionKind, and these five exact fields set
-                to JSON null: reportArtifactRef, sourcesArtifactRef, claimEvidenceArtifactRef, resultArtifactRef, and
-                unresolvedArtifactRef. artifactRefs must be an empty JSON array; never put null elements in it. Do not
-                invent an Artifact reference. directAnswer must be one plain string, never an object or array.
-                completedItems and failedItems must be arrays of plain strings, never objects. For Deep Research,
-                completionKind must be exactly
-                COMPLETE when failedItems is empty, otherwise exactly PARTIAL; values such as PARTIAL_EVIDENCE are
-                invalid. sourceRefs and unverifiedClaims may contain only IDs present in the settled Task results, and
-                all unverified claim IDs from those results must be included.
-                Mission mode: %s
-                Mission objective: %s
-                Authoritative settled Task results: %s
-                Failed or cancelled Task items: %s
-                """
-                        .formatted(intent.mode(), intent.objective(), intent.taskResults(), intent.failedItems());
+        String dispatchKey = synthesisDispatchKey(intent.missionId(), revisionAttempt);
+        String prompt = intent.mode() == MissionMode.DEEP_RESEARCH
+                ? researchSynthesisPrompt(intent, previous, quality, revisionAttempt)
+                : standardSynthesisPrompt(intent);
+        String profile =
+                intent.mode() == MissionMode.DEEP_RESEARCH ? RESEARCH_SYNTHESIS_RUN_PROFILE : SYNTHESIS_RUN_PROFILE;
         var started = agent.runs()
                 .start(new AgentRunRequest(
                         dispatchKey,
                         new AgentDefinitionId("personal-assistant"),
                         Optional.of(new AgentDefinitionVersion(1, 0, 0)),
-                        SYNTHESIS_RUN_PROFILE,
+                        profile,
                         sessionId,
                         Optional.empty(),
                         prompt,
@@ -1006,27 +1013,37 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     .orElseThrow(
                             () -> new MissionException("MISSION_SYNTHESIS_TIMEOUT", "Mission Synthesis timed out"));
             if (terminal.status() != AgentRunStatus.COMPLETED) {
+                String failure = terminal.error()
+                        .map(error -> error.code().wireCode())
+                        .orElse(terminal.status().name());
                 if (intent.mode() == MissionMode.DEEP_RESEARCH) {
-                    String failure = terminal.error()
-                            .map(error -> error.code().wireCode())
-                            .orElse(terminal.status().name());
                     return new SynthesisRunResult(
                             sessionId.value(),
                             terminal.runId().value(),
-                            conservativeResearchSynthesis(intent, failure),
-                            usage(terminal.usage()));
+                            conservativeResearchReport(intent, failure),
+                            usage(terminal.usage()),
+                            List.of("MISSION_SYNTHESIS_FALLBACK:" + failure));
                 }
-                throw new MissionException(
-                        "MISSION_SYNTHESIS_FAILED", terminal.status().name());
+                throw new MissionException("MISSION_SYNTHESIS_FAILED", failure);
             }
             String output = terminal.result()
                     .map(result -> result.summary())
                     .or(() -> terminal.output())
                     .filter(value -> !value.isBlank())
-                    .orElseThrow(() -> new MissionException(
-                            "MISSION_SYNTHESIS_SCHEMA_INVALID", "Mission Synthesis returned no result"));
+                    .orElse("");
+            if (output.isBlank() && intent.mode() == MissionMode.DEEP_RESEARCH) {
+                return new SynthesisRunResult(
+                        sessionId.value(),
+                        terminal.runId().value(),
+                        conservativeResearchReport(intent, "MISSION_SYNTHESIS_EMPTY"),
+                        usage(terminal.usage()),
+                        List.of("MISSION_SYNTHESIS_EMPTY"));
+            }
+            if (output.isBlank()) {
+                throw new MissionException("MISSION_SYNTHESIS_SCHEMA_INVALID", "Mission Synthesis returned no result");
+            }
             String normalized =
-                    intent.mode() == MissionMode.DEEP_RESEARCH ? canonicalizeResearchSynthesis(output) : output;
+                    intent.mode() == MissionMode.DEEP_RESEARCH ? canonicalizeResearchReport(output) : output;
             return new SynthesisRunResult(
                     sessionId.value(), terminal.runId().value(), normalized, usage(terminal.usage()));
         } catch (InterruptedException exception) {
@@ -1035,8 +1052,137 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         }
     }
 
+    private String standardSynthesisPrompt(MissionSynthesisIntent intent) {
+        return """
+                [mission-synthesis]
+                Produce only one pa.mission-final-result/v1 JSON object. Do not invent Artifact references.
+                Mission mode: %s
+                Mission objective: %s
+                Authoritative settled Task results: %s
+                Failed or cancelled Task items: %s
+                """
+                .formatted(intent.mode(), intent.objective(), intent.taskResults(), intent.failedItems());
+    }
+
+    private String researchSynthesisPrompt(
+            MissionSynthesisIntent intent,
+            SynthesisRunResult previous,
+            ReportQualityGate.Result quality,
+            int revisionAttempt) {
+        String revision = revisionAttempt == 0
+                ? "This is the initial candidate."
+                : "This is bounded revision " + revisionAttempt + " of 2. Fix only these deterministic failures: "
+                        + quality.revisionFeedback() + "\nPrevious candidate:\n" + previous.structuredOutput();
+        return """
+                [mission-research-synthesis]
+                Return only the complete Markdown report, never JSON and never a fenced Markdown block.
+                Preserve evidence boundaries: do not invent Task IDs, Source IDs, facts, Artifact references, or URLs.
+                Copy every real Task ID exactly into a <!-- haifa-task: task-id --> marker and cite settled sources only
+                with [[source-id]]. Use the required stable section markers from the template. A critical external claim
+                without sufficient fetched support must be explicitly labeled unverified.
+
+                Mission objective: %s
+                Real completed Task IDs in result order: %s
+                Failed or cancelled Task items: %s
+                Authoritative settled Task result summaries and evidence: %s
+                Report template: %s
+                Deterministic report quality contract: %s
+                Revision instruction: %s
+                """
+                .formatted(
+                        intent.objective(),
+                        intent.completedTaskIds(),
+                        intent.failedItems(),
+                        intent.taskResults(),
+                        deepResearchSkill.resource("templates/report.md"),
+                        deepResearchSkill.resource("references/report-quality.md"),
+                        revision);
+    }
+
+    static String canonicalizeResearchReport(String value) {
+        String report = value.strip();
+        if (report.startsWith("```markdown") && report.endsWith("```")) {
+            report = report.substring("```markdown".length(), report.length() - 3)
+                    .strip();
+        } else if (report.startsWith("```md") && report.endsWith("```")) {
+            report = report.substring("```md".length(), report.length() - 3).strip();
+        }
+        return report;
+    }
+
+    public static String conservativeResearchReport(MissionSynthesisIntent intent, String reason) {
+        StringBuilder findings = new StringBuilder();
+        for (int index = 0; index < intent.taskResults().size(); index++) {
+            String taskId = intent.completedTaskIds().get(index);
+            String brief = "Settled research evidence was preserved for this task.";
+            try {
+                String candidate = JSON.readTree(intent.taskResults().get(index))
+                        .path("brief")
+                        .asText();
+                if (!candidate.isBlank()) brief = candidate;
+            } catch (Exception ignored) {
+                // The deterministic publisher will retain the precise schema failure.
+            }
+            findings.append("\n<!-- haifa-task: ")
+                    .append(taskId)
+                    .append(" -->\n### ")
+                    .append(taskId)
+                    .append("\n\n")
+                    .append(brief)
+                    .append('\n');
+        }
+        return """
+                # Research report
+
+                <!-- haifa-section: executive-summary -->
+                ## Executive summary
+
+                The research tasks finished, but final synthesis was degraded. The evidence-preserving findings below
+                remain available and must not be interpreted as a fully quality-approved conclusion.
+
+                <!-- haifa-section: scope-method -->
+                ## Scope, assumptions, and method
+
+                The report is limited to the confirmed Mission objective and settled Task evidence. No missing fact was
+                inferred or fabricated during deterministic fallback.
+
+                <!-- haifa-section: task-findings -->
+                ## Task findings
+                %s
+
+                <!-- haifa-section: synthesis -->
+                ## Synthesis
+
+                A reliable cross-task synthesis could not be completed. Review the individual findings and sources.
+
+                <!-- haifa-section: conclusions -->
+                ## Conclusions and recommendations
+
+                No complete conclusion is claimed. Recreate the Mission if a new research run is required.
+
+                <!-- haifa-section: risks-unknowns -->
+                ## Risks, unknowns, and open questions
+
+                Synthesis degradation reason: %s. Failed items: %s.
+
+                <!-- haifa-section: sources -->
+                ## Sources
+
+                Source metadata remains available in the accompanying sources artifact.
+                """
+                .formatted(findings, reason, intent.failedItems());
+    }
+
     public static String synthesisDispatchKey(String missionId) {
-        return "mission:" + Objects.requireNonNull(missionId) + ":synthesis:" + SYNTHESIS_PROTOCOL_VERSION;
+        return synthesisDispatchKey(missionId, 0);
+    }
+
+    public static String synthesisDispatchKey(String missionId, int revisionAttempt) {
+        if (revisionAttempt < 0 || revisionAttempt > 2) {
+            throw new IllegalArgumentException("revisionAttempt must be between 0 and 2");
+        }
+        String suffix = revisionAttempt == 0 ? "" : ":revision-" + revisionAttempt;
+        return "mission:" + Objects.requireNonNull(missionId) + ":synthesis:" + SYNTHESIS_PROTOCOL_VERSION + suffix;
     }
 
     static String canonicalizeResearchSynthesis(String value) {

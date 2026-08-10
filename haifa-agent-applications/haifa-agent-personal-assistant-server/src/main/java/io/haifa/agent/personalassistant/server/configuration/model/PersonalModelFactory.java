@@ -360,28 +360,69 @@ public final class PersonalModelFactory {
             String visibleContext = request.messages().stream()
                     .map(io.haifa.agent.model.api.ModelMessage::content)
                     .collect(java.util.stream.Collectors.joining("\n"));
+            if (prompt.contains("[mission-research-synthesis]")) {
+                java.util.regex.Matcher ids = java.util.regex.Pattern.compile(
+                                "Real completed Task IDs in result order: \\[([^]]*)]")
+                        .matcher(prompt);
+                java.util.List<String> taskIds = ids.find()
+                        ? java.util.Arrays.stream(ids.group(1).split(","))
+                                .map(String::trim)
+                                .filter(value -> !value.isBlank())
+                                .toList()
+                        : java.util.List.of("task-1");
+                java.util.regex.Matcher sourceIds = java.util.regex.Pattern.compile(
+                                "\\\"sourceId\\\":\\\"([^\\\"]+)\\\"")
+                        .matcher(prompt);
+                java.util.List<String> settledSourceIds = new java.util.ArrayList<>();
+                while (sourceIds.find()) {
+                    if (!settledSourceIds.contains(sourceIds.group(1))) settledSourceIds.add(sourceIds.group(1));
+                }
+                String primarySource = settledSourceIds.isEmpty() ? "source-1" : settledSourceIds.getFirst();
+                String secondarySource = settledSourceIds.size() < 2 ? primarySource : settledSourceIds.get(1);
+                String findings = taskIds.stream()
+                        .map(taskId -> "<!-- haifa-task: " + taskId + " -->\n### " + taskId
+                                + "\nThe settled fixture evidence supports this bounded finding [["
+                                + primarySource + "]] and an independent cross-check [[" + secondarySource
+                                + "]].")
+                        .collect(java.util.stream.Collectors.joining("\n\n"));
+                String report =
+                        """
+                        # Deterministic research report
+                        <!-- haifa-section: executive-summary -->
+                        ## Executive summary
+                        The researched finding is supported by two independently fetched fixtures, subject to bounded offline limitations.
+                        <!-- haifa-section: scope-method -->
+                        ## Scope, assumptions, and method
+                        The acceptance report uses only settled Mission evidence and distinguishes fetched facts from remaining uncertainty.
+                        <!-- haifa-section: task-findings -->
+                        ## Task findings
+                        %s
+                        <!-- haifa-section: synthesis -->
+                        ## Integrated analysis
+                        The independent fixture sources agree on the material result while external freshness remains outside this offline run.
+                        <!-- haifa-section: conclusions -->
+                        ## Conclusions and recommendations
+                        The bounded acceptance conclusion is supported; refresh external evidence before relying on it in production.
+                        <!-- haifa-section: risks-unknowns -->
+                        ## Risks, unknowns, and open questions
+                        External freshness, provider variance, and live network behavior were intentionally not evaluated by this fixture.
+                        <!-- haifa-section: sources -->
+                        ## Sources
+                        - [[%s]] Primary deterministic fixture evidence.
+                        - [[%s]] Independent deterministic fixture evidence.
+                        """
+                                .formatted(findings, primarySource, secondarySource);
+                return response(current, report, List.of(), ModelFinishReason.STOP);
+            }
             if (prompt.contains("[mission-synthesis]")) {
                 boolean partial = !prompt.contains("Failed or cancelled Task items: []");
-                String result = prompt.contains("Mission mode: DEEP_RESEARCH")
-                        ? "{\"schemaVersion\":\"pa.research-final-result/v1\","
-                                + "\"reportArtifactRef\":null,\"sourcesArtifactRef\":null,"
-                                + "\"claimEvidenceArtifactRef\":null,\"resultArtifactRef\":null,"
-                                + "\"unresolvedArtifactRef\":null,"
-                                + "\"directAnswer\":\"The researched finding is supported by two independently fetched fixtures.\","
-                                + "\"completedItems\":[\"Research tasks and citation checks completed\"],"
-                                + "\"failedItems\":" + (partial ? "[\"One or more Research tasks\"]" : "[]")
-                                + ",\"artifactRefs\":[],"
-                                + "\"sourceRefs\":[\"source-1\",\"source-2\"],\"unverifiedClaims\":[],"
-                                + "\"unresolvedQuestions\":[\"External freshness was not evaluated.\"],"
-                                + "\"residualRisks\":[\"Offline acceptance evidence is intentionally bounded.\"],"
-                                + "\"completionKind\":\"" + (partial ? "PARTIAL" : "COMPLETE") + "\"}"
-                        : "{\"schemaVersion\":\"pa.mission-final-result/v1\","
-                                + "\"directAnswer\":\"All Mission tasks completed successfully.\","
-                                + "\"completedItems\":[\"Settled Mission tasks\"],\"failedItems\":"
-                                + (partial ? "[\"One or more Mission tasks\"]" : "[]") + ","
-                                + "\"artifactRefs\":[],\"sourceRefs\":[],\"unverifiedClaims\":[],"
-                                + "\"unresolvedQuestions\":[],\"residualRisks\":[],"
-                                + "\"completionKind\":\"" + (partial ? "PARTIAL" : "COMPLETE") + "\"}";
+                String result = "{\"schemaVersion\":\"pa.mission-final-result/v1\","
+                        + "\"directAnswer\":\"All Mission tasks completed successfully.\","
+                        + "\"completedItems\":[\"Settled Mission tasks\"],\"failedItems\":"
+                        + (partial ? "[\"One or more Mission tasks\"]" : "[]") + ","
+                        + "\"artifactRefs\":[],\"sourceRefs\":[],\"unverifiedClaims\":[],"
+                        + "\"unresolvedQuestions\":[],\"residualRisks\":[],"
+                        + "\"completionKind\":\"" + (partial ? "PARTIAL" : "COMPLETE") + "\"}";
                 return response(current, result, List.of(), ModelFinishReason.STOP);
             }
             if (prompt.contains("Task type: RESEARCH") || visibleContext.contains("Task type: RESEARCH")) {

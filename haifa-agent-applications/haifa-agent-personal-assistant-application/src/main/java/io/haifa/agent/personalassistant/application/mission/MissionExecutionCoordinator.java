@@ -1,6 +1,5 @@
 package io.haifa.agent.personalassistant.application.mission;
 
-import io.haifa.agent.personalassistant.application.runtime.SdkMissionRuntimeAccess;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -91,38 +90,65 @@ public final class MissionExecutionCoordinator {
         }
 
         store.claimSynthesis(now()).ifPresent(intent -> {
+            MissionRuntimeAccess.SynthesisRunResult synthesis;
+            MissionPublishedResult published;
             try {
-                MissionRuntimeAccess.SynthesisRunResult synthesis = runtime.runSynthesis(intent);
-                PublishedSynthesis delivery = publishWithResearchFallback(publisher, intent, synthesis);
+                synthesis = runtime.runSynthesis(intent);
+                PublishedSynthesis delivery =
+                        publishWithBoundedResearchRevisions(publisher, runtime, intent, synthesis, this::now);
                 synthesis = delivery.synthesis();
-                MissionPublishedResult published = delivery.published();
+                published = delivery.published();
+            } catch (MissionException failure) {
+                if (recoverableSynthesisFailure(failure.code())) return;
+                store.failSynthesis(intent, failure.code(), now());
+                return;
+            } catch (RuntimeException transientFailure) {
+                return;
+            }
+            try {
                 runtime.appendFinalMessage(
                         intent.conversationId(), intent.missionId(), synthesis.runId(), published.finalMessage());
+            } catch (RuntimeException transientFailure) {
+                return;
+            }
+            try {
                 store.settleSynthesis(intent, synthesis, published, now());
-            } catch (RuntimeException failure) {
-                store.failSynthesis(intent, safeCode(failure), now());
+            } catch (RuntimeException transientFailure) {
+                // The transaction outcome may be unknown. Reclaiming SYNTHESIZING and replaying stable Runtime,
+                // Artifact, and final-message keys is safe; a committed settlement is no longer claimable.
             }
         });
     }
 
-    static PublishedSynthesis publishWithResearchFallback(
+    static PublishedSynthesis publishWithBoundedResearchRevisions(
             MissionResultPublisher publisher,
+            MissionRuntimeAccess runtime,
             MissionSynthesisIntent intent,
-            MissionRuntimeAccess.SynthesisRunResult synthesis) {
-        try {
+            MissionRuntimeAccess.SynthesisRunResult synthesis,
+            java.util.function.Supplier<Instant> now) {
+        if (intent.mode() != MissionMode.DEEP_RESEARCH) {
             return new PublishedSynthesis(synthesis, publisher.publish(intent, synthesis));
-        } catch (MissionException failure) {
-            if (intent.mode() != MissionMode.DEEP_RESEARCH || !"MISSION_RESULT_SCHEMA_INVALID".equals(failure.code())) {
-                throw failure;
-            }
-            var fallback = new MissionRuntimeAccess.SynthesisRunResult(
-                    synthesis.sessionId(),
-                    synthesis.runId(),
-                    SdkMissionRuntimeAccess.conservativeResearchSynthesis(
-                            intent, failure.code(), synthesis.structuredOutput()),
-                    synthesis.usage());
-            return new PublishedSynthesis(fallback, publisher.publish(intent, fallback));
         }
+        MissionUsage cumulativeUsage = synthesis.usage();
+        ReportQualityGate.Result quality = publisher.evaluate(intent, synthesis);
+        int revisionAttempt = 1;
+        while (!quality.passed() && intent.revisionAllowed(revisionAttempt, cumulativeUsage, now.get())) {
+            MissionRuntimeAccess.SynthesisRunResult revised =
+                    runtime.reviseSynthesis(intent, synthesis, quality, revisionAttempt);
+            cumulativeUsage = cumulativeUsage.plus(revised.usage());
+            synthesis = new MissionRuntimeAccess.SynthesisRunResult(
+                    revised.sessionId(),
+                    revised.runId(),
+                    revised.structuredOutput(),
+                    cumulativeUsage,
+                    revised.degradationReasons());
+            quality = publisher.evaluate(intent, synthesis);
+            revisionAttempt++;
+        }
+        MissionPublishedResult published = quality.passed()
+                ? publisher.publish(intent, synthesis)
+                : publisher.publishDegraded(intent, synthesis, quality);
+        return new PublishedSynthesis(synthesis, published);
     }
 
     private Instant now() {
@@ -135,6 +161,10 @@ public final class MissionExecutionCoordinator {
             return runtime.code().name();
         }
         return "MISSION_DISPATCH_FAILED";
+    }
+
+    private static boolean recoverableSynthesisFailure(String failureCode) {
+        return "MISSION_SYNTHESIS_TIMEOUT".equals(failureCode) || "MISSION_SYNTHESIS_INTERRUPTED".equals(failureCode);
     }
 
     static boolean retryableTaskFailure(String failureCode) {
