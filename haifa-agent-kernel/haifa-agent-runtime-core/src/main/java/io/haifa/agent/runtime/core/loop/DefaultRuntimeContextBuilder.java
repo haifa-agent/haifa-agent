@@ -17,6 +17,8 @@ import io.haifa.agent.core.content.AssetRefPart;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.message.AgentMessage;
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.model.api.ModelToolSpecification;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.middleware.AgentRuntimeMiddlewareChain;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
@@ -75,6 +77,22 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         middleware.apply(RuntimePhase.BEFORE_CONTEXT_BUILD, middlewareContext);
         middleware.apply(RuntimePhase.AFTER_CONTEXT_BUILD, middlewareContext);
         addSkillPrompts(run, middlewareContext);
+        List<ModelToolSpecification> effectiveTools = model.tools();
+        if (RuntimeControlOptions.finalizeOnly(
+                model.configuration().modelRequestOptions(), run.usage().toolCalls())) {
+            effectiveTools = List.of();
+            middlewareContext.addPrompt(new PromptComponent(
+                    new PromptComponentId("runtime-finalize-only"),
+                    "1.0",
+                    PromptLayer.TOOL_PROTOCOL,
+                    PromptRole.RUNTIME,
+                    "FINALIZE_ONLY: the governed Tool collection threshold has been reached. No more Tools are available. "
+                            + "Finish now using only the evidence already present in the conversation. Return the requested final output; "
+                            + "do not ask for or invent additional Tool results. Do not print or serialize Tool-call syntax such as "
+                            + "DSML, XML invoke tags, function_call, or tool_calls; such text is not a final answer.",
+                    false,
+                    java.util.Set.of("runtime-control", "finalize-only")));
+        }
 
         List<ContextItem> memoryItems = memorySource.select(run, model);
         int divisor = loopContext.forcedContextRebuildAttempts() > 0 ? 10 : 20;
@@ -90,7 +108,7 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
         long nonSessionTokens = middlewareContext.prompts().stream()
                         .mapToLong(estimator::estimate)
                         .sum()
-                + model.tools().stream().mapToLong(estimator::estimate).sum()
+                + effectiveTools.stream().mapToLong(estimator::estimate).sum()
                 + middlewareContext.contextItems().stream()
                         .mapToLong(estimator::estimate)
                         .sum()
@@ -119,13 +137,13 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
                 run.usage(),
                 middlewareContext.prompts(),
                 items,
-                model.tools(),
+                effectiveTools,
                 model.configuration().model().maxOutputTokens(),
                 safetyMargin,
                 selection.policyVersion(),
                 selection.compressorVersion(),
                 loopContext.forcedContextRebuildAttempts());
-        String windowIdentity = windowIdentity(middlewareContext, memoryItems, selection, model);
+        String windowIdentity = windowIdentity(middlewareContext, memoryItems, selection, model, effectiveTools);
         return new RuntimeContextBuildResult(contexts.build(request), middlewareContext, selection, windowIdentity);
     }
 
@@ -133,16 +151,16 @@ public final class DefaultRuntimeContextBuilder implements RuntimeContextBuilder
             RuntimeMiddlewareContext middlewareContext,
             List<ContextItem> memoryItems,
             SessionMessageSource.Selection selection,
-            FrozenModelBinding model) {
+            FrozenModelBinding model,
+            List<ModelToolSpecification> effectiveTools) {
         List<String> components = new ArrayList<>();
         components.add("configuration:" + model.configuration().reference().contentHash());
         middlewareContext
                 .prompts()
                 .forEach(prompt -> components.add(
                         "prompt:" + prompt.id().value() + ":" + prompt.version() + ":" + sha256(prompt.text())));
-        model.tools()
-                .forEach(tool -> components.add("tool:" + tool.name() + ":" + tool.version() + ":"
-                        + tool.inputSchemaId() + ":" + tool.inputSchemaVersion()));
+        effectiveTools.forEach(tool -> components.add("tool:" + tool.name() + ":" + tool.version() + ":"
+                + tool.inputSchemaId() + ":" + tool.inputSchemaVersion()));
         middlewareContext
                 .contextItems()
                 .forEach(item -> components.add("runtime-item:"

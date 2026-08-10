@@ -80,6 +80,7 @@ public record ResolvedProfile(
             }
         });
         modelRequestOptions = ModelRequestOptions.freeze(modelRequestOptions);
+        RuntimeControlOptions.validate(modelRequestOptions, budget);
         allowedTools = Objects.requireNonNull(allowedTools, "allowedTools must not be null")
                 .map(aliases -> aliases.stream()
                         .map(alias -> requireText(alias, "allowedTools alias"))

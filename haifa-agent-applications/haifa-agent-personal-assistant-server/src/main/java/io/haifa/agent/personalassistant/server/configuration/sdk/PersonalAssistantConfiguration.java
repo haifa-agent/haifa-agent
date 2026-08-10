@@ -22,6 +22,7 @@ import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
 import io.haifa.agent.personalassistant.server.mission.MissionArtifactPublisher;
 import io.haifa.agent.personalassistant.server.mission.MissionCapacityMonitor;
 import io.haifa.agent.personalassistant.server.mission.MissionDispatcher;
+import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
 import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
 import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
@@ -182,34 +183,47 @@ public class PersonalAssistantConfiguration {
 
     @Bean
     MissionPlanner personalMissionPlanner(
-            PersonalAssistantProperties properties, PersonalAssistantApplication application, ObjectMapper mapper) {
+            PersonalAssistantProperties properties,
+            PersonalAssistantApplication application,
+            MissionPlanValidator missionPlanValidator,
+            ObjectMapper mapper) {
         return switch (properties.mission().plannerMode()) {
             case "deterministic-stub" -> new DeterministicMissionPlanner();
-            case "runtime" -> new RuntimeMissionPlanner(application.missionRuntime(), mapper);
+            case "runtime" -> new RuntimeMissionPlanner(application.missionRuntime(), missionPlanValidator, mapper);
             default -> throw new IllegalStateException("unsupported Mission Planner mode");
         };
     }
 
     @Bean
-    MissionApplicationService missionApplicationService(
-            SqliteMissionStore store, MissionPlanner planner, Clock clock, PersonalAssistantApplication application) {
-        var validator = new MissionPlanValidator(
+    MissionPlanValidator missionPlanValidator() {
+        return new MissionPlanValidator(
                 Set.of("GENERAL", "RESEARCH"),
                 Set.of("deep-research"),
                 Set.of("pa.task-result@v1", "pa.research-task-result@v1"));
+    }
+
+    @Bean
+    MissionApplicationService missionApplicationService(
+            SqliteMissionStore store,
+            MissionPlanner planner,
+            MissionPlanValidator missionPlanValidator,
+            Clock clock,
+            PersonalAssistantApplication application,
+            MissionOperationsService operations) {
         var ids = new UuidV7IdentifierGenerator();
         return new MissionApplicationService(
                 store,
                 store,
                 planner,
-                validator,
+                missionPlanValidator,
                 ids::nextValue,
                 clock,
                 store,
                 application
                         .skillBindingReference("deep-research")
                         .map(binding -> java.util.Map.of("deep-research", binding))
-                        .orElseGet(java.util.Map::of));
+                        .orElseGet(java.util.Map::of),
+                operations::requireAdmission);
     }
 
     @Bean(initMethod = "start", destroyMethod = "close")

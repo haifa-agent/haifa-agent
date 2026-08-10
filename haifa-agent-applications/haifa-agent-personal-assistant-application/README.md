@@ -40,12 +40,31 @@ Search/Fetch and Wikipedia MCP Tools; the explicitly selected Deep Research Prod
 Research Task instead of asking the model to rediscover it. Synthesis freezes an empty Tool set. A zero Tool budget is
 not used as an implicit capability policy.
 
-The Research Task budget permits up to 32 calls to that read-only allowlist. Its prompt stops new discovery branches
-at about 20 calls, caps each fetched page at 20,000 characters, and reserves context for the final result. This is a
+The primary Research Task budget permits up to 40 calls to that read-only allowlist. Runtime enters a deterministic
+finalize-only turn after 24 completed Tool calls, caps each fetched page at 10,000 characters, and reserves context
+for the final result. The Profile also bounds the Run to 24 model calls and 384,000 total model tokens. This is a
 bounded execution limit, not permission to expose any additional Tool.
+
+Each Attempt also freezes a digest-bound Task Run Input containing the bounded Mission/Task objective, direct
+dependency result snapshots and digests, result schema, execution Profile, and research limits. A Task with completed
+dependencies uses the separate dependency-aware Profile: prior structured results are projected as valid JSON within
+a 48,000-character ceiling, repeated searches are prohibited, Runtime enters finalize-only after 16 completed calls
+with a hard safety ceiling of 32, and each fetch is capped at 8,000 characters. The Profile is bounded to 20 model
+calls and 384,000 total model tokens. The persisted Outbox payload and Attempt request digest identify the same
+immutable input across claim recovery and retry.
+
+Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Final publication
+canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the Mission-wide 24-source
+limit. The bounded final unverified-claim index supports the existing eight-Task by forty-claims-per-Task ceiling, so
+strict citation closure never requires dropping an unverified claim merely to satisfy a smaller synthesis array.
+Only complete FETCHED metadata with a canonical `sha256:` content digest survives Task normalization; all other
+source states clear fetch-only metadata and dependent claims remain unverified. Synthesis similarly normalizes
+representational drift into the exact final-result shape without trusting model-provided Artifact references.
 
 Research Task Runs use a 10-minute wall-clock limit and a 4-minute idle limit so a long final structured response can
 complete after multi-round evidence collection. Planner and Synthesis retain their narrower stage-specific limits.
+The Mission-wide deadline defaults to two hours and remains a hard upper bound; individual Task limits, Mission token
+and Tool budgets, cancellation, and capacity admission continue to bound resource use.
 
 Planner and Synthesis use the Provider's native JSON response format. Research Task deliberately does not combine
 that option with iterative Tool calls because supported OpenAI-compatible Providers may reject a later continuation;

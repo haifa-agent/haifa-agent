@@ -2,7 +2,7 @@
 param(
     [string] $DeepSeekKeyFile = 'D:\workspace\ss-deepseek.txt',
     [ValidateSet('deepseek-chat-pro', 'deepseek-chat-flash', 'deepseek-responses-flash')]
-    [string] $DefaultModelId = 'deepseek-responses-flash',
+    [string] $DefaultModelId = 'deepseek-chat-flash',
     [string] $AliyunIqsKeyFile = 'D:\workspace\ss-aliyun-iqs.txt',
     [string] $ContinuationKeyFile = 'D:\workspace\ss-haifa-personal-continuation.txt',
     [string] $UtilityMcpDirectory = 'D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server',

@@ -87,7 +87,7 @@ haifa:
             capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
             context-window: 131072
             max-output-tokens: 8192
-    default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-responses-flash}
+    default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-chat-flash}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:
       enabled: ${HAIFA_PERSONAL_WEB_ENABLED:false}
@@ -102,9 +102,9 @@ haifa:
       max-acceptance-criteria: ${HAIFA_PERSONAL_MISSION_MAX_ACCEPTANCE_CRITERIA:20}
       global-active-task-runs: ${HAIFA_PERSONAL_MISSION_GLOBAL_ACTIVE_TASK_RUNS:1}
       max-auto-attempts-per-task: ${HAIFA_PERSONAL_MISSION_MAX_AUTO_ATTEMPTS_PER_TASK:2}
-      max-wall-clock-millis: ${HAIFA_PERSONAL_MISSION_MAX_WALL_CLOCK_MILLIS:1800000}
-      max-model-tokens: ${HAIFA_PERSONAL_MISSION_MAX_MODEL_TOKENS:1500000}
-      max-tool-calls: ${HAIFA_PERSONAL_MISSION_MAX_TOOL_CALLS:180}
+      max-wall-clock-millis: ${HAIFA_PERSONAL_MISSION_MAX_WALL_CLOCK_MILLIS:7200000}
+      max-model-tokens: ${HAIFA_PERSONAL_MISSION_MAX_MODEL_TOKENS:3000000}
+      max-tool-calls: ${HAIFA_PERSONAL_MISSION_MAX_TOOL_CALLS:360}
       max-artifacts: ${HAIFA_PERSONAL_MISSION_MAX_ARTIFACTS:8}
       max-total-artifact-bytes: ${HAIFA_PERSONAL_MISSION_MAX_TOTAL_ARTIFACT_BYTES:4194304}
       dispatcher-poll-millis: ${HAIFA_PERSONAL_MISSION_DISPATCHER_POLL_MILLIS:500}

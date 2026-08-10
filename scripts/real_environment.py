@@ -25,7 +25,7 @@ from typing import Iterable, Mapping, Sequence
 FRONTEND_PORT = 20000
 BACKEND_PORT = 20001
 MCP_PORT = 20002
-DEFAULT_MODEL_ID = "deepseek-responses-flash"
+DEFAULT_MODEL_ID = "deepseek-chat-flash"
 SUPPORTED_DEFAULT_MODEL_IDS = (
     "deepseek-chat-pro",
     "deepseek-chat-flash",

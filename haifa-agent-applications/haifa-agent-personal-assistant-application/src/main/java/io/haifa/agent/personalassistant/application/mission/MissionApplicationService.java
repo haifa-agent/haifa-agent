@@ -17,6 +17,7 @@ public final class MissionApplicationService {
     private final Clock clock;
     private final MissionExecutionStore execution;
     private final Map<String, String> skillBindingReferences;
+    private final MissionAdmission admission;
 
     public MissionApplicationService(
             MissionStore store,
@@ -25,7 +26,16 @@ public final class MissionApplicationService {
             MissionPlanValidator validator,
             MissionIdGenerator ids,
             Clock clock) {
-        this(store, unitOfWork, planner, validator, ids, clock, MissionExecutionStore.unavailable(), Map.of());
+        this(
+                store,
+                unitOfWork,
+                planner,
+                validator,
+                ids,
+                clock,
+                MissionExecutionStore.unavailable(),
+                Map.of(),
+                MissionAdmission.allowAll());
     }
 
     public MissionApplicationService(
@@ -36,7 +46,7 @@ public final class MissionApplicationService {
             MissionIdGenerator ids,
             Clock clock,
             MissionExecutionStore execution) {
-        this(store, unitOfWork, planner, validator, ids, clock, execution, Map.of());
+        this(store, unitOfWork, planner, validator, ids, clock, execution, Map.of(), MissionAdmission.allowAll());
     }
 
     public MissionApplicationService(
@@ -48,6 +58,28 @@ public final class MissionApplicationService {
             Clock clock,
             MissionExecutionStore execution,
             Map<String, String> skillBindingReferences) {
+        this(
+                store,
+                unitOfWork,
+                planner,
+                validator,
+                ids,
+                clock,
+                execution,
+                skillBindingReferences,
+                MissionAdmission.allowAll());
+    }
+
+    public MissionApplicationService(
+            MissionStore store,
+            MissionUnitOfWork unitOfWork,
+            MissionPlanner planner,
+            MissionPlanValidator validator,
+            MissionIdGenerator ids,
+            Clock clock,
+            MissionExecutionStore execution,
+            Map<String, String> skillBindingReferences,
+            MissionAdmission admission) {
         this.store = Objects.requireNonNull(store);
         this.unitOfWork = Objects.requireNonNull(unitOfWork);
         this.planner = Objects.requireNonNull(planner);
@@ -56,6 +88,7 @@ public final class MissionApplicationService {
         this.clock = Objects.requireNonNull(clock);
         this.execution = Objects.requireNonNull(execution);
         this.skillBindingReferences = Map.copyOf(skillBindingReferences);
+        this.admission = Objects.requireNonNull(admission);
     }
 
     public MissionSnapshot create(CreateMission command) {
@@ -76,14 +109,10 @@ public final class MissionApplicationService {
                 command.researchBrief().map(Object::toString).orElse(""));
         String proposedMissionId = ids.nextId();
         MissionCommandBinding binding = unitOfWork.execute(() -> {
-            MissionCommandBinding reserved = store.reserveCommand(new MissionCommandBinding(
-                            command.ownerScope(),
-                            "create",
-                            command.idempotencyKey(),
-                            requestDigest,
-                            proposedMissionId,
-                            now))
-                    .binding();
+            MissionCommandReservation reservation = store.reserveCommand(new MissionCommandBinding(
+                    command.ownerScope(), "create", command.idempotencyKey(), requestDigest, proposedMissionId, now));
+            MissionCommandBinding reserved = reservation.binding();
+            if (reservation.created()) admission.requireAdmission();
             if (store.find(reserved.missionId(), command.ownerScope()).isEmpty()) {
                 store.insert(PersonalMission.create(
                         reserved.missionId(),

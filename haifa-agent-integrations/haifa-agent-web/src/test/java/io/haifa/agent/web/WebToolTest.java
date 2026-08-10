@@ -263,7 +263,7 @@ class WebToolTest {
     }
 
     @Test
-    void fetchAuthenticationFailureRemainsAnInfrastructureFailure() {
+    void fetchAuthenticationFailureLeavesTheSourceUnavailableWithoutAbortingResearch() {
         WebFetchProvider unavailable = new WebFetchProvider() {
             @Override
             public WebProviderDescriptor descriptor() {
@@ -279,9 +279,13 @@ class WebToolTest {
         var invocation = fetchInvocation(
                 new WebToolCatalog().fetch(unavailable, new DefaultWebUrlPolicy()), "https://example.com/private");
 
-        assertThatThrownBy(() -> invocation.contribution().provider().invoke(invocation.request()))
-                .isInstanceOfSatisfying(ToolInvocationException.class, failure -> assertThat(failure.failureCode())
-                        .isEqualTo("WEB_AUTH_FAILED"));
+        ToolResult result = invocation.contribution().provider().invoke(invocation.request());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("failureCode", "WEB_AUTH_FAILED")
+                .containsEntry("sourceAvailable", false)
+                .containsEntry("retryWithAnotherSource", true);
     }
 
     @Test

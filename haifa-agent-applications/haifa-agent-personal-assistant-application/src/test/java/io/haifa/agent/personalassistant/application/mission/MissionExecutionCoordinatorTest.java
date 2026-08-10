@@ -2,6 +2,7 @@ package io.haifa.agent.personalassistant.application.mission;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.personalassistant.application.runtime.SdkMissionRuntimeAccess;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;

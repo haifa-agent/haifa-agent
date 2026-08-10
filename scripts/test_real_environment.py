@@ -152,7 +152,7 @@ class RealEnvironmentTest(unittest.TestCase):
             ["--default-model-id", "deepseek-chat-flash"]
         )
 
-        self.assertEqual("deepseek-responses-flash", default_arguments.default_model_id)
+        self.assertEqual("deepseek-chat-flash", default_arguments.default_model_id)
         self.assertEqual("deepseek-chat-flash", chat_arguments.default_model_id)
 
     def test_rebuild_port_conflict_message_explains_stop_then_rebuild(self) -> None:

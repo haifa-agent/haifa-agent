@@ -46,13 +46,17 @@ class MissionApplicationServiceTest {
     void createReplaceConfirmAndCancelAreIdempotent() {
         InMemoryMissionStore store = new InMemoryMissionStore();
         AtomicInteger ids = new AtomicInteger();
+        AtomicInteger admissions = new AtomicInteger();
         MissionApplicationService service = new MissionApplicationService(
                 store,
                 store,
                 new DeterministicMissionPlanner(),
                 MissionPlanValidator.phaseOne(),
                 () -> "mission-" + ids.incrementAndGet(),
-                CLOCK);
+                CLOCK,
+                MissionExecutionStore.unavailable(),
+                Map.of(),
+                admissions::incrementAndGet);
         var create = new MissionApplicationService.CreateMission(
                 "create-1",
                 "local/public-user",
@@ -65,6 +69,7 @@ class MissionApplicationServiceTest {
         MissionSnapshot duplicate = service.create(create);
         assertThat(duplicate.missionId()).isEqualTo(created.missionId());
         assertThat(created.state()).isEqualTo(MissionState.WAITING_CONFIRMATION);
+        assertThat(admissions).hasValue(1);
 
         var regenerate = new MissionApplicationService.RegenerateMissionPlan(
                 "regenerate-1", "local/public-user", created.missionId(), created.version());

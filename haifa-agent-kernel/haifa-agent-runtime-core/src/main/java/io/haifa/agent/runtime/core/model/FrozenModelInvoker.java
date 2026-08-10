@@ -13,6 +13,7 @@ import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -102,7 +103,7 @@ public final class FrozenModelInvoker {
                 context.tools(),
                 Math.toIntExact(context.budget().outputReserve()),
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
-                binding.configuration().modelRequestOptions());
+                RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()));
         appendLifecycle(binding, run, callId, iteration, attempt, "model.call.started", "STARTED", 0, 0, "", "NONE");
         output.started(run.id(), callId.value(), attempt, iteration);
         AgentChatResponse response;

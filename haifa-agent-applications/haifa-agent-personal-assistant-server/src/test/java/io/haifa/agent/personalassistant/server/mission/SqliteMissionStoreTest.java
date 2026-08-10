@@ -186,6 +186,57 @@ class SqliteMissionStoreTest {
     }
 
     @Test
+    void freezesDependencyResultsInDispatchInputAndKeepsRetryDigestStable() {
+        SqliteMissionStore store =
+                new SqliteMissionStore(directory.resolve("dependency-input.sqlite"), new ObjectMapper());
+        store.registerDispatcher("process", "instance", CLOCK.instant());
+        MissionApplicationService service = new MissionApplicationService(
+                store,
+                store,
+                new DeterministicMissionPlanner(),
+                MissionPlanValidator.phaseOne(),
+                () -> "mission-dependency-input",
+                CLOCK,
+                store);
+        MissionSnapshot created = service.create(new MissionApplicationService.CreateMission(
+                "create-dependency-input",
+                "local/public-user",
+                "conversation-dependency-input",
+                "Research then integrate the result",
+                List.of("research", "integrate"),
+                MissionConstraints.DEFAULT));
+        service.confirm(new MissionApplicationService.ChangeMission(
+                "confirm-dependency-input", "local/public-user", created.missionId(), created.version()));
+
+        var first = store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant())
+                .orElseThrow();
+        store.bind(first, "session-1", "run-1", CLOCK.instant());
+        String completedResult = "verified dependency result";
+        String completedDigest = "sha256:" + "a".repeat(64);
+        store.settleCompleted(store.activeAttempts().getFirst(), completedDigest, completedResult, CLOCK.instant());
+
+        var dependent = store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant())
+                .orElseThrow();
+        assertThat(dependent.runInput().missionObjective()).isEqualTo("Research then integrate the result");
+        assertThat(dependent.runInput().executionProfileId())
+                .isEqualTo(
+                        io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput
+                                .DEPENDENCY_AWARE_RESEARCH_PROFILE);
+        assertThat(dependent.runInput().dependencyResults()).singleElement().satisfies(value -> {
+            assertThat(value.taskId()).isEqualTo("task-1");
+            assertThat(value.resultDigest()).isEqualTo(completedDigest);
+            assertThat(value.resultJson()).isEqualTo(completedResult);
+        });
+
+        store.bind(dependent, "session-2", "run-2", CLOCK.instant());
+        store.settleFailed(store.activeAttempts().getFirst(), "TRANSIENT", true, CLOCK.instant());
+        var retry = store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant())
+                .orElseThrow();
+        assertThat(retry.payloadDigest()).isEqualTo(dependent.payloadDigest());
+        assertThat(retry.runInput()).isEqualTo(dependent.runInput());
+    }
+
+    @Test
     void exhaustedUserRetryCancelsDependentsAndSettlesPartialSynthesis() {
         SqliteMissionStore store = new SqliteMissionStore(directory.resolve("partial.sqlite"), new ObjectMapper());
         store.registerDispatcher("process", "instance", CLOCK.instant());

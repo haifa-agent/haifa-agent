@@ -88,6 +88,7 @@ final class WebToolProviderSupport {
                     WEB_UNSUPPORTED_OPTION,
                     WEB_URL_DENIED,
                     WEB_DNS_DENIED,
+                    WEB_AUTH_FAILED,
                     WEB_RESPONSE_TOO_LARGE,
                     WEB_UNSUPPORTED_MEDIA_TYPE,
                     WEB_PROVIDER_RESPONSE_INVALID,
@@ -101,7 +102,8 @@ final class WebToolProviderSupport {
         try {
             WebFailureCode code = WebFailureCode.valueOf(failure.failureCode());
             return switch (code) {
-                case WEB_INVALID_REQUEST, WEB_UNSUPPORTED_OPTION, WEB_URL_DENIED, WEB_DNS_DENIED -> true;
+                case WEB_INVALID_REQUEST, WEB_UNSUPPORTED_OPTION, WEB_URL_DENIED, WEB_DNS_DENIED, WEB_AUTH_FAILED ->
+                    true;
                 default -> false;
             };
         } catch (IllegalArgumentException ignored) {

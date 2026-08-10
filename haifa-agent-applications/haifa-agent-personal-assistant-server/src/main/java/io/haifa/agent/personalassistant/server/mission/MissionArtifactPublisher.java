@@ -19,10 +19,13 @@ import io.haifa.agent.personalassistant.application.mission.MissionPublishedResu
 import io.haifa.agent.personalassistant.application.mission.MissionResultPublisher;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
+import io.haifa.agent.personalassistant.application.runtime.SdkMissionRuntimeAccess;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -49,6 +52,9 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             "TOOL_LIMIT",
             "NO_MORE_SAFE_SOURCES",
             "CANCELLED");
+    private static final int MAX_TASK_RESULTS = 8;
+    private static final int MAX_CLAIMS_PER_TASK = 40;
+    private static final int MAX_FINAL_UNVERIFIED_CLAIMS = MAX_TASK_RESULTS * MAX_CLAIMS_PER_TASK;
 
     private final ArtifactService artifacts;
     private final ObjectMapper mapper;
@@ -119,15 +125,41 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             JsonNode finalResult,
             FinalDelivery delivery) {
         ResearchEvidence evidence = evidence(intent.taskResults());
-        if (!evidence.sources().keySet().containsAll(delivery.sourceRefs())) {
-            invalid("Final result cites an unavailable source");
+        List<String> canonicalSourceRefs = delivery.sourceRefs().stream()
+                .map(reference -> canonicalSourceRef(reference, evidence))
+                .distinct()
+                .toList();
+        if (canonicalSourceRefs.size() > maxSources) {
+            invalid("Final result cites too many distinct sources");
         }
+        delivery = new FinalDelivery(
+                delivery.directAnswer(),
+                delivery.completedItems(),
+                delivery.failedItems(),
+                canonicalSourceRefs,
+                delivery.unverifiedClaims(),
+                delivery.unresolvedQuestions(),
+                delivery.residualRisks(),
+                delivery.completionKind());
+        ((ObjectNode) finalResult).set("sourceRefs", mapper.valueToTree(canonicalSourceRefs));
         if (!evidence.claims().keySet().containsAll(delivery.unverifiedClaims())) {
             invalid("Final result names an unavailable unverified claim");
         }
-        if (!delivery.unverifiedClaims().containsAll(evidence.unverifiedClaimIds())) {
+        if (!delivery.unverifiedClaims().containsAll(evidence.requiredUnverifiedClaimIds())) {
             invalid("Final result omitted an unverified claim");
         }
+        LinkedHashSet<String> canonicalUnverified = new LinkedHashSet<>(delivery.unverifiedClaims());
+        canonicalUnverified.addAll(evidence.aggregateDowngradedClaimIds());
+        delivery = new FinalDelivery(
+                delivery.directAnswer(),
+                delivery.completedItems(),
+                delivery.failedItems(),
+                delivery.sourceRefs(),
+                List.copyOf(canonicalUnverified),
+                delivery.unresolvedQuestions(),
+                delivery.residualRisks(),
+                delivery.completionKind());
+        ((ObjectNode) finalResult).set("unverifiedClaims", mapper.valueToTree(canonicalUnverified));
 
         ObjectNode sourcesDocument = mapper.createObjectNode();
         sourcesDocument.put("schemaVersion", "pa.research-sources/v1");
@@ -187,10 +219,12 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
     }
 
     private ResearchEvidence evidence(List<String> taskResults) {
-        if (taskResults.isEmpty() || taskResults.size() > 16) invalid("Research Task results are unavailable");
+        if (taskResults.isEmpty() || taskResults.size() > MAX_TASK_RESULTS) {
+            invalid("Research Task results are unavailable");
+        }
         Map<String, JsonNode> sources = new LinkedHashMap<>();
-        Map<String, String> sourceByLocator = new LinkedHashMap<>();
-        List<JsonNode> taskObjects = new ArrayList<>();
+        Map<String, String> sourceAliases = new LinkedHashMap<>();
+        List<NormalizedTask> taskObjects = new ArrayList<>();
         LinkedHashSet<String> unresolved = new LinkedHashSet<>();
         for (String encoded : taskResults) {
             JsonNode task = object(encoded, "Research Task result");
@@ -213,39 +247,72 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                                     .count()) {
                 invalid("limitsUsed contradicts the research evidence");
             }
+            Map<String, String> taskAliases = new LinkedHashMap<>();
+            Map<String, JsonNode> taskSourceIndex = new LinkedHashMap<>();
             for (JsonNode source : taskSources) {
-                validateSource(source);
-                String id = stableId(source, "sourceId");
-                String locator = source.get("normalizedLocator").asText();
-                JsonNode previous = sources.putIfAbsent(id, source);
-                if (previous != null && !previous.equals(source)) invalid("Source ID is ambiguous");
-                String previousId = sourceByLocator.putIfAbsent(locator, id);
-                if (previousId != null && !previousId.equals(id)) invalid("Source locator is duplicated");
+                SourceIdentity identity = validateSource(source);
+                String previousAlias = taskAliases.putIfAbsent(identity.originalId(), identity.canonicalId());
+                if (previousAlias != null && !previousAlias.equals(identity.canonicalId())) {
+                    invalid("Source ID is ambiguous within a Task");
+                }
+                if (taskSourceIndex.putIfAbsent(identity.canonicalId(), source) != null) {
+                    invalid("Source locator is duplicated within a Task");
+                }
+                String globalAlias = sourceAliases.putIfAbsent(identity.originalId(), identity.canonicalId());
+                if (globalAlias != null && !globalAlias.equals(identity.canonicalId())) {
+                    invalid("Source ID is ambiguous across Tasks");
+                }
+                JsonNode previous = sources.putIfAbsent(identity.canonicalId(), source);
+                if (previous != null) {
+                    sources.put(identity.canonicalId(), preferredSource(previous, source));
+                }
             }
             unresolved.addAll(textArray(task, "unresolvedQuestions", 20));
-            taskObjects.add(task);
+            taskObjects.add(new NormalizedTask(task, taskAliases, taskSourceIndex));
         }
+        if (sources.size() > maxSources) invalid("Research evidence exceeds the Mission source limit");
 
         Map<String, JsonNode> claims = new LinkedHashMap<>();
-        LinkedHashSet<String> unverified = new LinkedHashSet<>();
-        for (JsonNode task : taskObjects) {
-            for (JsonNode claim : requiredArray(task, "claims", 40)) {
-                validateClaim(claim, sources);
+        LinkedHashSet<String> requiredUnverified = new LinkedHashSet<>();
+        for (NormalizedTask task : taskObjects) {
+            for (JsonNode claim : requiredArray(task.value(), "claims", 40)) {
+                rewriteClaimSourceRefs(claim, task.sourceAliases());
+                validateClaim(claim, task.sources());
                 String id = stableId(claim, "claimId");
                 JsonNode previous = claims.putIfAbsent(id, claim);
                 if (previous != null && !previous.equals(claim)) invalid("Claim ID is ambiguous");
-                if (claim.get("unverified").asBoolean()) unverified.add(id);
+                if (claim.get("unverified").asBoolean()) requiredUnverified.add(id);
             }
         }
-        return new ResearchEvidence(sources, claims, Set.copyOf(unverified), List.copyOf(unresolved));
+        LinkedHashSet<String> aggregateDowngraded = new LinkedHashSet<>();
+        claims.forEach((claimId, claim) -> {
+            LinkedHashSet<String> references = new LinkedHashSet<>();
+            claim.path("supportingSourceIds").forEach(value -> references.add(value.asText()));
+            claim.path("opposingSourceIds").forEach(value -> references.add(value.asText()));
+            boolean insufficient = references.stream().anyMatch(reference ->
+                    !"FETCHED".equals(sources.get(reference).path("status").asText()));
+            if (insufficient && !claim.path("unverified").asBoolean()) {
+                ((ObjectNode) claim).put("unverified", true);
+                aggregateDowngraded.add(claimId);
+            }
+        });
+        return new ResearchEvidence(
+                sources,
+                sourceAliases,
+                claims,
+                Set.copyOf(requiredUnverified),
+                Set.copyOf(aggregateDowngraded),
+                List.copyOf(unresolved));
     }
 
-    private void validateSource(JsonNode source) {
+    private SourceIdentity validateSource(JsonNode source) {
         if (!source.isObject() || source.size() != 11) invalid("Source shape is invalid");
-        stableId(source, "sourceId");
+        String originalId = stableId(source, "sourceId");
         String locator = requiredText(source, "locator", 4_096);
         ResearchSourceLocator.Normalized normalized = ResearchSourceLocator.normalize(locator);
         ObjectNode canonical = (ObjectNode) source;
+        String canonicalId = "source-" + normalized.digest().substring("sha256:".length(), 31);
+        canonical.put("sourceId", canonicalId);
         canonical.put("normalizedLocator", normalized.locator());
         canonical.put("locatorDigest", normalized.digest());
         requiredText(source, "title", 1_024);
@@ -253,7 +320,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             invalid("Source safety type is invalid");
         }
         nullableInstant(source, "fetchedAt");
-        nullableInstant(source, "publishedAt");
+        nullablePublishedInstant(source, "publishedAt");
         String status = requiredText(source, "status", 64);
         if (!SOURCE_STATUSES.contains(status)) invalid("Source status is invalid");
         optionalText(source, "excerpt", 4_096);
@@ -270,6 +337,53 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                         || source.get("excerpt").asText().isBlank())) {
             invalid("Fetched source evidence is incomplete");
         }
+        return new SourceIdentity(originalId, canonicalId);
+    }
+
+    private static JsonNode preferredSource(JsonNode first, JsonNode candidate) {
+        if ("CONFLICT".equals(first.path("status").asText())) return first;
+        if ("CONFLICT".equals(candidate.path("status").asText())) return candidate;
+        boolean firstFetched = "FETCHED".equals(first.path("status").asText());
+        boolean candidateFetched = "FETCHED".equals(candidate.path("status").asText());
+        if (firstFetched && candidateFetched
+                && !first.path("contentDigest").equals(candidate.path("contentDigest"))) {
+            ObjectNode conflict = first.deepCopy();
+            conflict.put("status", "CONFLICT");
+            conflict.putNull("fetchedAt");
+            conflict.putNull("contentDigest");
+            conflict.put("excerpt", "");
+            return conflict;
+        }
+        return !firstFetched && candidateFetched ? candidate : first;
+    }
+
+    private void rewriteClaimSourceRefs(JsonNode claim, Map<String, String> aliases) {
+        rewriteSourceIds(requiredArray(claim, "supportingSourceIds", 20), aliases);
+        rewriteSourceIds(requiredArray(claim, "opposingSourceIds", 20), aliases);
+        for (JsonNode quote : requiredArray(claim, "quotedSpans", 20)) {
+            if (!quote.isObject()) invalid("Quoted span shape is invalid");
+            String original = requiredText(quote, "sourceId", 128);
+            String canonical = aliases.get(original);
+            if (canonical == null) invalid("Claim references an unavailable source");
+            ((ObjectNode) quote).put("sourceId", canonical);
+        }
+    }
+
+    private static void rewriteSourceIds(JsonNode values, Map<String, String> aliases) {
+        ArrayNode array = (ArrayNode) values;
+        for (int index = 0; index < array.size(); index++) {
+            String original = array.get(index).asText();
+            String canonical = aliases.get(original);
+            if (canonical == null) invalid("Claim references an unavailable source");
+            array.set(index, array.textNode(canonical));
+        }
+    }
+
+    private static String canonicalSourceRef(String reference, ResearchEvidence evidence) {
+        String canonical = evidence.sourceAliases().get(reference);
+        if (canonical == null && evidence.sources().containsKey(reference)) canonical = reference;
+        if (canonical == null) invalid("Final result cites an unavailable source");
+        return canonical;
     }
 
     private void validateClaim(JsonNode claim, Map<String, JsonNode> sources) {
@@ -303,8 +417,8 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         String answer = requiredText(value, "directAnswer", 24_000);
         List<String> completed = textArray(value, "completedItems", 40);
         List<String> failed = textArray(value, "failedItems", 40);
-        List<String> sourceRefs = textArray(value, "sourceRefs", maxSources);
-        List<String> unverified = textArray(value, "unverifiedClaims", 40);
+        List<String> sourceRefs = textArray(value, "sourceRefs", maxSources * MAX_TASK_RESULTS);
+        List<String> unverified = textArray(value, "unverifiedClaims", MAX_FINAL_UNVERIFIED_CLAIMS);
         List<String> unresolved = textArray(value, "unresolvedQuestions", 20);
         List<String> risks = textArray(value, "residualRisks", 20);
         String completion = requiredText(value, "completionKind", 16);
@@ -377,7 +491,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                         new AgentRunId(synthesis.runId()),
                         new AgentSessionId(synthesis.sessionId()),
                         null,
-                        "mission:" + intent.missionId() + ":synthesis:v1",
+                        SdkMissionRuntimeAccess.synthesisDispatchKey(intent.missionId()),
                         title,
                         sourceHash,
                         "owner-only",
@@ -505,6 +619,22 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         }
     }
 
+    private static void nullablePublishedInstant(JsonNode value, String field) {
+        JsonNode node = value.get(field);
+        if (node == null || (!node.isNull() && !node.isTextual())) invalid(field + " is invalid");
+        if (!node.isTextual()) return;
+        try {
+            ((ObjectNode) value).put(field, Instant.parse(node.asText()).toString());
+        } catch (DateTimeParseException instantFailure) {
+            try {
+                ((ObjectNode) value)
+                        .put(field, LocalDate.parse(node.asText()).atStartOfDay(ZoneOffset.UTC).toInstant().toString());
+            } catch (DateTimeParseException dateFailure) {
+                throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", field + " is invalid", dateFailure);
+            }
+        }
+    }
+
     private static int quotedWords(String text) {
         String normalized = text.replaceAll("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]", " ")
                 .trim();
@@ -574,9 +704,16 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
 
     private record ResearchEvidence(
             Map<String, JsonNode> sources,
+            Map<String, String> sourceAliases,
             Map<String, JsonNode> claims,
-            Set<String> unverifiedClaimIds,
+            Set<String> requiredUnverifiedClaimIds,
+            Set<String> aggregateDowngradedClaimIds,
             List<String> unresolvedQuestions) {}
+
+    private record NormalizedTask(
+            JsonNode value, Map<String, String> sourceAliases, Map<String, JsonNode> sources) {}
+
+    private record SourceIdentity(String originalId, String canonicalId) {}
 
     private record FinalDelivery(
             String directAnswer,

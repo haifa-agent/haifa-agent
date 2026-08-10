@@ -58,6 +58,23 @@ class PersonalAssistantWebFluxTest {
                 .build();
     }
 
+    @Test
+    void unsupportedRequestContentTypePreservesTheHttpStatus() {
+        web.post()
+                .uri("/api/v1/missions/not-created/cancel")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "unsupported-media-" + IDS.incrementAndGet())
+                .header("If-Match", "1")
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .bodyValue("ignored=true")
+                .exchange()
+                .expectStatus()
+                .isEqualTo(415)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("UNSUPPORTED_MEDIA_TYPE");
+    }
+
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("haifa.personal.data-directory", DATA::toString);

@@ -11,6 +11,8 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
+import io.haifa.agent.runtime.core.retry.RetryPolicy;
+import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
@@ -37,6 +39,7 @@ import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +47,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 
 /** Fluent bootstrap builder. Product behavior is selected by Profile, not by hard-coded product branches. */
 public final class HaifaAgentBuilder {
@@ -56,6 +60,7 @@ public final class HaifaAgentBuilder {
     private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
             java.util.function.UnaryOperator.identity();
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
+    private RetryPolicy toolRetry = RetryPolicy.none();
     private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
 
     HaifaAgentBuilder() {}
@@ -97,6 +102,20 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder modelImageResolver(ModelImageResolver value) {
         modelImageResolver = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    /** Configures bounded Tool retries; Runtime still disables them for non-idempotent Tools. */
+    public HaifaAgentBuilder toolRetry(
+            int maxAttempts,
+            Predicate<RuntimeException> retryable,
+            Duration initialDelay,
+            Duration maxDelay,
+            double backoffMultiplier) {
+        toolRetry = new RetryPolicy(
+                maxAttempts,
+                Objects.requireNonNull(retryable, "retryable must not be null"),
+                new RuntimeBackoffPolicy(initialDelay, maxDelay, backoffMultiplier));
         return this;
     }
 
@@ -168,6 +187,7 @@ public final class HaifaAgentBuilder {
                     .timeProvider(time)
                     .scheduler(scheduler)
                     .toolApprovalPrompts(toolApprovalPrompts::format)
+                    .toolRetry(toolRetry)
                     .publicToolPolicyDecorator(publicToolPolicyDecorator)
                     .modelImageResolver(modelImageResolver::resolve)
                     .persistence(persistence.runtimePersistence())
