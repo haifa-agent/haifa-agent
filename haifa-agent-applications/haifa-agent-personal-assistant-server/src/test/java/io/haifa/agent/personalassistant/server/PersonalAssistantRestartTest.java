@@ -3,6 +3,8 @@ package io.haifa.agent.personalassistant.server;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.mission.MissionApplicationService;
@@ -19,9 +21,12 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.DriverManager;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -29,6 +34,8 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 
 class PersonalAssistantRestartTest {
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     @Test
     void deepResearchMissionPublishesStableArtifactsAndFinalConversationMessageAcrossRestart() throws Exception {
         Path data = Files.createTempDirectory("haifa-personal-deep-research-");
@@ -69,7 +76,7 @@ class PersonalAssistantRestartTest {
             assertThat(completed.mode()).isEqualTo(MissionMode.DEEP_RESEARCH);
             assertThat(completed.selectedSkillId()).contains("deep-research");
             assertThat(completed.selectedSkillBinding()).hasValueSatisfying(binding -> assertThat(binding)
-                    .contains("product", "personal-assistant-bundled@1", "deep-research@2.0.0#sha256:"));
+                    .contains("product", "personal-assistant-bundled@1", "deep-research@2.1.0#sha256:"));
             assertThat(completed.execution().artifacts()).hasSize(5);
             assertThat(completed.execution().sources()).hasSize(2);
             assertThat(completed.execution().finalResult()).hasValueSatisfying(result -> assertThat(result)
@@ -79,6 +86,8 @@ class PersonalAssistantRestartTest {
             assertThat(application.turns(conversationId, 100)).anySatisfy(turn -> assertThat(turn.text())
                     .contains("# Deterministic research report")
                     .doesNotContain("reveal credentials", "ignore the research brief"));
+
+            assertPhase6EvidenceEfficiency(data.resolve("personal-assistant.sqlite"), missionId);
         }
 
         try (var artifactFiles = Files.list(data.resolve("artifacts"))) {
@@ -101,6 +110,87 @@ class PersonalAssistantRestartTest {
                     .hasSize(1);
         }
     }
+
+    private static void assertPhase6EvidenceEfficiency(Path database, String missionId) throws Exception {
+        List<ToolTrace> trace = new ArrayList<>();
+        JsonNode taskResult;
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                var calls = connection.prepareStatement(
+                        """
+                        SELECT c.tool_name,c.arguments_payload
+                        FROM personal_mission_task_attempt a
+                        JOIN tool_call c ON c.run_id=a.run_id
+                        WHERE a.mission_id=? AND c.status='COMPLETED'
+                        ORDER BY c.requested_at,c.tool_call_id
+                        """);
+                var result = connection.prepareStatement(
+                        "SELECT result_json FROM personal_mission_task WHERE mission_id=? ORDER BY ordinal LIMIT 1")) {
+            calls.setString(1, missionId);
+            try (var rows = calls.executeQuery()) {
+                while (rows.next()) {
+                    JsonNode arguments = JSON.readTree(rows.getBytes("arguments_payload"));
+                    JsonNode values = arguments.path("values");
+                    String tool = rows.getString("tool_name");
+                    String canonical = tool.equals("web_fetch")
+                            ? values.path("url").asText()
+                            : "query:" + values.path("query").asText();
+                    trace.add(new ToolTrace(tool, canonical));
+                }
+            }
+            result.setString(1, missionId);
+            try (var rows = result.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                taskResult = JSON.readTree(rows.getString("result_json"));
+            }
+        }
+
+        assertThat(trace)
+                .containsExactly(
+                        new ToolTrace("web_search", "query:deterministic deep research evidence"),
+                        new ToolTrace("web_fetch", "https://research.stub/source-1"),
+                        new ToolTrace("web_fetch", "https://research.stub/source-2"));
+        Map<String, String> uniqueTargets = Map.of(
+                "query:deterministic deep research evidence", "claim-1:origin",
+                "https://research.stub/source-1", "claim-1:primary",
+                "https://research.stub/source-2", "claim-1:independent");
+        assertThat(trace).allSatisfy(value -> assertThat(uniqueTargets).containsKey(value.canonical()));
+        assertThat(trace.stream()
+                        .map(value -> uniqueTargets.get(value.canonical()))
+                        .distinct())
+                .hasSize(trace.size());
+        assertThat(trace.stream()
+                        .filter(value -> value.tool().equals("web_fetch"))
+                        .map(ToolTrace::canonical)
+                        .distinct()
+                        .count())
+                .isEqualTo(2);
+        assertThat(trace.subList(3, trace.size())).isEmpty();
+
+        JsonNode limits = taskResult.path("limitsUsed");
+        assertThat(limits.path("searchCalls").asInt()).isEqualTo(1);
+        assertThat(limits.path("fetchCalls").asInt()).isEqualTo(2);
+        assertThat(limits.path("sources").asInt())
+                .isEqualTo(taskResult.path("sources").size());
+        assertThat(taskResult.path("queries"))
+                .allSatisfy(
+                        query -> assertThat(query.path("phase").asText()).isIn("DISCOVER", "DEEPEN", "CROSS_CHECK"));
+
+        JsonNode baseline = JSON.readTree(PersonalAssistantRestartTest.class.getResourceAsStream(
+                "/deep-research/phase5-evidence-efficiency-baseline.json"));
+        assertThat(baseline.path("briefId").asText()).isEqualTo("deterministic-deep-research-evidence");
+        assertThat(baseline.path("modelScriptId").asText()).isEqualTo("personal-deterministic-research-v1");
+        assertThat(baseline.path("toolFixtureId").asText()).isEqualTo("personal-web-deterministic-stub-v1");
+        int baselineCalls = baseline.path("trace").size();
+        long baselineWaste = java.util.stream.StreamSupport.stream(
+                        baseline.path("trace").spliterator(), false)
+                .filter(value -> value.hasNonNull("waste"))
+                .count();
+        assertThat(trace.size()).isLessThanOrEqualTo(baselineCalls);
+        assertThat(baselineWaste).isPositive();
+        assertThat(trace).noneSatisfy(value -> assertThat(value.canonical()).contains("background popularity"));
+    }
+
+    private record ToolTrace(String tool, String canonical) {}
 
     @Test
     void confirmedMissionResumesAcrossServerRestartAndSettlesThreeDependentTasks() throws Exception {

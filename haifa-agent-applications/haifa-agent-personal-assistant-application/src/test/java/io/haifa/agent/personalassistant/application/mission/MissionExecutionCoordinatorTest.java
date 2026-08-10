@@ -248,7 +248,8 @@ class MissionExecutionCoordinatorTest {
                 List.of("evidence-task"),
                 revisions,
                 remainingTokens,
-                Optional.of(Instant.parse("2026-08-10T01:00:00Z")));
+                Optional.of(Instant.parse("2026-08-10T01:00:00Z")),
+                Optional.of(researchBrief()));
     }
 
     private static MissionSynthesisIntent standardIntent() {
@@ -263,7 +264,20 @@ class MissionExecutionCoordinatorTest {
                 List.of("task-1"),
                 0,
                 1_000,
-                Optional.of(Instant.parse("2026-08-10T01:00:00Z")));
+                Optional.of(Instant.parse("2026-08-10T01:00:00Z")),
+                Optional.empty());
+    }
+
+    private static ResearchBrief researchBrief() {
+        return new ResearchBrief(
+                "Research objective",
+                "Evidence scope",
+                "Frozen range",
+                "Global",
+                "Reader",
+                List.of("primary sources"),
+                List.of("unsupported claims"),
+                "Markdown");
     }
 
     private static MissionRuntimeAccess runtime(AtomicInteger revisions) {

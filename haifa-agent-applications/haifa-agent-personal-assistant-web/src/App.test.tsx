@@ -386,7 +386,7 @@ describe("Personal Assistant application", () => {
       blocker: "MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED",
       tasks: [],
       selectedSkillId: "deep-research",
-      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.0.0#sha256:test",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.1.0#sha256:test",
     };
     const api = {
       ...client(),
@@ -448,7 +448,7 @@ describe("Personal Assistant application", () => {
       ...mission,
       mode: "DEEP_RESEARCH",
       selectedSkillId: "deep-research",
-      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.0.0#sha256:test",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.1.0#sha256:test",
       state: "PARTIALLY_COMPLETED",
       artifacts: ["artifact-report", "artifact-delivery"],
       finalResult: JSON.stringify({

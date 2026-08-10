@@ -2,6 +2,7 @@ package io.haifa.agent.personalassistant.application.mission;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Immutable, digest-bound input snapshot for one Mission Task Attempt. */
 public record MissionTaskRunInput(
@@ -18,6 +19,7 @@ public record MissionTaskRunInput(
         int researchToolCallHardLimit,
         int researchToolCallStopTarget,
         int fetchMaxCharacters,
+        Optional<ResearchBrief> researchBrief,
         List<DependencyResult> dependencyResults) {
     public static final String SCHEMA_VERSION = "pa.mission-task-run-input/v1";
     public static final String PRIMARY_RESEARCH_PROFILE = "personal-mission-task";
@@ -58,6 +60,11 @@ public record MissionTaskRunInput(
         if (fetchMaxCharacters < 1 || fetchMaxCharacters > 20_000) {
             throw new MissionException("MISSION_LIMIT_EXCEEDED", "fetch character limit is invalid");
         }
+        researchBrief = Objects.requireNonNull(researchBrief, "researchBrief must not be null");
+        if (requiredSkillIds.contains("deep-research") && researchBrief.isEmpty()) {
+            throw new MissionException(
+                    "MISSION_RESEARCH_BRIEF_REQUIRED", "Deep Research Task input requires the frozen Research Brief");
+        }
         dependencyResults = List.copyOf(Objects.requireNonNull(dependencyResults));
         if (dependencyResults.size() > 15) {
             throw new MissionException("MISSION_LIMIT_EXCEEDED", "dependency results must not exceed 15");
@@ -87,6 +94,7 @@ public record MissionTaskRunInput(
             List<String> requiredSkillIds,
             String resultSchemaId,
             String resultSchemaVersion,
+            Optional<ResearchBrief> researchBrief,
             List<DependencyResult> dependencyResults) {
         boolean dependencyAware = !dependencyResults.isEmpty();
         return new MissionTaskRunInput(
@@ -103,6 +111,7 @@ public record MissionTaskRunInput(
                 dependencyAware ? DEPENDENCY_AWARE_TOOL_CALL_HARD_LIMIT : PRIMARY_RESEARCH_TOOL_CALL_HARD_LIMIT,
                 dependencyAware ? DEPENDENCY_AWARE_TOOL_CALL_STOP_TARGET : PRIMARY_RESEARCH_TOOL_CALL_STOP_TARGET,
                 dependencyAware ? DEPENDENCY_AWARE_FETCH_MAX_CHARACTERS : PRIMARY_FETCH_MAX_CHARACTERS,
+                researchBrief,
                 dependencyResults);
     }
 

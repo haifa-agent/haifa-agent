@@ -3,43 +3,45 @@
 <!-- haifa-section: executive-summary -->
 ## {Executive summary}
 
-State the answer, strongest evidence, material uncertainty, and recommended action or judgment.
+Give the usable answer, strongest evidence, material uncertainty, and recommended action/judgment.
 
 <!-- haifa-section: scope-method -->
 ## {Scope, assumptions, and method}
 
-Describe the confirmed scope, time/region boundary, exclusions, source strategy, and evidence limitations.
+State the frozen Brief, type, time/region, exclusions, source strategy, and limits.
 
 <!-- haifa-section: task-findings -->
 ## {Task findings}
 
-Repeat the following block for every real Task ID supplied by the product. Do not invent or omit an ID.
+Repeat for every supplied Task ID; invent or omit none:
 
 <!-- haifa-task: task-id -->
 ### {Finding title}
 
-Explain the finding, supporting evidence `[[source-id]]`, counterevidence, inference, and remaining uncertainty.
+Explain evidence `[[source-id]]`, counterevidence, inference, and uncertainty.
 
 <!-- haifa-section: synthesis -->
 ## {Integrated analysis}
 
-Connect the findings, reconcile conflicts, distinguish fact from inference, and explain what changes the judgment.
-
-For a truthfulness investigation, include a matrix with: claim, evidence, counterevidence, inference, unknown, judgment.
-For a decision, include options, trade-offs, triggers, and failure plan. For a postmortem, include timeline, competing
-accounts, direct causes, root causes, and decision mistakes.
+Connect reinforcement, conflicts, applicability, and what changes the judgment. Truthfulness uses a compact material-
+claim matrix: promotion; origin; primary/technical evidence; independent validation; counterevidence/limits; inference;
+unknown; high/medium/low strength; verified/partly verified/insufficient/misleading/refuted judgment; evidence that
+would change it. Address technical origin, capability, business model, and exaggeration separately. Decision adds
+options, constraints, costs/benefits, risks, triggers, failure plan. Policy adds subject, region, effective dates,
+authority, enforcement, exceptions, change risk. Postmortem adds timeline, accounts, consensus/conflict, direct/root
+causes, and decision mistakes.
 
 <!-- haifa-section: conclusions -->
 ## {Conclusions and recommendations}
 
-Give bounded conclusions and actionable next steps without overstating evidence.
+Give bounded conclusions and actions without overstating evidence.
 
 <!-- haifa-section: risks-unknowns -->
 ## {Risks, unknowns, and open questions}
 
-List unresolved, disputed, stale, inaccessible, or unsafe evidence and its impact.
+List only consequential unresolved, disputed, stale, inaccessible, or unsafe evidence and impact.
 
 <!-- haifa-section: sources -->
 ## {Sources}
 
-List each cited `[[source-id]]` with its title, publisher, date/status, and URL supplied by the settled evidence.
+List each cited `[[source-id]]` with settled title, publisher, date/status, and URL.

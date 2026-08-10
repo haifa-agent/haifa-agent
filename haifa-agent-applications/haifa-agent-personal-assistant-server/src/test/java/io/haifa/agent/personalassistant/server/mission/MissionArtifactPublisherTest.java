@@ -14,6 +14,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionException;
 import io.haifa.agent.personalassistant.application.mission.MissionMode;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
+import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -143,7 +144,8 @@ class MissionArtifactPublisherTest {
                 List.of("task-1"),
                 2,
                 10_000,
-                Optional.empty());
+                Optional.empty(),
+                Optional.of(researchBrief()));
         var published = publisher(new InMemoryArtifactStore(), newIds()).publish(request, synthesis(validReport()));
         JsonNode manifest = MAPPER.readTree(published.structuredResult());
 
@@ -267,7 +269,25 @@ class MissionArtifactPublisherTest {
                 "local/public-user",
                 MissionMode.DEEP_RESEARCH,
                 "Research objective",
-                List.of(task.toString()));
+                List.of(task.toString()),
+                List.of(),
+                List.of("task-1"),
+                2,
+                Long.MAX_VALUE,
+                Optional.empty(),
+                Optional.of(researchBrief()));
+    }
+
+    private static ResearchBrief researchBrief() {
+        return new ResearchBrief(
+                "Research objective",
+                "Evidence scope",
+                "Frozen range",
+                "Global",
+                "Reader",
+                List.of("primary sources"),
+                List.of("unsupported claims"),
+                "Markdown");
     }
 
     private static MissionRuntimeAccess.SynthesisRunResult synthesis(String report) {
