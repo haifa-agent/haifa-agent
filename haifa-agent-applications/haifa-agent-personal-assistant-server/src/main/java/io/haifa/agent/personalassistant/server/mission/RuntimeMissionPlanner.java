@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
+import io.haifa.agent.personalassistant.application.mission.MissionPlanDependencyNormalizer;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanRevision;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
@@ -32,12 +33,12 @@ public final class RuntimeMissionPlanner implements MissionPlanner {
     public PlanningResult plan(PlanningRequest request) {
         MissionRuntimeAccess.PlannerRunResult run = runtime.runPlanner(request);
         try {
-            return decode(run, request);
+            return decode(run, request, false);
         } catch (InvalidPlanPayloadException invalid) {
             MissionRuntimeAccess.PlannerRunResult repaired =
                     runtime.repairPlanner(request, run, invalid.code(), invalid.getMessage(), 1);
             try {
-                return decode(repaired, request);
+                return decode(repaired, request, true);
             } catch (InvalidPlanPayloadException stillInvalid) {
                 throw new MissionException(
                         stillInvalid.code(),
@@ -48,28 +49,40 @@ public final class RuntimeMissionPlanner implements MissionPlanner {
         }
     }
 
-    private PlanningResult decode(MissionRuntimeAccess.PlannerRunResult run, PlanningRequest request) {
+    private PlanningResult decode(
+            MissionRuntimeAccess.PlannerRunResult run, PlanningRequest request, boolean allowDeterministicDepthRepair) {
         try {
             PlanPayload payload = mapper.readValue(run.structuredOutput(), PlanPayload.class);
             if (!"pa.mission-plan/v1".equals(payload.schemaVersion())) {
                 throw new MissionException("MISSION_PLAN_SCHEMA_UNSUPPORTED", "Planner schemaVersion is unsupported");
             }
-            List<MissionTask> tasks = validator.validate(
-                    payload.tasks().stream()
-                            .map(task -> new MissionTask(
-                                    task.taskId(),
-                                    task.ordinal(),
-                                    task.title(),
-                                    task.objective(),
-                                    task.acceptanceCriteria(),
-                                    task.dependsOn(),
-                                    task.taskType(),
-                                    task.requiredSkillIds(),
-                                    task.resultSchema().id(),
-                                    task.resultSchema().version(),
-                                    MissionTaskState.PLANNED))
-                            .toList(),
-                    request.constraints());
+            List<MissionTask> proposed = payload.tasks().stream()
+                    .map(task -> new MissionTask(
+                            task.taskId(),
+                            task.ordinal(),
+                            task.title(),
+                            task.objective(),
+                            task.acceptanceCriteria(),
+                            task.dependsOn(),
+                            task.taskType(),
+                            task.requiredSkillIds(),
+                            task.resultSchema().id(),
+                            task.resultSchema().version(),
+                            MissionTaskState.PLANNED))
+                    .toList();
+            List<MissionTask> tasks;
+            try {
+                tasks = validator.validate(proposed, request.constraints());
+            } catch (MissionException invalid) {
+                if (!allowDeterministicDepthRepair
+                        || !"MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED".equals(invalid.code())) {
+                    throw invalid;
+                }
+                tasks = validator.validate(
+                        MissionPlanDependencyNormalizer.flattenToMaximumDepth(
+                                proposed, request.constraints().maxDependencyDepth()),
+                        request.constraints());
+            }
             return new PlanningResult(
                     MissionPlanRevision.SCHEMA_ID,
                     MissionPlanRevision.SCHEMA_VERSION,

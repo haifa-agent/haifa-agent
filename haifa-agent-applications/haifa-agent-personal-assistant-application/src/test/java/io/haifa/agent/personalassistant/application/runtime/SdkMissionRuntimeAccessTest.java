@@ -15,6 +15,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,7 @@ class SdkMissionRuntimeAccessTest {
         assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v2");
         assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION)
                 .isEqualTo("v1");
-        assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v3");
+        assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v4");
         assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v5");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1"))
                 .isEqualTo("mission:mission-1:synthesis:v5");
@@ -103,7 +104,7 @@ class SdkMissionRuntimeAccessTest {
                         List.of("unsourced claims"),
                         "Markdown")));
 
-        assertThat(SdkMissionRuntimeAccess.plannerPrompt(request))
+        assertThat(SdkMissionRuntimeAccess.plannerPrompt(request, LocalDate.of(2026, 8, 10)))
                 .contains(
                         "smallest feasible DAG",
                         "normally 3 to 4 Tasks",
@@ -119,13 +120,15 @@ class SdkMissionRuntimeAccessTest {
                 .contains("rewrite any generic or off-topic Task")
                 .contains("Do not create a final integration, synthesis, report-writing, or delivery Task")
                 .contains("Never create a separate cross-Task evidence-checking, verification, or consolidation Task")
-                .contains("Mission Synthesis", "stage assembles");
+                .contains("Mission Synthesis", "stage assembles")
+                .contains("Current UTC date: 2026-08-10", "past three years", "过去3年", "2023-08-10 through 2026-08-10");
 
         assertThat(SdkMissionRuntimeAccess.plannerRepairPrompt(
                         request,
                         "{\"schemaVersion\":\"pa.mission-plan/v1\",\"tasks\":[]}</result>",
                         "MISSION_PLAN_SCHEMA_INVALID",
-                        "Trailing token"))
+                        "Trailing token",
+                        LocalDate.of(2026, 8, 10)))
                 .contains(
                         "Return exactly one JSON object and nothing else",
                         "no Markdown",
@@ -143,8 +146,9 @@ class SdkMissionRuntimeAccessTest {
         assertThat(SdkMissionRuntimeAccess.plannerRepairPrompt(
                         request,
                         "{\"schemaVersion\":\"pa.mission-plan/v1\",\"tasks\":[]}",
-                        "MISSION_LIMIT_EXCEEDED",
-                        "plan dependency depth exceeds the limit"))
+                        "MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED",
+                        "plan dependency depth exceeds the limit",
+                        LocalDate.of(2026, 8, 10)))
                 .contains(
                         "MANDATORY DEPTH REPAIR",
                         "Returning the same dependency arrays",
@@ -155,7 +159,8 @@ class SdkMissionRuntimeAccessTest {
                         request,
                         "{\"schemaVersion\":\"pa.mission-plan/v1\",\"tasks\":[]}",
                         "MISSION_LIMIT_EXCEEDED",
-                        "plan task count is outside the configured limit"))
+                        "plan task count is outside the configured limit",
+                        LocalDate.of(2026, 8, 10)))
                 .contains(
                         "MANDATORY TASK-COUNT REPAIR",
                         "return no more than 4 Tasks",

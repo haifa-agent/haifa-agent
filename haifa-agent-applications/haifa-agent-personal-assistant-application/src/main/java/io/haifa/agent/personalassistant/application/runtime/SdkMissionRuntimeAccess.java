@@ -59,7 +59,7 @@ import java.util.regex.Pattern;
 public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     public static final String PLANNER_RUN_PROFILE = "personal-mission-planner";
     public static final String PLANNER_REPAIR_RUN_PROFILE = "personal-mission-planner-repair";
-    public static final String PLANNER_REPAIR_PROTOCOL_VERSION = "v3";
+    public static final String PLANNER_REPAIR_PROTOCOL_VERSION = "v4";
     public static final String TASK_RUN_PROFILE = MissionTaskRunInput.PRIMARY_RESEARCH_PROFILE;
     public static final String DEPENDENT_TASK_RUN_PROFILE = MissionTaskRunInput.DEPENDENCY_AWARE_RESEARCH_PROFILE;
     public static final String TASK_NORMALIZER_RUN_PROFILE = "personal-mission-task-normalizer";
@@ -166,7 +166,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         PLANNER_RUN_PROFILE,
                         sessionId,
                         Optional.empty(),
-                        plannerPrompt(request),
+                        plannerPrompt(request, currentUtcDate()),
                         List.of(),
                         RuntimeOverrides.NONE));
         try {
@@ -264,7 +264,12 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         PLANNER_REPAIR_RUN_PROFILE,
                         sessionId,
                         Optional.empty(),
-                        plannerRepairPrompt(request, invalidRun.structuredOutput(), violationCode, violationMessage),
+                        plannerRepairPrompt(
+                                request,
+                                invalidRun.structuredOutput(),
+                                violationCode,
+                                violationMessage,
+                                currentUtcDate()),
                         List.of(),
                         RuntimeOverrides.NONE));
         try {
@@ -1582,6 +1587,10 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         return model;
     }
 
+    private LocalDate currentUtcDate() {
+        return time.now().atZone(ZoneOffset.UTC).toLocalDate();
+    }
+
     private static MissionUsage usage(io.haifa.agent.core.run.AgentRunUsage value) {
         return new MissionUsage(
                 Math.addExact(value.inputTokens(), value.outputTokens()), value.modelCalls(), value.toolCalls());
@@ -1612,7 +1621,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
     private record NormalizedTaskResult(String result, MissionUsage usage) {}
 
-    static String plannerPrompt(MissionPlanner.PlanningRequest request) {
+    static String plannerPrompt(MissionPlanner.PlanningRequest request, LocalDate currentUtcDate) {
+        String referenceTime = plannerReferenceTime(currentUtcDate);
         if (request.mode() == MissionMode.DEEP_RESEARCH) {
             return """
                     Produce only one JSON object matching schema pa.mission-plan/v1. Do not use Markdown fences.
@@ -1641,6 +1651,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     other. If no selection is required, keep all Tasks as roots with empty dependsOn arrays.
                     Do not create a final integration, synthesis, report-writing, or delivery Task. The Mission Synthesis
                     stage assembles the authoritative Task results after every Task settles.
+                    %s
                     Mission objective: %s
                     Acceptance criteria: %s
                     Frozen research brief: %s
@@ -1649,6 +1660,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                             request.constraints().maxTasks(),
                             request.constraints().maxDependencyDepth(),
                             Math.min(5, request.constraints().maxTasks()),
+                            referenceTime,
                             request.objective(),
                             request.acceptanceCriteria(),
                             request.researchBrief().orElseThrow());
@@ -1668,12 +1680,14 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Use the smallest feasible DAG that covers the acceptance criteria and combine closely related work.
                 Do not create a final integration, synthesis, report-writing, or delivery Task. The Mission Synthesis
                 stage assembles the authoritative Task results after every Task settles.
+                %s
                 Mission objective: %s
                 Acceptance criteria: %s
                 """
                 .formatted(
                         request.constraints().maxTasks(),
                         request.constraints().maxDependencyDepth(),
+                        referenceTime,
                         request.objective(),
                         request.acceptanceCriteria());
     }
@@ -1682,14 +1696,16 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             MissionPlanner.PlanningRequest request,
             String invalidOutput,
             String violationCode,
-            String violationMessage) {
+            String violationMessage,
+            LocalDate currentUtcDate) {
         String boundedOutput = Objects.requireNonNull(invalidOutput);
         if (boundedOutput.length() > PLANNER_REPAIR_INPUT_MAX_CHARACTERS) {
             boundedOutput = boundedOutput.substring(0, PLANNER_REPAIR_INPUT_MAX_CHARACTERS);
         }
         String dependencyRepair = "";
-        if ("MISSION_LIMIT_EXCEEDED".equals(violationCode)
-                && violationMessage.toLowerCase(java.util.Locale.ROOT).contains("dependency depth")) {
+        if ("MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED".equals(violationCode)
+                || ("MISSION_LIMIT_EXCEEDED".equals(violationCode)
+                        && violationMessage.toLowerCase(java.util.Locale.ROOT).contains("dependency depth"))) {
             dependencyRepair =
                     """
 
@@ -1725,6 +1741,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Dependency depth counts task nodes, not edges: root depth is 1, a direct dependent is depth 2, and a
                 dependent of that Task is depth 3. Flatten dependencies as needed to stay within the maximum.
                 %s%s
+                %s
                 Mission objective: %s
                 Mission acceptance criteria: %s
                 Rejected by deterministic validation: %s - %s
@@ -1740,11 +1757,23 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         request.constraints().maxDependencyDepth(),
                         dependencyRepair,
                         taskCountRepair,
+                        plannerReferenceTime(currentUtcDate),
                         request.objective(),
                         request.acceptanceCriteria(),
                         violationCode,
                         violationMessage,
                         PLANNER_REPAIR_INPUT_MAX_CHARACTERS,
                         boundedOutput);
+    }
+
+    private static String plannerReferenceTime(LocalDate currentUtcDate) {
+        LocalDate referenceDate = Objects.requireNonNull(currentUtcDate);
+        return """
+                Current UTC date: %s. Resolve relative dates against this date, not model training data.
+                The concrete inclusive window for \"past three years\", \"过去三年\", \"过去3年\", or \"近三年\"
+                is %s through %s. Use another interval only when the Mission explicitly specifies it.
+                """
+                .formatted(referenceDate, referenceDate.minusYears(3), referenceDate)
+                .strip();
     }
 }

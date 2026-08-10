@@ -90,7 +90,10 @@ owner 的同一 Conversation 同时只能存在一个非终态 Mission；计划�
 
 Planner 有确定性 Stub 和一次性 Runtime Run 两种实现。Runtime Planner 使用独立的 ephemeral
 Planner Session、命名 Run Profile 和严格 `pa.mission-plan/v1` JSON；能力、Schema、约束或 allowlist
-校验失败时 fail closed，不从自由文本提取 JSON，也不回退模型。Phase 2 增加产品层 Task Attempt、
+校验失败时 fail closed，不从自由文本提取 JSON，也不回退模型。Planner Prompt 冻结当前 UTC 日期，
+并把“过去三年”明确解析为当前日期向前推三年的闭区间。单次模型 Schema Repair 后，如果候选计划仅因
+依赖深度超限而失败，产品会确定性切断导致超深的最早串行边并再次执行完整校验；该修复不增加模型调用，
+其它约束失败仍然 fail closed。Phase 2 增加产品层 Task Attempt、
 Outbox/Saga 协调、确定性串行 ready 计算、稳定 dispatch key、Runtime 权威状态结算、取消、一次自动
 重试和用户显式重试。每个 Task Attempt 使用独立 ephemeral Session；它不创建 Conversation，也不进入
 Memory。Pause/Resume、Task Verifier 和 Task Repair 仍不在本阶段范围内；这里只提供上述最终 Synthesis
