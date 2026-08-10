@@ -289,7 +289,11 @@ describe("Personal Assistant application", () => {
     expect(within(taskDetail).getByRole("heading", { name: "准备交付" })).toBeTruthy();
     expect(within(taskDetail).getByText("整理明确的交付内容")).toBeTruthy();
     expect(within(taskDetail).getByText("可验收")).toBeTruthy();
-    expect(within(taskDetail).getByText("pa.task-result · v1")).toBeTruthy();
+    expect(within(taskDetail).queryByText(/Skill|Schema|pa\.task-result/)).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "编辑计划" }));
+    const planEditor = within(dialog).getByLabelText("完整计划 JSON") as HTMLTextAreaElement;
+    expect(planEditor.value).not.toMatch(/requiredSkillIds|taskType|resultSchemaId|deep-research/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消编辑" }));
     fireEvent.click(screen.getByRole("button", { name: /确认计划/ }));
     await waitFor(() => expect(api.confirmMission).toHaveBeenCalledWith(
       expect.objectContaining({ missionId: "mission-1", version: 1 }),
@@ -375,6 +379,30 @@ describe("Personal Assistant application", () => {
     ));
   });
 
+  it("explains a planning dependency-depth failure without exposing Skill details", async () => {
+    const failed: MissionSnapshot = {
+      ...mission,
+      state: "FAILED",
+      blocker: "MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED",
+      tasks: [],
+      selectedSkillId: "deep-research",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.1.0#sha256:test",
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [failed], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => failed),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect(await within(dialog).findByText("Mission 规划失败：任务依赖层级超过限制。")).toBeTruthy();
+    expect(within(dialog).queryByText(/deep-research@|执行 Skill/)).toBeNull();
+  });
+
   it("renders a partial Deep Research delivery with evidence and artifacts", async () => {
     const delivered: MissionSnapshot = {
       ...mission,
@@ -410,6 +438,7 @@ describe("Personal Assistant application", () => {
     expect(within(dialog).getByText("claim-unverified")).toBeTruthy();
     expect(within(dialog).getByText("https://research.stub/source-1")).toBeTruthy();
     expect(within(dialog).getByText("artifact-report")).toBeTruthy();
+    expect(within(dialog).queryByText(/deep-research@|执行 Skill/)).toBeNull();
   });
 
   it("renders a degraded v2 delivery with report view download and copy actions", async () => {
@@ -419,7 +448,7 @@ describe("Personal Assistant application", () => {
       ...mission,
       mode: "DEEP_RESEARCH",
       selectedSkillId: "deep-research",
-      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.0.0#sha256:test",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.1.0#sha256:test",
       state: "PARTIALLY_COMPLETED",
       artifacts: ["artifact-report", "artifact-delivery"],
       finalResult: JSON.stringify({

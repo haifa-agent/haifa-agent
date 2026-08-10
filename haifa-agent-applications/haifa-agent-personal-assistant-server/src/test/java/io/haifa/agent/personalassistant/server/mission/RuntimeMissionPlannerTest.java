@@ -120,8 +120,60 @@ class RuntimeMissionPlannerTest {
 
         var result = new RuntimeMissionPlanner(runtime, validator(), new ObjectMapper()).plan(request);
 
-        assertThat(repaired.get()).contains("MISSION_LIMIT_EXCEEDED", "dependency depth");
+        assertThat(repaired.get()).contains("MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED", "dependency depth");
         assertThat(result.plannerRunId()).contains("repair-run-1");
+    }
+
+    @Test
+    void deterministicallyFlattensExcessiveSerialDependenciesAfterSchemaRepair() {
+        String chain =
+                """
+                {"schemaVersion":"pa.mission-plan/v1","tasks":[
+                  {"taskId":"first","ordinal":1,"title":"First","objective":"First","acceptanceCriteria":["A"],
+                   "dependsOn":[],"taskType":"GENERAL","requiredSkillIds":[],"resultSchema":{"id":"pa.task-result","version":"v1"}},
+                  {"taskId":"second","ordinal":2,"title":"Second","objective":"Second","acceptanceCriteria":["B"],
+                   "dependsOn":["first"],"taskType":"GENERAL","requiredSkillIds":[],"resultSchema":{"id":"pa.task-result","version":"v1"}},
+                  {"taskId":"third","ordinal":3,"title":"Third","objective":"Third","acceptanceCriteria":["C"],
+                   "dependsOn":["second"],"taskType":"GENERAL","requiredSkillIds":[],"resultSchema":{"id":"pa.task-result","version":"v1"}},
+                  {"taskId":"fourth","ordinal":4,"title":"Fourth","objective":"Fourth","acceptanceCriteria":["D"],
+                   "dependsOn":["third"],"taskType":"GENERAL","requiredSkillIds":[],"resultSchema":{"id":"pa.task-result","version":"v1"}},
+                  {"taskId":"fifth","ordinal":5,"title":"Fifth","objective":"Fifth","acceptanceCriteria":["E"],
+                   "dependsOn":["fourth"],"taskType":"GENERAL","requiredSkillIds":[],"resultSchema":{"id":"pa.task-result","version":"v1"}}
+                ]}
+                """;
+        var repairCalls = new java.util.concurrent.atomic.AtomicInteger();
+        MissionRuntimeAccess runtime = new MissionRuntimeAccess() {
+            @Override
+            public PlannerRunResult runPlanner(MissionPlanner.PlanningRequest ignored) {
+                return new PlannerRunResult("session-1", "run-1", chain + "</result>");
+            }
+
+            @Override
+            public PlannerRunResult repairPlanner(
+                    MissionPlanner.PlanningRequest ignored,
+                    PlannerRunResult invalidRun,
+                    String violationCode,
+                    String violationMessage,
+                    int repairAttemptNo) {
+                assertThat(violationCode).isEqualTo("MISSION_PLAN_SCHEMA_INVALID");
+                repairCalls.incrementAndGet();
+                return new PlannerRunResult("repair-session-1", "repair-run-1", chain);
+            }
+        };
+        var request = new MissionPlanner.PlanningRequest(
+                "mission-1",
+                "Summarize Ethereum upgrades",
+                List.of("Cover the important changes"),
+                new MissionConstraints(8, 4, java.util.Optional.empty()),
+                1);
+
+        var result = new RuntimeMissionPlanner(runtime, validator(), new ObjectMapper()).plan(request);
+
+        assertThat(repairCalls).hasValue(1);
+        assertThat(result.plannerRunId()).contains("repair-run-1");
+        assertThat(result.tasks())
+                .extracting(task -> task.dependsOn())
+                .containsExactly(List.of(), List.of(), List.of("second"), List.of("third"), List.of("fourth"));
     }
 
     private static RuntimeMissionPlanner planner(String output) {

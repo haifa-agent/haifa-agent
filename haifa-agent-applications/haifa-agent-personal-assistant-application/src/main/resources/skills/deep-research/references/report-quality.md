@@ -1,13 +1,17 @@
 # Final report quality checklist
 
-Before returning the final Markdown candidate, verify all of the following:
+- Preserve every `haifa-section` marker with substantive prose and every supplied Task ID exactly once as a
+  substantive `haifa-task` finding.
+- Close every material external claim with settled `[[source-id]]` evidence.
+- Distinguish evidence, counterevidence, inference, judgment, and unknowns.
+- Give the usable answer first, then strongest evidence, largest uncertainty, and action.
+- Integrate Tasks; do not concatenate briefs, IDs, errors, or metadata.
+- Disclose missing, stale, conflicting, inaccessible, or unsafe evidence and stay within the Brief.
+- State what evidence would change the judgment.
+- Return Markdown only: no JSON, fences, Artifact references, hidden work, or invented IDs.
 
-- The report contains every stable `haifa-section` marker from the template and substantive prose after each marker.
-- Every real Task ID supplied by the product appears exactly as a `haifa-task` marker with a substantive finding.
-- Every material external claim has a `[[source-id]]` citation closed over the settled evidence set.
-- Evidence, counterevidence, inference, judgment, and unknowns are visibly distinguished where relevant.
-- The executive summary answers the research question instead of describing execution status.
-- Integrated analysis connects Task findings; it is not a concatenation of briefs, IDs, errors, or source metadata.
-- Missing, inaccessible, stale, conflicting, or unsafe evidence is disclosed and does not silently support a claim.
-- Conclusions remain within the confirmed scope and state what evidence would change the judgment.
-- The output is Markdown only, without JSON wrapping, Artifact references, hidden continuation work, or invented IDs.
+Apply the shared type addition. A truthfulness matrix covers only conclusion-changing claims and includes promotional
+claim, claim origin, primary/technical evidence, independent validation, counterevidence/limits, inference, unknown,
+evidence strength (high/medium/low), judgment (verified/partly verified/insufficient evidence/misleading/refuted), and
+evidence that would change it. Address technical origin, capability, business model, and exaggeration separately.
+Insufficient evidence is not refutation; no counterevidence is not verification. Preserve other type additions.

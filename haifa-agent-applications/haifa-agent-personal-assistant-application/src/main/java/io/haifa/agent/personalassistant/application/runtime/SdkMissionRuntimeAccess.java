@@ -31,6 +31,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionSynthesisInte
 import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.MissionUsage;
 import io.haifa.agent.personalassistant.application.mission.ReportQualityGate;
+import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.runtime.api.AgentRunRequest;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
@@ -59,7 +60,7 @@ import java.util.regex.Pattern;
 public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     public static final String PLANNER_RUN_PROFILE = "personal-mission-planner";
     public static final String PLANNER_REPAIR_RUN_PROFILE = "personal-mission-planner-repair";
-    public static final String PLANNER_REPAIR_PROTOCOL_VERSION = "v3";
+    public static final String PLANNER_REPAIR_PROTOCOL_VERSION = "v4";
     public static final String TASK_RUN_PROFILE = MissionTaskRunInput.PRIMARY_RESEARCH_PROFILE;
     public static final String DEPENDENT_TASK_RUN_PROFILE = MissionTaskRunInput.DEPENDENCY_AWARE_RESEARCH_PROFILE;
     public static final String TASK_NORMALIZER_RUN_PROFILE = "personal-mission-task-normalizer";
@@ -73,7 +74,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     private static final Pattern STABLE_EVIDENCE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
     public static final String SYNTHESIS_RUN_PROFILE = "personal-mission-synthesis";
     public static final String RESEARCH_SYNTHESIS_RUN_PROFILE = "personal-mission-research-synthesis";
-    public static final String SYNTHESIS_PROTOCOL_VERSION = "v5";
+    public static final String SYNTHESIS_PROTOCOL_VERSION = "v6";
     public static final String STANDARD_SYNTHESIS_PROTOCOL_VERSION = "v2";
     public static final String STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION = "v1";
     private static final int SYNTHESIS_MAX_UNVERIFIED_CLAIMS = 320;
@@ -166,7 +167,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         PLANNER_RUN_PROFILE,
                         sessionId,
                         Optional.empty(),
-                        plannerPrompt(request),
+                        plannerPrompt(request, currentUtcDate()),
                         List.of(),
                         RuntimeOverrides.NONE));
         try {
@@ -264,7 +265,12 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         PLANNER_REPAIR_RUN_PROFILE,
                         sessionId,
                         Optional.empty(),
-                        plannerRepairPrompt(request, invalidRun.structuredOutput(), violationCode, violationMessage),
+                        plannerRepairPrompt(
+                                request,
+                                invalidRun.structuredOutput(),
+                                violationCode,
+                                violationMessage,
+                                currentUtcDate()),
                         List.of(),
                         RuntimeOverrides.NONE));
         try {
@@ -363,6 +369,9 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     [deep-research/SKILL.md]
                     %s
 
+                    [deep-research/references/research-types.md]
+                    %s
+
                     [deep-research/references/research-method.md]
                     %s
 
@@ -377,6 +386,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     """
                             .formatted(
                                     deepResearchSkill.instructions(),
+                                    deepResearchSkill.resource("references/research-types.md"),
                                     deepResearchSkill.resource("references/research-method.md"),
                                     deepResearchSkill.resource("references/source-quality.md"),
                                     deepResearchSkill.resource("references/citation-rules.md"),
@@ -393,6 +403,9 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Task objective: %s
                 Acceptance criteria: %s
                 Required result schema: %s@%s
+
+                Frozen Research Brief (the complete bounded input; do not reinterpret or broaden it):
+                %s
 
                 Frozen direct dependency context (structured, digest-bound, and bounded):
                 %s
@@ -421,6 +434,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         intent.acceptanceCriteria(),
                         intent.resultSchemaId(),
                         intent.resultSchemaVersion(),
+                        frozenResearchBrief(intent.runInput().researchBrief()),
                         dependencyContext,
                         intent.runInput().researchToolCallHardLimit(),
                         intent.runInput().researchToolCallStopTarget(),
@@ -1055,7 +1069,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 ? synthesisDispatchKey(intent.missionId(), revisionAttempt)
                 : standardSynthesisDispatchKey(intent.missionId());
         String prompt = intent.mode() == MissionMode.DEEP_RESEARCH
-                ? researchSynthesisPrompt(intent, previous, quality, revisionAttempt)
+                ? researchSynthesisPrompt(intent, previous, quality, revisionAttempt, deepResearchSkill)
                 : standardSynthesisPrompt(intent);
         String profile =
                 intent.mode() == MissionMode.DEEP_RESEARCH ? RESEARCH_SYNTHESIS_RUN_PROFILE : SYNTHESIS_RUN_PROFILE;
@@ -1216,11 +1230,16 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         invalidOutput);
     }
 
-    private String researchSynthesisPrompt(
+    static String initialResearchSynthesisPrompt(MissionSynthesisIntent intent, SkillContent deepResearchSkill) {
+        return researchSynthesisPrompt(intent, null, null, 0, deepResearchSkill);
+    }
+
+    private static String researchSynthesisPrompt(
             MissionSynthesisIntent intent,
             SynthesisRunResult previous,
             ReportQualityGate.Result quality,
-            int revisionAttempt) {
+            int revisionAttempt,
+            SkillContent deepResearchSkill) {
         String revision = revisionAttempt == 0
                 ? "This is the initial candidate."
                 : "This is bounded revision " + revisionAttempt + " of 2. Fix only these deterministic failures: "
@@ -1234,6 +1253,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 without sufficient fetched support must be explicitly labeled unverified.
 
                 Mission objective: %s
+                Frozen Research Brief (the complete bounded input): %s
+                Shared research-type decision table: %s
                 Real completed Task IDs in result order: %s
                 Failed or cancelled Task items: %s
                 Authoritative settled Task result summaries and evidence: %s
@@ -1243,12 +1264,18 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 """
                 .formatted(
                         intent.objective(),
+                        frozenResearchBrief(intent.researchBrief()),
+                        deepResearchSkill.resource("references/research-types.md"),
                         intent.completedTaskIds(),
                         intent.failedItems(),
                         intent.taskResults(),
                         deepResearchSkill.resource("templates/report.md"),
                         deepResearchSkill.resource("references/report-quality.md"),
                         revision);
+    }
+
+    static String frozenResearchBrief(Optional<ResearchBrief> researchBrief) {
+        return researchBrief.map(value -> JSON.valueToTree(value).toString()).orElse("null");
     }
 
     static String canonicalizeResearchReport(String value) {
@@ -1582,6 +1609,10 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         return model;
     }
 
+    private LocalDate currentUtcDate() {
+        return time.now().atZone(ZoneOffset.UTC).toLocalDate();
+    }
+
     private static MissionUsage usage(io.haifa.agent.core.run.AgentRunUsage value) {
         return new MissionUsage(
                 Math.addExact(value.inputTokens(), value.outputTokens()), value.modelCalls(), value.toolCalls());
@@ -1612,7 +1643,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
     private record NormalizedTaskResult(String result, MissionUsage usage) {}
 
-    static String plannerPrompt(MissionPlanner.PlanningRequest request) {
+    static String plannerPrompt(MissionPlanner.PlanningRequest request, LocalDate currentUtcDate) {
+        String referenceTime = plannerReferenceTime(currentUtcDate);
         if (request.mode() == MissionMode.DEEP_RESEARCH) {
             return """
                     Produce only one JSON object matching schema pa.mission-plan/v1. Do not use Markdown fences.
@@ -1641,6 +1673,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     other. If no selection is required, keep all Tasks as roots with empty dependsOn arrays.
                     Do not create a final integration, synthesis, report-writing, or delivery Task. The Mission Synthesis
                     stage assembles the authoritative Task results after every Task settles.
+                    %s
                     Mission objective: %s
                     Acceptance criteria: %s
                     Frozen research brief: %s
@@ -1649,6 +1682,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                             request.constraints().maxTasks(),
                             request.constraints().maxDependencyDepth(),
                             Math.min(5, request.constraints().maxTasks()),
+                            referenceTime,
                             request.objective(),
                             request.acceptanceCriteria(),
                             request.researchBrief().orElseThrow());
@@ -1668,12 +1702,14 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Use the smallest feasible DAG that covers the acceptance criteria and combine closely related work.
                 Do not create a final integration, synthesis, report-writing, or delivery Task. The Mission Synthesis
                 stage assembles the authoritative Task results after every Task settles.
+                %s
                 Mission objective: %s
                 Acceptance criteria: %s
                 """
                 .formatted(
                         request.constraints().maxTasks(),
                         request.constraints().maxDependencyDepth(),
+                        referenceTime,
                         request.objective(),
                         request.acceptanceCriteria());
     }
@@ -1682,14 +1718,16 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             MissionPlanner.PlanningRequest request,
             String invalidOutput,
             String violationCode,
-            String violationMessage) {
+            String violationMessage,
+            LocalDate currentUtcDate) {
         String boundedOutput = Objects.requireNonNull(invalidOutput);
         if (boundedOutput.length() > PLANNER_REPAIR_INPUT_MAX_CHARACTERS) {
             boundedOutput = boundedOutput.substring(0, PLANNER_REPAIR_INPUT_MAX_CHARACTERS);
         }
         String dependencyRepair = "";
-        if ("MISSION_LIMIT_EXCEEDED".equals(violationCode)
-                && violationMessage.toLowerCase(java.util.Locale.ROOT).contains("dependency depth")) {
+        if ("MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED".equals(violationCode)
+                || ("MISSION_LIMIT_EXCEEDED".equals(violationCode)
+                        && violationMessage.toLowerCase(java.util.Locale.ROOT).contains("dependency depth"))) {
             dependencyRepair =
                     """
 
@@ -1725,6 +1763,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 Dependency depth counts task nodes, not edges: root depth is 1, a direct dependent is depth 2, and a
                 dependent of that Task is depth 3. Flatten dependencies as needed to stay within the maximum.
                 %s%s
+                %s
                 Mission objective: %s
                 Mission acceptance criteria: %s
                 Rejected by deterministic validation: %s - %s
@@ -1740,11 +1779,23 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         request.constraints().maxDependencyDepth(),
                         dependencyRepair,
                         taskCountRepair,
+                        plannerReferenceTime(currentUtcDate),
                         request.objective(),
                         request.acceptanceCriteria(),
                         violationCode,
                         violationMessage,
                         PLANNER_REPAIR_INPUT_MAX_CHARACTERS,
                         boundedOutput);
+    }
+
+    private static String plannerReferenceTime(LocalDate currentUtcDate) {
+        LocalDate referenceDate = Objects.requireNonNull(currentUtcDate);
+        return """
+                Current UTC date: %s. Resolve relative dates against this date, not model training data.
+                The concrete inclusive window for \"past three years\", \"过去三年\", \"过去3年\", or \"近三年\"
+                is %s through %s. Use another interval only when the Mission explicitly specifies it.
+                """
+                .formatted(referenceDate, referenceDate.minusYears(3), referenceDate)
+                .strip();
     }
 }

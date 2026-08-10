@@ -1229,6 +1229,19 @@ function missionStateLabel(state: string): string {
   }[state] ?? state;
 }
 
+function missionFailureMessage(mission: MissionSnapshot): string {
+  if (mission.blocker === "MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED") {
+    return "Mission 规划失败：任务依赖层级超过限制。";
+  }
+  if (mission.blocker === "MISSION_LIMIT_EXCEEDED" && mission.tasks.length === 0) {
+    return "Mission 规划失败：任务数量或依赖层级超过限制。";
+  }
+  if (mission.blocker === "MISSION_LIMIT_EXCEEDED") {
+    return "Mission 执行失败：已达到资源、调用次数或时间限制。";
+  }
+  return "Mission 执行失败，请查看技术详情。";
+}
+
 function parseMissionFinalResult(value: string | null): {
   schemaVersion?: string;
   unsupportedVersion?: boolean;
@@ -1620,16 +1633,36 @@ function MissionDialog({
 
   const beginEdit = () => {
     if (!selected) return;
-    setPlanJson(JSON.stringify({ tasks: selected.tasks }, null, 2));
+    setPlanJson(JSON.stringify({
+      tasks: selected.tasks.map((task) => ({
+        taskId: task.taskId,
+        ordinal: task.ordinal,
+        title: task.title,
+        objective: task.objective,
+        acceptanceCriteria: task.acceptanceCriteria,
+        dependsOn: task.dependsOn,
+      })),
+    }, null, 2));
     setEditingPlan(true);
   };
 
   const replacePlan = () => {
     if (!selected || !client.replaceMissionPlan) return;
     try {
-      const parsed = JSON.parse(planJson) as { tasks?: MissionSnapshot["tasks"] };
+      const parsed = JSON.parse(planJson) as {
+        tasks?: Array<Pick<MissionSnapshot["tasks"][number],
+          "taskId" | "ordinal" | "title" | "objective" | "acceptanceCriteria" | "dependsOn">>;
+      };
       if (!Array.isArray(parsed.tasks)) throw new Error("计划必须包含 tasks 数组。");
-      const tasks = parsed.tasks;
+      const deepResearch = selected.mode === "DEEP_RESEARCH";
+      const tasks: MissionSnapshot["tasks"] = parsed.tasks.map((task) => ({
+        ...task,
+        taskType: deepResearch ? "RESEARCH" : "GENERAL",
+        requiredSkillIds: deepResearch ? ["deep-research"] : [],
+        resultSchemaId: deepResearch ? "pa.research-task-result" : "pa.task-result",
+        resultSchemaVersion: "v1",
+        state: "PLANNED",
+      }));
       void command(() => client.replaceMissionPlan!(selected, { plan: { tasks } }, {
         idempotencyKey: crypto.randomUUID(),
       })).then((succeeded) => {
@@ -1715,8 +1748,8 @@ function MissionDialog({
             )}
             {!creatingMission && (selected ? (
               <article className="mission-detail">
-                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span>{selected.mode === "DEEP_RESEARCH" && <span className="mission-mode">Deep Research · {selected.selectedSkillBinding ?? "deep-research"}</span>}<h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
-                {selected.blocker && <p className="error-banner" role="alert">Mission 失败：{selected.blocker}</p>}
+                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span>{selected.mode === "DEEP_RESEARCH" && <span className="mission-mode">Deep Research</span>}<h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                {selected.blocker && <div className="error-banner" role="alert"><span>{missionFailureMessage(selected)}</span><details><summary>技术详情</summary><code>{selected.blocker}</code></details></div>}
                 {selected.researchBrief && <section className="research-brief-summary"><h4>Research brief</h4><p><b>问题：</b>{selected.researchBrief.question}</p>{selected.researchBrief.scope && <p><b>范围：</b>{selected.researchBrief.scope}</p>}<p><b>时间 / 地区 / 受众：</b>{[selected.researchBrief.timeRange, selected.researchBrief.region, selected.researchBrief.audience].filter(Boolean).join(" · ") || "未限定"}</p></section>}
                 {selected.acceptanceCriteria.length > 0 && <section><h4>验收标准</h4><ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section>}
                 <section className="mission-execution-summary" aria-label="Mission 执行状态">
@@ -1751,10 +1784,7 @@ function MissionDialog({
               <div className="mission-task-detail-scroll">
                 <section><h4>任务目标</h4><p>{selectedTask.objective}</p></section>
                 <dl className="mission-task-metadata">
-                  <div><dt>任务类型</dt><dd>{selectedTask.taskType}</dd></div>
                   <div><dt>当前状态</dt><dd>{selectedTask.state}</dd></div>
-                  <div><dt>执行 Skill</dt><dd>{selectedTask.requiredSkillIds.join("、") || "无指定 Skill"}</dd></div>
-                  <div><dt>结果 Schema</dt><dd>{selectedTask.resultSchemaId} · {selectedTask.resultSchemaVersion}</dd></div>
                 </dl>
                 <section><div className="mission-task-section-heading"><h4>验收标准</h4><span>{selectedTask.acceptanceCriteria.length} 项</span></div>{selectedTask.acceptanceCriteria.length > 0 ? <ol className="mission-task-criteria">{selectedTask.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ol> : <p className="mission-task-empty">未定义任务级验收标准。</p>}</section>
                 <section><div className="mission-task-section-heading"><h4>依赖任务</h4><span>{selectedTask.dependsOn.length} 项</span></div>{selectedTask.dependsOn.length > 0 ? <div className="mission-task-dependencies">{selectedTask.dependsOn.map((dependencyId) => {
@@ -1768,7 +1798,7 @@ function MissionDialog({
                 {selected && selectedTask.state === "BLOCKED" && client.retryMissionTask && <button type="button" className="button" disabled={busy} onClick={() => void command(() => client.retryMissionTask!(selected, selectedTask.taskId, { idempotencyKey: crypto.randomUUID() }))}>重试任务</button>}
                 {nextTask && <button type="button" className="button primary-button" onClick={() => setSelectedTaskId(nextTask.taskId)}>下一个任务<ChevronRight size={15} /></button>}
               </footer>
-            </> : <div className="mission-task-detail-empty"><PanelRight size={24} /><h3>选择计划任务</h3><p>点击中间的 Plan 任务，在这里查看目标、验收标准、依赖、Skill 与结果 Schema。</p></div>}
+            </> : <div className="mission-task-detail-empty"><PanelRight size={24} /><h3>选择计划任务</h3><p>点击中间的 Plan 任务，在这里查看目标、验收标准、依赖与结果格式。</p></div>}
           </aside>
         </div>
         <div className={`mission-sync-status sync-${syncStatus}`} role="status" aria-live="polite" aria-atomic="true">

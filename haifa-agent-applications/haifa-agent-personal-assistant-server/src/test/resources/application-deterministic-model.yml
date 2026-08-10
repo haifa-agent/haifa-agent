@@ -56,7 +56,7 @@ haifa:
             provider-model-id: personal-test
             style: deterministic-chat
             capabilities: [TEXT_CHAT, TOOL_CALLING, IMAGE_INPUT, STRUCTURED_OUTPUT]
-            context-window: 8192
+            context-window: 16384
             max-output-tokens: 1024
     web:
       enabled: false

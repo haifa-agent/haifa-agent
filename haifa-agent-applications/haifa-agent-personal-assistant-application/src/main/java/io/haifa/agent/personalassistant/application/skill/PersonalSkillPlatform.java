@@ -181,6 +181,7 @@ public record PersonalSkillPlatform(
                 SkillAvailability.ENABLED);
         List<String> researchResources = List.of(
                 "SKILL.md",
+                "references/research-types.md",
                 "references/research-method.md",
                 "references/source-quality.md",
                 "references/citation-rules.md",

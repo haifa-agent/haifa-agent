@@ -73,7 +73,8 @@ public final class MissionPlanValidator {
         for (MissionTask task : tasks) {
             int depth = depth(task.taskId(), byId, depths, visiting);
             if (depth > constraints.maxDependencyDepth()) {
-                throw new MissionException("MISSION_LIMIT_EXCEEDED", "plan dependency depth exceeds the limit");
+                throw new MissionException(
+                        "MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED", "plan dependency depth exceeds the limit");
             }
         }
         return tasks.stream()

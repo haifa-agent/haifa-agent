@@ -24,6 +24,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionTaskState;
 import io.haifa.agent.personalassistant.application.mission.MissionUnitOfWork;
 import io.haifa.agent.personalassistant.application.mission.MissionUsage;
 import io.haifa.agent.personalassistant.application.mission.PersonalMission;
+import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.store.sqlite.migration.SqlScriptParser;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -311,7 +312,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         }
         this.database = normalized;
         jdbcUrl = "jdbc:sqlite:" + normalized;
-        this.mapper = mapper.copy();
+        this.mapper = mapper.copy().findAndRegisterModules();
         this.maxAutoAttempts = maxAutoAttempts;
         this.maxTotalAttempts = maxTotalAttempts;
         this.maxModelTokens = maxModelTokens;
@@ -890,7 +891,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 try (var select = current()
                         .prepareStatement(
                                 """
-                    SELECT mission_id,conversation_id,owner_scope,mode,objective,
+                    SELECT mission_id,conversation_id,owner_scope,mode,objective,research_brief_json,
                            usage_model_tokens,deadline_at_ms
                     FROM personal_mission m
                     WHERE state IN ('RUNNING','WAITING_USER','SYNTHESIZING')
@@ -943,7 +944,9 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 completedTaskIds,
                                 2,
                                 Math.max(0, maxModelTokens - result.getLong("usage_model_tokens")),
-                                Optional.of(Instant.ofEpochMilli(result.getLong("deadline_at_ms")))));
+                                Optional.of(Instant.ofEpochMilli(result.getLong("deadline_at_ms"))),
+                                Optional.ofNullable(result.getString("research_brief_json"))
+                                        .map(encoded -> json(encoded, ResearchBrief.class, "research brief"))));
                     }
                 }
             } catch (SQLException exception) {
@@ -1305,7 +1308,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 """
                 SELECT t.mission_id,t.task_id,t.latest_attempt_no,t.objective,t.acceptance_json,
                        t.task_type,t.skill_ids_json,t.result_schema_id,t.result_schema_version,
-                       m.objective AS mission_objective,m.acceptance_json AS mission_acceptance_json
+                       m.objective AS mission_objective,m.acceptance_json AS mission_acceptance_json,
+                       m.research_brief_json
                 FROM personal_mission_task t JOIN personal_mission m ON m.mission_id=t.mission_id
                 WHERE t.state='READY' AND m.state='RUNNING'
                 ORDER BY COALESCE(m.started_at_ms,m.confirmed_at_ms),t.mission_id,t.ordinal,t.task_id LIMIT 1
@@ -1326,6 +1330,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     jsonList(result.getString("skill_ids_json")),
                     result.getString("result_schema_id"),
                     result.getString("result_schema_version"),
+                    Optional.ofNullable(result.getString("research_brief_json"))
+                            .map(encoded -> json(encoded, ResearchBrief.class, "research brief")),
                     dependencies);
             String payload = json(runInput);
             String payloadDigest = sha256(payload);

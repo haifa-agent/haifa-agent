@@ -143,7 +143,7 @@ class MissionApplicationServiceTest {
                 MissionExecutionStore.unavailable(),
                 Map.of(
                         "deep-research",
-                        "product/classpath:personal-assistant-bundled@1/deep-research@2.0.0#sha256:test"));
+                        "product/classpath:personal-assistant-bundled@1/deep-research@2.1.0#sha256:test"));
         ResearchBrief brief = new ResearchBrief(
                 "What does the evidence show?",
                 "bounded",
@@ -168,7 +168,7 @@ class MissionApplicationServiceTest {
         assertThat(snapshot.researchBrief()).contains(brief);
         assertThat(snapshot.selectedSkillId()).contains("deep-research");
         assertThat(snapshot.selectedSkillBinding()).hasValueSatisfying(binding -> assertThat(binding)
-                .contains("personal-assistant-bundled", "deep-research@2.0.0", "#sha256:"));
+                .contains("personal-assistant-bundled", "deep-research@2.1.0", "#sha256:"));
         assertThat(snapshot.plan().orElseThrow().tasks()).allSatisfy(task -> {
             assertThat(task.taskType()).isEqualTo("RESEARCH");
             assertThat(task.requiredSkillIds()).containsExactly("deep-research");

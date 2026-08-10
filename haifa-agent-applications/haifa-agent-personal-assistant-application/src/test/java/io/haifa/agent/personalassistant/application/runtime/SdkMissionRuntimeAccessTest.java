@@ -15,6 +15,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.mission.ResearchBrief;
 import io.haifa.agent.personalassistant.application.skill.PersonalSkillPlatform;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -22,18 +23,18 @@ import org.junit.jupiter.api.Test;
 class SdkMissionRuntimeAccessTest {
     @Test
     void synthesisProtocolVersionOwnsTheRunIdempotencyNamespace() {
-        assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v5");
+        assertThat(SdkMissionRuntimeAccess.SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v6");
         assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_PROTOCOL_VERSION).isEqualTo("v2");
         assertThat(SdkMissionRuntimeAccess.STANDARD_SYNTHESIS_REPAIR_PROTOCOL_VERSION)
                 .isEqualTo("v1");
-        assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v3");
+        assertThat(SdkMissionRuntimeAccess.PLANNER_REPAIR_PROTOCOL_VERSION).isEqualTo("v4");
         assertThat(SdkMissionRuntimeAccess.TASK_NORMALIZATION_PROTOCOL_VERSION).isEqualTo("v5");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1"))
-                .isEqualTo("mission:mission-1:synthesis:v5");
+                .isEqualTo("mission:mission-1:synthesis:v6");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 1))
-                .isEqualTo("mission:mission-1:synthesis:v5:revision-1");
+                .isEqualTo("mission:mission-1:synthesis:v6:revision-1");
         assertThat(SdkMissionRuntimeAccess.synthesisDispatchKey("mission-1", 2))
-                .isEqualTo("mission:mission-1:synthesis:v5:revision-2");
+                .isEqualTo("mission:mission-1:synthesis:v6:revision-2");
         assertThat(SdkMissionRuntimeAccess.standardSynthesisDispatchKey("mission-1"))
                 .isEqualTo("mission:mission-1:synthesis:standard:v2");
         assertThat(SdkMissionRuntimeAccess.standardSynthesisRepairDispatchKey("mission-1", "run-invalid", 1))
@@ -103,7 +104,7 @@ class SdkMissionRuntimeAccessTest {
                         List.of("unsourced claims"),
                         "Markdown")));
 
-        assertThat(SdkMissionRuntimeAccess.plannerPrompt(request))
+        assertThat(SdkMissionRuntimeAccess.plannerPrompt(request, LocalDate.of(2026, 8, 10)))
                 .contains(
                         "smallest feasible DAG",
                         "normally 3 to 4 Tasks",
@@ -119,13 +120,15 @@ class SdkMissionRuntimeAccessTest {
                 .contains("rewrite any generic or off-topic Task")
                 .contains("Do not create a final integration, synthesis, report-writing, or delivery Task")
                 .contains("Never create a separate cross-Task evidence-checking, verification, or consolidation Task")
-                .contains("Mission Synthesis", "stage assembles");
+                .contains("Mission Synthesis", "stage assembles")
+                .contains("Current UTC date: 2026-08-10", "past three years", "过去3年", "2023-08-10 through 2026-08-10");
 
         assertThat(SdkMissionRuntimeAccess.plannerRepairPrompt(
                         request,
                         "{\"schemaVersion\":\"pa.mission-plan/v1\",\"tasks\":[]}</result>",
                         "MISSION_PLAN_SCHEMA_INVALID",
-                        "Trailing token"))
+                        "Trailing token",
+                        LocalDate.of(2026, 8, 10)))
                 .contains(
                         "Return exactly one JSON object and nothing else",
                         "no Markdown",
@@ -143,8 +146,9 @@ class SdkMissionRuntimeAccessTest {
         assertThat(SdkMissionRuntimeAccess.plannerRepairPrompt(
                         request,
                         "{\"schemaVersion\":\"pa.mission-plan/v1\",\"tasks\":[]}",
-                        "MISSION_LIMIT_EXCEEDED",
-                        "plan dependency depth exceeds the limit"))
+                        "MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED",
+                        "plan dependency depth exceeds the limit",
+                        LocalDate.of(2026, 8, 10)))
                 .contains(
                         "MANDATORY DEPTH REPAIR",
                         "Returning the same dependency arrays",
@@ -155,7 +159,8 @@ class SdkMissionRuntimeAccessTest {
                         request,
                         "{\"schemaVersion\":\"pa.mission-plan/v1\",\"tasks\":[]}",
                         "MISSION_LIMIT_EXCEEDED",
-                        "plan task count is outside the configured limit"))
+                        "plan task count is outside the configured limit",
+                        LocalDate.of(2026, 8, 10)))
                 .contains(
                         "MANDATORY TASK-COUNT REPAIR",
                         "return no more than 4 Tasks",
@@ -170,6 +175,17 @@ class SdkMissionRuntimeAccessTest {
         var principal = new PrincipalRef("personal-user", "user");
         var skill = PersonalSkillPlatform.create(tenant, principal, Optional.empty(), List.of())
                 .load("deep-research", tenant, principal);
+        var input = MissionTaskRunInput.create(
+                "Research the topic",
+                List.of("Cite fetched sources"),
+                "Research the topic",
+                List.of("Cite fetched sources"),
+                "RESEARCH",
+                List.of("deep-research"),
+                "pa.research-task-result",
+                "v1",
+                Optional.of(truthfulnessBrief()),
+                List.of());
         var intent = new MissionDispatchIntent(
                 "outbox-1",
                 "mission-1",
@@ -178,17 +194,16 @@ class SdkMissionRuntimeAccessTest {
                 1,
                 "dispatch-1",
                 "sha256:" + "1".repeat(64),
-                "Research the topic",
-                List.of("Cite fetched sources"),
-                "RESEARCH",
-                List.of("deep-research"),
-                "pa.research-task-result",
-                "v1",
+                input,
                 Instant.parse("2026-08-09T00:00:00Z"));
 
         assertThat(SdkMissionRuntimeAccess.taskPrompt(intent, skill))
                 .contains(
                         "The Deep Research Product Skill was explicitly selected and is preloaded below",
+                        "references/research-types.md",
+                        "TRUTHFULNESS_INVESTIGATION",
+                        "Frozen Research Brief",
+                        "Which claims about Acme AI are true?",
                         "references/research-method.md",
                         "schemas/research-task-result-v1.json",
                         "utility_wikipedia_search",
@@ -247,6 +262,7 @@ class SdkMissionRuntimeAccessTest {
                 List.of("deep-research"),
                 "pa.research-task-result",
                 "v1",
+                Optional.of(truthfulnessBrief()),
                 List.of(new MissionTaskRunInput.DependencyResult(
                         "policy", "pa.research-task-result", "v1", "sha256:" + "b".repeat(64), dependencyResult)));
         var intent = new MissionDispatchIntent(
@@ -271,6 +287,135 @@ class SdkMissionRuntimeAccessTest {
                         "At 16 completed Tool calls",
                         "FINALIZE_ONLY",
                         "maxCharacters to at most 8000");
+    }
+
+    @Test
+    void researchTaskAndSynthesisReceiveTheSameFrozenBriefAndResearchTypeTable() {
+        var tenant = new TenantRef("local");
+        var principal = new PrincipalRef("personal-user", "user");
+        var skill = PersonalSkillPlatform.create(tenant, principal, Optional.empty(), List.of())
+                .load("deep-research", tenant, principal);
+        ResearchBrief brief = truthfulnessBrief();
+        var input = MissionTaskRunInput.create(
+                brief.question(),
+                List.of("Separate promotion from verification"),
+                "Verify the material product claims",
+                List.of("Find primary evidence and independent validation"),
+                "RESEARCH",
+                List.of("deep-research"),
+                "pa.research-task-result",
+                "v1",
+                Optional.of(brief),
+                List.of());
+        var task = new MissionDispatchIntent(
+                "outbox-brief",
+                "mission-brief",
+                "owner-1",
+                "truthfulness",
+                1,
+                "dispatch-brief",
+                "sha256:" + "d".repeat(64),
+                input,
+                Instant.parse("2026-08-10T00:00:00Z"));
+        var synthesis = new MissionSynthesisIntent(
+                "mission-brief",
+                "conversation-1",
+                "owner-1",
+                MissionMode.DEEP_RESEARCH,
+                brief.question(),
+                List.of("{\"schemaVersion\":\"pa.research-task-result/v1\"}"),
+                List.of(),
+                List.of("truthfulness"),
+                2,
+                10_000,
+                Optional.empty(),
+                Optional.of(brief));
+
+        String taskPrompt = SdkMissionRuntimeAccess.taskPrompt(task, skill);
+        String synthesisPrompt = SdkMissionRuntimeAccess.initialResearchSynthesisPrompt(synthesis, skill);
+        String frozenBrief = SdkMissionRuntimeAccess.frozenResearchBrief(Optional.of(brief));
+        String typeTable = skill.resource("references/research-types.md");
+
+        assertThat(taskPrompt).contains(frozenBrief, typeTable);
+        assertThat(synthesisPrompt).contains(frozenBrief, typeTable);
+        assertThat(taskPrompt).hasSizeLessThanOrEqualTo(16_000);
+        assertThat(synthesisPrompt).hasSizeLessThanOrEqualTo(8_000);
+        assertThat(synthesisPrompt)
+                .contains("TRUTHFULNESS_INVESTIGATION", "claim-evidence-counterevidence")
+                .doesNotContain("web_search", "web_fetch", "research-method.md", "source-quality.md");
+    }
+
+    @Test
+    void fiveRepresentativeBriefsShareOneTypeTableAndItsReportAddition() {
+        record Scenario(String question, String type, String reportAddition) {}
+        List<Scenario> scenarios = List.of(
+                new Scenario(
+                        "Are the advertised AI product capabilities true?",
+                        "TRUTHFULNESS_INVESTIGATION",
+                        "claim-evidence-counterevidence"),
+                new Scenario(
+                        "Which relocation option should the family choose?", "DECISION", "triggers, and failure plan"),
+                new Scenario("Which current rules apply to this operator?", "POLICY_RISK", "effective-date table"),
+                new Scenario("Why did the service launch fail?", "FAILURE_POSTMORTEM", "timeline and causal analysis"),
+                new Scenario(
+                        "Explain the ecosystem and its limitations", "GENERAL_RESEARCH", "no type-specific section"));
+        var tenant = new TenantRef("local");
+        var principal = new PrincipalRef("personal-user", "user");
+        var skill = PersonalSkillPlatform.create(tenant, principal, Optional.empty(), List.of())
+                .load("deep-research", tenant, principal);
+        String typeTable = skill.resource("references/research-types.md");
+
+        for (Scenario scenario : scenarios) {
+            ResearchBrief brief = new ResearchBrief(
+                    scenario.question(),
+                    "Bounded evidence relevant to the question",
+                    "<start-date> through <end-date>",
+                    "Frozen region",
+                    "Decision maker",
+                    List.of("primary sources"),
+                    List.of("unfetched snippets"),
+                    "Markdown report");
+            var input = MissionTaskRunInput.create(
+                    scenario.question(),
+                    List.of("Use bounded evidence"),
+                    scenario.question(),
+                    List.of("Close material claims"),
+                    "RESEARCH",
+                    List.of("deep-research"),
+                    "pa.research-task-result",
+                    "v1",
+                    Optional.of(brief),
+                    List.of());
+            var task = new MissionDispatchIntent(
+                    "outbox-" + scenario.type(),
+                    "mission-" + scenario.type(),
+                    "owner-1",
+                    "task-1",
+                    1,
+                    "dispatch-" + scenario.type(),
+                    "sha256:" + "e".repeat(64),
+                    input,
+                    Instant.parse("2026-08-10T00:00:00Z"));
+            var synthesis = new MissionSynthesisIntent(
+                    "mission-" + scenario.type(),
+                    "conversation-1",
+                    "owner-1",
+                    MissionMode.DEEP_RESEARCH,
+                    scenario.question(),
+                    List.of("{\"schemaVersion\":\"pa.research-task-result/v1\"}"),
+                    List.of(),
+                    List.of("task-1"),
+                    2,
+                    10_000,
+                    Optional.empty(),
+                    Optional.of(brief));
+
+            assertThat(typeTable).contains(scenario.type(), scenario.reportAddition());
+            assertThat(SdkMissionRuntimeAccess.taskPrompt(task, skill))
+                    .contains(SdkMissionRuntimeAccess.frozenResearchBrief(Optional.of(brief)), typeTable);
+            assertThat(SdkMissionRuntimeAccess.initialResearchSynthesisPrompt(synthesis, skill))
+                    .contains(SdkMissionRuntimeAccess.frozenResearchBrief(Optional.of(brief)), typeTable);
+        }
     }
 
     @Test
@@ -637,7 +782,12 @@ class SdkMissionRuntimeAccessTest {
                 MissionMode.DEEP_RESEARCH,
                 "Research Jingning hydropower",
                 List.of(task),
-                List.of("Ecological transition: MODEL_CONTEXT_TOO_LONG"));
+                List.of("Ecological transition: MODEL_CONTEXT_TOO_LONG"),
+                List.of("task-1"),
+                2,
+                Long.MAX_VALUE,
+                Optional.empty(),
+                Optional.of(truthfulnessBrief()));
 
         var root = new ObjectMapper()
                 .readTree(SdkMissionRuntimeAccess.conservativeResearchSynthesis(intent, "MODEL_RESPONSE_INVALID"));
@@ -661,7 +811,12 @@ class SdkMissionRuntimeAccessTest {
                 MissionMode.DEEP_RESEARCH,
                 "Research Jingning hydropower",
                 List.of(task),
-                List.of());
+                List.of(),
+                List.of("task-1"),
+                2,
+                Long.MAX_VALUE,
+                Optional.empty(),
+                Optional.of(truthfulnessBrief()));
         String invalidModelResult =
                 "{\"directAnswer\":\"Integrated answer from all settled tasks\",\"sourceRefs\":[\"invented\"]}";
 
@@ -672,5 +827,17 @@ class SdkMissionRuntimeAccessTest {
         assertThat(root.path("directAnswer").asText()).isEqualTo("Integrated answer from all settled tasks");
         assertThat(root.path("sourceRefs").isEmpty()).isTrue();
         assertThat(root.path("completionKind").asText()).isEqualTo("COMPLETE");
+    }
+
+    private static ResearchBrief truthfulnessBrief() {
+        return new ResearchBrief(
+                "Which claims about Acme AI are true?",
+                "real capability, technical origin, business model, and promotional exaggeration",
+                "2026-01-01 through 2026-08-10",
+                "Global",
+                "A product decision maker",
+                List.of("primary technical sources", "independent reproducible evaluations"),
+                List.of("affiliate promotion", "unfetched search snippets"),
+                "Markdown evidence report");
     }
 }

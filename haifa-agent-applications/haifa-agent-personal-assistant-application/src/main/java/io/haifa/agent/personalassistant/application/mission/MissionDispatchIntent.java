@@ -51,6 +51,7 @@ public record MissionDispatchIntent(
                         requiredSkillIds,
                         resultSchemaId,
                         resultSchemaVersion,
+                        java.util.Optional.empty(),
                         List.of()),
                 claimedAt);
     }

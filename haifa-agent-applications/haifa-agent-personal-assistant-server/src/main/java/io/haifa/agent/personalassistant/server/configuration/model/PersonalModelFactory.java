@@ -426,9 +426,12 @@ public final class PersonalModelFactory {
                 return response(current, result, List.of(), ModelFinishReason.STOP);
             }
             if (prompt.contains("Task type: RESEARCH") || visibleContext.contains("Task type: RESEARCH")) {
-                long toolResults = request.messages().stream()
-                        .filter(message -> message.role() == ModelMessageRole.TOOL)
-                        .count();
+                boolean reusesDependencies = visibleContext.contains("\"dependencies\":[{");
+                long toolResults = reusesDependencies
+                        ? 3
+                        : request.messages().stream()
+                                .filter(message -> message.role() == ModelMessageRole.TOOL)
+                                .count();
                 if (toolResults == 0) {
                     return tool(
                             current,
@@ -475,8 +478,12 @@ public final class PersonalModelFactory {
                         "quotedSpans":[]}],"artifactRefs":[],
                         "unresolvedQuestions":["The offline fixture cannot establish external freshness."],
                         "stopReason":"SUFFICIENT_EVIDENCE",
-                        "limitsUsed":{"searchCalls":1,"fetchCalls":2,"sources":2,"contentBytes":164}}
-                        """,
+                        "limitsUsed":{"searchCalls":%d,"fetchCalls":%d,"sources":2,"contentBytes":%d}}
+                        """
+                                .formatted(
+                                        reusesDependencies ? 0 : 1,
+                                        reusesDependencies ? 0 : 2,
+                                        reusesDependencies ? 0 : 164),
                         List.of(),
                         ModelFinishReason.STOP);
             }
