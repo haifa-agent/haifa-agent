@@ -118,8 +118,11 @@ the deterministic acceptance profile keeps its explicit 30-minute test deadline.
 Phase 3 adds product schema V5 for the frozen Mission-level Skill binding and uses shared Runtime
 schema V7 Artifact metadata plus an application-owned, no-follow payload directory. Deep Research
 uses only the approved `web.search` / `web.fetch` pipeline, validates canonical source identities,
-citation closure, quote bounds and structured synthesis, then publishes exactly five owner-only,
-hash-verified Artifacts and one idempotent final Conversation message. The deterministic offline
+citation closure and quote bounds, then applies a deterministic marked-Markdown Report Gate and at most two stable
+idempotent revisions. It publishes report, sources, claim-evidence and unresolved Artifacts, validates their
+hash/version/media type, and publishes the code-owned `pa.research-delivery/v2` manifest last as the fifth owner-only
+Artifact plus one idempotent final Conversation message. Existing v1 delivery JSON remains read-only compatible and
+the existing Mission columns carry v2 without a database Migration. The deterministic offline
 Stub exercises the same Tool/Skill/Runtime path; it is not a production network provider.
 
 Server 提供 `/api/v1/missions` 的 create/list/get/snapshot、确认前完整计划 replace/regenerate、confirm

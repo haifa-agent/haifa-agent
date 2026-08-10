@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pa.research-delivery/v2",
+  "type": "object",
+  "required": [
+    "schemaVersion", "completionKind", "degraded", "degradationReasons",
+    "reportArtifactRef", "sourcesArtifactRef", "claimEvidenceArtifactRef", "unresolvedArtifactRef",
+    "coveredTaskIds", "affectedTaskIds", "sourceCount", "unverifiedClaimCount",
+    "unresolvedQuestionCount", "qualityGate"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "pa.research-delivery/v2" },
+    "completionKind": { "enum": ["COMPLETE", "PARTIAL"] },
+    "degraded": { "type": "boolean" },
+    "degradationReasons": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
+    "reportArtifactRef": { "$ref": "#/$defs/artifactRef" },
+    "sourcesArtifactRef": { "$ref": "#/$defs/artifactRef" },
+    "claimEvidenceArtifactRef": { "$ref": "#/$defs/artifactRef" },
+    "unresolvedArtifactRef": { "$ref": "#/$defs/artifactRef" },
+    "coveredTaskIds": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+    "affectedTaskIds": { "type": "array", "maxItems": 8, "items": { "type": "string" } },
+    "sourceCount": { "type": "integer", "minimum": 0, "maximum": 24 },
+    "unverifiedClaimCount": { "type": "integer", "minimum": 0, "maximum": 320 },
+    "unresolvedQuestionCount": { "type": "integer", "minimum": 0, "maximum": 160 },
+    "qualityGate": {
+      "type": "object",
+      "required": ["passed", "failedChecks"],
+      "additionalProperties": false,
+      "properties": {
+        "passed": { "type": "boolean" },
+        "failedChecks": { "type": "array", "maxItems": 20, "items": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "artifactRef": {
+      "type": "object",
+      "required": ["artifactId", "version", "sha256", "byteCount", "mediaType", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "artifactId": { "type": "string" },
+        "version": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "byteCount": { "type": "integer", "minimum": 1 },
+        "mediaType": { "type": "string" },
+        "title": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "degraded": { "const": true } }, "required": ["degraded"] },
+      "then": { "properties": { "completionKind": { "const": "PARTIAL" } } }
+    }
+  ],
+  "additionalProperties": false
+}

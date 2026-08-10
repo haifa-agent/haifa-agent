@@ -29,11 +29,12 @@ that reaches its execution or Mission deadline is cancelled and enters the exist
 partial-synthesis path instead of being silently abandoned.
 
 Phase 3 adds an explicit `DEEP_RESEARCH` Mission mode with a frozen Research Brief and the
-bundled `deep-research@1.0.0` Skill. The Mission persists the full resolved Skill coordinate
+bundled `deep-research@2.0.0` Skill. The Mission persists the full resolved Skill coordinate
 (scope, source version, declared version, and package content digest), while each Research Task
-runs in an isolated ephemeral Session through the existing Runtime Tool pipeline. Strict task and
-final-result schemas preserve source identity, claim-to-evidence closure, unresolved questions,
-partial completion, and five immutable research Artifacts; fetched content remains untrusted data.
+runs in an isolated ephemeral Session through the existing Runtime Tool pipeline. Strict task schemas preserve
+source identity and claim-to-evidence closure. Final Synthesis returns Markdown directly; a deterministic Report
+Quality Gate and code-owned `pa.research-delivery/v2` manifest preserve Task coverage, unresolved questions,
+partial/degraded completion, and five immutable research Artifacts. Fetched content remains untrusted data.
 
 Mission stages use explicit Run Profile Tool boundaries. Planner and Research Task freeze only read-only Web
 Search/Fetch and Wikipedia MCP Tools; the explicitly selected Deep Research Product Skill is preloaded into each
@@ -53,23 +54,33 @@ with a hard safety ceiling of 32, and each fetch is capped at 8,000 characters. 
 calls and 384,000 total model tokens. The persisted Outbox payload and Attempt request digest identify the same
 immutable input across claim recovery and retry.
 
-Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Final publication
-canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the Mission-wide 24-source
-limit. The bounded final unverified-claim index supports the existing eight-Task by forty-claims-per-Task ceiling, so
+Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Unicode model IDs
+are normalized to lower-case ASCII kebab IDs there, and Claim source references are rewritten to the same identity.
+Final publication canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the
+Mission-wide 24-source limit. The bounded final unverified-claim index supports the existing eight-Task by
+forty-claims-per-Task ceiling, so
 strict citation closure never requires dropping an unverified claim merely to satisfy a smaller synthesis array.
 Only complete FETCHED metadata with a canonical `sha256:` content digest survives Task normalization; all other
-source states clear fetch-only metadata and dependent claims remain unverified. Synthesis similarly normalizes
-representational drift into the exact final-result shape without trusting model-provided Artifact references.
+source states clear fetch-only metadata and dependent claims remain unverified. Synthesis uses stable initial,
+revision-1 and revision-2 Runtime idempotency keys. The product checks marked Markdown before publication, then
+checks the four published Artifact refs before publishing `research-delivery.json` last; the model never supplies
+Artifact references or the delivery manifest.
 
 Research Task Runs use a 10-minute wall-clock limit and a 4-minute idle limit so a long final structured response can
 complete after multi-round evidence collection. Planner and Synthesis retain their narrower stage-specific limits.
 The Mission-wide deadline defaults to two hours and remains a hard upper bound; individual Task limits, Mission token
 and Tool budgets, cancellation, and capacity admission continue to bound resource use.
 
-Planner and Synthesis use the Provider's native JSON response format. Research Task deliberately does not combine
-that option with iterative Tool calls because supported OpenAI-compatible Providers may reject a later continuation;
-the preloaded Skill still requires exactly one JSON object and the product boundary strictly validates the declared
-Task result schema before accepting it.
+Planner, Task Normalizer and Standard Mission Synthesis use the Provider's native JSON response format. Research
+Task deliberately does not combine that option with iterative Tool calls, and Deep Research final Synthesis uses a
+separate Markdown Profile without JSON response formatting. The preloaded Skill still requires exactly one Task JSON
+object, while the final report uses stable section, Task and source markers validated by the product boundary.
+
+Standard Mission Synthesis freezes the complete `pa.mission-final-result/v1` field shape in its prompt. If the first
+candidate is rejected specifically by the deterministic final-result schema validator, the coordinator permits one
+stable-idempotency repair Run in the same ephemeral Synthesis Session and validates the repaired candidate again.
+Usage from that repair is cumulative; a second invalid candidate or any non-schema publication failure terminates
+without another model retry.
 
 `mission` 产品包提供显式长任务的纯 Java 聚合与用例：创建规划中 Mission、生成或整体替换有序
 Task DAG、确认并冻结计划、取消、查询 Snapshot，以及命令幂等和 expected revision。一个可信
@@ -82,7 +93,8 @@ Planner Session、命名 Run Profile 和严格 `pa.mission-plan/v1` JSON；能�
 校验失败时 fail closed，不从自由文本提取 JSON，也不回退模型。Phase 2 增加产品层 Task Attempt、
 Outbox/Saga 协调、确定性串行 ready 计算、稳定 dispatch key、Runtime 权威状态结算、取消、一次自动
 重试和用户显式重试。每个 Task Attempt 使用独立 ephemeral Session；它不创建 Conversation，也不进入
-Memory。Pause/Resume、Verifier 和 Repair 仍不在本阶段范围内；Deep Research 已按上述边界落地。
+Memory。Pause/Resume、Task Verifier 和 Task Repair 仍不在本阶段范围内；这里只提供上述最终 Synthesis
+Schema 的一次受限 repair，Deep Research 已按上述边界落地。
 
 Personal Run View 在兼容 `errorCode` 之外提供类型化执行错误：code、默认安全 message、
 category、retryability、安全 details、diagnosticId 和 occurredAt。应用层只投影 Runtime

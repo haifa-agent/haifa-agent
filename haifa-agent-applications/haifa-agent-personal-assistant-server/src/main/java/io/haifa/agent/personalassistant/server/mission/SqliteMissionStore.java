@@ -890,7 +890,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 try (var select = current()
                         .prepareStatement(
                                 """
-                    SELECT mission_id,conversation_id,owner_scope,mode,objective
+                    SELECT mission_id,conversation_id,owner_scope,mode,objective,
+                           usage_model_tokens,deadline_at_ms
                     FROM personal_mission m
                     WHERE state IN ('RUNNING','WAITING_USER','SYNTHESIZING')
                       AND NOT EXISTS (SELECT 1 FROM personal_mission_task t
@@ -908,6 +909,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         String missionId = result.getString("mission_id");
                         updateMissionState(missionId, "SYNTHESIZING", now, "state IN ('RUNNING','WAITING_USER')");
                         List<String> taskResults = new ArrayList<>();
+                        List<String> completedTaskIds = new ArrayList<>();
                         List<String> failedItems = new ArrayList<>();
                         try (var tasks = current()
                                 .prepareStatement(
@@ -918,6 +920,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                     String taskResult = rows.getString("result_json");
                                     if (taskResult != null) {
                                         taskResults.add(taskResult);
+                                        completedTaskIds.add(rows.getString("task_id"));
                                     } else {
                                         String code = rows.getString("block_code");
                                         failedItems.add(rows.getString("task_id") + ":" + rows.getString("state")
@@ -936,7 +939,11 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                         "Mission mode"),
                                 result.getString("objective"),
                                 taskResults,
-                                failedItems));
+                                failedItems,
+                                completedTaskIds,
+                                2,
+                                Math.max(0, maxModelTokens - result.getLong("usage_model_tokens")),
+                                Optional.of(Instant.ofEpochMilli(result.getLong("deadline_at_ms")))));
                     }
                 }
             } catch (SQLException exception) {

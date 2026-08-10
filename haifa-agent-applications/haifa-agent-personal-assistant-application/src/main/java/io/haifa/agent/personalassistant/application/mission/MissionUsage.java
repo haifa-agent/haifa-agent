@@ -9,4 +9,11 @@ public record MissionUsage(long modelTokens, long modelCalls, long toolCalls) {
             throw new IllegalArgumentException("Mission usage must not be negative");
         }
     }
+
+    public MissionUsage plus(MissionUsage other) {
+        return new MissionUsage(
+                Math.addExact(modelTokens, other.modelTokens),
+                Math.addExact(modelCalls, other.modelCalls),
+                Math.addExact(toolCalls, other.toolCalls));
+    }
 }

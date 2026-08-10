@@ -31,6 +31,24 @@ public interface MissionRuntimeAccess {
         throw new MissionException("MISSION_SYNTHESIS_UNAVAILABLE", "Mission Synthesis is unavailable");
     }
 
+    default SynthesisRunResult reviseSynthesis(
+            MissionSynthesisIntent intent,
+            SynthesisRunResult previous,
+            ReportQualityGate.Result quality,
+            int revisionAttempt) {
+        throw new MissionException(
+                "MISSION_SYNTHESIS_REVISION_UNAVAILABLE", "Mission Synthesis revision is unavailable");
+    }
+
+    default SynthesisRunResult repairSynthesis(
+            MissionSynthesisIntent intent,
+            SynthesisRunResult invalid,
+            String violationCode,
+            String violationMessage,
+            int repairAttemptNo) {
+        throw new MissionException("MISSION_SYNTHESIS_REPAIR_UNAVAILABLE", "Mission Synthesis repair is unavailable");
+    }
+
     default void appendFinalMessage(
             String conversationId, String missionId, String synthesisRunId, String finalMessage) {}
 
@@ -46,13 +64,23 @@ public interface MissionRuntimeAccess {
 
     record TaskRunBinding(String sessionId, String runId) {}
 
-    record SynthesisRunResult(String sessionId, String runId, String structuredOutput, MissionUsage usage) {
+    record SynthesisRunResult(
+            String sessionId,
+            String runId,
+            String structuredOutput,
+            MissionUsage usage,
+            java.util.List<String> degradationReasons) {
         public SynthesisRunResult(String sessionId, String runId, String structuredOutput) {
-            this(sessionId, runId, structuredOutput, MissionUsage.NONE);
+            this(sessionId, runId, structuredOutput, MissionUsage.NONE, java.util.List.of());
+        }
+
+        public SynthesisRunResult(String sessionId, String runId, String structuredOutput, MissionUsage usage) {
+            this(sessionId, runId, structuredOutput, usage, java.util.List.of());
         }
 
         public SynthesisRunResult {
             usage = java.util.Objects.requireNonNull(usage);
+            degradationReasons = java.util.List.copyOf(degradationReasons);
         }
     }
 

@@ -19,6 +19,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionPublishedResu
 import io.haifa.agent.personalassistant.application.mission.MissionResultPublisher;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
+import io.haifa.agent.personalassistant.application.mission.ReportQualityGate;
 import io.haifa.agent.personalassistant.application.runtime.SdkMissionRuntimeAccess;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -62,6 +63,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
     private final int maxTotalContentBytes;
     private final int maxArtifacts;
     private final long maxTotalArtifactBytes;
+    private final ReportQualityGate reportQualityGate = new ReportQualityGate();
 
     public MissionArtifactPublisher(ArtifactService artifacts, ObjectMapper mapper) {
         this(artifacts, mapper, 24, 2_097_152, 8, 4L * 1024 * 1024);
@@ -94,15 +96,16 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
     @Override
     public MissionPublishedResult publish(
             MissionSynthesisIntent intent, MissionRuntimeAccess.SynthesisRunResult synthesis) {
-        JsonNode finalResult = object(synthesis.structuredOutput(), "Synthesis result");
-        String schema = intent.mode() == MissionMode.DEEP_RESEARCH
-                ? "pa.research-final-result/v1"
-                : "pa.mission-final-result/v1";
-        requireSchema(finalResult, schema);
-        FinalDelivery delivery = finalDelivery(finalResult, intent.mode() == MissionMode.DEEP_RESEARCH);
         if (intent.mode() == MissionMode.DEEP_RESEARCH) {
-            return publishResearch(intent, synthesis, finalResult, delivery);
+            ReportQualityGate.Result quality = evaluate(intent, synthesis);
+            if (!quality.passed()) {
+                throw new MissionException("MISSION_REPORT_QUALITY_FAILED", quality.revisionFeedback());
+            }
+            return publishResearchV2(intent, synthesis, quality, false);
         }
+        JsonNode finalResult = object(synthesis.structuredOutput(), "Synthesis result");
+        requireSchema(finalResult, "pa.mission-final-result/v1");
+        FinalDelivery delivery = finalDelivery(finalResult, false);
         Artifact artifact = publish(
                 intent,
                 synthesis,
@@ -119,47 +122,48 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 delivery.completionKind());
     }
 
-    private MissionPublishedResult publishResearch(
+    @Override
+    public ReportQualityGate.Result evaluate(
+            MissionSynthesisIntent intent, MissionRuntimeAccess.SynthesisRunResult synthesis) {
+        if (intent.mode() != MissionMode.DEEP_RESEARCH) return ReportQualityGate.Result.passedResult();
+        ResearchEvidence evidence = evidence(intent.taskResults());
+        LinkedHashSet<String> availableSourceIds =
+                new LinkedHashSet<>(evidence.sources().keySet());
+        availableSourceIds.addAll(evidence.sourceAliases().keySet());
+        ReportQualityGate.Result quality = reportQualityGate.evaluate(
+                synthesis.structuredOutput(), intent.completedTaskIds(), Set.copyOf(availableSourceIds));
+        if (synthesis.degradationReasons().isEmpty()) return quality;
+        List<ReportQualityGate.Failure> failures = new ArrayList<>(quality.failures());
+        failures.add(new ReportQualityGate.Failure("REPORT_SYNTHESIS_DEGRADED", synthesis.degradationReasons()));
+        return new ReportQualityGate.Result(false, failures);
+    }
+
+    @Override
+    public MissionPublishedResult publishDegraded(
             MissionSynthesisIntent intent,
             MissionRuntimeAccess.SynthesisRunResult synthesis,
-            JsonNode finalResult,
-            FinalDelivery delivery) {
+            ReportQualityGate.Result quality) {
+        if (intent.mode() != MissionMode.DEEP_RESEARCH || quality.passed()) {
+            throw new MissionException("MISSION_REPORT_QUALITY_FAILED", "Degraded publication request is invalid");
+        }
+        if (!reportQualityGate.readable(synthesis.structuredOutput())) {
+            throw new MissionException(
+                    "MISSION_REPORT_UNREADABLE", "No readable research report candidate is available");
+        }
+        return publishResearchV2(intent, synthesis, quality, true);
+    }
+
+    private MissionPublishedResult publishResearchV2(
+            MissionSynthesisIntent intent,
+            MissionRuntimeAccess.SynthesisRunResult synthesis,
+            ReportQualityGate.Result quality,
+            boolean degraded) {
+        if (degraded && quality.passed()) {
+            throw new MissionException(
+                    "MISSION_RESULT_SCHEMA_INVALID", "Degraded delivery cannot pass its quality gate");
+        }
         ResearchEvidence evidence = evidence(intent.taskResults());
-        List<String> canonicalSourceRefs = delivery.sourceRefs().stream()
-                .map(reference -> canonicalSourceRef(reference, evidence))
-                .distinct()
-                .toList();
-        if (canonicalSourceRefs.size() > maxSources) {
-            invalid("Final result cites too many distinct sources");
-        }
-        delivery = new FinalDelivery(
-                delivery.directAnswer(),
-                delivery.completedItems(),
-                delivery.failedItems(),
-                canonicalSourceRefs,
-                delivery.unverifiedClaims(),
-                delivery.unresolvedQuestions(),
-                delivery.residualRisks(),
-                delivery.completionKind());
-        ((ObjectNode) finalResult).set("sourceRefs", mapper.valueToTree(canonicalSourceRefs));
-        if (!evidence.claims().keySet().containsAll(delivery.unverifiedClaims())) {
-            invalid("Final result names an unavailable unverified claim");
-        }
-        if (!delivery.unverifiedClaims().containsAll(evidence.requiredUnverifiedClaimIds())) {
-            invalid("Final result omitted an unverified claim");
-        }
-        LinkedHashSet<String> canonicalUnverified = new LinkedHashSet<>(delivery.unverifiedClaims());
-        canonicalUnverified.addAll(evidence.aggregateDowngradedClaimIds());
-        delivery = new FinalDelivery(
-                delivery.directAnswer(),
-                delivery.completedItems(),
-                delivery.failedItems(),
-                delivery.sourceRefs(),
-                List.copyOf(canonicalUnverified),
-                delivery.unresolvedQuestions(),
-                delivery.residualRisks(),
-                delivery.completionKind());
-        ((ObjectNode) finalResult).set("unverifiedClaims", mapper.valueToTree(canonicalUnverified));
+        String reportText = canonicalizeReportCitations(synthesis.structuredOutput(), evidence.sourceAliases());
 
         ObjectNode sourcesDocument = mapper.createObjectNode();
         sourcesDocument.put("schemaVersion", "pa.research-sources/v1");
@@ -171,6 +175,8 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         unresolvedDocument.put("schemaVersion", "pa.unresolved-questions/v1");
         unresolvedDocument.set("unresolvedQuestions", mapper.valueToTree(evidence.unresolvedQuestions()));
 
+        Artifact report = publish(
+                intent, synthesis, "research-report", "research-report.md", reportText, "text/markdown; charset=utf-8");
         Artifact sources = publish(
                 intent, synthesis, "research-data", "sources.json", encode(sourcesDocument), "application/json");
         Artifact claims = publish(
@@ -182,40 +188,118 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 "unresolved-questions.json",
                 encode(unresolvedDocument),
                 "application/json");
-        String reportText = report(delivery, evidence);
-        Artifact report = publish(
-                intent, synthesis, "research-report", "research-report.md", reportText, "text/markdown; charset=utf-8");
 
-        ObjectNode resultDocument = finalResult.deepCopy();
-        resultDocument.set("reportArtifactRef", reference(report));
-        resultDocument.set("sourcesArtifactRef", reference(sources));
-        resultDocument.set("claimEvidenceArtifactRef", reference(claims));
-        resultDocument.putNull("resultArtifactRef");
-        resultDocument.set("unresolvedArtifactRef", reference(unresolved));
-        ArrayNode priorRefs = mapper.createArrayNode();
-        priorRefs.add(reference(report));
-        priorRefs.add(reference(sources));
-        priorRefs.add(reference(claims));
-        priorRefs.add(reference(unresolved));
-        resultDocument.set("artifactRefs", priorRefs);
-        Artifact result = publish(
-                intent, synthesis, "research-data", "research-result.json", encode(resultDocument), "application/json");
-
-        ObjectNode storedResult = resultDocument.deepCopy();
-        storedResult.set("resultArtifactRef", reference(result));
-        ArrayNode allRefs = mapper.createArrayNode();
-        List.of(report, sources, claims, result, unresolved).forEach(value -> allRefs.add(reference(value)));
-        storedResult.set("artifactRefs", allRefs);
-        List<Artifact> published = List.of(report, sources, claims, result, unresolved);
+        ObjectNode manifest = mapper.createObjectNode();
+        manifest.put("schemaVersion", "pa.research-delivery/v2");
+        boolean partial = degraded || !intent.failedItems().isEmpty();
+        manifest.put("completionKind", partial ? "PARTIAL" : "COMPLETE");
+        manifest.put("degraded", degraded);
+        List<String> degradationReasons = degraded
+                ? java.util.stream.Stream.concat(
+                                quality.failureCodes().stream(), synthesis.degradationReasons().stream())
+                        .distinct()
+                        .toList()
+                : List.of();
+        manifest.set("degradationReasons", mapper.valueToTree(degradationReasons));
+        ObjectNode reportRef = reference(report);
+        ObjectNode sourcesRef = reference(sources);
+        ObjectNode claimsRef = reference(claims);
+        ObjectNode unresolvedRef = reference(unresolved);
+        manifest.set("reportArtifactRef", reportRef);
+        manifest.set("sourcesArtifactRef", sourcesRef);
+        manifest.set("claimEvidenceArtifactRef", claimsRef);
+        manifest.set("unresolvedArtifactRef", unresolvedRef);
+        List<String> affectedTaskIds = affectedTaskIds(intent, quality);
+        List<String> coveredTaskIds = intent.completedTaskIds().stream()
+                .filter(taskId -> !affectedTaskIds.contains(taskId))
+                .toList();
+        manifest.set("coveredTaskIds", mapper.valueToTree(coveredTaskIds));
+        manifest.set("affectedTaskIds", mapper.valueToTree(affectedTaskIds));
+        manifest.put("sourceCount", evidence.sources().size());
+        LinkedHashSet<String> unverified = new LinkedHashSet<>(evidence.requiredUnverifiedClaimIds());
+        unverified.addAll(evidence.aggregateDowngradedClaimIds());
+        manifest.put("unverifiedClaimCount", unverified.size());
+        manifest.put("unresolvedQuestionCount", evidence.unresolvedQuestions().size());
+        ObjectNode gate = manifest.putObject("qualityGate");
+        gate.put("passed", quality.passed());
+        gate.set("failedChecks", mapper.valueToTree(quality.failureCodes()));
+        validateDeliveryManifest(manifest);
+        validateReference(report, reportRef);
+        validateReference(sources, sourcesRef);
+        validateReference(claims, claimsRef);
+        validateReference(unresolved, unresolvedRef);
+        if (manifest.toString().contains("research-delivery.json")) {
+            throw new MissionException("REPORT_ARTIFACT_INCONSISTENT", "Delivery manifest cannot self-reference");
+        }
+        Artifact delivery = publish(
+                intent, synthesis, "research-delivery", "research-delivery.json", encode(manifest), "application/json");
+        List<Artifact> published = List.of(report, sources, claims, unresolved, delivery);
         return new MissionPublishedResult(
                 report.id().value(),
                 published.stream().map(value -> value.id().value()).toList(),
                 evidence.sources().values().stream()
                         .map(value -> value.get("normalizedLocator").asText())
                         .toList(),
-                encode(storedResult),
+                encode(manifest),
                 reportText,
-                delivery.completionKind());
+                partial ? "PARTIAL" : "COMPLETE");
+    }
+
+    static void validateDeliveryManifest(JsonNode manifest) {
+        boolean validEnvelope = manifest != null
+                && manifest.isObject()
+                && "pa.research-delivery/v2"
+                        .equals(manifest.path("schemaVersion").asText())
+                && ("COMPLETE".equals(manifest.path("completionKind").asText())
+                        || "PARTIAL".equals(manifest.path("completionKind").asText()))
+                && manifest.path("degraded").isBoolean()
+                && manifest.path("degradationReasons").isArray()
+                && manifest.path("qualityGate").isObject()
+                && manifest.path("qualityGate").path("passed").isBoolean();
+        if (!validEnvelope) {
+            throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", "Research delivery manifest is invalid");
+        }
+        boolean degraded = manifest.path("degraded").asBoolean();
+        boolean complete = "COMPLETE".equals(manifest.path("completionKind").asText());
+        boolean hasReasons = !manifest.path("degradationReasons").isEmpty();
+        boolean gatePassed = manifest.path("qualityGate").path("passed").asBoolean();
+        if ((degraded && (complete || !hasReasons || gatePassed)) || (!degraded && hasReasons)) {
+            throw new MissionException(
+                    "MISSION_RESULT_SCHEMA_INVALID", "Research delivery degradation semantics are inconsistent");
+        }
+    }
+
+    private static String canonicalizeReportCitations(String report, Map<String, String> sourceAliases) {
+        String value = report;
+        for (Map.Entry<String, String> alias : sourceAliases.entrySet()) {
+            value = value.replace("[[" + alias.getKey() + "]]", "[[" + alias.getValue() + "]]");
+        }
+        return value;
+    }
+
+    private static List<String> affectedTaskIds(MissionSynthesisIntent intent, ReportQualityGate.Result quality) {
+        LinkedHashSet<String> affected = new LinkedHashSet<>(quality.affectedTaskIds());
+        for (String failedItem : intent.failedItems()) {
+            String candidate = failedItem.contains(":") ? failedItem.substring(0, failedItem.indexOf(':')) : failedItem;
+            if (!candidate.isBlank()) affected.add(candidate);
+        }
+        return List.copyOf(affected);
+    }
+
+    private static void validateReference(Artifact artifact, JsonNode reference) {
+        boolean consistent = artifact.id()
+                        .value()
+                        .equals(reference.path("artifactId").asText())
+                && artifact.version().value() == reference.path("version").asLong()
+                && artifact.payload().sha256().equals(reference.path("sha256").asText())
+                && artifact.payload().byteCount() == reference.path("byteCount").asLong()
+                && artifact.payload()
+                        .mediaType()
+                        .equals(reference.path("mediaType").asText())
+                && artifact.title().equals(reference.path("title").asText());
+        if (!consistent) {
+            throw new MissionException("REPORT_ARTIFACT_INCONSISTENT", "Published Artifact reference is inconsistent");
+        }
     }
 
     private ResearchEvidence evidence(List<String> taskResults) {
@@ -289,8 +373,8 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             LinkedHashSet<String> references = new LinkedHashSet<>();
             claim.path("supportingSourceIds").forEach(value -> references.add(value.asText()));
             claim.path("opposingSourceIds").forEach(value -> references.add(value.asText()));
-            boolean insufficient = references.stream().anyMatch(reference ->
-                    !"FETCHED".equals(sources.get(reference).path("status").asText()));
+            boolean insufficient = references.stream().anyMatch(reference -> !"FETCHED"
+                    .equals(sources.get(reference).path("status").asText()));
             if (insufficient && !claim.path("unverified").asBoolean()) {
                 ((ObjectNode) claim).put("unverified", true);
                 aggregateDowngraded.add(claimId);
@@ -345,8 +429,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         if ("CONFLICT".equals(candidate.path("status").asText())) return candidate;
         boolean firstFetched = "FETCHED".equals(first.path("status").asText());
         boolean candidateFetched = "FETCHED".equals(candidate.path("status").asText());
-        if (firstFetched && candidateFetched
-                && !first.path("contentDigest").equals(candidate.path("contentDigest"))) {
+        if (firstFetched && candidateFetched && !first.path("contentDigest").equals(candidate.path("contentDigest"))) {
             ObjectNode conflict = first.deepCopy();
             conflict.put("status", "CONFLICT");
             conflict.putNull("fetchedAt");
@@ -628,7 +711,12 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         } catch (DateTimeParseException instantFailure) {
             try {
                 ((ObjectNode) value)
-                        .put(field, LocalDate.parse(node.asText()).atStartOfDay(ZoneOffset.UTC).toInstant().toString());
+                        .put(
+                                field,
+                                LocalDate.parse(node.asText())
+                                        .atStartOfDay(ZoneOffset.UTC)
+                                        .toInstant()
+                                        .toString());
             } catch (DateTimeParseException dateFailure) {
                 throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", field + " is invalid", dateFailure);
             }
@@ -710,8 +798,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             Set<String> aggregateDowngradedClaimIds,
             List<String> unresolvedQuestions) {}
 
-    private record NormalizedTask(
-            JsonNode value, Map<String, String> sourceAliases, Map<String, JsonNode> sources) {}
+    private record NormalizedTask(JsonNode value, Map<String, String> sourceAliases, Map<String, JsonNode> sources) {}
 
     private record SourceIdentity(String originalId, String canonicalId) {}
 

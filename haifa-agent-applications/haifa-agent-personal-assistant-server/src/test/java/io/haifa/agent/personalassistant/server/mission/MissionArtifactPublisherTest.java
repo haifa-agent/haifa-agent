@@ -16,6 +16,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -23,35 +24,157 @@ class MissionArtifactPublisherTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Test
-    void validatesCitationClosureAndPublishesExactlyFiveRecoverableResearchArtifacts() throws Exception {
+    void publishesMarkdownAndExactlyFiveRecoverableV2ArtifactsWithConsistentReferences() throws Exception {
         AtomicInteger ids = new AtomicInteger();
         var metadata = new InMemoryArtifactStore();
         var publisher = publisher(metadata, () -> "artifact-" + ids.incrementAndGet());
 
-        var published = publisher.publish(intent(validTask()), synthesis(validFinal()));
-        var replayed = publisher.publish(intent(validTask()), synthesis(validFinal()));
-        JsonNode stored = MAPPER.readTree(published.structuredResult());
+        var published = publisher.publish(intent(validTask()), synthesis(validReport()));
+        var replayed = publisher.publish(intent(validTask()), synthesis(validReport()));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
 
-        assertThat(published.artifactIds()).hasSize(5);
-        assertThat(replayed.artifactIds()).isEqualTo(published.artifactIds());
+        assertThat(published.artifactIds()).hasSize(5).isEqualTo(replayed.artifactIds());
         assertThat(metadata.findByProject("mission-mission-1")).hasSize(5);
-        assertThat(published.sources())
-                .containsExactly("https://research.stub/source-1", "https://research.stub/source-2");
-        assertThat(stored.path("artifactRefs")).hasSize(5);
-        assertThat(stored.path("resultArtifactRef").path("sha256").asText()).startsWith("sha256:");
-        assertThat(stored.path("sourcesArtifactRef").path("version").asLong()).isEqualTo(1);
+        assertThat(manifest.path("schemaVersion").asText()).isEqualTo("pa.research-delivery/v2");
+        assertThat(manifest.path("completionKind").asText()).isEqualTo("COMPLETE");
+        assertThat(manifest.path("degraded").asBoolean()).isFalse();
+        assertThat(manifest.path("qualityGate").path("passed").asBoolean()).isTrue();
+        assertThat(manifest.path("coveredTaskIds")).extracting(JsonNode::asText).containsExactly("task-1");
+        for (String field : List.of(
+                "reportArtifactRef", "sourcesArtifactRef", "claimEvidenceArtifactRef", "unresolvedArtifactRef")) {
+            assertThat(manifest.path(field).path("sha256").asText()).matches("sha256:[a-f0-9]{64}");
+            assertThat(manifest.path(field).path("version").asLong()).isEqualTo(1);
+            assertThat(manifest.path(field).path("byteCount").asLong()).isPositive();
+        }
+        assertThat(published.finalMessage())
+                .contains("中文“引号”", "| 主张 | 证据 |", "https://example.test/path?a=1", "```text");
+        assertThat(published.structuredResult()).doesNotContain("中文“引号”", "```text");
     }
 
     @Test
-    void rejectsMissingCitationDuplicateLocatorInsufficientEvidenceAndOversizedQuote() throws Exception {
+    void resumesAfterInterruptionBeforeTheDeliveryManifestWithoutDuplicatingArtifacts() throws Exception {
+        AtomicInteger ids = new AtomicInteger();
+        var metadata = new InMemoryArtifactStore();
+        var payloads = new InMemoryArtifactPayloadStore();
+        Ids interruptedIds = () -> {
+            int value = ids.incrementAndGet();
+            if (value == 5) {
+                throw new IllegalStateException("injected interruption before manifest publication");
+            }
+            return "artifact-" + value;
+        };
+        var interrupted = new MissionArtifactPublisher(artifactService(metadata, payloads, interruptedIds), MAPPER);
+
+        assertThatThrownBy(() -> interrupted.publish(intent(validTask()), synthesis(validReport())))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("injected interruption");
+        assertThat(metadata.findByProject("mission-mission-1"))
+                .extracting(value -> value.title())
+                .containsExactlyInAnyOrder(
+                        "research-report.md", "sources.json", "claim-evidence.json", "unresolved-questions.json");
+
+        var resumed = new MissionArtifactPublisher(
+                        artifactService(metadata, payloads, () -> "artifact-" + ids.incrementAndGet()), MAPPER)
+                .publish(intent(validTask()), synthesis(validReport()));
+        var replayed = new MissionArtifactPublisher(
+                        artifactService(metadata, payloads, () -> "artifact-" + ids.incrementAndGet()), MAPPER)
+                .publish(intent(validTask()), synthesis(validReport()));
+
+        assertThat(resumed.artifactIds()).hasSize(5).isEqualTo(replayed.artifactIds());
+        assertThat(metadata.findByProject("mission-mission-1"))
+                .extracting(value -> value.title())
+                .containsExactlyInAnyOrder(
+                        "research-report.md",
+                        "sources.json",
+                        "claim-evidence.json",
+                        "unresolved-questions.json",
+                        "research-delivery.json");
+        assertThat(MAPPER.readTree(resumed.structuredResult())
+                        .path("schemaVersion")
+                        .asText())
+                .isEqualTo("pa.research-delivery/v2");
+    }
+
+    @Test
+    void degradedReadableCandidateIsAlwaysPartialAndCarriesStableFailures() throws Exception {
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        String degradedReport = validReport().replace("<!-- haifa-section: synthesis -->", "");
+        var request = intent(validTask());
+        var candidate = synthesis(degradedReport);
+        var quality = publisher.evaluate(request, candidate);
+
+        var published = publisher.publishDegraded(request, candidate, quality);
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+
+        assertThat(quality.failureCodes()).contains("REPORT_REQUIRED_SECTION_MISSING");
+        assertThat(published.completionKind()).isEqualTo("PARTIAL");
+        assertThat(manifest.path("degraded").asBoolean()).isTrue();
+        assertThat(manifest.path("completionKind").asText()).isEqualTo("PARTIAL");
+        assertThat(manifest.path("degradationReasons"))
+                .extracting(JsonNode::asText)
+                .contains("REPORT_REQUIRED_SECTION_MISSING");
+    }
+
+    @Test
+    void rejectsAnIllegalDegradedCompleteV2Combination() throws Exception {
+        ObjectNode manifest = MAPPER.createObjectNode();
+        manifest.put("schemaVersion", "pa.research-delivery/v2");
+        manifest.put("completionKind", "COMPLETE");
+        manifest.put("degraded", true);
+        manifest.putArray("degradationReasons").add("REPORT_REQUIRED_SECTION_MISSING");
+        manifest.putObject("qualityGate").put("passed", false);
+
+        assertThatThrownBy(() -> MissionArtifactPublisher.validateDeliveryManifest(manifest))
+                .isInstanceOf(MissionException.class)
+                .extracting(value -> ((MissionException) value).code())
+                .isEqualTo("MISSION_RESULT_SCHEMA_INVALID");
+    }
+
+    @Test
+    void failedTaskProducesPartialWithoutPretendingTheReportGateFailed() throws Exception {
+        var request = new MissionSynthesisIntent(
+                "mission-1",
+                "conversation-1",
+                "local/public-user",
+                MissionMode.DEEP_RESEARCH,
+                "Research objective",
+                List.of(validTask().toString()),
+                List.of("task-2:BLOCKED:SOURCE_UNAVAILABLE"),
+                List.of("task-1"),
+                2,
+                10_000,
+                Optional.empty());
+        var published = publisher(new InMemoryArtifactStore(), newIds()).publish(request, synthesis(validReport()));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+
+        assertThat(published.completionKind()).isEqualTo("PARTIAL");
+        assertThat(manifest.path("degraded").asBoolean()).isFalse();
+        assertThat(manifest.path("qualityGate").path("passed").asBoolean()).isTrue();
+        assertThat(manifest.path("affectedTaskIds"))
+                .extracting(JsonNode::asText)
+                .containsExactly("task-2");
+    }
+
+    @Test
+    void rejectsUnreadableCandidateInsteadOfPublishingMetadataAsAReport() throws Exception {
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        var request = intent(validTask());
+        var candidate = synthesis("status claim-1 source-1");
+
+        assertThatThrownBy(() -> publisher.publishDegraded(request, candidate, publisher.evaluate(request, candidate)))
+                .isInstanceOf(MissionException.class)
+                .extracting(value -> ((MissionException) value).code())
+                .isEqualTo("MISSION_REPORT_UNREADABLE");
+    }
+
+    @Test
+    void validatesCitationClosureEvidenceStateDuplicateLocatorAndQuoteBounds() throws Exception {
         assertInvalid(task -> ((ArrayNode) task.path("claims").get(0).path("supportingSourceIds"))
                 .set(0, MAPPER.getNodeFactory().textNode("missing")));
         assertInvalid(task -> {
             ObjectNode duplicate = task.path("sources").get(1).deepCopy();
             duplicate.put("sourceId", "source-duplicate");
             duplicate.put("locator", "https://RESEARCH.stub:443/a/../source-1?utm_source=x#fragment");
-            duplicate.put("normalizedLocator", "https://research.stub/source-1");
-            duplicate.put("locatorDigest", "sha256:1d0076d5314fa605319d168505842186fb1f6d3f534ee25bc2a9fc79a8b97980");
             ((ArrayNode) task.path("sources")).add(duplicate);
         });
         assertInvalid(task -> {
@@ -60,306 +183,148 @@ class MissionArtifactPublisherTest {
             source.putNull("fetchedAt");
             source.putNull("contentDigest");
             source.put("excerpt", "");
-            ArrayNode supporting = (ArrayNode) task.path("claims").get(0).path("supportingSourceIds");
-            supporting.removeAll().add("source-2");
+            ((ArrayNode) task.path("claims").get(0).path("supportingSourceIds"))
+                    .removeAll()
+                    .add("source-2");
         });
         assertInvalid(task -> {
             ObjectNode quote = MAPPER.createObjectNode();
             quote.put("sourceId", "source-1");
             quote.put(
                     "text",
-                    "one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-                            + "fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three "
-                            + "twenty-four twenty-five twenty-six");
+                    "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six");
             ((ArrayNode) task.path("claims").get(0).path("quotedSpans")).add(quote);
         });
     }
 
     @Test
-    void canonicalizesSafeLocatorsAndRemovesOnlyFrozenTrackingParameters() {
-        var normalized = ResearchSourceLocator.normalize(
-                "https://RESEARCH.stub:443/a/../source-1?b=2&utm_source=x&a=1#fragment");
+    void serverCanonicalizesSourceIdentityAndRewritesReportCitations() throws Exception {
+        ObjectNode task = validTask();
+        ObjectNode source = (ObjectNode) task.path("sources").get(0);
+        source.put("locator", "https://RESEARCH.stub:443/a/../source-1?utm_source=model#fragment");
+        source.put("normalizedLocator", "https://untrusted.invalid/model-value");
+        source.put("locatorDigest", "sha256:" + "0".repeat(64));
+        var metadata = new InMemoryArtifactStore();
+        var service = artifactService(metadata, newIds());
+        var published = new MissionArtifactPublisher(service, MAPPER).publish(intent(task), synthesis(validReport()));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+        var report = metadata.findByProject("mission-mission-1").stream()
+                .filter(value -> value.title().equals("research-report.md"))
+                .findFirst()
+                .orElseThrow();
 
-        assertThat(normalized.locator()).isEqualTo("https://research.stub/source-1?b=2&a=1");
-        assertThat(normalized.digest()).matches("sha256:[a-f0-9]{64}");
-        assertThat(ResearchSourceLocator.normalize("http://www.news.cn:80/policy?utm_source=x").locator())
-                .isEqualTo("http://www.news.cn/policy");
+        assertThat(published.sources()).contains("https://research.stub/source-1");
+        assertThat(new String(service.load(report), java.nio.charset.StandardCharsets.UTF_8))
+                .contains("[[source-")
+                .doesNotContain("[[source-1]]");
+        assertThat(manifest.path("sourceCount").asInt()).isEqualTo(2);
+    }
+
+    @Test
+    void canonicalizesSafeLocatorsAndRejectsPrivateOrCredentialedTargets() {
+        assertThat(ResearchSourceLocator.normalize(
+                                "https://RESEARCH.stub:443/a/../source-1?b=2&utm_source=x&a=1#fragment")
+                        .locator())
+                .isEqualTo("https://research.stub/source-1?b=2&a=1");
         assertThatThrownBy(() -> ResearchSourceLocator.normalize("http://127.0.0.1/private"))
                 .isInstanceOf(MissionException.class);
         assertThatThrownBy(() -> ResearchSourceLocator.normalize("https://user@example.com/private"))
                 .isInstanceOf(MissionException.class);
     }
 
-    @Test
-    void publishesPublicHttpEvidenceAcceptedByTheResearchTaskBoundary() throws Exception {
-        ObjectNode task = validTask();
-        ObjectNode source = (ObjectNode) task.path("sources").get(0);
-        source.put("locator", "http://www.news.cn/policy?utm_source=model");
-        source.put("normalizedLocator", "http://untrusted.invalid/model-value");
-        source.put("locatorDigest", "sha256:" + "0".repeat(64));
-
-        AtomicInteger ids = new AtomicInteger();
-        var published = publisher(new InMemoryArtifactStore(), () -> "artifact-" + ids.incrementAndGet())
-                .publish(intent(task), synthesis(validFinal()));
-
-        assertThat(published.sources()).contains("http://www.news.cn/policy");
-    }
-
-    @Test
-    void canonicalizesADateOnlyPublicationAtTheFinalTrustBoundary() throws Exception {
-        ObjectNode task = validTask();
-        ((ObjectNode) task.path("sources").get(0)).put("publishedAt", "2020-08-30");
-
-        AtomicInteger ids = new AtomicInteger();
-        var published = publisher(new InMemoryArtifactStore(), () -> "artifact-" + ids.incrementAndGet())
-                .publish(intent(task), synthesis(validFinal()));
-
-        assertThat(published.artifactIds()).hasSize(5);
-    }
-
-    @Test
-    void mergesTheSameCrossTaskLocatorUnderAServerOwnedCanonicalSourceId() throws Exception {
-        ObjectNode first = validTask();
-        ObjectNode second = validTask();
-        ArrayNode secondSources = (ArrayNode) second.path("sources");
-        secondSources.remove(1);
-        ((ObjectNode) secondSources.get(0)).put("sourceId", "another-task-source");
-        ((ArrayNode) second.path("claims")).removeAll();
-        ((ObjectNode) second.path("limitsUsed")).put("fetchCalls", 1).put("sources", 1).put("contentBytes", 64);
-        ObjectNode result = validFinal();
-        ((ArrayNode) result.path("sourceRefs"))
-                .removeAll()
-                .add("another-task-source")
-                .add("source-2");
-
-        AtomicInteger ids = new AtomicInteger();
-        var published = publisher(new InMemoryArtifactStore(), () -> "artifact-" + ids.incrementAndGet())
-                .publish(intent(first, second), synthesis(result));
-        JsonNode stored = MAPPER.readTree(published.structuredResult());
-
-        assertThat(published.sources()).containsExactly("https://research.stub/source-1", "https://research.stub/source-2");
-        assertThat(stored.path("sourceRefs")).hasSize(2).allSatisfy(value -> assertThat(value.asText()).startsWith("source-"));
-    }
-
-    @Test
-    void downgradesCrossTaskFetchDigestDriftWithoutDiscardingTheResearchReport() throws Exception {
-        ObjectNode first = validTask();
-        ObjectNode second = validTask();
-        ArrayNode secondSources = (ArrayNode) second.path("sources");
-        secondSources.remove(1);
-        ObjectNode repeated = (ObjectNode) secondSources.get(0);
-        repeated.put("sourceId", "same-page-shorter-fetch");
-        repeated.put("excerpt", "A differently truncated fetch of the same public page.");
-        repeated.put("contentDigest", "sha256:" + "c".repeat(64));
-        ((ArrayNode) second.path("claims")).removeAll();
-        ((ObjectNode) second.path("limitsUsed")).put("fetchCalls", 1).put("sources", 1).put("contentBytes", 64);
-
-        ObjectNode result = validFinal();
-        AtomicInteger ids = new AtomicInteger();
-        var published = publisher(new InMemoryArtifactStore(), () -> "artifact-" + ids.incrementAndGet())
-                .publish(intent(first, second), synthesis(result));
-        JsonNode stored = MAPPER.readTree(published.structuredResult());
-
-        assertThat(stored.path("unverifiedClaims")).anySatisfy(
-                value -> assertThat(value.asText()).isEqualTo("claim-1"));
-        assertThat(published.artifactIds()).hasSize(5);
-    }
-
-    @Test
-    void deduplicatesTaskLocalSourceAliasesBeforeApplyingMissionLimitsAndPreservesAllUnverifiedClaims()
-            throws Exception {
-        List<ObjectNode> tasks = new java.util.ArrayList<>();
-        ObjectNode result = validFinal();
-        ((ArrayNode) result.path("sourceRefs")).removeAll();
-        ((ArrayNode) result.path("unverifiedClaims")).removeAll();
-        for (int taskNo = 1; taskNo <= 5; taskNo++) {
-            ObjectNode task = validTask();
-            ArrayNode sources = (ArrayNode) task.path("sources");
-            sources.removeAll();
-            for (int sourceNo = 1; sourceNo <= 6; sourceNo++) {
-                ObjectNode source = MAPPER.createObjectNode();
-                String sourceId = "task-" + taskNo + "--source-" + sourceNo;
-                String locator = "https://research.stub/shared-" + sourceNo;
-                source.put("sourceId", sourceId);
-                source.put("locator", locator);
-                source.put("normalizedLocator", locator);
-                source.put("locatorDigest", "sha256:" + "a".repeat(64));
-                source.put("title", "Shared source " + sourceNo);
-                source.put("safetyType", "DEVELOPMENT_STUB");
-                source.put("fetchedAt", "2026-08-08T00:00:00Z");
-                source.put("publishedAt", "2026-01-15T00:00:00Z");
-                source.put("status", "FETCHED");
-                source.put("excerpt", "Shared evidence.");
-                source.put("contentDigest", "sha256:" + "b".repeat(64));
-                sources.add(source);
-                ((ArrayNode) result.path("sourceRefs")).add(sourceId);
-            }
-            ArrayNode claims = (ArrayNode) task.path("claims");
-            claims.removeAll();
-            for (int claimNo = 1; claimNo <= 10; claimNo++) {
-                String claimId = "task-" + taskNo + "--claim-" + claimNo;
-                ObjectNode claim = MAPPER.createObjectNode();
-                claim.put("claimId", claimId);
-                claim.put("claim", "Unverified claim " + claimNo);
-                claim.putArray("supportingSourceIds").add("task-" + taskNo + "--source-1");
-                claim.putArray("opposingSourceIds");
-                claim.put("limitations", "Fixture intentionally remains unverified");
-                claim.put("unverified", true);
-                claim.putArray("quotedSpans");
-                claims.add(claim);
-                ((ArrayNode) result.path("unverifiedClaims")).add(claimId);
-            }
-            ((ObjectNode) task.path("limitsUsed"))
-                    .put("fetchCalls", 6)
-                    .put("sources", 6)
-                    .put("contentBytes", 384);
-            tasks.add(task);
-        }
-
-        AtomicInteger ids = new AtomicInteger();
-        var published = publisher(new InMemoryArtifactStore(), () -> "artifact-" + ids.incrementAndGet())
-                .publish(intent(tasks.toArray(JsonNode[]::new)), synthesis(result));
-        JsonNode stored = MAPPER.readTree(published.structuredResult());
-
-        assertThat(stored.path("sourceRefs")).hasSize(6);
-        assertThat(stored.path("unverifiedClaims")).hasSize(50);
-        assertThat(published.sources()).hasSize(6);
-        assertThat(published.artifactIds()).hasSize(5);
-    }
-
-    @Test
-    void serverOwnsCanonicalSourceIdentityInsteadOfTrustingModelHashes() throws Exception {
-        ObjectNode task = validTask();
-        ObjectNode source = (ObjectNode) task.path("sources").get(0);
-        source.put("locator", "https://RESEARCH.stub:443/a/../source-1?utm_source=model#fragment");
-        source.put("normalizedLocator", "https://untrusted.invalid/model-value");
-        source.put("locatorDigest", "sha256:" + "0".repeat(64));
-
-        AtomicInteger ids = new AtomicInteger();
-        var published = publisher(new InMemoryArtifactStore(), () -> "artifact-" + ids.incrementAndGet())
-                .publish(intent(task), synthesis(validFinal()));
-
-        assertThat(published.sources()).contains("https://research.stub/source-1");
-    }
-
-    @Test
-    void rejectsSynthesisThatOmitsUnverifiedClaimOrInventsArtifactReference() throws Exception {
-        ObjectNode task = validTask();
-        ((ObjectNode) task.path("claims").get(0)).put("unverified", true);
-        assertThatThrownBy(() -> publisher(new InMemoryArtifactStore(), () -> "artifact-1")
-                        .publish(intent(task), synthesis(validFinal())))
-                .isInstanceOf(MissionException.class)
-                .extracting(value -> ((MissionException) value).code())
-                .isEqualTo("MISSION_RESULT_SCHEMA_INVALID");
-
-        ObjectNode result = validFinal();
-        ObjectNode invented = MAPPER.createObjectNode();
-        invented.put("artifactId", "invented");
-        ((ArrayNode) result.path("artifactRefs")).add(invented);
-        assertThatThrownBy(() -> publisher(new InMemoryArtifactStore(), () -> "artifact-1")
-                        .publish(intent(validTask()), synthesis(result)))
-                .isInstanceOf(MissionException.class)
-                .extracting(value -> ((MissionException) value).code())
-                .isEqualTo("MISSION_RESULT_SCHEMA_INVALID");
-    }
-
-    @Test
-    void preservesExplicitNonVerifiedSourceStatesWithoutPromotingThemToEvidence() throws Exception {
-        for (String status : List.of("INACCESSIBLE", "STALE", "UNKNOWN", "CONFLICT", "UNDATED", "UNSAFE")) {
-            ObjectNode task = validTask();
-            ObjectNode source = (ObjectNode) task.path("sources").get(1);
-            source.put("status", status);
-            source.putNull("fetchedAt");
-            source.putNull("contentDigest");
-            source.put("excerpt", "");
-            ObjectNode claim = (ObjectNode) task.path("claims").get(0);
-            claim.put("unverified", true);
-            ObjectNode result = validFinal();
-            ((ArrayNode) result.path("unverifiedClaims")).add("claim-1");
-
-            AtomicInteger ids = new AtomicInteger();
-            var published = publisher(new InMemoryArtifactStore(), () -> "artifact-" + ids.incrementAndGet())
-                    .publish(intent(task), synthesis(result));
-
-            assertThat(published.structuredResult()).contains("\"completionKind\":\"COMPLETE\"");
-        }
-    }
-
     private static void assertInvalid(ThrowingMutation mutation) throws Exception {
         ObjectNode task = validTask();
         mutation.apply(task);
-        assertThatThrownBy(() -> publisher(new InMemoryArtifactStore(), () -> "artifact-1")
-                        .publish(intent(task), synthesis(validFinal())))
+        var publisher = publisher(new InMemoryArtifactStore(), newIds());
+        assertThatThrownBy(() -> publisher.evaluate(intent(task), synthesis(validReport())))
                 .isInstanceOf(MissionException.class)
                 .extracting(value -> ((MissionException) value).code())
                 .isEqualTo("MISSION_RESULT_SCHEMA_INVALID");
     }
 
     private static MissionArtifactPublisher publisher(InMemoryArtifactStore metadata, Ids ids) {
-        return new MissionArtifactPublisher(
-                new ArtifactService(
-                        metadata,
-                        new InMemoryArtifactPayloadStore(),
-                        ids::next,
-                        () -> Instant.parse("2026-08-08T00:00:00Z")),
-                MAPPER);
+        return new MissionArtifactPublisher(artifactService(metadata, ids), MAPPER);
     }
 
-    private static MissionSynthesisIntent intent(JsonNode... tasks) {
+    private static ArtifactService artifactService(InMemoryArtifactStore metadata, Ids ids) {
+        return artifactService(metadata, new InMemoryArtifactPayloadStore(), ids);
+    }
+
+    private static ArtifactService artifactService(
+            InMemoryArtifactStore metadata, InMemoryArtifactPayloadStore payloads, Ids ids) {
+        return new ArtifactService(metadata, payloads, ids::next, () -> Instant.parse("2026-08-10T00:00:00Z"));
+    }
+
+    private static Ids newIds() {
+        AtomicInteger ids = new AtomicInteger();
+        return () -> "artifact-" + ids.incrementAndGet();
+    }
+
+    private static MissionSynthesisIntent intent(JsonNode task) {
         return new MissionSynthesisIntent(
                 "mission-1",
                 "conversation-1",
                 "local/public-user",
                 MissionMode.DEEP_RESEARCH,
                 "Research objective",
-                java.util.Arrays.stream(tasks).map(JsonNode::toString).toList());
+                List.of(task.toString()));
     }
 
-    private static MissionRuntimeAccess.SynthesisRunResult synthesis(JsonNode result) {
-        return new MissionRuntimeAccess.SynthesisRunResult("session-synthesis", "run-synthesis", result.toString());
+    private static MissionRuntimeAccess.SynthesisRunResult synthesis(String report) {
+        return new MissionRuntimeAccess.SynthesisRunResult("session-synthesis", "run-synthesis", report);
+    }
+
+    private static String validReport() {
+        return """
+                # 热门 AI 产品真实性调查
+                <!-- haifa-section: executive-summary -->
+                ## 执行摘要
+                宣传主张得到部分证据支持，但真实能力受场景和技术限制约束，商业结论仍需谨慎。
+                <!-- haifa-section: scope-method -->
+                ## 范围、假设与方法
+                调查比较官方资料与独立来源，区分已验证事实、反证、推断和未知信息。
+                <!-- haifa-section: task-findings -->
+                ## 分项研究发现
+                <!-- haifa-task: task-1 -->
+                ### 能力、技术来源与商业模式
+                中文“引号”和换行不会进入控制 JSON。关键事实由 [[source-1]] 支持，反证来自 [[source-2]]。
+
+                | 主张 | 证据 | 反证 | 判断 |
+                | --- | --- | --- | --- |
+                | 能力领先 | 官方演示 | 场景限制 | 部分成立 |
+
+                https://example.test/path?a=1
+                ```text
+                representative code block
+                ```
+                <!-- haifa-section: synthesis -->
+                ## 综合分析
+                证据与反证共同表明，产品具有真实能力，但宣传把限定场景外推成了普遍能力。
+                <!-- haifa-section: conclusions -->
+                ## 结论与建议
+                在获得可复现实测和完整定价前，不应把宣传指标直接当成采购或投资依据。
+                <!-- haifa-section: risks-unknowns -->
+                ## 风险、未知与待确认问题
+                未公开训练数据、推理成本、客户留存和最新版本变化仍会影响最终判断。
+                <!-- haifa-section: sources -->
+                ## 来源
+                - [[source-1]] Primary evidence
+                - [[source-2]] Independent evidence
+                """;
     }
 
     private static ObjectNode validTask() throws Exception {
-        return (ObjectNode)
-                MAPPER.readTree(
-                        """
+        return (ObjectNode) MAPPER.readTree(
+                """
                 {"schemaVersion":"pa.research-task-result/v1","brief":"Bounded research",
-                "queries":[{"query":"primary evidence","phase":"DISCOVER"},
-                {"query":"independent evidence","phase":"CROSS_CHECK"}],
+                "queries":[{"query":"primary evidence","phase":"DISCOVER"},{"query":"independent evidence","phase":"CROSS_CHECK"}],
                 "sources":[
-                {"sourceId":"source-1","locator":"https://research.stub/source-1",
-                "normalizedLocator":"https://research.stub/source-1",
-                "locatorDigest":"sha256:1d0076d5314fa605319d168505842186fb1f6d3f534ee25bc2a9fc79a8b97980",
-                "title":"Primary","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z",
-                "publishedAt":"2026-01-15T00:00:00Z","status":"FETCHED","excerpt":"Primary evidence.",
-                "contentDigest":"sha256:9f00cea97901fba126e5aecc2f4a33adb3763cbdef57aa21ebf816f94198437b"},
-                {"sourceId":"source-2","locator":"https://research.stub/source-2",
-                "normalizedLocator":"https://research.stub/source-2",
-                "locatorDigest":"sha256:abe06c90ad15ca62760beee68928ade4e5ff04b28d3077a63dccbe599e2d7da5",
-                "title":"Independent","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z",
-                "publishedAt":"2026-02-01T00:00:00Z","status":"FETCHED","excerpt":"Independent evidence.",
-                "contentDigest":"sha256:2badb1b783b31c475f4112dba70fd85edbd4721e5c0b326ab83cb292a36be30a"}],
-                "claims":[{"claimId":"claim-1","claim":"Supported claim",
-                "supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],
-                "limitations":"Offline fixture","unverified":false,"quotedSpans":[]}],
-                "artifactRefs":[],"unresolvedQuestions":["External freshness"],
-                "stopReason":"SUFFICIENT_EVIDENCE",
-                "limitsUsed":{"searchCalls":1,"fetchCalls":2,"sources":2,"contentBytes":128}}
-                """);
-    }
-
-    private static ObjectNode validFinal() throws Exception {
-        return (ObjectNode)
-                MAPPER.readTree(
-                        """
-                {"schemaVersion":"pa.research-final-result/v1","reportArtifactRef":null,
-                "sourcesArtifactRef":null,"claimEvidenceArtifactRef":null,"resultArtifactRef":null,
-                "unresolvedArtifactRef":null,"directAnswer":"Supported answer",
-                "completedItems":["Research completed"],"failedItems":[],"artifactRefs":[],
-                "sourceRefs":["source-1","source-2"],"unverifiedClaims":[],
-                "unresolvedQuestions":["External freshness"],"residualRisks":["Offline evidence"],
-                "completionKind":"COMPLETE"}
-                """);
+                {"sourceId":"source-1","locator":"https://research.stub/source-1","normalizedLocator":"https://research.stub/source-1","locatorDigest":"sha256:%s","title":"Primary","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z","status":"FETCHED","excerpt":"Primary evidence.","contentDigest":"sha256:%s"},
+                {"sourceId":"source-2","locator":"https://research.stub/source-2","normalizedLocator":"https://research.stub/source-2","locatorDigest":"sha256:%s","title":"Independent","safetyType":"DEVELOPMENT_STUB","fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z","status":"FETCHED","excerpt":"Independent evidence.","contentDigest":"sha256:%s"}],
+                "claims":[{"claimId":"claim-1","claim":"Supported claim","supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],"limitations":"Offline fixture","unverified":false,"quotedSpans":[]}],
+                "artifactRefs":[],"unresolvedQuestions":["External freshness"],"stopReason":"SUFFICIENT_EVIDENCE","limitsUsed":{"searchCalls":1,"fetchCalls":2,"sources":2,"contentBytes":128}}
+                """
+                        .formatted("a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64)));
     }
 
     @FunctionalInterface

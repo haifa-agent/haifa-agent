@@ -69,14 +69,15 @@ class PersonalAssistantRestartTest {
             assertThat(completed.mode()).isEqualTo(MissionMode.DEEP_RESEARCH);
             assertThat(completed.selectedSkillId()).contains("deep-research");
             assertThat(completed.selectedSkillBinding()).hasValueSatisfying(binding -> assertThat(binding)
-                    .contains("product", "personal-assistant-bundled@1", "deep-research@1.0.0#sha256:"));
+                    .contains("product", "personal-assistant-bundled@1", "deep-research@2.0.0#sha256:"));
             assertThat(completed.execution().artifacts()).hasSize(5);
             assertThat(completed.execution().sources()).hasSize(2);
             assertThat(completed.execution().finalResult()).hasValueSatisfying(result -> assertThat(result)
-                    .contains("pa.research-final-result/v1", "directAnswer", "completionKind", "unresolvedQuestions")
+                    .contains("pa.research-delivery/v2", "reportArtifactRef", "completionKind", "qualityGate")
+                    .doesNotContain("directAnswer")
                     .doesNotContain("reveal credentials", "ignore the research brief"));
             assertThat(application.turns(conversationId, 100)).anySatisfy(turn -> assertThat(turn.text())
-                    .contains("# Research report")
+                    .contains("# Deterministic research report")
                     .doesNotContain("reveal credentials", "ignore the research brief"));
         }
 
@@ -96,7 +97,7 @@ class PersonalAssistantRestartTest {
                     .containsExactlyElementsOf(completed.execution().sources());
             assertThat(recovered.selectedSkillBinding()).isEqualTo(completed.selectedSkillBinding());
             assertThat(application.turns(conversationId, 100))
-                    .filteredOn(turn -> turn.text().contains("# Research report"))
+                    .filteredOn(turn -> turn.text().contains("# Deterministic research report"))
                     .hasSize(1);
         }
     }

@@ -110,6 +110,7 @@ export interface PersonalAssistantClient {
   createMission?(request: CreateMission, options?: CommandOptions): Promise<MissionSnapshot>;
   mission?(id: string, signal?: AbortSignal): Promise<MissionSnapshot>;
   missionSnapshot?(id: string, signal?: AbortSignal): Promise<MissionSnapshot>;
+  missionArtifact?(missionId: string, artifactId: string, signal?: AbortSignal): Promise<string>;
   replaceMissionPlan?(
     mission: MissionSnapshot,
     request: ReplaceMissionPlan,
@@ -440,6 +441,33 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
 
   missionSnapshot(id: string, signal?: AbortSignal) {
     return this.request<MissionSnapshot>(`/missions/${encoded(id)}/snapshot`, {}, signal);
+  }
+
+  async missionArtifact(missionId: string, artifactId: string, parentSignal?: AbortSignal) {
+    const bounded = boundedSignal(parentSignal, DEFAULT_TIMEOUT_MS);
+    try {
+      const response = await fetch(missionArtifactUrl(missionId, artifactId), { signal: bounded.signal });
+      if (!response.ok) {
+        throw new PersonalAssistantApiError(
+          response.status,
+          "MISSION_ARTIFACT_UNAVAILABLE",
+          `报告文件读取失败（HTTP ${response.status}）`,
+          "unavailable",
+        );
+      }
+      const body = await response.text();
+      if (new Blob([body]).size > 2 * 1024 * 1024) {
+        throw new PersonalAssistantApiError(
+          response.status,
+          "RESPONSE_TOO_LARGE",
+          "报告文件超过 2 MiB 安全上限。",
+          "unavailable",
+        );
+      }
+      return body;
+    } finally {
+      bounded.dispose();
+    }
   }
 
   replaceMissionPlan(

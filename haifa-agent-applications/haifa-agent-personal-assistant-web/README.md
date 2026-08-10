@@ -40,8 +40,11 @@ JAR 的构建或静态资源打包。
 - 新建、搜索、选择、重命名、归档和恢复 Conversation；
 - 显式 Mission 入口、列表、创建、确认前整体计划替换/重新生成、确认、取消、Snapshot polling、
   Dispatcher/Task 执行摘要、blocked Task 重试、Task Run Interaction 回复和 Conversation 摘要卡片；
-- 显式 Standard / Deep Research 模式、完整 Research Brief、冻结 Skill 绑定展示，以及最终报告、完成/未完成项、
-  未验证结论、剩余风险、未决问题、来源链接和五类交付文件；
+- Mission 使用全屏三栏工作台；左侧可搜索和选择 Mission，中间浏览完整计划，点击任务后在右侧查看
+  目标、验收标准、依赖、任务类型、Skill 和结果 Schema；
+- 显式 Standard / Deep Research 模式、完整 Research Brief、冻结 Skill 绑定展示，以及 v1 历史结果和
+  `pa.research-delivery/v2` 正常/部分/降级/失败语义、完整 Markdown 报告查看/复制/下载、降级原因、
+  受影响 Task、来源链接和五类交付文件；
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
 - 输入框 `/` 命令菜单，以及按模型厂商、模型两级完成的新会话选择或已有会话切换；
@@ -60,7 +63,7 @@ JAR 的构建或静态资源打包。
 
 Mission 同步状态显式区分 loading、current、syncing、stale、recovering 和 offline。浏览器离线时保留
 最后一次安全快照、停止把陈旧数据呈现为 current，并在重新联网后自动恢复 polling；终态变化通过
-`aria-live` 宣告。Mission 抽屉支持 `Escape` 关闭、键盘焦点约束和关闭后的焦点恢复，交互控件具有
+`aria-live` 宣告。Mission 全屏工作台支持 `Escape` 关闭、键盘焦点约束和关闭后的焦点恢复，交互控件具有
 可见焦点样式，桌面与移动布局使用同一套状态和操作语义。同步 Planner 命令使用与 Server 120 秒
 规划窗口匹配的 130 秒客户端上限；普通请求仍使用 12 秒上限，失败 Mission 显示稳定 blocker code。
 
