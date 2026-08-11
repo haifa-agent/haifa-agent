@@ -100,8 +100,8 @@ def rebuild_port_conflict_message() -> str:
     return (
         "Rebuild requires ports 20000, 20001, and 20002 to be free.\n"
         "Stop the running environment first, then rebuild:\n"
-        "  PowerShell: .\\scripts\\start-real-environment.ps1 -Stop\n"
-        "              .\\scripts\\start-real-environment.ps1 -Rebuild\n"
+        "  PowerShell: .\\scripts\\start-real-environment.ps1 --stop\n"
+        "              .\\scripts\\start-real-environment.ps1 --rebuild\n"
         "  Bash:       ./scripts/start-real-environment.sh --stop\n"
         "              ./scripts/start-real-environment.sh --rebuild"
     )

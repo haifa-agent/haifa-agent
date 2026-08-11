@@ -1,15 +1,6 @@
-[CmdletBinding()]
-param(
-    [Parameter(Position = 0)]
-    [string] $OutputDirectory
-)
-
 $ErrorActionPreference = 'Stop'
 $pythonScript = Join-Path $PSScriptRoot 'package-local-coding-agent.py'
-$pythonArguments = @($pythonScript)
-if ($PSBoundParameters.ContainsKey('OutputDirectory')) {
-    $pythonArguments += $OutputDirectory
-}
+$pythonArguments = @($pythonScript) + $args
 
 if ($env:HAIFA_PYTHON_EXECUTABLE) {
     if (-not (Test-Path -LiteralPath $env:HAIFA_PYTHON_EXECUTABLE -PathType Leaf)) {

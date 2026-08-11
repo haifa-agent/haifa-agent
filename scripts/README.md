@@ -12,7 +12,7 @@
 
 ```powershell
 .\scripts\start-real-environment.ps1
-.\scripts\start-real-environment.ps1 -Stop -WhatIf
+.\scripts\start-real-environment.ps1 --stop --dry-run
 ```
 
 ```bash

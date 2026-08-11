@@ -122,7 +122,7 @@ class MissionExecutionRecoveryTest {
         Path database = directory.resolve("control.sqlite");
         AtomicInteger ids = new AtomicInteger();
         FakeRuntime runtime = new FakeRuntime();
-        SqliteMissionStore store = store(database);
+        SqliteMissionStore store = storeWithAutomaticRetry(database);
         MissionApplicationService service = service(store, ids);
         var created = service.create(create("create", "conversation", "Handle controls", List.of("done")));
         service.confirm(change("confirm", created.missionId(), created.version()));
@@ -213,6 +213,10 @@ class MissionExecutionRecoveryTest {
 
     private static SqliteMissionStore store(Path database) {
         return new SqliteMissionStore(database, new ObjectMapper());
+    }
+
+    private static SqliteMissionStore storeWithAutomaticRetry(Path database) {
+        return new SqliteMissionStore(database, new ObjectMapper(), 2, 3, 200_000, 100);
     }
 
     private static int eventCount(Path database, String eventType) {

@@ -49,6 +49,22 @@ class PersonalModelFactoryTest {
     }
 
     @Test
+    void defaultApplicationConfigurationRequiresExplicitTaskAutoRetryOptIn() throws Exception {
+        var sources = new MutablePropertySources();
+        var resource = new ClassPathResource("application.yml");
+        for (var source : new YamlPropertySourceLoader().load("application", resource)) {
+            sources.addLast(source);
+        }
+
+        int attempts = new Binder(
+                        ConfigurationPropertySources.from(sources), new PropertySourcesPlaceholdersResolver(sources))
+                .bind("haifa.personal.mission.max-auto-attempts-per-task", Integer.class)
+                .orElseThrow(() -> new AssertionError("default Mission Attempt limit did not bind"));
+
+        assertThat(attempts).isEqualTo(1);
+    }
+
+    @Test
     void bindsProviderWithItsAvailableModelList() {
         var source = new MapConfigurationPropertySource(Map.ofEntries(
                 Map.entry("provider.id", "deepseek"),

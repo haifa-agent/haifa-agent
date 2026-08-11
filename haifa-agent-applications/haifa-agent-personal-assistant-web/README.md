@@ -5,6 +5,20 @@ without presenting them as a percentage; when the Server supplies an authoritati
 real Todo completion and the current or blocked step. Activity lifecycle events are merged by the
 stable operation ID, and execution child records retain their parent Tool relationship.
 
+Completed Deep Research reports remain portable Markdown artifacts. The Web reader hides Haifa
+section markers, builds a local table of contents, maps task markers to user-facing Mission Task
+details, and resolves `[[source-*]]` references against the delivery's `sourcesArtifactRef`.
+Consecutive references share one stable numbered citation control. Citation details open in a
+non-blocking evidence side panel with page title, publisher, date, source tier and verification
+status; `Escape` closes this inner panel before the Mission workspace. Missing source records are
+shown as unavailable without creating a link, `[unverified: ...]` markers become a user-facing
+"待核实" badge, and internal task/source identifiers remain hidden. The same document reader is
+embedded in a completed Mission workspace, so the report remains readable from the Mission's stable
+URL without depending on a matching Conversation turn.
+
+Each Mission has a stable `/missions/{missionId}?conversationId={conversationId}` URL. Direct visits,
+refresh, Mission-list selection, and browser history restore the same Mission workspace.
+
 ## Image composer behavior
 
 For models that declare `IMAGE_INPUT`, the composer exposes one `+` menu for file upload,
@@ -41,11 +55,25 @@ JAR 的构建或静态资源打包。
 - 显式 Mission 入口、列表、创建、确认前整体计划替换/重新生成、确认、取消、Snapshot polling、
   Dispatcher/Task 执行摘要、blocked Task 重试、Task Run Interaction 回复和 Conversation 摘要卡片；
 - Mission 使用全屏三栏工作台；左侧可搜索和选择 Mission，中间浏览完整计划，点击任务后在右侧查看
-  目标、验收标准、依赖和状态；计划编辑器同样不展示内部 Task 类型、Skill 或结果 Schema；
+  目标、验收标准、依赖和状态；等待确认时提供结构化“适度调整计划”，支持在 Mission 约束内修改
+  任务标题、目标、验收标准、顺序和早期依赖，并增删任务；保存生成新 Plan Revision，确认后冻结。
+  编辑器不展示或允许修改内部 Task 类型、Skill 或结果 Schema；右侧详情可以独立关闭，窄屏使用
+  Mission、报告和详情三个互斥视图，避免三栏纵向堆叠和多重滚动；
 - 显式 Standard / Deep Research 模式、完整 Research Brief，以及 v1 历史结果和
   `pa.research-delivery/v2` 正常/部分/降级/失败语义、完整 Markdown 报告查看/复制/下载、降级原因、
-  受影响 Task、来源链接和五类交付文件；
+  受影响 Task、来源链接和五类交付文件；主对话直接渲染完整报告并隐藏报告中的 HTML 机器注释，
+  Markdown 下载通过浏览器 Blob 触发真实文件保存；
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
+- 每个 Mission 使用 `/missions/{missionId}` 稳定 URL，并保留所属 Conversation 参数；刷新、直接访问及
+  浏览器前进/后退均可恢复对应 Mission 工作台；
+- 完成态优先展示结论和完整报告，研究说明、验收标准、执行进度与计划默认收进“研究过程”；来源清单
+  使用网页标题而非 URL 作为名称，并区分政府/监管、已标注发布方与一般网页来源；通用 Markdown
+  来源清单隐藏内部来源 ID，URL 可在浏览器新标签页打开；主对话中的研究报告可从来源清单恢复
+  `[[source-*]]` 引用上下文，使用相同的编号引用和证据侧栏；
+- Mission 列表支持状态筛选、更新时间/进度排序和进度条；运行状态、Task 状态及当前任务统一使用用户
+  语言，Dispatcher、内部 Task ID 等运行细节仅进入折叠的技术详情；
+- `pa.research-delivery/v2` 的五类交付文件使用可读名称，点击后在第三栏读取 Markdown 或结构化 JSON，
+  不再新开原始 Markdown 页面；存在未决问题或待核实结论时可预填一个后续 Mission；
 - Turn 历史、提交消息、SSE 回复、断线后 Snapshot 重取和停止 Run；
 - 输入框 `/` 命令菜单，以及按模型厂商、模型两级完成的新会话选择或已有会话切换；
 - 图片模型下的 HTTPS URL、PNG/JPEG/WEBP/非动画 GIF 文件选择与拖放上传；

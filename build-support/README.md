@@ -56,13 +56,13 @@ Architecture/Contract 或测试选择变化会保守扩大到全量最终门禁�
 Windows 示例：
 
 ```powershell
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L1 -MavenArguments @( `
-  '-pl', ':haifa-agent-personal-assistant-server', '-am', `
-  '-Dtest=MissionDispatcherTest,SqliteMissionStoreTest', `
-  '-Dsurefire.failIfNoSpecifiedTests=false', 'test')
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L1 -- `
+  -pl :haifa-agent-personal-assistant-server -am `
+  '-Dtest=MissionDispatcherTest,SqliteMissionStoreTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
 
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L2 -MavenArguments @( `
-  '-pl', ':haifa-agent-personal-assistant-server', '-am', 'test')
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 -- `
+  -pl :haifa-agent-personal-assistant-server -am test
 ```
 
 Unix 示例：
@@ -85,8 +85,39 @@ Windows 控制台阻塞 Surefire。只有交互终端会持续消费全部输出
 汇总最近样本：
 
 ```powershell
-.\build-support\scripts\summarize-maven-build.ps1 -Layer L1 -Limit 20
+.\build-support\scripts\summarize-maven-build.ps1 --layer L1 --limit 20
+```
+
+```bash
+./build-support/scripts/summarize-maven-build.sh --layer L1 --limit 20
 ```
 
 性能比较必须绑定相同 Git SHA、dirty 状态、JDK、OS、Profile 和 clean/incremental 条件。睡眠污染样本
 保留原始墙钟，但不进入 P50/P95。
+
+## Java Language Server 开关
+
+在本地 Maven 构建需要独占各模块 `target/` 输出目录时，可以暂停当前工作区由 Red Hat Java 扩展启动的
+Eclipse JDT Language Server。控制器只匹配当前 VS Code 工作区对应的 JDT LS，不会操作 Maven、Surefire
+或应用 Java 进程；Windows 使用进程挂起/恢复，macOS 与 Linux 使用 `SIGSTOP`/`SIGCONT`。
+
+Windows PowerShell：
+
+```powershell
+.\build-support\scripts\set-java-language-server.ps1 status
+.\build-support\scripts\set-java-language-server.ps1 stop
+.\build-support\scripts\set-java-language-server.ps1 start
+.\build-support\scripts\set-java-language-server.ps1 status --workspace D:\workspace\haifa-agent --verbose
+```
+
+macOS / Linux：
+
+```bash
+./build-support/scripts/set-java-language-server.sh status
+./build-support/scripts/set-java-language-server.sh stop
+./build-support/scripts/set-java-language-server.sh start
+```
+
+公共控制逻辑位于 `scripts/java_language_server.py`，只依赖 Python 3 标准库。暂停状态写入被 Git 忽略的
+`local-tmp/java-language-server-control.json`；重复执行 `stop`/`start` 是幂等的。PowerShell 与 Shell
+入口使用相同的小写位置动作和 `--kebab-case` 长参数。

@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
-import io.haifa.agent.personalassistant.application.mission.MissionPlanDependencyNormalizer;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanRevision;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
@@ -33,12 +32,12 @@ public final class RuntimeMissionPlanner implements MissionPlanner {
     public PlanningResult plan(PlanningRequest request) {
         MissionRuntimeAccess.PlannerRunResult run = runtime.runPlanner(request);
         try {
-            return decode(run, request, false);
+            return decode(run, request);
         } catch (InvalidPlanPayloadException invalid) {
             MissionRuntimeAccess.PlannerRunResult repaired =
                     runtime.repairPlanner(request, run, invalid.code(), invalid.getMessage(), 1);
             try {
-                return decode(repaired, request, true);
+                return decode(repaired, request);
             } catch (InvalidPlanPayloadException stillInvalid) {
                 throw new MissionException(
                         stillInvalid.code(),
@@ -49,8 +48,7 @@ public final class RuntimeMissionPlanner implements MissionPlanner {
         }
     }
 
-    private PlanningResult decode(
-            MissionRuntimeAccess.PlannerRunResult run, PlanningRequest request, boolean allowDeterministicDepthRepair) {
+    private PlanningResult decode(MissionRuntimeAccess.PlannerRunResult run, PlanningRequest request) {
         try {
             PlanPayload payload = mapper.readValue(run.structuredOutput(), PlanPayload.class);
             if (!"pa.mission-plan/v1".equals(payload.schemaVersion())) {
@@ -70,19 +68,7 @@ public final class RuntimeMissionPlanner implements MissionPlanner {
                             task.resultSchema().version(),
                             MissionTaskState.PLANNED))
                     .toList();
-            List<MissionTask> tasks;
-            try {
-                tasks = validator.validate(proposed, request.constraints());
-            } catch (MissionException invalid) {
-                if (!allowDeterministicDepthRepair
-                        || !"MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED".equals(invalid.code())) {
-                    throw invalid;
-                }
-                tasks = validator.validate(
-                        MissionPlanDependencyNormalizer.flattenToMaximumDepth(
-                                proposed, request.constraints().maxDependencyDepth()),
-                        request.constraints());
-            }
+            List<MissionTask> tasks = validator.validate(proposed, request.constraints());
             return new PlanningResult(
                     MissionPlanRevision.SCHEMA_ID,
                     MissionPlanRevision.SCHEMA_VERSION,

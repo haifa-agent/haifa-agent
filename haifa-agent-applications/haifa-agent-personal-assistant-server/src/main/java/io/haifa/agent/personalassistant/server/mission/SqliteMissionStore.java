@@ -288,7 +288,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
     private final ThreadLocal<Connection> transaction = new ThreadLocal<>();
 
     public SqliteMissionStore(Path database, ObjectMapper mapper) {
-        this(database, mapper, 2, 3, 200_000, 100);
+        this(database, mapper, 1, 2, 200_000, 100);
     }
 
     public SqliteMissionStore(

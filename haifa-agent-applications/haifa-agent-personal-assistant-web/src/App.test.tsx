@@ -8,6 +8,7 @@ import type {
   Memory,
   MemoryCandidate,
   MissionSnapshot,
+  ReplaceMissionPlan,
   Run,
   Turn,
 } from "./api/generated";
@@ -205,6 +206,40 @@ const mission: MissionSnapshot = {
   },
 };
 
+const researchPlanTasks: MissionSnapshot["tasks"] = [
+  { ...missionTask, taskId: "history-evolution", ordinal: 1, title: "发展历史沿革", objective: "梳理历史阶段与政策节点", acceptanceCriteria: ["形成可核验时间线"], dependsOn: [], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "current-status-operation", ordinal: 2, title: "经营现状与规模", objective: "整理规模与经营现状", acceptanceCriteria: ["核心指标标注年份"], dependsOn: ["history-evolution"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "policy-security-compliance", ordinal: 3, title: "政策、安全与合规", objective: "核验政策与合规边界", acceptanceCriteria: ["重大判断引用权威来源"], dependsOn: ["history-evolution"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "hydrology-water-price-cost", ordinal: 4, title: "水文、电价与成本参数", objective: "整理投资测算关键参数", acceptanceCriteria: ["形成参数清单"], dependsOn: ["current-status-operation", "policy-security-compliance"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "investment-framework-valuation", ordinal: 5, title: "投资框架与综合判断", objective: "形成投资结论与尽调清单", acceptanceCriteria: ["给出三情景判断"], dependsOn: ["hydrology-water-price-cost"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+];
+
+const researchMission: MissionSnapshot = {
+  ...mission,
+  missionId: "mission-research",
+  objective: "研究景宁县小水电历史、现状与投资价值",
+  acceptanceCriteria: ["形成有来源支持的投资分析"],
+  mode: "DEEP_RESEARCH",
+  researchBrief: {
+    question: "景宁县小水电未来是否值得投资？",
+    scope: "景宁县小水电存量资产",
+    timeRange: "历史至今",
+    region: "浙江景宁",
+    audience: "产业投资人",
+    sourcePreferences: ["政府与监管来源"],
+    exclusions: ["无来源营销材料"],
+    deliveryFormat: "中文 Markdown 报告",
+  },
+  selectedSkillId: "deep-research",
+  selectedSkillBinding: "product/bundled/deep-research@2.1.0#sha256:test",
+  plan: {
+    ...mission.plan!,
+    tasks: researchPlanTasks,
+  },
+  tasks: researchPlanTasks,
+  version: 3,
+};
+
 function client(): PersonalAssistantClient {
   return {
     bootstrap: vi.fn(async () => bootstrap),
@@ -282,24 +317,122 @@ describe("Personal Assistant application", () => {
     expect(await screen.findByText("交付一份可验收的计划")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Mission" }));
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    await waitFor(() => expect(window.location.pathname).toBe("/missions/mission-1"));
+    expect(new URLSearchParams(window.location.search).get("conversationId")).toBe("conversation-1");
     fireEvent.click(await within(dialog).findByRole("button", { name: /交付一份可验收的计划/ }));
     const taskButton = await within(dialog).findByRole("button", { name: /准备交付/ });
     fireEvent.click(taskButton);
-    const taskDetail = within(dialog).getByRole("complementary", { name: "计划任务详情" });
+    const taskDetail = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
     expect(within(taskDetail).getByRole("heading", { name: "准备交付" })).toBeTruthy();
     expect(within(taskDetail).getByText("整理明确的交付内容")).toBeTruthy();
     expect(within(taskDetail).getByText("可验收")).toBeTruthy();
     expect(within(taskDetail).queryByText(/Skill|Schema|pa\.task-result/)).toBeNull();
-    fireEvent.click(within(dialog).getByRole("button", { name: "编辑计划" }));
-    const planEditor = within(dialog).getByLabelText("完整计划 JSON") as HTMLTextAreaElement;
-    expect(planEditor.value).not.toMatch(/requiredSkillIds|taskType|resultSchemaId|deep-research/);
-    fireEvent.click(within(dialog).getByRole("button", { name: "取消编辑" }));
+    fireEvent.click(within(taskDetail).getByRole("button", { name: "关闭任务详情" }));
+    expect(within(dialog).queryByRole("complementary", { name: "Mission 详情面板" })).toBeNull();
+    fireEvent.click(taskButton);
+    fireEvent.click(within(dialog).getByRole("button", { name: "适度调整计划" }));
+    const planEditor = within(dialog).getByRole("region", { name: "适度调整计划" });
+    expect((within(planEditor).getByLabelText("任务标题") as HTMLInputElement).value).toBe("准备交付");
+    expect(within(planEditor).queryByText(/requiredSkillIds|taskType|resultSchemaId|deep-research/)).toBeNull();
+    fireEvent.click(within(planEditor).getByRole("button", { name: "退出调整" }));
     fireEvent.click(screen.getByRole("button", { name: /确认计划/ }));
     await waitFor(() => expect(api.confirmMission).toHaveBeenCalledWith(
       expect.objectContaining({ missionId: "mission-1", version: 1 }),
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     ));
-    expect((await screen.findAllByText("计划已确认")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("执行中")).length).toBeGreaterThan(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "关闭 Mission" }));
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("opens a mission directly from its stable URL", async () => {
+    window.history.replaceState(null, "", "/missions/mission-1?conversationId=conversation-1");
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [mission], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => mission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect(await within(dialog).findByRole("button", { name: /交付一份可验收的计划/ })).toBeTruthy();
+    expect(window.location.pathname).toBe("/missions/mission-1");
+  });
+
+  it("moderately adjusts a deterministic research plan before confirmation", async () => {
+    const replaceMissionPlan = vi.fn(async (_mission: MissionSnapshot, request: ReplaceMissionPlan) => {
+      const tasks = request.plan?.tasks ?? [];
+      return {
+        ...researchMission,
+        version: 4,
+        plan: { ...researchMission.plan!, revision: 2, tasks },
+        tasks,
+      };
+    });
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [researchMission], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => researchMission),
+      replaceMissionPlan,
+      confirmMission: vi.fn(async () => ({ ...researchMission, state: "RUNNING" as const, version: 5 })),
+      cancelMission: vi.fn(async () => ({ ...researchMission, state: "CANCELLED" as const, version: 5 })),
+      createMission: vi.fn(async () => researchMission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /研究景宁县小水电历史/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "适度调整计划" }));
+    const adjuster = within(dialog).getByRole("region", { name: "适度调整计划" });
+
+    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 02 经营现状与规模/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /01 · 发展历史沿革/ }));
+    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 03 政策、安全与合规/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /01 · 发展历史沿革/ }));
+
+    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 04 水文、电价与成本参数/ }));
+    fireEvent.change(within(adjuster).getByLabelText("任务标题"), {
+      target: { value: "水文、电价、成本与样本电站经营测算" },
+    });
+    fireEvent.change(within(adjuster).getByLabelText("任务验收标准"), {
+      target: { value: "形成参数清单\n至少选取 3 个可核验的存量电站或交易样本" },
+    });
+
+    fireEvent.click(within(adjuster).getByRole("button", { name: "增加任务" }));
+    fireEvent.change(within(adjuster).getByLabelText("任务标题"), {
+      target: { value: "存量项目交易与标的筛选" },
+    });
+    fireEvent.change(within(adjuster).getByLabelText("任务目标"), {
+      target: { value: "筛选可交易的存量资产并识别产权与退出条件" },
+    });
+    fireEvent.click(within(adjuster).getByRole("button", { name: "上移任务" }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /02 · 经营现状与规模/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /03 · 政策、安全与合规/ }));
+
+    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 06 投资框架与综合判断/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /05 · 存量项目交易与标的筛选/ }));
+    expect(within(adjuster).queryByText(/deep-research|requiredSkillIds|resultSchemaId/)).toBeNull();
+    fireEvent.click(within(adjuster).getByRole("button", { name: "保存调整" }));
+
+    await waitFor(() => expect(replaceMissionPlan).toHaveBeenCalledTimes(1));
+    const request = replaceMissionPlan.mock.calls[0]![1];
+    const tasks = request.plan!.tasks;
+    expect(tasks).toHaveLength(6);
+    expect(tasks.map((task) => task.ordinal)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(tasks[1]?.dependsOn).toEqual([]);
+    expect(tasks[2]?.dependsOn).toEqual([]);
+    expect(tasks[3]?.title).toBe("水文、电价、成本与样本电站经营测算");
+    expect(tasks[3]?.acceptanceCriteria).toContain("至少选取 3 个可核验的存量电站或交易样本");
+    expect(tasks[4]?.dependsOn).toEqual(["current-status-operation", "policy-security-compliance"]);
+    expect(tasks[5]?.dependsOn).toEqual(["hydrology-water-price-cost", "manual-research-6"]);
+    expect(tasks.every((task) => task.taskType === "RESEARCH")).toBe(true);
+    expect(tasks.every((task) => task.requiredSkillIds[0] === "deep-research")).toBe(true);
+    expect(await within(dialog).findByText("执行计划 · 第 2 版")).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: /确认计划/ })).toBeTruthy();
   });
 
   it("requires acceptance criteria before creating a Mission", async () => {
@@ -374,7 +507,7 @@ describe("Personal Assistant application", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
     fireEvent.click(await within(dialog).findByRole("button", { name: /交付一份可验收的计划/ }));
-    expect(await within(dialog).findByText("已完成 0/1")).toBeTruthy();
+    expect(await within(dialog).findByText("0/1")).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "重试任务" }));
     await waitFor(() => expect(api.retryMissionTask).toHaveBeenCalledWith(
       expect.objectContaining({ missionId: "mission-1", version: 4 }),
@@ -440,14 +573,19 @@ describe("Personal Assistant application", () => {
     expect(await within(dialog).findByText("Bounded evidence summary")).toBeTruthy();
     expect(within(dialog).getByText("Secondary evidence unavailable")).toBeTruthy();
     expect(within(dialog).getByText("claim-unverified")).toBeTruthy();
-    expect(within(dialog).getByText("https://research.stub/source-1")).toBeTruthy();
-    expect(within(dialog).getByText("artifact-report")).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "网页来源 · research.stub" })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: /交付文件 1/ })).toBeTruthy();
     expect(within(dialog).queryByText(/deep-research@|执行 Skill/)).toBeNull();
   });
 
   it("renders a degraded v2 delivery with report view download and copy actions", async () => {
     const writeText = vi.fn(async () => undefined);
+    const createObjectURL = vi.fn(() => "blob:research-report");
+    const revokeObjectURL = vi.fn();
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
     const delivered: MissionSnapshot = {
       ...mission,
       mode: "DEEP_RESEARCH",
@@ -482,13 +620,138 @@ describe("Personal Assistant application", () => {
     expect(within(dialog).getByText((_content, element) => element?.tagName === "P"
       && element.textContent?.includes("受影响任务：") === true
       && element.textContent.includes("task-1"))).toBeTruthy();
-    expect(within(dialog).getByRole("link", { name: "查看完整报告" }).getAttribute("href"))
-      .toContain("/missions/mission-1/artifacts/artifact-report");
-    expect(within(dialog).getByRole("link", { name: "下载 Markdown" }).getAttribute("download"))
+    expect(within(dialog).getByRole("button", { name: "阅读全文" })).toBeTruthy();
+    expect(within(dialog).queryByRole("link", { name: "查看完整报告" })).toBeNull();
+    const embeddedReport = await within(dialog).findByRole("region", { name: "完整研究报告" });
+    expect(await within(embeddedReport).findByText("正文")).toBeTruthy();
+    const downloadLink = within(dialog).getByRole("link", { name: "下载 Markdown" });
+    expect(downloadLink.getAttribute("download"))
       .toBe("research-report.md");
+    fireEvent.click(downloadLink);
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:research-report");
+    expect(await within(dialog).findByRole("link", { name: "已下载" })).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: /复制完整报告/ }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("# 完整研究报告\n\n正文"));
     expect(await within(dialog).findByRole("button", { name: /已复制/ })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: /完整研究报告.*research-report\.md/ }));
+    const artifactPanel = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
+    expect(within(artifactPanel).getByRole("heading", { name: "完整研究报告" })).toBeTruthy();
+    expect(await within(artifactPanel).findByText("正文")).toBeTruthy();
+    anchorClick.mockRestore();
+  });
+
+  it("renders a navigable research document with task links and stable source citations", async () => {
+    const report = [
+      "<!-- haifa-section: synthesis -->",
+      "## 综合分析",
+      "",
+      "<!-- haifa-task: hydrology-water-price-cost -->",
+      "关键判断由官方政策与独立报道共同支持 [[source-official]][[source-news]]。",
+      "缺失引用 [[source-missing]]。",
+      "",
+      "<!-- haifa-section: conclusions -->",
+      "## 结论与建议",
+    ].join("\n");
+    const reportTurn: Turn = {
+      id: "turn-report",
+      role: "ASSISTANT",
+      runId: "run-report",
+      sequence: 3,
+      text: report,
+      images: [],
+      createdAt: "2026-08-11T06:00:00Z",
+    };
+    const delivered: MissionSnapshot = {
+      ...researchMission,
+      state: "COMPLETED",
+      finalResult: JSON.stringify({
+        schemaVersion: "pa.research-delivery/v2",
+        completionKind: "COMPLETE",
+        degraded: false,
+        reportArtifactRef: { artifactId: "artifact-report", title: "research-report.md" },
+        sourcesArtifactRef: { artifactId: "artifact-sources" },
+        qualityGate: { passed: true, failedChecks: [] },
+      }),
+    };
+    const sources = JSON.stringify({
+      schemaVersion: "pa.research-sources/v1",
+      sources: [{
+        sourceId: "source-official",
+        title: "官方政策",
+        publisher: "水利部",
+        locator: "https://example.gov/%25E6%2594%25BF%25E7%25AD%2596",
+        normalizedLocator: "https://example.gov/%2525E6%252594%2525BF%2525E7%2525AD%252596",
+        publishedAt: "2026-03-19T00:00:00Z",
+        fetchedAt: "2026-08-11T00:00:00Z",
+        status: "FETCHED",
+      }, {
+        sourceId: "source-news",
+        title: "独立报道",
+        locator: "https://news.example/report",
+        normalizedLocator: "https://news.example/report",
+        publishedAt: null,
+        fetchedAt: null,
+        status: "UNKNOWN",
+      }],
+    });
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      turns: vi.fn(async () => [...turns, reportTurn]),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+      missionArtifact: vi.fn(async (_missionId: string, artifactId: string) => (
+        artifactId === "artifact-sources" ? sources : report
+      )),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+
+    const toc = await screen.findByRole("navigation", { name: "报告目录" });
+    const synthesisLink = within(toc).getByRole("link", { name: /综合分析/ });
+    expect(synthesisLink.getAttribute("href")).toContain("section-synthesis");
+    const sectionAnchor = document.querySelector(synthesisLink.getAttribute("href")!);
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(sectionAnchor, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    const urlBeforeSectionNavigation = window.location.href;
+    fireEvent.click(synthesisLink);
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect(window.location.href).toBe(urlBeforeSectionNavigation);
+    expect(within(toc).getByRole("link", { name: /结论与建议/ })).toBeTruthy();
+    const taskLink = screen.getByRole("button", { name: "打开研究任务 04 详情" });
+    expect(taskLink.textContent).toContain("水文、电价与成本参数");
+    const conversationCitation = screen.getByRole("button", { name: "查看引用来源 1, 2" });
+    fireEvent.click(conversationCitation);
+    const conversationEvidence = screen.getByRole("region", { name: "引用来源详情" });
+    expect(within(conversationEvidence).getByText("水利部")).toBeTruthy();
+    const officialSourceLink = within(conversationEvidence).getByRole("link", { name: "打开“官方政策”" });
+    expect(officialSourceLink.getAttribute("href")).toBe("https://example.gov/%E6%94%BF%E7%AD%96");
+    expect(screen.getByText("来源不可用")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("source-official");
+    expect(document.body.textContent).not.toContain("hydrology-water-price-cost");
+    fireEvent.click(within(conversationEvidence).getByRole("button", { name: "关闭引用来源" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "打开研究任务 04 详情" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    let detail = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
+    expect(await within(detail).findByRole("heading", { name: "水文、电价与成本参数" })).toBeTruthy();
+    const embeddedReport = await within(dialog).findByRole("region", { name: "完整研究报告" });
+    expect(within(embeddedReport).getByRole("navigation", { name: "报告目录" })).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "官方政策" })).toBeTruthy();
+    expect(within(embeddedReport).getByRole("button", { name: "查看引用来源 1, 2" })).toBeTruthy();
+    fireEvent.click(within(embeddedReport).getByRole("button", { name: "查看引用来源 1, 2" }));
+    detail = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
+    expect(within(detail).getByRole("region", { name: "引用来源详情" })).toBeTruthy();
+    fireEvent.keyDown(within(detail).getByRole("button", { name: "关闭引用来源" }), { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Mission" })).toBeTruthy();
+    expect(within(dialog).queryByRole("complementary", { name: "Mission 详情面板" })).toBeNull();
+    const embeddedTaskLink = within(embeddedReport).getByRole("button", { name: "打开研究任务 04 详情" });
+    expect(embeddedTaskLink.textContent).toContain("水文、电价与成本参数");
+    fireEvent.click(embeddedTaskLink);
+    detail = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
+    expect(await within(detail).findByRole("heading", { name: "水文、电价与成本参数" })).toBeTruthy();
   });
 
   it("renders the current Standard Mission final result envelope", async () => {
@@ -565,6 +828,9 @@ describe("Personal Assistant application", () => {
     fireEvent.click(open);
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
     expect(within(dialog).getByRole("status").textContent).toContain("当前离线");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Mission" })).toBeTruthy();
+    expect(within(dialog).queryByRole("complementary", { name: "Mission 详情面板" })).toBeNull();
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Mission" })).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(open));

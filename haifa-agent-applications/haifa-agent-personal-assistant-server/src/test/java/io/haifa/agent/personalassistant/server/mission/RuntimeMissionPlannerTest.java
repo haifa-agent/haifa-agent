@@ -125,7 +125,7 @@ class RuntimeMissionPlannerTest {
     }
 
     @Test
-    void deterministicallyFlattensExcessiveSerialDependenciesAfterSchemaRepair() {
+    void rejectsExcessiveSerialDependenciesThatRemainAfterTheSingleSchemaRepair() {
         String chain =
                 """
                 {"schemaVersion":"pa.mission-plan/v1","tasks":[
@@ -167,13 +167,11 @@ class RuntimeMissionPlannerTest {
                 new MissionConstraints(8, 4, java.util.Optional.empty()),
                 1);
 
-        var result = new RuntimeMissionPlanner(runtime, validator(), new ObjectMapper()).plan(request);
-
+        assertThatThrownBy(() -> new RuntimeMissionPlanner(runtime, validator(), new ObjectMapper()).plan(request))
+                .isInstanceOf(MissionException.class)
+                .extracting(error -> ((MissionException) error).code())
+                .isEqualTo("MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED");
         assertThat(repairCalls).hasValue(1);
-        assertThat(result.plannerRunId()).contains("repair-run-1");
-        assertThat(result.tasks())
-                .extracting(task -> task.dependsOn())
-                .containsExactly(List.of(), List.of(), List.of("second"), List.of("third"), List.of("fourth"));
     }
 
     private static RuntimeMissionPlanner planner(String output) {

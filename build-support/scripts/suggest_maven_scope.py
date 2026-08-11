@@ -164,15 +164,15 @@ def build_recommendation(root: Path, base: str, head: str | None) -> dict[str, o
         commands = {
             "l1": "Run targeted tests for the edited classes before the full gate.",
             "l2": "Run affected product sentinels; scope cannot be proven minimal for this change.",
-            "final": ".\\build-support\\scripts\\invoke-haifa-maven.ps1 -Layer L3 "
-            "-MavenArguments @('-Pci-fast', 'clean', 'verify')",
+            "final": ".\\build-support\\scripts\\invoke-haifa-maven.ps1 --layer L3 -- "
+            "-Pci-fast clean verify",
         }
     elif selectors:
         commands = {
             "l1": f".\\mvnw.cmd -pl {selectors} -am test",
-            "l2": f".\\build-support\\scripts\\invoke-haifa-maven.ps1 -Layer L2 -MavenArguments @('-pl', '{selectors}', '-am', 'test')",
-            "final": ".\\build-support\\scripts\\invoke-haifa-maven.ps1 -Layer L3 "
-            "-MavenArguments @('-Pci-fast', 'clean', 'verify')",
+            "l2": f".\\build-support\\scripts\\invoke-haifa-maven.ps1 --layer L2 -- -pl {selectors} -am test",
+            "final": ".\\build-support\\scripts\\invoke-haifa-maven.ps1 --layer L3 -- "
+            "-Pci-fast clean verify",
         }
     else:
         commands = {

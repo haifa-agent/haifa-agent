@@ -110,8 +110,9 @@ waits for the bounded convergence window, and leaves durable work recoverable wh
 expires.
 
 The default Mission-wide model-token budget is 3,000,000 (configurable up to 4,000,000), and the independent
-Tool-call budget is 360 (configurable up to 400). These cover a bounded multi-task Deep Research run, one automatic
-task retry, and its final synthesis without widening any stage's explicit Tool allowlist.
+Tool-call budget is 360 (configurable up to 400). These cover a bounded multi-task Deep Research run, an explicitly
+authorized user retry, and its final synthesis without widening any stage's explicit Tool allowlist. Automatic Task
+retry is disabled by default and requires an explicit deployment opt-in.
 The default Mission wall-clock budget is two hours. It is a product hard limit for serial multi-Task research, while
 the deterministic acceptance profile keeps its explicit 30-minute test deadline.
 

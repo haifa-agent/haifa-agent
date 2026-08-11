@@ -3,13 +3,12 @@
   "briefId": "deterministic-deep-research-evidence",
   "modelScriptId": "personal-deterministic-research-v1",
   "toolFixtureId": "personal-web-deterministic-stub-v1",
+  "sourceCommit": "a6b0475d6973358baafdb7b1768155b616d50b9d",
+  "sourcePath": "haifa-agent-applications/haifa-agent-personal-assistant-server/src/main/java/io/haifa/agent/personalassistant/server/configuration/model/PersonalModelFactory.java",
   "frozenBudget": {"hardToolCalls": 40, "stopTarget": 24, "fetchMaxCharacters": 10000},
   "trace": [
-    {"tool": "web.search", "target": "claim-1:origin", "canonical": "query:deterministic deep research evidence"},
-    {"tool": "web.fetch", "target": "claim-1:primary", "canonical": "https://research.stub/source-1"},
-    {"tool": "web.fetch", "target": "claim-1:independent", "canonical": "https://research.stub/source-2", "claimSufficientAfter": true},
-    {"tool": "web.fetch", "target": "claim-1:independent", "canonical": "https://research.stub/source-2", "waste": "DUPLICATE_FETCH"},
-    {"tool": "web.search", "target": "background-only", "canonical": "query:deterministic background popularity", "waste": "NON_MATERIAL"},
-    {"tool": "web.search", "target": "claim-1:extra-support", "canonical": "query:more deterministic corroboration", "waste": "AFTER_SUFFICIENT"}
+    {"tool": "web_search", "target": "claim-1:origin", "canonical": "query:deterministic deep research evidence"},
+    {"tool": "web_fetch", "target": "claim-1:primary", "canonical": "https://research.stub/source-1"},
+    {"tool": "web_fetch", "target": "claim-1:independent", "canonical": "https://research.stub/source-2", "claimSufficientAfter": true}
   ]
 }

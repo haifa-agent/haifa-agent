@@ -228,6 +228,107 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void missionApiAcceptsModeratelyAdjustedDeepResearchPlanAndFreezesItOnConfirmation() throws Exception {
+        JsonNode conversation = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"景宁小水电研究","message":"准备投资研究工作区"}
+                """);
+        String conversationId = conversation.path("id").asText();
+        String createRequest =
+                """
+                {
+                  "conversationId":%s,
+                  "objective":"研究景宁县小水电历史、现状与投资价值",
+                  "acceptanceCriteria":["形成有来源支持的投资分析"],
+                  "constraints":{"maxTasks":8,"maxDependencyDepth":4},
+                  "mode":"DEEP_RESEARCH",
+                  "selectedSkillId":"deep-research",
+                  "researchBrief":{
+                    "question":"景宁县小水电未来是否值得投资？",
+                    "scope":"景宁县小水电存量资产",
+                    "timeRange":"历史至今",
+                    "region":"浙江景宁",
+                    "audience":"产业投资人",
+                    "sourcePreferences":["政府与监管来源"],
+                    "exclusions":["无来源营销材料"],
+                    "deliveryFormat":"中文 Markdown 报告"
+                  }
+                }
+                """
+                        .formatted(mapper.writeValueAsString(conversationId));
+        JsonNode mission = missionCreate("mission-adjust-create-" + IDS.incrementAndGet(), createRequest);
+        String missionId = mission.path("missionId").asText();
+
+        String replacement =
+                """
+                {"plan":{"tasks":[
+                  {"taskId":"history-evolution","ordinal":1,"title":"发展历史沿革","objective":"梳理历史阶段与政策节点","acceptanceCriteria":["形成可核验时间线"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"current-status-operation","ordinal":2,"title":"经营现状与规模","objective":"整理规模与经营现状","acceptanceCriteria":["核心指标标注年份"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"policy-security-compliance","ordinal":3,"title":"政策、安全与合规","objective":"核验政策与合规边界","acceptanceCriteria":["重大判断引用权威来源"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"hydrology-water-price-cost","ordinal":4,"title":"水文、电价、成本与样本电站经营测算","objective":"整理投资测算关键参数","acceptanceCriteria":["形成参数清单","至少选取 3 个可核验的存量电站或交易样本"],"dependsOn":["current-status-operation","policy-security-compliance"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"manual-research-6","ordinal":5,"title":"存量项目交易与标的筛选","objective":"筛选可交易的存量资产并识别产权与退出条件","acceptanceCriteria":["给出可核验的结论与来源"],"dependsOn":["current-status-operation","policy-security-compliance"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"investment-framework-valuation","ordinal":6,"title":"投资框架与综合判断","objective":"形成投资结论与尽调清单","acceptanceCriteria":["给出三情景判断"],"dependsOn":["hydrology-water-price-cost","manual-research-6"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"}
+                ]}}
+                """;
+        byte[] replacedBody = web.put()
+                .uri("/api/v1/missions/" + missionId + "/plan")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-adjust-replace-" + IDS.incrementAndGet())
+                .header("If-Match", '"' + Long.toString(mission.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(replacement)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        JsonNode replaced = mapper.readTree(replacedBody);
+        assertThat(replaced.path("state").asText()).isEqualTo("WAITING_CONFIRMATION");
+        assertThat(replaced.path("plan").path("revision").asInt()).isEqualTo(2);
+        assertThat(replaced.path("tasks").size()).isEqualTo(6);
+        assertThat(replaced.path("tasks").get(1).path("dependsOn").size()).isZero();
+        assertThat(replaced.path("tasks").get(2).path("dependsOn").size()).isZero();
+        assertThat(replaced.path("tasks").get(3).path("acceptanceCriteria").toString())
+                .contains("3 个可核验的存量电站");
+        assertThat(replaced.path("tasks").get(5).path("dependsOn").size()).isEqualTo(2);
+
+        byte[] confirmedBody = web.post()
+                .uri("/api/v1/missions/" + missionId + "/confirm")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-adjust-confirm-" + IDS.incrementAndGet())
+                .header("If-Match", '"' + Long.toString(replaced.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{}")
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .returnResult()
+                .getResponseBody();
+        JsonNode confirmed = mapper.readTree(confirmedBody);
+        assertThat(confirmed.path("state").asText()).isEqualTo("RUNNING");
+        assertThat(confirmed.path("plan").path("revision").asInt()).isEqualTo(2);
+
+        web.put()
+                .uri("/api/v1/missions/" + missionId + "/plan")
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "mission-adjust-frozen-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + Long.toString(confirmed.path("version").asLong()) + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(replacement)
+                .exchange()
+                .expectStatus()
+                .isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MISSION_PLAN_FROZEN");
+    }
+
+    @Test
     void missionOperationsExposeReadinessAndQuiescentUpgradeFacts() throws Exception {
         JsonNode operations = get("/v1/admin/missions/operations");
         assertThat(operations.path("dispatcherStatus").asText()).isEqualTo("READY");

@@ -18,14 +18,17 @@ import {
   Link,
   Paperclip,
   PanelRight,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
+  Save,
   Send,
   ShieldCheck,
   Sparkles,
   Square,
   Timer,
+  Trash2,
   WifiOff,
   X,
   Zap,
@@ -62,11 +65,22 @@ import {
 } from "./api/client";
 import { appReducer, initialState } from "./state/appReducer";
 import type { ConnectionState, OutputPhase } from "./types";
-import { renderMarkdown } from "./utils/markdownRenderer";
+import {
+  hasEmbeddedMarkdownResearchSources,
+  inferMarkdownResearchContext,
+  renderMarkdownDocument,
+  researchSourceDate,
+  researchSourceSite,
+  researchSourceStatus,
+  researchSourceTier,
+  type MarkdownResearchContext,
+  type MarkdownResearchSource,
+} from "./utils/markdownRenderer";
 
 const defaultClient = new HttpPersonalAssistantClient();
 const terminalStatuses = new Set(["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"]);
 const conversationIdParameter = "conversationId";
+const missionPathPattern = /^\/missions\/([^/]+)$/;
 const approvalPreviewCharacters = 640;
 const approvalPreviewLines = 14;
 const number = new Intl.NumberFormat("zh-CN");
@@ -76,6 +90,16 @@ const dateTime = new Intl.DateTimeFormat("zh-CN", {
   hour: "2-digit",
   minute: "2-digit",
 });
+
+function missionIdFromLocation(): string | null {
+  const match = missionPathPattern.exec(window.location.pathname);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
 
 type SlashMenuState =
   | { stage: "commands" }
@@ -207,9 +231,173 @@ function updateConversationUrl(conversationId: string | null, mode: "push" | "re
   );
 }
 
-function MessageContent({ text }: { text: string }) {
+type ResearchCitationSelection = {
+  sources: MarkdownResearchSource[];
+  numbers: number[];
+  unavailable: boolean;
+};
+
+function safeResearchLocator(source: MarkdownResearchSource): string | null {
+  for (const locator of [source.locator, source.normalizedLocator]) {
+    if (!locator) continue;
+    try {
+      let readableLocator = locator;
+      for (let pass = 0; pass < 3 && /(?:%25[0-9a-f]{2}){2,}/i.test(readableLocator); pass += 1) {
+        readableLocator = decodeURI(readableLocator);
+      }
+      const url = new URL(readableLocator);
+      if (["http:", "https:"].includes(url.protocol)) return url.toString();
+    } catch {
+      // Try the normalized locator when the original value is malformed.
+    }
+  }
+  return null;
+}
+
+function ResearchCitationPanel({
+  selection,
+  onClose,
+}: {
+  selection: ResearchCitationSelection;
+  onClose(): void;
+}) {
+  return (
+    <section
+      className="research-evidence-panel"
+      aria-label="引用来源详情"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <header>
+        <div><span className="eyebrow">EVIDENCE</span><h4>引用来源</h4></div>
+        <button type="button" className="icon" aria-label="关闭引用来源" onClick={onClose} autoFocus><X size={16} /></button>
+      </header>
+      <div className="research-evidence-list">
+        {selection.sources.map((source, index) => {
+          const tier = researchSourceTier(source);
+          const locator = safeResearchLocator(source);
+          return <article className="research-source-entry" key={source.sourceId}>
+            <div className="research-source-heading">
+              <span>[{selection.numbers[index]}]</span>
+              <span className={`research-source-tier tier-${tier.key}`}>{tier.label}</span>
+            </div>
+            <h5>{source.title || "未命名来源"}</h5>
+            <dl>
+              <div><dt>发布方</dt><dd>{source.publisher?.trim() || "未提供"}</dd></div>
+              <div><dt>站点</dt><dd>{researchSourceSite(source)}</dd></div>
+              <div><dt>日期</dt><dd>{researchSourceDate(source)}</dd></div>
+              <div><dt>核验状态</dt><dd>{researchSourceStatus(source.status)}</dd></div>
+            </dl>
+            <p>{tier.note}</p>
+            <p className="research-source-claim-note">支持关系：报告已引用，尚未独立复核该网页是否充分支持当前结论。</p>
+            {locator
+              ? <a href={locator} target="_blank" rel="noopener noreferrer"><Link size={13} />打开“{source.title || researchSourceSite(source)}”</a>
+              : <span className="research-source-link-unavailable">网页链接不可用</span>}
+          </article>;
+        })}
+        {selection.unavailable && <article className="research-source-entry unavailable"><h5>来源不可用</h5><p>报告引用未能在来源清单中匹配，因此不生成伪链接。</p></article>}
+      </div>
+    </section>
+  );
+}
+
+function MessageContent({
+  text,
+  research,
+  researchAnchorPrefix = "conversation-report",
+  onResearchTaskSelect,
+  onResearchCitationSelect,
+}: {
+  text: string;
+  research?: MarkdownResearchContext;
+  researchAnchorPrefix?: string;
+  onResearchTaskSelect?(ordinal: number): void;
+  onResearchCitationSelect?(selection: ResearchCitationSelection): void;
+}) {
+  const [localCitation, setLocalCitation] = useState<ResearchCitationSelection | null>(null);
+  const inferenceKey = `${researchAnchorPrefix}:${text}`;
+  const shouldInferResearch = !research && hasEmbeddedMarkdownResearchSources(text);
+  const [inferredResearch, setInferredResearch] = useState<{
+    key: string;
+    context: MarkdownResearchContext;
+  } | null>(null);
+  useEffect(() => {
+    if (!shouldInferResearch) {
+      setInferredResearch(null);
+      return;
+    }
+    let cancelled = false;
+    void inferMarkdownResearchContext(text, researchAnchorPrefix)
+      .then((context) => {
+        if (cancelled) return;
+        setInferredResearch({
+          key: inferenceKey,
+          context: context ?? {
+            anchorPrefix: researchAnchorPrefix,
+            tasks: [],
+            sources: [],
+            sourceState: "failed",
+          },
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setInferredResearch({
+            key: inferenceKey,
+            context: {
+              anchorPrefix: researchAnchorPrefix,
+              tasks: [],
+              sources: [],
+              sourceState: "failed",
+            },
+          });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [inferenceKey, researchAnchorPrefix, shouldInferResearch, text]);
+  const effectiveResearch = research ?? (
+    shouldInferResearch
+      ? inferredResearch?.key === inferenceKey
+        ? inferredResearch.context
+        : { anchorPrefix: researchAnchorPrefix, tasks: [], sources: [], sourceState: "loading" }
+      : undefined
+  );
+  const rendered = renderMarkdownDocument(text, effectiveResearch);
   const handleClick = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
+    const taskButton = target.closest<HTMLButtonElement>(".research-task-reference[data-task-ordinal]");
+    if (taskButton) {
+      const ordinal = Number(taskButton.dataset.taskOrdinal);
+      if (Number.isInteger(ordinal) && ordinal > 0) onResearchTaskSelect?.(ordinal);
+      return;
+    }
+    const citationButton = target.closest<HTMLButtonElement>(".research-citation-button[data-source-indexes]");
+    if (citationButton && effectiveResearch) {
+      const sourceIndexes = (citationButton.dataset.sourceIndexes ?? "")
+        .split(",")
+        .map((value) => Number(value))
+        .filter(Number.isInteger);
+      const numbers = (citationButton.dataset.sourceNumbers ?? "")
+        .split(",")
+        .map((value) => Number(value))
+        .filter(Number.isFinite);
+      const selection = {
+        sources: sourceIndexes.flatMap((sourceIndex) => {
+          const source = effectiveResearch.sources[sourceIndex];
+          return source ? [source] : [];
+        }),
+        numbers,
+        unavailable: citationButton.dataset.sourceUnavailable === "true",
+      };
+      if (onResearchCitationSelect) onResearchCitationSelect(selection);
+      else setLocalCitation(selection);
+      return;
+    }
     const button = target.closest<HTMLButtonElement>(".copy-code-button");
     if (!button) return;
 
@@ -235,15 +423,38 @@ function MessageContent({ text }: { text: string }) {
     } catch {
       // Clipboard access can be denied by the browser; leave the control retryable.
     }
-  }, []);
+  }, [effectiveResearch, onResearchCitationSelect, onResearchTaskSelect]);
 
-  return (
+  const content = (
     <div
       className="message-content"
       onClick={handleClick}
-      dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
+      dangerouslySetInnerHTML={{ __html: rendered.html }}
     />
   );
+  const documentView = rendered.sections.length === 0 ? content : (
+    <div className="research-document">
+      <nav className="research-document-toc" aria-label="报告目录">
+        <span>报告目录</span>
+        <ol>{rendered.sections.map((section, index) => (
+          <li key={section.anchorId}>
+            <a
+              href={`#${section.anchorId}`}
+              onClick={(event) => {
+                event.preventDefault();
+                document.getElementById(section.anchorId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
+              <span>{String(index + 1).padStart(2, "0")}</span>{section.label}
+            </a>
+          </li>
+        ))}</ol>
+      </nav>
+      <div className="research-document-body">{content}</div>
+    </div>
+  );
+  if (!localCitation) return documentView;
+  return <div className="research-document-with-evidence">{documentView}<ResearchCitationPanel selection={localCitation} onClose={() => setLocalCitation(null)} /></div>;
 }
 
 function MessageCopyButton({ text }: { text: string }) {
@@ -1219,14 +1430,37 @@ function missionStateLabel(state: string): string {
   return {
     PLANNING: "正在生成计划",
     WAITING_CONFIRMATION: "等待确认",
-    RUNNING: "计划已确认",
-    WAITING_USER: "等待用户",
-    SYNTHESIZING: "正在整合",
+    RUNNING: "执行中",
+    WAITING_USER: "等待你的回复",
+    SYNTHESIZING: "正在生成报告",
     COMPLETED: "已完成",
     PARTIALLY_COMPLETED: "部分完成",
     FAILED: "失败",
     CANCELLED: "已取消",
   }[state] ?? state;
+}
+
+function missionTaskStateLabel(state: string): string {
+  return {
+    PLANNED: "已规划",
+    WAITING_DEPENDENCY: "等待前置任务",
+    READY: "等待执行",
+    COMPLETED: "已完成",
+    BLOCKED: "需要处理",
+    CANCELLED: "已取消",
+  }[state] ?? "状态待确认";
+}
+
+function missionModeLabel(mode: MissionSnapshot["mode"]): string {
+  return mode === "DEEP_RESEARCH" ? "深度调研" : "标准任务";
+}
+
+function missionSourceFallbackTitle(source: string): string {
+  try {
+    return `网页来源 · ${new URL(source).hostname.replace(/^www\./, "")}`;
+  } catch {
+    return "网页来源";
+  }
 }
 
 function missionFailureMessage(mission: MissionSnapshot): string {
@@ -1242,7 +1476,13 @@ function missionFailureMessage(mission: MissionSnapshot): string {
   return "Mission 执行失败，请查看技术详情。";
 }
 
-function parseMissionFinalResult(value: string | null): {
+type MissionArtifactReference = {
+  artifactId: string;
+  title?: string;
+  mediaType?: string;
+};
+
+type ParsedMissionFinalResult = {
   schemaVersion?: string;
   unsupportedVersion?: boolean;
   directAnswer?: string;
@@ -1250,7 +1490,13 @@ function parseMissionFinalResult(value: string | null): {
   degraded?: boolean;
   degradationReasons?: string[];
   affectedTaskIds?: string[];
-  reportArtifactRef?: { artifactId: string; title?: string };
+  reportArtifactRef?: MissionArtifactReference;
+  sourcesArtifactRef?: MissionArtifactReference;
+  claimEvidenceArtifactRef?: MissionArtifactReference;
+  unresolvedArtifactRef?: MissionArtifactReference;
+  sourceCount?: number;
+  unverifiedClaimCount?: number;
+  unresolvedQuestionCount?: number;
   qualityGate?: { passed?: boolean; failedChecks?: string[] };
   completedItems?: string[];
   failedItems?: string[];
@@ -1258,7 +1504,20 @@ function parseMissionFinalResult(value: string | null): {
   unverifiedClaims?: string[];
   residualRisks?: string[];
   unresolvedQuestions?: string[];
-} | null {
+};
+
+function parseArtifactReference(value: unknown): MissionArtifactReference | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.artifactId !== "string") return undefined;
+  return {
+    artifactId: record.artifactId,
+    title: typeof record.title === "string" ? record.title : undefined,
+    mediaType: typeof record.mediaType === "string" ? record.mediaType : undefined,
+  };
+}
+
+function parseMissionFinalResult(value: string | null): ParsedMissionFinalResult | null {
   if (!value) return null;
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>;
@@ -1280,15 +1539,13 @@ function parseMissionFinalResult(value: string | null): {
       degraded: typeof parsed.degraded === "boolean" ? parsed.degraded : undefined,
       degradationReasons: strings("degradationReasons"),
       affectedTaskIds: strings("affectedTaskIds"),
-      reportArtifactRef: typeof parsed.reportArtifactRef === "object" && parsed.reportArtifactRef !== null
-        && typeof (parsed.reportArtifactRef as Record<string, unknown>).artifactId === "string"
-        ? {
-            artifactId: (parsed.reportArtifactRef as Record<string, unknown>).artifactId as string,
-            title: typeof (parsed.reportArtifactRef as Record<string, unknown>).title === "string"
-              ? (parsed.reportArtifactRef as Record<string, unknown>).title as string
-              : undefined,
-          }
-        : undefined,
+      reportArtifactRef: parseArtifactReference(parsed.reportArtifactRef),
+      sourcesArtifactRef: parseArtifactReference(parsed.sourcesArtifactRef),
+      claimEvidenceArtifactRef: parseArtifactReference(parsed.claimEvidenceArtifactRef),
+      unresolvedArtifactRef: parseArtifactReference(parsed.unresolvedArtifactRef),
+      sourceCount: typeof parsed.sourceCount === "number" ? parsed.sourceCount : undefined,
+      unverifiedClaimCount: typeof parsed.unverifiedClaimCount === "number" ? parsed.unverifiedClaimCount : undefined,
+      unresolvedQuestionCount: typeof parsed.unresolvedQuestionCount === "number" ? parsed.unresolvedQuestionCount : undefined,
       qualityGate: typeof parsed.qualityGate === "object" && parsed.qualityGate !== null
         ? {
             passed: typeof (parsed.qualityGate as Record<string, unknown>).passed === "boolean"
@@ -1312,6 +1569,166 @@ function parseMissionFinalResult(value: string | null): {
   }
 }
 
+function parseResearchSourcesArtifact(value: string): MarkdownResearchSource[] {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (parsed.schemaVersion !== "pa.research-sources/v1" || !Array.isArray(parsed.sources)) return [];
+    return parsed.sources.flatMap((candidate) => {
+      if (typeof candidate !== "object" || candidate === null) return [];
+      const source = candidate as Record<string, unknown>;
+      if (typeof source.sourceId !== "string"
+        || typeof source.title !== "string"
+        || typeof source.locator !== "string") return [];
+      return [{
+        sourceId: source.sourceId,
+        title: source.title,
+        locator: source.locator,
+        normalizedLocator: typeof source.normalizedLocator === "string"
+          ? source.normalizedLocator
+          : undefined,
+        publisher: typeof source.publisher === "string" ? source.publisher : undefined,
+        publishedAt: typeof source.publishedAt === "string" ? source.publishedAt : null,
+        fetchedAt: typeof source.fetchedAt === "string" ? source.fetchedAt : null,
+        status: typeof source.status === "string" ? source.status : undefined,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+type MissionArtifactItem = {
+  artifactId: string;
+  title: string;
+  fileName: string;
+  mediaType: string;
+};
+
+function artifactDisplayName(fileName: string): string {
+  return {
+    "research-report.md": "完整研究报告",
+    "sources.json": "来源清单",
+    "claim-evidence.json": "结论与证据关系",
+    "unresolved-questions.json": "未决问题",
+    "research-delivery.json": "交付清单",
+  }[fileName] ?? fileName.replace(/[-_]+/g, " ").replace(/\.[^.]+$/, "");
+}
+
+function missionArtifactItems(mission: MissionSnapshot): MissionArtifactItem[] {
+  const result = parseMissionFinalResult(mission.finalResult);
+  const references = [
+    result?.reportArtifactRef,
+    result?.sourcesArtifactRef,
+    result?.claimEvidenceArtifactRef,
+    result?.unresolvedArtifactRef,
+  ].filter((reference): reference is MissionArtifactReference => Boolean(reference));
+  const byId = new Map(references.map((reference) => [reference.artifactId, reference]));
+  return mission.artifacts.map((artifactId, index) => {
+    const reference = byId.get(artifactId);
+    const fallbackManifest = result?.schemaVersion === "pa.research-delivery/v2" && index === mission.artifacts.length - 1;
+    const fileName = reference?.title || (fallbackManifest ? "research-delivery.json" : `交付文件-${index + 1}`);
+    const mediaType = reference?.mediaType || (fileName.endsWith(".md") ? "text/markdown" : "application/json");
+    return {
+      artifactId,
+      title: artifactDisplayName(fileName),
+      fileName,
+      mediaType,
+    };
+  });
+}
+
+function ArtifactJsonDocument({ text }: { text: string }) {
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>;
+    const schemaVersion = typeof value.schemaVersion === "string" ? value.schemaVersion : "";
+    if (schemaVersion === "pa.research-sources/v1") {
+      const sources = parseResearchSourcesArtifact(text);
+      return <div className="artifact-readable-list">{sources.map((source, index) => {
+        const tier = researchSourceTier(source);
+        const locator = safeResearchLocator(source);
+        return <article key={source.sourceId}><div><span>来源 {String(index + 1).padStart(2, "0")}</span><span className={`research-source-tier tier-${tier.key}`}>{tier.label}</span></div><h4>{source.title}</h4><p>{source.publisher || researchSourceSite(source)} · {researchSourceDate(source)} · {researchSourceStatus(source.status)}</p>{locator && <a href={locator} target="_blank" rel="noopener noreferrer">打开“{source.title}”</a>}</article>;
+      })}</div>;
+    }
+    if (schemaVersion === "pa.unresolved-questions/v1") {
+      const questions = Array.isArray(value.unresolvedQuestions)
+        ? value.unresolvedQuestions.filter((item): item is string => typeof item === "string")
+        : [];
+      return questions.length > 0
+        ? <ol className="artifact-question-list">{questions.map((question) => <li key={question}>{question}</li>)}</ol>
+        : <p className="mission-task-empty">没有未决问题。</p>;
+    }
+    if (schemaVersion === "pa.claim-evidence/v1") {
+      const claims = Array.isArray(value.claims)
+        ? value.claims.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+        : [];
+      return <div className="artifact-readable-list">{claims.map((claim, index) => <article key={index}><div><span>结论 {String(index + 1).padStart(2, "0")}</span>{claim.unverified === true && <span className="research-unverified">待核实</span>}</div><h4>{typeof claim.claim === "string" ? claim.claim : "未命名结论"}</h4>{typeof claim.limitations === "string" && claim.limitations && <p>限制：{claim.limitations}</p>}<p>支持来源 {Array.isArray(claim.supportingSourceIds) ? claim.supportingSourceIds.length : 0} 个 · 反向来源 {Array.isArray(claim.opposingSourceIds) ? claim.opposingSourceIds.length : 0} 个</p></article>)}</div>;
+    }
+    if (schemaVersion === "pa.research-delivery/v2") {
+      return <div className="artifact-delivery-summary"><p><b>交付状态：</b>{value.completionKind === "COMPLETE" ? "完整完成" : "部分完成"}</p><p><b>来源：</b>{typeof value.sourceCount === "number" ? `${value.sourceCount} 个` : "未提供"}</p><p><b>待核实结论：</b>{typeof value.unverifiedClaimCount === "number" ? `${value.unverifiedClaimCount} 个` : "未提供"}</p><p><b>未决问题：</b>{typeof value.unresolvedQuestionCount === "number" ? `${value.unresolvedQuestionCount} 个` : "未提供"}</p></div>;
+    }
+    return <details className="artifact-technical-data"><summary>查看结构化内容</summary><pre>{JSON.stringify(value, null, 2)}</pre></details>;
+  } catch {
+    return <pre className="artifact-plain-text">{text}</pre>;
+  }
+}
+
+function MissionArtifactReader({
+  client,
+  mission,
+  artifact,
+}: {
+  client: PersonalAssistantClient;
+  mission: MissionSnapshot;
+  artifact: MissionArtifactItem;
+}) {
+  const [content, setContent] = useState<
+    { state: "loading" } | { state: "failed" } | { state: "ready"; text: string; research?: MarkdownResearchContext }
+  >({ state: "loading" });
+  useEffect(() => {
+    if (!client.missionArtifact) {
+      setContent({ state: "failed" });
+      return;
+    }
+    let cancelled = false;
+    setContent({ state: "loading" });
+    const result = parseMissionFinalResult(mission.finalResult);
+    const sourcesId = result?.sourcesArtifactRef?.artifactId;
+    const sourcesRequest = sourcesId && sourcesId !== artifact.artifactId
+      ? client.missionArtifact(mission.missionId, sourcesId)
+      : Promise.resolve<string | null>(null);
+    void Promise.allSettled([
+      client.missionArtifact(mission.missionId, artifact.artifactId),
+      sourcesRequest,
+    ]).then(([artifactOutcome, sourcesOutcome]) => {
+      if (cancelled) return;
+      if (artifactOutcome.status === "rejected") {
+        setContent({ state: "failed" });
+        return;
+      }
+      const sources = sourcesOutcome.status === "fulfilled" && sourcesOutcome.value
+        ? parseResearchSourcesArtifact(sourcesOutcome.value)
+        : [];
+      setContent({
+        state: "ready",
+        text: artifactOutcome.value,
+        research: artifact.mediaType.startsWith("text/markdown") ? {
+          anchorPrefix: `mission-artifact-${mission.missionId}-${artifact.artifactId}`,
+          tasks: mission.tasks.map((task) => ({ ordinal: task.ordinal, taskId: task.taskId, title: task.title })),
+          sources,
+          sourceState: sourcesId ? (sourcesOutcome.status === "fulfilled" ? "ready" : "failed") : "failed",
+        } : undefined,
+      });
+    });
+    return () => { cancelled = true; };
+  }, [artifact, client, mission]);
+  if (content.state === "loading") return <div className="mission-embedded-report-status" role="status">正在加载交付文件…</div>;
+  if (content.state === "failed") return <div className="mission-embedded-report-status failed" role="alert">交付文件加载失败，请稍后重试。</div>;
+  if (artifact.mediaType.startsWith("text/markdown") || artifact.fileName.endsWith(".md")) {
+    return <div className="artifact-markdown-reader"><MessageContent text={content.text} research={content.research} /></div>;
+  }
+  return <ArtifactJsonDocument text={content.text} />;
+}
+
 const degradationLabels: Record<string, string> = {
   REPORT_EMPTY: "综合没有返回正文",
   REPORT_TOO_LARGE: "报告超过安全大小限制",
@@ -1327,18 +1744,73 @@ const degradationLabels: Record<string, string> = {
 function MissionFinalResult({
   client,
   mission,
+  onTaskSelect,
+  onCitationSelect,
+  onCreateFollowUp,
 }: {
   client: PersonalAssistantClient;
   mission: MissionSnapshot;
+  onTaskSelect(taskId: string): void;
+  onCitationSelect(selection: ResearchCitationSelection): void;
+  onCreateFollowUp(): void;
 }) {
   const result = parseMissionFinalResult(mission.finalResult);
   const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "failed">("idle");
+  const [downloadState, setDownloadState] = useState<"idle" | "downloading" | "downloaded" | "failed">("idle");
+  const [embeddedReport, setEmbeddedReport] = useState<
+    | { status: "idle" | "loading" }
+    | { status: "failed" }
+    | { status: "ready"; text: string; research: MarkdownResearchContext }
+  >({ status: "idle" });
+  const reportId = result?.reportArtifactRef?.artifactId;
+  const sourcesId = result?.sourcesArtifactRef?.artifactId;
+  const reportSectionId = `mission-report-${mission.missionId}`;
+
+  useEffect(() => {
+    if (result?.schemaVersion !== "pa.research-delivery/v2" || !reportId || !client.missionArtifact) {
+      setEmbeddedReport({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setEmbeddedReport({ status: "loading" });
+    const reportRequest = client.missionArtifact(mission.missionId, reportId);
+    const sourcesRequest = sourcesId
+      ? client.missionArtifact(mission.missionId, sourcesId)
+      : Promise.resolve<string | null>(null);
+    void Promise.allSettled([reportRequest, sourcesRequest]).then(([reportOutcome, sourcesOutcome]) => {
+      if (cancelled) return;
+      if (reportOutcome.status === "rejected") {
+        setEmbeddedReport({ status: "failed" });
+        return;
+      }
+      const sources = sourcesOutcome.status === "fulfilled" && sourcesOutcome.value
+        ? parseResearchSourcesArtifact(sourcesOutcome.value)
+        : [];
+      setEmbeddedReport({
+        status: "ready",
+        text: reportOutcome.value,
+        research: {
+          anchorPrefix: `mission-workspace-${mission.missionId}`,
+          tasks: mission.tasks.map((task) => ({
+            ordinal: task.ordinal,
+            taskId: task.taskId,
+            title: task.title,
+          })),
+          sources,
+          sourceState: sourcesId && sourcesOutcome.status === "fulfilled" ? "ready" : "failed",
+        },
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, mission.missionId, mission.tasks, reportId, result?.schemaVersion, sourcesId]);
+
   if (!result) return null;
   if (result.unsupportedVersion) {
     return <section className="research-result" role="alert"><h4>最终报告版本不受支持</h4><p>为避免错误解释交付状态，当前客户端不会推断未知版本。请升级客户端后重试。</p><details><summary>技术详情</summary><code>{result.schemaVersion}</code></details></section>;
   }
   const v2 = result.schemaVersion === "pa.research-delivery/v2";
-  const reportId = result.reportArtifactRef?.artifactId;
   const status = result.degraded
     ? "调研降级完成"
     : result.completionKind === "PARTIAL"
@@ -1354,17 +1826,64 @@ function MissionFinalResult({
       setCopyState("failed");
     }
   };
+  const downloadReport = async (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (!reportId || !client.missionArtifact) return;
+    setDownloadState("downloading");
+    try {
+      const report = await client.missionArtifact(mission.missionId, reportId);
+      const objectUrl = URL.createObjectURL(new Blob([report], {
+        type: "text/markdown;charset=utf-8",
+      }));
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = result.reportArtifactRef?.title ?? "research-report.md";
+      anchor.hidden = true;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+      setDownloadState("downloaded");
+    } catch {
+      setDownloadState("failed");
+    }
+  };
   if (v2) {
+    const visibleSourceCount = result.sourceCount
+      ?? (embeddedReport.status === "ready" ? embeddedReport.research.sources.length : 0);
     return <section className="research-result" aria-label="Deep Research 最终交付">
-      <h4>{status} · {result.completionKind}</h4>
+      <div className="research-result-heading"><div><span className="eyebrow">FINAL DELIVERY</span><h4>{status}</h4></div><div className="research-result-metrics"><span>{visibleSourceCount} 个来源</span><span>{result.unverifiedClaimCount ?? 0} 个待核实结论</span><span>{result.unresolvedQuestionCount ?? 0} 个未决问题</span></div></div>
       {result.degraded && <p className="warning-banner">最终综合未完全达到质量门禁，已保留可读报告和已收集证据。</p>}
       {(result.degradationReasons?.length ?? 0) > 0 && <><h5>降级原因</h5><ul>{result.degradationReasons!.map((reason) => <li key={reason}>{degradationLabels[reason] ?? "综合质量检查未通过"}<details><summary>技术详情</summary><code>{reason}</code></details></li>)}</ul></>}
       {(result.affectedTaskIds?.length ?? 0) > 0 && <p><b>受影响任务：</b>{result.affectedTaskIds!.join("、")}</p>}
       {reportId && <div className="research-report-actions">
-        <a className="button" href={missionArtifactUrl(mission.missionId, reportId)} target="_blank" rel="noreferrer">查看完整报告</a>
-        <a className="button" href={missionArtifactUrl(mission.missionId, reportId)} download={result.reportArtifactRef?.title ?? "research-report.md"}>下载 Markdown</a>
+        <button className="button" type="button" onClick={() => document.getElementById(reportSectionId)?.scrollIntoView({ behavior: "smooth", block: "start" })}>阅读全文</button>
+        <a className="button" href={missionArtifactUrl(mission.missionId, reportId)} download={result.reportArtifactRef?.title ?? "research-report.md"} aria-disabled={downloadState === "downloading" || !client.missionArtifact} onClick={(event) => void downloadReport(event)}>{downloadState === "downloading" ? "下载中…" : downloadState === "downloaded" ? "已下载" : downloadState === "failed" ? "下载失败" : "下载 Markdown"}</a>
         <button type="button" className="button" disabled={copyState === "copying" || !client.missionArtifact} onClick={() => void copyReport()}><Copy size={14} />{copyState === "copied" ? "已复制" : copyState === "failed" ? "复制失败" : "复制完整报告"}</button>
       </div>}
+      {embeddedReport.status === "loading" && <div className="mission-embedded-report-status" role="status">正在加载完整研究报告…</div>}
+      {embeddedReport.status === "failed" && <div className="mission-embedded-report-status failed" role="alert">完整研究报告加载失败，可使用上方“查看完整报告”打开原始 Markdown。</div>}
+      {embeddedReport.status === "ready" && <section id={reportSectionId} className="mission-embedded-report" aria-label="完整研究报告">
+        <header><div><span className="eyebrow">RESEARCH REPORT</span><h5>完整研究报告</h5></div><span>文档阅读模式</span></header>
+        <MessageContent
+          text={embeddedReport.text}
+          research={embeddedReport.research}
+          onResearchCitationSelect={onCitationSelect}
+          onResearchTaskSelect={(ordinal) => {
+            const task = mission.tasks.find((candidate) => candidate.ordinal === ordinal);
+            if (task) onTaskSelect(task.taskId);
+          }}
+        />
+      </section>}
+      {embeddedReport.status === "ready" && embeddedReport.research.sources.length > 0 && <section className="research-sources" aria-label="来源与引用">
+        <div className="research-source-list-heading"><div><span className="eyebrow">SOURCES</span><h5>来源与引用</h5></div><span>{embeddedReport.research.sources.length} 个网页来源</span></div>
+        <ol>{embeddedReport.research.sources.map((source, index) => {
+          const locator = safeResearchLocator(source);
+          const tier = researchSourceTier(source);
+          return <li key={source.sourceId}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{locator ? <a href={locator} target="_blank" rel="noopener noreferrer">{source.title}</a> : source.title}</strong><small>{source.publisher || researchSourceSite(source)} · {researchSourceDate(source)} · {researchSourceStatus(source.status)}</small></div><span className={`research-source-tier tier-${tier.key}`}>{tier.label}</span></li>;
+        })}</ol>
+      </section>}
+      {((result.unresolvedQuestionCount ?? 0) > 0 || (result.unverifiedClaimCount ?? 0) > 0 || result.degraded) && <div className="research-follow-up"><div><b>还有需要继续核实的内容</b><span>创建新的 Mission，并继承本次研究主题与范围。</span></div><button type="button" className="button" onClick={onCreateFollowUp}>继续研究未决问题</button></div>}
       {result.degraded && <p>下一步：查看已完成内容；如需重新调研，请按现有产品能力重新创建 Mission。</p>}
     </section>;
   }
@@ -1379,21 +1898,75 @@ function MissionFinalResult({
   return <section className="research-result"><h4>{resultTitle}{completionLabel && ` · ${completionLabel}`}</h4>{result.directAnswer && <p className="research-answer">{result.directAnswer}</p>}{(result.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.sourceRefs?.length ?? 0) > 0 && <><h5>参考来源</h5><ul>{result.sourceRefs!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</section>;
 }
 
+type MissionPlanTask = MissionSnapshot["tasks"][number];
+
+function copyMissionPlanTasks(tasks: MissionPlanTask[]): MissionPlanTask[] {
+  return tasks.map((task) => ({
+    ...task,
+    acceptanceCriteria: [...task.acceptanceCriteria],
+    dependsOn: [...task.dependsOn],
+    requiredSkillIds: [...task.requiredSkillIds],
+  }));
+}
+
+function missionPlanDependencyDepth(tasks: MissionPlanTask[]): number {
+  const byId = new Map(tasks.map((task) => [task.taskId, task]));
+  const memo = new Map<string, number>();
+  const visiting = new Set<string>();
+  const depth = (taskId: string): number => {
+    const known = memo.get(taskId);
+    if (known !== undefined) return known;
+    if (visiting.has(taskId)) return Number.POSITIVE_INFINITY;
+    visiting.add(taskId);
+    const task = byId.get(taskId);
+    const value = task?.dependsOn.length
+      ? 1 + Math.max(...task.dependsOn.map((dependency) => byId.has(dependency) ? depth(dependency) : Number.POSITIVE_INFINITY))
+      : 1;
+    visiting.delete(taskId);
+    memo.set(taskId, value);
+    return value;
+  };
+  return tasks.length ? Math.max(...tasks.map((task) => depth(task.taskId))) : 0;
+}
+
+function normalizeMissionPlanTasks(tasks: MissionPlanTask[]): MissionPlanTask[] {
+  return tasks.map((task, index) => ({
+    ...task,
+    ordinal: index + 1,
+    title: task.title.trim(),
+    objective: task.objective.trim(),
+    acceptanceCriteria: task.acceptanceCriteria.map((criterion) => criterion.trim()).filter(Boolean),
+    state: "PLANNED",
+  }));
+}
+
 function MissionDialog({
   client,
   conversation,
+  initialMissionId,
+  initialTaskId,
   onClose,
   onChanged,
+  onSelected,
 }: {
   client: PersonalAssistantClient;
   conversation: Conversation | null;
+  initialMissionId: string | null;
+  initialTaskId: string | null;
   onClose(): void;
   onChanged(mission: MissionSnapshot | null): void;
+  onSelected(mission: MissionSnapshot): void;
 }) {
   const [missions, setMissions] = useState<MissionSnapshot[]>([]);
   const [selected, setSelected] = useState<MissionSnapshot | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedArtifact, setSelectedArtifact] = useState<MissionArtifactItem | null>(null);
+  const [selectedCitation, setSelectedCitation] = useState<ResearchCitationSelection | null>(null);
+  const [detailPanelOpen, setDetailPanelOpen] = useState(true);
+  const [mobileView, setMobileView] = useState<"missions" | "content" | "detail">("content");
   const [missionQuery, setMissionQuery] = useState("");
+  const [missionFilter, setMissionFilter] = useState<"ALL" | "ACTIVE" | "ACTION" | "COMPLETED" | "FAILED">("ALL");
+  const [missionSort, setMissionSort] = useState<"UPDATED" | "PROGRESS">("UPDATED");
   const [creatingMission, setCreatingMission] = useState(false);
   const [objective, setObjective] = useState("");
   const [criteria, setCriteria] = useState("");
@@ -1407,7 +1980,8 @@ function MissionDialog({
   const [researchExclusions, setResearchExclusions] = useState("");
   const [researchDelivery, setResearchDelivery] = useState("Markdown report");
   const [editingPlan, setEditingPlan] = useState(false);
-  const [planJson, setPlanJson] = useState("");
+  const [planDraft, setPlanDraft] = useState<MissionPlanTask[]>([]);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [missionInteraction, setMissionInteraction] = useState<Interaction | null>(null);
@@ -1420,6 +1994,8 @@ function MissionDialog({
   const pollFailures = useRef(0);
   const dialogRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const maxPlanTasks = selected?.constraints.maxTasks ?? 8;
+  const maxPlanDependencyDepth = selected?.constraints.maxDependencyDepth ?? 4;
 
   const merge = useCallback((mission: MissionSnapshot) => {
     setSelected((current) => {
@@ -1436,7 +2012,8 @@ function MissionDialog({
         new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
     });
     onChanged(mission);
-  }, [onChanged]);
+    onSelected(mission);
+  }, [onChanged, onSelected]);
 
   useEffect(() => {
     closeButtonRef.current?.focus({ preventScroll: true });
@@ -1456,8 +2033,12 @@ function MissionDialog({
   useEffect(() => {
     const tasks = selected?.tasks ?? [];
     setSelectedTaskId((current) =>
-      tasks.some((task) => task.taskId === current) ? current : (tasks[0]?.taskId ?? null));
-  }, [selected]);
+      tasks.some((task) => task.taskId === initialTaskId)
+        ? initialTaskId
+        : tasks.some((task) => task.taskId === current)
+          ? current
+          : (tasks[0]?.taskId ?? null));
+  }, [initialTaskId, selected]);
 
   useEffect(() => {
     if (!client.missions) {
@@ -1471,12 +2052,14 @@ function MissionDialog({
     client.missions(undefined, controller.signal)
       .then((page) => {
         setMissions(page.items);
-        const current = conversation
-          ? page.items.find((mission) => mission.conversationId === conversation.id)
-          : page.items[0];
+        const current = page.items.find((mission) => mission.missionId === initialMissionId)
+          ?? (conversation
+            ? page.items.find((mission) => mission.conversationId === conversation.id)
+            : page.items[0]);
         setSelected(current ?? null);
         setCreatingMission(current == null);
         onChanged(current ?? null);
+        if (current) onSelected(current);
         setSyncStatus(navigator.onLine ? "current" : "offline");
         setError(null);
       })
@@ -1499,7 +2082,7 @@ function MissionDialog({
       controller.abort();
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [client, conversation, onChanged, reconnectEpoch]);
+  }, [client, conversation, initialMissionId, onChanged, onSelected, reconnectEpoch]);
 
   useEffect(() => {
     if (!selected || missionTerminalStates.has(selected.state) || !client.missionSnapshot) return;
@@ -1537,6 +2120,13 @@ function MissionDialog({
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      if (detailPanelOpen) {
+        setDetailPanelOpen(false);
+        setSelectedCitation(null);
+        setSelectedArtifact(null);
+        setMobileView("content");
+        return;
+      }
       onClose();
       return;
     }
@@ -1554,6 +2144,35 @@ function MissionDialog({
       event.preventDefault();
       first.focus();
     }
+  };
+
+  const openTaskDetail = (taskId: string) => {
+    setSelectedTaskId(taskId);
+    setSelectedArtifact(null);
+    setSelectedCitation(null);
+    setDetailPanelOpen(true);
+    setMobileView("detail");
+  };
+
+  const openArtifact = (artifact: MissionArtifactItem) => {
+    setSelectedArtifact(artifact);
+    setSelectedCitation(null);
+    setDetailPanelOpen(true);
+    setMobileView("detail");
+  };
+
+  const openCitation = (selection: ResearchCitationSelection) => {
+    setSelectedCitation(selection);
+    setSelectedArtifact(null);
+    setDetailPanelOpen(true);
+    setMobileView("detail");
+  };
+
+  const closeDetailPanel = () => {
+    setDetailPanelOpen(false);
+    setSelectedCitation(null);
+    setSelectedArtifact(null);
+    setMobileView("content");
   };
 
   const syncStatusLabel = {
@@ -1645,46 +2264,135 @@ function MissionDialog({
     });
   };
 
+  const beginFollowUp = () => {
+    if (!selected || !conversation) return;
+    if (missions.some((mission) => mission.conversationId === conversation.id && !missionTerminalStates.has(mission.state))) {
+      setError("当前会话已有进行中的 Mission，请先完成或取消后再继续研究。");
+      return;
+    }
+    setMode(selected.mode);
+    setObjective(`继续研究：${selected.objective}，重点解决报告中的未决问题与待核实结论。`);
+    setCriteria([
+      "逐项核实上一份报告中的未决问题与待核实结论",
+      "新增结论必须提供可追溯来源",
+      "说明相对上一份报告发生的结论变化",
+    ].join("\n"));
+    setResearchQuestion(selected.researchBrief?.question ?? selected.objective);
+    setResearchScope(selected.researchBrief?.scope ?? "");
+    setResearchTimeRange(selected.researchBrief?.timeRange ?? "");
+    setResearchRegion(selected.researchBrief?.region ?? "");
+    setResearchAudience(selected.researchBrief?.audience ?? "");
+    setResearchSources(selected.researchBrief?.sourcePreferences.join("\n") ?? "政府、监管机构与一手来源");
+    setResearchExclusions(selected.researchBrief?.exclusions.join("\n") ?? "无法追溯出处的营销材料");
+    setResearchDelivery(selected.researchBrief?.deliveryFormat ?? "中文 Markdown 报告");
+    setCreatingMission(true);
+    setEditingPlan(false);
+    setDetailPanelOpen(false);
+    setMobileView("content");
+    setError(null);
+  };
+
   const beginEdit = () => {
     if (!selected) return;
-    setPlanJson(JSON.stringify({
-      tasks: selected.tasks.map((task) => ({
-        taskId: task.taskId,
-        ordinal: task.ordinal,
-        title: task.title,
-        objective: task.objective,
-        acceptanceCriteria: task.acceptanceCriteria,
-        dependsOn: task.dependsOn,
-      })),
-    }, null, 2));
+    const tasks = copyMissionPlanTasks(selected.tasks);
+    setPlanDraft(tasks);
+    setEditingTaskId(tasks[0]?.taskId ?? null);
+    setError(null);
     setEditingPlan(true);
+  };
+
+  const cancelEdit = () => {
+    setEditingPlan(false);
+    setPlanDraft([]);
+    setEditingTaskId(null);
+    setError(null);
+  };
+
+  const updateDraftTask = (taskId: string, patch: Partial<MissionPlanTask>) => {
+    setPlanDraft((current) => current.map((task) => task.taskId === taskId ? { ...task, ...patch } : task));
+  };
+
+  const addDraftTask = () => {
+    if (!selected || planDraft.length >= maxPlanTasks) return;
+    const prefix = selected.mode === "DEEP_RESEARCH" ? "manual-research" : "manual-task";
+    let suffix = planDraft.length + 1;
+    while (planDraft.some((task) => task.taskId === `${prefix}-${suffix}`)) suffix += 1;
+    const task: MissionPlanTask = {
+      taskId: `${prefix}-${suffix}`,
+      ordinal: planDraft.length + 1,
+      title: "新增研究任务",
+      objective: "说明这项任务需要回答的问题和预期结果。",
+      acceptanceCriteria: ["给出可核验的结论与来源"],
+      dependsOn: [],
+      taskType: selected.mode === "DEEP_RESEARCH" ? "RESEARCH" : "GENERAL",
+      requiredSkillIds: selected.mode === "DEEP_RESEARCH" ? ["deep-research"] : [],
+      resultSchemaId: selected.mode === "DEEP_RESEARCH" ? "pa.research-task-result" : "pa.task-result",
+      resultSchemaVersion: "v1",
+      state: "PLANNED",
+    };
+    setPlanDraft((current) => [...current, task]);
+    setEditingTaskId(task.taskId);
+  };
+
+  const removeDraftTask = (taskId: string) => {
+    const dependent = planDraft.find((task) => task.dependsOn.includes(taskId));
+    if (dependent) {
+      setError(`请先移除“${dependent.title}”对当前任务的依赖。`);
+      return;
+    }
+    if (planDraft.length <= 1) {
+      setError("计划至少需要保留一个任务。");
+      return;
+    }
+    const currentIndex = planDraft.findIndex((task) => task.taskId === taskId);
+    const next = planDraft.filter((task) => task.taskId !== taskId);
+    setPlanDraft(next);
+    setEditingTaskId(next[Math.min(currentIndex, next.length - 1)]?.taskId ?? null);
+    setError(null);
+  };
+
+  const moveDraftTask = (taskId: string, direction: -1 | 1) => {
+    const currentIndex = planDraft.findIndex((task) => task.taskId === taskId);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= planDraft.length) return;
+    const current = planDraft[currentIndex];
+    const target = planDraft[targetIndex];
+    if (direction < 0 && current.dependsOn.includes(target.taskId)) {
+      setError("任务不能移动到它所依赖的任务之前。请先调整依赖关系。");
+      return;
+    }
+    if (direction > 0 && target.dependsOn.includes(current.taskId)) {
+      setError("被依赖的任务不能移动到其下游任务之后。请先调整依赖关系。");
+      return;
+    }
+    const next = [...planDraft];
+    next.splice(currentIndex, 1);
+    next.splice(targetIndex, 0, current);
+    setPlanDraft(normalizeMissionPlanTasks(next));
+    setError(null);
   };
 
   const replacePlan = () => {
     if (!selected || !client.replaceMissionPlan) return;
-    try {
-      const parsed = JSON.parse(planJson) as {
-        tasks?: Array<Pick<MissionSnapshot["tasks"][number],
-          "taskId" | "ordinal" | "title" | "objective" | "acceptanceCriteria" | "dependsOn">>;
-      };
-      if (!Array.isArray(parsed.tasks)) throw new Error("计划必须包含 tasks 数组。");
-      const deepResearch = selected.mode === "DEEP_RESEARCH";
-      const tasks: MissionSnapshot["tasks"] = parsed.tasks.map((task) => ({
-        ...task,
-        taskType: deepResearch ? "RESEARCH" : "GENERAL",
-        requiredSkillIds: deepResearch ? ["deep-research"] : [],
-        resultSchemaId: deepResearch ? "pa.research-task-result" : "pa.task-result",
-        resultSchemaVersion: "v1",
-        state: "PLANNED",
-      }));
-      void command(() => client.replaceMissionPlan!(selected, { plan: { tasks } }, {
-        idempotencyKey: crypto.randomUUID(),
-      })).then((succeeded) => {
-        if (succeeded) setEditingPlan(false);
-      });
-    } catch (reason) {
-      setError(safeError(reason));
+    const tasks = normalizeMissionPlanTasks(planDraft);
+    const depth = missionPlanDependencyDepth(tasks);
+    if (tasks.length < 1 || tasks.length > maxPlanTasks) {
+      setError(`计划需要包含 1～${maxPlanTasks} 个任务。`);
+      return;
     }
+    if (depth > maxPlanDependencyDepth) {
+      setError(`任务依赖深度不能超过 ${maxPlanDependencyDepth}。`);
+      return;
+    }
+    if (tasks.some((task) => !task.title || !task.objective)) {
+      setError("每个任务都需要标题和任务目标。");
+      return;
+    }
+    void command(() => client.replaceMissionPlan!(selected, { plan: { tasks } }, {
+      idempotencyKey: crypto.randomUUID(),
+    })).then((succeeded) => {
+      if (succeeded) cancelEdit();
+    });
   };
 
   const respondToMissionInteraction = (action: string) => {
@@ -1706,19 +2414,62 @@ function MissionDialog({
       .finally(() => setBusy(false));
   };
 
-  const visibleMissions = missions.filter((mission) =>
-    mission.objective.toLocaleLowerCase().includes(missionQuery.trim().toLocaleLowerCase()));
+  const visibleMissions = missions
+    .filter((mission) => mission.objective.toLocaleLowerCase().includes(missionQuery.trim().toLocaleLowerCase()))
+    .filter((mission) => {
+      if (missionFilter === "ACTIVE") return !missionTerminalStates.has(mission.state);
+      if (missionFilter === "ACTION") return ["WAITING_CONFIRMATION", "WAITING_USER"].includes(mission.state);
+      if (missionFilter === "COMPLETED") return ["COMPLETED", "PARTIALLY_COMPLETED"].includes(mission.state);
+      if (missionFilter === "FAILED") return ["FAILED", "CANCELLED"].includes(mission.state);
+      return true;
+    })
+    .sort((left, right) => {
+      if (missionSort === "PROGRESS") {
+        const leftProgress = left.tasks.length ? left.execution.completedTasks / left.tasks.length : 0;
+        const rightProgress = right.tasks.length ? right.execution.completedTasks / right.tasks.length : 0;
+        if (leftProgress !== rightProgress) return rightProgress - leftProgress;
+      }
+      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+    });
+  const editingTaskIndex = planDraft.findIndex((task) => task.taskId === editingTaskId);
+  const editingTask = editingTaskIndex >= 0 ? planDraft[editingTaskIndex] : null;
+  const planDraftDepth = missionPlanDependencyDepth(planDraft);
+  const planDraftValid = !!selected
+    && planDraft.length >= 1
+    && planDraft.length <= maxPlanTasks
+    && planDraftDepth <= maxPlanDependencyDepth
+    && planDraft.every((task) => task.title.trim() && task.objective.trim());
   const selectedTask = selected?.tasks.find((task) => task.taskId === selectedTaskId)
     ?? selected?.tasks[0]
     ?? null;
+  const displayedTask = editingPlan ? editingTask : selectedTask;
+  const displayedPlanTasks = editingPlan ? planDraft : (selected?.tasks ?? []);
   const selectedTaskIndex = selected && selectedTask
     ? selected.tasks.findIndex((task) => task.taskId === selectedTask.taskId)
     : -1;
   const nextTask = selected && selectedTaskIndex >= 0
     ? selected.tasks[selectedTaskIndex + 1] ?? null
     : null;
+  const selectedFinalResult = parseMissionFinalResult(selected?.finalResult ?? null);
+  const selectedArtifacts = selected ? missionArtifactItems(selected) : [];
+  const selectedCurrentTask = selected?.tasks.find((task) => task.taskId === selected.execution.currentTaskId);
+  const selectedTerminal = selected ? missionTerminalStates.has(selected.state) : false;
   const canCreateMission = Boolean(conversation)
     && !missions.some((mission) => mission.conversationId === conversation?.id && !missionTerminalStates.has(mission.state));
+  const missionProcess = selected ? <>
+    {selected.researchBrief && <section className="research-brief-summary"><h4>研究说明</h4><p><b>问题：</b>{selected.researchBrief.question}</p>{selected.researchBrief.scope && <p><b>范围：</b>{selected.researchBrief.scope}</p>}<p><b>时间 / 地区 / 受众：</b>{[selected.researchBrief.timeRange, selected.researchBrief.region, selected.researchBrief.audience].filter(Boolean).join(" · ") || "未限定"}</p></section>}
+    {selected.acceptanceCriteria.length > 0 && <section><h4>验收标准</h4><ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section>}
+    <section className="mission-execution-summary" aria-label="Mission 执行状态">
+      <div className="mission-progress-copy"><span>任务进度</span><b>{selected.execution.completedTasks}/{selected.tasks.length}</b></div>
+      <span className="mission-progress-track" aria-hidden="true"><span style={{ width: `${selected.tasks.length ? Math.round((selected.execution.completedTasks / selected.tasks.length) * 100) : 0}%` }} /></span>
+      {selectedCurrentTask && <span>当前任务：{selectedCurrentTask.title}</span>}
+      {selected.execution.recovering && <span>正在恢复执行状态</span>}
+      <details><summary>技术详情</summary><span>调度状态：{selected.execution.dispatcherStatus}</span>{selected.execution.currentTaskId && <span>内部任务标识已隐藏</span>}</details>
+    </section>
+    {!editingPlan && <section className="mission-plan-section"><div className="mission-plan-heading"><div><span className="eyebrow">当前计划</span><h4>执行计划 · 第 {selected.plan?.revision ?? "-"} 版</h4></div><span>{selected.tasks.length} 个任务</span></div>
+      <ol className="mission-tasks">{selected.tasks.map((task) => <li className={selectedTask?.taskId === task.taskId && detailPanelOpen && !selectedArtifact && !selectedCitation ? "active" : ""} key={task.taskId}><button type="button" className="mission-task-select" aria-pressed={selectedTask?.taskId === task.taskId && detailPanelOpen} onClick={() => openTaskDetail(task.taskId)}><span className="mission-task-ordinal">{String(task.ordinal).padStart(2, "0")}</span><span className="mission-task-copy"><b>{task.title}</b><small>{task.objective}</small></span><em>{missionTaskStateLabel(task.state)}</em><ChevronRight size={15} aria-hidden="true" /></button></li>)}</ol>
+    </section>}
+  </> : null;
 
   return (
     <div className="dialog-backdrop mission-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1729,17 +2480,36 @@ function MissionDialog({
           <button ref={closeButtonRef} type="button" className="icon" aria-label="关闭 Mission" onClick={onClose}><X size={18} /></button>
         </header>
         {error && <div className="error-banner" role="alert"><CircleAlert size={16} /><span>{error}</span></div>}
-        <div className="mission-layout">
+        <nav className="mission-mobile-tabs" aria-label="Mission 工作台视图">
+          <button type="button" className={mobileView === "missions" ? "active" : ""} onClick={() => setMobileView("missions")}>Mission</button>
+          <button type="button" className={mobileView === "content" ? "active" : ""} onClick={() => setMobileView("content")}>报告</button>
+          <button type="button" className={mobileView === "detail" ? "active" : ""} disabled={!detailPanelOpen} onClick={() => setMobileView("detail")}>详情</button>
+        </nav>
+        <div className={`mission-layout ${detailPanelOpen ? "" : "detail-closed"}`} data-mobile-view={mobileView}>
           <aside className="mission-list" aria-label="Mission 列表">
             <div className="mission-list-heading"><div><span className="eyebrow">工作空间</span><strong>Mission 列表</strong></div><button type="button" disabled={!canCreateMission} title={canCreateMission ? "创建 Mission" : "当前会话已有进行中的 Mission"} onClick={() => setCreatingMission(true)}><Plus size={13} />新建</button></div>
             <label className="mission-list-search"><Search size={14} aria-hidden="true" /><input value={missionQuery} onChange={(event) => setMissionQuery(event.target.value)} placeholder="搜索 Mission" aria-label="搜索 Mission" /></label>
+            <div className="mission-list-controls"><label>状态<select aria-label="按状态筛选 Mission" value={missionFilter} onChange={(event) => setMissionFilter(event.target.value as typeof missionFilter)}><option value="ALL">全部</option><option value="ACTIVE">进行中</option><option value="ACTION">需要我处理</option><option value="COMPLETED">已交付</option><option value="FAILED">失败或取消</option></select></label><label>排序<select aria-label="Mission 排序" value={missionSort} onChange={(event) => setMissionSort(event.target.value as typeof missionSort)}><option value="UPDATED">最近更新</option><option value="PROGRESS">完成进度</option></select></label></div>
             {missions.length === 0 && !busy && <p>还没有 Mission。</p>}
             {missions.length > 0 && visibleMissions.length === 0 && <p>没有匹配的 Mission。</p>}
             {visibleMissions.map((mission) => (
-              <button type="button" className={!creatingMission && selected?.missionId === mission.missionId ? "active" : ""} key={mission.missionId} onClick={() => { setSelected(mission); setCreatingMission(false); }}>
+              <button type="button" className={!creatingMission && selected?.missionId === mission.missionId ? "active" : ""} key={mission.missionId} onClick={() => {
+                setSelected(mission);
+                onSelected(mission);
+                setCreatingMission(false);
+                setEditingPlan(false);
+                setPlanDraft([]);
+                setEditingTaskId(null);
+                setSelectedArtifact(null);
+                setSelectedCitation(null);
+                setDetailPanelOpen(true);
+                setMobileView("content");
+                setError(null);
+              }}>
                 <small><span className={`mission-state state-${mission.state.toLowerCase()}`}>{missionStateLabel(mission.state)}</span><time>{dateTime.format(new Date(mission.updatedAt))}</time></small>
                 <span>{mission.objective}</span>
-                <small><span>{mission.mode === "DEEP_RESEARCH" ? "DEEP RESEARCH" : "STANDARD"}</span><span>{mission.execution.completedTasks}/{mission.tasks.length} 个任务</span></small>
+                <span className="mission-card-progress" aria-label={`任务进度 ${mission.execution.completedTasks}/${mission.tasks.length}`}><span style={{ width: `${mission.tasks.length ? Math.round((mission.execution.completedTasks / mission.tasks.length) * 100) : 0}%` }} /></span>
+                <small><span>{missionModeLabel(mission.mode)}</span><span>最近更新 · {missionStateLabel(mission.state)}</span></small>
               </button>
             ))}
           </aside>
@@ -1765,28 +2535,38 @@ function MissionDialog({
             )}
             {!creatingMission && (selected ? (
               <article className="mission-detail">
-                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span>{selected.mode === "DEEP_RESEARCH" && <span className="mission-mode">Deep Research</span>}<h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span><span className="mission-mode">{missionModeLabel(selected.mode)}</span><h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
                 {selected.blocker && <div className="error-banner" role="alert"><span>{missionFailureMessage(selected)}</span><details><summary>技术详情</summary><code>{selected.blocker}</code></details></div>}
-                {selected.researchBrief && <section className="research-brief-summary"><h4>Research brief</h4><p><b>问题：</b>{selected.researchBrief.question}</p>{selected.researchBrief.scope && <p><b>范围：</b>{selected.researchBrief.scope}</p>}<p><b>时间 / 地区 / 受众：</b>{[selected.researchBrief.timeRange, selected.researchBrief.region, selected.researchBrief.audience].filter(Boolean).join(" · ") || "未限定"}</p></section>}
-                {selected.acceptanceCriteria.length > 0 && <section><h4>验收标准</h4><ul>{selected.acceptanceCriteria.map((item) => <li key={item}>{item}</li>)}</ul></section>}
-                <section className="mission-execution-summary" aria-label="Mission 执行状态">
-                  <span>Dispatcher：{selected.execution.dispatcherStatus}</span>
-                  <span>已完成 {selected.execution.completedTasks}/{selected.tasks.length}</span>
-                  {selected.execution.currentTaskId && <span>当前任务：{selected.execution.currentTaskId}</span>}
-                  {selected.execution.recovering && <span>正在恢复执行状态</span>}
-                </section>
-                <section className="mission-plan-section"><div className="mission-plan-heading"><div><span className="eyebrow">当前计划</span><h4>执行计划 · revision {selected.plan?.revision ?? "-"}</h4></div><span>{selected.tasks.length} 个任务</span></div>
-                  <ol className="mission-tasks">{selected.tasks.map((task) => <li className={selectedTask?.taskId === task.taskId ? "active" : ""} key={task.taskId}><button type="button" className="mission-task-select" aria-pressed={selectedTask?.taskId === task.taskId} onClick={() => setSelectedTaskId(task.taskId)}><span className="mission-task-ordinal">{String(task.ordinal).padStart(2, "0")}</span><span className="mission-task-copy"><b>{task.title}</b><small>{task.objective}</small></span><em>{task.state}</em><ChevronRight size={15} aria-hidden="true" /></button></li>)}</ol>
-                </section>
-                {selected.finalResult && <MissionFinalResult client={client} mission={selected} />}
-                {selected.sources.length > 0 && <section className="research-sources"><h4>来源与引用</h4><ol>{selected.sources.map((source) => <li key={source}><a href={source} target="_blank" rel="noreferrer">{source}</a></li>)}</ol></section>}
-                {selected.artifacts.length > 0 && <section className="research-artifacts"><h4>交付文件</h4><ul>{selected.artifacts.map((artifact) => <li key={artifact}><a href={missionArtifactUrl(selected.missionId, artifact)} target="_blank" rel="noreferrer"><code>{artifact}</code></a></li>)}</ul></section>}
+                {selectedTerminal && selected.finalResult && <MissionFinalResult client={client} mission={selected} onTaskSelect={openTaskDetail} onCitationSelect={openCitation} onCreateFollowUp={beginFollowUp} />}
+                {selectedTerminal ? <details className="mission-process"><summary><span><b>研究过程</b><small>研究说明、验收标准、执行进度与任务计划</small></span><ChevronDown size={16} /></summary><div>{missionProcess}</div></details> : missionProcess}
+                {!selectedTerminal && selected.finalResult && <MissionFinalResult client={client} mission={selected} onTaskSelect={openTaskDetail} onCitationSelect={openCitation} onCreateFollowUp={beginFollowUp} />}
+                {selectedFinalResult?.schemaVersion !== "pa.research-delivery/v2" && selected.sources.length > 0 && <section className="research-sources"><h4>来源与引用</h4><ol>{selected.sources.map((source, index) => <li key={source}><span>{String(index + 1).padStart(2, "0")}</span><div><strong><a href={source} target="_blank" rel="noreferrer">{missionSourceFallbackTitle(source)}</a></strong></div></li>)}</ol></section>}
+                {selectedArtifacts.length > 0 && <section className="research-artifacts"><div className="research-artifact-heading"><div><span className="eyebrow">DELIVERABLES</span><h4>交付文件</h4></div><span>{selectedArtifacts.length} 个文件</span></div><ul>{selectedArtifacts.map((artifact) => <li key={artifact.artifactId}><button type="button" onClick={() => openArtifact(artifact)}><span className="research-artifact-icon">{artifact.fileName.endsWith(".md") ? "MD" : "JSON"}</span><span><b>{artifact.title}</b><small>{artifact.fileName}</small></span><ChevronRight size={15} /></button></li>)}</ul></section>}
                 {missionInteraction && <section className="mission-interaction"><h4>{missionInteraction.title}</h4><p>{missionInteraction.safePrompt}</p>{missionInteraction.inputType !== "NONE" && <textarea value={missionInteractionText} maxLength={missionInteraction.maximumCharacters} onChange={(event) => setMissionInteractionText(event.target.value)} rows={3} /> }<div>{missionInteraction.allowedActions.map((action) => <button key={action} type="button" className="button" disabled={busy} onClick={() => respondToMissionInteraction(action)}>{action}</button>)}</div></section>}
-                {editingPlan && <section className="mission-plan-editor"><label>完整计划 JSON<textarea value={planJson} onChange={(event) => setPlanJson(event.target.value)} rows={12} spellCheck={false} /></label><div><button type="button" className="button" onClick={() => setEditingPlan(false)}>取消编辑</button><button type="button" className="button primary-button" disabled={busy} onClick={replacePlan}>替换整个计划</button></div></section>}
+                {editingPlan && editingTask && <section className="mission-plan-adjuster" aria-label="适度调整计划">
+                  <header className="mission-plan-adjuster-heading"><div><span className="eyebrow">PLAN REVIEW · REVISION {selected.plan?.revision ?? "-"}</span><h4>适度调整计划</h4><p>只调整任务结构和内容；Mission 目标、研究范围与交付格式保持不变。</p></div><button type="button" className="button" onClick={cancelEdit}><X size={14} />退出调整</button></header>
+                  <div className="mission-plan-guardrail"><ShieldCheck size={15} /><span><b>系统持续校验：</b>最多 {maxPlanTasks} 个任务、依赖深度不超过 {maxPlanDependencyDepth}；任务只能依赖排在它之前的任务。</span></div>
+                  <div className="mission-plan-adjuster-layout">
+                    <aside className="mission-plan-draft-list" aria-label="待确认任务顺序">
+                      <div><span>任务顺序</span><b>{planDraft.length}/{maxPlanTasks}</b></div>
+                      {planDraft.map((task, index) => <button type="button" className={task.taskId === editingTaskId ? "active" : ""} key={task.taskId} aria-label={`编辑任务 ${String(index + 1).padStart(2, "0")} ${task.title}`} onClick={() => setEditingTaskId(task.taskId)}><span>{String(index + 1).padStart(2, "0")}</span><span><b>{task.title || "未命名任务"}</b><small>{task.dependsOn.length ? `依赖 ${task.dependsOn.length} 项` : "可直接执行"}</small></span><ChevronRight size={14} /></button>)}
+                      <button type="button" className="mission-plan-add" disabled={planDraft.length >= maxPlanTasks} onClick={addDraftTask}><Plus size={14} />增加任务</button>
+                    </aside>
+                    <div className="mission-plan-task-form">
+                      <header><div><span className="eyebrow">任务 {String(editingTaskIndex + 1).padStart(2, "0")}</span><h4>{editingTask.title || "未命名任务"}</h4></div><div className="mission-plan-order-actions"><button type="button" aria-label="上移任务" title="上移任务" disabled={editingTaskIndex <= 0} onClick={() => moveDraftTask(editingTask.taskId, -1)}><ChevronUp size={15} /></button><button type="button" aria-label="下移任务" title="下移任务" disabled={editingTaskIndex >= planDraft.length - 1} onClick={() => moveDraftTask(editingTask.taskId, 1)}><ChevronDown size={15} /></button><button type="button" aria-label="删除任务" title="删除任务" disabled={planDraft.length <= 1 || planDraft.some((task) => task.dependsOn.includes(editingTask.taskId))} onClick={() => removeDraftTask(editingTask.taskId)}><Trash2 size={15} /></button></div></header>
+                      <label>任务标题<input aria-label="任务标题" value={editingTask.title} maxLength={200} onChange={(event) => updateDraftTask(editingTask.taskId, { title: event.target.value })} /><small>{editingTask.title.length}/200</small></label>
+                      <label>任务目标<textarea aria-label="任务目标" value={editingTask.objective} maxLength={4000} rows={3} onChange={(event) => updateDraftTask(editingTask.taskId, { objective: event.target.value })} /><small>{editingTask.objective.length}/4000</small></label>
+                      <label>验收标准 <em>每行一项，最多 20 项</em><textarea aria-label="任务验收标准" value={editingTask.acceptanceCriteria.join("\n")} rows={4} onChange={(event) => updateDraftTask(editingTask.taskId, { acceptanceCriteria: event.target.value.split("\n").slice(0, 20) })} /><small>{editingTask.acceptanceCriteria.filter(Boolean).length}/20</small></label>
+                      <fieldset><legend>依赖任务 <em>只能选择当前任务之前的任务</em></legend>{editingTaskIndex > 0 ? <div className="mission-plan-dependencies">{planDraft.slice(0, editingTaskIndex).map((task, index) => <label key={task.taskId}><input type="checkbox" checked={editingTask.dependsOn.includes(task.taskId)} onChange={(event) => updateDraftTask(editingTask.taskId, { dependsOn: event.target.checked ? [...editingTask.dependsOn, task.taskId] : editingTask.dependsOn.filter((dependency) => dependency !== task.taskId) })} /><span><b>{String(index + 1).padStart(2, "0")} · {task.title}</b></span></label>)}</div> : <p className="mission-plan-no-dependency"><CheckCircle2 size={14} />首个任务无需依赖，可以直接执行。</p>}</fieldset>
+                      <p className="mission-plan-system-fixed"><ShieldCheck size={14} />任务类型与交付格式由系统保持不变，不需要人工配置。</p>
+                    </div>
+                  </div>
+                  <footer className="mission-plan-adjuster-actions"><div className={planDraftValid ? "valid" : "invalid"}><ShieldCheck size={15} /><span><b>{planDraftValid ? "计划约束通过" : "请补全必填内容或调整依赖"}</b>{planDraft.length} 个任务 · 依赖深度 {Number.isFinite(planDraftDepth) ? planDraftDepth : "无效"}/{maxPlanDependencyDepth} · 保存后生成 revision {(selected.plan?.revision ?? 0) + 1}</span></div><button type="button" className="button" onClick={cancelEdit}>放弃修改</button><button type="button" className="button primary-button" disabled={busy || !planDraftValid} onClick={replacePlan}><Save size={14} />保存调整</button></footer>
+                </section>}
                 <footer className="mission-actions">
-                  {selected.state === "WAITING_CONFIRMATION" && <>
+                  {!editingPlan && selected.state === "WAITING_CONFIRMATION" && <>
                     <button type="button" className="button" disabled={busy} onClick={() => void command(() => client.replaceMissionPlan!(selected, { regenerate: true }, { idempotencyKey: crypto.randomUUID() }))}>重新生成</button>
-                    <button type="button" className="button" disabled={busy} onClick={beginEdit}>编辑计划</button>
+                    <button type="button" className="button" disabled={busy} onClick={beginEdit}><Pencil size={14} />适度调整计划</button>
                     <button type="button" className="button primary-button" disabled={busy} onClick={() => void command(() => client.confirmMission!(selected, { idempotencyKey: crypto.randomUUID() }))}><CheckCircle2 size={15} />确认计划</button>
                   </>}
                   {!missionTerminalStates.has(selected.state) && <button type="button" className="button danger" disabled={busy} onClick={() => void command(() => client.cancelMission!(selected, { idempotencyKey: crypto.randomUUID() }))}>取消 Mission</button>}
@@ -1795,28 +2575,31 @@ function MissionDialog({
               </article>
             ) : <div className="empty"><h3>选择或创建 Mission</h3><p>Mission 用于需要拆解、持续运行并最终整合的大任务。</p></div>)}
           </div>
-          <aside className="mission-task-detail" aria-label="计划任务详情">
-            {!creatingMission && selectedTask ? <>
-              <header className="mission-task-detail-header"><span className="mission-task-detail-number">{String(selectedTask.ordinal).padStart(2, "0")}</span><div><span className="eyebrow">任务详情</span><h3>{selectedTask.title}</h3></div></header>
+          {detailPanelOpen && <aside className="mission-task-detail" aria-label="Mission 详情面板">
+            {selectedCitation ? <ResearchCitationPanel selection={selectedCitation} onClose={closeDetailPanel} /> : selected && selectedArtifact ? <>
+              <header className="mission-task-detail-header"><span className="mission-task-detail-number"><Paperclip size={16} /></span><div><span className="eyebrow">交付文件</span><h3>{selectedArtifact.title}</h3><small>{selectedArtifact.fileName}</small></div><button type="button" className="icon" aria-label="关闭交付文件" onClick={closeDetailPanel}><X size={16} /></button></header>
+              <div className="mission-task-detail-scroll artifact-reader-scroll"><MissionArtifactReader client={client} mission={selected} artifact={selectedArtifact} /></div>
+            </> : !creatingMission && displayedTask ? <>
+              <header className="mission-task-detail-header"><span className="mission-task-detail-number">{String(displayedTask.ordinal).padStart(2, "0")}</span><div><span className="eyebrow">{editingPlan ? "正在调整" : "任务详情"}</span><h3>{displayedTask.title}</h3></div><button type="button" className="icon" aria-label="关闭任务详情" onClick={closeDetailPanel}><X size={16} /></button></header>
               <div className="mission-task-detail-scroll">
-                <section><h4>任务目标</h4><p>{selectedTask.objective}</p></section>
+                <section><h4>任务目标</h4><p>{displayedTask.objective}</p></section>
                 <dl className="mission-task-metadata">
-                  <div><dt>当前状态</dt><dd>{selectedTask.state}</dd></div>
+                  <div><dt>当前状态</dt><dd>{editingPlan ? "待保存" : missionTaskStateLabel(displayedTask.state)}</dd></div>
                 </dl>
-                <section><div className="mission-task-section-heading"><h4>验收标准</h4><span>{selectedTask.acceptanceCriteria.length} 项</span></div>{selectedTask.acceptanceCriteria.length > 0 ? <ol className="mission-task-criteria">{selectedTask.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ol> : <p className="mission-task-empty">未定义任务级验收标准。</p>}</section>
-                <section><div className="mission-task-section-heading"><h4>依赖任务</h4><span>{selectedTask.dependsOn.length} 项</span></div>{selectedTask.dependsOn.length > 0 ? <div className="mission-task-dependencies">{selectedTask.dependsOn.map((dependencyId) => {
-                  const dependency = selected?.tasks.find((task) => task.taskId === dependencyId);
+                <section><div className="mission-task-section-heading"><h4>验收标准</h4><span>{displayedTask.acceptanceCriteria.length} 项</span></div>{displayedTask.acceptanceCriteria.length > 0 ? <ol className="mission-task-criteria">{displayedTask.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ol> : <p className="mission-task-empty">未定义任务级验收标准。</p>}</section>
+                <section><div className="mission-task-section-heading"><h4>依赖任务</h4><span>{displayedTask.dependsOn.length} 项</span></div>{displayedTask.dependsOn.length > 0 ? <div className="mission-task-dependencies">{displayedTask.dependsOn.map((dependencyId) => {
+                  const dependency = displayedPlanTasks.find((task) => task.taskId === dependencyId);
                   return dependency
-                    ? <button type="button" key={dependencyId} onClick={() => setSelectedTaskId(dependencyId)}>{String(dependency.ordinal).padStart(2, "0")} {dependency.title}<ChevronRight size={14} aria-hidden="true" /></button>
-                    : <code key={dependencyId}>{dependencyId}</code>;
+                    ? <button type="button" key={dependencyId} onClick={() => editingPlan ? setEditingTaskId(dependencyId) : openTaskDetail(dependencyId)}>{String(dependency.ordinal).padStart(2, "0")} {dependency.title}<ChevronRight size={14} aria-hidden="true" /></button>
+                    : <span className="mission-task-empty" key={dependencyId}>依赖任务详情不可用</span>;
                 })}</div> : <p className="mission-task-empty">无依赖，可直接执行。</p>}</section>
               </div>
               <footer className="mission-task-detail-actions">
-                {selected && selectedTask.state === "BLOCKED" && client.retryMissionTask && <button type="button" className="button" disabled={busy} onClick={() => void command(() => client.retryMissionTask!(selected, selectedTask.taskId, { idempotencyKey: crypto.randomUUID() }))}>重试任务</button>}
-                {nextTask && <button type="button" className="button primary-button" onClick={() => setSelectedTaskId(nextTask.taskId)}>下一个任务<ChevronRight size={15} /></button>}
+                {!editingPlan && selected && selectedTask?.state === "BLOCKED" && client.retryMissionTask && <button type="button" className="button" disabled={busy} onClick={() => void command(() => client.retryMissionTask!(selected, selectedTask.taskId, { idempotencyKey: crypto.randomUUID() }))}>重试任务</button>}
+                {!editingPlan && nextTask && <button type="button" className="button primary-button" onClick={() => openTaskDetail(nextTask.taskId)}>下一个任务<ChevronRight size={15} /></button>}
               </footer>
-            </> : <div className="mission-task-detail-empty"><PanelRight size={24} /><h3>选择计划任务</h3><p>点击中间的 Plan 任务，在这里查看目标、验收标准、依赖与结果格式。</p></div>}
-          </aside>
+            </> : <div className="mission-task-detail-empty"><PanelRight size={24} /><h3>选择任务或交付文件</h3><p>在中间区域选择任务、引用或交付文件，在这里查看详情。</p></div>}
+          </aside>}
         </div>
         <div className={`mission-sync-status sync-${syncStatus}`} role="status" aria-live="polite" aria-atomic="true">
           {syncStatus === "offline" && <WifiOff size={14} aria-hidden="true" />}{syncStatusLabel}
@@ -1855,14 +2638,49 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [reasonTarget, setReasonTarget] = useState<
     { kind: "reject"; candidate: MemoryCandidate } | { kind: "invalidate"; memory: Memory } | null
   >(null);
-  const [missionOpen, setMissionOpen] = useState(false);
+  const [missionRouteId, setMissionRouteId] = useState<string | null>(() => missionIdFromLocation());
+  const [missionOpen, setMissionOpen] = useState(() => missionIdFromLocation() != null);
   const [conversationMission, setConversationMission] = useState<MissionSnapshot | null>(null);
+  const [requestedMissionTaskId, setRequestedMissionTaskId] = useState<string | null>(null);
+  const [researchReadingContext, setResearchReadingContext] = useState<
+    (MarkdownResearchContext & { missionId: string }) | null
+  >(null);
 
   const handleMissionChanged = useCallback((mission: MissionSnapshot | null) => {
     if (!mission || mission.conversationId === state.selectedConversationId) {
       setConversationMission(mission);
     }
   }, [state.selectedConversationId]);
+
+  const navigateToMission = useCallback((mission: MissionSnapshot) => {
+    setMissionRouteId(mission.missionId);
+    const query = new URLSearchParams(window.location.search);
+    query.set(conversationIdParameter, mission.conversationId);
+    const nextUrl = `/missions/${encodeURIComponent(mission.missionId)}?${query.toString()}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.pushState(null, "", nextUrl);
+    }
+  }, []);
+
+  const openResearchTask = useCallback((ordinal: number) => {
+    const mission = conversationMission;
+    const task = mission?.tasks.find((candidate) => candidate.ordinal === ordinal);
+    if (!mission || !task) return;
+    previousFocus.current = document.activeElement as HTMLElement;
+    setRequestedMissionTaskId(task.taskId);
+    setMissionOpen(true);
+    navigateToMission(mission);
+  }, [conversationMission, navigateToMission]);
+
+  useEffect(() => {
+    const syncMissionRoute = () => {
+      const missionId = missionIdFromLocation();
+      setMissionRouteId(missionId);
+      setMissionOpen(missionId != null);
+    };
+    window.addEventListener("popstate", syncMissionRoute);
+    return () => window.removeEventListener("popstate", syncMissionRoute);
+  }, []);
 
   useEffect(() => {
     if (!state.selectedConversationId || !client.missions) {
@@ -1879,6 +2697,49 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       });
     return () => controller.abort();
   }, [client, state.selectedConversationId]);
+
+  useEffect(() => {
+    const mission = conversationMission;
+    const finalResult = parseMissionFinalResult(mission?.finalResult ?? null);
+    if (!mission || finalResult?.schemaVersion !== "pa.research-delivery/v2") {
+      setResearchReadingContext(null);
+      return;
+    }
+    const baseContext: MarkdownResearchContext & { missionId: string } = {
+      missionId: mission.missionId,
+      anchorPrefix: `mission-${mission.missionId}`,
+      tasks: mission.tasks.map((task) => ({
+        ordinal: task.ordinal,
+        taskId: task.taskId,
+        title: task.title,
+      })),
+      sources: [],
+      sourceState: "loading",
+    };
+    const artifactId = finalResult.sourcesArtifactRef?.artifactId;
+    if (!artifactId || !client.missionArtifact) {
+      setResearchReadingContext({ ...baseContext, sourceState: "failed" });
+      return;
+    }
+    let cancelled = false;
+    setResearchReadingContext(baseContext);
+    client.missionArtifact(mission.missionId, artifactId)
+      .then((artifact) => {
+        if (!cancelled) {
+          setResearchReadingContext({
+            ...baseContext,
+            sources: parseResearchSourcesArtifact(artifact),
+            sourceState: "ready",
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setResearchReadingContext({ ...baseContext, sourceState: "failed" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, conversationMission]);
 
   const closeImageTools = useCallback(() => {
     setImageToolsOpen(false);
@@ -2457,8 +3318,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   }, []);
   const closeMission = useCallback(() => {
     setMissionOpen(false);
+    setMissionRouteId(null);
+    setRequestedMissionTaskId(null);
+    const query = new URLSearchParams(window.location.search);
+    if (state.selectedConversationId) query.set(conversationIdParameter, state.selectedConversationId);
+    const queryText = query.toString();
+    const nextUrl = queryText ? `/?${queryText}` : "/";
+    window.history.pushState(null, "", nextUrl);
     window.setTimeout(() => previousFocus.current?.focus(), 0);
-  }, []);
+  }, [state.selectedConversationId]);
 
   const runActive = Boolean(state.selectedConversation?.activeRunId) && !isTerminal(state.run);
   const composerDisabled = Boolean(state.pending) || runActive;
@@ -2562,14 +3430,21 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               <>
                 {state.turns.map((turn) => {
                   const assistant = turn.role.toLowerCase() === "assistant";
+                  const research = assistant
+                    && turn.text.includes("<!-- haifa-section:")
+                    && researchReadingContext
+                    && researchReadingContext.missionId === conversationMission?.missionId
+                    ? researchReadingContext
+                    : undefined;
+                  const embeddedResearch = assistant && hasEmbeddedMarkdownResearchSources(turn.text);
                   const recommendation = recommendedQuestions?.turnId === turn.id
                     ? recommendedQuestions
                     : null;
                   return (
-                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}`} key={turn.id}>
+                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}`} key={turn.id}>
                       <span className="message-role">{assistant ? "Haifa" : "你"}</span>
                       {turn.images?.length > 0 && <TurnImages images={turn.images} />}
-                      <MessageContent text={turn.text} /><time>{formatTime(turn.createdAt)}</time>
+                      <MessageContent text={turn.text} research={research} researchAnchorPrefix={`conversation-turn-${turn.id}`} onResearchTaskSelect={openResearchTask} /><time>{formatTime(turn.createdAt)}</time>
                       {assistant && (
                         <div className="message-actions">
                           <MessageCopyButton text={turn.text} />
@@ -2932,8 +3807,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         <MissionDialog
           client={client}
           conversation={state.selectedConversation}
+          initialMissionId={missionRouteId}
+          initialTaskId={requestedMissionTaskId}
           onClose={closeMission}
           onChanged={handleMissionChanged}
+          onSelected={navigateToMission}
         />
       )}
       {renameTarget && (
