@@ -46,6 +46,11 @@
 .mission-content { min-width: 0; padding: 24px 28px; overflow-x: hidden; overflow-y: auto; background: #fff; }
 .mission-create { margin-bottom: 22px; padding: 18px; display: grid; gap: 12px; border: 1px solid #dfe4f2; border-radius: 13px; background: #fbfcff; }
 .mission-create h3 { margin: 0; font-size: 16px; }
+.mission-create-heading { margin-bottom: 2px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.mission-create-heading > div { display: grid; gap: 4px; }
+.mission-create-heading > p { min-width: 0; max-width: 62%; margin: 0; display: grid; gap: 3px; text-align: right; }
+.mission-create-heading > p span { color: #8a92a6; font-size: 11px; }
+.mission-create-heading > p strong { overflow: hidden; color: #4b556f; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .mission-create label, .mission-plan-editor label { display: grid; gap: 6px; color: #5c657b; font-size: 13px; font-weight: 650; }
 .mission-create textarea, .mission-create input, .mission-create select, .mission-plan-editor textarea { width: 100%; padding: 10px 11px; resize: vertical; border: 1px solid #cfd5e4; border-radius: 9px; background: #fff; color: #232c43; font: inherit; font-weight: 400; }
 .research-brief { margin: 0; padding: 14px; display: grid; gap: 11px; border: 1px solid #d7dff2; border-radius: 11px; background: #f6f8ff; }
@@ -142,6 +147,8 @@
   .mission-dialog-header { min-height: 62px; padding: 0 14px; }
   .mission-dialog-brand .brand-mark { width: 34px; height: 34px; }
   .mission-content { padding: 16px; }
+  .mission-create-heading { display: grid; gap: 8px; }
+  .mission-create-heading > p { max-width: 100%; text-align: left; }
   .mission-task-detail-header, .mission-task-detail-scroll { padding-left: 16px; padding-right: 16px; }
   .research-brief-grid, .mission-task-metadata { grid-template-columns: 1fr; }
   .conversation-mission-card { width: calc(100% - 24px); margin: 0 12px 10px; }
