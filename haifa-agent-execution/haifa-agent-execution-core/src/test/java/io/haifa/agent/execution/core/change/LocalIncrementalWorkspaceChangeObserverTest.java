@@ -148,7 +148,7 @@ class LocalIncrementalWorkspaceChangeObserverTest {
     }
 
     @Test
-    void unchangedSecondWindowDoesNotRehashAnUnchangedLargeFile() throws Exception {
+    void unchangedWindowsStopRehashingAfterDelayedPlatformEventsSettle() throws Exception {
         Path large = root.resolve("large.bin");
         Files.write(large, new byte[2 * 1024 * 1024]);
         WorkspaceId workspaceId = new WorkspaceId("incremental-hash-test");
@@ -165,9 +165,13 @@ class LocalIncrementalWorkspaceChangeObserverTest {
         int baselineHashes = hashes.get();
         var second = observer.begin(workspaceId);
         assertThat(second.complete()).isEmpty();
+        int settledHashes = hashes.get();
+        var third = observer.begin(workspaceId);
+        assertThat(third.complete()).isEmpty();
 
         assertThat(baselineHashes).isEqualTo(1);
-        assertThat(hashes).hasValue(baselineHashes);
+        assertThat(settledHashes).isBetween(baselineHashes, baselineHashes + 1);
+        assertThat(hashes).hasValue(settledHashes);
         observer.close();
     }
 
