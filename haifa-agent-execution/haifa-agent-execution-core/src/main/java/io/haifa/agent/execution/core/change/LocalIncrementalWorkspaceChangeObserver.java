@@ -138,7 +138,7 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
         public void cancel() {
             if (!closed.compareAndSet(false, true)) return;
             try {
-                absorb(drain(false));
+                absorb(drain(true));
             } catch (RuntimeException exception) {
                 reset();
             } finally {

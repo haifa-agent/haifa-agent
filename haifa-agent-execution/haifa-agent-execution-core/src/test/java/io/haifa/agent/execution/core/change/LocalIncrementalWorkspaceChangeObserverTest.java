@@ -111,8 +111,12 @@ class LocalIncrementalWorkspaceChangeObserverTest {
     @Test
     void cancelReleasesTheWindowAndAbsorbsChanges() throws Exception {
         WorkspaceId workspaceId = new WorkspaceId("cancel-test");
-        var observer =
-                new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none());
+        var observer = new LocalIncrementalWorkspaceChangeObserver(
+                workspaceId,
+                root,
+                WorkspaceChangeIgnorePolicy.none(),
+                LocalIncrementalWorkspaceChangeObserverTest::deterministicVersion,
+                false);
         var cancelled = observer.begin(workspaceId);
         Files.writeString(root.resolve("cancelled.txt"), "ignored as a prior window\n");
         cancelled.cancel();
