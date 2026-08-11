@@ -147,7 +147,8 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
         public void cancel() {
             if (!closed.compareAndSet(false, true)) return;
             try {
-                absorb(drain(true));
+                baseline = resynchronize();
+                if (reconcileMetadata) metadataBaseline = metadataSnapshot(root);
             } catch (RuntimeException exception) {
                 reset();
             } finally {

@@ -7,7 +7,7 @@ import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
 import java.util.Objects;
 
-/** Process-local test/development persistence contribution. */
+/** Internal process-local persistence implementation. */
 public final class InMemoryPersistenceContribution extends AbstractSdkContribution
         implements SdkPersistenceContribution {
     private final RuntimePersistencePorts runtimePersistence;

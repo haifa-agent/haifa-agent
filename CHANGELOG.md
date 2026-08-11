@@ -2,6 +2,24 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 将遗漏在工作区外的 SDK 示例工程迁入 `examples/haifa-agent-example`，保持非 Reactor 外部消费者边界；
+  独立工程精简为 Pure Java 与 Spring Boot 完整应用，五个不重复的教学主题归入分层 SDK 示例。
+- Runtime Demo 统一迁入 `io.haifa.example.runtime`，将薄启动入口与 Model-only、Raw Tool、MCP、Skill
+  四个能力场景分离，并明确这些底层装配示例不是 SDK API 或 Live Probe。
+- SDK Starter 支持显式注册多模型/多 Provider 并按可信 Run Profile 选择；Spring 自动装配新增有序
+  `HaifaAgentStarterCustomizer`，SQLite 采用应用拥有的单机持久化参考装配，不新增 Store-specific Starter。
+- 新增按 Basic/Intermediate/Advanced 分层的可运行 SDK 示例，覆盖 Quickstart、类型化 Tool、多模型、
+  管理、事件、输出和 SQLite 重启恢复；同时增加独立 Maven/Gradle/Spring 消费者 smoke、文档检查和
+  SDK Release Artifact 门禁。
+- 修复 macOS WatchService 取消窗口后迟到事件泄漏到下一观察窗口的竞态。
+- 新增 `haifa-agent-spring-boot-starter`：自动装配单例 `HaifaAgent`、按 Spring 顺序收集
+  `JavaTool` Bean、支持配置属性元数据与用户 Bean backoff，并以安全 Failure Analysis 报告缺失凭据；
+  默认沿用 DeepSeek V4 Flash、关闭 Thinking 和进程内开发 Store。
+- 新增纯 Java `haifa-agent-sdk-starter`：默认装配 DeepSeek V4 Flash、关闭 Thinking、从
+  `DEEPSEEK_API_KEY` 解析凭据并使用进程内 Runtime/Conversation Store，提供可编译的最小 Quickstart。
+- SDK 新增类型化 `JavaTool<I, O>`、Java record JSON Schema/编解码与
+  `HaifaAgentBuilder.tool(...)` 单 Tool 注册入口；构建时自动派生有效 Profile、合并已有 Catalog，
+  并保持统一 Schema、Policy、Approval、Credential、Journal 与精确 binding 执行链路。
 - Personal Assistant adds durable Mission execution and an explicit Deep Research mode: frozen
   briefs and Skill coordinates, isolated Task Runs, bounded Search/Fetch, strict source and claim
   validation, partial synthesis, restart-safe final messages, five immutable Artifacts, and a

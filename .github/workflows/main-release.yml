@@ -121,10 +121,18 @@ jobs:
                   distribution: temurin
                   java-version: "21"
                   cache: maven
-            - name: Build release artifacts without test rerun
-              run: >-
-                  sh ./mvnw --batch-mode --no-transfer-progress -T 4
-                  -pl :haifa-agent-cli -am -Prelease-artifacts verify
+            - uses: gradle/actions/setup-gradle@v4
+              with:
+                  gradle-version: "8.14"
+            - name: Build SDK and CLI release artifacts without test rerun
+              run: |
+                  sh ./mvnw --batch-mode --no-transfer-progress -T 4 \
+                    -pl ':haifa-agent-bom,:haifa-agent-spring-bom,:haifa-agent-sdk,:haifa-agent-sdk-starter,:haifa-agent-spring-boot-autoconfigure,:haifa-agent-spring-boot-starter,:haifa-agent-cli' \
+                    -am -Prelease-artifacts install
+            - name: External Maven, Gradle, and Spring consumer smoke
+              run: bash build-support/sdk-consumer-smoke/verify.sh
+            - name: Standalone Java and Spring example applications
+              run: examples/haifa-agent-example/mvnw -f examples/haifa-agent-example/pom.xml clean verify
             - name: CLI entrypoint smoke
               run: java -jar haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar --help
 

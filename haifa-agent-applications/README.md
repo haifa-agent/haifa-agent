@@ -13,8 +13,8 @@
   Tool、Skill、MCP 统一 Pipeline 装配；不依赖 Spring 或 SQLite 实现；
 - `haifa-agent-personal-assistant-server`：Spring Boot WebFlux、SQLite、版本化 HTTP/SSE DTO、
   OpenAPI 与 executable JAR；只交付后端 API，默认监听 `127.0.0.1:20001`；
-- `haifa-agent-runtime-demo`：显式访问 DeepSeek 的 Runtime/Tool/MCP/Skill 示例应用；它不属于
-  Live Test Catalog，运行结果不能替代自动化 Probe 或 E2E；
+- `haifa-agent-runtime-demo`：按 Model-only、Raw Tool、MCP、Skill 能力场景拆分的显式 DeepSeek
+  Runtime Core 示例应用；它不属于 Live Test Catalog，运行结果不能替代自动化 Probe 或 E2E；
 - `haifa-agent-personal-assistant-web`：独立构建和部署的 React 前端，默认监听
   `127.0.0.1:20000`，由浏览器直接调用 Server。前端历史 Mock/API 假设不是后端代码事实，
   以 Server v1 DTO 和 OpenAPI 为准。
