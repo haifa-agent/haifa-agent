@@ -1243,7 +1243,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 """
                 UPDATE personal_mission_task SET state='CANCELLED',block_code='MISSION_DEADLINE_EXCEEDED',
                   updated_at_ms=?,version=version+1
-                WHERE mission_id=? AND state NOT IN ('COMPLETED','BLOCKED')
+                WHERE mission_id=? AND state<>'COMPLETED'
                 """);
                 var mission = current()
                         .prepareStatement(

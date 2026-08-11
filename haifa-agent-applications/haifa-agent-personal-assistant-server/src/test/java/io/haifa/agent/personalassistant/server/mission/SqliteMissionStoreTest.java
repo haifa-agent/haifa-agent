@@ -353,6 +353,12 @@ class SqliteMissionStoreTest {
             statement.setLong(1, CLOCK.instant().toEpochMilli());
             statement.setString(2, created.missionId());
             statement.executeUpdate();
+            try (var blocked = connection.prepareStatement(
+                    "UPDATE personal_mission_task SET state='BLOCKED',block_code='MODEL_REQUEST_INVALID',"
+                            + "latest_attempt_no=1 WHERE mission_id=? AND ordinal=1")) {
+                blocked.setString(1, created.missionId());
+                blocked.executeUpdate();
+            }
         }
 
         assertThat(store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant()))
