@@ -28,6 +28,8 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 - 可运行的 `haifa-agent-sdk-example`，按 Basic、Intermediate、Advanced 分层覆盖 Quickstart、类型化
   Tool、多模型选择、Conversation、Run 观察/控制、可信 Caller 与 SQLite 单机持久化参考装配；该示例
   模块不是发布制品；
+- 主仓跟踪但不加入 Reactor 的 `examples/haifa-agent-example`，通过独立 Maven 构建从已安装 BOM/Artifact
+  消费 SDK，只保留完整 Pure Java 与 Spring Boot 应用，不维护第二套教学示例；
 - 可选的安全 JSONL Transcript 投影，支持 at-least-once 去重、截断诊断、跨进程锁与原子轮转；
 - 纯 Java Policy API/Core，支持请求绑定决策、`DENY > ASK > ALLOW`、受限 Approval Grant、
   Project Trust、产品验证 SPI 和内存 Store；SQLite V3 已提供 Snapshot、Decision、Evidence、
@@ -108,6 +110,9 @@ haifa-agent-testing/
   haifa-agent-integration-tests/
   haifa-agent-e2e-tests/
 ```
+
+`examples/haifa-agent-example` 由主仓 Git 管理，但不属于上述 Reactor。它不继承主仓 Parent POM，必须在
+匹配版本的 Haifa 制品安装到本地 Maven 仓库后独立验证。
 
 实线表示编译期依赖，箭头从使用方指向被依赖方：
 

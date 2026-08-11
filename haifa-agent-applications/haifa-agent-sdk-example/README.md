@@ -5,9 +5,9 @@ organized by learning depth:
 
 | Package | Scope |
 | --- | --- |
-| `io.haifa.example.sdk.basic` | Real-provider Hello World and a network-free multi-turn Conversation |
-| `io.haifa.example.sdk.intermediate` | Typed Java Tool loop and explicit multi-model/multi-Provider selection |
-| `io.haifa.example.sdk.advanced` | Conversation management, Runtime observation/control, trusted host diagnostics, and SQLite reference assembly |
+| `io.haifa.example.sdk.basic` | Real-provider Hello World, multi-turn Conversation, and Agent reuse/lifecycle |
+| `io.haifa.example.sdk.intermediate` | Typed and multi-Tool loops, complex record schemas, Starter customization, and multi-model selection |
+| `io.haifa.example.sdk.advanced` | Safe errors, Conversation management, Runtime observation/control, trusted host diagnostics, and SQLite reference assembly |
 
 Every example is network-free unless its Javadoc explicitly opts into a real provider. Only
 `basic.HelloHaifa` requires `DEEPSEEK_API_KEY`.
@@ -16,6 +16,9 @@ Every example is network-free unless its Javadoc explicitly opts into a real pro
 assemble the existing SQLite contributions and provide their own `HaifaAgent`. This application
 example module is not a published SDK artifact, its classes are not Stable API, and application code
 must not depend on the example classes. Haifa does not publish a provider-specific production Starter.
+
+Complete external-consumer applications live under `examples/haifa-agent-example`; they do not
+duplicate this teaching catalog or join the main Reactor.
 
 Run the network-free examples and tests:
 

@@ -131,6 +131,8 @@ jobs:
                     -am -Prelease-artifacts install
             - name: External Maven, Gradle, and Spring consumer smoke
               run: bash build-support/sdk-consumer-smoke/verify.sh
+            - name: Standalone Java and Spring example applications
+              run: examples/haifa-agent-example/mvnw -f examples/haifa-agent-example/pom.xml clean verify
             - name: CLI entrypoint smoke
               run: java -jar haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar --help
 

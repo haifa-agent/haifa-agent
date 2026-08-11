@@ -2,6 +2,8 @@
 
 ## 0.1.0-SNAPSHOT
 
+- 将遗漏在工作区外的 SDK 示例工程迁入 `examples/haifa-agent-example`，保持非 Reactor 外部消费者边界；
+  独立工程精简为 Pure Java 与 Spring Boot 完整应用，五个不重复的教学主题归入分层 SDK 示例。
 - Runtime Demo 统一迁入 `io.haifa.example.runtime`，将薄启动入口与 Model-only、Raw Tool、MCP、Skill
   四个能力场景分离，并明确这些底层装配示例不是 SDK API 或 Live Probe。
 - SDK Starter 支持显式注册多模型/多 Provider 并按可信 Run Profile 选择；Spring 自动装配新增有序

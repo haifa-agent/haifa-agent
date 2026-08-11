@@ -1,6 +1,7 @@
 package io.haifa.example.sdk.support;
 
 import io.haifa.agent.model.api.AgentChatModel;
+import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
@@ -17,6 +18,8 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 /** Deterministic, network-free support shared only by this unpublished example module. */
 public final class DeterministicExampleSupport {
@@ -38,6 +41,22 @@ public final class DeterministicExampleSupport {
                 ModelUsage.unpriced(4, 4),
                 "",
                 Map.of());
+    }
+
+    @SafeVarargs
+    public static AgentChatModel scripted(Function<AgentChatRequest, AgentChatResponse>... steps) {
+        List<Function<AgentChatRequest, AgentChatResponse>> script = List.of(steps);
+        if (script.isEmpty()) {
+            throw new IllegalArgumentException("steps must not be empty");
+        }
+        var index = new AtomicInteger();
+        return request -> {
+            int current = index.getAndIncrement();
+            if (current >= script.size()) {
+                throw new IllegalStateException("deterministic model script is exhausted");
+            }
+            return script.get(current).apply(request);
+        };
     }
 
     public static ResolvedModelSnapshot snapshot() {
