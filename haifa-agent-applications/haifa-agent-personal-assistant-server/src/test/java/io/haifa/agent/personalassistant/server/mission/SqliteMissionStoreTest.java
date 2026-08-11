@@ -187,8 +187,8 @@ class SqliteMissionStoreTest {
 
     @Test
     void freezesDependencyResultsInDispatchInputAndKeepsRetryDigestStable() {
-        SqliteMissionStore store =
-                new SqliteMissionStore(directory.resolve("dependency-input.sqlite"), new ObjectMapper());
+        SqliteMissionStore store = new SqliteMissionStore(
+                directory.resolve("dependency-input.sqlite"), new ObjectMapper(), 2, 3, 200_000, 100);
         store.registerDispatcher("process", "instance", CLOCK.instant());
         MissionApplicationService service = new MissionApplicationService(
                 store,
@@ -237,8 +237,43 @@ class SqliteMissionStoreTest {
     }
 
     @Test
+    void defaultStoreRequiresExplicitUserRetryAfterARetryableFailure() {
+        SqliteMissionStore store =
+                new SqliteMissionStore(directory.resolve("explicit-retry.sqlite"), new ObjectMapper());
+        store.registerDispatcher("process", "instance", CLOCK.instant());
+        MissionApplicationService service = new MissionApplicationService(
+                store,
+                store,
+                new DeterministicMissionPlanner(),
+                MissionPlanValidator.phaseOne(),
+                () -> "mission-explicit-retry",
+                CLOCK,
+                store);
+        MissionSnapshot created = service.create(new MissionApplicationService.CreateMission(
+                "create-explicit-retry",
+                "local/public-user",
+                "conversation-explicit-retry",
+                "Require explicit retry authority",
+                List.of("complete once"),
+                MissionConstraints.DEFAULT));
+        service.confirm(new MissionApplicationService.ChangeMission(
+                "confirm-explicit-retry", "local/public-user", created.missionId(), created.version()));
+
+        var intent = store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant())
+                .orElseThrow();
+        store.bind(intent, "session-1", "run-1", CLOCK.instant());
+        store.settleFailed(store.activeAttempts().getFirst(), "MODEL_RESPONSE_INVALID", true, CLOCK.instant());
+
+        assertThat(store.prepareAndClaimNext("dispatcher", CLOCK.instant(), CLOCK.instant()))
+                .isEmpty();
+        assertThat(store.snapshot(created.missionId()).blockedTasks()).isEqualTo(1);
+        assertThat(store.missionState(created.missionId())).isEqualTo(MissionState.WAITING_USER);
+    }
+
+    @Test
     void exhaustedUserRetryCancelsDependentsAndSettlesPartialSynthesis() {
-        SqliteMissionStore store = new SqliteMissionStore(directory.resolve("partial.sqlite"), new ObjectMapper());
+        SqliteMissionStore store =
+                new SqliteMissionStore(directory.resolve("partial.sqlite"), new ObjectMapper(), 2, 3, 200_000, 100);
         store.registerDispatcher("process", "instance", CLOCK.instant());
         MissionApplicationService service = new MissionApplicationService(
                 store,

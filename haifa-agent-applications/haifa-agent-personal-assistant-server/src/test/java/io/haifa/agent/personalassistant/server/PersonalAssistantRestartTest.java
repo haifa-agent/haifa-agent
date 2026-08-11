@@ -87,7 +87,7 @@ class PersonalAssistantRestartTest {
                     .contains("# Deterministic research report")
                     .doesNotContain("reveal credentials", "ignore the research brief"));
 
-            assertPhase6EvidenceEfficiency(data.resolve("personal-assistant.sqlite"), missionId);
+            assertPhase6EvidenceTraceAgainstHonestPhase5Baseline(data.resolve("personal-assistant.sqlite"), missionId);
         }
 
         try (var artifactFiles = Files.list(data.resolve("artifacts"))) {
@@ -111,7 +111,8 @@ class PersonalAssistantRestartTest {
         }
     }
 
-    private static void assertPhase6EvidenceEfficiency(Path database, String missionId) throws Exception {
+    private static void assertPhase6EvidenceTraceAgainstHonestPhase5Baseline(Path database, String missionId)
+            throws Exception {
         List<ToolTrace> trace = new ArrayList<>();
         JsonNode taskResult;
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -180,14 +181,15 @@ class PersonalAssistantRestartTest {
         assertThat(baseline.path("briefId").asText()).isEqualTo("deterministic-deep-research-evidence");
         assertThat(baseline.path("modelScriptId").asText()).isEqualTo("personal-deterministic-research-v1");
         assertThat(baseline.path("toolFixtureId").asText()).isEqualTo("personal-web-deterministic-stub-v1");
-        int baselineCalls = baseline.path("trace").size();
-        long baselineWaste = java.util.stream.StreamSupport.stream(
+        assertThat(baseline.path("sourceCommit").asText()).isEqualTo("a6b0475d6973358baafdb7b1768155b616d50b9d");
+        List<ToolTrace> baselineTrace = java.util.stream.StreamSupport.stream(
                         baseline.path("trace").spliterator(), false)
-                .filter(value -> value.hasNonNull("waste"))
-                .count();
-        assertThat(trace.size()).isLessThanOrEqualTo(baselineCalls);
-        assertThat(baselineWaste).isPositive();
-        assertThat(trace).noneSatisfy(value -> assertThat(value.canonical()).contains("background popularity"));
+                .map(value -> new ToolTrace(
+                        value.path("tool").asText(), value.path("canonical").asText()))
+                .toList();
+        assertThat(baseline.path("trace"))
+                .allSatisfy(value -> assertThat(value.hasNonNull("waste")).isFalse());
+        assertThat(trace).containsExactlyElementsOf(baselineTrace);
     }
 
     private record ToolTrace(String tool, String canonical) {}
