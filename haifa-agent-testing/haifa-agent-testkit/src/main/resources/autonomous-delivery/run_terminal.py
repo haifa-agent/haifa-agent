@@ -5,6 +5,7 @@
 import json
 import hashlib
 import os
+import re
 import subprocess
 import sys
 import time
@@ -12,10 +13,14 @@ from pathlib import Path
 
 import pexpect
 
-DRIVER_PROTOCOL_VERSION = "1.1.0"
+DRIVER_PROTOCOL_VERSION = "1.2.0"
+RUN_TERMINAL_STATES = ("IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT")
 RECORDING_COLUMNS = 132
 RECORDING_ROWS = 42
 MAX_RECORDED_OUTPUT_BYTES = 1024 * 1024
+MAX_TERMINAL_TRANSITION_WAIT_SECONDS = 120
+STATUS_ROW_SEQUENCE = f"\x1b[{RECORDING_ROWS - 6};1H".encode("ascii")
+ANSI_CSI_PATTERN = rb"\x1b\[[0-?]*[ -/]*[@-~]"
 
 
 def fail(message: str, child: pexpect.spawn | None = None) -> None:
@@ -25,9 +30,30 @@ def fail(message: str, child: pexpect.spawn | None = None) -> None:
     raise SystemExit(20)
 
 
+def status_pattern(marker: str) -> re.Pattern[bytes]:
+    return re.compile(
+        re.escape(STATUS_ROW_SEQUENCE)
+        + rb"(?:[ \t\r]|"
+        + ANSI_CSI_PATTERN
+        + rb")*"
+        + re.escape(marker.encode("utf-8"))
+        + rb"(?=[ \t\r\n]|\x1b)"
+    )
+
+
 def wait_for(child: pexpect.spawn, marker: str, label: str, timeout: int) -> None:
     try:
-        child.expect_exact(marker.encode("utf-8"), timeout=timeout)
+        child.expect(status_pattern(marker), timeout=timeout)
+    except pexpect.TIMEOUT:
+        fail(f"TIMEOUT waiting for {label}", child)
+    except pexpect.EOF:
+        fail(f"UNEXPECTED EOF waiting for {label}", child)
+
+
+def wait_for_any(child: pexpect.spawn, markers: tuple[str, ...], label: str, timeout: int) -> str:
+    try:
+        index = child.expect([status_pattern(marker) for marker in markers], timeout=timeout)
+        return markers[index]
     except pexpect.TIMEOUT:
         fail(f"TIMEOUT waiting for {label}", child)
     except pexpect.EOF:
@@ -119,6 +145,7 @@ def main() -> int:
         timeout_value,
     ) = sys.argv[1:]
     timeout = int(timeout_value)
+    transition_timeout = min(timeout, MAX_TERMINAL_TRANSITION_WAIT_SECONDS)
     prompt = Path(prompt_file).read_text("utf-8").strip()
     started_at = time.time()
     recorder = AsciicastRecorder()
@@ -151,7 +178,7 @@ def main() -> int:
     )
     child.logfile_read = recorder
 
-    wait_for(child, "IDLE", "terminal startup", timeout)
+    wait_for(child, "IDLE", "terminal startup", transition_timeout)
     terminal_states.append({"state": "IDLE", "atSeconds": recorder.elapsed_seconds()})
     time.sleep(0.5)
     input_timeline.append(
@@ -162,10 +189,10 @@ def main() -> int:
         }
     )
     type_and_send(child, prompt)
-    wait_for(child, "RUNNING", "run start", timeout)
+    wait_for(child, "RUNNING", "run start", transition_timeout)
     terminal_states.append({"state": "RUNNING", "atSeconds": recorder.elapsed_seconds()})
-    wait_for(child, "IDLE", "autonomous run completion", timeout)
-    terminal_states.append({"state": "IDLE", "atSeconds": recorder.elapsed_seconds()})
+    terminal_state = wait_for_any(child, RUN_TERMINAL_STATES, "autonomous run completion", timeout)
+    terminal_states.append({"state": terminal_state, "atSeconds": recorder.elapsed_seconds()})
     completed_at = time.time()
 
     acceptance = subprocess.run(

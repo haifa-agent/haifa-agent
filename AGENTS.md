@@ -133,28 +133,52 @@ testing 位于 Reactor 末端，可按测试需要依赖产品模块；产品模
 
 ## 构建与验证命令
 
-Linux/macOS 使用 `./mvnw`；Windows PowerShell 使用 `.\mvnw.cmd`。
+Linux/macOS 的 Maven Wrapper 为 `./mvnw`，Windows PowerShell 为 `.\mvnw.cmd`。日常命令优先通过
+仓库统一入口调用 Wrapper，以获得固定并发、超时分类和构建指标。
 
 ```bash
-# 快速单元测试
-./mvnw test
+# 精确测试类及必要依赖；L1 默认串行，适合编辑内循环
+./build-support/scripts/invoke-haifa-maven.sh --layer L1 -- \
+  -pl :haifa-agent-runtime-core -am \
+  -Dtest=RuntimeCoreTest -Dsurefire.failIfNoSpecifiedTests=false test
 
-# 受影响模块及其依赖；将 artifactId 替换为目标模块
-./mvnw -pl :haifa-agent-runtime-core -am test
+# 受影响模块完整测试；L2 固定 -T 4
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- \
+  -pl :haifa-agent-runtime-core -am test
+
+# 全仓 Unit/Contract/Architecture；增量运行、不 clean
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- test
 
 # 应用 Spotless 格式化
-./mvnw spotless:apply
+./build-support/scripts/invoke-haifa-maven.sh --layer L0 -- spotless:apply
 
-# 与 GitHub Actions 一致的最终验证
-./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+# 本地最终验证；统一入口记录指标并使用资源感知的固定并发
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
+
+# 同一 SHA 已通过 ci-fast 后，只运行 Failsafe Integration
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-integration-only verify
+
+# 同一 SHA 已通过 ci-fast 后，只验证 CLI/JAR/Source/Javadoc 制品
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- \
+  -pl :haifa-agent-cli -am -Prelease-artifacts verify
 
 # 发布配置验证；必须通过 -pl 指定受影响模块，并用 -am 补齐其依赖
-./mvnw -pl :haifa-agent-runtime-core -am -Prelease verify
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- \
+  -pl :haifa-agent-runtime-core -am -Prelease verify
 ```
 
-`ci-fast` 默认跳过集成测试。仅在任务明确需要时使用 `-Pci-integration` 或 `-DskipITs=false`。
+`ci-fast` 运行 Unit/Contract/Architecture 并跳过 Integration。`ci-integration` 保留为兼容入口，仍会
+重复 Unit；只有同一 SHA 已通过 `ci-fast` 时才能使用 `ci-integration-only`。`release-artifacts` 跳过
+Unit/Integration，只验证打包、Source、Javadoc 和制品 smoke，不能单独作为代码正确性门禁。
 
-运行 `-Prelease verify` 时必须使用 `-pl` 指定本次任务的受影响模块；禁止不带 `-pl` 直接执行全仓 Release 验证，以免产生不必要的长时间构建。
+本地 Maven 开发优先使用 `build-support/scripts/invoke-haifa-maven.ps1`（Windows）或对应的 `.sh`
+入口。精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。L0/L1 默认串行，
+L2/L3 默认 `-T 4`；不要按本机 CPU 数直接使用 `-T 1C`。入口把脱敏指标
+写入 `local-tmp/maven-build-metrics/`，并原样返回 Maven 退出码。精确语法和分层矩阵见
+[`build-support/README.md`](build-support/README.md)。
+
+运行 `-Prelease verify` 或 `-Prelease-artifacts verify` 时必须使用 `-pl` 指定本次任务的受影响模块；
+禁止不带 `-pl` 直接执行全仓 Release 验证，以免产生不必要的长时间构建。
 
 真实 DeepSeek 冒烟测试还要求显式设置 `HAIFA_DEEPSEEK_LIVE_TEST=true` 和 `DEEPSEEK_API_KEY`，会访问外部服务并产生真实成本；普通开发和 CI 验证不得运行。默认只使用本地 Stub HTTP Server 测试适配器。
 
@@ -165,6 +189,6 @@ Linux/macOS 使用 `./mvnw`；Windows PowerShell 使用 `.\mvnw.cmd`。
 - 修改范围与任务一致，未覆盖用户已有改动；
 - 模块依赖方向和纯 Java 边界未被破坏；
 - 受影响测试通过，架构测试未被绕过；
-- `-Pci-fast clean verify` 通过，或已明确说明无法运行的原因；
+- 同一 Git SHA 的 L3 `-Pci-fast clean verify` 通过，或已明确说明无法运行的原因；
 - 文档、日志和测试输出不包含秘密或敏感原文；
 - 最终说明列出修改文件、验证命令和任何剩余风险。

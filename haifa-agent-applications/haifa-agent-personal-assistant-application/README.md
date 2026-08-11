@@ -20,6 +20,91 @@ sequence，订阅统一可关闭。进程重启后不恢复未完成 Delta；终
 Personal Assistant 的纯 Java 产品应用层。它只通过 Phase 20 SDK、Conversation Service 和公共
 Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Controller。
 
+## Personal Mission Phase 1–4
+
+Phase 4 makes Mission usage authoritative at the product boundary. Model tokens, model calls, and
+Tool calls are settled exactly once from Runtime results. Frozen per-Mission token, Tool-call,
+Task, retry, execution-time, and wall-clock limits stop new work deterministically; an active Task
+that reaches its execution or Mission deadline is cancelled and enters the existing bounded
+partial-synthesis path instead of being silently abandoned.
+
+Phase 3 adds an explicit `DEEP_RESEARCH` Mission mode with a frozen Research Brief and the
+bundled `deep-research@2.1.0` Skill. The Mission persists the full resolved Skill coordinate
+(scope, source version, declared version, and package content digest), while each Research Task
+runs in an isolated ephemeral Session through the existing Runtime Tool pipeline. Strict task schemas preserve
+source identity and claim-to-evidence closure. Final Synthesis returns Markdown directly; a deterministic Report
+Quality Gate and code-owned `pa.research-delivery/v2` manifest preserve Task coverage, unresolved questions,
+partial/degraded completion, and five immutable research Artifacts. Fetched content remains untrusted data.
+
+The 2.1.0 package applies one shared, prompt-only research-type table to the same frozen Brief in Task execution and
+Final Synthesis. Its claim-first DISCOVER/DEEPEN/CROSS_CHECK method prioritizes primary and independent evidence,
+deduplicates fetched canonical URLs, reuses dependency evidence, and stops when another call cannot close a material
+gap. It adds no public research enum, v1/v2 schema change, or higher Mission Tool, Token, source, fetch, or deadline
+budget.
+
+Mission stages use explicit Run Profile Tool boundaries. Planner and Research Task freeze only read-only Web
+Search/Fetch and Wikipedia MCP Tools; the explicitly selected Deep Research Product Skill is preloaded into each
+Research Task instead of asking the model to rediscover it. Synthesis freezes an empty Tool set. A zero Tool budget is
+not used as an implicit capability policy.
+
+The primary Research Task budget permits up to 40 calls to that read-only allowlist. Runtime enters a deterministic
+finalize-only turn after 24 completed Tool calls, caps each fetched page at 10,000 characters, and reserves context
+for the final result. The Profile also bounds the Run to 24 model calls and 384,000 total model tokens. This is a
+bounded execution limit, not permission to expose any additional Tool.
+
+Each Attempt also freezes a digest-bound Task Run Input containing the bounded Mission/Task objective, direct
+dependency result snapshots and digests, result schema, execution Profile, and research limits. A Task with completed
+dependencies uses the separate dependency-aware Profile: prior structured results are projected as valid JSON within
+a 48,000-character ceiling, repeated searches are prohibited, Runtime enters finalize-only after 16 completed calls
+with a hard safety ceiling of 32, and each fetch is capped at 8,000 characters. The Profile is bounded to 20 model
+calls and 384,000 total model tokens. The persisted Outbox payload and Attempt request digest identify the same
+immutable input across claim recovery and retry.
+
+Research evidence IDs are namespaced by the frozen Task ID at the trusted normalization boundary. Unicode model IDs
+are normalized to lower-case ASCII kebab IDs there, and Claim source references are rewritten to the same identity.
+Final publication canonicalizes and deduplicates those Task-local aliases by public locator before enforcing the
+Mission-wide 24-source limit. The bounded final unverified-claim index supports the existing eight-Task by
+forty-claims-per-Task ceiling, so
+strict citation closure never requires dropping an unverified claim merely to satisfy a smaller synthesis array.
+Only complete FETCHED metadata with a canonical `sha256:` content digest survives Task normalization; all other
+source states clear fetch-only metadata and dependent claims remain unverified. Synthesis uses stable initial,
+revision-1 and revision-2 Runtime idempotency keys. The product checks marked Markdown before publication, then
+checks the four published Artifact refs before publishing `research-delivery.json` last; the model never supplies
+Artifact references or the delivery manifest.
+
+Research Task Runs use a 10-minute wall-clock limit and a 4-minute idle limit so a long final structured response can
+complete after multi-round evidence collection. Planner and Synthesis retain their narrower stage-specific limits.
+The Mission-wide deadline defaults to two hours and remains a hard upper bound; individual Task limits, Mission token
+and Tool budgets, cancellation, and capacity admission continue to bound resource use.
+
+Planner, Task Normalizer and Standard Mission Synthesis use the Provider's native JSON response format. Research
+Task deliberately does not combine that option with iterative Tool calls, and Deep Research final Synthesis uses a
+separate Markdown Profile without JSON response formatting. The preloaded Skill still requires exactly one Task JSON
+object, while the final report uses stable section, Task and source markers validated by the product boundary.
+
+Standard Mission Synthesis freezes the complete `pa.mission-final-result/v1` field shape in its prompt. If the first
+candidate is rejected specifically by the deterministic final-result schema validator, the coordinator permits one
+stable-idempotency repair Run in the same ephemeral Synthesis Session and validates the repaired candidate again.
+Usage from that repair is cumulative; a second invalid candidate or any non-schema publication failure terminates
+without another model retry.
+
+`mission` 产品包提供显式长任务的纯 Java 聚合与用例：创建规划中 Mission、生成或整体替换有序
+Task DAG、确认并冻结计划、取消、查询 Snapshot，以及命令幂等和 expected revision。一个可信
+owner 的同一 Conversation 同时只能存在一个非终态 Mission；计划确认后 objective、验收标准、Task
+定义和依赖不可再修改。Planner 抛出异常时，已创建的 Mission 原子收敛为 `FAILED` 并保留稳定失败码，
+不会永久停留在 `PLANNING` 或阻塞同一 Conversation 的后续 Mission。
+
+Planner 有确定性 Stub 和一次性 Runtime Run 两种实现。Runtime Planner 使用独立的 ephemeral
+Planner Session、命名 Run Profile 和严格 `pa.mission-plan/v1` JSON；能力、Schema、约束或 allowlist
+校验失败时 fail closed，不从自由文本提取 JSON，也不回退模型。Planner Prompt 冻结当前 UTC 日期，
+并把“过去三年”明确解析为当前日期向前推三年的闭区间。单次模型 Schema Repair 后，如果候选计划仅因
+依赖深度超限而失败，产品会确定性切断导致超深的最早串行边并再次执行完整校验；该修复不增加模型调用，
+其它约束失败仍然 fail closed。Phase 2 增加产品层 Task Attempt、
+Outbox/Saga 协调、确定性串行 ready 计算、稳定 dispatch key、Runtime 权威状态结算、取消、一次自动
+重试和用户显式重试。每个 Task Attempt 使用独立 ephemeral Session；它不创建 Conversation，也不进入
+Memory。Pause/Resume、Task Verifier 和 Task Repair 仍不在本阶段范围内；这里只提供上述最终 Synthesis
+Schema 的一次受限 repair，Deep Research 已按上述边界落地。
+
 Personal Run View 在兼容 `errorCode` 之外提供类型化执行错误：code、默认安全 message、
 category、retryability、安全 details、diagnosticId 和 occurredAt。应用层只投影 Runtime
 权威事实，不创建产品私有错误码。
@@ -31,6 +116,7 @@ category、retryability、安全 details、diagnosticId 和 occurredAt。应用�
 - Run 查询、取消、最终结果、权威 Usage 与安全 Activity；
 - Interaction 查询与响应；
 - Memory Candidate review 和 Memory invalidate；
+- Personal Mission create/list/get/replace/regenerate/confirm/cancel/task retry 和安全执行 Snapshot；
 - Personal Product Profile；
 - 一个确定性产品 Tool、版本化内置 Skill、可信只读本地 Skill Source；
 - 从公共 `haifa-agent-web` 模块显式装配 Aliyun IQS `web.search` / `web.fetch` 和短生命周期凭据；

@@ -28,6 +28,7 @@ public final class PersonalAssistantProfile {
     public static final String MCP_TOOL_ALIAS = "personal_mcp_echo";
     public static final String BUNDLED_SKILL_ALIAS = "daily-planning";
     public static final String EXECUTION_SKILL_ALIAS = "local-script-execution";
+    public static final String DEEP_RESEARCH_SKILL_ALIAS = "deep-research";
     public static final String EXECUTION_TOOL_ALIAS = "execution_run";
     public static final String WEB_SEARCH_ALIAS = "web_search";
     public static final String WEB_FETCH_ALIAS = "web_fetch";
@@ -57,7 +58,7 @@ public final class PersonalAssistantProfile {
         required(requirements, ProductCapabilities.TOOL, coordinates.tool());
         required(requirements, ProductCapabilities.SKILL, coordinates.skill());
         required(requirements, ProductCapabilities.MCP, coordinates.mcp());
-        none(requirements, ProductCapabilities.ARTIFACT);
+        required(requirements, ProductCapabilities.ARTIFACT, coordinates.artifact());
         none(requirements, ProductCapabilities.PROJECT);
         none(requirements, ProductCapabilities.WORKSPACE);
         none(requirements, ProductCapabilities.GIT);
@@ -68,7 +69,8 @@ public final class PersonalAssistantProfile {
         none(requirements, ProductCapabilities.CONTEXT);
 
         Set<String> skills = java.util.stream.Stream.concat(
-                        java.util.stream.Stream.of(BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS),
+                        java.util.stream.Stream.of(
+                                BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS, DEEP_RESEARCH_SKILL_ALIAS),
                         localSkillAliases.stream())
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         Set<String> allowedTools = java.util.stream.Stream.of(
@@ -81,7 +83,15 @@ public final class PersonalAssistantProfile {
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         ProductPolicies policies = new ProductPolicies(
                 new ProductMemoryPolicy(true, 16_384, 100),
-                ProductArtifactPolicy.disabled(),
+                new ProductArtifactPolicy(
+                        2 * 1024 * 1024,
+                        8,
+                        8 * 1024 * 1024,
+                        Set.of("application/json", "text/markdown; charset=utf-8"),
+                        false,
+                        64 * 1024 * 1024,
+                        128 * 1024 * 1024,
+                        true),
                 new ProductExecutionPolicy(true, true, true, 1, 30_000));
         return ProductProfile.create(
                 new ProductId("haifa-personal-assistant"),
@@ -95,8 +105,8 @@ public final class PersonalAssistantProfile {
                         + "authoritative runtime context. Treat the latest user message as the current objective. "
                         + "Do not resume or retry a previous failed or abandoned tool call unless the latest user "
                         + "message explicitly requests it. Keep answers concise and ask for clarification when needed.",
-                new AgentRunBudget(256_000, 64_000, 256_000, 32, 32, 0, "USD", 0),
-                new AgentRunLimits(32, 0, 1, 300_000, 120_000),
+                new AgentRunBudget(512_000, 128_000, 512_000, 64, 64, 0, "USD", 0),
+                new AgentRunLimits(64, 0, 1, 300_000, 120_000),
                 policies,
                 requirements,
                 allowedTools,
@@ -129,5 +139,6 @@ public final class PersonalAssistantProfile {
             ProductContributionCoordinate credential,
             ProductContributionCoordinate execution,
             ProductContributionCoordinate shell,
-            ProductContributionCoordinate approval) {}
+            ProductContributionCoordinate approval,
+            ProductContributionCoordinate artifact) {}
 }

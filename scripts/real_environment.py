@@ -25,6 +25,12 @@ from typing import Iterable, Mapping, Sequence
 FRONTEND_PORT = 20000
 BACKEND_PORT = 20001
 MCP_PORT = 20002
+DEFAULT_MODEL_ID = "deepseek-chat-flash"
+SUPPORTED_DEFAULT_MODEL_IDS = (
+    "deepseek-chat-pro",
+    "deepseek-chat-flash",
+    "deepseek-responses-flash",
+)
 ALLOWED_MCP_TOOLS = ",".join(
     (
         "location_search",
@@ -112,6 +118,11 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--deepseek-key-file",
         default=os.getenv("HAIFA_DEEPSEEK_KEY_FILE", str(workspace / "ss-deepseek.txt")),
+    )
+    result.add_argument(
+        "--default-model-id",
+        choices=SUPPORTED_DEFAULT_MODEL_IDS,
+        default=os.getenv("HAIFA_PERSONAL_DEFAULT_MODEL_ID", DEFAULT_MODEL_ID),
     )
     result.add_argument(
         "--aliyun-iqs-key-file",
@@ -559,6 +570,7 @@ def latest_server_jar(value: Paths) -> Path | None:
 
 def backend_environment(
     deepseek_key: str,
+    default_model_id: str,
     openai: tuple[str, str, str] | None,
     aliyun_key: str,
     continuation: str,
@@ -571,7 +583,7 @@ def backend_environment(
         "ALIYUN_IQS_API_KEY": aliyun_key,
         "HAIFA_PERSONAL_CONTINUATION_KEY": continuation,
         "HAIFA_PERSONAL_DATA_DIR": str(value.data),
-        "HAIFA_PERSONAL_DEFAULT_MODEL_ID": "deepseek-responses-flash",
+        "HAIFA_PERSONAL_DEFAULT_MODEL_ID": default_model_id,
         "HAIFA_PERSONAL_MODELPROVIDERS_0_ID": "deepseek",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME": "DeepSeek",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODE": "remote",
@@ -705,6 +717,17 @@ def ensure_service(
     )
 
 
+def backend_build_arguments(rebuild: bool) -> tuple[str, ...]:
+    goals = ("clean", "package") if rebuild else ("package",)
+    return (
+        "-pl",
+        ":haifa-agent-personal-assistant-server",
+        "-am",
+        "-DskipUnitTests=true",
+        *goals,
+    )
+
+
 def start_environment(args: argparse.Namespace, value: Paths) -> None:
     if args.rebuild and any(port_open(port) for port in (FRONTEND_PORT, BACKEND_PORT, MCP_PORT)):
         fail(rebuild_port_conflict_message())
@@ -739,14 +762,9 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     server_jar = latest_server_jar(value)
     if args.rebuild or server_jar is None:
         print("Building the Personal Assistant backend...")
-        goals = ("clean", "package") if args.rebuild else ("package",)
         run_checked(
             value.maven_wrapper,
-            "-pl",
-            ":haifa-agent-personal-assistant-server",
-            "-am",
-            "-DskipTests",
-            *goals,
+            *backend_build_arguments(args.rebuild),
             cwd=value.repository,
         )
         server_jar = latest_server_jar(value)
@@ -793,6 +811,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         ("-jar", str(server_jar)),
         backend_environment(
             deepseek_key,
+            args.default_model_id,
             openai,
             aliyun_key,
             continuation,

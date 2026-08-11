@@ -30,7 +30,7 @@ jobs:
                   cache: maven
             - name: Verify architecture and tests (Unix)
               if: runner.os != 'Windows'
-              run: sh ./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+              run: sh ./mvnw --batch-mode --no-transfer-progress -T 4 -Pci-fast clean verify
             - name: Verify architecture and tests (Windows)
               if: runner.os == 'Windows'
-              run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+              run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 4 -Pci-fast clean verify

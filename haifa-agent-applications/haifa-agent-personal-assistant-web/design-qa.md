@@ -83,3 +83,74 @@ The focused before/after image shows the removal of the shadow and icon tile, lo
 - P3: if the whole conversation screen is later made denser, the live status copy could be collapsed to two rows on mobile. It is not currently required for usability.
 
 final result: passed
+
+---
+
+## Mission Full-Screen Workspace QA
+
+### Comparison target
+
+- Source visual truth: `C:\Users\wangr\.codex\visualizations\2026\08\10\019feb00-be16-7bc2-bec6-568d684b842a\mission-ui-prototype\implementation.png`
+- Browser-rendered implementation: `D:\workspace\haifa-agent\local-tmp\mission-ui-qa\implementation.png`
+- Side-by-side comparison: `D:\workspace\haifa-agent\local-tmp\mission-ui-qa\comparison.png`
+- Viewport: 1440 x 1024 CSS px, desktop, device density 1.
+- Pixel dimensions: source 1440 x 1024; implementation 1440 x 1024; comparison 2880 x 1024.
+- Density normalization: none required; both captures are 1:1 at the same viewport and pixel dimensions.
+- State: Mission workspace open, completed Deep Research Mission selected, first Plan task selected, task definition visible in the right pane.
+- Source-state difference: the mock uses a failed Ethereum plan while the implementation capture uses persisted completed Deep Research data. Layout, hierarchy, controls, and task-detail behavior are compared; dynamic copy and status are not expected to match.
+
+### Full-view comparison evidence
+
+- The combined image was opened and inspected at original resolution.
+- The implementation matches the selected full-screen three-pane structure: Mission navigation, Mission/Plan content, and an independently scrolling task-detail pane.
+- The dark Mission header, cool-grey navigation surface, white main surface, restrained indigo selection color, compact list density, dividers, radii, and footer action placement preserve the mock's visual hierarchy.
+- The persisted product content is denser than the mock but remains readable without horizontal clipping or overlap at 1440 x 1024.
+
+### Focused region comparison evidence
+
+- No separate crop was required because both 1440 x 1024 inputs were inspected at original resolution and the task rows, task metadata, acceptance criteria, dependencies, and persistent action area were legible. DOM inspection additionally verified the corresponding labels and selected states.
+
+### Findings
+
+- No actionable P0, P1, or P2 findings remain.
+- Fonts and typography: the implementation reuses the application's Inter/system/Microsoft YaHei stack. Heading, task-row, badge, metadata, and long Chinese copy weights remain consistent and readable.
+- Spacing and layout rhythm: the 286 / fluid / 360–430 grid follows the mock's proportions. Each pane scrolls independently and persistent task actions remain visible.
+- Colors and tokens: the implementation maps to the existing product palette while retaining the mock's dark header, indigo active state, semantic status colors, light borders, and neutral surfaces.
+- Image and icon fidelity: no raster imagery is required. All icons use the existing `lucide-react` dependency already used throughout the product; no placeholder emoji, handcrafted SVG, or CSS-drawn icon was introduced.
+- Copy and content: the UI uses authoritative Mission and MissionTask fields. Task details expose objective, type, state, required Skills, result Schema, acceptance criteria, and dependencies without inventing task-level evidence or outputs unavailable from the current contract.
+- Accessibility: the workspace remains a modal dialog with focus trapping and Escape close behavior. Search and pane labels are accessible, task selection exposes `aria-pressed`, and buttons retain visible focus styles.
+- Responsive behavior: the desktop grid was checked at 1440 x 1024. CSS collapses the workspace to stacked regions below 900 px while preserving scroll access and sticky task actions.
+
+### Primary interactions tested
+
+- Open and close Mission workspace.
+- Select the first and second Plan tasks and verify the right-side detail heading changes.
+- Follow a dependency link back to its task.
+- Search Missions and clear the query.
+- Enter the new-Mission state and return to the selected Mission without submitting data.
+- Browser console checked after all interactions: zero errors.
+
+### Comparison history
+
+- Pass 1 [P2, layout]: the generic dialog padding overrode the Mission full-screen rule, leaving a 20 px inset. Fix: increased the Mission backdrop selector specificity so the workspace occupies the complete viewport.
+- Pass 1 [P2, information hierarchy]: the create form and a selected terminal Mission rendered together, pushing the Plan below the fold. Fix: introduced an explicit new-Mission mode controlled from the left-pane action, so create and review states no longer compete.
+- Pass 1 [P2, overflow]: a long frozen Skill binding could widen the center pane. Fix: wrapped the binding badge and hid center-pane horizontal overflow while preserving full readable content.
+- Post-fix evidence: the final browser capture and combined comparison show edge-to-edge layout, Plan rows visible in the selected Mission state, and no horizontal clipping. Console remained error-free.
+
+### Open questions
+
+- The mock includes task-level Definition/Evidence/Output tabs and planner-run history. The current public Mission contract has task definitions plus only Mission-level sources/artifacts and the latest attempt, so the implementation intentionally omits misleading task-level evidence/history views.
+
+### Implementation checklist
+
+- Full-screen Mission workspace implemented.
+- Searchable Mission navigation and explicit new-Mission state implemented.
+- Selectable Plan rows and right-side authoritative task details implemented.
+- Existing create, replace, confirm, cancel, retry, polling, focus, and offline behavior preserved.
+- Unit tests, lint, typecheck, contract check, production build, and browser QA completed.
+
+### Follow-up polish
+
+- [P3] Add resizable pane dividers only if users report needing substantially more width for evidence-heavy task definitions.
+
+final result: passed

@@ -30,6 +30,28 @@ class TerminalDriverResultContractTest {
     }
 
     @Test
+    void acceptsEveryRunTerminalStateButRejectsAnotherRunningObservation() throws Exception {
+        for (String state : java.util.List.of("IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT")) {
+            JsonNode evidence = result("conpty").deepCopy();
+            ((com.fasterxml.jackson.databind.node.ObjectNode)
+                            evidence.path("terminalStates").get(2))
+                    .put("state", state);
+
+            assertTrue(TerminalDriverResultContract.validate(evidence, "conpty", recording())
+                    .passed());
+        }
+
+        JsonNode stillRunning = result("conpty").deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode)
+                        stillRunning.path("terminalStates").get(2))
+                .put("state", "RUNNING");
+
+        var invalid = TerminalDriverResultContract.validate(stillRunning, "conpty", recording());
+        assertFalse(invalid.passed());
+        assertTrue(invalid.violations().contains("INVALID_terminalStates"));
+    }
+
+    @Test
     void rejectsMissingProtocolAndBackendMismatch() throws Exception {
         JsonNode missingProtocol = result("unix-pty").deepCopy();
         ((com.fasterxml.jackson.databind.node.ObjectNode) missingProtocol).remove("driverProtocolVersion");
@@ -64,7 +86,7 @@ class TerminalDriverResultContractTest {
                 """
                 {
                   "schemaVersion": 2,
-                  "driverProtocolVersion": "1.1.0",
+                  "driverProtocolVersion": "1.2.0",
                   "terminalBackend": "%s",
                   "terminalExitStatus": 0,
                   "agentWallTimeSeconds": 1.25,

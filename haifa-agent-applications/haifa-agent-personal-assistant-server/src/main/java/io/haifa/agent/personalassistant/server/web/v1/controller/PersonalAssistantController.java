@@ -70,6 +70,7 @@ public final class PersonalAssistantController {
                         "shell",
                         "execution",
                         "recommended-questions",
+                        "mission",
                         "sse"),
                 application.productDigest(),
                 properties.defaultModelId(),

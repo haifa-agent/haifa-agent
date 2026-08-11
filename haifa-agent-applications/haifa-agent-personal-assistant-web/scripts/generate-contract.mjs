@@ -55,10 +55,18 @@ for (const required of [
   "rejectMemoryCandidate",
   "listMemories",
   "invalidateMemory",
+  "listMissions",
+  "createMission",
+  "getMission",
+  "getMissionSnapshot",
+  "downloadMissionArtifact",
+  "replaceMissionPlan",
+  "confirmMission",
+  "cancelMission",
 ]) {
   if (!operationIds.includes(required)) failures.push(`missing operationId: ${required}`);
 }
-for (const forbidden of ["followUp", "steer", "artifact", "preference", "research"]) {
+for (const forbidden of ["followUp", "steer", "preference", "research"]) {
   if (operationIds.some((value) => value.toLowerCase().includes(forbidden.toLowerCase()))) {
     failures.push(`deferred operation must not be published: ${forbidden}`);
   }

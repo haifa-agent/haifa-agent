@@ -25,6 +25,7 @@ public final class ClasspathSkillSource implements SkillSource {
     private final ClassLoader classLoader;
     private final String root;
     private final List<String> packageNames;
+    private final Map<String, List<String>> packageResources;
     private final SkillSourceDescriptor descriptor;
     private final SkillPackageParser parser;
     private final SkillAvailability configuredAvailability;
@@ -37,9 +38,30 @@ public final class ClasspathSkillSource implements SkillSource {
             SkillSourceDescriptor descriptor,
             SkillPackageParser parser,
             SkillAvailability configuredAvailability) {
+        this(
+                classLoader,
+                root,
+                packageNames,
+                packageNames.stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                java.util.function.Function.identity(), ignored -> List.of("SKILL.md"))),
+                descriptor,
+                parser,
+                configuredAvailability);
+    }
+
+    public ClasspathSkillSource(
+            ClassLoader classLoader,
+            String root,
+            List<String> packageNames,
+            Map<String, List<String>> packageResources,
+            SkillSourceDescriptor descriptor,
+            SkillPackageParser parser,
+            SkillAvailability configuredAvailability) {
         this.classLoader = java.util.Objects.requireNonNull(classLoader);
         this.root = normalizeRoot(root);
         this.packageNames = packageNames.stream().sorted().toList();
+        this.packageResources = normalizeResources(this.packageNames, packageResources);
         this.descriptor = java.util.Objects.requireNonNull(descriptor);
         this.parser = java.util.Objects.requireNonNull(parser);
         this.configuredAvailability = java.util.Objects.requireNonNull(configuredAvailability);
@@ -118,12 +140,46 @@ public final class ClasspathSkillSource implements SkillSource {
 
     private Map<String, byte[]> readPackage(String packageName) throws IOException {
         Map<String, byte[]> files = new LinkedHashMap<>();
-        String skillPath = root + "/" + packageName + "/SKILL.md";
-        try (var input = classLoader.getResourceAsStream(skillPath)) {
-            if (input == null) throw new IOException("missing Skill resource");
-            files.put("SKILL.md", input.readAllBytes());
+        for (String relative : packageResources.get(packageName)) {
+            String skillPath = root + "/" + packageName + "/" + relative;
+            try (var input = classLoader.getResourceAsStream(skillPath)) {
+                if (input == null) throw new IOException("missing Skill resource: " + relative);
+                files.put(relative, input.readAllBytes());
+            }
         }
         return files;
+    }
+
+    private static Map<String, List<String>> normalizeResources(
+            List<String> packageNames, Map<String, List<String>> packageResources) {
+        Map<String, List<String>> normalized = new LinkedHashMap<>();
+        Map<String, List<String>> declared = Map.copyOf(java.util.Objects.requireNonNull(packageResources));
+        if (!declared.keySet().equals(java.util.Set.copyOf(packageNames))) {
+            throw new IllegalArgumentException("Classpath Skill resource manifest must match package names");
+        }
+        for (String packageName : packageNames) {
+            List<String> resources = declared.get(packageName).stream()
+                    .map(ClasspathSkillSource::normalizeResource)
+                    .distinct()
+                    .sorted()
+                    .toList();
+            if (!resources.contains("SKILL.md")) {
+                throw new IllegalArgumentException("Classpath Skill package must declare SKILL.md");
+            }
+            normalized.put(packageName, resources);
+        }
+        return Map.copyOf(normalized);
+    }
+
+    private static String normalizeResource(String resource) {
+        String value = java.util.Objects.requireNonNull(resource, "resource must not be null")
+                .replace('\\', '/')
+                .replaceAll("^/+", "")
+                .replaceAll("/+$", "");
+        if (value.isBlank() || value.contains("..") || value.contains(":") || value.startsWith("META-INF/")) {
+            throw new IllegalArgumentException("invalid Classpath Skill resource");
+        }
+        return value;
     }
 
     private static String normalizeRoot(String root) {

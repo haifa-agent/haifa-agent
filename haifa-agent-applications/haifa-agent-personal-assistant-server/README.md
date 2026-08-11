@@ -21,7 +21,7 @@ Provider 是接入实例，持有共享 Endpoint、Credential、`native-streamin
 ```yaml
 haifa:
   personal:
-    default-model-id: deepseek-responses-flash
+    default-model-id: deepseek-chat-flash
     model-providers:
       - id: deepseek
         display-name: DeepSeek
@@ -85,8 +85,8 @@ DeepSeek Anthropic Messages 因 Base URL 与其余 Style 不同，在 Binding �
 Credential 与 `native-streaming` 仍只配置在 Provider。
 
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
-Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型
-仍是 `deepseek-responses-flash`。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
+Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型是显式关闭 thinking 的
+`deepseek-chat-flash`；Responses 与 Anthropic Messages 模型仍作为非默认的受信选项保留。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
 `IMAGE_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
@@ -99,9 +99,71 @@ Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 `127.0.0.1:20001`，本地确定性 MCP Stub 使用 `127.0.0.1:20002`，也可显式配置为更高端口。
 端口冲突会使启动失败，不会自动换端口。
 
+## Personal Mission Phase 1–4
+
+Phase 4 advances the Personal Mission schema to V6 and persists authoritative model-token,
+model-call, and Tool-call usage. Configured upper bounds are validated at startup and admission
+stops only new Mission dispatch when the SQLite or Artifact store reaches its stop threshold;
+running work remains observable and can converge. Readiness requires the single Dispatcher owner,
+its first reconciliation, and a successful Artifact integrity check. Shutdown stops admission,
+waits for the bounded convergence window, and leaves durable work recoverable when the window
+expires.
+
+The default Mission-wide model-token budget is 3,000,000 (configurable up to 4,000,000), and the independent
+Tool-call budget is 360 (configurable up to 400). These cover a bounded multi-task Deep Research run, one automatic
+task retry, and its final synthesis without widening any stage's explicit Tool allowlist.
+The default Mission wall-clock budget is two hours. It is a product hard limit for serial multi-Task research, while
+the deterministic acceptance profile keeps its explicit 30-minute test deadline.
+
+Phase 3 adds product schema V5 for the frozen Mission-level Skill binding and uses shared Runtime
+schema V7 Artifact metadata plus an application-owned, no-follow payload directory. Deep Research
+uses only the approved `web.search` / `web.fetch` pipeline, validates canonical source identities,
+citation closure and quote bounds, then applies a deterministic marked-Markdown Report Gate and at most two stable
+idempotent revisions. It publishes report, sources, claim-evidence and unresolved Artifacts, validates their
+hash/version/media type, and publishes the code-owned `pa.research-delivery/v2` manifest last as the fifth owner-only
+Artifact plus one idempotent final Conversation message. Existing v1 delivery JSON remains read-only compatible and
+the existing Mission columns carry v2 without a database Migration. The deterministic offline
+Stub exercises the same Tool/Skill/Runtime path; it is not a production network provider.
+
+Server 提供 `/api/v1/missions` 的 create/list/get/snapshot、确认前完整计划 replace/regenerate、confirm
+、cancel 和 blocked Task retry。写操作要求 `Idempotency-Key`，计划变更、确认和重试要求 `If-Match`；owner、Conversation 和
+Planner Profile 均从可信 Server 上下文解析，浏览器不能注入 Skill、Provider、Credential 或路径。
+
+Mission 使用独立的 Personal SQLite schema history。Mission、Plan revision、Task、Dependency、Event、
+Outbox 和 Command 在同一产品 UoW 中提交；数据库约束保证一个 Conversation 最多一个活动 Mission，
+触发器冻结已确认计划定义。Phase 2 用部分唯一索引保证全局最多一个活动 Task Attempt；OS 文件锁与
+Dispatcher ownership heartbeat 使同一数据目录只能有一个 Dispatcher。产品 UoW 与 Runtime UoW 通过
+稳定 dispatch key 和带请求摘要的 Runtime start 幂等绑定恢复，不宣称分布式 HA。Task Outbox 保存完整
+且有界的冻结 Run Input；直接依赖结果及其 digest、Profile 和工具边界均进入同一个 payload digest，claim
+时校验 Outbox/Attempt/digest 一致性，下游不会只等待依赖完成却丢失依赖结果。
+
+只读运维事实由 `/v1/admin/missions/operations` 和
+`/v1/admin/missions/upgrade-readiness` 提供；Actuator readiness 也包含 Personal Mission
+Dispatcher、首次 reconciliation、容量和 Artifact 完整性状态。升级前必须使 active Mission、待发
+Outbox 和未结算 Attempt 全部归零。MVP 不自动删除 Mission、Task、Run、Source 或 Artifact；容量告警后
+由运维人员先完成备份和校验，再按明确的维护流程处理数据。
+
+离线备份、校验和恢复通过可执行 Server JAR 运行。备份要求 Server 已停止、Dispatcher 文件锁可获取且
+Mission Store 处于 quiescent 状态；恢复目标必须是全新目录。`product-digest` 取自启动接口的
+`assemblyDigest`，`skill-binding` 使用 Mission 快照中冻结的完整 Deep Research Skill binding：
+
+```powershell
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+  mission-maintenance backup <data-dir> <backup-dir> <product-digest> "<skill-binding>"
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+  mission-maintenance verify <backup-dir> - <product-digest> "<skill-binding>"
+java -jar .\target\haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar `
+  mission-maintenance restore <backup-dir> <fresh-data-dir> <product-digest> "<skill-binding>"
+```
+
+备份清单绑定产品摘要、Skill binding、Schema 版本和每个数据库/Artifact 文件的 SHA-256。校验与恢复会
+检查清单、哈希、SQLite integrity/foreign keys、Run/Session 引用和 Artifact 引用；任何漂移均 fail
+closed。该命令不是在线热备、在线恢复、自动迁移或回滚机制。
+
 Server 负责：
 
 - 显式装配 Product Profile、Model、SQLite、Policy、Memory、Tool、Skill 和 MCP；
+- 装配 Personal Mission Store、Planner、Application Service 与版本化 HTTP/OpenAPI；
 - 按配置启用公共 `haifa-agent-web` 的 Aliyun IQS Search/Fetch，并把环境变量凭据绑定到
   Runtime `CredentialBroker`，不把 Key 放入 Profile、Tool Definition 或日志；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；

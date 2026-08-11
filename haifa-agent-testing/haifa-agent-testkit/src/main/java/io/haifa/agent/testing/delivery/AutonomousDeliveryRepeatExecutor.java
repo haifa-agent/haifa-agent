@@ -118,6 +118,7 @@ final class AutonomousDeliveryRepeatExecutor {
                 "HAIFA_SQLITE_DATABASE_PATH", repeat.resolve("runtime.db").toString());
         environment.put("HAIFA_TRANSCRIPT_ROOT", transcripts.toString());
         environment.put("TERM", "xterm-256color");
+        configurePythonUtf8(environment);
         Process process = builder.start();
         ProcessTreeCleanup.Tracker processTracker = ProcessTreeCleanup.track(process);
         boolean finished = process.waitFor(suite.budget().maxWallTimeMillis() + 120_000, TimeUnit.MILLISECONDS);
@@ -131,8 +132,9 @@ final class AutonomousDeliveryRepeatExecutor {
         String after = workspaceDigest(workspace);
         Files.writeString(repeat.resolve("workspace-after.sha256"), after + "\n", StandardOpenOption.CREATE_NEW);
         runGit(toolchains, workspace, repeat.resolve("workspace.diff"), "diff", "--binary", "--no-ext-diff");
-        AutonomousDeliveryRuntimeEvidenceReader.Evidence authoritative =
-                new AutonomousDeliveryRuntimeEvidenceReader(json).read(repeat.resolve("runtime.db"));
+        AutonomousDeliveryRuntimeEvidenceReader.Evidence authoritative = new AutonomousDeliveryRuntimeEvidenceReader(
+                        json)
+                .readOrUnavailable(repeat.resolve("runtime.db"), driverExit != 0 && driverEvidence == null);
         long wallTimeMillis = Math.round(wallSeconds * 1000.0);
         int iterations = maximumIteration(repeat.resolve("trace-detail.jsonl"));
         boolean withinBudget = authoritative.modelCalls() <= suite.budget().maxModelCalls()
@@ -191,6 +193,11 @@ final class AutonomousDeliveryRepeatExecutor {
                                 phaseThree.atomicity()),
                         selectedSecrets);
         return collected.summary();
+    }
+
+    static void configurePythonUtf8(Map<String, String> environment) {
+        environment.put("PYTHONUTF8", "1");
+        environment.put("PYTHONIOENCODING", "utf-8");
     }
 
     static boolean gateEligible(

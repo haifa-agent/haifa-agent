@@ -3,6 +3,7 @@ package io.haifa.agent.store.sqlite;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.runtime.api.RuntimeCommandResult;
 import io.haifa.agent.runtime.core.storage.IdempotencyRepository;
+import io.haifa.agent.runtime.core.storage.RunStartIdempotencyBinding;
 import io.haifa.agent.store.sqlite.codec.EncodedPayload;
 import io.haifa.agent.store.sqlite.codec.VersionedPayloadCodecRegistry;
 import io.haifa.agent.store.sqlite.mybatis.IdempotencyRow;
@@ -31,26 +32,54 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
     }
 
     @Override
-    public Optional<AgentRunId> findRun(String callerScope, String operation, String key) {
+    public Optional<RunStartIdempotencyBinding> findRunBinding(String callerScope, String operation, String key) {
         return execute(() -> Optional.ofNullable(find(callerScope, operation, key))
-                .map(IdempotencyRow::runId)
-                .map(AgentRunId::new));
+                .map(row -> new RunStartIdempotencyBinding(
+                        row.callerScope(),
+                        row.operation(),
+                        row.idempotencyKey(),
+                        Optional.ofNullable(row.requestDigest()),
+                        new AgentRunId(row.runId()))));
+    }
+
+    @Override
+    public RunStartIdempotencyBinding recordRunBinding(RunStartIdempotencyBinding binding) {
+        Objects.requireNonNull(binding, "binding must not be null");
+        return execute(() -> {
+            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
+            Instant now = Instant.ofEpochMilli(clock.millis());
+            mapper.insertIdempotency(new IdempotencyRow(
+                    binding.callerScope(),
+                    binding.operation(),
+                    binding.idempotencyKey(),
+                    binding.runId().value(),
+                    binding.requestDigest().orElse(null),
+                    false,
+                    null,
+                    null,
+                    null,
+                    now,
+                    now));
+            IdempotencyRow stored =
+                    mapper.findIdempotency(binding.callerScope(), binding.operation(), binding.idempotencyKey());
+            if (stored == null) throw new IllegalStateException("idempotency binding was not recorded");
+            return new RunStartIdempotencyBinding(
+                    stored.callerScope(),
+                    stored.operation(),
+                    stored.idempotencyKey(),
+                    Optional.ofNullable(stored.requestDigest()),
+                    new AgentRunId(stored.runId()));
+        });
     }
 
     @Override
     public AgentRunId recordRun(String callerScope, String operation, String key, AgentRunId runId) {
-        Objects.requireNonNull(runId, "runId must not be null");
-        return execute(() -> {
-            RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
-            Instant now = Instant.ofEpochMilli(clock.millis());
-            mapper.insertIdempotency(
-                    new IdempotencyRow(callerScope, operation, key, runId.value(), false, null, null, null, now, now));
-            IdempotencyRow stored = mapper.findIdempotency(callerScope, operation, key);
-            if (stored == null || !runId.value().equals(stored.runId())) {
-                throw new IllegalStateException("idempotency key is already bound to a different run");
-            }
-            return runId;
-        });
+        RunStartIdempotencyBinding stored =
+                recordRunBinding(new RunStartIdempotencyBinding(callerScope, operation, key, Optional.empty(), runId));
+        if (!stored.runId().equals(runId)) {
+            throw new IllegalStateException("idempotency key is already bound to a different run");
+        }
+        return stored.runId();
     }
 
     @Override
@@ -59,7 +88,7 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             Instant now = Instant.ofEpochMilli(clock.millis());
             mapper.insertIdempotency(
-                    new IdempotencyRow(callerScope, COMMAND, key, null, false, null, null, null, now, now));
+                    new IdempotencyRow(callerScope, COMMAND, key, null, null, false, null, null, null, now, now));
             return mapper.markCommandApplied(callerScope, key, now) == 1;
         });
     }
@@ -93,6 +122,7 @@ public final class SqliteIdempotencyRepository implements IdempotencyRepository 
                     COMMAND_RESULT,
                     idempotencyKey,
                     result.command().runId().value(),
+                    null,
                     false,
                     payload.schemaVersion(),
                     payload.bytes(),

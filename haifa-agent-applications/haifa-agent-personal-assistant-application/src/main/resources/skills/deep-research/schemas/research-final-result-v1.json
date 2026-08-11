@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pa.research-final-result/v1",
+  "type": "object",
+  "required": [
+    "schemaVersion", "reportArtifactRef", "sourcesArtifactRef", "claimEvidenceArtifactRef",
+    "resultArtifactRef", "unresolvedArtifactRef", "directAnswer", "completedItems", "failedItems",
+    "artifactRefs", "sourceRefs", "unverifiedClaims", "unresolvedQuestions", "residualRisks", "completionKind"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "pa.research-final-result/v1" },
+    "reportArtifactRef": { "type": ["object", "null"] },
+    "sourcesArtifactRef": { "type": ["object", "null"] },
+    "claimEvidenceArtifactRef": { "type": ["object", "null"] },
+    "resultArtifactRef": { "type": ["object", "null"] },
+    "unresolvedArtifactRef": { "type": ["object", "null"] },
+    "directAnswer": { "type": "string", "minLength": 1, "maxLength": 24000 },
+    "completedItems": { "type": "array", "maxItems": 40, "items": { "type": "string" } },
+    "failedItems": { "type": "array", "maxItems": 40, "items": { "type": "string" } },
+    "artifactRefs": { "type": "array", "maxItems": 8, "items": { "type": "object" } },
+    "sourceRefs": { "type": "array", "maxItems": 24, "items": { "type": "string" } },
+    "unverifiedClaims": { "type": "array", "maxItems": 320, "items": { "type": "string" } },
+    "unresolvedQuestions": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
+    "residualRisks": { "type": "array", "maxItems": 20, "items": { "type": "string" } },
+    "completionKind": { "enum": ["COMPLETE", "PARTIAL"] }
+  },
+  "additionalProperties": false
+}

@@ -220,9 +220,17 @@ flowchart LR
 Linux/macOS：
 
 ```bash
-./mvnw test
-./mvnw -pl :haifa-agent-runtime-core -am test
-./mvnw --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+./build-support/scripts/invoke-haifa-maven.sh --layer L1 -- \
+  -pl :haifa-agent-runtime-core -am \
+  -Dtest=RuntimeCoreTest -Dsurefire.failIfNoSpecifiedTests=false test
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- \
+  -pl :haifa-agent-runtime-core -am test
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- test
+./build-support/scripts/invoke-haifa-maven.sh --layer L0 -- spotless:apply
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-integration-only verify
+./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- \
+  -pl :haifa-agent-cli -am -Prelease-artifacts verify
 
 # 唯一可执行制品；无 -m 时默认启动 tui4j Terminal
 ./mvnw -pl :haifa-agent-cli -am package
@@ -232,14 +240,26 @@ java -jar ./haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.
 Windows PowerShell：
 
 ```powershell
-.\mvnw.cmd test
-.\mvnw.cmd -pl :haifa-agent-runtime-core -am test
-.\mvnw.cmd --batch-mode --no-transfer-progress -T 1C -Pci-fast clean verify
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L1 -MavenArguments @( `
+  '-pl', ':haifa-agent-runtime-core', '-am', `
+  '-Dtest=RuntimeCoreTest', '-Dsurefire.failIfNoSpecifiedTests=false', 'test')
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L2 -MavenArguments @( `
+  '-pl', ':haifa-agent-runtime-core', '-am', 'test')
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L2 -MavenArguments @('test')
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L0 -MavenArguments @('spotless:apply')
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @('-Pci-fast', 'clean', 'verify')
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @('-Pci-integration-only', 'verify')
+.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @( `
+  '-pl', ':haifa-agent-cli', '-am', '-Prelease-artifacts', 'verify')
 
 # 唯一可执行制品；无 -m 时默认启动 tui4j Terminal
 .\mvnw.cmd -pl :haifa-agent-cli -am package
 java -jar .\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar --help
 ```
+
+精确测试使用 L1 串行反馈；模块完整测试和全仓增量测试使用 L2 固定四线程；最终门禁使用 L3。
+统一入口会记录脱敏指标并避免按 CPU 核数无界放大并发。直接调用 Wrapper 仍受支持，但不作为日常
+全仓测试的推荐入口。
 
 普通开发与 CI 不运行真实模型、外部 MCP 或 Web Provider 服务。DeepSeek 与 Web Live Test 都必须使用各自的显式开关和独立凭据，访问外部服务并可能产生费用。
 

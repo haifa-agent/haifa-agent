@@ -1,11 +1,17 @@
 package io.haifa.agent.personalassistant.server.configuration.sdk;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
 import io.haifa.agent.personalassistant.application.PersonalAssistantAssembler;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
+import io.haifa.agent.personalassistant.application.mission.DeterministicMissionPlanner;
+import io.haifa.agent.personalassistant.application.mission.MissionApplicationService;
+import io.haifa.agent.personalassistant.application.mission.MissionExecutionCoordinator;
+import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
+import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
 import io.haifa.agent.personalassistant.application.web.PersonalWebPlatform;
 import io.haifa.agent.personalassistant.server.configuration.execution.PersonalExecutionRuntime;
 import io.haifa.agent.personalassistant.server.configuration.mcp.PersonalMcpRuntime;
@@ -13,6 +19,12 @@ import io.haifa.agent.personalassistant.server.configuration.model.PersonalModel
 import io.haifa.agent.personalassistant.server.configuration.model.SqlitePersonalModelPreferenceStore;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
+import io.haifa.agent.personalassistant.server.mission.MissionArtifactPublisher;
+import io.haifa.agent.personalassistant.server.mission.MissionCapacityMonitor;
+import io.haifa.agent.personalassistant.server.mission.MissionDispatcher;
+import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
+import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
+import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
@@ -85,16 +97,19 @@ public class PersonalAssistantConfiguration {
         try {
             execution = PersonalExecutionRuntime.create(
                     dataDirectory, principal, properties.execution(), sqlite.policy(), personalClock);
-            var web = PersonalWebPlatform.create(
-                    tenant,
-                    principal,
-                    properties.web().enabled(),
-                    resolveCredential(properties.web()),
-                    Duration.ofMillis(properties.web().timeoutMillis()),
-                    properties.web().searchMaximumResponseBytes(),
-                    properties.web().fetchMaximumResponseBytes(),
-                    mapper,
-                    personalClock);
+            var web = "deterministic-stub".equals(properties.mission().plannerMode())
+                            && !properties.web().enabled()
+                    ? PersonalWebPlatform.deterministicStub()
+                    : PersonalWebPlatform.create(
+                            tenant,
+                            principal,
+                            properties.web().enabled(),
+                            resolveCredential(properties.web()),
+                            Duration.ofMillis(properties.web().timeoutMillis()),
+                            properties.web().searchMaximumResponseBytes(),
+                            properties.web().fetchMaximumResponseBytes(),
+                            mapper,
+                            personalClock);
             var models = PersonalModelFactory.createPlatform(
                     properties.modelProviders(),
                     properties.defaultModelId(),
@@ -116,6 +131,7 @@ public class PersonalAssistantConfiguration {
                     sqlite.conversation(),
                     sqlite.memory(),
                     sqlite.policy(),
+                    sqlite.artifact(),
                     execution,
                     web,
                     mcpRuntime.configuration(),
@@ -146,6 +162,99 @@ public class PersonalAssistantConfiguration {
     @Bean
     PersonalImageStore personalImageStore(PersonalAssistantProperties properties) {
         return new PersonalImageStore(prepare(properties.dataDirectory()));
+    }
+
+    @Bean
+    SqliteMissionStore personalMissionStore(PersonalAssistantProperties properties, ObjectMapper mapper) {
+        var limits = properties.mission();
+        return new SqliteMissionStore(
+                properties.dataDirectory().resolve("personal-assistant.sqlite"),
+                mapper,
+                limits.maxAutoAttemptsPerTask(),
+                Math.min(3, limits.maxAutoAttemptsPerTask() + 1),
+                limits.maxModelTokens(),
+                limits.maxToolCalls());
+    }
+
+    @Bean
+    MissionCapacityMonitor missionCapacityMonitor(PersonalAssistantProperties properties) {
+        return new MissionCapacityMonitor(properties.dataDirectory(), properties.mission());
+    }
+
+    @Bean
+    MissionPlanner personalMissionPlanner(
+            PersonalAssistantProperties properties,
+            PersonalAssistantApplication application,
+            MissionPlanValidator missionPlanValidator,
+            ObjectMapper mapper) {
+        return switch (properties.mission().plannerMode()) {
+            case "deterministic-stub" -> new DeterministicMissionPlanner();
+            case "runtime" -> new RuntimeMissionPlanner(application.missionRuntime(), missionPlanValidator, mapper);
+            default -> throw new IllegalStateException("unsupported Mission Planner mode");
+        };
+    }
+
+    @Bean
+    MissionPlanValidator missionPlanValidator() {
+        return new MissionPlanValidator(
+                Set.of("GENERAL", "RESEARCH"),
+                Set.of("deep-research"),
+                Set.of("pa.task-result@v1", "pa.research-task-result@v1"));
+    }
+
+    @Bean
+    MissionApplicationService missionApplicationService(
+            SqliteMissionStore store,
+            MissionPlanner planner,
+            MissionPlanValidator missionPlanValidator,
+            Clock clock,
+            PersonalAssistantApplication application,
+            MissionOperationsService operations) {
+        var ids = new UuidV7IdentifierGenerator();
+        return new MissionApplicationService(
+                store,
+                store,
+                planner,
+                missionPlanValidator,
+                ids::nextValue,
+                clock,
+                store,
+                application
+                        .skillBindingReference("deep-research")
+                        .map(binding -> java.util.Map.of("deep-research", binding))
+                        .orElseGet(java.util.Map::of),
+                operations::requireAdmission);
+    }
+
+    @Bean(initMethod = "start", destroyMethod = "close")
+    MissionDispatcher missionDispatcher(
+            SqliteMissionStore store,
+            PersonalAssistantApplication application,
+            PersonalAssistantProperties properties,
+            Clock clock,
+            ObjectMapper mapper,
+            MissionCapacityMonitor capacity) {
+        String dispatcherId = "pa-mission-" + ProcessHandle.current().pid();
+        var coordinator = new MissionExecutionCoordinator(
+                store,
+                application.missionRuntime(),
+                clock,
+                dispatcherId,
+                new MissionArtifactPublisher(
+                        application.artifacts(),
+                        mapper,
+                        properties.research().maxSources(),
+                        properties.research().maxTotalContentBytes(),
+                        properties.mission().maxArtifacts(),
+                        properties.mission().maxTotalArtifactBytes()));
+        return new MissionDispatcher(
+                store,
+                coordinator,
+                clock,
+                properties.dataDirectory(),
+                capacity,
+                properties.mission().dispatcherPollMillis(),
+                properties.mission().dispatcherShutdownTimeoutMillis());
     }
 
     private static String resolveCredential(PersonalAssistantProperties.Web web) {

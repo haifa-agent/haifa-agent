@@ -57,6 +57,7 @@
         <flatten.version>1.7.1</flatten.version>
 
         <skipITs>true</skipITs>
+        <skipUnitTests>false</skipUnitTests>
         <haifa.surefire.reportsDirectory>${project.build.directory}/surefire-reports</haifa.surefire.reportsDirectory>
         <haifa.failsafe.reportsDirectory>${project.build.directory}/failsafe-reports</haifa.failsafe.reportsDirectory>
     </properties>
@@ -360,6 +361,8 @@
                     <version>${maven.surefire.plugin.version}</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
+                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+                        <skipTests>${skipUnitTests}</skipTests>
                         <reportsDirectory>${haifa.surefire.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*Test.java</include>
@@ -373,6 +376,7 @@
                     <version>${maven.failsafe.plugin.version}</version>
                     <configuration>
                         <skipITs>${skipITs}</skipITs>
+                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
                         <reportsDirectory>${haifa.failsafe.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*IT.java</include>
@@ -511,6 +515,7 @@
             <id>ci-fast</id>
             <properties>
                 <skipITs>true</skipITs>
+                <skipUnitTests>false</skipUnitTests>
             </properties>
             <build>
                 <plugins>
@@ -534,6 +539,30 @@
             <id>ci-integration</id>
             <properties>
                 <skipITs>false</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>ci-integration-only</id>
+            <properties>
+                <skipITs>false</skipITs>
+                <skipUnitTests>true</skipUnitTests>
             </properties>
             <build>
                 <plugins>
@@ -554,6 +583,45 @@
         </profile>
         <profile>
             <id>release</id>
+            <properties>
+                <skipITs>true</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>release-artifacts</id>
+            <properties>
+                <skipITs>true</skipITs>
+                <skipUnitTests>true</skipUnitTests>
+            </properties>
             <build>
                 <plugins>
                     <plugin>

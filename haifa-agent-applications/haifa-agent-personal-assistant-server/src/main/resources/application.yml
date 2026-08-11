@@ -30,6 +30,9 @@ management:
       probes:
         enabled: true
       show-details: never
+      group:
+        readiness:
+          include: personalAssistant,personalMission
 
 haifa:
   personal:
@@ -84,14 +87,37 @@ haifa:
             capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
             context-window: 131072
             max-output-tokens: 8192
-    default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-responses-flash}
+    default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-chat-flash}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:
       enabled: ${HAIFA_PERSONAL_WEB_ENABLED:false}
       credential-reference: ${HAIFA_PERSONAL_WEB_CREDENTIAL:env://ALIYUN_IQS_API_KEY}
       timeout-millis: ${HAIFA_PERSONAL_WEB_TIMEOUT_MILLIS:30000}
       search-maximum-response-bytes: ${HAIFA_PERSONAL_WEB_SEARCH_MAXIMUM_RESPONSE_BYTES:2097152}
-      fetch-maximum-response-bytes: ${HAIFA_PERSONAL_WEB_FETCH_MAXIMUM_RESPONSE_BYTES:4194304}
+      fetch-maximum-response-bytes: ${HAIFA_PERSONAL_WEB_FETCH_MAXIMUM_RESPONSE_BYTES:262144}
+    mission:
+      planner-mode: ${HAIFA_PERSONAL_MISSION_PLANNER_MODE:runtime}
+      max-tasks: ${HAIFA_PERSONAL_MISSION_MAX_TASKS:8}
+      max-dependency-depth: ${HAIFA_PERSONAL_MISSION_MAX_DEPENDENCY_DEPTH:4}
+      max-acceptance-criteria: ${HAIFA_PERSONAL_MISSION_MAX_ACCEPTANCE_CRITERIA:20}
+      global-active-task-runs: ${HAIFA_PERSONAL_MISSION_GLOBAL_ACTIVE_TASK_RUNS:1}
+      max-auto-attempts-per-task: ${HAIFA_PERSONAL_MISSION_MAX_AUTO_ATTEMPTS_PER_TASK:2}
+      max-wall-clock-millis: ${HAIFA_PERSONAL_MISSION_MAX_WALL_CLOCK_MILLIS:7200000}
+      max-model-tokens: ${HAIFA_PERSONAL_MISSION_MAX_MODEL_TOKENS:3000000}
+      max-tool-calls: ${HAIFA_PERSONAL_MISSION_MAX_TOOL_CALLS:360}
+      max-artifacts: ${HAIFA_PERSONAL_MISSION_MAX_ARTIFACTS:8}
+      max-total-artifact-bytes: ${HAIFA_PERSONAL_MISSION_MAX_TOTAL_ARTIFACT_BYTES:4194304}
+      dispatcher-poll-millis: ${HAIFA_PERSONAL_MISSION_DISPATCHER_POLL_MILLIS:500}
+      dispatcher-shutdown-timeout-millis: ${HAIFA_PERSONAL_MISSION_DISPATCHER_SHUTDOWN_TIMEOUT_MILLIS:20000}
+      recovery-batch-size: ${HAIFA_PERSONAL_MISSION_RECOVERY_BATCH_SIZE:100}
+      db-warning-bytes: ${HAIFA_PERSONAL_MISSION_DB_WARNING_BYTES:536870912}
+      db-stop-bytes: ${HAIFA_PERSONAL_MISSION_DB_STOP_BYTES:1073741824}
+      artifact-warning-bytes: ${HAIFA_PERSONAL_MISSION_ARTIFACT_WARNING_BYTES:1073741824}
+      artifact-stop-bytes: ${HAIFA_PERSONAL_MISSION_ARTIFACT_STOP_BYTES:2147483648}
+    research:
+      max-sources: ${HAIFA_PERSONAL_RESEARCH_MAX_SOURCES:24}
+      max-source-content-bytes: ${HAIFA_PERSONAL_RESEARCH_MAX_SOURCE_CONTENT_BYTES:262144}
+      max-total-content-bytes: ${HAIFA_PERSONAL_RESEARCH_MAX_TOTAL_CONTENT_BYTES:2097152}
     mcp:
       mode: ${HAIFA_PERSONAL_MCP_MODE:embedded-echo}
       address: 127.0.0.1

@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.application;
 
+import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
@@ -15,6 +16,7 @@ import io.haifa.agent.memory.api.MemoryRef;
 import io.haifa.agent.memory.api.MemoryStatus;
 import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
+import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender.RecommendationTurn;
@@ -68,6 +70,9 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private final PersonalModelCatalog models;
     private final PersonalModelPreferenceStore modelPreferences;
     private final AutoCloseable executionLifecycle;
+    private final MissionRuntimeAccess missionRuntime;
+    private final ArtifactService artifacts;
+    private final Map<String, String> skillBindingReferences;
     private final ConcurrentMap<String, List<String>> recommendedQuestions = new ConcurrentHashMap<>();
 
     public PersonalAssistantApplication(
@@ -78,7 +83,10 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             PersonalModelCatalog models,
             PersonalModelPreferenceStore modelPreferences,
             PersonalQuestionRecommender questionRecommender,
-            AutoCloseable executionLifecycle) {
+            AutoCloseable executionLifecycle,
+            MissionRuntimeAccess missionRuntime,
+            ArtifactService artifacts,
+            Map<String, String> skillBindingReferences) {
         this.agent = Objects.requireNonNull(agent);
         this.mcp = Objects.requireNonNull(mcp);
         this.clock = Objects.requireNonNull(clock);
@@ -87,7 +95,22 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         this.modelPreferences = Objects.requireNonNull(modelPreferences);
         this.questionRecommender = Objects.requireNonNull(questionRecommender);
         this.executionLifecycle = Objects.requireNonNull(executionLifecycle);
+        this.missionRuntime = Objects.requireNonNull(missionRuntime);
+        this.artifacts = Objects.requireNonNull(artifacts);
+        this.skillBindingReferences = Map.copyOf(skillBindingReferences);
         this.mcpToolAliases = mcp.aliases();
+    }
+
+    public ArtifactService artifacts() {
+        return artifacts;
+    }
+
+    public MissionRuntimeAccess missionRuntime() {
+        return missionRuntime;
+    }
+
+    public Optional<String> skillBindingReference(String alias) {
+        return Optional.ofNullable(skillBindingReferences.get(Objects.requireNonNull(alias)));
     }
 
     public ConversationView start(String idempotencyKey, String displayName, String message) {

@@ -165,6 +165,15 @@ public final class SqliteStoreFoundation implements AutoCloseable {
         return new SqliteConversationSummaryRepository(unitOfWork, runtimeCodecs);
     }
 
+    public SqliteArtifactStore artifacts() {
+        return new SqliteArtifactStore(connections);
+    }
+
+    public FileArtifactPayloadStore artifactPayloads() {
+        return new FileArtifactPayloadStore(
+                connections.configuration().databasePath().getParent().resolve("artifacts"));
+    }
+
     public SqliteRuntimeMemorySelectionRepository memorySelections() {
         return new SqliteRuntimeMemorySelectionRepository(unitOfWork, runtimeCodecs, clock);
     }

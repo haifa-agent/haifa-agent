@@ -11,6 +11,8 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
+import io.haifa.agent.runtime.core.retry.RetryPolicy;
+import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
 import io.haifa.agent.sdk.contribution.ApprovalPlatformContribution;
 import io.haifa.agent.sdk.contribution.ArtifactPlatformContribution;
@@ -34,8 +36,10 @@ import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
 import io.haifa.agent.sdk.product.ProductContribution;
 import io.haifa.agent.sdk.product.ProductProfile;
+import io.haifa.agent.sdk.product.ProductRunProfile;
 import io.haifa.agent.sdk.spi.SdkConversationContribution;
 import io.haifa.agent.sdk.spi.SdkPersistenceContribution;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,6 +47,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 
 /** Fluent bootstrap builder. Product behavior is selected by Profile, not by hard-coded product branches. */
 public final class HaifaAgentBuilder {
@@ -55,6 +60,8 @@ public final class HaifaAgentBuilder {
     private java.util.function.UnaryOperator<PublicToolPolicy> publicToolPolicyDecorator =
             java.util.function.UnaryOperator.identity();
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
+    private RetryPolicy toolRetry = RetryPolicy.none();
+    private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
 
     HaifaAgentBuilder() {}
 
@@ -95,6 +102,28 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder modelImageResolver(ModelImageResolver value) {
         modelImageResolver = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    /** Configures bounded Tool retries; Runtime still disables them for non-idempotent Tools. */
+    public HaifaAgentBuilder toolRetry(
+            int maxAttempts,
+            Predicate<RuntimeException> retryable,
+            Duration initialDelay,
+            Duration maxDelay,
+            double backoffMultiplier) {
+        toolRetry = new RetryPolicy(
+                maxAttempts,
+                Objects.requireNonNull(retryable, "retryable must not be null"),
+                new RuntimeBackoffPolicy(initialDelay, maxDelay, backoffMultiplier));
+        return this;
+    }
+
+    public HaifaAgentBuilder runProfile(ProductRunProfile value) {
+        ProductRunProfile profile = Objects.requireNonNull(value, "value must not be null");
+        if (runProfiles.putIfAbsent(profile.id(), profile) != null) {
+            throw new IllegalArgumentException("run profile IDs must be unique");
+        }
         return this;
     }
 
@@ -158,6 +187,7 @@ public final class HaifaAgentBuilder {
                     .timeProvider(time)
                     .scheduler(scheduler)
                     .toolApprovalPrompts(toolApprovalPrompts::format)
+                    .toolRetry(toolRetry)
                     .publicToolPolicyDecorator(publicToolPolicyDecorator)
                     .modelImageResolver(modelImageResolver::resolve)
                     .persistence(persistence.runtimePersistence())
@@ -173,14 +203,33 @@ public final class HaifaAgentBuilder {
                             Set.of(),
                             profile.instructions(),
                             List.of()))
-                    .profiles((id, overrides) -> new ResolvedProfile(
-                            id,
-                            profile.runProfileVersion(),
-                            AgentRunType.CHAT,
-                            profile.budget(),
-                            profile.limits(),
-                            resolveModelSnapshot(model, profile, id),
-                            resolvedCapabilities(resolution)));
+                    .profiles((id, overrides) -> {
+                        ProductRunProfile selected = runProfiles.get(id);
+                        if (selected == null) {
+                            return new ResolvedProfile(
+                                    id,
+                                    profile.runProfileVersion(),
+                                    AgentRunType.CHAT,
+                                    profile.budget(),
+                                    profile.limits(),
+                                    resolveModelSnapshot(model, profile, id),
+                                    resolvedCapabilities(resolution));
+                        }
+                        var snapshot = java.util.Optional.ofNullable(
+                                        model.snapshots().get(selected.modelId()))
+                                .orElseThrow(() -> new IllegalArgumentException(
+                                        "MODEL_SELECTION_REQUIRED: Run Profile model is unavailable"));
+                        return new ResolvedProfile(
+                                selected.id(),
+                                selected.version(),
+                                selected.runType(),
+                                selected.budget(),
+                                selected.limits(),
+                                snapshot,
+                                resolvedCapabilities(resolution),
+                                selected.modelRequestOptions(),
+                                selected.allowedTools());
+                    });
             model.adapters()
                     .forEach((coordinate, adapter) ->
                             runtimeBuilder.registerChatModel(coordinate.type(), coordinate.version(), adapter));

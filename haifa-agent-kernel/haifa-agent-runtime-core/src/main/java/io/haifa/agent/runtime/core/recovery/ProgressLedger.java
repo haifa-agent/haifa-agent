@@ -28,10 +28,9 @@ public final class ProgressLedger {
             }
             String family = firstText(data, "operationFamily").orElse("UNKNOWN");
             String status = firstText(data, "status").orElse("");
-            if ((family.equals("TEST") || family.equals("BUILD")) && status.equals("SUCCEEDED")) {
-                changed |= add(
-                        ProgressEvidence.Type.VALIDATION_ADVANCE,
-                        call.toolName() + ":" + call.toolVersion() + ":" + family + ":" + status);
+            if ((family.equals("TEST") || family.equals("BUILD") || family.equals("DIFF"))
+                    && status.equals("SUCCEEDED")) {
+                changed |= addDigest(ProgressEvidence.Type.VALIDATION_ADVANCE, validationDigest(call, family, status));
             }
         } else if (call.status() == ToolCallStatus.FAILED) {
             Map<String, Object> attributes =
@@ -105,6 +104,21 @@ public final class ProgressLedger {
         evidence.addLast(next);
         while (evidence.size() > MAXIMUM_EVIDENCE) evidence.removeFirst();
         return true;
+    }
+
+    private static String validationDigest(ToolCall call, String family, String status) {
+        Map<String, Object> arguments = call.arguments().values();
+        return FailureFingerprint.digest(List.of(
+                call.toolName(),
+                call.toolVersion(),
+                family,
+                status,
+                text(arguments.get("command")),
+                text(arguments.get("workdir"))));
+    }
+
+    private static String text(Object value) {
+        return value instanceof String text ? text : "";
     }
 
     private static Optional<String> firstText(Map<String, Object> values, String... keys) {

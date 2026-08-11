@@ -352,14 +352,144 @@ public final class PersonalModelFactory {
         @Override
         public AgentChatResponse invoke(io.haifa.agent.model.api.AgentChatRequest request) {
             long current = sequence.incrementAndGet();
-            if (request.messages().getLast().role() == ModelMessageRole.TOOL) {
-                return response(current, "The requested capability completed.", List.of(), ModelFinishReason.STOP);
-            }
             String prompt = request.messages().stream()
                     .filter(message -> message.role() == ModelMessageRole.USER)
                     .map(io.haifa.agent.model.api.ModelMessage::content)
                     .reduce((left, right) -> right)
                     .orElse("");
+            String visibleContext = request.messages().stream()
+                    .map(io.haifa.agent.model.api.ModelMessage::content)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            if (prompt.contains("[mission-research-synthesis]")) {
+                java.util.regex.Matcher ids = java.util.regex.Pattern.compile(
+                                "Real completed Task IDs in result order: \\[([^]]*)]")
+                        .matcher(prompt);
+                java.util.List<String> taskIds = ids.find()
+                        ? java.util.Arrays.stream(ids.group(1).split(","))
+                                .map(String::trim)
+                                .filter(value -> !value.isBlank())
+                                .toList()
+                        : java.util.List.of("task-1");
+                java.util.regex.Matcher sourceIds = java.util.regex.Pattern.compile(
+                                "\\\"sourceId\\\":\\\"([^\\\"]+)\\\"")
+                        .matcher(prompt);
+                java.util.List<String> settledSourceIds = new java.util.ArrayList<>();
+                while (sourceIds.find()) {
+                    if (!settledSourceIds.contains(sourceIds.group(1))) settledSourceIds.add(sourceIds.group(1));
+                }
+                String primarySource = settledSourceIds.isEmpty() ? "source-1" : settledSourceIds.getFirst();
+                String secondarySource = settledSourceIds.size() < 2 ? primarySource : settledSourceIds.get(1);
+                String findings = taskIds.stream()
+                        .map(taskId -> "<!-- haifa-task: " + taskId + " -->\n### " + taskId
+                                + "\nThe settled fixture evidence supports this bounded finding [["
+                                + primarySource + "]] and an independent cross-check [[" + secondarySource
+                                + "]].")
+                        .collect(java.util.stream.Collectors.joining("\n\n"));
+                String report =
+                        """
+                        # Deterministic research report
+                        <!-- haifa-section: executive-summary -->
+                        ## Executive summary
+                        The researched finding is supported by two independently fetched fixtures, subject to bounded offline limitations.
+                        <!-- haifa-section: scope-method -->
+                        ## Scope, assumptions, and method
+                        The acceptance report uses only settled Mission evidence and distinguishes fetched facts from remaining uncertainty.
+                        <!-- haifa-section: task-findings -->
+                        ## Task findings
+                        %s
+                        <!-- haifa-section: synthesis -->
+                        ## Integrated analysis
+                        The independent fixture sources agree on the material result while external freshness remains outside this offline run.
+                        <!-- haifa-section: conclusions -->
+                        ## Conclusions and recommendations
+                        The bounded acceptance conclusion is supported; refresh external evidence before relying on it in production.
+                        <!-- haifa-section: risks-unknowns -->
+                        ## Risks, unknowns, and open questions
+                        External freshness, provider variance, and live network behavior were intentionally not evaluated by this fixture.
+                        <!-- haifa-section: sources -->
+                        ## Sources
+                        - [[%s]] Primary deterministic fixture evidence.
+                        - [[%s]] Independent deterministic fixture evidence.
+                        """
+                                .formatted(findings, primarySource, secondarySource);
+                return response(current, report, List.of(), ModelFinishReason.STOP);
+            }
+            if (prompt.contains("[mission-synthesis]")) {
+                boolean partial = !prompt.contains("Failed or cancelled Task items: []");
+                String result = "{\"schemaVersion\":\"pa.mission-final-result/v1\","
+                        + "\"directAnswer\":\"All Mission tasks completed successfully.\","
+                        + "\"completedItems\":[\"Settled Mission tasks\"],\"failedItems\":"
+                        + (partial ? "[\"One or more Mission tasks\"]" : "[]") + ","
+                        + "\"artifactRefs\":[],\"sourceRefs\":[],\"unverifiedClaims\":[],"
+                        + "\"unresolvedQuestions\":[],\"residualRisks\":[],"
+                        + "\"completionKind\":\"" + (partial ? "PARTIAL" : "COMPLETE") + "\"}";
+                return response(current, result, List.of(), ModelFinishReason.STOP);
+            }
+            if (prompt.contains("Task type: RESEARCH") || visibleContext.contains("Task type: RESEARCH")) {
+                boolean reusesDependencies = visibleContext.contains("\"dependencies\":[{");
+                long toolResults = reusesDependencies
+                        ? 3
+                        : request.messages().stream()
+                                .filter(message -> message.role() == ModelMessageRole.TOOL)
+                                .count();
+                if (toolResults == 0) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_SEARCH_ALIAS,
+                            Map.of("query", "deterministic deep research evidence", "maxResults", 2));
+                }
+                if (toolResults == 1) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_FETCH_ALIAS,
+                            Map.of("url", "https://research.stub/source-1", "maxCharacters", 4000));
+                }
+                if (toolResults == 2) {
+                    return tool(
+                            current,
+                            PersonalAssistantProfile.WEB_FETCH_ALIAS,
+                            Map.of("url", "https://research.stub/source-2", "maxCharacters", 4000));
+                }
+                return response(
+                        current,
+                        """
+                        {"schemaVersion":"pa.research-task-result/v1",
+                        "brief":"Bounded deterministic research task",
+                        "queries":[{"query":"deterministic deep research evidence","phase":"DISCOVER"},
+                        {"query":"independent deterministic research corroboration","phase":"CROSS_CHECK"}],
+                        "sources":[
+                        {"sourceId":"source-1","locator":"https://research.stub/source-1",
+                        "normalizedLocator":"https://research.stub/source-1",
+                        "locatorDigest":"sha256:1d0076d5314fa605319d168505842186fb1f6d3f534ee25bc2a9fc79a8b97980",
+                        "title":"Primary research fixture","safetyType":"DEVELOPMENT_STUB",
+                        "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-01-15T00:00:00Z",
+                        "status":"FETCHED","excerpt":"Primary evidence supports the fixture finding.",
+                        "contentDigest":"sha256:9f00cea97901fba126e5aecc2f4a33adb3763cbdef57aa21ebf816f94198437b"},
+                        {"sourceId":"source-2","locator":"https://research.stub/source-2",
+                        "normalizedLocator":"https://research.stub/source-2",
+                        "locatorDigest":"sha256:abe06c90ad15ca62760beee68928ade4e5ff04b28d3077a63dccbe599e2d7da5",
+                        "title":"Independent research fixture","safetyType":"DEVELOPMENT_STUB",
+                        "fetchedAt":"2026-08-08T00:00:00Z","publishedAt":"2026-02-01T00:00:00Z",
+                        "status":"FETCHED","excerpt":"Independent evidence corroborates the primary finding.",
+                        "contentDigest":"sha256:2badb1b783b31c475f4112dba70fd85edbd4721e5c0b326ab83cb292a36be30a"}],
+                        "claims":[{"claimId":"claim-1","claim":"The primary finding is independently corroborated.",
+                        "supportingSourceIds":["source-1","source-2"],"opposingSourceIds":[],
+                        "limitations":"Offline fixtures do not establish external freshness.","unverified":false,
+                        "quotedSpans":[]}],"artifactRefs":[],
+                        "unresolvedQuestions":["The offline fixture cannot establish external freshness."],
+                        "stopReason":"SUFFICIENT_EVIDENCE",
+                        "limitsUsed":{"searchCalls":%d,"fetchCalls":%d,"sources":2,"contentBytes":%d}}
+                        """
+                                .formatted(
+                                        reusesDependencies ? 0 : 1,
+                                        reusesDependencies ? 0 : 2,
+                                        reusesDependencies ? 0 : 164),
+                        List.of(),
+                        ModelFinishReason.STOP);
+            }
+            if (request.messages().getLast().role() == ModelMessageRole.TOOL) {
+                return response(current, "The requested capability completed.", List.of(), ModelFinishReason.STOP);
+            }
             String alias;
             Map<String, Object> arguments;
             if (prompt.contains("CPU使用率") || prompt.contains("[execution-cpu]")) {
@@ -441,6 +571,15 @@ public final class PersonalModelFactory {
             } else {
                 return response(current, "Personal Assistant is ready.", List.of(), ModelFinishReason.STOP);
             }
+            return response(
+                    current,
+                    "",
+                    List.of(new ModelToolCall(
+                            new ProviderToolCallCorrelationId("personal-call-" + current), alias, arguments)),
+                    ModelFinishReason.TOOL_CALLS);
+        }
+
+        private AgentChatResponse tool(long current, String alias, Map<String, Object> arguments) {
             return response(
                     current,
                     "",

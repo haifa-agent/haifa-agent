@@ -32,6 +32,7 @@ import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
+import io.haifa.agent.runtime.core.storage.RunStartIdempotencyBinding;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import java.time.Instant;
 import java.util.List;
@@ -97,6 +98,19 @@ class SqliteOperationalAdaptersTest {
     }
 
     @Test
+    void startIdempotencyBindingPersistsRequestDigest(@TempDir java.nio.file.Path directory) {
+        SqliteStoreFoundation first = SqliteTestSupport.foundation(directory);
+        var run = SqliteAggregateTestData.prepareRun(first);
+        var binding = new RunStartIdempotencyBinding(
+                "tenant:principal", "start", "digest-key", Optional.of("digest-value"), run.id());
+
+        assertThat(first.idempotency().recordRunBinding(binding)).isEqualTo(binding);
+        SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory);
+        assertThat(reopened.idempotency().findRunBinding("tenant:principal", "start", "digest-key"))
+                .contains(binding);
+    }
+
+    @Test
     void journalEnforcesTransitionsAndPersistsResults(@TempDir java.nio.file.Path directory) {
         SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
         var run = SqliteAggregateTestData.prepareRun(foundation);
@@ -107,6 +121,8 @@ class SqliteOperationalAdaptersTest {
         journal.recordIntent(run.id(), key);
         journal.recordDispatched(run.id(), key);
         journal.recordAcknowledged(run.id(), key);
+        journal.recordDispatched(run.id(), key);
+        assertThat(journal.state(run.id(), key)).contains(ToolJournalState.ACKNOWLEDGED);
         journal.recordPendingResult(run.id(), key, result);
         journal.recordPendingResult(run.id(), key, result);
         assertThat(journal.pendingResult(run.id(), key)).contains(result);

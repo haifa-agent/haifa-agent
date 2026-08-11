@@ -13,6 +13,7 @@ import io.haifa.agent.skill.api.SkillContentDigest;
 import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -35,7 +36,8 @@ public record RuntimeConfigurationSnapshot(
         String agentInstruction,
         RuntimeOverrides overrides,
         List<EffectiveCapability> capabilities,
-        ResolvedModelSnapshot model) {
+        ResolvedModelSnapshot model,
+        Map<String, Object> modelRequestOptions) {
     public RuntimeConfigurationSnapshot(
             RunConfigurationSnapshotRef reference,
             AgentDefinitionId definitionId,
@@ -72,7 +74,49 @@ public record RuntimeConfigurationSnapshot(
                 agentInstruction,
                 overrides,
                 capabilities,
-                model);
+                model,
+                Map.of());
+    }
+
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            List<FrozenToolBinding> toolBindings,
+            List<FrozenSkillBinding> skillBindings,
+            SkillContentDigest skillCatalogDigest,
+            String skillResolutionPolicyRef,
+            SkillTrustSnapshot skillTrust,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides,
+            List<EffectiveCapability> capabilities,
+            ResolvedModelSnapshot model) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                skillTrust,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                model,
+                Map.of());
     }
 
     public RuntimeConfigurationSnapshot {
@@ -105,6 +149,8 @@ public record RuntimeConfigurationSnapshot(
         overrides = Objects.requireNonNull(overrides, "overrides must not be null");
         capabilities = List.copyOf(Objects.requireNonNull(capabilities, "capabilities must not be null"));
         model = Objects.requireNonNull(model, "model must not be null");
+        modelRequestOptions = ModelRequestOptions.freeze(Objects.requireNonNullElse(modelRequestOptions, Map.of()));
+        RuntimeControlOptions.validate(modelRequestOptions, budget);
     }
 
     public Set<String> allowedTools() {

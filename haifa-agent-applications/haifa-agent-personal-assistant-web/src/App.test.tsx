@@ -7,6 +7,7 @@ import type {
   Interaction,
   Memory,
   MemoryCandidate,
+  MissionSnapshot,
   Run,
   Turn,
 } from "./api/generated";
@@ -148,6 +149,61 @@ const bootstrap: Bootstrap = {
   defaultModelId: model.id,
   models: [model],
 };
+const missionTask: MissionSnapshot["tasks"][number] = {
+  taskId: "task-1",
+  ordinal: 1,
+  title: "准备交付",
+  objective: "整理明确的交付内容",
+  acceptanceCriteria: ["可验收"],
+  dependsOn: [],
+  taskType: "GENERAL",
+  requiredSkillIds: [],
+  resultSchemaId: "pa.task-result",
+  resultSchemaVersion: "v1",
+  state: "PLANNED",
+};
+const mission: MissionSnapshot = {
+  schemaVersion: "pa.mission-snapshot/v1",
+  missionId: "mission-1",
+  conversationId: conversation.id,
+  objective: "交付一份可验收的计划",
+  acceptanceCriteria: ["计划明确"],
+  constraints: { maxTasks: 8, maxDependencyDepth: 4 },
+  mode: "STANDARD",
+  researchBrief: null,
+  selectedSkillId: null,
+  selectedSkillBinding: null,
+  state: "WAITING_CONFIRMATION",
+  plan: {
+    revision: 1,
+    schemaId: "pa.mission-plan",
+    schemaVersion: "v1",
+    tasks: [missionTask],
+    plannerSessionId: null,
+    plannerRunId: null,
+    createdAt: "2026-08-08T00:00:00Z",
+  },
+  tasks: [missionTask],
+  blocker: null,
+  artifacts: [],
+  sources: [],
+  finalResult: null,
+  version: 1,
+  createdAt: "2026-08-08T00:00:00Z",
+  updatedAt: "2026-08-08T00:00:00Z",
+  confirmedAt: null,
+  finishedAt: null,
+  pollAfterMs: 5000,
+  execution: {
+    dispatcherStatus: "READY",
+    recovering: false,
+    allTasksSettled: false,
+    completedTasks: 0,
+    blockedTasks: 0,
+    currentTaskId: null,
+    latestAttempt: null,
+  },
+};
 
 function client(): PersonalAssistantClient {
   return {
@@ -190,6 +246,7 @@ function client(): PersonalAssistantClient {
 describe("Personal Assistant application", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/");
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   });
 
   it("renders authoritative run usage and safe activity", async () => {
@@ -206,6 +263,310 @@ describe("Personal Assistant application", () => {
     expect(screen.queryByText("Steer")).toBeNull();
     expect(screen.queryByText("Run Diagnostics")).toBeNull();
     expect(screen.queryByText("运行诊断")).toBeNull();
+  });
+
+  it("opens the explicit Mission workspace and confirms a fixed plan", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [mission], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => mission),
+      confirmMission: vi.fn(async () => ({ ...mission, state: "RUNNING" as const, version: 2 })),
+      cancelMission: vi.fn(async () => ({ ...mission, state: "CANCELLED" as const, version: 2 })),
+      replaceMissionPlan: vi.fn(async () => ({ ...mission, version: 2 })),
+      createMission: vi.fn(async () => mission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+
+    expect(await screen.findByText("交付一份可验收的计划")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /交付一份可验收的计划/ }));
+    const taskButton = await within(dialog).findByRole("button", { name: /准备交付/ });
+    fireEvent.click(taskButton);
+    const taskDetail = within(dialog).getByRole("complementary", { name: "计划任务详情" });
+    expect(within(taskDetail).getByRole("heading", { name: "准备交付" })).toBeTruthy();
+    expect(within(taskDetail).getByText("整理明确的交付内容")).toBeTruthy();
+    expect(within(taskDetail).getByText("可验收")).toBeTruthy();
+    expect(within(taskDetail).queryByText(/Skill|Schema|pa\.task-result/)).toBeNull();
+    fireEvent.click(within(dialog).getByRole("button", { name: "编辑计划" }));
+    const planEditor = within(dialog).getByLabelText("完整计划 JSON") as HTMLTextAreaElement;
+    expect(planEditor.value).not.toMatch(/requiredSkillIds|taskType|resultSchemaId|deep-research/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: /确认计划/ }));
+    await waitFor(() => expect(api.confirmMission).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: "mission-1", version: 1 }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    ));
+    expect((await screen.findAllByText("计划已确认")).length).toBeGreaterThan(0);
+  });
+
+  it("requires acceptance criteria before creating a Mission", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      createMission: vi.fn(async () => mission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    const objectiveInput = within(dialog).getByLabelText("目标");
+    const criteriaInput = within(dialog).getByLabelText("验收标准（必填，1～20 条）");
+    const createButton = within(dialog).getByRole("button", { name: "创建并生成计划" });
+
+    fireEvent.change(objectiveInput, { target: { value: "以太坊过去3年重要的技术迭代" } });
+    expect((criteriaInput as HTMLTextAreaElement).required).toBe(true);
+    expect((createButton as HTMLButtonElement).disabled).toBe(true);
+    expect(api.createMission).not.toHaveBeenCalled();
+
+    fireEvent.change(criteriaInput, { target: { value: "列出重要升级、时间及其技术影响" } });
+    await waitFor(() => expect((createButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(createButton);
+
+    await waitFor(() => expect(api.createMission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        objective: "以太坊过去3年重要的技术迭代",
+        acceptanceCriteria: ["列出重要升级、时间及其技术影响"],
+      }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    ));
+  });
+
+  it("shows execution progress and retries a blocked Mission task", async () => {
+    const blocked = {
+      ...mission,
+      state: "WAITING_USER" as const,
+      version: 4,
+      tasks: [{ ...missionTask, state: "BLOCKED" as const }],
+      execution: {
+        ...mission.execution,
+        completedTasks: 0,
+        blockedTasks: 1,
+        currentTaskId: "task-1",
+        latestAttempt: {
+          taskId: "task-1",
+          attemptNo: 2,
+          state: "FAILED" as const,
+          sessionId: "session-1",
+          runId: "run-1",
+          failureCode: "TASK_RUN_FAILED",
+          updatedAt: "2026-08-08T00:00:01Z",
+        },
+      },
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [blocked], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => blocked),
+      interaction: vi.fn(async () => null),
+      retryMissionTask: vi.fn(async () => ({ ...blocked, state: "RUNNING" as const, version: 5 })),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    fireEvent.click(await within(dialog).findByRole("button", { name: /交付一份可验收的计划/ }));
+    expect(await within(dialog).findByText("已完成 0/1")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "重试任务" }));
+    await waitFor(() => expect(api.retryMissionTask).toHaveBeenCalledWith(
+      expect.objectContaining({ missionId: "mission-1", version: 4 }),
+      "task-1",
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    ));
+  });
+
+  it("explains a planning dependency-depth failure without exposing Skill details", async () => {
+    const failed: MissionSnapshot = {
+      ...mission,
+      state: "FAILED",
+      blocker: "MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED",
+      tasks: [],
+      selectedSkillId: "deep-research",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.1.0#sha256:test",
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [failed], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => failed),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect(await within(dialog).findByText("Mission 规划失败：任务依赖层级超过限制。")).toBeTruthy();
+    expect(within(dialog).queryByText(/deep-research@|执行 Skill/)).toBeNull();
+  });
+
+  it("renders a partial Deep Research delivery with evidence and artifacts", async () => {
+    const delivered: MissionSnapshot = {
+      ...mission,
+      mode: "DEEP_RESEARCH",
+      selectedSkillId: "deep-research",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@1.0.0#sha256:test",
+      state: "PARTIALLY_COMPLETED",
+      sources: ["https://research.stub/source-1"],
+      artifacts: ["artifact-report"],
+      finalResult: JSON.stringify({
+        directAnswer: "Bounded evidence summary",
+        completionKind: "PARTIAL",
+        completedItems: ["Primary evidence checked"],
+        failedItems: ["Secondary evidence unavailable"],
+        unverifiedClaims: ["claim-unverified"],
+        residualRisks: ["Evidence may change"],
+        unresolvedQuestions: ["When will the dataset refresh?"],
+      }),
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect(await within(dialog).findByText("Bounded evidence summary")).toBeTruthy();
+    expect(within(dialog).getByText("Secondary evidence unavailable")).toBeTruthy();
+    expect(within(dialog).getByText("claim-unverified")).toBeTruthy();
+    expect(within(dialog).getByText("https://research.stub/source-1")).toBeTruthy();
+    expect(within(dialog).getByText("artifact-report")).toBeTruthy();
+    expect(within(dialog).queryByText(/deep-research@|执行 Skill/)).toBeNull();
+  });
+
+  it("renders a degraded v2 delivery with report view download and copy actions", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const delivered: MissionSnapshot = {
+      ...mission,
+      mode: "DEEP_RESEARCH",
+      selectedSkillId: "deep-research",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.1.0#sha256:test",
+      state: "PARTIALLY_COMPLETED",
+      artifacts: ["artifact-report", "artifact-delivery"],
+      finalResult: JSON.stringify({
+        schemaVersion: "pa.research-delivery/v2",
+        completionKind: "PARTIAL",
+        degraded: true,
+        degradationReasons: ["REPORT_REQUIRED_SECTION_MISSING"],
+        affectedTaskIds: ["task-1"],
+        reportArtifactRef: { artifactId: "artifact-report", title: "research-report.md" },
+        qualityGate: { passed: false, failedChecks: ["REPORT_REQUIRED_SECTION_MISSING"] },
+      }),
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+      missionArtifact: vi.fn(async () => "# 完整研究报告\n\n正文"),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect(await within(dialog).findByText(/调研降级完成/)).toBeTruthy();
+    expect(within(dialog).getByText("报告缺少必要章节")).toBeTruthy();
+    expect(within(dialog).getByText((_content, element) => element?.tagName === "P"
+      && element.textContent?.includes("受影响任务：") === true
+      && element.textContent.includes("task-1"))).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "查看完整报告" }).getAttribute("href"))
+      .toContain("/missions/mission-1/artifacts/artifact-report");
+    expect(within(dialog).getByRole("link", { name: "下载 Markdown" }).getAttribute("download"))
+      .toBe("research-report.md");
+    fireEvent.click(within(dialog).getByRole("button", { name: /复制完整报告/ }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("# 完整研究报告\n\n正文"));
+    expect(await within(dialog).findByRole("button", { name: /已复制/ })).toBeTruthy();
+  });
+
+  it("fails closed for an unknown research delivery version", async () => {
+    const delivered: MissionSnapshot = {
+      ...mission,
+      state: "COMPLETED",
+      finalResult: JSON.stringify({
+        schemaVersion: "pa.research-delivery/v999",
+        completionKind: "COMPLETE",
+        directAnswer: "must not be rendered",
+      }),
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect(await within(dialog).findByText("最终报告版本不受支持")).toBeTruthy();
+    expect(within(dialog).queryByText("must not be rendered")).toBeNull();
+  });
+
+  it("announces offline Mission state and restores focus when Escape closes the dialog", async () => {
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: false });
+    const running = { ...mission, state: "RUNNING" as const };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [running], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => running),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    const open = await screen.findByRole("button", { name: "Mission" });
+    fireEvent.click(open);
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect(within(dialog).getByRole("status").textContent).toContain("当前离线");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Mission" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(open));
+  });
+
+  it("retries the Mission list after a reachable browser loses and regains the Server", async () => {
+    vi.useFakeTimers();
+    try {
+      let dialogAttempts = 0;
+      const missions = vi.fn(async (conversationId?: string) => {
+        if (conversationId) return { items: [], nextCursor: null };
+        if (dialogAttempts++ === 0) throw new TypeError("Failed to fetch");
+        return { items: [], nextCursor: null };
+      });
+      const api = {
+        ...client(),
+        bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+        missions,
+      } satisfies PersonalAssistantClient;
+
+      render(<App client={api} />);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Mission" }));
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      const dialog = screen.getByRole("dialog", { name: "Mission" });
+      expect(within(dialog).getByRole("status").textContent).toContain("暂时无法同步");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(missions).toHaveBeenCalledTimes(3);
+      expect(within(dialog).getByRole("status").textContent).toContain("Mission 状态已同步");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("scrolls the activity panel to the latest live event", async () => {
@@ -565,7 +926,7 @@ describe("Personal Assistant application", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(
       "Get-Process | Select-Object -First 1",
     ));
-    expect(screen.getByRole("button", { name: "代码已复制" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "代码已复制" })).toBeTruthy();
   });
 
   it("opens memory management without writing on page load", async () => {

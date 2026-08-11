@@ -18,7 +18,7 @@ public class PersonalAssistantCorsConfiguration {
         var configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(
                 List.of("http://127.0.0.1:20000", "http://localhost:20000", "http://[::1]:20000"));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PATCH", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "OPTIONS"));
         configuration.setAllowedHeaders(List.of(
                 "Accept",
                 "Content-Type",

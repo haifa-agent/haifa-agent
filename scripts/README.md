@@ -17,6 +17,7 @@
 
 ```bash
 ./scripts/start-real-environment.sh
+./scripts/start-real-environment.sh --default-model-id deepseek-chat-flash
 ./scripts/start-real-environment.sh --stop --dry-run
 ```
 

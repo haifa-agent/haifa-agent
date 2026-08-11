@@ -51,6 +51,38 @@ public final class PersonalAdminDtos {
 
     public record CapabilityAttribute(String label, String value, String tone) {}
 
+    public record MissionOperations(
+            String dispatcherStatus,
+            boolean ready,
+            boolean maintenancePaused,
+            long recoveryCount,
+            long lastReconcileLatencyMillis,
+            long lastReconcileAtMillis,
+            int schemaVersion,
+            Map<String, Long> missionStates,
+            long activeMissions,
+            long activeTaskRuns,
+            long unsettledAttempts,
+            long pendingOutbox,
+            Optional<Long> oldestOutboxAgeMillis,
+            long blockedTasks,
+            long outcomeUnknownAttempts,
+            long budgetExhaustedTasks,
+            long modelTokens,
+            long modelCalls,
+            long toolCalls,
+            long duplicatePrevented,
+            long databaseBytes,
+            long artifactBytes,
+            long artifactFiles,
+            boolean databaseCapacityWarning,
+            boolean artifactCapacityWarning,
+            String capacityBlockerCode,
+            String retentionBoundary) {}
+
+    public record UpgradeReadiness(
+            boolean ready, List<String> blockerCodes, int schemaVersion, String requiredAction) {}
+
     public record Node(
             String id,
             Optional<String> parentId,

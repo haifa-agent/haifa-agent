@@ -1,11 +1,109 @@
 package io.haifa.agent.personalassistant.server.web.v1.mapper;
 
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.application.mission.MissionSnapshot;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
+import java.util.List;
+import java.util.Map;
 import org.springframework.stereotype.Component;
 
 @Component
 public final class PersonalApiMapper {
+    public PersonalApiDtos.MissionSnapshot mission(MissionSnapshot value) {
+        var constraints = new PersonalApiDtos.MissionConstraints(
+                value.constraints().maxTasks(),
+                value.constraints().maxDependencyDepth(),
+                value.constraints().deadlineAt().orElse(null));
+        Map<String, io.haifa.agent.personalassistant.application.mission.MissionTaskState> states =
+                value.execution().tasks().stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                io.haifa.agent.personalassistant.application.mission.MissionExecutionSnapshot
+                                                .TaskExecution::taskId,
+                                io.haifa.agent.personalassistant.application.mission.MissionExecutionSnapshot
+                                                .TaskExecution::state));
+        var plan = value.plan()
+                .map(revision -> new PersonalApiDtos.MissionPlanRevision(
+                        revision.revisionNo(),
+                        revision.schemaId(),
+                        revision.schemaVersion(),
+                        revision.tasks().stream()
+                                .map(task -> missionTask(task, states.get(task.taskId())))
+                                .toList(),
+                        revision.plannerSessionId(),
+                        revision.plannerRunId(),
+                        revision.createdAt()));
+        List<PersonalApiDtos.MissionTask> tasks =
+                plan.map(PersonalApiDtos.MissionPlanRevision::tasks).orElseGet(List::of);
+        var execution = new PersonalApiDtos.MissionExecution(
+                value.execution().dispatcherStatus(),
+                value.execution().recovering(),
+                value.execution().allTasksSettled(),
+                value.execution().completedTasks(),
+                value.execution().blockedTasks(),
+                value.execution().currentTaskId(),
+                value.execution()
+                        .latestAttempt()
+                        .map(attempt -> new PersonalApiDtos.MissionAttempt(
+                                attempt.taskId(),
+                                attempt.attemptNo(),
+                                attempt.state().name(),
+                                attempt.sessionId(),
+                                attempt.runId(),
+                                attempt.failureCode(),
+                                attempt.updatedAt())));
+        return new PersonalApiDtos.MissionSnapshot(
+                value.schemaVersion(),
+                value.missionId(),
+                value.conversationId(),
+                value.objective(),
+                value.acceptanceCriteria(),
+                constraints,
+                value.mode().name(),
+                value.researchBrief()
+                        .map(brief -> new PersonalApiDtos.ResearchBrief(
+                                brief.question(),
+                                brief.scope(),
+                                brief.timeRange(),
+                                brief.region(),
+                                brief.audience(),
+                                brief.sourcePreferences(),
+                                brief.exclusions(),
+                                brief.deliveryFormat())),
+                value.selectedSkillId(),
+                value.selectedSkillBinding(),
+                value.state().name(),
+                plan,
+                tasks,
+                value.failureCode(),
+                value.execution().artifacts(),
+                value.execution().sources(),
+                value.execution().finalResult(),
+                value.version(),
+                value.createdAt(),
+                value.updatedAt(),
+                value.confirmedAt(),
+                value.finishedAt(),
+                value.pollAfterMillis(),
+                execution);
+    }
+
+    private PersonalApiDtos.MissionTask missionTask(
+            io.haifa.agent.personalassistant.application.mission.MissionTask value,
+            io.haifa.agent.personalassistant.application.mission.MissionTaskState executionState) {
+        return new PersonalApiDtos.MissionTask(
+                value.taskId(),
+                value.ordinal(),
+                value.title(),
+                value.objective(),
+                value.acceptanceCriteria(),
+                value.dependsOn(),
+                value.taskType(),
+                value.requiredSkillIds().stream().sorted().toList(),
+                value.resultSchemaId(),
+                value.resultSchemaVersion(),
+                (executionState == null ? value.state() : executionState).name());
+    }
+
     public PersonalApiDtos.Conversation conversation(PersonalAssistantApplication.ConversationView value) {
         return new PersonalApiDtos.Conversation(
                 value.id(),

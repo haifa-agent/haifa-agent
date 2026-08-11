@@ -410,7 +410,7 @@ class HostSandboxTest {
                     ExecutionCommand.shell(command),
                     WorkspacePath.root(fixture.workspaceId),
                     hostBaselineEnvironment(),
-                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)));
+                    new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 4)));
 
             assertThat(result.status()).isEqualTo(SandboxProcessStatus.EXITED);
             assertThat(result.exitCode()).isZero();
@@ -453,7 +453,7 @@ class HostSandboxTest {
                     ExecutionCommand.shell(scratchProbeCommand()),
                     WorkspacePath.root(fixture.workspaceId),
                     hostBaselineEnvironment(),
-                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 2),
+                    new ExecutionLimits(Duration.ofSeconds(5), 4096, 4096, 4),
                     ExecutionInput.none(),
                     scratch));
 

@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.personalassistant.application.trust.PersonalTrustedScriptManifest;
 import io.haifa.agent.skill.api.SkillAvailability;
 import io.haifa.agent.skill.api.SkillCatalog;
+import io.haifa.agent.skill.api.SkillContent;
 import io.haifa.agent.skill.api.SkillContentLoader;
 import io.haifa.agent.skill.api.SkillDiscoveryContext;
 import io.haifa.agent.skill.api.SkillOrigin;
@@ -32,6 +33,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -55,6 +57,25 @@ public record PersonalSkillPlatform(
         Objects.requireNonNull(trustManifest);
     }
 
+    /** Stable, fully frozen Skill coordinates keyed by the product-visible alias. */
+    public Map<String, String> bindingReferences() {
+        return catalog.snapshot().bindings().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        binding -> binding.alias().value(),
+                        binding -> binding.coordinate().externalForm()));
+    }
+
+    /** Loads one already-selected Product Skill without exposing Skill discovery Tools to the model. */
+    public SkillContent load(String alias, TenantRef tenant, PrincipalRef principal) {
+        var binding = catalog.snapshot().bindings().stream()
+                .filter(candidate -> candidate.alias().value().equals(alias))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Skill alias is unavailable: " + alias));
+        var visibility = new SkillVisibilityContext(
+                tenant, principal, Optional.empty(), false, Set.of(SkillScope.PRODUCT, SkillScope.USER));
+        return contentLoader.load(binding, visibility);
+    }
+
     public static PersonalSkillPlatform create(
             TenantRef tenant, PrincipalRef principal, Optional<Path> configuredLocalRoot, List<Path> forbiddenRoots) {
         return create(
@@ -74,7 +95,7 @@ public record PersonalSkillPlatform(
             PersonalTrustedScriptManifest trustManifest,
             Clock clock) {
         List<SkillSource> sources = new ArrayList<>();
-        sources.add(bundled());
+        sources.addAll(bundled());
         configuredLocalRoot.ifPresent(root -> sources.add(local(tenant, principal, root, forbiddenRoots)));
         var visibility = new SkillVisibilityContext(
                 tenant, principal, Optional.empty(), false, Set.of(SkillScope.PRODUCT, SkillScope.USER));
@@ -143,8 +164,8 @@ public record PersonalSkillPlatform(
                 "SKILL_PACKAGE_REVIEWED");
     }
 
-    private static SkillSource bundled() {
-        return new ClasspathSkillSource(
+    private static List<SkillSource> bundled() {
+        SkillSource standard = new ClasspathSkillSource(
                 PersonalSkillPlatform.class.getClassLoader(),
                 "META-INF/haifa-agent/personal-skills",
                 List.of("daily-planning", "local-script-execution"),
@@ -158,6 +179,33 @@ public record PersonalSkillPlatform(
                         false),
                 new SkillPackageParser(SkillPackageLimits.defaults()),
                 SkillAvailability.ENABLED);
+        List<String> researchResources = List.of(
+                "SKILL.md",
+                "references/research-types.md",
+                "references/research-method.md",
+                "references/source-quality.md",
+                "references/citation-rules.md",
+                "references/report-quality.md",
+                "schemas/research-task-result-v1.json",
+                "schemas/research-final-result-v1.json",
+                "schemas/research-delivery-v2.json",
+                "templates/report.md");
+        SkillSource research = new ClasspathSkillSource(
+                PersonalSkillPlatform.class.getClassLoader(),
+                "skills",
+                List.of("deep-research"),
+                java.util.Map.of("deep-research", researchResources),
+                new SkillSourceDescriptor(
+                        new SkillSourceRef("personal-assistant-bundled", "1"),
+                        SkillScopeRef.product(),
+                        SkillOrigin.BUNDLED,
+                        0,
+                        SkillParserMode.STRICT,
+                        true,
+                        false),
+                new SkillPackageParser(SkillPackageLimits.defaults()),
+                SkillAvailability.ENABLED);
+        return List.of(standard, research);
     }
 
     private static SkillSource local(

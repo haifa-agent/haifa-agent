@@ -8,6 +8,10 @@ import type {
   ImageInput,
   Memory,
   MemoryCandidate,
+  CreateMission,
+  MissionPage,
+  MissionSnapshot,
+  ReplaceMissionPlan,
   ModelSelection,
   RecommendedQuestions,
   Run,
@@ -21,6 +25,11 @@ const DEFAULT_API_ROOT = "http://127.0.0.1:20001/api/v1";
 const API_ROOT = (import.meta.env.VITE_PERSONAL_ASSISTANT_API_BASE_URL?.trim() || DEFAULT_API_ROOT)
   .replace(/\/+$/, "");
 const DEFAULT_TIMEOUT_MS = 12_000;
+const MISSION_PLANNING_TIMEOUT_MS = 190_000;
+
+export function missionArtifactUrl(missionId: string, artifactId: string): string {
+  return `${API_ROOT}/missions/${encoded(missionId)}/artifacts/${encoded(artifactId)}`;
+}
 
 export class PersonalAssistantApiError extends Error {
   constructor(
@@ -97,6 +106,23 @@ export interface PersonalAssistantClient {
     options?: CommandOptions,
   ): Promise<MemoryCandidate>;
   invalidateMemory(memory: Memory, reason: string, options?: CommandOptions): Promise<Memory>;
+  missions?(conversationId?: string, signal?: AbortSignal): Promise<MissionPage>;
+  createMission?(request: CreateMission, options?: CommandOptions): Promise<MissionSnapshot>;
+  mission?(id: string, signal?: AbortSignal): Promise<MissionSnapshot>;
+  missionSnapshot?(id: string, signal?: AbortSignal): Promise<MissionSnapshot>;
+  missionArtifact?(missionId: string, artifactId: string, signal?: AbortSignal): Promise<string>;
+  replaceMissionPlan?(
+    mission: MissionSnapshot,
+    request: ReplaceMissionPlan,
+    options?: CommandOptions,
+  ): Promise<MissionSnapshot>;
+  confirmMission?(mission: MissionSnapshot, options?: CommandOptions): Promise<MissionSnapshot>;
+  cancelMission?(mission: MissionSnapshot, options?: CommandOptions): Promise<MissionSnapshot>;
+  retryMissionTask?(
+    mission: MissionSnapshot,
+    taskId: string,
+    options?: CommandOptions,
+  ): Promise<MissionSnapshot>;
   streamRun(
     runId: string,
     handlers: StreamHandlers,
@@ -117,11 +143,14 @@ function encoded(value: string): string {
   return encodeURIComponent(value);
 }
 
-function boundedSignal(parent?: AbortSignal): { signal: AbortSignal; dispose: () => void } {
+function boundedSignal(
+  parent?: AbortSignal,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): { signal: AbortSignal; dispose: () => void } {
   const controller = new AbortController();
   const timer = window.setTimeout(
     () => controller.abort(new DOMException("Request timed out", "TimeoutError")),
-    DEFAULT_TIMEOUT_MS,
+    timeoutMs,
   );
   const abort = () => controller.abort(parent?.reason);
   parent?.addEventListener("abort", abort, { once: true });
@@ -141,8 +170,9 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     path: string,
     init: RequestInit = {},
     parentSignal?: AbortSignal,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
   ): Promise<T> {
-    const bounded = boundedSignal(parentSignal);
+    const bounded = boundedSignal(parentSignal, timeoutMs);
     try {
       const response = await fetch(`${API_ROOT}${path}`, {
         ...init,
@@ -158,7 +188,18 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
         );
       }
       if (response.status === 204) return null as T;
-      return (await response.json()) as T;
+      const body = typeof response.text === "function"
+        ? await response.text()
+        : JSON.stringify(await response.json());
+      if (new Blob([body]).size > 2 * 1024 * 1024) {
+        throw new PersonalAssistantApiError(
+          response.status,
+          "RESPONSE_TOO_LARGE",
+          "服务器响应超过 2 MiB 安全上限。",
+          "unavailable",
+        );
+      }
+      return JSON.parse(body) as T;
     } finally {
       bounded.dispose();
     }
@@ -370,6 +411,113 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
         method: "POST",
         headers: commandHeaders(undefined, options.idempotencyKey),
         body: JSON.stringify({ reason }),
+      },
+      options.signal,
+    );
+  }
+
+  missions(conversationId?: string, signal?: AbortSignal) {
+    const parameters = new URLSearchParams({ size: "50" });
+    if (conversationId) parameters.set("conversationId", conversationId);
+    return this.request<MissionPage>(`/missions?${parameters}`, {}, signal);
+  }
+
+  createMission(request: CreateMission, options: CommandOptions = {}) {
+    return this.request<MissionSnapshot>(
+      "/missions",
+      {
+        method: "POST",
+        headers: commandHeaders(undefined, options.idempotencyKey),
+        body: JSON.stringify(request),
+      },
+      options.signal,
+      MISSION_PLANNING_TIMEOUT_MS,
+    );
+  }
+
+  mission(id: string, signal?: AbortSignal) {
+    return this.request<MissionSnapshot>(`/missions/${encoded(id)}`, {}, signal);
+  }
+
+  missionSnapshot(id: string, signal?: AbortSignal) {
+    return this.request<MissionSnapshot>(`/missions/${encoded(id)}/snapshot`, {}, signal);
+  }
+
+  async missionArtifact(missionId: string, artifactId: string, parentSignal?: AbortSignal) {
+    const bounded = boundedSignal(parentSignal, DEFAULT_TIMEOUT_MS);
+    try {
+      const response = await fetch(missionArtifactUrl(missionId, artifactId), { signal: bounded.signal });
+      if (!response.ok) {
+        throw new PersonalAssistantApiError(
+          response.status,
+          "MISSION_ARTIFACT_UNAVAILABLE",
+          `报告文件读取失败（HTTP ${response.status}）`,
+          "unavailable",
+        );
+      }
+      const body = await response.text();
+      if (new Blob([body]).size > 2 * 1024 * 1024) {
+        throw new PersonalAssistantApiError(
+          response.status,
+          "RESPONSE_TOO_LARGE",
+          "报告文件超过 2 MiB 安全上限。",
+          "unavailable",
+        );
+      }
+      return body;
+    } finally {
+      bounded.dispose();
+    }
+  }
+
+  replaceMissionPlan(
+    mission: MissionSnapshot,
+    request: ReplaceMissionPlan,
+    options: CommandOptions = {},
+  ) {
+    return this.request<MissionSnapshot>(
+      `/missions/${encoded(mission.missionId)}/plan`,
+      {
+        method: "PUT",
+        headers: commandHeaders(mission.version, options.idempotencyKey),
+        body: JSON.stringify(request),
+      },
+      options.signal,
+      MISSION_PLANNING_TIMEOUT_MS,
+    );
+  }
+
+  confirmMission(mission: MissionSnapshot, options: CommandOptions = {}) {
+    return this.request<MissionSnapshot>(
+      `/missions/${encoded(mission.missionId)}/confirm`,
+      {
+        method: "POST",
+        headers: commandHeaders(mission.version, options.idempotencyKey),
+        body: "{}",
+      },
+      options.signal,
+    );
+  }
+
+  cancelMission(mission: MissionSnapshot, options: CommandOptions = {}) {
+    return this.request<MissionSnapshot>(
+      `/missions/${encoded(mission.missionId)}/cancel`,
+      {
+        method: "POST",
+        headers: commandHeaders(mission.version, options.idempotencyKey),
+        body: "{}",
+      },
+      options.signal,
+    );
+  }
+
+  retryMissionTask(mission: MissionSnapshot, taskId: string, options: CommandOptions = {}) {
+    return this.request<MissionSnapshot>(
+      `/missions/${encoded(mission.missionId)}/tasks/${encoded(taskId)}/retry`,
+      {
+        method: "POST",
+        headers: commandHeaders(mission.version, options.idempotencyKey),
+        body: "{}",
       },
       options.signal,
     );

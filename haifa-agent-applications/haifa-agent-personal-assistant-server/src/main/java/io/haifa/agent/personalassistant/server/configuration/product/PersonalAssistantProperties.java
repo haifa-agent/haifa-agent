@@ -17,6 +17,8 @@ public record PersonalAssistantProperties(
         String defaultModelId,
         boolean allowInsecureLoopbackModel,
         Web web,
+        Mission mission,
+        Research research,
         Mcp mcp,
         Execution execution,
         String localSkillRoot,
@@ -27,8 +29,9 @@ public record PersonalAssistantProperties(
         if (continuationKeyBase64 == null || continuationKeyBase64.isBlank()) {
             throw new IllegalArgumentException("HAIFA_PERSONAL_CONTINUATION_KEY is required");
         }
-        if (caller == null || web == null || mcp == null || execution == null) {
-            throw new IllegalArgumentException("caller, web, mcp, and execution configuration are required");
+        if (caller == null || web == null || mission == null || research == null || mcp == null || execution == null) {
+            throw new IllegalArgumentException(
+                    "caller, web, mission, research, mcp, and execution configuration are required");
         }
         if (modelProviders == null || modelProviders.isEmpty()) {
             throw new IllegalArgumentException("modelProviders must not be empty");
@@ -50,6 +53,97 @@ public record PersonalAssistantProperties(
         }
         localSkillRoot = localSkillRoot == null ? "" : localSkillRoot.trim();
         trustedScriptManifest = trustedScriptManifest == null ? "" : trustedScriptManifest.trim();
+    }
+
+    public record Mission(
+            String plannerMode,
+            int maxTasks,
+            int maxDependencyDepth,
+            int maxAcceptanceCriteria,
+            int globalActiveTaskRuns,
+            int maxAutoAttemptsPerTask,
+            long maxWallClockMillis,
+            long maxModelTokens,
+            long maxToolCalls,
+            int maxArtifacts,
+            long maxTotalArtifactBytes,
+            long dispatcherPollMillis,
+            long dispatcherShutdownTimeoutMillis,
+            int recoveryBatchSize,
+            long dbWarningBytes,
+            long dbStopBytes,
+            long artifactWarningBytes,
+            long artifactStopBytes) {
+        public static final long MAX_WALL_CLOCK_MILLIS = 2 * 60 * 60_000L;
+
+        public Mission {
+            plannerMode = text(plannerMode, "mission.plannerMode").toLowerCase(java.util.Locale.ROOT);
+            if (!plannerMode.equals("runtime") && !plannerMode.equals("deterministic-stub")) {
+                throw new IllegalArgumentException("mission.plannerMode must be runtime or deterministic-stub");
+            }
+            if (maxTasks < 1 || maxTasks > 16) {
+                throw new IllegalArgumentException("mission.maxTasks must be between 1 and 16");
+            }
+            if (maxDependencyDepth < 1 || maxDependencyDepth > 8) {
+                throw new IllegalArgumentException("mission.maxDependencyDepth must be between 1 and 8");
+            }
+            if (maxAcceptanceCriteria < 1 || maxAcceptanceCriteria > 20) {
+                throw new IllegalArgumentException("mission.maxAcceptanceCriteria must be between 1 and 20");
+            }
+            if (globalActiveTaskRuns != 1) {
+                throw new IllegalArgumentException("mission.globalActiveTaskRuns must equal 1 in the MVP");
+            }
+            if (maxAutoAttemptsPerTask < 1 || maxAutoAttemptsPerTask > 2) {
+                throw new IllegalArgumentException("mission.maxAutoAttemptsPerTask must be between 1 and 2");
+            }
+            if (maxWallClockMillis < 1 || maxWallClockMillis > MAX_WALL_CLOCK_MILLIS) {
+                throw new IllegalArgumentException("mission.maxWallClockMillis must not exceed 2 hours");
+            }
+            if (maxModelTokens < 1 || maxModelTokens > 4_000_000) {
+                throw new IllegalArgumentException("mission.maxModelTokens must be between 1 and 4000000");
+            }
+            if (maxToolCalls < 1 || maxToolCalls > 400) {
+                throw new IllegalArgumentException("mission.maxToolCalls must be between 1 and 400");
+            }
+            if (maxArtifacts < 5 || maxArtifacts > 8) {
+                throw new IllegalArgumentException("mission.maxArtifacts must be between 5 and 8");
+            }
+            if (maxTotalArtifactBytes < 1024 * 1024L || maxTotalArtifactBytes > 4 * 1024 * 1024L) {
+                throw new IllegalArgumentException("mission.maxTotalArtifactBytes must be between 1 MiB and 4 MiB");
+            }
+            if (dispatcherPollMillis < 100 || dispatcherPollMillis > 500) {
+                throw new IllegalArgumentException("mission.dispatcherPollMillis must be between 100 and 500");
+            }
+            if (dispatcherShutdownTimeoutMillis < 1_000 || dispatcherShutdownTimeoutMillis > 20_000) {
+                throw new IllegalArgumentException(
+                        "mission.dispatcherShutdownTimeoutMillis must be between 1000 and 20000");
+            }
+            if (recoveryBatchSize < 1 || recoveryBatchSize > 100) {
+                throw new IllegalArgumentException("mission.recoveryBatchSize must be between 1 and 100");
+            }
+            if (dbWarningBytes < 1 || dbStopBytes < dbWarningBytes || dbStopBytes > 1024L * 1024 * 1024) {
+                throw new IllegalArgumentException("mission database capacity thresholds are invalid");
+            }
+            if (artifactWarningBytes < 1
+                    || artifactStopBytes < artifactWarningBytes
+                    || artifactStopBytes > 2L * 1024 * 1024 * 1024) {
+                throw new IllegalArgumentException("mission Artifact capacity thresholds are invalid");
+            }
+        }
+    }
+
+    public record Research(int maxSources, int maxSourceContentBytes, int maxTotalContentBytes) {
+        public Research {
+            if (maxSources < 2 || maxSources > 24) {
+                throw new IllegalArgumentException("research.maxSources must be between 2 and 24");
+            }
+            if (maxSourceContentBytes < 1024 || maxSourceContentBytes > 262_144) {
+                throw new IllegalArgumentException("research.maxSourceContentBytes is out of range");
+            }
+            if (maxTotalContentBytes < maxSourceContentBytes || maxTotalContentBytes > 2_097_152) {
+                throw new IllegalArgumentException("research.maxTotalContentBytes is out of range");
+            }
+        }
     }
 
     public record Web(

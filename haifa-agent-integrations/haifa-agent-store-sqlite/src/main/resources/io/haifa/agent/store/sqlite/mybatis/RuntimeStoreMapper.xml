@@ -833,6 +833,7 @@
             <arg column="operation" javaType="java.lang.String"/>
             <arg column="idempotency_key" javaType="java.lang.String"/>
             <arg column="run_id" javaType="java.lang.String"/>
+            <arg column="request_digest" javaType="java.lang.String"/>
             <arg column="command_applied" javaType="_boolean"/>
             <arg column="result_schema_version" javaType="java.lang.String"/>
             <arg column="result_payload" javaType="[B"/>
@@ -845,7 +846,7 @@
     </resultMap>
 
     <select id="findIdempotency" resultMap="idempotencyRow">
-        SELECT caller_scope, operation, idempotency_key, run_id, command_applied,
+        SELECT caller_scope, operation, idempotency_key, run_id, request_digest, command_applied,
                result_schema_version, result_payload, result_hash, created_at, updated_at
         FROM idempotency
         WHERE caller_scope = #{callerScope} AND operation = #{operation} AND idempotency_key = #{key}
@@ -853,10 +854,11 @@
 
     <insert id="insertIdempotency">
         INSERT INTO idempotency (
-            caller_scope, operation, idempotency_key, run_id, command_applied,
+            caller_scope, operation, idempotency_key, run_id, request_digest, command_applied,
             result_schema_version, result_payload, result_hash, created_at, updated_at
         ) VALUES (
             #{row.callerScope}, #{row.operation}, #{row.idempotencyKey}, #{row.runId},
+            #{row.requestDigest},
             #{row.commandApplied}, #{row.resultSchemaVersion}, #{row.resultPayload},
             #{row.resultHash}, #{row.createdAt}, #{row.updatedAt}
         )

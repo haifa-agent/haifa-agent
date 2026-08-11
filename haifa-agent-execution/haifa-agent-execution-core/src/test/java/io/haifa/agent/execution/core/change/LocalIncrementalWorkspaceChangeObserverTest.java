@@ -111,8 +111,12 @@ class LocalIncrementalWorkspaceChangeObserverTest {
     @Test
     void cancelReleasesTheWindowAndAbsorbsChanges() throws Exception {
         WorkspaceId workspaceId = new WorkspaceId("cancel-test");
-        var observer =
-                new LocalIncrementalWorkspaceChangeObserver(workspaceId, root, WorkspaceChangeIgnorePolicy.none());
+        var observer = new LocalIncrementalWorkspaceChangeObserver(
+                workspaceId,
+                root,
+                WorkspaceChangeIgnorePolicy.none(),
+                LocalIncrementalWorkspaceChangeObserverTest::deterministicVersion,
+                false);
         var cancelled = observer.begin(workspaceId);
         Files.writeString(root.resolve("cancelled.txt"), "ignored as a prior window\n");
         cancelled.cancel();
@@ -144,6 +148,30 @@ class LocalIncrementalWorkspaceChangeObserverTest {
     }
 
     @Test
+    void transientIncrementalScanFailureFallsBackToAFullResynchronization() throws Exception {
+        Path changed = Files.writeString(root.resolve("changed.txt"), "before");
+        WorkspaceId workspaceId = new WorkspaceId("incremental-resync-test");
+        AtomicInteger changedFileReads = new AtomicInteger();
+        LocalIncrementalWorkspaceChangeObserver.FileVersionResolver versions = (file, attributes) -> {
+            if (file.getFileName().toString().equals("changed.txt") && changedFileReads.incrementAndGet() == 2) {
+                throw new java.io.IOException("transient incremental read failure");
+            }
+            return deterministicVersion(file, attributes);
+        };
+        var observer = new LocalIncrementalWorkspaceChangeObserver(
+                workspaceId, root, WorkspaceChangeIgnorePolicy.none(), versions, true);
+        var observation = observer.begin(workspaceId);
+        Files.writeString(changed, "after");
+
+        assertThat(observation.complete()).anySatisfy(change -> {
+            assertThat(change.type()).isEqualTo(FileChangeType.REPLACE);
+            assertThat(change.path()).hasToString("changed.txt");
+        });
+        assertThat(changedFileReads).hasValue(3);
+        observer.close();
+    }
+
+    @Test
     void unchangedSecondWindowDoesNotRehashAnUnchangedLargeFile() throws Exception {
         Path large = root.resolve("large.bin");
         Files.write(large, new byte[2 * 1024 * 1024]);
@@ -165,6 +193,13 @@ class LocalIncrementalWorkspaceChangeObserverTest {
         assertThat(baselineHashes).isEqualTo(1);
         assertThat(hashes).hasValue(baselineHashes);
         observer.close();
+    }
+
+    @Test
+    void opaqueFileKeysUseTheirStableRepresentation() {
+        assertThat(LocalIncrementalWorkspaceChangeObserver.stableFileKey(new OpaqueFileKey("same")))
+                .isEqualTo(LocalIncrementalWorkspaceChangeObserver.stableFileKey(new OpaqueFileKey("same")));
+        assertThat(LocalIncrementalWorkspaceChangeObserver.stableFileKey(null)).isNull();
     }
 
     @Test
@@ -190,5 +225,18 @@ class LocalIncrementalWorkspaceChangeObserverTest {
             Path file, BasicFileAttributes attributes) {
         return new io.haifa.agent.project.changeset.FileVersion(
                 FileType.FILE, attributes.size(), "test:" + file.getFileName() + ":" + attributes.size());
+    }
+
+    private static final class OpaqueFileKey {
+        private final String value;
+
+        private OpaqueFileKey(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public String toString() {
+            return value;
+        }
     }
 }

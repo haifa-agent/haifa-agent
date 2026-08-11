@@ -20,6 +20,7 @@ import io.haifa.agent.runtime.core.bootstrap.CapabilityResolutionErrorCode;
 import io.haifa.agent.runtime.core.bootstrap.CapabilityResolutionException;
 import io.haifa.agent.runtime.core.bootstrap.ContentAddressedSnapshotFactory;
 import io.haifa.agent.runtime.core.bootstrap.DefaultCapabilityResolver;
+import io.haifa.agent.runtime.core.bootstrap.EffectiveCapability;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedCapability;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
@@ -101,6 +102,34 @@ class BootstrapCapabilityTest {
     }
 
     @Test
+    void modelRequestOptionsAreFrozenAndChangeTheConfigurationDigest() {
+        var definition = definition(List.of());
+        var capabilities = List.<EffectiveCapability>of();
+        var base = profile(Map.of());
+        var responseFormat = new java.util.LinkedHashMap<String, Object>();
+        responseFormat.put("type", "json_object");
+        var structured = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                Map.of("response_format", responseFormat));
+        responseFormat.put("type", "mutated");
+
+        var plainSnapshot =
+                new ContentAddressedSnapshotFactory().create(request(false), definition, base, CALLER, capabilities);
+        var structuredSnapshot = new ContentAddressedSnapshotFactory()
+                .create(request(false), definition, structured, CALLER, capabilities);
+
+        assertThat(structuredSnapshot.modelRequestOptions())
+                .containsEntry("response_format", Map.of("type", "json_object"));
+        assertThat(structuredSnapshot.reference()).isNotEqualTo(plainSnapshot.reference());
+    }
+
+    @Test
     void requiredCapabilityFailuresAreTypedAndOptionalAbsenceCreatesNoNoopCapability() {
         var required = definition(List.of(new AgentCapabilityRequirement("workspace.filesystem", "1.0.0", true)));
         var optional = definition(List.of(new AgentCapabilityRequirement("workspace.filesystem", "1.0.0", false)));
@@ -173,6 +202,48 @@ class BootstrapCapabilityTest {
                 .isNotEqualTo(changed.toolBindings().getFirst().coordinate().definitionHash());
         assertThat(first.reference()).isNotEqualTo(changed.reference());
         assertThat(first.toolBindings()).containsExactly(firstBinding);
+    }
+
+    @Test
+    void runProfileToolAllowlistNarrowsTheFrozenAgentTools() {
+        var readBinding = TestToolPlatform.binding("read", "1.0.0", "read.input", false);
+        var writeBinding = TestToolPlatform.binding("write", "1.0.0", "write.input", true);
+        var definition = new ResolvedDefinition(
+                new AgentDefinitionId("agent"),
+                new AgentDefinitionVersion(1, 0, 0),
+                Set.of("read", "write"),
+                Set.of(),
+                "Complete the objective.");
+        var base = profile(Map.of());
+        var readOnly = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                base.modelRequestOptions(),
+                Optional.of(Set.of("read")));
+        var factory = new ContentAddressedSnapshotFactory(
+                new ToolCatalogSnapshot(readBinding.catalogDigest(), List.of(readBinding, writeBinding)));
+
+        var snapshot = factory.create(request(false), definition, readOnly, CALLER, List.of());
+
+        assertThat(snapshot.toolBindings()).containsExactly(readBinding);
+        var invalid = new ResolvedProfile(
+                base.id(),
+                base.version(),
+                base.runType(),
+                base.budget(),
+                base.limits(),
+                base.model(),
+                base.capabilities(),
+                base.modelRequestOptions(),
+                Optional.of(Set.of("outside-agent")));
+        assertThatThrownBy(() -> factory.create(request(false), definition, invalid, CALLER, List.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("subset");
     }
 
     @Test

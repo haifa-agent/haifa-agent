@@ -2,6 +2,13 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Personal Assistant adds durable Mission execution and an explicit Deep Research mode: frozen
+  briefs and Skill coordinates, isolated Task Runs, bounded Search/Fetch, strict source and claim
+  validation, partial synthesis, restart-safe final messages, five immutable Artifacts, and a
+  shared Web workspace for plan confirmation and research delivery. Release hardening adds
+  authoritative Mission usage settlement, fixed execution/capacity limits, deadline and budget
+  partial synthesis, readiness and upgrade diagnostics, bounded shutdown, and verified offline
+  SQLite/Artifact backup and fresh-directory restore.
 - Coding Agent 新增顶层 `haifa-coding resume` 基础能力：支持选择、最近及指定 Session，并可在打开后
   提交首条 Prompt；Terminal 从权威 Session Message Store 恢复最近 100 条安全用户可见历史，活动
   Run 仅只读打开且禁止自动接管、恢复或重复提交。

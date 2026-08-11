@@ -4,12 +4,15 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
-const DRIVER_PROTOCOL_VERSION = "1.1.0";
+const DRIVER_PROTOCOL_VERSION = "1.2.0";
+const RUN_TERMINAL_STATES = ["IDLE", "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"];
 const RECORDING_COLUMNS = 132;
 const RECORDING_ROWS = 42;
 const MAX_RECORDED_OUTPUT_BYTES = 1024 * 1024;
+const MAX_TERMINAL_TRANSITION_WAIT_MILLIS = 120_000;
 
 function fail(message, terminal) {
   if (terminal) terminal.kill();
@@ -37,14 +40,157 @@ function loadPty() {
   fail(`A compatible Node PTY module is required.\n${failures.join("\n")}`);
 }
 
-function waitForMarker(state, marker, label, timeoutMillis) {
+export function findStatusMarker(screenText, markers) {
+  const visibleStatus = screenText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (visibleStatus == null) return null;
+  return markers.find(
+    (candidate) =>
+      visibleStatus === candidate || visibleStatus.startsWith(`${candidate} ·`),
+  ) ?? null;
+}
+
+export class VirtualScreen {
+  constructor(columns, rows) {
+    this.columns = columns;
+    this.rows = rows;
+    this.grid = this.blank();
+    this.row = 0;
+    this.column = 0;
+    this.saved = [0, 0];
+  }
+
+  blank() {
+    return Array.from({ length: this.rows }, () => Array(this.columns).fill(" "));
+  }
+
+  clear() {
+    this.grid = this.blank();
+    this.row = 0;
+    this.column = 0;
+  }
+
+  feed(text) {
+    for (let index = 0; index < text.length; ) {
+      const character = text[index];
+      if (character === "\u001b") {
+        if (text[index + 1] === "[") {
+          const match = /^\u001b\[([0-?]*)([ -/]*)([@-~])/.exec(text.slice(index));
+          if (match) {
+            this.csi(match[1], match[3]);
+            index += match[0].length;
+            continue;
+          }
+        }
+        if (text[index + 1] === "]") {
+          const endBell = text.indexOf("\u0007", index + 2);
+          const endSt = text.indexOf("\u001b\\", index + 2);
+          const end = endBell >= 0 && (endSt < 0 || endBell < endSt) ? endBell + 1 : endSt + 2;
+          if (end > 1) {
+            index = end;
+            continue;
+          }
+        }
+        index += 2;
+        continue;
+      }
+      if (character === "\r") {
+        this.column = 0;
+      } else if (character === "\n") {
+        this.lineFeed();
+      } else if (character === "\b") {
+        this.column = Math.max(0, this.column - 1);
+      } else if (character === "\t") {
+        this.column = Math.min(this.columns - 1, (Math.floor(this.column / 8) + 1) * 8);
+      } else if (character >= " " && character !== "\u007f" && character !== "\uFFFF") {
+        this.grid[this.row][this.column] = character;
+        this.column += 1;
+        if (this.column >= this.columns) {
+          this.column = 0;
+          this.lineFeed();
+        }
+      }
+      index += 1;
+    }
+  }
+
+  csi(rawParameters, finalCharacter) {
+    const privateMode = rawParameters.startsWith("?");
+    const values = rawParameters
+      .replace(/^\?/, "")
+      .split(";")
+      .filter(Boolean)
+      .map(Number);
+    const value = (position, fallback = 1) => values[position] || fallback;
+    if ((finalCharacter === "h" || finalCharacter === "l") && privateMode) {
+      if (values.includes(1049) && finalCharacter === "h") this.clear();
+      return;
+    }
+    switch (finalCharacter) {
+      case "H":
+      case "f":
+        this.row = Math.min(this.rows - 1, value(0) - 1);
+        this.column = Math.min(this.columns - 1, value(1) - 1);
+        break;
+      case "A":
+        this.row = Math.max(0, this.row - value(0));
+        break;
+      case "B":
+        this.row = Math.min(this.rows - 1, this.row + value(0));
+        break;
+      case "C":
+        this.column = Math.min(this.columns - 1, this.column + value(0));
+        break;
+      case "D":
+        this.column = Math.max(0, this.column - value(0));
+        break;
+      case "G":
+        this.column = Math.min(this.columns - 1, value(0) - 1);
+        break;
+      case "d":
+        this.row = Math.min(this.rows - 1, value(0) - 1);
+        break;
+      case "J":
+        if (values.length === 0 || values[0] === 0 || values[0] === 2 || values[0] === 3) this.clear();
+        break;
+      case "K":
+        this.grid[this.row].fill(" ", values[0] === 1 ? 0 : this.column);
+        break;
+      case "s":
+        this.saved = [this.row, this.column];
+        break;
+      case "u":
+        [this.row, this.column] = this.saved;
+        break;
+      default:
+        break;
+    }
+  }
+
+  lineFeed() {
+    this.row += 1;
+    if (this.row >= this.rows) {
+      this.grid.shift();
+      this.grid.push(Array(this.columns).fill(" "));
+      this.row = this.rows - 1;
+    }
+  }
+
+  text() {
+    return this.grid.map((line) => line.join("").replace(/\s+$/, "")).join("\n");
+  }
+}
+
+function waitForStatusMarker(state, markers, label, timeoutMillis) {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMillis;
     const poll = () => {
-      const markerIndex = state.output.indexOf(marker, state.markerOffset);
-      if (markerIndex >= 0) {
-        state.markerOffset = markerIndex + marker.length;
-        resolve();
+      const match = findStatusMarker(state.screen.text(), markers);
+      if (match) {
+        resolve(match);
       } else if (state.exited) {
         reject(new Error(`UNEXPECTED EOF waiting for ${label}`));
       } else if (Date.now() >= deadline) {
@@ -186,15 +332,16 @@ async function main() {
       useConpty: process.platform === "win32",
     },
   );
-  const state = { output: "", markerOffset: 0, exited: false, exitCode: null };
+  const state = {
+    screen: new VirtualScreen(RECORDING_COLUMNS, RECORDING_ROWS),
+    exited: false,
+    exitCode: null,
+  };
   const recorder = createRecorder();
   const terminalStates = [];
   const inputTimeline = [];
   terminal.onData((chunk) => {
-    const combined = state.output + chunk;
-    const removedCharacters = Math.max(0, combined.length - 1024 * 1024);
-    state.output = combined.slice(removedCharacters);
-    state.markerOffset = Math.max(0, state.markerOffset - removedCharacters);
+    state.screen.feed(chunk);
     recorder.record(chunk);
     process.stdout.write(chunk);
   });
@@ -207,9 +354,10 @@ async function main() {
   });
 
   const timeoutMillis = timeoutSeconds * 1000;
+  const transitionTimeoutMillis = Math.min(timeoutMillis, MAX_TERMINAL_TRANSITION_WAIT_MILLIS);
   const startedAt = Date.now();
   try {
-    await waitForMarker(state, "IDLE", "terminal startup", timeoutMillis);
+    await waitForStatusMarker(state, ["IDLE"], "terminal startup", transitionTimeoutMillis);
     terminalStates.push({ state: "IDLE", atSeconds: recorder.elapsedSeconds() });
     await new Promise((resolve) => setTimeout(resolve, 500));
     const prompt = fs.readFileSync(promptFile, "utf8").trim();
@@ -219,10 +367,15 @@ async function main() {
       characters: Array.from(prompt).length,
     });
     await typeAndSend(terminal, prompt);
-    await waitForMarker(state, "RUNNING", "run start", timeoutMillis);
+    await waitForStatusMarker(state, ["RUNNING"], "run start", transitionTimeoutMillis);
     terminalStates.push({ state: "RUNNING", atSeconds: recorder.elapsedSeconds() });
-    await waitForMarker(state, "IDLE", "autonomous run completion", timeoutMillis);
-    terminalStates.push({ state: "IDLE", atSeconds: recorder.elapsedSeconds() });
+    const terminalState = await waitForStatusMarker(
+      state,
+      RUN_TERMINAL_STATES,
+      "autonomous run completion",
+      timeoutMillis,
+    );
+    terminalStates.push({ state: terminalState, atSeconds: recorder.elapsedSeconds() });
   } catch (error) {
     fail(error.message, terminal);
   }
@@ -268,4 +421,6 @@ async function main() {
   process.exit(payload.acceptancePassed ? 0 : 40);
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

@@ -14,8 +14,11 @@ import io.haifa.agent.core.plan.AgentPlanId;
 import io.haifa.agent.core.plan.TodoItem;
 import io.haifa.agent.core.plan.TodoItemId;
 import io.haifa.agent.core.plan.TodoPriority;
+import io.haifa.agent.core.run.AgentRunBudget;
+import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
@@ -47,6 +50,9 @@ import io.haifa.agent.runtime.api.RuntimeCommandStatus;
 import io.haifa.agent.runtime.api.RuntimeCommandType;
 import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
+import io.haifa.agent.runtime.core.bootstrap.DefaultResolvedModelSnapshots;
+import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
+import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
@@ -191,6 +197,52 @@ class RuntimeCoreTest {
                         accepted.runId(),
                         fixture.store.toolCalls(accepted.runId()).getFirst().idempotencyKey()))
                 .contains(ToolJournalState.COMPLETED);
+    }
+
+    @Test
+    void finalizeOnlyRemovesToolDefinitionsAfterTheFrozenCollectionThreshold() {
+        ToolRequest first =
+                toolRequest("finalize-1", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));
+        ToolRequest second =
+                toolRequest("finalize-2", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> finalRequest = new AtomicReference<>();
+        AgentChatModel model = request -> {
+            if (modelCalls.getAndIncrement() == 0) {
+                assertThat(request.tools())
+                        .extracting(ModelToolSpecification::name)
+                        .containsExactly("echo");
+                return response(new ToolCallDecision(List.of(first, second)));
+            }
+            finalRequest.set(request);
+            return response(finalDecision("finalized"));
+        };
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder,
+                        "echo",
+                        "1.0.0",
+                        "echo.input",
+                        false,
+                        request -> new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false))
+                .profiles((id, overrides) -> new ResolvedProfile(
+                        id,
+                        "1.0.0",
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(10_000, 10_000, 10_000, 4, 4, 0, "USD", 0),
+                        new AgentRunLimits(4, 0, 1, 60_000, 60_000),
+                        DefaultResolvedModelSnapshots.deepSeekV4Pro(),
+                        Map.of(),
+                        Map.of(RuntimeControlOptions.FINALIZE_AFTER_TOOL_CALLS, 2))));
+
+        var accepted = fixture.runtime.start(request("finalize-only"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(finalRequest.get().tools()).isEmpty();
+        assertThat(finalRequest.get().options()).doesNotContainKey(RuntimeControlOptions.FINALIZE_AFTER_TOOL_CALLS);
+        assertThat(finalRequest.get().messages()).anySatisfy(message -> assertThat(message.content())
+                .contains("FINALIZE_ONLY", "No more Tools", "DSML", "not a final answer"));
     }
 
     @Test
@@ -385,6 +437,26 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void startRejectsReuseOfIdempotencyKeyForDifferentRequest() {
+        Fixture fixture = fixture(model(finalDecision("done")));
+        fixture.runtime.start(request("same-key"));
+        AgentRunRequest changed = new AgentRunRequest(
+                "same-key",
+                new AgentDefinitionId("test-agent"),
+                Optional.empty(),
+                "test-profile",
+                new AgentSessionId("session-1"),
+                Optional.empty(),
+                "different objective",
+                List.of(),
+                RuntimeOverrides.NONE);
+
+        assertThatThrownBy(() -> fixture.runtime.start(changed))
+                .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
+                        .isEqualTo(RuntimeApiErrorCode.IDEMPOTENCY_CONFLICT));
+    }
+
+    @Test
     void storeEnforcesOptimisticLocking() {
         Fixture fixture = fixture(model(finalDecision("done")));
         var accepted = fixture.runtime.start(request("optimistic-lock"));
@@ -425,6 +497,8 @@ class RuntimeCoreTest {
                         "read.input",
                         false,
                         request -> {
+                            request.observer().dispatched();
+                            request.observer().acknowledged();
                             if (readCalls.incrementAndGet() == 1) throw new IllegalStateException("retry read");
                             return new ToolResult(true, "read", Map.of(), List.of(), List.of(), false);
                         }));

@@ -2,6 +2,7 @@ package io.haifa.agent.testing.delivery;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -128,6 +129,22 @@ class AutonomousDeliveryRuntimeEvidenceReaderTest {
         assertEquals(0, evidence.scratchProvisionedCount());
         assertEquals(1, evidence.scratchCleanupFailures());
         assertFalse(evidence.scratchSatisfied());
+    }
+
+    @Test
+    void failedDriverWithoutRunProducesBoundedUnavailableEvidence(@TempDir Path temporary) throws Exception {
+        Path database = temporary.resolve("runtime.db");
+        try (Connection ignored = createDatabase(database)) {
+            // A PTY startup failure can initialize SQLite without ever creating a Run.
+        }
+        AutonomousDeliveryRuntimeEvidenceReader reader = new AutonomousDeliveryRuntimeEvidenceReader(json);
+
+        var unavailable = reader.readOrUnavailable(database, true);
+
+        assertEquals("NOT_STARTED", unavailable.termination());
+        assertFalse(unavailable.terminalStateObserved());
+        assertEquals(0, unavailable.modelCalls());
+        assertThrows(java.io.IOException.class, () -> reader.readOrUnavailable(database, false));
     }
 
     private static Connection createDatabase(Path database) throws Exception {
