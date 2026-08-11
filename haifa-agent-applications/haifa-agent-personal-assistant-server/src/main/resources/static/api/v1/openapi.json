@@ -766,7 +766,7 @@
           "blocker": {"oneOf": [{"type": "string"}, {"type": "null"}]},
           "artifacts": {"type": "array", "items": {"type": "string"}},
           "sources": {"type": "array", "items": {"type": "string"}},
-          "finalResult": {"description": "Encoded completion envelope. Historical research missions use pa.research-final-result/v1; newly published research deliveries use pa.research-delivery/v2 and reference a separate Markdown report Artifact.", "oneOf": [{"type": "string"}, {"type": "null"}]},
+          "finalResult": {"description": "Encoded completion envelope. Standard Missions use pa.mission-final-result/v1, historical research Missions use pa.research-final-result/v1, and newly published research deliveries use pa.research-delivery/v2 with a separate Markdown report Artifact.", "oneOf": [{"type": "string"}, {"type": "null"}]},
           "version": {"type": "integer", "format": "int64"},
           "createdAt": {"type": "string", "format": "date-time"},
           "updatedAt": {"type": "string", "format": "date-time"},
