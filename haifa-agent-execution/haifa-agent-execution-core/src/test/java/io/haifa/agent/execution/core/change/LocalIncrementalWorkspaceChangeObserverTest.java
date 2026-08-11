@@ -169,8 +169,9 @@ class LocalIncrementalWorkspaceChangeObserverTest {
         var third = observer.begin(workspaceId);
         assertThat(third.complete()).isEmpty();
 
-        assertThat(baselineHashes).isEqualTo(1);
-        assertThat(settledHashes).isBetween(baselineHashes, baselineHashes + 1);
+        // macOS may deliver one registration-era candidate in either of the first two settled windows.
+        assertThat(baselineHashes).isBetween(1, 2);
+        assertThat(settledHashes).isBetween(baselineHashes, 2);
         assertThat(hashes).hasValue(settledHashes);
         observer.close();
     }
