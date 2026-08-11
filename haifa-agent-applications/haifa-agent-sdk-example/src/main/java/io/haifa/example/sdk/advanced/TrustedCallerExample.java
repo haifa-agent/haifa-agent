@@ -5,6 +5,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.starter.HaifaAgentStarter;
+import io.haifa.example.sdk.support.DeterministicExampleSupport;
 import java.util.Set;
 
 /** Supplies identity only from an authenticated host boundary. */
@@ -17,7 +18,7 @@ public final class TrustedCallerExample {
                 new PrincipalRef("authenticated-user", "user"),
                 Set.of("memory:read"));
         try (var agent = HaifaAgentStarter.builder()
-                .model(ExampleAgentFactory.model("trusted-answer"), ExampleAgentFactory.snapshot())
+                .model(DeterministicExampleSupport.model("trusted-answer"), DeterministicExampleSupport.snapshot())
                 .callerProvider(callers)
                 .build()) {
             System.out.println(agent.assembly().profile().productId().value());

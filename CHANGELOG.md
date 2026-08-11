@@ -4,8 +4,9 @@
 
 - SDK Starter 支持显式注册多模型/多 Provider 并按可信 Run Profile 选择；Spring 自动装配新增有序
   `HaifaAgentStarterCustomizer`，SQLite 采用应用拥有的单机持久化参考装配，不新增 Store-specific Starter。
-- 新增可运行的 SDK 管理、事件、输出和 SQLite 重启恢复示例，以及独立 Maven/Gradle/Spring 消费者
-  smoke、文档链接/API 漂移检查和 SDK Release Artifact 门禁。
+- 新增按 Basic/Intermediate/Advanced 分层的可运行 SDK 示例，覆盖 Quickstart、类型化 Tool、多模型、
+  管理、事件、输出和 SQLite 重启恢复；同时增加独立 Maven/Gradle/Spring 消费者 smoke、文档检查和
+  SDK Release Artifact 门禁。
 - 修复 macOS WatchService 取消窗口后迟到事件泄漏到下一观察窗口的竞态。
 - 新增 `haifa-agent-spring-boot-starter`：自动装配单例 `HaifaAgent`、按 Spring 顺序收集
   `JavaTool` Bean、支持配置属性元数据与用户 Bean backoff，并以安全 Failure Analysis 报告缺失凭据；

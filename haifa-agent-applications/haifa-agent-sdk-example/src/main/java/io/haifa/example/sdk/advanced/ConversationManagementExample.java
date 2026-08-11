@@ -2,13 +2,14 @@ package io.haifa.example.sdk.advanced;
 
 import io.haifa.agent.sdk.conversation.RenameConversationCommand;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
+import io.haifa.example.sdk.support.DeterministicExampleSupport;
 
 /** Creates, waits for, and renames one durable conversation aggregate. */
 public final class ConversationManagementExample {
     private ConversationManagementExample() {}
 
     public static void main(String[] args) throws Exception {
-        try (var agent = ExampleAgentFactory.inMemory()) {
+        try (var agent = DeterministicExampleSupport.inMemory()) {
             var started = agent.conversations()
                     .start(new StartConversationCommand("conversation-start", "Trip", "Introduce Hangzhou."));
             agent.runs().await(started.activeRunId().orElseThrow());

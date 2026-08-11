@@ -1,4 +1,4 @@
-package io.haifa.example.sdk.advanced;
+package io.haifa.example.sdk.support;
 
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatResponse;
@@ -18,16 +18,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-final class ExampleAgentFactory {
-    private ExampleAgentFactory() {}
+/** Deterministic, network-free support shared only by this unpublished example module. */
+public final class DeterministicExampleSupport {
+    private DeterministicExampleSupport() {}
 
-    static HaifaAgent inMemory() {
+    public static HaifaAgent inMemory() {
         return HaifaAgentStarter.builder()
                 .model(model("example-answer"), snapshot())
                 .build();
     }
 
-    static AgentChatModel model(String answer) {
+    public static AgentChatModel model(String answer) {
         return request -> new AgentChatResponse(
                 "example-response",
                 request.model().providerModelId(),
@@ -39,14 +40,18 @@ final class ExampleAgentFactory {
                 Map.of());
     }
 
-    static ResolvedModelSnapshot snapshot() {
+    public static ResolvedModelSnapshot snapshot() {
+        return snapshot("example", "example-chat", "example-adapter");
+    }
+
+    public static ResolvedModelSnapshot snapshot(String providerId, String modelId, String adapterType) {
         return ResolvedModelSnapshot.create(
-                new ModelProviderId("example"),
+                new ModelProviderId(providerId),
                 "1.0.0",
-                new ModelDefinitionId("example-chat"),
+                new ModelDefinitionId(modelId),
                 "1.0.0",
-                "example-chat",
-                "example-adapter",
+                modelId,
+                adapterType,
                 "1.0.0",
                 ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 ModelApiBindingDefinition.STANDARD_DIALECT,

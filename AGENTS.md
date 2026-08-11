@@ -69,7 +69,7 @@
 | [`haifa-agent-integrations/haifa-agent-model-openai-compatible/`](haifa-agent-integrations/haifa-agent-model-openai-compatible/README.md) | OpenAI Chat Completions 兼容适配及 DeepSeek 默认配置 | Provider 细节留在适配层；首版强制关闭 thinking |
 | [`haifa-agent-integrations/haifa-agent-web/`](haifa-agent-integrations/haifa-agent-web/README.md) | 通用 Web Search/Fetch Tool 与 HTTP Provider | 产品显式选择 Provider 和凭据；公共模块不依赖 Runtime、Spring 或具体产品 |
 | [`haifa-agent-applications/haifa-agent-runtime-demo/`](haifa-agent-applications/haifa-agent-runtime-demo/README.md) | Runtime/Tool/MCP/Skill 可执行示例 | 不是测试事实源；真实调用必须显式 opt-in |
-| [`haifa-agent-applications/haifa-agent-sdk-example/`](haifa-agent-applications/haifa-agent-sdk-example/README.md) | SDK 使用者可运行示例与 SQLite 单机持久化参考装配 | 默认离线确定性；示例模块不作为 SDK 制品发布，不新增 Store-specific Starter |
+| [`haifa-agent-applications/haifa-agent-sdk-example/`](haifa-agent-applications/haifa-agent-sdk-example/README.md) | Basic/Intermediate/Advanced 可运行 SDK 示例与 SQLite 单机持久化参考装配 | 除显式真实 Provider Quickstart 外默认离线；示例模块不发布 |
 | [`haifa-agent-testing/`](haifa-agent-testing/README.md) | Reactor 末端的测试基础设施聚合层 | 生产模块不得依赖测试模块；运行产物不得进入源码仓库 |
 | [`haifa-agent-testing/haifa-agent-testkit/`](haifa-agent-testing/haifa-agent-testkit/README.md) | 跨模块测试辅助能力 | 只提供确定性、无外部副作用的测试支持 |
 | [`haifa-agent-testing/haifa-agent-test-fixtures/`](haifa-agent-testing/haifa-agent-test-fixtures/README.md) | 可共享的小型安全 Fixture | 禁止秘密、生产数据、主机路径和运行产物 |

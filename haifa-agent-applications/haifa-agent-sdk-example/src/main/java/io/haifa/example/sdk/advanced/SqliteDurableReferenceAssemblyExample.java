@@ -28,6 +28,7 @@ import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import io.haifa.agent.sdk.product.ProductVersion;
 import io.haifa.agent.store.sqlite.SqliteSdkProductContributions;
 import io.haifa.agent.store.sqlite.SqliteStoreConfiguration;
+import io.haifa.example.sdk.support.DeterministicExampleSupport;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
@@ -108,8 +109,8 @@ public final class SqliteDurableReferenceAssemblyExample {
         try (var agent = open(
                 dataDirectory,
                 new SecretKeySpec(key, "AES"),
-                ExampleAgentFactory.model("sqlite-answer"),
-                ExampleAgentFactory.snapshot(),
+                DeterministicExampleSupport.model("sqlite-answer"),
+                DeterministicExampleSupport.snapshot(),
                 SdkCallerProvider.defaultPublicUser())) {
             System.out.println(agent.assembly().assemblyDigest());
         }

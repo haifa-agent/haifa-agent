@@ -1,10 +1,10 @@
-package io.haifa.agent.starter.example;
+package io.haifa.example.sdk.basic;
 
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.starter.HaifaAgentStarter;
 
-/** Compile-checked source for the public Quickstart. */
+/** Minimal real-provider Quickstart; requires {@code DEEPSEEK_API_KEY}. */
 public final class HelloHaifa {
     private HelloHaifa() {}
 

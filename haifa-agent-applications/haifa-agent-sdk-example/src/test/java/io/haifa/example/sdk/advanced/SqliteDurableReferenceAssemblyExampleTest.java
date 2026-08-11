@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.haifa.agent.sdk.api.SdkCallerProvider;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
+import io.haifa.example.sdk.support.DeterministicExampleSupport;
 import java.nio.file.Path;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
@@ -17,8 +18,8 @@ class SqliteDurableReferenceAssemblyExampleTest {
         try (var first = SqliteDurableReferenceAssemblyExample.open(
                 directory,
                 key,
-                ExampleAgentFactory.model("persisted-answer"),
-                ExampleAgentFactory.snapshot(),
+                DeterministicExampleSupport.model("persisted-answer"),
+                DeterministicExampleSupport.snapshot(),
                 SdkCallerProvider.defaultPublicUser())) {
             var conversation = first.conversations()
                     .start(new StartConversationCommand("sqlite-start", "SQLite", "Persist this conversation."));
@@ -29,8 +30,8 @@ class SqliteDurableReferenceAssemblyExampleTest {
         try (var reopened = SqliteDurableReferenceAssemblyExample.open(
                 directory,
                 key,
-                ExampleAgentFactory.model("reopened-answer"),
-                ExampleAgentFactory.snapshot(),
+                DeterministicExampleSupport.model("reopened-answer"),
+                DeterministicExampleSupport.snapshot(),
                 SdkCallerProvider.defaultPublicUser())) {
             assertThat(reopened.conversations()
                             .list(io.haifa.agent.sdk.conversation.ConversationQuery.active(10))
