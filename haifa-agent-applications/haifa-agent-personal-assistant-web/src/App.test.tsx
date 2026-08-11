@@ -313,6 +313,10 @@ describe("Personal Assistant application", () => {
     render(<App client={api} />);
     fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect(within(dialog).getByRole("heading", { name: "创建 Mission" })).toBeTruthy();
+    expect(within(dialog).getByText("所属会话")).toBeTruthy();
+    expect(within(dialog).getByText("每日计划")).toBeTruthy();
+    expect(within(dialog).queryByRole("heading", { name: "为“每日计划”创建 Mission" })).toBeNull();
     const objectiveInput = within(dialog).getByLabelText("目标");
     const criteriaInput = within(dialog).getByLabelText("验收标准（必填，1～20 条）");
     const createButton = within(dialog).getByRole("button", { name: "创建并生成计划" });

@@ -1732,7 +1732,10 @@ function MissionDialog({
           <div className="mission-content">
             {conversation && creatingMission && (
               <form className="mission-create" onSubmit={createMission}>
-                <h3>为“{conversation.displayName}”创建 Mission</h3>
+                <div className="mission-create-heading">
+                  <div><span className="eyebrow">新建任务</span><h3>创建 Mission</h3></div>
+                  <p><span>所属会话</span><strong title={conversation.displayName}>{conversation.displayName}</strong></p>
+                </div>
                 <label>任务模式<select value={mode} onChange={(event) => setMode(event.target.value as "STANDARD" | "DEEP_RESEARCH")}><option value="STANDARD">标准 Mission</option><option value="DEEP_RESEARCH">Deep Research</option></select></label>
                 <label>目标<textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={8000} rows={3} placeholder="描述要持续推进并最终交付的目标" /></label>
                 <label>验收标准（必填，1～20 条）<textarea required value={criteria} onChange={(event) => setCriteria(event.target.value)} maxLength={4000} rows={3} placeholder="每行一条，例如：覆盖关键升级、时间及影响" /></label>
