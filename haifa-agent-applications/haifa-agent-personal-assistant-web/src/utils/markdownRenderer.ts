@@ -102,6 +102,16 @@ function tableAlignClass(separatorCell: string): string {
   return "";
 }
 
+function normalizedTableHeader(value: string): string {
+  return value.replace(/<[^>]*>/g, "").replace(/\s+/g, "").toLowerCase();
+}
+
+function renderSourceUrlCell(value: string): string {
+  const href = value.trim();
+  if (!/^https?:\/\/[^\s<>]+$/i.test(href) || !isSafeHref(href)) return value;
+  return `<a href="${href}" target="_blank" rel="noopener noreferrer">${value}</a>`;
+}
+
 function renderMarkdownTables(input: string): string {
   const lines = input.split("\n");
   const output: string[] = [];
@@ -116,6 +126,15 @@ function renderMarkdownTables(input: string): string {
     ) {
       const headers = splitMarkdownTableRow(headerLine);
       const separators = splitMarkdownTableRow(separatorLine);
+      const normalizedHeaders = headers.map(normalizedTableHeader);
+      const sourceIdIndex = normalizedHeaders.findIndex((header) => (
+        header === "来源id" || header === "sourceid"
+      ));
+      const urlIndex = normalizedHeaders.findIndex((header) => header === "url");
+      const isSourceList = sourceIdIndex >= 0 && urlIndex >= 0;
+      const visibleColumnIndexes = headers
+        .map((_header, cellIndex) => cellIndex)
+        .filter((cellIndex) => !isSourceList || cellIndex !== sourceIdIndex);
       const rows: string[][] = [];
       index += 2;
 
@@ -125,17 +144,22 @@ function renderMarkdownTables(input: string): string {
       }
       index -= 1;
 
-      const heading = headers
-        .map((cell, cellIndex) => (
-          `<th class="${tableAlignClass(separators[cellIndex] ?? "")}">${cell}</th>`
-        ))
+      const heading = visibleColumnIndexes
+        .map((cellIndex) => {
+          const cell = headers[cellIndex] ?? "";
+          return `<th class="${tableAlignClass(separators[cellIndex] ?? "")}">${cell}</th>`;
+        })
         .join("");
       const body = rows
         .map((row) => {
-          const cells = headers
-            .map((_header, cellIndex) => (
-              `<td class="${tableAlignClass(separators[cellIndex] ?? "")}">${row[cellIndex] ?? ""}</td>`
-            ))
+          const cells = visibleColumnIndexes
+            .map((cellIndex) => {
+              const value = row[cellIndex] ?? "";
+              const renderedValue = isSourceList && cellIndex === urlIndex
+                ? renderSourceUrlCell(value)
+                : value;
+              return `<td class="${tableAlignClass(separators[cellIndex] ?? "")}">${renderedValue}</td>`;
+            })
             .join("");
           return `<tr>${cells}</tr>`;
         })
@@ -157,6 +181,93 @@ function isSafeHref(href: string): boolean {
   if (/^(?:https?:|mailto:)/i.test(value)) return true;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return false;
   return true;
+}
+
+function embeddedSourceStatus(value: string): string {
+  if (/已抓取|fetched/i.test(value)) return "FETCHED";
+  if (/已核验|verified/i.test(value)) return "VERIFIED";
+  if (/抓取失败|failed/i.test(value)) return "FAILED";
+  if (/不可访问|访问受限|blocked/i.test(value)) return "BLOCKED";
+  return "UNKNOWN";
+}
+
+function embeddedSourceLocator(value: string): string | null {
+  const markdownLink = /^\[[^\]]+\]\((https?:\/\/[^)\s]+)\)$/.exec(value.trim());
+  const locator = markdownLink?.[1] ?? value.trim().replace(/^<|>$/g, "");
+  return /^https?:\/\/[^\s<>]+$/i.test(locator) && isSafeHref(locator) ? locator : null;
+}
+
+function embeddedResearchSources(text: string): MarkdownResearchSource[] {
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const headerLine = lines[index];
+    const separatorLine = lines[index + 1];
+    if (!headerLine?.includes("|") || !separatorLine?.includes("|")
+      || !isMarkdownTableSeparator(separatorLine)) continue;
+    const headers = splitMarkdownTableRow(headerLine);
+    const normalizedHeaders = headers.map(normalizedTableHeader);
+    const sourceIdIndex = normalizedHeaders.findIndex((header) => (
+      header === "来源id" || header === "sourceid"
+    ));
+    const titleIndex = normalizedHeaders.findIndex((header) => header === "标题" || header === "title");
+    const publisherIndex = normalizedHeaders.findIndex((header) => header === "发布方" || header === "publisher");
+    const dateIndex = normalizedHeaders.findIndex((header) => (
+      header === "日期/状态" || header === "日期状态" || header === "date/status"
+    ));
+    const urlIndex = normalizedHeaders.findIndex((header) => header === "url");
+    if (sourceIdIndex < 0 || titleIndex < 0 || urlIndex < 0) continue;
+
+    const sources: MarkdownResearchSource[] = [];
+    for (let rowIndex = index + 2; rowIndex < lines.length && lines[rowIndex].trim().includes("|"); rowIndex += 1) {
+      const cells = splitMarkdownTableRow(lines[rowIndex]);
+      const locator = embeddedSourceLocator(cells[urlIndex] ?? "");
+      if (!locator) continue;
+      const dateAndStatus = dateIndex >= 0 ? cells[dateIndex] ?? "" : "";
+      sources.push({
+        sourceId: cells[sourceIdIndex] ?? `embedded-source-${sources.length + 1}`,
+        title: cells[titleIndex]?.trim() || "未命名来源",
+        publisher: publisherIndex >= 0 ? cells[publisherIndex]?.trim() : undefined,
+        locator,
+        normalizedLocator: locator,
+        publishedAt: /\b\d{4}-\d{2}-\d{2}\b/.exec(dateAndStatus)?.[0] ?? null,
+        status: embeddedSourceStatus(dateAndStatus),
+      });
+    }
+    return sources;
+  }
+  return [];
+}
+
+async function sha256Prefix(value: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 24);
+}
+
+export function hasEmbeddedMarkdownResearchSources(text: string): boolean {
+  return /\[\[source-[A-Za-z0-9_-]+\]\]/.test(text)
+    && /\|\s*(?:来源\s*ID|source\s*id)\s*\|/i.test(text)
+    && /\|\s*URL\s*\|/i.test(text);
+}
+
+export async function inferMarkdownResearchContext(
+  text: string,
+  anchorPrefix: string,
+): Promise<MarkdownResearchContext | undefined> {
+  if (!hasEmbeddedMarkdownResearchSources(text)) return undefined;
+  const sources = embeddedResearchSources(text);
+  if (sources.length === 0 || !globalThis.crypto?.subtle) return undefined;
+  const normalizedSources = await Promise.all(sources.map(async (source) => ({
+    ...source,
+    sourceId: `source-${await sha256Prefix(source.locator)}`,
+  })));
+  return {
+    anchorPrefix,
+    tasks: [],
+    sources: normalizedSources,
+    sourceState: "ready",
+  };
 }
 
 function safeIdentifier(value: string): string {
@@ -429,7 +540,7 @@ export function renderMarkdownDocument(
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/__([^_]+)__/g, "<strong>$1</strong>");
   html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  html = html.replace(/_([^_]+)_/g, "<em>$1</em>");
+  html = html.replace(/(?<![\w/])_([^_\n]+)_(?!\w)/g, "<em>$1</em>");
   html = html.replace(/~~([^~]+)~~/g, "<del>$1</del>");
   html = html.replace(
     /\[([^\]]+)\]\(([^)\s]+)\)/g,

@@ -66,6 +66,8 @@ import {
 import { appReducer, initialState } from "./state/appReducer";
 import type { ConnectionState, OutputPhase } from "./types";
 import {
+  hasEmbeddedMarkdownResearchSources,
+  inferMarkdownResearchContext,
   renderMarkdownDocument,
   researchSourceDate,
   researchSourceSite,
@@ -307,16 +309,65 @@ function ResearchCitationPanel({
 function MessageContent({
   text,
   research,
+  researchAnchorPrefix = "conversation-report",
   onResearchTaskSelect,
   onResearchCitationSelect,
 }: {
   text: string;
   research?: MarkdownResearchContext;
+  researchAnchorPrefix?: string;
   onResearchTaskSelect?(ordinal: number): void;
   onResearchCitationSelect?(selection: ResearchCitationSelection): void;
 }) {
   const [localCitation, setLocalCitation] = useState<ResearchCitationSelection | null>(null);
-  const rendered = renderMarkdownDocument(text, research);
+  const inferenceKey = `${researchAnchorPrefix}:${text}`;
+  const shouldInferResearch = !research && hasEmbeddedMarkdownResearchSources(text);
+  const [inferredResearch, setInferredResearch] = useState<{
+    key: string;
+    context: MarkdownResearchContext;
+  } | null>(null);
+  useEffect(() => {
+    if (!shouldInferResearch) {
+      setInferredResearch(null);
+      return;
+    }
+    let cancelled = false;
+    void inferMarkdownResearchContext(text, researchAnchorPrefix)
+      .then((context) => {
+        if (cancelled) return;
+        setInferredResearch({
+          key: inferenceKey,
+          context: context ?? {
+            anchorPrefix: researchAnchorPrefix,
+            tasks: [],
+            sources: [],
+            sourceState: "failed",
+          },
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setInferredResearch({
+            key: inferenceKey,
+            context: {
+              anchorPrefix: researchAnchorPrefix,
+              tasks: [],
+              sources: [],
+              sourceState: "failed",
+            },
+          });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [inferenceKey, researchAnchorPrefix, shouldInferResearch, text]);
+  const effectiveResearch = research ?? (
+    shouldInferResearch
+      ? inferredResearch?.key === inferenceKey
+        ? inferredResearch.context
+        : { anchorPrefix: researchAnchorPrefix, tasks: [], sources: [], sourceState: "loading" }
+      : undefined
+  );
+  const rendered = renderMarkdownDocument(text, effectiveResearch);
   const handleClick = useCallback(async (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     const taskButton = target.closest<HTMLButtonElement>(".research-task-reference[data-task-ordinal]");
@@ -326,7 +377,7 @@ function MessageContent({
       return;
     }
     const citationButton = target.closest<HTMLButtonElement>(".research-citation-button[data-source-indexes]");
-    if (citationButton && research) {
+    if (citationButton && effectiveResearch) {
       const sourceIndexes = (citationButton.dataset.sourceIndexes ?? "")
         .split(",")
         .map((value) => Number(value))
@@ -337,7 +388,7 @@ function MessageContent({
         .filter(Number.isFinite);
       const selection = {
         sources: sourceIndexes.flatMap((sourceIndex) => {
-          const source = research.sources[sourceIndex];
+          const source = effectiveResearch.sources[sourceIndex];
           return source ? [source] : [];
         }),
         numbers,
@@ -372,7 +423,7 @@ function MessageContent({
     } catch {
       // Clipboard access can be denied by the browser; leave the control retryable.
     }
-  }, [onResearchCitationSelect, onResearchTaskSelect, research]);
+  }, [effectiveResearch, onResearchCitationSelect, onResearchTaskSelect]);
 
   const content = (
     <div
@@ -3385,14 +3436,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     && researchReadingContext.missionId === conversationMission?.missionId
                     ? researchReadingContext
                     : undefined;
+                  const embeddedResearch = assistant && hasEmbeddedMarkdownResearchSources(turn.text);
                   const recommendation = recommendedQuestions?.turnId === turn.id
                     ? recommendedQuestions
                     : null;
                   return (
-                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}${research ? " research-report-message" : ""}`} key={turn.id}>
+                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}`} key={turn.id}>
                       <span className="message-role">{assistant ? "Haifa" : "你"}</span>
                       {turn.images?.length > 0 && <TurnImages images={turn.images} />}
-                      <MessageContent text={turn.text} research={research} onResearchTaskSelect={openResearchTask} /><time>{formatTime(turn.createdAt)}</time>
+                      <MessageContent text={turn.text} research={research} researchAnchorPrefix={`conversation-turn-${turn.id}`} onResearchTaskSelect={openResearchTask} /><time>{formatTime(turn.createdAt)}</time>
                       {assistant && (
                         <div className="message-actions">
                           <MessageCopyButton text={turn.text} />
