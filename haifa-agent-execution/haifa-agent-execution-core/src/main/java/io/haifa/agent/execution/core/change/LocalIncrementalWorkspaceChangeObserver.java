@@ -380,6 +380,10 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
         return new FileVersion(FileType.DIRECTORY, 0, "metadata:DIRECTORY:0");
     }
 
+    static String stableFileKey(Object fileKey) {
+        return fileKey == null ? null : fileKey.toString();
+    }
+
     private Path resolve(ProjectPath path) {
         Path value = root;
         for (String segment : path.segments()) value = value.resolve(segment);
@@ -506,13 +510,14 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
 
     private record CandidateBatch(Set<ProjectPath> paths, boolean overflow) {}
 
-    private record FileMetadata(FileType type, long size, FileTime modifiedAt, Object fileKey) {
+    private record FileMetadata(FileType type, long size, FileTime modifiedAt, String fileKey) {
         private static FileMetadata directory() {
             return new FileMetadata(FileType.DIRECTORY, 0, null, null);
         }
 
         private static FileMetadata from(FileType type, BasicFileAttributes attributes) {
-            return new FileMetadata(type, attributes.size(), attributes.lastModifiedTime(), attributes.fileKey());
+            return new FileMetadata(
+                    type, attributes.size(), attributes.lastModifiedTime(), stableFileKey(attributes.fileKey()));
         }
     }
 

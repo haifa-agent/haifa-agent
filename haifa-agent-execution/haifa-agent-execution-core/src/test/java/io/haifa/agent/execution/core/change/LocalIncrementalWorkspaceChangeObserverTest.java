@@ -148,7 +148,7 @@ class LocalIncrementalWorkspaceChangeObserverTest {
     }
 
     @Test
-    void unchangedWindowsStopRehashingAfterDelayedPlatformEventsSettle() throws Exception {
+    void unchangedSecondWindowDoesNotRehashAnUnchangedLargeFile() throws Exception {
         Path large = root.resolve("large.bin");
         Files.write(large, new byte[2 * 1024 * 1024]);
         WorkspaceId workspaceId = new WorkspaceId("incremental-hash-test");
@@ -165,15 +165,17 @@ class LocalIncrementalWorkspaceChangeObserverTest {
         int baselineHashes = hashes.get();
         var second = observer.begin(workspaceId);
         assertThat(second.complete()).isEmpty();
-        int settledHashes = hashes.get();
-        var third = observer.begin(workspaceId);
-        assertThat(third.complete()).isEmpty();
 
-        // macOS may deliver one registration-era candidate in either of the first two settled windows.
-        assertThat(baselineHashes).isBetween(1, 2);
-        assertThat(settledHashes).isBetween(baselineHashes, 2);
-        assertThat(hashes).hasValue(settledHashes);
+        assertThat(baselineHashes).isEqualTo(1);
+        assertThat(hashes).hasValue(baselineHashes);
         observer.close();
+    }
+
+    @Test
+    void opaqueFileKeysUseTheirStableRepresentation() {
+        assertThat(LocalIncrementalWorkspaceChangeObserver.stableFileKey(new OpaqueFileKey("same")))
+                .isEqualTo(LocalIncrementalWorkspaceChangeObserver.stableFileKey(new OpaqueFileKey("same")));
+        assertThat(LocalIncrementalWorkspaceChangeObserver.stableFileKey(null)).isNull();
     }
 
     @Test
@@ -199,5 +201,18 @@ class LocalIncrementalWorkspaceChangeObserverTest {
             Path file, BasicFileAttributes attributes) {
         return new io.haifa.agent.project.changeset.FileVersion(
                 FileType.FILE, attributes.size(), "test:" + file.getFileName() + ":" + attributes.size());
+    }
+
+    private static final class OpaqueFileKey {
+        private final String value;
+
+        private OpaqueFileKey(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public String toString() {
+            return value;
+        }
     }
 }
