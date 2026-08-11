@@ -491,6 +491,41 @@ describe("Personal Assistant application", () => {
     expect(await within(dialog).findByRole("button", { name: /已复制/ })).toBeTruthy();
   });
 
+  it("renders the current Standard Mission final result envelope", async () => {
+    const delivered: MissionSnapshot = {
+      ...mission,
+      state: "COMPLETED",
+      finalResult: JSON.stringify({
+        schemaVersion: "pa.mission-final-result/v1",
+        directAnswer: "存量电站提质改造具有投资价值，但需要核实电价和消纳风险。",
+        completionKind: "COMPLETE",
+        completedItems: ["梳理历史发展阶段", "分析当前运营情况"],
+        failedItems: [],
+        artifactRefs: [],
+        sourceRefs: ["景宁县国民经济和社会发展统计公报"],
+        unverifiedClaims: ["项目级收益率仍需尽调"],
+        residualRisks: ["电价市场化风险"],
+        unresolvedQuestions: ["外送通道扩容时间表"],
+      }),
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect(await within(dialog).findByText("Mission 最终报告 · 已完成")).toBeTruthy();
+    expect(within(dialog).getByText("存量电站提质改造具有投资价值，但需要核实电价和消纳风险。")).toBeTruthy();
+    expect(within(dialog).getByText("景宁县国民经济和社会发展统计公报")).toBeTruthy();
+    expect(within(dialog).getByText("项目级收益率仍需尽调")).toBeTruthy();
+    expect(within(dialog).queryByText("最终报告版本不受支持")).toBeNull();
+  });
+
   it("fails closed for an unknown research delivery version", async () => {
     const delivered: MissionSnapshot = {
       ...mission,

@@ -102,9 +102,10 @@ public final class PersonalApiDtos {
             Instant createdAt) {}
 
     /**
-     * Mission read model. {@code finalResult} remains an encoded compatibility envelope: historical research
-     * missions use {@code pa.research-final-result/v1}, while newly published research deliveries use
-     * {@code pa.research-delivery/v2} and reference the separate Markdown report Artifact.
+     * Mission read model. {@code finalResult} remains an encoded compatibility envelope: standard Missions use
+     * {@code pa.mission-final-result/v1}, historical research Missions use {@code pa.research-final-result/v1}, and
+     * newly published research deliveries use {@code pa.research-delivery/v2} with a separate Markdown report
+     * Artifact.
      */
     public record MissionSnapshot(
             String schemaVersion,

@@ -1254,6 +1254,7 @@ function parseMissionFinalResult(value: string | null): {
   qualityGate?: { passed?: boolean; failedChecks?: string[] };
   completedItems?: string[];
   failedItems?: string[];
+  sourceRefs?: string[];
   unverifiedClaims?: string[];
   residualRisks?: string[];
   unresolvedQuestions?: string[];
@@ -1265,7 +1266,11 @@ function parseMissionFinalResult(value: string | null): {
       ? parsed[field].filter((item): item is string => typeof item === "string")
       : [];
     const schemaVersion = typeof parsed.schemaVersion === "string" ? parsed.schemaVersion : undefined;
-    if (schemaVersion && !["pa.research-final-result/v1", "pa.research-delivery/v2"].includes(schemaVersion)) {
+    if (schemaVersion && ![
+      "pa.mission-final-result/v1",
+      "pa.research-final-result/v1",
+      "pa.research-delivery/v2",
+    ].includes(schemaVersion)) {
       return { schemaVersion, unsupportedVersion: true };
     }
     return {
@@ -1297,6 +1302,7 @@ function parseMissionFinalResult(value: string | null): {
         : undefined,
       completedItems: strings("completedItems"),
       failedItems: strings("failedItems"),
+      sourceRefs: strings("sourceRefs"),
       unverifiedClaims: strings("unverifiedClaims"),
       residualRisks: strings("residualRisks"),
       unresolvedQuestions: strings("unresolvedQuestions"),
@@ -1362,7 +1368,15 @@ function MissionFinalResult({
       {result.degraded && <p>下一步：查看已完成内容；如需重新调研，请按现有产品能力重新创建 Mission。</p>}
     </section>;
   }
-  return <section className="research-result"><h4>历史最终报告{result.completionKind && ` · ${result.completionKind}`}</h4>{result.directAnswer && <p className="research-answer">{result.directAnswer}</p>}{(result.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</section>;
+  const resultTitle = result.schemaVersion === "pa.mission-final-result/v1"
+    ? "Mission 最终报告"
+    : "历史最终报告";
+  const completionLabel = result.completionKind === "COMPLETE"
+    ? "已完成"
+    : result.completionKind === "PARTIAL"
+      ? "部分完成"
+      : result.completionKind;
+  return <section className="research-result"><h4>{resultTitle}{completionLabel && ` · ${completionLabel}`}</h4>{result.directAnswer && <p className="research-answer">{result.directAnswer}</p>}{(result.completedItems?.length ?? 0) > 0 && <><h5>完成项</h5><ul>{result.completedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.failedItems?.length ?? 0) > 0 && <><h5>未完成项</h5><ul>{result.failedItems!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.sourceRefs?.length ?? 0) > 0 && <><h5>参考来源</h5><ul>{result.sourceRefs!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unverifiedClaims?.length ?? 0) > 0 && <><h5>未验证结论</h5><ul>{result.unverifiedClaims!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.residualRisks?.length ?? 0) > 0 && <><h5>剩余风险</h5><ul>{result.residualRisks!.map((item) => <li key={item}>{item}</li>)}</ul></>}{(result.unresolvedQuestions?.length ?? 0) > 0 && <><h5>未决问题</h5><ul>{result.unresolvedQuestions!.map((item) => <li key={item}>{item}</li>)}</ul></>}</section>;
 }
 
 function MissionDialog({
