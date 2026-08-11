@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelApiBindingDefinition;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -13,7 +15,6 @@ import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
-import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.tool.JavaTool;
@@ -146,12 +147,15 @@ public class HaifaAgentStarterBuilderTest {
                 "starter-test",
                 "test-adapter",
                 "1.0.0",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                ModelApiBindingDefinition.STANDARD_DIALECT,
                 URI.create("https://model.invalid"),
                 new CredentialRef("env://TEST_KEY"),
+                false,
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                 8_192,
                 1_024,
-                OpenAiCompatibleDialects.standardOpenAiChatCompletionsOptions(),
+                Map.of(),
                 Map.of());
     }
 

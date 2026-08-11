@@ -7,6 +7,8 @@ import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.ModelAdapterCoordinate;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
@@ -168,8 +170,11 @@ public final class HaifaAgentStarterBuilder {
                         snapshot.configurationDigest(),
                         ProductProviderSuitability.DEVELOPMENT,
                         "Deterministic Starter model"),
-                Objects.requireNonNull(model, "model must not be null"),
-                Objects.requireNonNull(snapshot, "snapshot must not be null"));
+                Map.of(
+                        ModelAdapterCoordinate.from(Objects.requireNonNull(snapshot, "snapshot must not be null")),
+                        Objects.requireNonNull(model, "model must not be null")),
+                snapshot,
+                Map.of(snapshot.modelId().value(), snapshot));
         modelOverride = new ModelBundle(contribution, snapshot);
         return this;
     }
@@ -187,12 +192,15 @@ public final class HaifaAgentStarterBuilder {
                 MODEL_ID,
                 ADAPTER_TYPE,
                 VERSION,
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.DEEPSEEK,
                 ENDPOINT,
                 new CredentialRef("env://" + credentialEnvironmentVariable),
+                false,
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
                 1_048_576,
                 8_192,
-                OpenAiCompatibleDialects.deepSeekOptions(),
+                Map.of(),
                 Map.of("thinking", "disabled"));
         AgentChatModel model = new OpenAiCompatibleChatModel(
                 ADAPTER_TYPE,
@@ -212,8 +220,9 @@ public final class HaifaAgentStarterBuilder {
                         snapshot.configurationDigest(),
                         ProductProviderSuitability.PRODUCTION,
                         "DeepSeek V4 Flash with Thinking disabled"),
-                model,
-                snapshot);
+                Map.of(ModelAdapterCoordinate.from(snapshot), model),
+                snapshot,
+                Map.of(snapshot.modelId().value(), snapshot));
         return new ModelBundle(contribution, snapshot);
     }
 
