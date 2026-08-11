@@ -5,7 +5,52 @@ type ProtectedFragment = {
   html: string;
 };
 
+export type MarkdownResearchTask = {
+  ordinal: number;
+  taskId: string;
+  title: string;
+};
+
+export type MarkdownResearchSource = {
+  sourceId: string;
+  title: string;
+  locator: string;
+  normalizedLocator?: string;
+  publisher?: string;
+  publishedAt?: string | null;
+  fetchedAt?: string | null;
+  status?: string;
+};
+
+export type MarkdownResearchContext = {
+  anchorPrefix: string;
+  tasks: MarkdownResearchTask[];
+  sources: MarkdownResearchSource[];
+  sourceState?: "loading" | "ready" | "failed";
+};
+
+export type MarkdownSection = {
+  anchorId: string;
+  key: string;
+  label: string;
+};
+
+export type MarkdownRenderResult = {
+  enhanced: boolean;
+  html: string;
+  sections: MarkdownSection[];
+};
+
 const protectedTokenPattern = /\uE000HAIFA(\d+)\uE001/g;
+const researchSectionLabels: Record<string, string> = {
+  "executive-summary": "执行摘要",
+  "scope-method": "范围与方法",
+  "task-findings": "分任务研究发现",
+  synthesis: "综合分析",
+  conclusions: "结论与建议",
+  "risks-unknowns": "风险与待核实事项",
+  sources: "引用来源",
+};
 
 function escapeHtml(raw: string): string {
   return raw
@@ -114,6 +159,93 @@ function isSafeHref(href: string): boolean {
   return true;
 }
 
+function safeIdentifier(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "report";
+}
+
+export function researchSourceStatus(status: string | undefined): string {
+  return {
+    FETCHED: "已获取，内容待核验",
+    VERIFIED: "来源信息已核验",
+    UNKNOWN: "待核验",
+    FAILED: "获取失败",
+    BLOCKED: "访问受限",
+    CONFLICTING: "内容存在冲突",
+  }[status?.toUpperCase() ?? ""] ?? "状态待确认";
+}
+
+export function researchSourceSite(source: MarkdownResearchSource): string {
+  try {
+    return new URL(source.normalizedLocator || source.locator).hostname.replace(/^www\./, "");
+  } catch {
+    return "站点未知";
+  }
+}
+
+export function researchSourceDate(source: MarkdownResearchSource): string {
+  const value = source.publishedAt || source.fetchedAt;
+  if (!value) return "日期未提供";
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+  return match?.[1] ?? "日期格式不可用";
+}
+
+export function researchSourceTier(source: MarkdownResearchSource): {
+  key: "official" | "primary" | "web";
+  label: string;
+  note: string;
+} {
+  const site = researchSourceSite(source).toLowerCase();
+  const publisher = source.publisher?.trim() ?? "";
+  if (/\.(?:gov|gov\.cn)$/.test(site)
+    || /(?:人民政府|政府|委员会|厅|局|部|法院|检察院|监管)/.test(publisher)) {
+    return { key: "official", label: "政府或监管来源", note: "来源身份较强，仍需核对正文是否直接支持当前结论。" };
+  }
+  if (publisher) {
+    return { key: "primary", label: "已标注发布方", note: "已识别发布主体，尚未独立确认其是否为事件或数据的一手来源。" };
+  }
+  return { key: "web", label: "一般网页来源", note: "发布主体信息不足，建议结合更权威来源交叉核验。" };
+}
+
+function renderResearchTask(task: MarkdownResearchTask | undefined): string {
+  if (!task) {
+    return '<span class="research-task-reference unavailable">研究任务 · 详情不可用</span>';
+  }
+  const ordinal = String(task.ordinal).padStart(2, "0");
+  return `<button type="button" class="research-task-reference" data-task-ordinal="${task.ordinal}" aria-label="打开研究任务 ${ordinal} 详情"><span>研究任务 ${ordinal}</span><strong>${escapeHtml(task.title)}</strong><em>查看任务详情</em></button>`;
+}
+
+function researchSourceTooltip(
+  number: number,
+  source: MarkdownResearchSource,
+): string {
+  const publisher = source.publisher?.trim() || "未提供";
+  const locator = source.normalizedLocator || source.locator;
+  return [
+    `[${number}] ${source.title || "未命名来源"}`,
+    `发布方：${publisher}`,
+    `站点：${researchSourceSite(source)}`,
+    `日期：${researchSourceDate(source)}`,
+    `验证状态：${researchSourceStatus(source.status)}`,
+    `URL：${locator}`,
+  ].join("\n");
+}
+
+function renderResearchCitation(
+  matched: Array<{ number: number; sourceIndex: number; source: MarkdownResearchSource }>,
+  unavailable: boolean,
+  unavailableLabel: string,
+): string {
+  if (matched.length === 0) {
+    return `<span class="research-citation-unavailable">${escapeHtml(unavailableLabel)}</span>`;
+  }
+  const numberLabel = matched.map((entry) => entry.number).join(", ");
+  const visibleLabel = unavailable ? `${numberLabel}, 来源不可用` : numberLabel;
+  const tooltip = matched.map((entry) => researchSourceTooltip(entry.number, entry.source)).join("\n\n");
+  const sourceIndexes = matched.map((entry) => entry.sourceIndex).join(",");
+  const sourceNumbers = matched.map((entry) => entry.number).join(",");
+  return `<span class="research-citation"><button type="button" class="research-citation-button" data-source-indexes="${escapeHtml(sourceIndexes)}" data-source-numbers="${escapeHtml(sourceNumbers)}" data-source-unavailable="${unavailable ? "true" : "false"}" title="${escapeHtml(tooltip)}" aria-label="查看引用来源 ${escapeHtml(visibleLabel)}"><sup>[${escapeHtml(visibleLabel)}]</sup></button></span>`;
+}
+
 function renderParagraphs(input: string): string {
   const lines = input.split("\n");
   const output: string[] = [];
@@ -141,10 +273,15 @@ function renderParagraphs(input: string): string {
   return output.join("\n");
 }
 
-export function renderMarkdown(text: string): string {
-  if (!text) return "";
+export function renderMarkdownDocument(
+  text: string,
+  research?: MarkdownResearchContext,
+): MarkdownRenderResult {
+  if (!text) return { enhanced: false, html: "", sections: [] };
 
   const protectedFragments: ProtectedFragment[] = [];
+  const sections: MarkdownSection[] = [];
+  let enhanced = false;
   const protect = (html: string, block: boolean): string => {
     const index = protectedFragments.push({ block, html }) - 1;
     const token = `\uE000HAIFA${index}\uE001`;
@@ -167,6 +304,82 @@ export function renderMarkdown(text: string): string {
   processed = processed.replace(/`([^`\n]+)`/g, (_match, code: string) => (
     protect(`<code>${escapeHtml(code)}</code>`, false)
   ));
+
+  if (research) {
+    const taskById = new Map(research.tasks.map((task) => [task.taskId, task]));
+    const sourceById = new Map(research.sources.map((source) => [source.sourceId, source]));
+    const sourceNumbers = new Map<string, number>();
+    const anchorPrefix = safeIdentifier(research.anchorPrefix);
+
+    processed = processed.replace(
+      /<!--\s*haifa-section:\s*([a-z0-9_-]+)\s*-->/gi,
+      (_match, sectionKey: string) => {
+        const key = sectionKey.toLowerCase();
+        const anchorId = `${anchorPrefix}-section-${safeIdentifier(key)}`;
+        if (!sections.some((section) => section.anchorId === anchorId)) {
+          sections.push({
+            anchorId,
+            key,
+            label: researchSectionLabels[key] ?? key.replace(/[-_]+/g, " "),
+          });
+        }
+        enhanced = true;
+        return protect(`<span id="${anchorId}" class="research-section-anchor" aria-hidden="true"></span>`, true);
+      },
+    );
+    processed = processed.replace(
+      /<!--\s*haifa-task:\s*([a-z0-9_-]+)\s*-->/gi,
+      (_match, taskId: string) => {
+        enhanced = true;
+        return protect(renderResearchTask(taskById.get(taskId)), true);
+      },
+    );
+    processed = processed.replace(
+      /(?:\[\[source-[A-Za-z0-9_-]+\]\][ \t]*)+/g,
+      (group: string) => {
+        const sourceIds = Array.from(group.matchAll(/\[\[(source-[A-Za-z0-9_-]+)\]\]/g))
+          .map((match) => match[1]);
+        const uniqueSourceIds = sourceIds.filter((sourceId, index) => sourceIds.indexOf(sourceId) === index);
+        const matched: Array<{ number: number; sourceIndex: number; source: MarkdownResearchSource }> = [];
+        let unavailable = false;
+        for (const sourceId of uniqueSourceIds) {
+          const source = sourceById.get(sourceId);
+          if (!source) {
+            unavailable = true;
+            continue;
+          }
+          let number = sourceNumbers.get(sourceId);
+          if (number === undefined) {
+            number = sourceNumbers.size + 1;
+            sourceNumbers.set(sourceId, number);
+          }
+          matched.push({ number, sourceIndex: research.sources.indexOf(source), source });
+        }
+        enhanced = true;
+        const unavailableLabel = research.sourceState === "loading" ? "来源加载中" : "来源不可用";
+        return protect(renderResearchCitation(
+          matched,
+          unavailable,
+          unavailableLabel,
+        ), false);
+      },
+    );
+
+    processed = processed.replace(
+      /\[unverified(?:\s*:[^\]\r\n]+)?\]/gi,
+      () => {
+        enhanced = true;
+        return protect(
+          '<span class="research-unverified" title="该结论尚未完成证据核验">待核实</span>',
+          false,
+        );
+      },
+    );
+  }
+
+  // Hide any remaining HTML comments while preserving comment-like text inside
+  // fenced and inline code, which has already been protected above.
+  processed = processed.replace(/<!--[\s\S]*?-->/g, "");
 
   const protectMath = (
     match: string,
@@ -251,8 +464,16 @@ export function renderMarkdown(text: string): string {
     },
   );
 
-  return renderParagraphs(html).replace(
+  const rendered = renderParagraphs(html).replace(
     /<(?:div|span) data-markdown-protected="(\d+)"><\/(?:div|span)>/g,
     (token, indexText: string) => protectedFragments[Number(indexText)]?.html ?? token,
   );
+  return { enhanced, html: rendered, sections };
+}
+
+export function renderMarkdown(
+  text: string,
+  research?: MarkdownResearchContext,
+): string {
+  return renderMarkdownDocument(text, research).html;
 }
