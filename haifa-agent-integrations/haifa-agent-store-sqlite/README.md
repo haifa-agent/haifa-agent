@@ -1,5 +1,10 @@
 # Haifa Agent SQLite Runtime Store
 
+`SqliteSdkProductContributions` 打开一个 SQLite Foundation，并共同提供 Persistence、Conversation、
+Memory、Policy 与 Artifact。应用应在自己的装配层选择这些 Contribution；仓库不会为某个 Store 发布
+独立生产 Starter。单机持久化参考代码见 `haifa-agent-sdk-example` 的
+`SqliteDurableReferenceAssemblyExample`；示例模块不是发布制品或 Stable API。
+
 ## V5 SDK Conversation
 
 Runtime Migration V5 新增产品中立的 `sdk_conversation` 与 `sdk_conversation_command`：

@@ -59,6 +59,22 @@ public class HaifaAgentAutoConfigurationTest {
     }
 
     @Test
+    void appliesOrderedStarterCustomizersBeforeBuildingTheAgent() {
+        contextRunner
+                .withBean(
+                        HaifaAgentStarterCustomizer.class,
+                        () -> builder -> builder.instructions("Customized by the trusted Spring host."))
+                .run(context -> {
+                    assertThat(context).hasSingleBean(HaifaAgent.class);
+                    assertThat(context.getBean(HaifaAgent.class)
+                                    .assembly()
+                                    .profile()
+                                    .instructions())
+                            .isEqualTo("Customized by the trusted Spring host.");
+                });
+    }
+
+    @Test
     void backsOffWhenTheApplicationProvidesAnAgent() {
         try (var customAgent = HaifaAgentStarter.builder()
                 .credentialEnvironmentVariable("PATH")

@@ -36,6 +36,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -51,7 +52,7 @@ public final class HaifaAgentStarterBuilder {
     private static final String VERSION = "1.0.0";
     private static final String ADAPTER_TYPE = "openai-compatible";
     private static final ProductContributionCoordinate MODEL_COORDINATE =
-            new ProductContributionCoordinate("starter.model.deepseek-v4-flash", VERSION);
+            new ProductContributionCoordinate("starter.model.catalog", VERSION);
     private static final ProductContributionCoordinate PERSISTENCE_COORDINATE =
             new ProductContributionCoordinate("starter.persistence.memory", VERSION);
     private static final ProductContributionCoordinate CONVERSATION_COORDINATE =
@@ -63,7 +64,8 @@ public final class HaifaAgentStarterBuilder {
     private Function<String, String> environment = System::getenv;
     private Duration connectTimeout = Duration.ofSeconds(10);
     private final List<JavaTool<?, ?>> tools = new ArrayList<>();
-    private ModelBundle modelOverride;
+    private final Map<String, ModelRegistration> models = new LinkedHashMap<>();
+    private String defaultModelId;
 
     HaifaAgentStarterBuilder() {}
 
@@ -141,12 +143,42 @@ public final class HaifaAgentStarterBuilder {
     }
 
     /**
+     * Registers one trusted model adapter and its frozen snapshot. Registering any custom model
+     * replaces the built-in DeepSeek catalog. Callers select non-default models by passing the
+     * model ID as the trusted conversation {@code runProfileId}.
+     *
+     * @param model model adapter
+     * @param snapshot frozen model snapshot
+     * @return this builder
+     */
+    public HaifaAgentStarterBuilder model(AgentChatModel model, ResolvedModelSnapshot snapshot) {
+        Objects.requireNonNull(model, "model must not be null");
+        Objects.requireNonNull(snapshot, "snapshot must not be null");
+        String modelId = snapshot.modelId().value();
+        if (models.putIfAbsent(modelId, new ModelRegistration(model, snapshot)) != null) {
+            throw new IllegalArgumentException("model IDs must be unique");
+        }
+        return this;
+    }
+
+    /**
+     * Selects the default from the explicitly registered model catalog.
+     *
+     * @param modelId internal model ID
+     * @return this builder
+     */
+    public HaifaAgentStarterBuilder defaultModel(String modelId) {
+        defaultModelId = requireText(modelId, "modelId");
+        return this;
+    }
+
+    /**
      * Builds a process-local Agent. The configured API key is checked but never retained.
      *
      * @return the assembled Agent
      */
     public HaifaAgent build() {
-        ModelBundle model = modelOverride == null ? deepSeekModel() : modelOverride;
+        ModelBundle model = models.isEmpty() ? deepSeekModel() : configuredModels();
         ProductProfile profile = profile(model.snapshot());
         var builder = HaifaAgents.builder(profile)
                 .callerProvider(callers)
@@ -154,28 +186,15 @@ public final class HaifaAgentStarterBuilder {
                 .contribute(persistenceContribution())
                 .contribute(conversationContribution())
                 .tools(tools);
+        model.snapshots().values().stream()
+                .filter(snapshot -> !snapshot.modelId().equals(model.snapshot().modelId()))
+                .map(this::runProfile)
+                .forEach(builder::runProfile);
         return builder.build();
     }
 
     HaifaAgentStarterBuilder environment(Function<String, String> value) {
         environment = Objects.requireNonNull(value, "value must not be null");
-        return this;
-    }
-
-    HaifaAgentStarterBuilder model(AgentChatModel model, ResolvedModelSnapshot snapshot) {
-        ModelContribution contribution = new ModelContribution(
-                metadata(
-                        MODEL_COORDINATE,
-                        ProductCapabilities.MODEL,
-                        snapshot.configurationDigest(),
-                        ProductProviderSuitability.DEVELOPMENT,
-                        "Deterministic Starter model"),
-                Map.of(
-                        ModelAdapterCoordinate.from(Objects.requireNonNull(snapshot, "snapshot must not be null")),
-                        Objects.requireNonNull(model, "model must not be null")),
-                snapshot,
-                Map.of(snapshot.modelId().value(), snapshot));
-        modelOverride = new ModelBundle(contribution, snapshot);
         return this;
     }
 
@@ -223,18 +242,45 @@ public final class HaifaAgentStarterBuilder {
                 Map.of(ModelAdapterCoordinate.from(snapshot), model),
                 snapshot,
                 Map.of(snapshot.modelId().value(), snapshot));
-        return new ModelBundle(contribution, snapshot);
+        return new ModelBundle(contribution, snapshot, Map.of(snapshot.modelId().value(), snapshot));
+    }
+
+    private ModelBundle configuredModels() {
+        String selectedModelId =
+                defaultModelId == null ? models.keySet().iterator().next() : defaultModelId;
+        ModelRegistration selected = models.get(selectedModelId);
+        if (selected == null) {
+            throw new IllegalArgumentException("default model must be present in the registered model catalog");
+        }
+        Map<ModelAdapterCoordinate, AgentChatModel> adapters = new LinkedHashMap<>();
+        Map<String, ResolvedModelSnapshot> snapshots = new LinkedHashMap<>();
+        models.forEach((modelId, registration) -> {
+            ModelAdapterCoordinate coordinate = ModelAdapterCoordinate.from(registration.snapshot());
+            AgentChatModel existing = adapters.putIfAbsent(coordinate, registration.model());
+            if (existing != null && existing != registration.model()) {
+                throw new IllegalArgumentException(
+                        "one model adapter coordinate cannot resolve to multiple adapter instances");
+            }
+            snapshots.put(modelId, registration.snapshot());
+        });
+        ModelContribution contribution = new ModelContribution(
+                metadata(
+                        MODEL_COORDINATE,
+                        ProductCapabilities.MODEL,
+                        selected.snapshot().configurationDigest(),
+                        ProductProviderSuitability.DEVELOPMENT,
+                        "Explicit Starter model catalog"),
+                adapters,
+                selected.snapshot(),
+                snapshots);
+        return new ModelBundle(contribution, selected.snapshot(), Map.copyOf(snapshots));
     }
 
     private ProductProfile profile(ResolvedModelSnapshot snapshot) {
         Map<io.haifa.agent.sdk.product.ProductCapabilityId, ProductCapabilityRequirement> requirements = Map.of(
                 ProductCapabilities.MODEL,
                 ProductCapabilityRequirement.required(
-                        ProductCapabilities.MODEL,
-                        Set.of(MODEL_COORDINATE),
-                        modelOverride == null
-                                ? ProductProviderSuitability.PRODUCTION
-                                : ProductProviderSuitability.DEVELOPMENT),
+                        ProductCapabilities.MODEL, Set.of(MODEL_COORDINATE), ProductProviderSuitability.DEVELOPMENT),
                 ProductCapabilities.PERSISTENCE,
                 ProductCapabilityRequirement.required(
                         ProductCapabilities.PERSISTENCE,
@@ -259,6 +305,17 @@ public final class HaifaAgentStarterBuilder {
                 Set.of(),
                 Set.of(),
                 Set.of());
+    }
+
+    private io.haifa.agent.sdk.product.ProductRunProfile runProfile(ResolvedModelSnapshot snapshot) {
+        return new io.haifa.agent.sdk.product.ProductRunProfile(
+                snapshot.modelId().value(),
+                VERSION,
+                snapshot.modelId().value(),
+                io.haifa.agent.core.run.AgentRunType.CHAT,
+                new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
+                new AgentRunLimits(16, 0, 1, 120_000, 60_000),
+                Map.of());
     }
 
     private static io.haifa.agent.sdk.product.ProductContribution persistenceContribution() {
@@ -295,5 +352,10 @@ public final class HaifaAgentStarterBuilder {
         return normalized;
     }
 
-    private record ModelBundle(ModelContribution contribution, ResolvedModelSnapshot snapshot) {}
+    private record ModelRegistration(AgentChatModel model, ResolvedModelSnapshot snapshot) {}
+
+    private record ModelBundle(
+            ModelContribution contribution,
+            ResolvedModelSnapshot snapshot,
+            Map<String, ResolvedModelSnapshot> snapshots) {}
 }

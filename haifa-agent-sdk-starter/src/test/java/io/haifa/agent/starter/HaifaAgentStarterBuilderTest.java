@@ -25,6 +25,7 @@ import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -86,6 +87,42 @@ public class HaifaAgentStarterBuilderTest {
     }
 
     @Test
+    void registersMultipleProvidersAndSelectsThemByTrustedRunProfile() throws Exception {
+        var first = fixedModel("first-provider");
+        var second = fixedModel("second-provider");
+        try (var agent = HaifaAgentStarter.builder()
+                .model(first, testSnapshot("first-provider", "first-model", "first-adapter"))
+                .model(second, testSnapshot("second-provider", "second-model", "second-adapter"))
+                .defaultModel("first-model")
+                .build()) {
+            var defaultConversation = agent.conversations()
+                    .start(new StartConversationCommand("multi-1", "Default", "Use the default model."));
+            var selectedConversation = agent.conversations()
+                    .start(new StartConversationCommand(
+                            "multi-2", "Selected", "Use the selected model.", Optional.of("second-model")));
+
+            assertThat(agent.runs()
+                            .await(defaultConversation.activeRunId().orElseThrow())
+                            .output())
+                    .contains("first-provider");
+            assertThat(agent.runs()
+                            .await(selectedConversation.activeRunId().orElseThrow())
+                            .output())
+                    .contains("second-provider");
+        }
+    }
+
+    @Test
+    void rejectsAnUnknownDefaultModel() {
+        assertThatThrownBy(() -> HaifaAgentStarter.builder()
+                        .model(fixedModel("first"), testSnapshot("first", "first-model", "first-adapter"))
+                        .defaultModel("missing")
+                        .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("default model");
+    }
+
+    @Test
     void runsTypedJavaToolThroughTheStarterRuntimePipeline() throws Exception {
         AtomicInteger modelCalls = new AtomicInteger();
         AtomicReference<WeatherRequest> invoked = new AtomicReference<>();
@@ -139,13 +176,17 @@ public class HaifaAgentStarterBuilderTest {
     }
 
     private static ResolvedModelSnapshot testSnapshot() {
+        return testSnapshot("test", "starter-test", "test-adapter");
+    }
+
+    private static ResolvedModelSnapshot testSnapshot(String providerId, String modelId, String adapterType) {
         return ResolvedModelSnapshot.create(
-                new ModelProviderId("test"),
+                new ModelProviderId(providerId),
                 "1.0.0",
-                new ModelDefinitionId("starter-test"),
+                new ModelDefinitionId(modelId),
                 "1.0.0",
-                "starter-test",
-                "test-adapter",
+                modelId,
+                adapterType,
                 "1.0.0",
                 ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
                 ModelApiBindingDefinition.STANDARD_DIALECT,
@@ -156,6 +197,18 @@ public class HaifaAgentStarterBuilderTest {
                 8_192,
                 1_024,
                 Map.of(),
+                Map.of());
+    }
+
+    private static io.haifa.agent.model.api.AgentChatModel fixedModel(String answer) {
+        return request -> new AgentChatResponse(
+                answer,
+                request.model().providerModelId(),
+                answer,
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(1, 1),
+                "",
                 Map.of());
     }
 

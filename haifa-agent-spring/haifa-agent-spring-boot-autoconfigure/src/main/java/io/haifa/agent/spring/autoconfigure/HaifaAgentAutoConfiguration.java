@@ -26,7 +26,8 @@ public class HaifaAgentAutoConfiguration {
     HaifaAgent haifaAgent(
             HaifaAgentProperties properties,
             ObjectProvider<JavaTool<?, ?>> tools,
-            ObjectProvider<SdkCallerProvider> callerProviders) {
+            ObjectProvider<SdkCallerProvider> callerProviders,
+            ObjectProvider<HaifaAgentStarterCustomizer> customizers) {
         String environmentVariable = properties.getModel().getCredentialEnvironmentVariable();
         try {
             var builder = HaifaAgentStarter.builder()
@@ -37,6 +38,7 @@ public class HaifaAgentAutoConfiguration {
             if (instructions != null) {
                 builder.instructions(instructions);
             }
+            customizers.orderedStream().forEach(customizer -> customizer.customize(builder));
             tools.orderedStream().forEach(builder::tool);
             return builder.build();
         } catch (RuntimeException exception) {

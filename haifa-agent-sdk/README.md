@@ -151,6 +151,6 @@ Core 或 Provider 异常。同步请求失败属于 `RuntimeApiErrorCode`，异�
 - `HaifaAgent.memories()` 暴露受 Product Profile、可信 `SdkCaller` 与权限约束的产品级
   propose/revise/approve/reject/invalidate/list API；调用命令不能注入 Tenant、Principal 或 Reviewer。
 - `HaifaAgent.memory()` 与 `HaifaAgent.artifacts()` 只在 Profile 选中了对应 typed Contribution
-  时返回应用服务；Memory 的生产 SQLite Provider 已由 Phase 2 提供，Artifact 生产 Provider 仍延期。
+  时返回应用服务；SQLite Product Contributions 已提供 Memory 与 Artifact 的单机持久化实现基线。
 
 当前开发范围由 `docs/20-agent-sdk-product-session-memory-foundation.md` 定义。

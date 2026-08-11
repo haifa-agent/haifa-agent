@@ -4,6 +4,10 @@
 `DEEPSEEK_API_KEY`、进程内 Runtime Persistence 和 Conversation Store，不启用文件、Shell、Git、MCP、
 Web、Memory、Artifact 或 Execution。
 
+可信宿主可以通过 `model(adapter, snapshot)` 注册多个 Provider/模型，并通过 `defaultModel(modelId)`
+选择默认模型。自定义目录会替代内置 DeepSeek 目录；Conversation 命令使用已注册 model ID 作为可信
+`runProfileId` 选择后续 Run，不能从 Prompt 注入 endpoint 或 Credential。
+
 ```java
 import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.sdk.api.HaifaAgent;

@@ -1,0 +1,21 @@
+plugins {
+    id "java"
+}
+
+group = "io.haifa.smoke"
+version = "1.0.0"
+
+repositories {
+    mavenLocal()
+}
+
+dependencies {
+    implementation platform("io.haifa:haifa-agent-bom:0.1.0-SNAPSHOT")
+    implementation "io.haifa:haifa-agent-sdk-starter"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
