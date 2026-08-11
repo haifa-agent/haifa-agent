@@ -71,7 +71,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 先使用脚本自身的停止功能关闭旧环境：
 
 ```powershell
-& .\scripts\start-real-environment.ps1 -Stop
+& .\scripts\start-real-environment.ps1 --stop
 ```
 
 停止前，脚本会同时核对 `last-start.json` 记录的 PID、端口当前监听 PID、进程名和
@@ -80,38 +80,38 @@ Set-ExecutionPolicy -Scope Process Bypass
 需要只查看将要停止的进程时：
 
 ```powershell
-& .\scripts\start-real-environment.ps1 -Stop -WhatIf
+& .\scripts\start-real-environment.ps1 --stop --dry-run
 ```
 
 状态文件缺失、记录 PID 已过期或进程身份校验无法通过时，可按三个固定端口的当前监听
 进程显式强制停止：
 
 ```powershell
-& .\scripts\start-real-environment.ps1 -Stop -Force
+& .\scripts\start-real-environment.ps1 --stop --force
 ```
 
-`-Force` 只允许与 `-Stop` 一起使用。它会把状态或身份不一致降级为警告，并强制结束
+`--force` 只允许与 `--stop` 一起使用。它会把状态或身份不一致降级为警告，并强制结束
 当前监听 `20000`、`20001`、`20002` 的进程，因此可能终止占用这些端口的非目标程序。
-需要先核对强制停止目标时，可使用 `-Stop -Force -WhatIf`。
+需要先核对强制停止目标时，可使用 `--stop --force --dry-run`。
 
 确认 20000、20001、20002 均已释放后，再执行：
 
 ```powershell
-& .\scripts\start-real-environment.ps1 -Rebuild
+& .\scripts\start-real-environment.ps1 --rebuild
 ```
 
-`-Rebuild` 会重新构建后端和前端。为了避免 Windows 上正在运行的 JAR 文件锁和
+`--rebuild` 会重新构建后端和前端。为了避免 Windows 上正在运行的 JAR 文件锁和
 旧页面产物混用，只要三个端口中任意一个仍被占用，重建就会拒绝执行。
 
 需要使用非默认 Key 或 MCP 路径时：
 
 ```powershell
 & .\scripts\start-real-environment.ps1 `
-  -DeepSeekKeyFile 'D:\secure\deepseek.txt' `
-  -AliyunIqsKeyFile 'D:\secure\aliyun-iqs.txt' `
-  -ContinuationKeyFile 'D:\secure\personal-continuation.txt' `
-  -PersonalSkillRoot 'D:\agents\hermes-agent\optional-skills\finance' `
-  -UtilityMcpDirectory 'D:\src\haifa-ai-utility-mcp-server'
+  --deepseek-key-file 'D:\secure\deepseek.txt' `
+  --aliyun-iqs-key-file 'D:\secure\aliyun-iqs.txt' `
+  --continuation-key-file 'D:\secure\personal-continuation.txt' `
+  --personal-skill-root 'D:\agents\hermes-agent\optional-skills\finance' `
+  --utility-mcp-directory 'D:\src\haifa-ai-utility-mcp-server'
 ```
 
 Continuation Key 文件必须长期保留。删除或更换它会使旧的加密 continuation token
@@ -178,7 +178,7 @@ D:\workspace\haifa-agent\local-tmp\personal-assistant-real\logs\
 正常停止直接使用启动脚本：
 
 ```powershell
-& .\scripts\start-real-environment.ps1 -Stop
+& .\scripts\start-real-environment.ps1 --stop
 ```
 
 停止结果写入：

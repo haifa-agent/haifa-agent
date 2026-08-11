@@ -164,8 +164,8 @@ class RealEnvironmentTest(unittest.TestCase):
         message = str(failure.exception)
 
         self.assertIn("Stop the running environment first, then rebuild", message)
-        self.assertIn(r".\scripts\start-real-environment.ps1 -Stop", message)
-        self.assertIn(r".\scripts\start-real-environment.ps1 -Rebuild", message)
+        self.assertIn(r".\scripts\start-real-environment.ps1 --stop", message)
+        self.assertIn(r".\scripts\start-real-environment.ps1 --rebuild", message)
 
     def test_backend_build_uses_the_repository_unit_test_skip_property(self) -> None:
         self.assertEqual(

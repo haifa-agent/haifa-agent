@@ -125,6 +125,9 @@ testing 位于 Reactor 末端，可按测试需要依赖产品模块；产品模
 ## 修改与测试工作流
 
 - 优先做满足需求的最小变更；不要顺带重命名、重排包结构或扩大公共 API。
+- 编写脚本工具时，公共业务逻辑必须使用 Python，入口同时提供 `.ps1` 与 `.sh` 薄包装并原样透传参数；
+  两个入口必须统一使用 Unix 风格 CLI，包括小写位置动作和 `--kebab-case` 长参数，不得为
+  PowerShell 单独设计 `-Action` 一类参数。
 - 修改公共行为时补充相邻单元测试；修改依赖边界时补充或更新 ArchUnit/Maven Enforcer 约束。
 - 测试命名遵循现有 Maven 约定：Surefire 执行 `*Test.java`、`*ContractTest.java`；Failsafe 执行 `*IT.java`、`*LiveIT.java`、`*E2E.java`。
 - 先运行受影响模块，再运行与 CI 一致的全仓验证。

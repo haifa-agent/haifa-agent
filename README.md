@@ -240,17 +240,17 @@ java -jar ./haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.
 Windows PowerShell：
 
 ```powershell
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L1 -MavenArguments @( `
-  '-pl', ':haifa-agent-runtime-core', '-am', `
-  '-Dtest=RuntimeCoreTest', '-Dsurefire.failIfNoSpecifiedTests=false', 'test')
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L2 -MavenArguments @( `
-  '-pl', ':haifa-agent-runtime-core', '-am', 'test')
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L2 -MavenArguments @('test')
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L0 -MavenArguments @('spotless:apply')
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @('-Pci-fast', 'clean', 'verify')
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @('-Pci-integration-only', 'verify')
-.\build-support\scripts\invoke-haifa-maven.ps1 -Layer L3 -MavenArguments @( `
-  '-pl', ':haifa-agent-cli', '-am', '-Prelease-artifacts', 'verify')
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L1 -- `
+  -pl :haifa-agent-runtime-core -am `
+  '-Dtest=RuntimeCoreTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 -- `
+  -pl :haifa-agent-runtime-core -am test
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 -- test
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L0 -- spotless:apply
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 -- -Pci-fast clean verify
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 -- -Pci-integration-only verify
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 -- `
+  -pl :haifa-agent-cli -am -Prelease-artifacts verify
 
 # 唯一可执行制品；无 -m 时默认启动 tui4j Terminal
 .\mvnw.cmd -pl :haifa-agent-cli -am package
