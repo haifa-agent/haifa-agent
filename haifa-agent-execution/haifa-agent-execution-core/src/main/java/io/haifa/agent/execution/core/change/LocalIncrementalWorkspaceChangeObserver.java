@@ -125,10 +125,19 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
         @Override
         public List<FileChange> complete() {
             if (!closed.compareAndSet(false, true)) throw new IllegalStateException("observation already completed");
+            Map<ProjectPath, FileVersion> before = new LinkedHashMap<>(baseline);
             try {
                 return apply(drain(true), true);
-            } catch (RuntimeException exception) {
-                throw WorkspaceChangeObserverException.resyncFailed(exception);
+            } catch (RuntimeException incrementalFailure) {
+                try {
+                    Map<ProjectPath, FileVersion> after = resynchronize();
+                    baseline = after;
+                    if (reconcileMetadata) metadataBaseline = metadataSnapshot(root);
+                    return diff(before, after);
+                } catch (RuntimeException resyncFailure) {
+                    resyncFailure.addSuppressed(incrementalFailure);
+                    throw WorkspaceChangeObserverException.resyncFailed(resyncFailure);
+                }
             } finally {
                 window.release();
             }
@@ -138,7 +147,7 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
         public void cancel() {
             if (!closed.compareAndSet(false, true)) return;
             try {
-                absorb(drain(false));
+                absorb(drain(true));
             } catch (RuntimeException exception) {
                 reset();
             } finally {
@@ -380,6 +389,10 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
         return new FileVersion(FileType.DIRECTORY, 0, "metadata:DIRECTORY:0");
     }
 
+    static String stableFileKey(Object fileKey) {
+        return fileKey == null ? null : fileKey.toString();
+    }
+
     private Path resolve(ProjectPath path) {
         Path value = root;
         for (String segment : path.segments()) value = value.resolve(segment);
@@ -506,13 +519,14 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
 
     private record CandidateBatch(Set<ProjectPath> paths, boolean overflow) {}
 
-    private record FileMetadata(FileType type, long size, FileTime modifiedAt, Object fileKey) {
+    private record FileMetadata(FileType type, long size, FileTime modifiedAt, String fileKey) {
         private static FileMetadata directory() {
             return new FileMetadata(FileType.DIRECTORY, 0, null, null);
         }
 
         private static FileMetadata from(FileType type, BasicFileAttributes attributes) {
-            return new FileMetadata(type, attributes.size(), attributes.lastModifiedTime(), attributes.fileKey());
+            return new FileMetadata(
+                    type, attributes.size(), attributes.lastModifiedTime(), stableFileKey(attributes.fileKey()));
         }
     }
 

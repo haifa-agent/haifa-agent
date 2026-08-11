@@ -9,6 +9,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.haifa.agent.core.run.AgentRunId;
@@ -42,7 +44,7 @@ class PersonalObservabilityTest {
 
     @Test
     void modelLogsContainOperationalMetadataButNotPayloadsOrFailureMessages() {
-        ListAppender<ILoggingEvent> appender = attach(LoggingAgentChatModel.class);
+        LogCapture capture = attach(LoggingAgentChatModel.class);
         AgentChatRequest request = request();
         AgentChatResponse response = new AgentChatResponse(
                 "response-1",
@@ -74,7 +76,7 @@ class PersonalObservabilityTest {
                             .invoke(request))
                     .isInstanceOf(IllegalStateException.class);
 
-            assertThat(formatted(appender))
+            assertThat(formatted(capture))
                     .contains(
                             "event=model.call.started",
                             "event=model.call.completed",
@@ -90,7 +92,7 @@ class PersonalObservabilityTest {
                             "safeMessage=model provider request failed with HTTP 400")
                     .doesNotContain(SECRET_PROMPT, SECRET_RESPONSE, SECRET_FAILURE);
         } finally {
-            detach(LoggingAgentChatModel.class, appender);
+            detach(capture);
         }
     }
 
@@ -128,7 +130,7 @@ class PersonalObservabilityTest {
 
     @Test
     void runLogsContainLifecycleMetadataButNotAnswerOrExecutionPayloads() {
-        ListAppender<ILoggingEvent> appender = attach(PersonalRunLoggingService.class);
+        LogCapture capture = attach(PersonalRunLoggingService.class);
         PersonalAssistantApplication application = mock(PersonalAssistantApplication.class);
         AtomicReference<PersonalAssistantApplication.StreamListener> listener = new AtomicReference<>();
         AtomicBoolean closed = new AtomicBoolean();
@@ -188,7 +190,7 @@ class PersonalObservabilityTest {
                             PersonalAssistantApplication.StreamSource.DURABLE,
                             3));
 
-            assertThat(formatted(appender))
+            assertThat(formatted(capture))
                     .contains(
                             "event=run.observation.started",
                             "event=activity.committed",
@@ -199,13 +201,13 @@ class PersonalObservabilityTest {
             assertThat(closed).isTrue();
         } finally {
             service.close();
-            detach(PersonalRunLoggingService.class, appender);
+            detach(capture);
         }
     }
 
     @Test
     void recoveredRunObservationUsesTheSdkLimitAndCannotBreakStartup() {
-        ListAppender<ILoggingEvent> appender = attach(PersonalRunLoggingService.class);
+        LogCapture capture = attach(PersonalRunLoggingService.class);
         PersonalAssistantApplication application = mock(PersonalAssistantApplication.class);
         when(application.conversations(Optional.empty(), java.util.Set.of("ACTIVE"), 100))
                 .thenThrow(new IllegalStateException(SECRET_FAILURE));
@@ -215,11 +217,11 @@ class PersonalObservabilityTest {
             assertThatCode(service::observeRecoveredRuns).doesNotThrowAnyException();
 
             verify(application).conversations(Optional.empty(), java.util.Set.of("ACTIVE"), 100);
-            assertThat(formatted(appender))
+            assertThat(formatted(capture))
                     .contains("event=run.recovery-observation.failed", "failureType=java.lang.IllegalStateException")
                     .doesNotContain(SECRET_FAILURE);
         } finally {
-            detach(PersonalRunLoggingService.class, appender);
+            detach(capture);
         }
     }
 
@@ -237,23 +239,27 @@ class PersonalObservabilityTest {
                 Map.of());
     }
 
-    private static ListAppender<ILoggingEvent> attach(Class<?> owner) {
-        var logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(owner);
+    private static LogCapture attach(Class<?> owner) {
+        var logger = (Logger) LoggerFactory.getLogger(owner);
+        Level originalLevel = logger.getLevel();
+        logger.setLevel(Level.INFO);
         var appender = new ListAppender<ILoggingEvent>();
         appender.start();
         logger.addAppender(appender);
-        return appender;
+        return new LogCapture(logger, originalLevel, appender);
     }
 
-    private static void detach(Class<?> owner, ListAppender<ILoggingEvent> appender) {
-        var logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(owner);
-        logger.detachAppender(appender);
-        appender.stop();
+    private static void detach(LogCapture capture) {
+        capture.logger().detachAppender(capture.appender());
+        capture.appender().stop();
+        capture.logger().setLevel(capture.originalLevel());
     }
 
-    private static String formatted(ListAppender<ILoggingEvent> appender) {
-        return appender.list.stream()
+    private static String formatted(LogCapture capture) {
+        return capture.appender().list.stream()
                 .map(ILoggingEvent::getFormattedMessage)
                 .collect(java.util.stream.Collectors.joining("\n"));
     }
+
+    private record LogCapture(Logger logger, Level originalLevel, ListAppender<ILoggingEvent> appender) {}
 }
