@@ -1,4 +1,4 @@
-package io.haifa.agent.examples.runtime;
+package io.haifa.example.runtime.mcp;
 
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
@@ -38,10 +38,10 @@ import java.util.Map;
 import java.util.Set;
 
 /** Owns one reviewed Utility MCP connection and its frozen Runtime Tool catalog. */
-final class UtilityMcpRuntimePlatform implements AutoCloseable {
-    static final String REMOTE_TOOL_NAME = "unit_convert";
-    static final String LOCAL_TOOL_ALIAS = "utility_unit_convert";
-    private static final McpServerId SERVER_ID = new McpServerId("utility-main");
+public final class UtilityMcpRuntimePlatform implements AutoCloseable {
+    public static final String REMOTE_TOOL_NAME = "unit_convert";
+    public static final String LOCAL_TOOL_ALIAS = "utility_unit_convert";
+    private static final McpServerId SERVER_ID = new McpServerId("utility-demo");
     private static final TenantRef TENANT = new TenantRef("local");
     private static final PrincipalRef PRINCIPAL = new PrincipalRef("local-user", "user");
 
@@ -53,7 +53,7 @@ final class UtilityMcpRuntimePlatform implements AutoCloseable {
         this.catalog = catalog;
     }
 
-    static UtilityMcpRuntimePlatform connect(URI endpoint) {
+    public static UtilityMcpRuntimePlatform connect(URI endpoint) {
         McpServerDefinition server = serverDefinition(endpoint);
         var connections = new McpConnectionManager(List.of(server), new SdkMcpClientFactory());
         try {
@@ -103,7 +103,7 @@ final class UtilityMcpRuntimePlatform implements AutoCloseable {
         }
     }
 
-    static McpServerDefinition serverDefinition(URI endpoint) {
+    public static McpServerDefinition serverDefinition(URI endpoint) {
         var importPolicy = new McpToolImportPolicy(
                 Set.of(REMOTE_TOOL_NAME),
                 Set.of(),
@@ -138,7 +138,7 @@ final class UtilityMcpRuntimePlatform implements AutoCloseable {
                 "1.0.0");
     }
 
-    DefaultToolCatalog catalog() {
+    public DefaultToolCatalog catalog() {
         return catalog;
     }
 

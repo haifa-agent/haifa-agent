@@ -2,6 +2,8 @@
 
 ## 0.1.0-SNAPSHOT
 
+- Runtime Demo 统一迁入 `io.haifa.example.runtime`，将薄启动入口与 Model-only、Raw Tool、MCP、Skill
+  四个能力场景分离，并明确这些底层装配示例不是 SDK API 或 Live Probe。
 - SDK Starter 支持显式注册多模型/多 Provider 并按可信 Run Profile 选择；Spring 自动装配新增有序
   `HaifaAgentStarterCustomizer`，SQLite 采用应用拥有的单机持久化参考装配，不新增 Store-specific Starter。
 - 新增按 Basic/Intermediate/Advanced 分层的可运行 SDK 示例，覆盖 Quickstart、类型化 Tool、多模型、

@@ -1,4 +1,4 @@
-package io.haifa.agent.examples.runtime;
+package io.haifa.example.runtime.skill;
 
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -32,21 +32,21 @@ import java.util.Optional;
 import java.util.Set;
 
 /** Freezes the example newsroom Skill and its progressive-disclosure activation Tool. */
-record CounterfactualNewsroomSkillPlatform(
+public record CounterfactualNewsroomSkillPlatform(
         DefaultSkillCatalog skillCatalog, SkillContentLoader contentLoader, DefaultToolCatalog toolCatalog) {
-    static final String SKILL_NAME = "run-counterfactual-newsrooms";
-    static final String SKILL_LOAD_ALIAS = "skill_load";
+    public static final String SKILL_NAME = "run-counterfactual-newsrooms";
+    public static final String SKILL_LOAD_ALIAS = "skill_load";
     private static final String SKILL_ROOT = "META-INF/haifa-agent/skills";
     private static final TenantRef TENANT = new TenantRef("local");
     private static final PrincipalRef PRINCIPAL = new PrincipalRef("local-user", "user");
 
-    static CounterfactualNewsroomSkillPlatform create(RuntimePersistencePorts persistence, TimeProvider time) {
+    public static CounterfactualNewsroomSkillPlatform create(RuntimePersistencePorts persistence, TimeProvider time) {
         SkillSource source = new ClasspathSkillSource(
-                DeepSeekRuntimeMain.class.getClassLoader(),
+                CounterfactualNewsroomSkillPlatform.class.getClassLoader(),
                 SKILL_ROOT,
                 List.of(SKILL_NAME),
                 new SkillSourceDescriptor(
-                        new SkillSourceRef("classpath:deepseek-runtime-main-skills", "1"),
+                        new SkillSourceRef("classpath:runtime-demo-skills", "1"),
                         SkillScopeRef.product(),
                         SkillOrigin.BUNDLED,
                         100,
@@ -59,8 +59,7 @@ record CounterfactualNewsroomSkillPlatform(
                 new SkillVisibilityContext(TENANT, PRINCIPAL, Optional.empty(), false, Set.of(SkillScope.PRODUCT));
         DefaultSkillCatalog skillCatalog = new SkillCatalogBuilder(
                         List.of(source),
-                        new SkillResolutionPolicy(
-                                "deepseek-runtime-main-skill-policy-v1", List.of(SkillScope.PRODUCT), false))
+                        new SkillResolutionPolicy("runtime-demo-skill-policy-v1", List.of(SkillScope.PRODUCT), false))
                 .build(new SkillDiscoveryContext(visibility));
         List<String> errors = skillCatalog.snapshot().diagnostics().stream()
                 .filter(diagnostic -> diagnostic.severity() == SkillDiagnosticSeverity.ERROR)
