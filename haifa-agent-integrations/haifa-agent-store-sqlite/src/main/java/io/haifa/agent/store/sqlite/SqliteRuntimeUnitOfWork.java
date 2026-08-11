@@ -17,6 +17,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     private static final Logger LOGGER = LoggerFactory.getLogger(SqliteRuntimeUnitOfWork.class);
     private static final AtomicLong UNIT_OF_WORK_IDS = new AtomicLong();
     private static final long SLOW_OPERATION_MILLIS = 50;
+    private static final int MAX_BEGIN_ATTEMPTS = 2;
 
     private final SqliteConnectionFactory connections;
     private final SqliteMyBatisSessionFactory myBatis;
@@ -189,17 +190,25 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
     }
 
     private static void beginImmediate(Connection connection) throws SQLException {
-        try {
-            executeControl(connection, "BEGIN IMMEDIATE");
-        } catch (SQLException exception) {
-            if (exception.getErrorCode() == 5 || exception.getErrorCode() == 6) {
-                throw new SqliteStoreException(
-                        SqliteStoreFailure.DATABASE_BUSY,
-                        "SQLite writer is busy before the unit of work began",
-                        exception);
+        SQLException busyFailure = null;
+        for (int attempt = 1; attempt <= MAX_BEGIN_ATTEMPTS; attempt++) {
+            try {
+                executeControl(connection, "BEGIN IMMEDIATE");
+                return;
+            } catch (SQLException exception) {
+                if (!isBusy(exception)) throw exception;
+                busyFailure = exception;
+                if (attempt < MAX_BEGIN_ATTEMPTS) {
+                    LOGGER.debug("event=sqlite.uow.begin-retry attempt={} maxAttempts={}", attempt, MAX_BEGIN_ATTEMPTS);
+                }
             }
-            throw exception;
         }
+        throw new SqliteStoreException(
+                SqliteStoreFailure.DATABASE_BUSY, "SQLite writer is busy before the unit of work began", busyFailure);
+    }
+
+    private static boolean isBusy(SQLException exception) {
+        return exception.getErrorCode() == 5 || exception.getErrorCode() == 6;
     }
 
     private static void rollback(Connection connection, Throwable original) {

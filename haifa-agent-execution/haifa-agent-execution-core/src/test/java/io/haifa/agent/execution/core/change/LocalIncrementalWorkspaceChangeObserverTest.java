@@ -148,6 +148,30 @@ class LocalIncrementalWorkspaceChangeObserverTest {
     }
 
     @Test
+    void transientIncrementalScanFailureFallsBackToAFullResynchronization() throws Exception {
+        Path changed = Files.writeString(root.resolve("changed.txt"), "before");
+        WorkspaceId workspaceId = new WorkspaceId("incremental-resync-test");
+        AtomicInteger changedFileReads = new AtomicInteger();
+        LocalIncrementalWorkspaceChangeObserver.FileVersionResolver versions = (file, attributes) -> {
+            if (file.getFileName().toString().equals("changed.txt") && changedFileReads.incrementAndGet() == 2) {
+                throw new java.io.IOException("transient incremental read failure");
+            }
+            return deterministicVersion(file, attributes);
+        };
+        var observer = new LocalIncrementalWorkspaceChangeObserver(
+                workspaceId, root, WorkspaceChangeIgnorePolicy.none(), versions, true);
+        var observation = observer.begin(workspaceId);
+        Files.writeString(changed, "after");
+
+        assertThat(observation.complete()).anySatisfy(change -> {
+            assertThat(change.type()).isEqualTo(FileChangeType.REPLACE);
+            assertThat(change.path()).hasToString("changed.txt");
+        });
+        assertThat(changedFileReads).hasValue(3);
+        observer.close();
+    }
+
+    @Test
     void unchangedSecondWindowDoesNotRehashAnUnchangedLargeFile() throws Exception {
         Path large = root.resolve("large.bin");
         Files.write(large, new byte[2 * 1024 * 1024]);

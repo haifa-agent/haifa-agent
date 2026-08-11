@@ -125,10 +125,19 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
         @Override
         public List<FileChange> complete() {
             if (!closed.compareAndSet(false, true)) throw new IllegalStateException("observation already completed");
+            Map<ProjectPath, FileVersion> before = new LinkedHashMap<>(baseline);
             try {
                 return apply(drain(true), true);
-            } catch (RuntimeException exception) {
-                throw WorkspaceChangeObserverException.resyncFailed(exception);
+            } catch (RuntimeException incrementalFailure) {
+                try {
+                    Map<ProjectPath, FileVersion> after = resynchronize();
+                    baseline = after;
+                    if (reconcileMetadata) metadataBaseline = metadataSnapshot(root);
+                    return diff(before, after);
+                } catch (RuntimeException resyncFailure) {
+                    resyncFailure.addSuppressed(incrementalFailure);
+                    throw WorkspaceChangeObserverException.resyncFailed(resyncFailure);
+                }
             } finally {
                 window.release();
             }

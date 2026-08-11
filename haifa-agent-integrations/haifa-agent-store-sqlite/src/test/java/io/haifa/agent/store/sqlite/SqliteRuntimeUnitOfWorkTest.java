@@ -10,6 +10,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ibatis.session.SqlSession;
@@ -125,6 +127,40 @@ class SqliteRuntimeUnitOfWorkTest {
                     .isEqualTo(SqliteStoreFailure.DATABASE_BUSY);
             assertThat(workCalls).hasValue(0);
             statement.execute("ROLLBACK");
+        }
+    }
+
+    @Test
+    void retriesTransientBusyBeforeTransactionWorkBegins() throws Exception {
+        Path database = directory.resolve("transient-busy.db");
+        try (SqliteStoreFoundation foundation = SqliteStoreFoundation.initialize(
+                new SqliteStoreConfiguration(database, 100, 4 * 1024 * 1024), java.time.Clock.systemUTC())) {
+            CountDownLatch writerStarted = new CountDownLatch(1);
+            AtomicReference<Throwable> blockerFailure = new AtomicReference<>();
+            Thread blocker = Thread.ofVirtual().start(() -> {
+                try (Connection connection = foundation.connections().openConnection();
+                        Statement statement = connection.createStatement()) {
+                    statement.execute("BEGIN IMMEDIATE");
+                    writerStarted.countDown();
+                    Thread.sleep(150);
+                    statement.execute("ROLLBACK");
+                } catch (Throwable exception) {
+                    blockerFailure.set(exception);
+                    writerStarted.countDown();
+                }
+            });
+            assertThat(writerStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(blockerFailure.get()).isNull();
+            AtomicInteger workCalls = new AtomicInteger();
+
+            foundation.unitOfWork().execute(() -> {
+                workCalls.incrementAndGet();
+                return null;
+            });
+
+            blocker.join();
+            assertThat(blockerFailure.get()).isNull();
+            assertThat(workCalls).hasValue(1);
         }
     }
 
