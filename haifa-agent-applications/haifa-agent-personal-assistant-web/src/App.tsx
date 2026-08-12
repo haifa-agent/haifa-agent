@@ -111,6 +111,14 @@ type SlashMenuState =
   | { stage: "providers" }
   | { stage: "models"; providerId: string };
 
+type ComposerMode = "CHAT" | "DEEP_RESEARCH";
+
+interface MissionDraftRequest {
+  requestId: string;
+  idempotencyKey: string;
+  objective: string;
+}
+
 interface ModelProviderGroup {
   id: string;
   displayName: string;
@@ -175,7 +183,21 @@ const slashCommands = [
     label: "选择模型",
     description: "按模型厂商和模型切换当前会话使用的 LLM",
   },
+  {
+    id: "deep-research",
+    command: "/deep-research",
+    label: "发起深度调研",
+    description: "将当前目标带入 Mission，确认研究设置和计划后再执行",
+  },
 ] as const;
+
+function explicitDeepResearchObjective(value: string): string | null {
+  const normalized = value.trim();
+  const slash = /^\/deep-research(?:\s+)([\s\S]+)$/i.exec(normalized);
+  if (slash?.[1]?.trim()) return slash[1].trim();
+  const explicit = /^(?:请)?(?:调用|使用)\s*deep-research\s*skill\s*(?:来|进行|做)?\s*[：:]?\s*([\s\S]+)$/i.exec(normalized);
+  return explicit?.[1]?.trim() || null;
+}
 
 function groupModelsByProvider(models: Model[]): ModelProviderGroup[] {
   const providers = new Map<string, ModelProviderGroup>();
@@ -1950,6 +1972,9 @@ function MissionDialog({
   conversation,
   initialMissionId,
   initialTaskId,
+  initialDraft,
+  webResearchAvailable,
+  onDraftCreated,
   onClose,
   onChanged,
   onSelected,
@@ -1958,6 +1983,9 @@ function MissionDialog({
   conversation: Conversation | null;
   initialMissionId: string | null;
   initialTaskId: string | null;
+  initialDraft: MissionDraftRequest | null;
+  webResearchAvailable: boolean;
+  onDraftCreated(): void;
   onClose(): void;
   onChanged(mission: MissionSnapshot | null): void;
   onSelected(mission: MissionSnapshot): void;
@@ -2071,12 +2099,40 @@ function MissionDialog({
           ?? (conversation
             ? page.items.find((mission) => mission.conversationId === conversation.id)
             : page.items[0]);
-        setSelected(current ?? null);
-        setCreatingMission(current == null);
-        onChanged(current ?? null);
-        if (current) onSelected(current);
+        const active = conversation
+          ? page.items.find((mission) => mission.conversationId === conversation.id
+            && !missionTerminalStates.has(mission.state))
+          : undefined;
+        if (initialDraft && conversation && !active) {
+          setSelected(current ?? null);
+          setMode("DEEP_RESEARCH");
+          setObjective(initialDraft.objective);
+          setCriteria("");
+          setResearchQuestion(initialDraft.objective);
+          setResearchScope("");
+          setResearchTimeRange("");
+          setResearchRegion("");
+          setResearchAudience("");
+          setResearchSources("");
+          setResearchExclusions("");
+          setResearchDelivery("");
+          setCreationSettingsOpen(false);
+          setCreatingMission(true);
+          setDetailPanelOpen(false);
+          setMobileView("content");
+          setError(null);
+          onChanged(current ?? null);
+        } else {
+          const selectedMission = active ?? current ?? null;
+          setSelected(selectedMission);
+          setCreatingMission(selectedMission == null);
+          onChanged(selectedMission);
+          if (selectedMission) onSelected(selectedMission);
+          setError(initialDraft && active
+            ? "当前会话已有进行中的 Mission。请打开当前 Mission，取消后重建，或换一个会话。"
+            : null);
+        }
         setSyncStatus(navigator.onLine ? "current" : "offline");
-        setError(null);
       })
       .catch((reason) => {
         if (!controller.signal.aborted) {
@@ -2097,7 +2153,7 @@ function MissionDialog({
       controller.abort();
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [client, conversation, initialMissionId, onChanged, onSelected, reconnectEpoch]);
+  }, [client, conversation, initialDraft, initialMissionId, onChanged, onSelected, reconnectEpoch, webResearchAvailable]);
 
   useEffect(() => {
     if (!selected || missionTerminalStates.has(selected.state) || !client.missionSnapshot) return;
@@ -2300,8 +2356,9 @@ function MissionDialog({
           : generatedResearch.exclusions,
         deliveryFormat: researchDelivery.trim() || generatedResearch.deliveryFormat,
       } : undefined,
-    }, { idempotencyKey: crypto.randomUUID() })).then((succeeded) => {
+    }, { idempotencyKey: initialDraft?.idempotencyKey ?? crypto.randomUUID() })).then((succeeded) => {
       if (succeeded) {
+        onDraftCreated();
         setCreatingMission(false);
         setObjective("");
         setCriteria("");
@@ -2582,6 +2639,7 @@ function MissionDialog({
                     <label className={mode === "DEEP_RESEARCH" ? "selected" : ""}><input type="radio" name="mission-mode" value="DEEP_RESEARCH" checked={mode === "DEEP_RESEARCH"} onChange={() => selectMissionMode("DEEP_RESEARCH")} /><span className="mission-mode-icon"><Sparkles size={17} /></span><span className="mission-mode-copy"><b>Deep Research</b><small>基于外部来源形成完整报告，包含来源、引用与交付文件。</small></span><Check className="mission-mode-check" size={15} /></label>
                   </div>
                 </div>
+                {mode === "DEEP_RESEARCH" && !webResearchAvailable && <div className="mission-capability-warning" role="alert"><WifiOff size={16} /><span><b>Deep Research 暂不可用</b>请先配置 Web Search/Fetch Provider；当前草稿不会生成计划或产生外部调用。</span></div>}
                 <label className="mission-objective-field">目标<textarea aria-label="目标" value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={8000} rows={3} placeholder="例如：梳理以太坊近三年的重要技术迭代，并分析其影响" /><small>用结果语言描述即可，不需要自己拆任务或填写技术参数。</small></label>
 
                 <section className={`mission-generated-brief ${objective.trim() ? "ready" : "empty"}`} aria-live="polite">
@@ -2611,7 +2669,7 @@ function MissionDialog({
                     <details className="mission-source-settings"><summary><span><b>来源与边界</b><small>仅在需要约束来源时调整</small></span><ChevronDown size={15} /></summary><div className="research-brief-grid"><label>优先来源<textarea value={researchSources} onChange={(event) => setResearchSources(event.target.value)} rows={3} /></label><label>排除项<textarea value={researchExclusions} onChange={(event) => setResearchExclusions(event.target.value)} rows={3} /></label></div></details>
                   </>}
                 </section>}
-                <div className="mission-create-actions">{selected && <button type="button" className="button" onClick={() => setCreatingMission(false)}>返回当前 Mission</button>}<button type="submit" className="button primary-button" disabled={busy || !objective.trim()}><Sparkles size={15} />生成计划</button></div>
+                <div className="mission-create-actions">{selected && <button type="button" className="button" onClick={() => setCreatingMission(false)}>返回当前 Mission</button>}<button type="submit" className="button primary-button" disabled={busy || !objective.trim() || (mode === "DEEP_RESEARCH" && !webResearchAvailable)}><Sparkles size={15} />生成计划</button></div>
               </form>
             )}
             {!creatingMission && (selected ? (
@@ -2705,6 +2763,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [newModelId, setNewModelId] = useState("");
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [composerMode, setComposerMode] = useState<ComposerMode>("CHAT");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [imageUrl, setImageUrl] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -2721,6 +2780,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   >(null);
   const [missionRouteId, setMissionRouteId] = useState<string | null>(() => missionIdFromLocation());
   const [missionOpen, setMissionOpen] = useState(() => missionIdFromLocation() != null);
+  const [missionDraft, setMissionDraft] = useState<MissionDraftRequest | null>(null);
   const [conversationMission, setConversationMission] = useState<MissionSnapshot | null>(null);
   const [requestedMissionTaskId, setRequestedMissionTaskId] = useState<string | null>(null);
   const [researchReadingContext, setResearchReadingContext] = useState<
@@ -3286,7 +3346,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
   const updateComposer = (value: string) => {
     dispatch({ type: "setComposer", value });
-    const slashInput = value.startsWith("/") && !value.includes("\n");
+    const slashInput = value.startsWith("/")
+      && !value.includes("\n")
+      && !/^\/deep-research\s+\S/i.test(value);
     if (slashInput) closeImageTools();
     if (!slashInput) {
       setSlashMenu(null);
@@ -3299,7 +3361,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const activateSlashItem = (index: number) => {
     if (!slashMenu) return;
     if (slashMenu.stage === "commands") {
-      if (!visibleSlashCommands[index]) return;
+      const command = visibleSlashCommands[index];
+      if (!command) return;
+      if (command.id === "deep-research") {
+        dispatch({ type: "setComposer", value: "/deep-research " });
+        setSlashMenu(null);
+        setSlashActiveIndex(0);
+        window.requestAnimationFrame(() => textareaRef.current?.focus());
+        return;
+      }
       dispatch({ type: "setComposer", value: "/model" });
       setSlashMenu({ stage: "providers" });
       const currentProviderIndex = modelProviders.findIndex((provider) =>
@@ -3336,6 +3406,40 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const raw = state.composer.trim();
+    const slashRequested = /^\/deep-research(?:\s|$)/i.test(raw);
+    const explicitRequested = /^(?:请)?(?:调用|使用)\s*deep-research\s*skill(?:\s|[：:]|$)/i.test(raw);
+    const objective = composerMode === "DEEP_RESEARCH" ? raw : explicitDeepResearchObjective(raw);
+    if (composerMode === "DEEP_RESEARCH" || slashRequested || explicitRequested) {
+      if (!objective) {
+        dispatch({ type: "error", message: "请补充 Deep Research 的目标。" });
+        return;
+      }
+      if (!state.selectedConversation) {
+        dispatch({ type: "error", message: "请先选择一个已有会话，再从该会话发起 Deep Research Mission。" });
+        return;
+      }
+      if (!state.bootstrap?.capabilities.includes("mission") || !client.createMission) {
+        dispatch({ type: "error", message: "当前 Server 未发布 Mission 能力。" });
+        return;
+      }
+      if (pendingImages.length > 0) {
+        dispatch({ type: "error", message: "Deep Research Mission 暂不支持图片或附件引用。请移除附件后再继续，附件不会被静默丢弃。" });
+        return;
+      }
+      previousFocus.current = document.activeElement as HTMLElement;
+      setMissionDraft({
+        requestId: crypto.randomUUID(),
+        idempotencyKey: crypto.randomUUID(),
+        objective,
+      });
+      setMissionRouteId(null);
+      setMissionOpen(true);
+      setComposerMode("CHAT");
+      setSlashMenu(null);
+      dispatch({ type: "setComposer", value: "" });
+      return;
+    }
     submitMessage(state.composer);
   };
 
@@ -3399,6 +3503,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   }, []);
   const closeMission = useCallback(() => {
     setMissionOpen(false);
+    setMissionDraft(null);
     setMissionRouteId(null);
     setRequestedMissionTaskId(null);
     const query = new URLSearchParams(window.location.search);
@@ -3457,6 +3562,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           {state.bootstrap?.capabilities.includes("mission") && (
             <button className="button mission-button" onClick={(event) => {
               previousFocus.current = event.currentTarget;
+              setMissionDraft(null);
               setMissionOpen(true);
             }}>
               <CheckCircle2 size={16} /> Mission
@@ -3578,7 +3684,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             </div>
           )}
           <form
-            className={`composer${imageCapable ? " image-capable" : ""}${pendingImages.length ? " has-pending-images" : ""}${draggingImages ? " image-dragging" : ""}`}
+            className={`composer${composerMode === "DEEP_RESEARCH" ? " deep-research-mode" : ""}${imageCapable ? " image-capable" : ""}${pendingImages.length ? " has-pending-images" : ""}${draggingImages ? " image-dragging" : ""}`}
             onSubmit={submit}
             onDragEnter={(event) => {
               event.preventDefault();
@@ -3593,6 +3699,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             }}
             onDrop={dropImages}
           >
+            <div className="composer-mode-switch" role="group" aria-label="对话模式">
+              <button type="button" className={composerMode === "CHAT" ? "active" : ""} aria-pressed={composerMode === "CHAT"} onClick={() => setComposerMode("CHAT")}><MessageSquarePlus size={14} />普通对话</button>
+              <button type="button" className={composerMode === "DEEP_RESEARCH" ? "active" : ""} aria-pressed={composerMode === "DEEP_RESEARCH"} onClick={() => setComposerMode("DEEP_RESEARCH")}><Sparkles size={14} />Deep Research</button>
+            </div>
             {slashMenu && !composerDisabled && (
               <section
                 className="slash-command-menu"
@@ -3839,7 +3949,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={runActive ? "当前任务运行中" : "输入消息或 / 命令，Enter 发送"}
+                placeholder={runActive ? "当前任务运行中" : composerMode === "DEEP_RESEARCH" ? "描述调研目标，Enter 打开 Mission 确认页" : "输入消息或 / 命令，Enter 发送"}
                 rows={2}
               />
             </label>
@@ -3856,7 +3966,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 <RefreshCw size={16} aria-hidden="true" />
               </button>
             )}
-            <Button type="submit" className="send-button" aria-label="发送消息" busy={Boolean(state.pending)} disabled={composerDisabled || (!state.composer.trim() && !pendingImages.length)}>
+            <Button type="submit" className="send-button" aria-label={composerMode === "DEEP_RESEARCH" ? "准备 Deep Research" : "发送消息"} busy={Boolean(state.pending)} disabled={composerDisabled || (!state.composer.trim() && !pendingImages.length)}>
               <Send size={18} />
             </Button>
           </form>
@@ -3890,6 +4000,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           conversation={state.selectedConversation}
           initialMissionId={missionRouteId}
           initialTaskId={requestedMissionTaskId}
+          initialDraft={missionDraft}
+          webResearchAvailable={Boolean(state.bootstrap?.capabilities.includes("web-research"))}
+          onDraftCreated={() => setMissionDraft(null)}
           onClose={closeMission}
           onChanged={handleMissionChanged}
           onSelected={navigateToMission}

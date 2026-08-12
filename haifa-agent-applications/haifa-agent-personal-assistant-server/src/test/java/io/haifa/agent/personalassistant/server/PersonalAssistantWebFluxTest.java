@@ -96,7 +96,7 @@ class PersonalAssistantWebFluxTest {
                 .expectBody()
                 .jsonPath("$.capabilities")
                 .value(value -> assertThat(value.toString())
-                        .contains("tool", "skill", "mcp")
+                        .contains("tool", "skill", "mcp", "web-research")
                         .doesNotContain("admin"));
 
         Set<String> observedKinds = new HashSet<>();
@@ -232,25 +232,25 @@ class PersonalAssistantWebFluxTest {
         JsonNode conversation = post(
                 "/api/v1/conversations",
                 """
-                {"displayName":"景宁小水电研究","message":"准备投资研究工作区"}
+                {"displayName":"数据库技术研究","message":"准备技术选型研究工作区"}
                 """);
         String conversationId = conversation.path("id").asText();
         String createRequest =
                 """
                 {
                   "conversationId":%s,
-                  "objective":"研究景宁县小水电历史、现状与投资价值",
-                  "acceptanceCriteria":["形成有来源支持的投资分析"],
+                  "objective":"研究主流开源数据库过去三年的演进与适用场景",
+                  "acceptanceCriteria":["形成有来源支持的技术选型分析"],
                   "constraints":{"maxTasks":8,"maxDependencyDepth":4},
                   "mode":"DEEP_RESEARCH",
                   "selectedSkillId":"deep-research",
                   "researchBrief":{
-                    "question":"景宁县小水电未来是否值得投资？",
-                    "scope":"景宁县小水电存量资产",
-                    "timeRange":"历史至今",
-                    "region":"浙江景宁",
-                    "audience":"产业投资人",
-                    "sourcePreferences":["政府与监管来源"],
+                    "question":"主流开源数据库如何支持不同工作负载？",
+                    "scope":"公开发布的稳定版本与生态资料",
+                    "timeRange":"过去三年至今",
+                    "region":"全球",
+                    "audience":"技术决策者",
+                    "sourcePreferences":["官方文档与一手技术资料"],
                     "exclusions":["无来源营销材料"],
                     "deliveryFormat":"中文 Markdown 报告"
                   }
@@ -263,12 +263,12 @@ class PersonalAssistantWebFluxTest {
         String replacement =
                 """
                 {"plan":{"tasks":[
-                  {"taskId":"history-evolution","ordinal":1,"title":"发展历史沿革","objective":"梳理历史阶段与政策节点","acceptanceCriteria":["形成可核验时间线"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
-                  {"taskId":"current-status-operation","ordinal":2,"title":"经营现状与规模","objective":"整理规模与经营现状","acceptanceCriteria":["核心指标标注年份"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
-                  {"taskId":"policy-security-compliance","ordinal":3,"title":"政策、安全与合规","objective":"核验政策与合规边界","acceptanceCriteria":["重大判断引用权威来源"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
-                  {"taskId":"hydrology-water-price-cost","ordinal":4,"title":"水文、电价、成本与样本电站经营测算","objective":"整理投资测算关键参数","acceptanceCriteria":["形成参数清单","至少选取 3 个可核验的存量电站或交易样本"],"dependsOn":["current-status-operation","policy-security-compliance"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
-                  {"taskId":"manual-research-6","ordinal":5,"title":"存量项目交易与标的筛选","objective":"筛选可交易的存量资产并识别产权与退出条件","acceptanceCriteria":["给出可核验的结论与来源"],"dependsOn":["current-status-operation","policy-security-compliance"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
-                  {"taskId":"investment-framework-valuation","ordinal":6,"title":"投资框架与综合判断","objective":"形成投资结论与尽调清单","acceptanceCriteria":["给出三情景判断"],"dependsOn":["hydrology-water-price-cost","manual-research-6"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"}
+                  {"taskId":"history-evolution","ordinal":1,"title":"技术发展沿革","objective":"梳理版本演进与关键节点","acceptanceCriteria":["形成可核验时间线"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"current-capabilities","ordinal":2,"title":"当前能力与生态","objective":"整理当前能力与生态现状","acceptanceCriteria":["核心指标标注版本或年份"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"governance-security","ordinal":3,"title":"治理、安全与兼容性","objective":"核验治理、安全与兼容性边界","acceptanceCriteria":["重大判断引用权威来源"],"dependsOn":[],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"performance-cost","ordinal":4,"title":"性能、成本与公开基准","objective":"整理技术选型关键指标","acceptanceCriteria":["形成指标清单","至少选取 3 组可核验的公开基准或案例"],"dependsOn":["current-capabilities","governance-security"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"migration-ecosystem","ordinal":5,"title":"迁移案例与生态验证","objective":"验证典型迁移案例并识别生态约束","acceptanceCriteria":["给出可核验的结论与来源"],"dependsOn":["current-capabilities","governance-security"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"},
+                  {"taskId":"selection-framework","ordinal":6,"title":"选型框架与综合建议","objective":"形成选型建议与验证清单","acceptanceCriteria":["给出三种场景建议"],"dependsOn":["performance-cost","migration-ecosystem"],"taskType":"RESEARCH","requiredSkillIds":["deep-research"],"resultSchemaId":"pa.research-task-result","resultSchemaVersion":"v1","state":"PLANNED"}
                 ]}}
                 """;
         byte[] replacedBody = web.put()
@@ -291,7 +291,7 @@ class PersonalAssistantWebFluxTest {
         assertThat(replaced.path("tasks").get(1).path("dependsOn").size()).isZero();
         assertThat(replaced.path("tasks").get(2).path("dependsOn").size()).isZero();
         assertThat(replaced.path("tasks").get(3).path("acceptanceCriteria").toString())
-                .contains("3 个可核验的存量电站");
+                .contains("3 组可核验的公开基准");
         assertThat(replaced.path("tasks").get(5).path("dependsOn").size()).isEqualTo(2);
 
         byte[] confirmedBody = web.post()

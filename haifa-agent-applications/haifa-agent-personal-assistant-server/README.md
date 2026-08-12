@@ -13,6 +13,8 @@ Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显�
 和 Conversation 只返回脱敏信息；Endpoint、
 Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
+Bootstrap 仅在 `web_search` 与 `web_fetch` 均完成受信注册时发布 `web-research` 能力，供 Web 在创建
+Deep Research 计划前做确定性可用性检查；该标记不包含 Provider、Endpoint 或凭据细节。
 
 Provider 是接入实例，持有共享 Endpoint、Credential、`native-streaming` 和运行模式；每个 Provider
 通过 `api-bindings` 声明一个或多个 API Style，再由 Model 的 `style` 精确引用。Binding 省略 dialect

@@ -38,8 +38,9 @@ updated, the panel automatically scrolls to the latest event.
 
 会话标题区提供模型 Selector。新会话使用 Bootstrap 默认值或用户选择；已有会话仅在无活动 Run 时
 调用带 `If-Match` 与幂等键的切换 API。页面只提交内部 Model ID。
-消息输入框输入 `/` 会打开命令菜单；当前 `/model`“选择模型”命令按 Provider、Model 两级展示
-Bootstrap 返回的可用模型，并复用同一模型切换 API。
+消息输入框输入 `/` 会打开命令菜单；`/model`“选择模型”命令按 Provider、Model 两级展示 Bootstrap
+返回的可用模型，并复用同一模型切换 API；`/deep-research <目标>` 与显式 Deep Research 模式只打开
+复用的 Mission 创建草稿，不提交普通 Conversation Run。普通“调研一下”不会触发长任务路由。
 当选中模型声明 `IMAGE_INPUT` 时，输入区通过单一“添加图片”入口提供 HTTPS 图片 URL、文件选择和拖放；
 待发送附件按顺序显示且最多四张，上传成功后只把 Server 返回的 opaque image id 放入 Conversation 请求。
 已发送图片随用户 Turn 显示在主对话中：外部 URL 显示缩略图，本地上传显示不暴露 opaque id 的附件卡片。
@@ -64,6 +65,9 @@ JAR 的构建或静态资源打包。
   `pa.research-delivery/v2` 正常/部分/降级/失败语义、完整 Markdown 报告查看/复制/下载、降级原因、
   受影响 Task、来源链接和五类交付文件；主对话直接渲染完整报告并隐藏报告中的 HTML 机器注释，
   Markdown 下载通过浏览器 Blob 触发真实文件保存；
+- Conversation Composer 提供普通对话 / Deep Research 显式模式和 `/deep-research <目标>` 命令；路由前
+  拒绝静默丢弃附件，活动 Mission 冲突时打开当前 Mission，Bootstrap 未声明 `web-research` 时在计划生成前
+  禁用入口。打开草稿本身不调用普通消息、Mission 创建、Planner、Web Search/Fetch 或付费模型；
 - 当前 Conversation 通过 URL `conversationId` 查询参数持久化，刷新及浏览器前进/后退会恢复对应会话；
 - 每个 Mission 使用 `/missions/{missionId}` 稳定 URL，并保留所属 Conversation 参数；刷新、直接访问及
   浏览器前进/后退均可恢复对应 Mission 工作台；

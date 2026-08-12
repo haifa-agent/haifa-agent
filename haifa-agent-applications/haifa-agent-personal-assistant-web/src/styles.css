@@ -63,6 +63,9 @@
 .mission-create textarea, .mission-create input, .mission-create select, .mission-plan-editor textarea { width: 100%; padding: 10px 11px; resize: vertical; border: 1px solid #cfd5e4; border-radius: 9px; background: #fff; color: #232c43; font: inherit; font-weight: 400; }
 .mission-create textarea:focus, .mission-create input:focus { outline: none; border-color: #8d87df; box-shadow: 0 0 0 3px #eeedff; }
 .mission-create-field { display: grid; gap: 7px; color: #5c657b; font-size: 13px; font-weight: 650; }
+.mission-capability-warning { padding: 10px 12px; display: flex; align-items: flex-start; gap: 8px; color: #8a5917; border: 1px solid #ead19e; border-radius: 9px; background: #fff9e9; font-size: 11px; line-height: 1.5; }
+.mission-capability-warning svg { flex: none; margin-top: 1px; }
+.mission-capability-warning span { display: grid; gap: 2px; }
 .mission-mode-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .mission-mode-options > label { min-width: 0; min-height: 86px; padding: 12px; position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr) 18px; align-items: start; gap: 9px; text-align: left; color: #3d465e; border: 1px solid #dfe3ec; border-radius: 10px; background: #fff; cursor: pointer; }
 .mission-mode-options > label:hover { border-color: #bab6e8; background: #fbfaff; }
@@ -922,12 +925,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: white;
   box-shadow: 0 12px 34px rgb(38 49 77 / 9%);
 }
-.composer > label { min-width: 0; grid-column: 1 / -1; grid-row: 1; }
-.composer.has-pending-images > label { grid-row: 2; }
+.composer-mode-switch { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 5px; }
+.composer-mode-switch button { min-height: 26px; padding: 4px 8px; display: inline-flex; align-items: center; gap: 5px; color: #747e92; border: 1px solid transparent; border-radius: 999px; background: transparent; font: inherit; font-size: 10px; font-weight: 750; cursor: pointer; }
+.composer-mode-switch button:hover { color: #4e59a4; background: #f2f3fb; }
+.composer-mode-switch button.active { color: #4e49b7; border-color: #d8d5ef; background: #eeedff; }
+.composer.deep-research-mode { border-color: #c9c5ef; box-shadow: 0 12px 34px rgb(67 58 145 / 12%); }
+.composer > label { min-width: 0; grid-column: 1 / -1; grid-row: 2; }
+.composer.has-pending-images > label { grid-row: 3; }
 .image-attachment-stage { grid-column: 1 / -1; }
 .image-attachment-stage {
   position: relative;
-  grid-row: 1;
+  grid-row: 2;
   min-height: 84px;
   display: flex;
   flex-direction: column;
@@ -1006,8 +1014,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   font-size: 10px;
   font-weight: 750;
 }
-.image-add-control { position: relative; grid-column: 1; grid-row: 2; align-self: center; }
-.composer.has-pending-images .image-add-control { grid-row: 3; }
+.image-add-control { position: relative; grid-column: 1; grid-row: 3; align-self: center; }
+.composer.has-pending-images .image-add-control { grid-row: 4; }
 .image-add-trigger {
   width: 34px;
   height: 34px;
@@ -1093,7 +1101,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .image-input-hint {
   min-width: 0;
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 3;
   align-self: center;
   overflow: hidden;
   color: #8b94a6;
@@ -1101,7 +1109,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.composer.has-pending-images .image-input-hint { grid-row: 3; }
+.composer.has-pending-images .image-input-hint { grid-row: 4; }
 .image-drop-hint {
   z-index: 35;
   position: absolute;
@@ -1247,7 +1255,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   width: 36px;
   height: 36px;
   grid-column: 4;
-  grid-row: 2;
+  grid-row: 3;
   align-self: end;
   justify-content: center;
   padding: 0;
@@ -1257,13 +1265,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: #4c6fff;
   cursor: pointer;
 }
-.composer.has-pending-images .send-button { grid-row: 3; }
+.composer.has-pending-images .send-button { grid-row: 4; }
 .send-button:disabled { color: #9ca6b7; background: #e8ebf0; cursor: not-allowed; }
 .retry-send-button {
   width: 30px;
   height: 30px;
   grid-column: 3;
-  grid-row: 2;
+  grid-row: 3;
   align-self: center;
   display: grid;
   place-items: center;
@@ -1274,7 +1282,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: #fff7f8;
   cursor: pointer;
 }
-.composer.has-pending-images .retry-send-button { grid-row: 3; }
+.composer.has-pending-images .retry-send-button { grid-row: 4; }
 .retry-send-button:hover { color: #8f3e4e; border-color: #e6b7c0; background: #fdeef1; }
 .retry-send-button:disabled { opacity: .5; cursor: not-allowed; }
 

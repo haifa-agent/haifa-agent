@@ -145,7 +145,7 @@ const bootstrap: Bootstrap = {
   apiVersion: "v1",
   connection: "connected",
   caller: "public-user",
-  capabilities: ["conversation", "tool", "skill", "mcp", "memory", "usage", "sse"],
+  capabilities: ["conversation", "tool", "skill", "mcp", "memory", "usage", "web-research", "sse"],
   assemblyDigest: "safe-digest",
   defaultModelId: model.id,
   models: [model],
@@ -343,6 +343,147 @@ describe("Personal Assistant application", () => {
     expect((await screen.findAllByText("执行中")).length).toBeGreaterThan(0);
     fireEvent.click(within(dialog).getByRole("button", { name: "关闭 Mission" }));
     expect(window.location.pathname).toBe("/");
+  });
+
+  it("routes the deep-research slash command to a prefilled Mission draft without starting a normal run", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      createMission: vi.fn(async () => researchMission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    const composer = await screen.findByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "/deep-research 研究主流开源数据库过去三年的变化" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect((within(dialog).getByLabelText("目标") as HTMLTextAreaElement).value)
+      .toBe("研究主流开源数据库过去三年的变化");
+    expect((within(dialog).getByRole("radio", { name: /Deep Research/ }) as HTMLInputElement).checked).toBe(true);
+    expect(api.submitMessage).not.toHaveBeenCalled();
+    expect(api.createMission).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "生成计划" }));
+    await waitFor(() => expect(api.createMission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        objective: "研究主流开源数据库过去三年的变化",
+        mode: "DEEP_RESEARCH",
+        selectedSkillId: "deep-research",
+      }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    ));
+  });
+
+  it("only routes an explicit deep-research request and leaves broad research wording in normal chat", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      createMission: vi.fn(async () => researchMission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    const composer = await screen.findByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "帮我调研一下主流数据库" } });
+    fireEvent.submit(composer.closest("form")!);
+    await waitFor(() => expect(api.submitMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: conversation.id }),
+      "帮我调研一下主流数据库",
+      expect.any(Object),
+    ));
+    await waitFor(() => expect((composer as HTMLTextAreaElement).disabled).toBe(false));
+
+    fireEvent.change(composer, { target: { value: "调用 deep-research skill 研究数据库安全演进" } });
+    fireEvent.submit(composer.closest("form")!);
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect((within(dialog).getByLabelText("目标") as HTMLTextAreaElement).value).toBe("研究数据库安全演进");
+    expect(api.createMission).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unavailable Deep Research draft cost-free and explains the missing Web capability", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"]
+        .filter((capability) => capability !== "web-research") })),
+      missions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      createMission: vi.fn(async () => researchMission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    fireEvent.click(await screen.findByRole("button", { name: "Deep Research" }));
+    const composer = screen.getByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "研究数据库兼容性" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect(within(dialog).getByRole("alert").textContent).toContain("Web Search/Fetch Provider");
+    expect((within(dialog).getByRole("button", { name: "生成计划" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(api.createMission).not.toHaveBeenCalled();
+    expect(api.submitMessage).not.toHaveBeenCalled();
+  });
+
+  it("opens the current Mission instead of creating a second active Mission", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [researchMission], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => researchMission),
+      createMission: vi.fn(async () => researchMission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    const composer = screen.getByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "/deep-research 研究新的数据库主题" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    expect(within(dialog).getByRole("alert").textContent).toContain("已有进行中的 Mission");
+    expect(within(dialog).getAllByText(researchMission.objective)).toHaveLength(2);
+    expect(api.createMission).not.toHaveBeenCalled();
+    expect(api.submitMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not silently discard attachments when Deep Research routing is requested", async () => {
+    const imageModel = { ...model, capabilities: [...model.capabilities, "IMAGE_INPUT"] };
+    const imageConversation = { ...conversation, model: { model: imageModel, revision: 0, available: true } };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({
+        ...bootstrap,
+        capabilities: [...bootstrap.capabilities, "mission"],
+        models: [imageModel],
+      })),
+      conversations: vi.fn(async () => [imageConversation]),
+      conversation: vi.fn(async () => imageConversation),
+      missions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      createMission: vi.fn(async () => researchMission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    await screen.findByText("每日计划");
+    fireEvent.click(screen.getByRole("button", { name: "添加图片" }));
+    const imageDialog = screen.getByRole("dialog", { name: "添加图片" });
+    fireEvent.click(within(imageDialog).getByRole("button", { name: /^添加图片 URL/ }));
+    fireEvent.change(within(imageDialog).getByRole("textbox", { name: "图片 URL" }), {
+      target: { value: "https://example.com/evidence.png" },
+    });
+    fireEvent.click(within(imageDialog).getByRole("button", { name: "确认添加图片 URL" }));
+    fireEvent.click(screen.getByRole("button", { name: "Deep Research" }));
+    const composer = screen.getByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "研究图片中的证据" } });
+    fireEvent.submit(composer.closest("form")!);
+
+    expect(await screen.findByText(/附件不会被静默丢弃/)).toBeTruthy();
+    expect(screen.getByText("example.com")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Mission" })).toBeNull();
+    expect(api.createMission).not.toHaveBeenCalled();
+    expect(api.submitMessage).not.toHaveBeenCalled();
   });
 
   it("opens a mission directly from its stable URL", async () => {
