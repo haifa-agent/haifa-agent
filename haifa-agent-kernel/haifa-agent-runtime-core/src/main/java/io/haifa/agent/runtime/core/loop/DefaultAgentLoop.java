@@ -741,6 +741,15 @@ public final class DefaultAgentLoop implements AgentLoop {
         if (error instanceof RuntimeLimitExceededException) return AgentErrorCode.RUN_BUDGET_EXCEEDED;
         if (error instanceof ContextRebuildExhaustedException) return AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
         if (!(error instanceof ModelInvocationException modelError)) return AgentErrorCode.MODEL_CALL_FAILED;
+        if ("structured_output_unsupported".equals(modelError.providerCode())) {
+            return AgentErrorCode.MODEL_STRUCTURED_OUTPUT_UNSUPPORTED;
+        }
+        if ("structured_output_invalid".equals(modelError.providerCode())) {
+            return AgentErrorCode.MODEL_STRUCTURED_OUTPUT_INVALID;
+        }
+        if ("output_truncated".equals(modelError.providerCode())) {
+            return AgentErrorCode.MODEL_OUTPUT_TRUNCATED;
+        }
         return switch (modelError.category()) {
             case AUTHENTICATION_FAILED -> AgentErrorCode.MODEL_AUTHENTICATION_FAILED;
             case PERMISSION_DENIED -> AgentErrorCode.MODEL_PERMISSION_DENIED;

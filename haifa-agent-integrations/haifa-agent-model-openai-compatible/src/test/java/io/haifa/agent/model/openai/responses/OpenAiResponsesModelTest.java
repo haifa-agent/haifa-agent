@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.ApiStyleId;
@@ -76,14 +77,14 @@ class OpenAiResponsesModelTest {
         var tool = new ModelToolSpecification("lookup", "1", "Lookup", "schema", "1", Map.of("type", "object"), true);
         var call = new ModelToolCall(new ProviderToolCallCorrelationId("call-1"), "lookup", Map.of("city", "Hangzhou"));
         var request = request(
-                standardSnapshot(true),
+                standardSnapshot(true, Map.of("response_format", Map.of("type", "json_object"))),
                 List.of(
                         ModelMessage.text(ModelMessageRole.SYSTEM, "Be concise"),
                         ModelMessage.text(ModelMessageRole.USER, "weather"),
                         ModelMessage.assistant("", List.of(call)),
                         ModelMessage.tool(new ProviderToolCallCorrelationId("call-1"), "sunny")),
                 List.of(tool),
-                Map.of("response_format", Map.of("type", "json_object")));
+                Map.of());
 
         var actual = model().invoke(request);
 
@@ -120,6 +121,55 @@ class OpenAiResponsesModelTest {
             assertThat(call.providerCorrelationId().value()).isEqualTo("call-weather");
             assertThat(call.arguments()).containsEntry("city", "Paris");
         });
+    }
+
+    @Test
+    void mapsFrozenRecordRequirementToResponsesTextFormatAndParsesTerminalOutput() throws Exception {
+        response.set(Response.json(
+                200,
+                """
+                {"id":"resp-structured","status":"completed","model":"gpt-test",
+                 "output":[{"id":"msg-1","type":"message","content":[{"type":"output_text","text":%s}]}],
+                 "usage":{"input_tokens":2,"output_tokens":1}}
+                """
+                        .formatted(json.writeValueAsString("{\"city\":\"Shanghai\",\"days\":2}"))));
+        var requirement = new StructuredOutputRequirement(
+                "java-record:TripPlan",
+                "sha256:test",
+                "TripPlan",
+                Map.of(
+                        "type",
+                        "object",
+                        "properties",
+                        Map.of(
+                                "city", Map.of("type", "string"),
+                                "days", Map.of("type", "integer")),
+                        "required",
+                        List.of("city", "days"),
+                        "additionalProperties",
+                        false));
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("call-structured"),
+                new AgentRunId("run-structured"),
+                1,
+                1,
+                standardSnapshot(true),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "plan")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement));
+
+        var actual = model().invoke(request);
+
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        JsonNode format = json.readTree(requestBody.get()).path("text").path("format");
+        assertThat(format.path("type").asText()).isEqualTo("json_schema");
+        assertThat(format.path("name").asText()).isEqualTo("TripPlan");
+        assertThat(format.path("strict").asBoolean()).isTrue();
+        assertThat(format.path("schema").path("additionalProperties").asBoolean())
+                .isFalse();
     }
 
     @Test
@@ -284,7 +334,11 @@ class OpenAiResponsesModelTest {
     }
 
     private ResolvedModelSnapshot standardSnapshot(boolean nativeStreaming) {
-        return snapshot("gpt-test", OpenAiResponsesDialects.STANDARD, nativeStreaming);
+        return standardSnapshot(nativeStreaming, Map.of());
+    }
+
+    private ResolvedModelSnapshot standardSnapshot(boolean nativeStreaming, Map<String, Object> invocationOptions) {
+        return snapshot("gpt-test", OpenAiResponsesDialects.STANDARD, nativeStreaming, invocationOptions);
     }
 
     private ResolvedModelSnapshot deepSeekSnapshot() {
@@ -296,6 +350,11 @@ class OpenAiResponsesModelTest {
     }
 
     private ResolvedModelSnapshot snapshot(String providerModelId, String dialect, boolean nativeStreaming) {
+        return snapshot(providerModelId, dialect, nativeStreaming, Map.of());
+    }
+
+    private ResolvedModelSnapshot snapshot(
+            String providerModelId, String dialect, boolean nativeStreaming, Map<String, Object> invocationOptions) {
         return ResolvedModelSnapshot.create(
                 new io.haifa.agent.model.api.ModelProviderId("stub"),
                 "provider-v1",
@@ -317,7 +376,7 @@ class OpenAiResponsesModelTest {
                 128_000,
                 8_192,
                 Map.of(),
-                Map.of());
+                invocationOptions);
     }
 
     private void handle(HttpExchange exchange) throws IOException {

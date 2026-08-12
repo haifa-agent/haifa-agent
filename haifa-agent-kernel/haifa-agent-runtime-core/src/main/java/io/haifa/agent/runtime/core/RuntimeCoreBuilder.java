@@ -59,6 +59,7 @@ import io.haifa.agent.runtime.core.completion.CompletionPolicy;
 import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
 import io.haifa.agent.runtime.core.completion.DefaultRunFinalizer;
+import io.haifa.agent.runtime.core.completion.FrozenStructuredOutputValidator;
 import io.haifa.agent.runtime.core.completion.OutputContractValidator;
 import io.haifa.agent.runtime.core.completion.RequiredArtifactChecker;
 import io.haifa.agent.runtime.core.completion.TodoConvergenceChecker;
@@ -178,6 +179,9 @@ public final class RuntimeCoreBuilder {
                 + request.binding().coordinate().externalForm());
     };
     private ToolSchemaValidator toolSchemaValidator = (schema, instance) -> new ToolSchemaValidationResult(List.of());
+    private ToolSchemaValidator structuredOutputSchemaValidator = (schema, instance) ->
+            new ToolSchemaValidationResult(List.of(new io.haifa.agent.tool.api.ToolSchemaValidationError(
+                    "$", "validator", "structured output schema validator is unavailable")));
     private boolean toolPlatformConfigured;
     private ToolPolicy toolPolicy = new DefaultToolPolicy();
     private PublicToolPolicy publicToolPolicy;
@@ -439,6 +443,12 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    /** Configures the bounded JSON Schema validator used by the frozen terminal output contract. */
+    public RuntimeCoreBuilder structuredOutputSchemaValidator(ToolSchemaValidator value) {
+        structuredOutputSchemaValidator = Objects.requireNonNull(value);
+        return this;
+    }
+
     public RuntimeCoreBuilder requiredArtifactChecker(RequiredArtifactChecker value) {
         requiredArtifacts = Objects.requireNonNull(value);
         return this;
@@ -611,13 +621,18 @@ public final class RuntimeCoreBuilder {
         AgentRuntimeMiddlewareChain middleware = new AgentRuntimeMiddlewareChain(configuredMiddleware);
         TodoReconciliationService todoReconciliation =
                 new TodoReconciliationService(state, new TodoConvergenceChecker());
+        OutputContractValidator configuredOutputContract =
+                new FrozenStructuredOutputValidator(state, structuredOutputSchemaValidator);
+        OutputContractValidator productOutputContract = outputContract;
+        OutputContractValidator combinedOutputContract = (run, decision) ->
+                configuredOutputContract.isValid(run, decision) && productOutputContract.isValid(run, decision);
         DefaultCompletionGuard completion = new DefaultCompletionGuard(
                 state,
                 pipeline,
                 interactions,
                 delegations,
                 todoReconciliation,
-                outputContract,
+                combinedOutputContract,
                 requiredArtifacts,
                 completionPolicy);
         ResumeCheckpointSelector checkpointSelections = new ResumeCheckpointSelector();

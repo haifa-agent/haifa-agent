@@ -3,6 +3,7 @@ package io.haifa.agent.sdk.conversation;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.session.AgentSessionId;
 import java.util.List;
 import java.util.Objects;
@@ -13,10 +14,18 @@ public record SubmitConversationTurnCommand(
         String idempotencyKey,
         String message,
         java.util.Optional<String> runProfileId,
-        List<ContentPart> inputs) {
+        List<ContentPart> inputs,
+        java.util.Optional<StructuredOutputRequirement> structuredOutput) {
     public SubmitConversationTurnCommand(
             AgentSessionId sessionId, long expectedRevision, String idempotencyKey, String message) {
-        this(sessionId, expectedRevision, idempotencyKey, message, java.util.Optional.empty(), List.of());
+        this(
+                sessionId,
+                expectedRevision,
+                idempotencyKey,
+                message,
+                java.util.Optional.empty(),
+                List.of(),
+                java.util.Optional.empty());
     }
 
     public SubmitConversationTurnCommand(
@@ -25,7 +34,17 @@ public record SubmitConversationTurnCommand(
             String idempotencyKey,
             String message,
             java.util.Optional<String> runProfileId) {
-        this(sessionId, expectedRevision, idempotencyKey, message, runProfileId, List.of());
+        this(sessionId, expectedRevision, idempotencyKey, message, runProfileId, List.of(), java.util.Optional.empty());
+    }
+
+    public SubmitConversationTurnCommand(
+            AgentSessionId sessionId,
+            long expectedRevision,
+            String idempotencyKey,
+            String message,
+            java.util.Optional<String> runProfileId,
+            List<ContentPart> inputs) {
+        this(sessionId, expectedRevision, idempotencyKey, message, runProfileId, inputs, java.util.Optional.empty());
     }
 
     public SubmitConversationTurnCommand {
@@ -36,6 +55,7 @@ public record SubmitConversationTurnCommand(
         runProfileId = Objects.requireNonNull(runProfileId, "runProfileId must not be null")
                 .map(value -> requireText(value, "runProfileId", 256));
         inputs = imageInputs(inputs);
+        structuredOutput = Objects.requireNonNullElse(structuredOutput, java.util.Optional.empty());
     }
 
     private static String requireText(String value, String field, int limit) {

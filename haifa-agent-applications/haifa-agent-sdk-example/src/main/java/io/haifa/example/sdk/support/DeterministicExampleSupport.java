@@ -77,7 +77,7 @@ public final class DeterministicExampleSupport {
                 URI.create("https://model.invalid"),
                 new CredentialRef("env://EXAMPLE_MODEL_KEY"),
                 false,
-                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.STRUCTURED_OUTPUT),
                 8_192,
                 1_024,
                 Map.of(),

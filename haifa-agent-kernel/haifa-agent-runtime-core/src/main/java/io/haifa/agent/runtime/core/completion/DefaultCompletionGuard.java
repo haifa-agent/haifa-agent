@@ -43,9 +43,17 @@ public final class DefaultCompletionGuard implements CompletionGuard {
     @Override
     public CompletionReadiness evaluate(AgentRun run, FinalAnswerDecision decision) {
         List<CompletionBlocker> blockers = new ArrayList<>();
-        if (!outputContract.isValid(run, decision))
+        if (!outputContract.isValid(run, decision)) {
+            boolean structured = state.configuration(run.configurationSnapshot())
+                    .flatMap(configuration -> configuration.structuredOutput())
+                    .isPresent();
             blockers.add(CompletionBlocker.recoverable(
-                    "OUTPUT_CONTRACT_INVALID", "Output contract is incomplete.", "VALID_OUTPUT"));
+                    structured ? "STRUCTURED_OUTPUT_INVALID" : "OUTPUT_CONTRACT_INVALID",
+                    structured
+                            ? "Structured final output does not satisfy the frozen schema."
+                            : "Output contract is incomplete.",
+                    "VALID_OUTPUT"));
+        }
         if (!artifacts.isSatisfied(run, decision))
             blockers.add(CompletionBlocker.recoverable(
                     "REQUIRED_ARTIFACT_MISSING", "A required artifact is missing.", "REQUIRED_ARTIFACT"));

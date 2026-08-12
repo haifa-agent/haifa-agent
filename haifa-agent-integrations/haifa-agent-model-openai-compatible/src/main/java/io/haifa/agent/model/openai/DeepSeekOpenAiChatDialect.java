@@ -40,6 +40,11 @@ final class DeepSeekOpenAiChatDialect implements OpenAiCompatibleDialect {
     @Override
     public void applyRequest(AgentChatRequest request, Map<String, Object> body) {
         String thinking = frozen(request, "thinking", "disabled");
+        if ("enabled".equals(thinking)
+                && (request.options().containsKey("temperature")
+                        || request.model().invocationOptions().containsKey("temperature"))) {
+            throw new IllegalArgumentException("DeepSeek thinking cannot be combined with temperature");
+        }
         body.put("thinking", Map.of("type", thinking));
         if ("enabled".equals(thinking)) body.put("reasoning_effort", frozen(request, "reasoning_effort", "high"));
     }

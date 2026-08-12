@@ -1,5 +1,14 @@
 # Changelog
 
+- SDK 新增 `chat(message, Record.class)` 类型化最终输出：复用 Java record Schema/Codec，把输出契约冻结进
+  Run 配置，由 OpenAI-compatible Adapter 映射并在 Runtime 终态校验、持久化后解码；Tool Loop 不受最终
+  Schema 限制，不提供类型化 partial stream，Unsupported/Invalid/Refusal/Truncation 保持稳定分类。
+- Anthropic Messages Structured Output 按 dialect 分流：`standard` 映射官方 `output_config.format`
+  JSON Schema，DeepSeek Anthropic-compatible 在未验证该字段前继续 fail closed。
+- OpenAI-compatible Integration 新增类型化模型配置 Builder，覆盖现有 Chat Completions、Responses 与
+  Anthropic Messages style 的标准/DeepSeek profile，并把超时和受限调用选项纳入冻结配置；Starter
+  保留原有 `model(adapter, snapshot)` 高级入口。
+
 ## 0.1.0-SNAPSHOT
 
 - SDK 新增复用现有 Conversation/Runtime 的轻量 `chat()` Facade、纯展示 `name`/`description`、Starter

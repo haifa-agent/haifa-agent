@@ -12,6 +12,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRun;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.session.AgentSession;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.session.SessionScope;
@@ -289,6 +290,78 @@ class SqliteRuntimeRecoveryTest {
                             ExecutionAttemptStatus.PAUSED,
                             ExecutionAttemptStatus.ABANDONED,
                             ExecutionAttemptStatus.SUCCEEDED);
+            assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
+                    .isPresent();
+        }
+    }
+
+    @Test
+    void recoversFrozenStructuredOutputRequirementAndPersistsValidatedResult() {
+        AgentRunId runId;
+        StructuredOutputRequirement requirement = tripPlanRequirement();
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            AtomicReference<DefaultAgentRuntime> runtimeRef = new AtomicReference<>();
+            AtomicReference<AgentRunId> runRef = new AtomicReference<>();
+            AgentChatModel pausingModel = ignored -> {
+                runtimeRef.get().command(pause(runRef.get()));
+                return structuredResponse("checkpoint-before-restart");
+            };
+            RuntimeInstance processA = runtime(
+                    first,
+                    pausingModel,
+                    "structured-process-a",
+                    new TestIds("structured-a"),
+                    builder -> builder.structuredOutputSchemaValidator(new JsonSchema202012Validator()));
+            runtimeRef.set(processA.runtime());
+            runId = processA.runtime()
+                    .start(structuredRequest("structured-resume", requirement))
+                    .runId();
+            runRef.set(runId);
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.SUSPENDED);
+            assertThat(processA.ports()
+                            .state()
+                            .configuration(processA.ports()
+                                    .runs()
+                                    .find(runId)
+                                    .orElseThrow()
+                                    .configurationSnapshot())
+                            .orElseThrow()
+                            .structuredOutput())
+                    .contains(requirement);
+        }
+
+        try (SqliteStoreFoundation resumed = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = runtime(
+                    resumed,
+                    ignored -> structuredResponse("not-yet"),
+                    "structured-process-a",
+                    new TestIds("structured-a2"),
+                    builder -> builder.structuredOutputSchemaValidator(new JsonSchema202012Validator()));
+            processA.runtime().resume(new ResumeAgentRunRequest("structured-resume-command", runId, List.of()));
+            AgentRunExecutionAttempt active =
+                    resumed.attempts().activeFor(runId).orElseThrow();
+            long expected = active.version();
+            active.start("structured-process-a", NOW);
+            resumed.attempts().save(active, expected);
+        }
+
+        try (SqliteStoreFoundation recovered = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = runtime(
+                    recovered,
+                    ignored -> structuredResponse("recovered"),
+                    "structured-process-b",
+                    new TestIds("structured-b"),
+                    builder -> builder.structuredOutputSchemaValidator(new JsonSchema202012Validator()));
+            processB.runtime().recover(runId);
+            processB.scheduler().runAll();
+
+            var completed = processB.runtime().find(runId).orElseThrow();
+            assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(completed.result().orElseThrow().outputSchemaId()).isEqualTo(requirement.schemaId());
+            assertThat(completed.result().orElseThrow().structuredOutput())
+                    .containsExactlyInAnyOrderEntriesOf(Map.of("city", "Shanghai", "days", 2));
             assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
                     .isPresent();
         }
@@ -912,6 +985,20 @@ class SqliteRuntimeRecoveryTest {
                 RuntimeOverrides.NONE);
     }
 
+    private static AgentRunRequest structuredRequest(String key, StructuredOutputRequirement requirement) {
+        return new AgentRunRequest(
+                key,
+                new AgentDefinitionId("sqlite-runtime-agent"),
+                Optional.empty(),
+                "sqlite-runtime-profile",
+                SESSION_ID,
+                Optional.empty(),
+                "test structured objective",
+                List.of(),
+                RuntimeOverrides.NONE,
+                Optional.of(requirement));
+    }
+
     private static RuntimeCommand pause(AgentRunId runId) {
         return new RuntimeCommand(
                 new RuntimeCommandId("pause-command"),
@@ -952,6 +1039,38 @@ class SqliteRuntimeRecoveryTest {
                 ModelUsage.unpriced(1, 1),
                 "",
                 Map.of());
+    }
+
+    private static AgentChatResponse structuredResponse(String summary) {
+        return new AgentChatResponse(
+                "response-structured",
+                "test-model",
+                "{\"city\":\"Shanghai\",\"days\":2}",
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of("summary", summary),
+                Optional.empty(),
+                Optional.of(Map.of("city", "Shanghai", "days", 2)));
+    }
+
+    private static StructuredOutputRequirement tripPlanRequirement() {
+        return new StructuredOutputRequirement(
+                "java-record:TripPlan",
+                "sha256:trip-plan",
+                "TripPlan",
+                Map.of(
+                        "type",
+                        "object",
+                        "properties",
+                        Map.of(
+                                "city", Map.of("type", "string"),
+                                "days", Map.of("type", "integer")),
+                        "required",
+                        List.of("city", "days"),
+                        "additionalProperties",
+                        false));
     }
 
     private static AgentChatResponse toolResponse() {

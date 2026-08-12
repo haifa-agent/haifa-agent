@@ -223,6 +223,7 @@ public final class HaifaAgentBuilder {
                     .timeProvider(time)
                     .scheduler(scheduler)
                     .toolApprovalPrompts(toolApprovalPrompts::format)
+                    .structuredOutputSchemaValidator(new io.haifa.agent.tool.core.JsonSchema202012Validator())
                     .toolRetry(toolRetry)
                     .publicToolPolicyDecorator(publicToolPolicyDecorator)
                     .modelImageResolver(modelImageResolver::resolve)

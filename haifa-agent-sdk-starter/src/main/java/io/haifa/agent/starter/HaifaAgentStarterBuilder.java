@@ -16,6 +16,7 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration;
 import io.haifa.agent.sdk.api.AgentMetadata;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
@@ -172,7 +173,25 @@ public final class HaifaAgentStarterBuilder {
         Objects.requireNonNull(model, "model must not be null");
         Objects.requireNonNull(snapshot, "snapshot must not be null");
         String modelId = snapshot.modelId().value();
-        if (models.putIfAbsent(modelId, new ModelRegistration(model, snapshot)) != null) {
+        if (models.putIfAbsent(modelId, new ModelRegistration(model, snapshot, Duration.ofSeconds(60))) != null) {
+            throw new IllegalArgumentException("model IDs must be unique");
+        }
+        return this;
+    }
+
+    /**
+     * Registers a typed OpenAI-compatible model configuration. The adapter coordinate, frozen
+     * snapshot, invocation options, and request timeout remain part of the ordinary Runtime path.
+     *
+     * @param configuration typed Integration configuration
+     * @return this builder
+     */
+    public HaifaAgentStarterBuilder model(OpenAiCompatibleModelConfiguration configuration) {
+        OpenAiCompatibleModelConfiguration value =
+                Objects.requireNonNull(configuration, "configuration must not be null");
+        String modelId = value.snapshot().modelId().value();
+        if (models.putIfAbsent(modelId, new ModelRegistration(value.model(), value.snapshot(), value.requestTimeout()))
+                != null) {
             throw new IllegalArgumentException("model IDs must be unique");
         }
         return this;
@@ -207,10 +226,7 @@ public final class HaifaAgentStarterBuilder {
         if (defaultInstructions) {
             builder.starterDefaultInstructionsInUse();
         }
-        model.snapshots().values().stream()
-                .filter(snapshot -> !snapshot.modelId().equals(model.snapshot().modelId()))
-                .map(this::runProfile)
-                .forEach(builder::runProfile);
+        models.values().stream().map(this::runProfile).forEach(builder::runProfile);
         return builder.build();
     }
 
@@ -328,14 +344,16 @@ public final class HaifaAgentStarterBuilder {
                 Set.of());
     }
 
-    private io.haifa.agent.sdk.product.ProductRunProfile runProfile(ResolvedModelSnapshot snapshot) {
+    private io.haifa.agent.sdk.product.ProductRunProfile runProfile(ModelRegistration registration) {
+        ResolvedModelSnapshot snapshot = registration.snapshot();
+        long requestTimeoutMillis = registration.requestTimeout().toMillis();
         return new io.haifa.agent.sdk.product.ProductRunProfile(
                 snapshot.modelId().value(),
                 VERSION,
                 snapshot.modelId().value(),
                 io.haifa.agent.core.run.AgentRunType.CHAT,
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
-                new AgentRunLimits(16, 0, 1, 120_000, 60_000),
+                new AgentRunLimits(16, 0, 1, Math.max(120_000, requestTimeoutMillis), requestTimeoutMillis),
                 Map.of());
     }
 
@@ -378,7 +396,13 @@ public final class HaifaAgentStarterBuilder {
         return normalized;
     }
 
-    private record ModelRegistration(AgentChatModel model, ResolvedModelSnapshot snapshot) {}
+    private record ModelRegistration(AgentChatModel model, ResolvedModelSnapshot snapshot, Duration requestTimeout) {
+        private ModelRegistration {
+            Objects.requireNonNull(model, "model must not be null");
+            Objects.requireNonNull(snapshot, "snapshot must not be null");
+            Objects.requireNonNull(requestTimeout, "requestTimeout must not be null");
+        }
+    }
 
     private record ModelBundle(
             ModelContribution contribution,

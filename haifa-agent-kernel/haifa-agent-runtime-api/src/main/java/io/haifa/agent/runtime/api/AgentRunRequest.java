@@ -4,6 +4,7 @@ import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.reference.ProjectRef;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.session.AgentSessionId;
 import java.util.List;
 import java.util.Objects;
@@ -19,7 +20,31 @@ public record AgentRunRequest(
         Optional<ProjectRef> project,
         String objective,
         List<ContentPart> inputs,
-        RuntimeOverrides overrides) {
+        RuntimeOverrides overrides,
+        Optional<StructuredOutputRequirement> structuredOutput) {
+
+    public AgentRunRequest(
+            String idempotencyKey,
+            AgentDefinitionId agentDefinitionId,
+            Optional<AgentDefinitionVersion> requestedDefinitionVersion,
+            String productProfileId,
+            AgentSessionId sessionId,
+            Optional<ProjectRef> project,
+            String objective,
+            List<ContentPart> inputs,
+            RuntimeOverrides overrides) {
+        this(
+                idempotencyKey,
+                agentDefinitionId,
+                requestedDefinitionVersion,
+                productProfileId,
+                sessionId,
+                project,
+                objective,
+                inputs,
+                overrides,
+                Optional.empty());
+    }
 
     public AgentRunRequest {
         idempotencyKey = requireText(idempotencyKey, "idempotencyKey");
@@ -36,6 +61,7 @@ public record AgentRunRequest(
         }
         inputs = List.copyOf(inputs);
         overrides = Objects.requireNonNull(overrides, "overrides must not be null");
+        structuredOutput = Objects.requireNonNullElse(structuredOutput, Optional.empty());
     }
 
     private static String requireText(String value, String field) {
