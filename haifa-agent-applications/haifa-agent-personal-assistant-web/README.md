@@ -59,7 +59,8 @@ JAR 的构建或静态资源打包。
   任务标题、目标、验收标准、顺序和早期依赖，并增删任务；保存生成新 Plan Revision，确认后冻结。
   编辑器不展示或允许修改内部 Task 类型、Skill 或结果 Schema；右侧详情可以独立关闭，窄屏使用
   Mission、报告和详情三个互斥视图，避免三栏纵向堆叠和多重滚动；
-- 显式 Standard / Deep Research 模式、完整 Research Brief，以及 v1 历史结果和
+- 显式 Standard / Deep Research 模式；创建页默认只要求目标，并准备领域无关、可编辑的执行/研究默认值，
+  验收标准和完整 Research Brief 按需展开编辑；提交时仍冻结完整输入。支持 v1 历史结果和
   `pa.research-delivery/v2` 正常/部分/降级/失败语义、完整 Markdown 报告查看/复制/下载、降级原因、
   受影响 Task、来源链接和五类交付文件；主对话直接渲染完整报告并隐藏报告中的 HTML 机器注释，
   Markdown 下载通过浏览器 Blob 触发真实文件保存；

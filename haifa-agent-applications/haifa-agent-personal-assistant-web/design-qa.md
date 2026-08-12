@@ -83,7 +83,6 @@ The focused before/after image shows the removal of the shadow and icon tile, lo
 - P3: if the whole conversation screen is later made denser, the live status copy could be collapsed to two rows on mobile. It is not currently required for usability.
 
 final result: passed
-
 ---
 
 ## Mission Full-Screen Workspace QA
@@ -152,5 +151,53 @@ final result: passed
 ### Follow-up polish
 
 - [P3] Add resizable pane dividers only if users report needing substantially more width for evidence-heavy task definitions.
+
+final result: passed
+
+---
+
+# Mission Progressive Creation Design QA
+
+## Comparison target
+
+- Approved design: `D:/workspace/haifa-agent/haifa-agent-design/mission-entry-and-creation-flow/qa/10-progressive-summary.png`
+- Production implementation: `http://127.0.0.1:20000/`
+- Production screenshot: `D:/workspace/haifa-agent/local-tmp/product-design-audits/mission-progressive-create/production-final.png`
+- Expanded settings screenshot: `D:/workspace/haifa-agent/local-tmp/product-design-audits/mission-progressive-create/production-expanded.png`
+- Viewport: 1440 x 900 CSS px.
+
+## Fidelity review
+
+- Preserved the production Mission workspace shell while matching the approved mode cards, goal-first hierarchy, prepared defaults, two-column summary, optional settings control, and right-side planning guide.
+- Reused the existing production typography, spacing, color tokens, borders, focus treatment, and Lucide icon system.
+- Standard Mission and Deep Research stay explicit. Internal Skill and Schema details remain hidden.
+- Narrow layouts collapse mode cards, summary fields, Research Brief fields, and metadata to one column.
+
+## Interaction verification
+
+- Verified an empty goal shows the empty defaults state, hides acceptance criteria, and disables plan generation.
+- Verified selecting Deep Research and entering a goal with an explicit three-year range prepares domain-neutral scope, time, region, delivery, and three acceptance-criteria defaults.
+- Verified “调整研究设置” reveals editable criteria, research question, scope, time, region, audience, and delivery format.
+- Verified “来源与边界” independently reveals source preferences and exclusions.
+- Verified adjacent component tests submit complete deterministic Standard and Deep Research payloads through the existing Mission API contract.
+- Browser verification intentionally stopped before the paid Planner call; no paid model request was made during visual QA.
+- Screenshot references preserve the reviewed layout; the later domain-neutral wording and defaults were verified through source review and automated tests without producing a new browser capture.
+
+## Findings
+
+- P1 fixed: the previous form required acceptance criteria and the full Research Brief before planning.
+- P1 fixed: the right detail panel was empty during creation; it now explains planning, confirmation, and background execution.
+- P2 fixed: prepared defaults and optional editing are clearly distinguished without claiming semantic goal understanding.
+- No remaining actionable P0, P1, or P2 mismatch was found.
+
+## Validation
+
+- `npm run lint` passed.
+- `npm run contract:check` passed.
+- `npm run typecheck` passed.
+- `npm test` passed: 66 tests.
+- `npm run build` passed.
+- `npm run bundle:check` passed.
+- `npm run deploy:check` passed.
 
 final result: passed
