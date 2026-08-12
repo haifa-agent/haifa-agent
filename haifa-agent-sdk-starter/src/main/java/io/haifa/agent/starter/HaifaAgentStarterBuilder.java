@@ -16,6 +16,7 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.sdk.api.AgentMetadata;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
@@ -59,6 +60,9 @@ public final class HaifaAgentStarterBuilder {
             new ProductContributionCoordinate("starter.conversation.memory", VERSION);
 
     private String instructions = "You are a helpful assistant. Answer clearly and concisely.";
+    private String name = AgentMetadata.DEFAULT_NAME;
+    private String description = AgentMetadata.DEFAULT_DESCRIPTION;
+    private boolean defaultInstructions = true;
     private String credentialEnvironmentVariable = API_KEY_ENVIRONMENT_VARIABLE;
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
     private Function<String, String> environment = System::getenv;
@@ -69,6 +73,18 @@ public final class HaifaAgentStarterBuilder {
 
     HaifaAgentStarterBuilder() {}
 
+    /** Sets bounded immutable display metadata; it is never added to the Prompt. */
+    public HaifaAgentStarterBuilder name(String value) {
+        name = requireText(value, "name", 128);
+        return this;
+    }
+
+    /** Sets bounded immutable diagnostic metadata; it is never added to the Prompt. */
+    public HaifaAgentStarterBuilder description(String value) {
+        description = requireText(value, "description", 512);
+        return this;
+    }
+
     /**
      * Sets the trusted system instructions frozen into every Run created by this Starter.
      *
@@ -77,6 +93,7 @@ public final class HaifaAgentStarterBuilder {
      */
     public HaifaAgentStarterBuilder instructions(String value) {
         instructions = requireText(value, "instructions");
+        defaultInstructions = false;
         return this;
     }
 
@@ -181,11 +198,15 @@ public final class HaifaAgentStarterBuilder {
         ModelBundle model = models.isEmpty() ? deepSeekModel() : configuredModels();
         ProductProfile profile = profile(model.snapshot());
         var builder = HaifaAgents.builder(profile)
+                .metadata(new AgentMetadata(name, description))
                 .callerProvider(callers)
                 .contribute(model.contribution())
                 .contribute(persistenceContribution())
                 .contribute(conversationContribution())
                 .tools(tools);
+        if (defaultInstructions) {
+            builder.starterDefaultInstructionsInUse();
+        }
         model.snapshots().values().stream()
                 .filter(snapshot -> !snapshot.modelId().equals(model.snapshot().modelId()))
                 .map(this::runProfile)
@@ -346,9 +367,14 @@ public final class HaifaAgentStarterBuilder {
     }
 
     private static String requireText(String value, String field) {
+        return requireText(value, field, 32_000);
+    }
+
+    private static String requireText(String value, String field, int maximumLength) {
         String normalized =
                 Objects.requireNonNull(value, field + " must not be null").trim();
         if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
+        if (normalized.length() > maximumLength) throw new IllegalArgumentException(field + " is too long");
         return normalized;
     }
 

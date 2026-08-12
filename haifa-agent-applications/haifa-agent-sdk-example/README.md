@@ -6,11 +6,15 @@ organized by learning depth:
 | Package | Scope |
 | --- | --- |
 | `io.haifa.example.sdk.basic` | Real-provider Hello World, multi-turn Conversation, and Agent reuse/lifecycle |
-| `io.haifa.example.sdk.intermediate` | Typed and multi-Tool loops, complex record schemas, Starter customization, and multi-model selection |
+| `io.haifa.example.sdk.intermediate` | Typed and multi-Tool loops, Prompt Diagnostics, complex record schemas, Starter customization, and multi-model selection |
 | `io.haifa.example.sdk.advanced` | Safe errors, Conversation management, Runtime observation/control, trusted host diagnostics, and SQLite reference assembly |
 
 Every example is network-free unless its Javadoc explicitly opts into a real provider. Only
 `basic.HelloHaifa` requires `DEEPSEEK_API_KEY`.
+
+`basic.HelloHaifa` uses the lightweight `chat()` facade. `intermediate.PromptDiagnosticsExample`
+prints only redacted process-local component facts, while `advanced.AssemblyDiagnosticsExample`
+shows immutable display metadata and the Starter fallback diagnostic.
 
 `SqliteDurableReferenceAssemblyExample` is a single-process durable reference assembly: applications
 assemble the existing SQLite contributions and provide their own `HaifaAgent`. This application

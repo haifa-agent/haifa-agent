@@ -42,6 +42,8 @@ public class HaifaAgentAutoConfigurationTest {
                 .withBean(WeatherTool.class)
                 .withPropertyValues(
                         "haifa.agent.instructions=Answer with verified weather only.",
+                        "haifa.agent.name=spring-weather-agent",
+                        "haifa.agent.description=Spring display metadata",
                         "haifa.agent.model.credential-environment-variable=PATH",
                         "haifa.agent.model.connect-timeout=3s")
                 .run(context -> {
@@ -50,11 +52,15 @@ public class HaifaAgentAutoConfigurationTest {
                     assertThat(agent.assembly().profile().instructions())
                             .isEqualTo("Answer with verified weather only.");
                     assertThat(agent.assembly().profile().allowedTools()).containsExactly("weather_get");
+                    assertThat(agent.metadata().name()).isEqualTo("spring-weather-agent");
+                    assertThat(agent.metadata().description()).isEqualTo("Spring display metadata");
 
                     var properties = context.getBean(HaifaAgentProperties.class);
                     assertThat(properties.getModel().getCredentialEnvironmentVariable())
                             .isEqualTo("PATH");
                     assertThat(properties.getModel().getConnectTimeout()).isEqualTo(Duration.ofSeconds(3));
+                    assertThat(properties.getName()).isEqualTo("spring-weather-agent");
+                    assertThat(properties.getDescription()).isEqualTo("Spring display metadata");
                 });
     }
 

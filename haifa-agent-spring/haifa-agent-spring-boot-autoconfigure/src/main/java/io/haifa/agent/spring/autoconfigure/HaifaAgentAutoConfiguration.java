@@ -38,6 +38,12 @@ public class HaifaAgentAutoConfiguration {
             if (instructions != null) {
                 builder.instructions(instructions);
             }
+            if (properties.getName() != null) {
+                builder.name(properties.getName());
+            }
+            if (properties.getDescription() != null) {
+                builder.description(properties.getDescription());
+            }
             customizers.orderedStream().forEach(customizer -> customizer.customize(builder));
             tools.orderedStream().forEach(builder::tool);
             return builder.build();

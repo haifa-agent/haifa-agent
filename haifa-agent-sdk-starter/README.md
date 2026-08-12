@@ -9,19 +9,22 @@ Web、Memory、Artifact 或 Execution。
 `runProfileId` 选择后续 Run，不能从 Prompt 注入 endpoint 或 Credential。
 
 ```java
-import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.sdk.api.HaifaAgent;
-import io.haifa.agent.sdk.conversation.ConversationRecord;
-import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.starter.HaifaAgentStarter;
 
-try (HaifaAgent agent = HaifaAgentStarter.create()) {
-    ConversationRecord conversation = agent.conversations()
-            .start(new StartConversationCommand("hello-1", "Hello Haifa", "Say hello in one sentence."));
-    AgentRunSnapshot completed = agent.runs().await(conversation.activeRunId().orElseThrow());
-    System.out.println(completed.output().orElseThrow());
+try (HaifaAgent agent = HaifaAgentStarter.builder()
+        .name("hello-agent")
+        .description("Minimal quickstart assistant")
+        .build()) {
+    var response = agent.chat("Say hello in one sentence.").await();
+    System.out.println(response.text());
 }
 ```
+
+默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
+`DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name`/`description`
+仅用于展示和诊断，不进入 Prompt 或选择逻辑。多轮、重试、revision、取消和事件订阅继续使用显式
+Conversation/Run API。
 
 运行前设置 `DEEPSEEK_API_KEY`。该入口会访问真实 DeepSeek API 并产生费用。Starter 的进程内状态在
 进程退出后丢失；生产系统应通过 `haifa-agent-sdk` 显式装配持久化、可信 Caller、Policy、Credential

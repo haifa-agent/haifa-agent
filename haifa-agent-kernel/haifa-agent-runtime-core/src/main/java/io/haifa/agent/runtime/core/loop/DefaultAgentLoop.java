@@ -51,6 +51,7 @@ import io.haifa.agent.runtime.core.retry.RetryExecutor;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
+import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import java.time.Duration;
@@ -78,6 +79,7 @@ public final class DefaultAgentLoop implements AgentLoop {
     private final IdentifierGenerator ids;
     private final TimeProvider time;
     private final TracePort trace;
+    private final PromptDiagnosticsSink promptDiagnostics;
     private final RuntimeStateReconciler reconciler;
     private final AgentRuntimeMiddlewareChain middleware;
     private final RunInputApplier runInputs;
@@ -98,6 +100,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             IdentifierGenerator ids,
             TimeProvider time,
             TracePort trace,
+            PromptDiagnosticsSink promptDiagnostics,
             RuntimeStateReconciler reconciler,
             AgentRuntimeMiddlewareChain middleware,
             RunInputApplier runInputs) {
@@ -116,6 +119,7 @@ public final class DefaultAgentLoop implements AgentLoop {
         this.ids = Objects.requireNonNull(ids);
         this.time = Objects.requireNonNull(time);
         this.trace = Objects.requireNonNull(trace);
+        this.promptDiagnostics = Objects.requireNonNull(promptDiagnostics);
         this.reconciler = Objects.requireNonNull(reconciler);
         this.middleware = Objects.requireNonNull(middleware);
         this.runInputs = Objects.requireNonNull(runInputs);
@@ -250,6 +254,7 @@ public final class DefaultAgentLoop implements AgentLoop {
 
             FrozenModelBinding model = models.bind(run);
             RuntimeContextBuildResult built = contextBuilder.build(run, progress, model);
+            recordPromptDiagnostics(built);
             recordTrace(new RuntimeTraceEvent(
                     traceId,
                     run.id(),
@@ -700,6 +705,21 @@ public final class DefaultAgentLoop implements AgentLoop {
             trace.record(event);
         } catch (RuntimeException ignored) {
             // Trace is a best-effort projection and never changes Agent execution semantics.
+        }
+    }
+
+    private void recordPromptDiagnostics(RuntimeContextBuildResult built) {
+        try {
+            promptDiagnostics.record(
+                    built.context().trace(),
+                    built.context().context().prompts().stream()
+                            .map(io.haifa.agent.context.prompt.PromptComponent::id)
+                            .toList(),
+                    built.context().context().items().stream()
+                            .map(io.haifa.agent.context.item.ContextItem::id)
+                            .toList());
+        } catch (RuntimeException ignored) {
+            // Diagnostics are a best-effort projection and never change Agent execution semantics.
         }
     }
 

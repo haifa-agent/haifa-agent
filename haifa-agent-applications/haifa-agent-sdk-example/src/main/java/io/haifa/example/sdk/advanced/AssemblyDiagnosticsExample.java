@@ -10,10 +10,14 @@ public final class AssemblyDiagnosticsExample {
         try (var agent = DeterministicExampleSupport.inMemory()) {
             var assembly = agent.assembly();
             System.out.printf(
-                    "product=%s runProfile=%s assemblyDigest=%s%n",
+                    "product=%s agent=%s runProfile=%s assemblyDigest=%s%n",
                     assembly.profile().productId().value(),
+                    agent.metadata().name(),
                     assembly.profile().runProfileId(),
                     assembly.assemblyDigest());
+            agent.diagnostics()
+                    .forEach(diagnostic -> System.out.printf(
+                            "%s %s %s%n", diagnostic.severity(), diagnostic.code(), diagnostic.safeMessage()));
         }
     }
 }

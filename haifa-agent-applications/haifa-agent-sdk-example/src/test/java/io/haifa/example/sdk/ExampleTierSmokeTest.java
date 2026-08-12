@@ -8,6 +8,7 @@ import io.haifa.example.sdk.basic.MultiTurnConversationExample;
 import io.haifa.example.sdk.intermediate.ComplexRecordSchemaExample;
 import io.haifa.example.sdk.intermediate.MultiModelProviderExample;
 import io.haifa.example.sdk.intermediate.MultiToolCollaborationExample;
+import io.haifa.example.sdk.intermediate.PromptDiagnosticsExample;
 import io.haifa.example.sdk.intermediate.StarterCustomizationExample;
 import io.haifa.example.sdk.intermediate.TypedJavaToolExample;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ class ExampleTierSmokeTest {
         assertDoesNotThrow(() -> ComplexRecordSchemaExample.main(new String[0]));
         assertDoesNotThrow(() -> StarterCustomizationExample.main(new String[0]));
         assertDoesNotThrow(() -> MultiModelProviderExample.main(new String[0]));
+        assertDoesNotThrow(() -> PromptDiagnosticsExample.main(new String[0]));
         assertDoesNotThrow(() -> SafeErrorHandlingExample.main(new String[0]));
     }
 }

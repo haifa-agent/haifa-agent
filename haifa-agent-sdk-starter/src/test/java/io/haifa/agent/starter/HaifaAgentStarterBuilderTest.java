@@ -16,6 +16,7 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.sdk.conversation.StartConversationCommand;
+import io.haifa.agent.sdk.diagnostics.PromptDiagnosticSource;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
@@ -83,6 +84,96 @@ public class HaifaAgentStarterBuilderTest {
             var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
 
             assertThat(completed.output()).contains("Hello from Haifa Agent!");
+        }
+    }
+
+    @Test
+    void exposesDisplayMetadataAndLightweightChatWithoutAddingMetadataToPrompt() throws Exception {
+        AtomicReference<io.haifa.agent.model.api.AgentChatRequest> request = new AtomicReference<>();
+        var model = (io.haifa.agent.model.api.AgentChatModel) value -> {
+            request.set(value);
+            return new AgentChatResponse(
+                    "starter-response",
+                    value.model().providerModelId(),
+                    "Hello from the Chat facade!",
+                    List.of(),
+                    ModelFinishReason.STOP,
+                    ModelUsage.unpriced(4, 5),
+                    "",
+                    Map.of());
+        };
+        try (var agent = HaifaAgentStarter.builder()
+                .name("weather-agent")
+                .description("Display-only weather helper")
+                .instructions("Answer weather questions.")
+                .model(model, testSnapshot())
+                .build()) {
+            var response = agent.chat("Hello").await();
+
+            assertThat(response.text()).isEqualTo("Hello from the Chat facade!");
+            assertThat(response.sessionId()).isNotNull();
+            assertThat(response.runId()).isNotNull();
+            assertThat(response.status().isTerminal()).isTrue();
+            assertThat(response.error()).isEmpty();
+            assertThat(agent.metadata().name()).isEqualTo("weather-agent");
+            assertThat(agent.metadata().description()).isEqualTo("Display-only weather helper");
+            assertThat(request.get().messages())
+                    .extracting(io.haifa.agent.model.api.ModelMessage::content)
+                    .noneMatch(text -> text.contains("weather-agent") || text.contains("Display-only weather helper"));
+
+            var diagnostics = agent.runs().promptDiagnostics(response.runId());
+            assertThat(diagnostics.available()).isTrue();
+            assertThat(diagnostics.components())
+                    .extracting("source")
+                    .contains(
+                            PromptDiagnosticSource.STARTER_INSTRUCTIONS,
+                            PromptDiagnosticSource.RUNTIME_SAFETY,
+                            PromptDiagnosticSource.SESSION_CONTEXT);
+            assertThat(diagnostics.toString())
+                    .doesNotContain("Answer weather questions.")
+                    .doesNotContain("Hello")
+                    .doesNotContain("Display-only weather helper");
+        }
+    }
+
+    @Test
+    void diagnosesOnlyTheStarterInstructionsFallback() {
+        try (var fallback = HaifaAgentStarter.builder()
+                        .model(fixedModel("ok"), testSnapshot())
+                        .build();
+                var explicit = HaifaAgentStarter.builder()
+                        .instructions("Use explicit trusted instructions.")
+                        .model(fixedModel("ok"), testSnapshot())
+                        .build()) {
+            assertThat(fallback.diagnostics()).extracting("code").contains("DEFAULT_INSTRUCTIONS_IN_USE");
+            assertThat(explicit.diagnostics()).extracting("code").doesNotContain("DEFAULT_INSTRUCTIONS_IN_USE");
+            assertThat(fallback.diagnostics().toString()).doesNotContain("helpful assistant");
+        }
+    }
+
+    @Test
+    void rejectsInvalidDisplayMetadata() {
+        assertThatThrownBy(() -> HaifaAgentStarter.builder().name(" ")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> HaifaAgentStarter.builder().description("x".repeat(513)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void lightweightChatPreservesSafeTerminalFailure() throws Exception {
+        var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
+            throw new IllegalStateException("provider-secret-detail");
+        };
+        try (var agent =
+                HaifaAgentStarter.builder().model(model, testSnapshot()).build()) {
+            var response = agent.chat("Fail safely.").await();
+
+            assertThat(response.status().isTerminal()).isTrue();
+            assertThat(response.error()).isPresent();
+            assertThat(response.toString()).doesNotContain("provider-secret-detail");
+            assertThatThrownBy(response::text)
+                    .isInstanceOf(io.haifa.agent.sdk.api.HaifaAgentException.class)
+                    .hasMessage("CHAT_OUTPUT_UNAVAILABLE")
+                    .hasMessageNotContaining("provider-secret-detail");
         }
     }
 

@@ -130,6 +130,7 @@ import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
+import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import io.haifa.agent.skill.api.SkillCatalog;
 import io.haifa.agent.skill.api.SkillContentLoader;
@@ -199,6 +200,7 @@ public final class RuntimeCoreBuilder {
     private PersistenceRetryPolicy persistenceRetry = PersistenceRetryPolicy.none();
     private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
     private TracePort trace = TracePort.noop();
+    private PromptDiagnosticsSink promptDiagnostics = PromptDiagnosticsSink.noop();
     private FailureDiagnosticSink failureDiagnostics = FailureDiagnosticSink.noop();
     private RunInputPort runInputs;
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
@@ -413,6 +415,12 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder trace(TracePort value) {
         trace = Objects.requireNonNull(value);
+        return this;
+    }
+
+    /** Registers a best-effort process-local consumer of redacted Context trace facts. */
+    public RuntimeCoreBuilder promptDiagnostics(PromptDiagnosticsSink value) {
+        promptDiagnostics = Objects.requireNonNull(value);
         return this;
     }
 
@@ -683,6 +691,7 @@ public final class RuntimeCoreBuilder {
                 ids,
                 time,
                 trace,
+                promptDiagnostics,
                 new RuntimeStateReconciler(state, attempts, interactions, pipeline, time, configuredOwnership),
                 middleware,
                 runInputApplier);
