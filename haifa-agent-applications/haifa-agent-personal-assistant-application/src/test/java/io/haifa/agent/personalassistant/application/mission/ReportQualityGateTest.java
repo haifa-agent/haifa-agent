@@ -11,7 +11,7 @@ class ReportQualityGateTest {
 
     @Test
     void acceptsACompleteMarkedReportWithRealTaskAndSourceIds() {
-        assertThat(gate.evaluate(validReport(), List.of("evidence-task"), Set.of("source-1"))
+        assertThat(evaluate(validReport(), List.of("evidence-task"), Set.of("source-1"))
                         .passed())
                 .isTrue();
     }
@@ -28,7 +28,7 @@ class ReportQualityGateTest {
                                 "Integrated analysis connects the evidence and counterevidence into a bounded judgment.",
                                 ""),
                 "REPORT_SECTION_EMPTY");
-        assertThat(gate.evaluate(validReport(), List.of("missing-task"), Set.of("source-1"))
+        assertThat(evaluate(validReport(), List.of("missing-task"), Set.of("source-1"))
                         .failureCodes())
                 .contains("REPORT_TASK_COVERAGE_MISSING");
         assertFailure(validReport().replace("[[source-1]]", ""), "REPORT_SOURCES_MISSING");
@@ -37,14 +37,22 @@ class ReportQualityGateTest {
     }
 
     private void assertFailure(String report, String code) {
-        assertThat(gate.evaluate(report, List.of("evidence-task"), Set.of("source-1"))
+        assertThat(evaluate(report, List.of("evidence-task"), Set.of("source-1"))
                         .failureCodes())
                 .contains(code);
+    }
+
+    private ReportQualityGate.Result evaluate(String report, List<String> tasks, Set<String> sources) {
+        return gate.evaluate(report, tasks, sources, new ReportQualityGate.EvidenceSummary(0, 0, 0, 0, List.of()));
     }
 
     private static String validReport() {
         return """
                 # Investigation report
+                <!-- haifa-section: evidence-summary -->
+                ## Evidence status
+                <!-- haifa-evidence-counts: total=0 unverified=0 single-source=0 counterevidence=0 unresolved=0 -->
+                The trusted evidence counters are included in this delivery and contain no material claims.
                 <!-- haifa-section: executive-summary -->
                 ## Executive summary
                 The investigated claim is partly supported, while important technical and commercial limitations remain.

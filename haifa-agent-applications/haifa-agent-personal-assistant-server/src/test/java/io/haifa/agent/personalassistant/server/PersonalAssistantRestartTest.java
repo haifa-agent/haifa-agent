@@ -76,7 +76,7 @@ class PersonalAssistantRestartTest {
             assertThat(completed.mode()).isEqualTo(MissionMode.DEEP_RESEARCH);
             assertThat(completed.selectedSkillId()).contains("deep-research");
             assertThat(completed.selectedSkillBinding()).hasValueSatisfying(binding -> assertThat(binding)
-                    .contains("product", "personal-assistant-bundled@1", "deep-research@2.1.0#sha256:"));
+                    .contains("product", "personal-assistant-bundled@1", "deep-research@2.2.0#sha256:"));
             assertThat(completed.execution().artifacts()).hasSize(5);
             assertThat(completed.execution().sources()).hasSize(2);
             assertThat(completed.execution().finalResult()).hasValueSatisfying(result -> assertThat(result)
@@ -84,7 +84,8 @@ class PersonalAssistantRestartTest {
                     .doesNotContain("directAnswer")
                     .doesNotContain("reveal credentials", "ignore the research brief"));
             assertThat(application.turns(conversationId, 100)).anySatisfy(turn -> assertThat(turn.text())
-                    .contains("# Deterministic research report")
+                    .contains("<!-- haifa-mission-delivery:" + missionId + " -->", "完整报告与证据已保存在 Mission 中")
+                    .doesNotContain("# Deterministic research report")
                     .doesNotContain("reveal credentials", "ignore the research brief"));
 
             assertPhase6EvidenceTraceAgainstHonestPhase5Baseline(data.resolve("personal-assistant.sqlite"), missionId);
@@ -106,7 +107,7 @@ class PersonalAssistantRestartTest {
                     .containsExactlyElementsOf(completed.execution().sources());
             assertThat(recovered.selectedSkillBinding()).isEqualTo(completed.selectedSkillBinding());
             assertThat(application.turns(conversationId, 100))
-                    .filteredOn(turn -> turn.text().contains("# Deterministic research report"))
+                    .filteredOn(turn -> turn.text().contains("<!-- haifa-mission-delivery:" + missionId + " -->"))
                     .hasSize(1);
         }
     }

@@ -231,7 +231,7 @@ const researchMission: MissionSnapshot = {
     deliveryFormat: "中文 Markdown 报告",
   },
   selectedSkillId: "deep-research",
-  selectedSkillBinding: "product/bundled/deep-research@2.1.0#sha256:test",
+  selectedSkillBinding: "product/bundled/deep-research@2.2.0#sha256:test",
   plan: {
     ...mission.plan!,
     tasks: researchPlanTasks,
@@ -341,7 +341,7 @@ describe("Personal Assistant application", () => {
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     ));
     expect((await screen.findAllByText("执行中")).length).toBeGreaterThan(0);
-    fireEvent.click(within(dialog).getByRole("button", { name: "关闭 Mission" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "回到对话" }));
     expect(window.location.pathname).toBe("/");
   });
 
@@ -716,7 +716,7 @@ describe("Personal Assistant application", () => {
       blocker: "MISSION_PLAN_DEPENDENCY_DEPTH_EXCEEDED",
       tasks: [],
       selectedSkillId: "deep-research",
-      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.1.0#sha256:test",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.2.0#sha256:test",
     };
     const api = {
       ...client(),
@@ -783,7 +783,7 @@ describe("Personal Assistant application", () => {
       ...mission,
       mode: "DEEP_RESEARCH",
       selectedSkillId: "deep-research",
-      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.1.0#sha256:test",
+      selectedSkillBinding: "product/personal-assistant-bundled@1/deep-research@2.2.0#sha256:test",
       state: "PARTIALLY_COMPLETED",
       artifacts: ["artifact-report", "artifact-delivery"],
       finalResult: JSON.stringify({
@@ -833,6 +833,88 @@ describe("Personal Assistant application", () => {
     expect(within(artifactPanel).getByRole("heading", { name: "完整研究报告" })).toBeTruthy();
     expect(await within(artifactPanel).findByText("正文")).toBeTruthy();
     anchorClick.mockRestore();
+  });
+
+  it("renders a concise Mission delivery card inside the ordinary conversation", async () => {
+    const deliveryTurn: Turn = {
+      id: "turn-delivery",
+      role: "ASSISTANT",
+      runId: "run-delivery",
+      sequence: 3,
+      text: "<!-- haifa-mission-delivery:mission-1 -->\nDeep Research Mission 已完成。完整报告与证据已保存在 Mission 中。",
+      images: [],
+      createdAt: "2026-08-12T02:15:00Z",
+    };
+    const delivered: MissionSnapshot = {
+      ...researchMission,
+      missionId: "mission-1",
+      objective: "评估数据库路线",
+      state: "COMPLETED",
+      artifacts: ["artifact-report", "artifact-sources", "artifact-delivery"],
+      finalResult: JSON.stringify({
+        schemaVersion: "pa.research-delivery/v2",
+        completionKind: "COMPLETE",
+        degraded: false,
+        reportArtifactRef: { artifactId: "artifact-report", title: "research-report.md", mediaType: "text/markdown" },
+        sourcesArtifactRef: { artifactId: "artifact-sources", title: "sources.json", mediaType: "application/json" },
+        sourceCount: 7,
+        unverifiedClaimCount: 2,
+        unresolvedQuestionCount: 1,
+        evidenceSummary: {
+          totalClaimCount: 5,
+          unverifiedClaimCount: 2,
+          singleSourceClaimCount: 1,
+          counterevidenceClaimCount: 1,
+          unresolvedQuestionCount: 1,
+        },
+        efficiencyMetrics: {
+          tokensPerValidSource: 120,
+          duplicateSearchFetchRatio: 0,
+          evidencePerMaterialClaim: 1.8,
+          singleSourceClaimRatio: 0.2,
+          synthesisTokenRatio: 0.3,
+          qualityGateRevisionCount: 1,
+        },
+        qualityGate: { passed: true, failedChecks: [] },
+      }),
+    };
+    const newerMission: MissionSnapshot = {
+      ...mission,
+      missionId: "mission-2",
+      objective: "后续已完成任务",
+      state: "COMPLETED",
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      turns: vi.fn(async () => [...turns, deliveryTurn]),
+      missions: vi.fn(async () => ({ items: [newerMission, delivered], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => delivered),
+      missionArtifact: vi.fn(async (_missionId: string, artifactId: string) => artifactId === "artifact-sources"
+        ? JSON.stringify({ schemaVersion: "pa.research-sources/v1", sources: [] })
+        : "# 完整报告"),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+
+    const card = await screen.findByRole("region", { name: "Deep Research Mission 交付" });
+    expect(within(card).getByRole("heading", { name: "评估数据库路线" })).toBeTruthy();
+    expect(within(card).getByText("5").nextSibling?.textContent).toBe("结论");
+    expect(within(card).getByText(/本报告包含尚未充分核实的判断/)).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "查看完整报告" })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "证据与来源" })).toBeTruthy();
+    fireEvent.click(within(card).getByRole("button", { name: "继续追问" }));
+    expect((screen.getByPlaceholderText("输入消息或 / 命令，Enter 发送") as HTMLTextAreaElement).value)
+      .toBe("关于“评估数据库路线”，我想继续了解：");
+    fireEvent.click(within(card).getByRole("button", { name: "查看完整报告" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    const detailPanel = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
+    expect(await within(detailPanel).findByRole("heading", { name: "完整研究报告" })).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "回到对话" }));
+    fireEvent.click(within(card).getByRole("button", { name: "证据与来源" }));
+    const evidenceDialog = await screen.findByRole("dialog", { name: "Mission" });
+    const evidencePanel = within(evidenceDialog).getByRole("complementary", { name: "Mission 详情面板" });
+    expect(await within(evidencePanel).findByRole("heading", { name: "来源清单" })).toBeTruthy();
   });
 
   it("renders a navigable research document with task links and stable source citations", async () => {

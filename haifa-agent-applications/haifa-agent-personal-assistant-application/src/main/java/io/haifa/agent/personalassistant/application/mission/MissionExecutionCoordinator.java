@@ -141,7 +141,8 @@ public final class MissionExecutionCoordinator {
                     revised.runId(),
                     revised.structuredOutput(),
                     cumulativeUsage,
-                    revised.degradationReasons());
+                    revised.degradationReasons(),
+                    revisionAttempt);
             quality = publisher.evaluate(intent, synthesis);
             revisionAttempt++;
         }
@@ -167,7 +168,8 @@ public final class MissionExecutionCoordinator {
                     repaired.runId(),
                     repaired.structuredOutput(),
                     synthesis.usage().plus(repaired.usage()),
-                    repaired.degradationReasons());
+                    repaired.degradationReasons(),
+                    repaired.qualityGateRevisionCount());
             return new PublishedSynthesis(repaired, publisher.publish(intent, repaired));
         }
     }

@@ -94,6 +94,7 @@ public final class MissionApplicationService {
     public MissionSnapshot create(CreateMission command) {
         Objects.requireNonNull(command);
         Instant now = now();
+        Optional<ResearchBrief> frozenResearchBrief = ResearchTimeRangeFreezer.freeze(command.researchBrief(), now);
         String requestDigest = MissionValues.digest(
                 command.conversationId(),
                 command.objective(),
@@ -126,7 +127,7 @@ public final class MissionApplicationService {
                                 ? Optional.of(requireSkillBinding("deep-research"))
                                 : Optional.empty(),
                         command.mode(),
-                        command.researchBrief(),
+                        frozenResearchBrief,
                         now));
             }
             return reserved;

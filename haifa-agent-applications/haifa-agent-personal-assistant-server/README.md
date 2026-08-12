@@ -124,8 +124,9 @@ uses only the approved `web.search` / `web.fetch` pipeline, validates canonical 
 citation closure and quote bounds, then applies a deterministic marked-Markdown Report Gate and at most two stable
 idempotent revisions. It publishes report, sources, claim-evidence and unresolved Artifacts, validates their
 hash/version/media type, and publishes the code-owned `pa.research-delivery/v2` manifest last as the fifth owner-only
-Artifact plus one idempotent final Conversation message. Existing v1 delivery JSON remains read-only compatible and
-the existing Mission columns carry v2 without a database Migration. The deterministic offline
+Artifact plus one idempotent, concise final Conversation delivery marker. The manifest includes trusted Evidence
+Summary and efficiency metrics derived from settled Task Evidence and Runtime usage; the existing Mission columns
+carry v2 without a database Migration. The deterministic offline
 Stub exercises the same Tool/Skill/Runtime path; it is not a production network provider.
 
 Server 提供 `/api/v1/missions` 的 create/list/get/snapshot、确认前完整计划 replace/regenerate、confirm

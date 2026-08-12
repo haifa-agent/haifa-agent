@@ -1524,6 +1524,21 @@ type ParsedMissionFinalResult = {
   sourceCount?: number;
   unverifiedClaimCount?: number;
   unresolvedQuestionCount?: number;
+  evidenceSummary?: {
+    totalClaimCount: number;
+    unverifiedClaimCount: number;
+    singleSourceClaimCount: number;
+    counterevidenceClaimCount: number;
+    unresolvedQuestionCount: number;
+  };
+  efficiencyMetrics?: {
+    tokensPerValidSource: number;
+    duplicateSearchFetchRatio: number;
+    evidencePerMaterialClaim: number;
+    singleSourceClaimRatio: number;
+    synthesisTokenRatio: number;
+    qualityGateRevisionCount: number;
+  };
   qualityGate?: { passed?: boolean; failedChecks?: string[] };
   completedItems?: string[];
   failedItems?: string[];
@@ -1554,11 +1569,18 @@ function parseMissionFinalResult(value: string | null): ParsedMissionFinalResult
     const schemaVersion = typeof parsed.schemaVersion === "string" ? parsed.schemaVersion : undefined;
     if (schemaVersion && ![
       "pa.mission-final-result/v1",
-      "pa.research-final-result/v1",
       "pa.research-delivery/v2",
     ].includes(schemaVersion)) {
       return { schemaVersion, unsupportedVersion: true };
     }
+    const numericRecord = (field: string): Record<string, number> | undefined => {
+      const candidate = parsed[field];
+      if (typeof candidate !== "object" || candidate === null) return undefined;
+      const entries = Object.entries(candidate).filter((entry): entry is [string, number] => typeof entry[1] === "number");
+      return Object.fromEntries(entries);
+    };
+    const evidence = numericRecord("evidenceSummary");
+    const efficiency = numericRecord("efficiencyMetrics");
     return {
       schemaVersion,
       directAnswer: typeof parsed.directAnswer === "string" ? parsed.directAnswer : undefined,
@@ -1573,6 +1595,21 @@ function parseMissionFinalResult(value: string | null): ParsedMissionFinalResult
       sourceCount: typeof parsed.sourceCount === "number" ? parsed.sourceCount : undefined,
       unverifiedClaimCount: typeof parsed.unverifiedClaimCount === "number" ? parsed.unverifiedClaimCount : undefined,
       unresolvedQuestionCount: typeof parsed.unresolvedQuestionCount === "number" ? parsed.unresolvedQuestionCount : undefined,
+      evidenceSummary: evidence ? {
+        totalClaimCount: evidence.totalClaimCount ?? 0,
+        unverifiedClaimCount: evidence.unverifiedClaimCount ?? 0,
+        singleSourceClaimCount: evidence.singleSourceClaimCount ?? 0,
+        counterevidenceClaimCount: evidence.counterevidenceClaimCount ?? 0,
+        unresolvedQuestionCount: evidence.unresolvedQuestionCount ?? 0,
+      } : undefined,
+      efficiencyMetrics: efficiency ? {
+        tokensPerValidSource: efficiency.tokensPerValidSource ?? 0,
+        duplicateSearchFetchRatio: efficiency.duplicateSearchFetchRatio ?? 0,
+        evidencePerMaterialClaim: efficiency.evidencePerMaterialClaim ?? 0,
+        singleSourceClaimRatio: efficiency.singleSourceClaimRatio ?? 0,
+        synthesisTokenRatio: efficiency.synthesisTokenRatio ?? 0,
+        qualityGateRevisionCount: efficiency.qualityGateRevisionCount ?? 0,
+      } : undefined,
       qualityGate: typeof parsed.qualityGate === "object" && parsed.qualityGate !== null
         ? {
             passed: typeof (parsed.qualityGate as Record<string, unknown>).passed === "boolean"
@@ -1594,6 +1631,47 @@ function parseMissionFinalResult(value: string | null): ParsedMissionFinalResult
   } catch {
     return { directAnswer: value };
   }
+}
+
+const missionDeliveryMarker = /^<!--\s*haifa-mission-delivery:\s*([a-zA-Z0-9._:-]+)\s*-->/;
+
+function missionDeliveryId(text: string): string | null {
+  return missionDeliveryMarker.exec(text.trimStart())?.[1] ?? null;
+}
+
+function MissionDeliveryCard({
+  mission,
+  onOpenReport,
+  onOpenEvidence,
+  onContinue,
+}: {
+  mission: MissionSnapshot;
+  onOpenReport(): void;
+  onOpenEvidence(): void;
+  onContinue(): void;
+}) {
+  const result = parseMissionFinalResult(mission.finalResult);
+  if (!result || result.schemaVersion !== "pa.research-delivery/v2") return null;
+  const evidence = result.evidenceSummary;
+  const status = result.degraded
+    ? "降级完成"
+    : result.completionKind === "PARTIAL" ? "部分完成" : "已完成";
+  return <section className="mission-delivery-card" aria-label="Deep Research Mission 交付">
+    <header><div><span className="mission-delivery-status"><CheckCircle2 size={15} />{status}</span><h3>{mission.objective}</h3></div><span>Deep Research</span></header>
+    <p>调研报告与完整证据链已生成。普通对话保留摘要，全文与技术交付文件在 Mission 中查看。</p>
+    <div className="mission-delivery-metrics" aria-label="证据汇总">
+      <span><b>{mission.tasks.filter((task) => task.state === "COMPLETED").length}</b>任务</span>
+      <span><b>{evidence?.totalClaimCount ?? 0}</b>结论</span>
+      <span><b>{result.sourceCount ?? 0}</b>来源</span>
+      <span><b>{evidence?.unresolvedQuestionCount ?? result.unresolvedQuestionCount ?? 0}</b>未决</span>
+    </div>
+    {(evidence?.unverifiedClaimCount ?? result.unverifiedClaimCount ?? 0) > 0 && <p className="mission-delivery-warning"><CircleAlert size={15} />本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。</p>}
+    <div className="mission-delivery-actions">
+      <button type="button" className="button primary" onClick={onOpenReport}>查看完整报告</button>
+      <button type="button" className="button" onClick={onOpenEvidence}>证据与来源</button>
+      <button type="button" className="button" onClick={onContinue}>继续追问</button>
+    </div>
+  </section>;
 }
 
 function parseResearchSourcesArtifact(value: string): MarkdownResearchSource[] {
@@ -1765,6 +1843,10 @@ const degradationLabels: Record<string, string> = {
   REPORT_SOURCES_MISSING: "报告缺少可解析来源引用",
   REPORT_CITATION_INVALID: "报告包含无法闭合的来源引用",
   REPORT_ONLY_METADATA: "报告内容不足，仅包含执行元数据",
+  REPORT_EVIDENCE_SUMMARY_INVALID: "证据汇总与可信计数不一致",
+  REPORT_UNVERIFIED_WARNING_MISSING: "报告缺少待核实结论警告",
+  REPORT_UNRESOLVED_COVERAGE_MISSING: "报告未覆盖全部未决问题",
+  REPORT_SINGLE_SOURCE_RISK_MISSING: "报告未披露单一来源结论风险",
   REPORT_SYNTHESIS_DEGRADED: "模型综合过程发生降级",
 };
 
@@ -1878,11 +1960,14 @@ function MissionFinalResult({
   if (v2) {
     const visibleSourceCount = result.sourceCount
       ?? (embeddedReport.status === "ready" ? embeddedReport.research.sources.length : 0);
+    const evidence = result.evidenceSummary;
     return <section className="research-result" aria-label="Deep Research 最终交付">
-      <div className="research-result-heading"><div><span className="eyebrow">FINAL DELIVERY</span><h4>{status}</h4></div><div className="research-result-metrics"><span>{visibleSourceCount} 个来源</span><span>{result.unverifiedClaimCount ?? 0} 个待核实结论</span><span>{result.unresolvedQuestionCount ?? 0} 个未决问题</span></div></div>
+      <div className="research-result-heading"><div><span className="eyebrow">FINAL DELIVERY</span><h4>{status}</h4></div><div className="research-result-metrics"><span>{visibleSourceCount} 个来源</span><span>{evidence?.totalClaimCount ?? 0} 个主要结论</span><span>{evidence?.unverifiedClaimCount ?? result.unverifiedClaimCount ?? 0} 个待核实</span><span>{evidence?.singleSourceClaimCount ?? 0} 个单一来源</span><span>{evidence?.counterevidenceClaimCount ?? 0} 个有反向证据</span><span>{evidence?.unresolvedQuestionCount ?? result.unresolvedQuestionCount ?? 0} 个未决问题</span></div></div>
       {result.degraded && <p className="warning-banner">最终综合未完全达到质量门禁，已保留可读报告和已收集证据。</p>}
+      {(evidence?.unverifiedClaimCount ?? result.unverifiedClaimCount ?? 0) > 0 && <p className="warning-banner">本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。</p>}
       {(result.degradationReasons?.length ?? 0) > 0 && <><h5>降级原因</h5><ul>{result.degradationReasons!.map((reason) => <li key={reason}>{degradationLabels[reason] ?? "综合质量检查未通过"}<details><summary>技术详情</summary><code>{reason}</code></details></li>)}</ul></>}
       {(result.affectedTaskIds?.length ?? 0) > 0 && <p><b>受影响任务：</b>{result.affectedTaskIds!.join("、")}</p>}
+      {result.efficiencyMetrics && <details className="research-efficiency"><summary>质量与成本指标</summary><dl><div><dt>每个有效来源 Token</dt><dd>{result.efficiencyMetrics.tokensPerValidSource}</dd></div><div><dt>重复 Search/Fetch 比率</dt><dd>{number.format(result.efficiencyMetrics.duplicateSearchFetchRatio * 100)}%</dd></div><div><dt>每个结论证据数</dt><dd>{result.efficiencyMetrics.evidencePerMaterialClaim}</dd></div><div><dt>单一来源结论比率</dt><dd>{number.format(result.efficiencyMetrics.singleSourceClaimRatio * 100)}%</dd></div><div><dt>Synthesis Token 比率</dt><dd>{number.format(result.efficiencyMetrics.synthesisTokenRatio * 100)}%</dd></div><div><dt>质量门禁修订次数</dt><dd>{result.efficiencyMetrics.qualityGateRevisionCount}</dd></div></dl></details>}
       {reportId && <div className="research-report-actions">
         <button className="button" type="button" onClick={() => document.getElementById(reportSectionId)?.scrollIntoView({ behavior: "smooth", block: "start" })}>阅读全文</button>
         <a className="button" href={missionArtifactUrl(mission.missionId, reportId)} download={result.reportArtifactRef?.title ?? "research-report.md"} aria-disabled={downloadState === "downloading" || !client.missionArtifact} onClick={(event) => void downloadReport(event)}>{downloadState === "downloading" ? "下载中…" : downloadState === "downloaded" ? "已下载" : downloadState === "failed" ? "下载失败" : "下载 Markdown"}</a>
@@ -1972,6 +2057,7 @@ function MissionDialog({
   conversation,
   initialMissionId,
   initialTaskId,
+  initialArtifactFileName,
   initialDraft,
   webResearchAvailable,
   onDraftCreated,
@@ -1983,6 +2069,7 @@ function MissionDialog({
   conversation: Conversation | null;
   initialMissionId: string | null;
   initialTaskId: string | null;
+  initialArtifactFileName: string | null;
   initialDraft: MissionDraftRequest | null;
   webResearchAvailable: boolean;
   onDraftCreated(): void;
@@ -2082,6 +2169,16 @@ function MissionDialog({
           ? current
           : (tasks[0]?.taskId ?? null));
   }, [initialTaskId, selected]);
+
+  useEffect(() => {
+    if (!selected || !initialArtifactFileName) return;
+    const artifact = missionArtifactItems(selected).find((candidate) => candidate.fileName === initialArtifactFileName);
+    if (!artifact) return;
+    setSelectedArtifact(artifact);
+    setSelectedCitation(null);
+    setDetailPanelOpen(true);
+    setMobileView("detail");
+  }, [initialArtifactFileName, selected]);
 
   useEffect(() => {
     if (!client.missions) {
@@ -2589,7 +2686,7 @@ function MissionDialog({
         <header className="mission-dialog-header">
           <div className="mission-dialog-brand"><span className="brand-mark"><Brain size={19} /></span><div><strong>Haifa Assistant</strong><small>Mission 工作台</small></div></div>
           <div className="mission-dialog-heading"><span className="eyebrow">LONG-RUNNING WORK</span><h2 id="mission-title">Mission</h2></div>
-          <button ref={closeButtonRef} type="button" className="icon" aria-label="关闭 Mission" onClick={onClose}><X size={18} /></button>
+          <button ref={closeButtonRef} type="button" className="button mission-return" aria-label="回到对话" onClick={onClose}><MessageSquarePlus size={15} />回到对话</button>
         </header>
         {error && <div className="error-banner" role="alert"><CircleAlert size={16} /><span>{error}</span></div>}
         <nav className="mission-mobile-tabs" aria-label="Mission 工作台视图">
@@ -2782,7 +2879,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [missionOpen, setMissionOpen] = useState(() => missionIdFromLocation() != null);
   const [missionDraft, setMissionDraft] = useState<MissionDraftRequest | null>(null);
   const [conversationMission, setConversationMission] = useState<MissionSnapshot | null>(null);
+  const [conversationMissions, setConversationMissions] = useState<MissionSnapshot[]>([]);
   const [requestedMissionTaskId, setRequestedMissionTaskId] = useState<string | null>(null);
+  const [requestedMissionArtifact, setRequestedMissionArtifact] = useState<string | null>(null);
   const [researchReadingContext, setResearchReadingContext] = useState<
     (MarkdownResearchContext & { missionId: string }) | null
   >(null);
@@ -2790,6 +2889,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const handleMissionChanged = useCallback((mission: MissionSnapshot | null) => {
     if (!mission || mission.conversationId === state.selectedConversationId) {
       setConversationMission(mission);
+      setConversationMissions((current) => {
+        if (!mission) return current;
+        return [mission, ...current.filter((candidate) => candidate.missionId !== mission.missionId)];
+      });
     }
   }, [state.selectedConversationId]);
 
@@ -2826,15 +2929,22 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   useEffect(() => {
     if (!state.selectedConversationId || !client.missions) {
       setConversationMission(null);
+      setConversationMissions([]);
       return;
     }
     const controller = new AbortController();
     client.missions(state.selectedConversationId, controller.signal)
       .then((page) => {
-        if (!controller.signal.aborted) setConversationMission(page.items[0] ?? null);
+        if (!controller.signal.aborted) {
+          setConversationMissions(page.items);
+          setConversationMission(page.items[0] ?? null);
+        }
       })
       .catch(() => {
-        if (!controller.signal.aborted) setConversationMission(null);
+        if (!controller.signal.aborted) {
+          setConversationMissions([]);
+          setConversationMission(null);
+        }
       });
     return () => controller.abort();
   }, [client, state.selectedConversationId]);
@@ -3506,6 +3616,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     setMissionDraft(null);
     setMissionRouteId(null);
     setRequestedMissionTaskId(null);
+    setRequestedMissionArtifact(null);
     const query = new URLSearchParams(window.location.search);
     if (state.selectedConversationId) query.set(conversationIdParameter, state.selectedConversationId);
     const queryText = query.toString();
@@ -3593,7 +3704,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>
             {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
           </div>
-          {conversationMission && (
+          {conversationMission && !missionTerminalStates.has(conversationMission.state) && (
             <button type="button" className="conversation-mission-card" onClick={() => setMissionOpen(true)}>
               <span><b>Mission</b>{missionStateLabel(conversationMission.state)}</span>
               <strong>{conversationMission.objective}</strong>
@@ -3617,7 +3728,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               <>
                 {state.turns.map((turn) => {
                   const assistant = turn.role.toLowerCase() === "assistant";
+                  const deliveryId = assistant ? missionDeliveryId(turn.text) : null;
+                  const deliveryMission = deliveryId
+                    ? conversationMissions.find((mission) => mission.missionId === deliveryId) ?? null
+                    : null;
                   const research = assistant
+                    && !deliveryMission
                     && turn.text.includes("<!-- haifa-section:")
                     && researchReadingContext
                     && researchReadingContext.missionId === conversationMission?.missionId
@@ -3628,10 +3744,30 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     ? recommendedQuestions
                     : null;
                   return (
-                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}`} key={turn.id}>
+                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}${deliveryMission ? " mission-delivery-message" : ""}`} key={turn.id}>
                       <span className="message-role">{assistant ? "Haifa" : "你"}</span>
                       {turn.images?.length > 0 && <TurnImages images={turn.images} />}
-                      <MessageContent text={turn.text} research={research} researchAnchorPrefix={`conversation-turn-${turn.id}`} onResearchTaskSelect={openResearchTask} /><time>{formatTime(turn.createdAt)}</time>
+                      {deliveryMission
+                        ? <MissionDeliveryCard
+                            mission={deliveryMission}
+                            onOpenReport={() => {
+                              setRequestedMissionArtifact("research-report.md");
+                              navigateToMission(deliveryMission);
+                              setMissionOpen(true);
+                            }}
+                            onOpenEvidence={() => {
+                              setRequestedMissionArtifact("sources.json");
+                              navigateToMission(deliveryMission);
+                              setMissionOpen(true);
+                            }}
+                            onContinue={() => {
+                              setComposerMode("CHAT");
+                              dispatch({ type: "setComposer", value: `关于“${deliveryMission.objective}”，我想继续了解：` });
+                              window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 0);
+                            }}
+                          />
+                        : <MessageContent text={turn.text} research={research} researchAnchorPrefix={`conversation-turn-${turn.id}`} onResearchTaskSelect={openResearchTask} />}
+                      <time>{formatTime(turn.createdAt)}</time>
                       {assistant && (
                         <div className="message-actions">
                           <MessageCopyButton text={turn.text} />
@@ -4000,6 +4136,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           conversation={state.selectedConversation}
           initialMissionId={missionRouteId}
           initialTaskId={requestedMissionTaskId}
+          initialArtifactFileName={requestedMissionArtifact}
           initialDraft={missionDraft}
           webResearchAvailable={Boolean(state.bootstrap?.capabilities.includes("web-research"))}
           onDraftCreated={() => setMissionDraft(null)}

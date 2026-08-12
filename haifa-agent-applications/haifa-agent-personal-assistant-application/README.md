@@ -29,18 +29,20 @@ that reaches its execution or Mission deadline is cancelled and enters the exist
 partial-synthesis path instead of being silently abandoned.
 
 Phase 3 adds an explicit `DEEP_RESEARCH` Mission mode with a frozen Research Brief and the
-bundled `deep-research@2.1.0` Skill. The Mission persists the full resolved Skill coordinate
+bundled `deep-research@2.2.0` Skill. The Mission persists the full resolved Skill coordinate
 (scope, source version, declared version, and package content digest), while each Research Task
 runs in an isolated ephemeral Session through the existing Runtime Tool pipeline. Strict task schemas preserve
 source identity and claim-to-evidence closure. Final Synthesis returns Markdown directly; a deterministic Report
 Quality Gate and code-owned `pa.research-delivery/v2` manifest preserve Task coverage, unresolved questions,
-partial/degraded completion, and five immutable research Artifacts. Fetched content remains untrusted data.
+partial/degraded completion, and five immutable research Artifacts. Relative Brief ranges are frozen to explicit UTC
+dates at creation. Fetched content remains untrusted data.
 
-The 2.1.0 package applies one shared, prompt-only research-type table to the same frozen Brief in Task execution and
+The 2.2.0 package applies one shared, prompt-only research-type table to the same frozen Brief in Task execution and
 Final Synthesis. Its claim-first DISCOVER/DEEPEN/CROSS_CHECK method prioritizes primary and independent evidence,
 deduplicates fetched canonical URLs, reuses dependency evidence, and stops when another call cannot close a material
-gap. It adds no public research enum, v1/v2 schema change, or higher Mission Tool, Token, source, fetch, or deadline
-budget.
+gap. The trusted publisher adds an evidence status section, unresolved and single-source limitations, and computes
+source, Claim, duplicate-operation, Token-ratio and Quality Gate revision metrics without trusting model-supplied
+counts. It adds no public research enum or higher Mission Tool, Token, source, fetch, or deadline budget.
 
 Mission stages use explicit Run Profile Tool boundaries. Planner and Research Task freeze only read-only Web
 Search/Fetch and Wikipedia MCP Tools; the explicitly selected Deep Research Product Skill is preloaded into each

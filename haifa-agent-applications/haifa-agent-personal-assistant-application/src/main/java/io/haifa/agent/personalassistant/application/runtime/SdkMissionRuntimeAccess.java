@@ -1569,7 +1569,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     @Override
     public void appendFinalMessage(
             String conversationId, String missionId, String synthesisRunId, String finalMessage) {
-        String stable = digest(missionId, "final-message", "v1");
+        String stable = digest(missionId, "final-message", "v2");
         AgentMessageId messageId = new AgentMessageId("mission-final-" + stable.substring("sha256:".length(), 38));
         persistence.inTransaction(() -> {
             if (persistence.runtimePersistence().state().message(messageId).isEmpty()) {
@@ -1589,7 +1589,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                         "missionId",
                                         missionId,
                                         "messageKey",
-                                        "mission:" + missionId + ":final-message:v1"),
+                                        "mission:" + missionId + ":final-message:v2"),
                                 time.now()));
             }
             return null;

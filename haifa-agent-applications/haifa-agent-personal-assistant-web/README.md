@@ -61,10 +61,11 @@ JAR 的构建或静态资源打包。
   编辑器不展示或允许修改内部 Task 类型、Skill 或结果 Schema；右侧详情可以独立关闭，窄屏使用
   Mission、报告和详情三个互斥视图，避免三栏纵向堆叠和多重滚动；
 - 显式 Standard / Deep Research 模式；创建页默认只要求目标，并准备领域无关、可编辑的执行/研究默认值，
-  验收标准和完整 Research Brief 按需展开编辑；提交时仍冻结完整输入。支持 v1 历史结果和
-  `pa.research-delivery/v2` 正常/部分/降级/失败语义、完整 Markdown 报告查看/复制/下载、降级原因、
-  受影响 Task、来源链接和五类交付文件；主对话直接渲染完整报告并隐藏报告中的 HTML 机器注释，
-  Markdown 下载通过浏览器 Blob 触发真实文件保存；
+  验收标准和完整 Research Brief 按需展开编辑；提交时把受支持的相对时间冻结为明确 UTC 日期区间。
+  `pa.research-delivery/v2` 提供正常/部分/降级/失败语义、完整 Markdown 报告查看/复制/下载、降级原因、
+  受影响 Task、可信 Evidence Summary、成本指标、来源链接和五类交付文件；主对话只展示 Assistant
+  Mission 交付卡片与可信度警告，完整报告保留在 Mission 工作台，Markdown 下载通过浏览器 Blob
+  触发真实文件保存；
 - Conversation Composer 提供普通对话 / Deep Research 显式模式和 `/deep-research <目标>` 命令；路由前
   拒绝静默丢弃附件，活动 Mission 冲突时打开当前 Mission，Bootstrap 未声明 `web-research` 时在计划生成前
   禁用入口。打开草稿本身不调用普通消息、Mission 创建、Planner、Web Search/Fetch 或付费模型；

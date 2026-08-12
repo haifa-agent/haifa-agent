@@ -892,7 +892,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                         .prepareStatement(
                                 """
                     SELECT mission_id,conversation_id,owner_scope,mode,objective,research_brief_json,
-                           usage_model_tokens,deadline_at_ms
+                           usage_model_tokens,usage_model_calls,usage_tool_calls,deadline_at_ms
                     FROM personal_mission m
                     WHERE state IN ('RUNNING','WAITING_USER','SYNTHESIZING')
                       AND NOT EXISTS (SELECT 1 FROM personal_mission_task t
@@ -946,7 +946,11 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 Math.max(0, maxModelTokens - result.getLong("usage_model_tokens")),
                                 Optional.of(Instant.ofEpochMilli(result.getLong("deadline_at_ms"))),
                                 Optional.ofNullable(result.getString("research_brief_json"))
-                                        .map(encoded -> json(encoded, ResearchBrief.class, "research brief"))));
+                                        .map(encoded -> json(encoded, ResearchBrief.class, "research brief")),
+                                new MissionUsage(
+                                        result.getLong("usage_model_tokens"),
+                                        result.getLong("usage_model_calls"),
+                                        result.getLong("usage_tool_calls"))));
                     }
                 }
             } catch (SQLException exception) {
@@ -975,7 +979,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setString(2, synthesis.sessionId());
                 statement.setString(3, synthesis.runId());
                 statement.setString(4, published.finalArtifactId());
-                statement.setString(5, "mission:" + intent.missionId() + ":final-message:v1");
+                statement.setString(5, "mission:" + intent.missionId() + ":final-message:v2");
                 statement.setString(6, json(published.artifactIds()));
                 statement.setString(7, json(published.sources()));
                 statement.setString(8, published.structuredResult());
