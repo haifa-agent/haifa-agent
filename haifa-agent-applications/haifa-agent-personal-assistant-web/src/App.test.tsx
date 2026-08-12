@@ -207,26 +207,26 @@ const mission: MissionSnapshot = {
 };
 
 const researchPlanTasks: MissionSnapshot["tasks"] = [
-  { ...missionTask, taskId: "history-evolution", ordinal: 1, title: "发展历史沿革", objective: "梳理历史阶段与政策节点", acceptanceCriteria: ["形成可核验时间线"], dependsOn: [], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
-  { ...missionTask, taskId: "current-status-operation", ordinal: 2, title: "经营现状与规模", objective: "整理规模与经营现状", acceptanceCriteria: ["核心指标标注年份"], dependsOn: ["history-evolution"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
-  { ...missionTask, taskId: "policy-security-compliance", ordinal: 3, title: "政策、安全与合规", objective: "核验政策与合规边界", acceptanceCriteria: ["重大判断引用权威来源"], dependsOn: ["history-evolution"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
-  { ...missionTask, taskId: "hydrology-water-price-cost", ordinal: 4, title: "水文、电价与成本参数", objective: "整理投资测算关键参数", acceptanceCriteria: ["形成参数清单"], dependsOn: ["current-status-operation", "policy-security-compliance"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
-  { ...missionTask, taskId: "investment-framework-valuation", ordinal: 5, title: "投资框架与综合判断", objective: "形成投资结论与尽调清单", acceptanceCriteria: ["给出三情景判断"], dependsOn: ["hydrology-water-price-cost"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "history-evolution", ordinal: 1, title: "技术发展沿革", objective: "梳理版本演进与关键节点", acceptanceCriteria: ["形成可核验时间线"], dependsOn: [], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "current-status-operation", ordinal: 2, title: "当前能力与生态", objective: "整理当前能力与生态现状", acceptanceCriteria: ["核心指标标注年份"], dependsOn: ["history-evolution"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "governance-security-compatibility", ordinal: 3, title: "治理、安全与兼容性", objective: "核验治理、安全与兼容性边界", acceptanceCriteria: ["重大判断引用权威来源"], dependsOn: ["history-evolution"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "performance-cost-evidence", ordinal: 4, title: "性能、成本与实证数据", objective: "整理选型比较关键指标", acceptanceCriteria: ["形成指标清单"], dependsOn: ["current-status-operation", "governance-security-compatibility"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
+  { ...missionTask, taskId: "selection-framework-recommendation", ordinal: 5, title: "选型框架与综合建议", objective: "形成选型建议与验证清单", acceptanceCriteria: ["给出三种场景建议"], dependsOn: ["performance-cost-evidence"], taskType: "RESEARCH", requiredSkillIds: ["deep-research"], resultSchemaId: "pa.research-task-result" },
 ];
 
 const researchMission: MissionSnapshot = {
   ...mission,
   missionId: "mission-research",
-  objective: "研究景宁县小水电历史、现状与投资价值",
-  acceptanceCriteria: ["形成有来源支持的投资分析"],
+  objective: "研究主流开源数据库过去三年的技术演进与适用场景",
+  acceptanceCriteria: ["形成有来源支持的选型分析"],
   mode: "DEEP_RESEARCH",
   researchBrief: {
-    question: "景宁县小水电未来是否值得投资？",
-    scope: "景宁县小水电存量资产",
-    timeRange: "历史至今",
-    region: "浙江景宁",
-    audience: "产业投资人",
-    sourcePreferences: ["政府与监管来源"],
+    question: "主流开源数据库分别适合哪些技术场景？",
+    scope: "主流开源数据库及其生态",
+    timeRange: "过去三年",
+    region: "全球",
+    audience: "技术决策者",
+    sourcePreferences: ["官方文档与独立基准测试"],
     exclusions: ["无来源营销材料"],
     deliveryFormat: "中文 Markdown 报告",
   },
@@ -385,36 +385,36 @@ describe("Personal Assistant application", () => {
     render(<App client={api} />);
     fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
-    fireEvent.click(await within(dialog).findByRole("button", { name: /研究景宁县小水电历史/ }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: /研究主流开源数据库过去三年/ }));
     fireEvent.click(within(dialog).getByRole("button", { name: "适度调整计划" }));
     const adjuster = within(dialog).getByRole("region", { name: "适度调整计划" });
 
-    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 02 经营现状与规模/ }));
-    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /01 · 发展历史沿革/ }));
-    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 03 政策、安全与合规/ }));
-    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /01 · 发展历史沿革/ }));
+    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 02 当前能力与生态/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /01 · 技术发展沿革/ }));
+    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 03 治理、安全与兼容性/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /01 · 技术发展沿革/ }));
 
-    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 04 水文、电价与成本参数/ }));
+    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 04 性能、成本与实证数据/ }));
     fireEvent.change(within(adjuster).getByLabelText("任务标题"), {
-      target: { value: "水文、电价、成本与样本电站经营测算" },
+      target: { value: "性能、成本、生态与公开基准比较" },
     });
     fireEvent.change(within(adjuster).getByLabelText("任务验收标准"), {
-      target: { value: "形成参数清单\n至少选取 3 个可核验的存量电站或交易样本" },
+      target: { value: "形成指标清单\n至少选取 3 组可核验的公开基准或案例" },
     });
 
     fireEvent.click(within(adjuster).getByRole("button", { name: "增加任务" }));
     fireEvent.change(within(adjuster).getByLabelText("任务标题"), {
-      target: { value: "存量项目交易与标的筛选" },
+      target: { value: "迁移案例与生态验证" },
     });
     fireEvent.change(within(adjuster).getByLabelText("任务目标"), {
-      target: { value: "筛选可交易的存量资产并识别产权与退出条件" },
+      target: { value: "验证典型迁移案例并识别生态与退出条件" },
     });
     fireEvent.click(within(adjuster).getByRole("button", { name: "上移任务" }));
-    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /02 · 经营现状与规模/ }));
-    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /03 · 政策、安全与合规/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /02 · 当前能力与生态/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /03 · 治理、安全与兼容性/ }));
 
-    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 06 投资框架与综合判断/ }));
-    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /05 · 存量项目交易与标的筛选/ }));
+    fireEvent.click(within(adjuster).getByRole("button", { name: /编辑任务 06 选型框架与综合建议/ }));
+    fireEvent.click(within(adjuster).getByRole("checkbox", { name: /05 · 迁移案例与生态验证/ }));
     expect(within(adjuster).queryByText(/deep-research|requiredSkillIds|resultSchemaId/)).toBeNull();
     fireEvent.click(within(adjuster).getByRole("button", { name: "保存调整" }));
 
@@ -425,10 +425,10 @@ describe("Personal Assistant application", () => {
     expect(tasks.map((task) => task.ordinal)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(tasks[1]?.dependsOn).toEqual([]);
     expect(tasks[2]?.dependsOn).toEqual([]);
-    expect(tasks[3]?.title).toBe("水文、电价、成本与样本电站经营测算");
-    expect(tasks[3]?.acceptanceCriteria).toContain("至少选取 3 个可核验的存量电站或交易样本");
-    expect(tasks[4]?.dependsOn).toEqual(["current-status-operation", "policy-security-compliance"]);
-    expect(tasks[5]?.dependsOn).toEqual(["hydrology-water-price-cost", "manual-research-6"]);
+    expect(tasks[3]?.title).toBe("性能、成本、生态与公开基准比较");
+    expect(tasks[3]?.acceptanceCriteria).toContain("至少选取 3 组可核验的公开基准或案例");
+    expect(tasks[4]?.dependsOn).toEqual(["current-status-operation", "governance-security-compatibility"]);
+    expect(tasks[5]?.dependsOn).toEqual(["performance-cost-evidence", "manual-research-6"]);
     expect(tasks.every((task) => task.taskType === "RESEARCH")).toBe(true);
     expect(tasks.every((task) => task.requiredSkillIds[0] === "deep-research")).toBe(true);
     expect(await within(dialog).findByText("执行计划 · 第 2 版")).toBeTruthy();
@@ -699,8 +699,8 @@ describe("Personal Assistant application", () => {
       "<!-- haifa-section: synthesis -->",
       "## 综合分析",
       "",
-      "<!-- haifa-task: hydrology-water-price-cost -->",
-      "关键判断由官方政策与独立报道共同支持 [[source-official]][[source-news]]。",
+      "<!-- haifa-task: performance-cost-evidence -->",
+      "关键判断由官方文档与独立报道共同支持 [[source-official]][[source-news]]。",
       "缺失引用 [[source-missing]]。",
       "",
       "<!-- haifa-section: conclusions -->",
@@ -731,10 +731,10 @@ describe("Personal Assistant application", () => {
       schemaVersion: "pa.research-sources/v1",
       sources: [{
         sourceId: "source-official",
-        title: "官方政策",
-        publisher: "水利部",
-        locator: "https://example.gov/%25E6%2594%25BF%25E7%25AD%2596",
-        normalizedLocator: "https://example.gov/%2525E6%252594%2525BF%2525E7%2525AD%252596",
+        title: "官方文档",
+        publisher: "官方技术组织",
+        locator: "https://example.org/%25E6%2596%2587%25E6%25A1%25A3",
+        normalizedLocator: "https://example.org/%2525E6%252596%252587%2525E6%2525A1%2525A3",
         publishedAt: "2026-03-19T00:00:00Z",
         fetchedAt: "2026-08-11T00:00:00Z",
         status: "FETCHED",
@@ -773,25 +773,25 @@ describe("Personal Assistant application", () => {
     expect(window.location.href).toBe(urlBeforeSectionNavigation);
     expect(within(toc).getByRole("link", { name: /结论与建议/ })).toBeTruthy();
     const taskLink = screen.getByRole("button", { name: "打开研究任务 04 详情" });
-    expect(taskLink.textContent).toContain("水文、电价与成本参数");
+    expect(taskLink.textContent).toContain("性能、成本与实证数据");
     const conversationCitation = screen.getByRole("button", { name: "查看引用来源 1, 2" });
     fireEvent.click(conversationCitation);
     const conversationEvidence = screen.getByRole("region", { name: "引用来源详情" });
-    expect(within(conversationEvidence).getByText("水利部")).toBeTruthy();
-    const officialSourceLink = within(conversationEvidence).getByRole("link", { name: "打开“官方政策”" });
-    expect(officialSourceLink.getAttribute("href")).toBe("https://example.gov/%E6%94%BF%E7%AD%96");
+    expect(within(conversationEvidence).getByText("官方技术组织")).toBeTruthy();
+    const officialSourceLink = within(conversationEvidence).getByRole("link", { name: "打开“官方文档”" });
+    expect(officialSourceLink.getAttribute("href")).toBe("https://example.org/%E6%96%87%E6%A1%A3");
     expect(screen.getByText("来源不可用")).toBeTruthy();
     expect(document.body.textContent).not.toContain("source-official");
-    expect(document.body.textContent).not.toContain("hydrology-water-price-cost");
+    expect(document.body.textContent).not.toContain("performance-cost-evidence");
     fireEvent.click(within(conversationEvidence).getByRole("button", { name: "关闭引用来源" }));
 
     fireEvent.click(screen.getByRole("button", { name: "打开研究任务 04 详情" }));
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
     let detail = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
-    expect(await within(detail).findByRole("heading", { name: "水文、电价与成本参数" })).toBeTruthy();
+    expect(await within(detail).findByRole("heading", { name: "性能、成本与实证数据" })).toBeTruthy();
     const embeddedReport = await within(dialog).findByRole("region", { name: "完整研究报告" });
     expect(within(embeddedReport).getByRole("navigation", { name: "报告目录" })).toBeTruthy();
-    expect(within(dialog).getByRole("link", { name: "官方政策" })).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "官方文档" })).toBeTruthy();
     expect(within(embeddedReport).getByRole("button", { name: "查看引用来源 1, 2" })).toBeTruthy();
     fireEvent.click(within(embeddedReport).getByRole("button", { name: "查看引用来源 1, 2" }));
     detail = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
@@ -800,10 +800,10 @@ describe("Personal Assistant application", () => {
     expect(screen.getByRole("dialog", { name: "Mission" })).toBeTruthy();
     expect(within(dialog).queryByRole("complementary", { name: "Mission 详情面板" })).toBeNull();
     const embeddedTaskLink = within(embeddedReport).getByRole("button", { name: "打开研究任务 04 详情" });
-    expect(embeddedTaskLink.textContent).toContain("水文、电价与成本参数");
+    expect(embeddedTaskLink.textContent).toContain("性能、成本与实证数据");
     fireEvent.click(embeddedTaskLink);
     detail = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
-    expect(await within(detail).findByRole("heading", { name: "水文、电价与成本参数" })).toBeTruthy();
+    expect(await within(detail).findByRole("heading", { name: "性能、成本与实证数据" })).toBeTruthy();
   });
 
   it("renders the current Standard Mission final result envelope", async () => {
@@ -812,15 +812,15 @@ describe("Personal Assistant application", () => {
       state: "COMPLETED",
       finalResult: JSON.stringify({
         schemaVersion: "pa.mission-final-result/v1",
-        directAnswer: "存量电站提质改造具有投资价值，但需要核实电价和消纳风险。",
+        directAnswer: "候选技术方案各有适用场景，但上线前需要核实性能与迁移风险。",
         completionKind: "COMPLETE",
         completedItems: ["梳理历史发展阶段", "分析当前运营情况"],
         failedItems: [],
         artifactRefs: [],
-        sourceRefs: ["景宁县国民经济和社会发展统计公报"],
-        unverifiedClaims: ["项目级收益率仍需尽调"],
-        residualRisks: ["电价市场化风险"],
-        unresolvedQuestions: ["外送通道扩容时间表"],
+        sourceRefs: ["开源项目官方版本说明"],
+        unverifiedClaims: ["生产负载性能仍需验证"],
+        residualRisks: ["迁移兼容性风险"],
+        unresolvedQuestions: ["目标环境压测时间表"],
       }),
     };
     const api = {
@@ -835,9 +835,9 @@ describe("Personal Assistant application", () => {
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
 
     expect(await within(dialog).findByText("Mission 最终报告 · 已完成")).toBeTruthy();
-    expect(within(dialog).getByText("存量电站提质改造具有投资价值，但需要核实电价和消纳风险。")).toBeTruthy();
-    expect(within(dialog).getByText("景宁县国民经济和社会发展统计公报")).toBeTruthy();
-    expect(within(dialog).getByText("项目级收益率仍需尽调")).toBeTruthy();
+    expect(within(dialog).getByText("候选技术方案各有适用场景，但上线前需要核实性能与迁移风险。")).toBeTruthy();
+    expect(within(dialog).getByText("开源项目官方版本说明")).toBeTruthy();
+    expect(within(dialog).getByText("生产负载性能仍需验证")).toBeTruthy();
     expect(within(dialog).queryByText("最终报告版本不受支持")).toBeNull();
   });
 
