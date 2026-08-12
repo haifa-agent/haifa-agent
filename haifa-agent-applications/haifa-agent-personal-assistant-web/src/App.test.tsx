@@ -435,7 +435,7 @@ describe("Personal Assistant application", () => {
     expect(within(dialog).getByRole("button", { name: /确认计划/ })).toBeTruthy();
   });
 
-  it("requires acceptance criteria before creating a Mission", async () => {
+  it("creates a Standard Mission from a goal with generated acceptance criteria", async () => {
     const api = {
       ...client(),
       bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
@@ -446,27 +446,79 @@ describe("Personal Assistant application", () => {
     render(<App client={api} />);
     fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
-    expect(within(dialog).getByRole("heading", { name: "创建 Mission" })).toBeTruthy();
+    expect(within(dialog).getByRole("heading", { name: "你希望 Mission 最终交付什么？" })).toBeTruthy();
     expect(within(dialog).getByText("所属会话")).toBeTruthy();
     expect(within(dialog).getByText("每日计划")).toBeTruthy();
     expect(within(dialog).queryByRole("heading", { name: "为“每日计划”创建 Mission" })).toBeNull();
     const objectiveInput = within(dialog).getByLabelText("目标");
-    const criteriaInput = within(dialog).getByLabelText("验收标准（必填，1～20 条）");
-    const createButton = within(dialog).getByRole("button", { name: "创建并生成计划" });
+    const createButton = within(dialog).getByRole("button", { name: "生成计划" });
 
     fireEvent.change(objectiveInput, { target: { value: "以太坊过去3年重要的技术迭代" } });
-    expect((criteriaInput as HTMLTextAreaElement).required).toBe(true);
-    expect((createButton as HTMLButtonElement).disabled).toBe(true);
-    expect(api.createMission).not.toHaveBeenCalled();
-
-    fireEvent.change(criteriaInput, { target: { value: "列出重要升级、时间及其技术影响" } });
+    expect(within(dialog).getByRole("heading", { name: "执行默认值已准备" })).toBeTruthy();
+    expect(within(dialog).queryByLabelText("验收标准")).toBeNull();
     await waitFor(() => expect((createButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(createButton);
 
     await waitFor(() => expect(api.createMission).toHaveBeenCalledWith(
       expect.objectContaining({
         objective: "以太坊过去3年重要的技术迭代",
-        acceptanceCriteria: ["列出重要升级、时间及其技术影响"],
+        acceptanceCriteria: [
+          "交付结果覆盖目标要求的核心范围",
+          "关键结论说明依据、限制与未完成项",
+          "形成清晰、可继续使用的最终交付",
+        ],
+        mode: "STANDARD",
+      }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
+    ));
+  });
+
+  it("progressively reveals Deep Research settings and submits deterministic defaults", async () => {
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      missions: vi.fn(async () => ({ items: [], nextCursor: null })),
+      createMission: vi.fn(async () => mission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+    fireEvent.click(within(dialog).getByRole("radio", { name: /Deep Research/ }));
+    fireEvent.change(within(dialog).getByLabelText("目标"), {
+      target: { value: "以太坊过去3年重要的技术迭代" },
+    });
+
+    expect(within(dialog).getByRole("heading", { name: "研究默认值已准备" })).toBeTruthy();
+    expect(within(dialog).getByText("过去3年至今")).toBeTruthy();
+    expect(within(dialog).getByText("未指定（以目标明确地区为准）")).toBeTruthy();
+    expect(within(dialog).queryByLabelText("验收标准")).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "调整研究设置" }));
+    const criteriaInput = within(dialog).getByLabelText("验收标准") as HTMLTextAreaElement;
+    expect(criteriaInput.value).toContain("关键结论提供可追溯来源");
+    expect((within(dialog).getByLabelText("时间范围") as HTMLInputElement).value).toBe("过去3年至今");
+    expect(within(dialog).getByText("来源与边界")).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText("地区"), { target: { value: "全球" } });
+
+    const deepResearchCreate = within(dialog).getByRole("button", { name: "生成计划" });
+    fireEvent.submit(deepResearchCreate.closest("form")!);
+    await waitFor(() => expect(api.createMission).toHaveBeenCalledWith(
+      expect.objectContaining({
+        objective: "以太坊过去3年重要的技术迭代",
+        mode: "DEEP_RESEARCH",
+        selectedSkillId: "deep-research",
+        acceptanceCriteria: expect.arrayContaining([
+          "覆盖目标涉及的关键事实、发展过程与当前状态",
+          "关键结论提供可追溯来源，并说明不确定性与证据限制",
+        ]),
+        researchBrief: expect.objectContaining({
+          question: "以太坊过去3年重要的技术迭代",
+          timeRange: "过去3年至今",
+          region: "全球",
+          sourcePreferences: ["一手与官方来源", "权威数据库与专业资料", "独立可靠来源"],
+          exclusions: ["无法追溯原始出处的转载", "缺少事实依据的纯营销材料"],
+        }),
       }),
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     ));

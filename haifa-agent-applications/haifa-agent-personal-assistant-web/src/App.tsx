@@ -66,6 +66,11 @@ import {
 import { appReducer, initialState } from "./state/appReducer";
 import type { ConnectionState, OutputPhase } from "./types";
 import {
+  defaultMissionAcceptanceCriteria,
+  defaultResearchBrief,
+  type MissionMode,
+} from "./missionCreationDefaults";
+import {
   hasEmbeddedMarkdownResearchSources,
   inferMarkdownResearchContext,
   renderMarkdownDocument,
@@ -1970,7 +1975,7 @@ function MissionDialog({
   const [creatingMission, setCreatingMission] = useState(false);
   const [objective, setObjective] = useState("");
   const [criteria, setCriteria] = useState("");
-  const [mode, setMode] = useState<"STANDARD" | "DEEP_RESEARCH">("STANDARD");
+  const [mode, setMode] = useState<MissionMode>("STANDARD");
   const [researchQuestion, setResearchQuestion] = useState("");
   const [researchScope, setResearchScope] = useState("");
   const [researchTimeRange, setResearchTimeRange] = useState("");
@@ -1978,7 +1983,8 @@ function MissionDialog({
   const [researchAudience, setResearchAudience] = useState("");
   const [researchSources, setResearchSources] = useState("");
   const [researchExclusions, setResearchExclusions] = useState("");
-  const [researchDelivery, setResearchDelivery] = useState("Markdown report");
+  const [researchDelivery, setResearchDelivery] = useState("");
+  const [creationSettingsOpen, setCreationSettingsOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState(false);
   const [planDraft, setPlanDraft] = useState<MissionPlanTask[]>([]);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -1996,6 +2002,15 @@ function MissionDialog({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const maxPlanTasks = selected?.constraints.maxTasks ?? 8;
   const maxPlanDependencyDepth = selected?.constraints.maxDependencyDepth ?? 4;
+  const generatedCriteria = defaultMissionAcceptanceCriteria(mode);
+  const effectiveAcceptanceCriteria = criteria.trim()
+    ? criteria.split("\n").map((value) => value.trim()).filter(Boolean)
+    : generatedCriteria;
+  const generatedResearch = defaultResearchBrief(objective);
+  const effectiveResearchScope = researchScope.trim() || generatedResearch.scope;
+  const effectiveResearchTimeRange = researchTimeRange.trim() || generatedResearch.timeRange;
+  const effectiveResearchRegion = researchRegion.trim() || generatedResearch.region;
+  const effectiveResearchAudience = researchAudience.trim() || generatedResearch.audience;
 
   const merge = useCallback((mission: MissionSnapshot) => {
     setSelected((current) => {
@@ -2220,14 +2235,42 @@ function MissionDialog({
     }
   };
 
+  const selectMissionMode = (nextMode: MissionMode) => {
+    if (nextMode === mode) return;
+    setMode(nextMode);
+    setCriteria("");
+    setCreationSettingsOpen(false);
+    setResearchQuestion("");
+    setResearchScope("");
+    setResearchTimeRange("");
+    setResearchRegion("");
+    setResearchAudience("");
+    setResearchSources("");
+    setResearchExclusions("");
+    setResearchDelivery("");
+  };
+
+  const toggleCreationSettings = () => {
+    if (!creationSettingsOpen) {
+      if (!criteria.trim()) setCriteria(generatedCriteria.join("\n"));
+      if (mode === "DEEP_RESEARCH") {
+        if (!researchQuestion.trim()) setResearchQuestion(objective.trim());
+        if (!researchScope.trim()) setResearchScope(generatedResearch.scope);
+        if (!researchTimeRange.trim()) setResearchTimeRange(generatedResearch.timeRange);
+        if (!researchRegion.trim()) setResearchRegion(generatedResearch.region);
+        if (!researchAudience.trim()) setResearchAudience(generatedResearch.audience);
+        if (!researchSources.trim()) setResearchSources(generatedResearch.sourcePreferences.join("\n"));
+        if (!researchExclusions.trim()) setResearchExclusions(generatedResearch.exclusions.join("\n"));
+        if (!researchDelivery.trim()) setResearchDelivery(generatedResearch.deliveryFormat);
+      }
+    }
+    setCreationSettingsOpen((value) => !value);
+  };
+
   const createMission = (event: FormEvent) => {
     event.preventDefault();
     if (!conversation || !client.createMission || !objective.trim()) return;
-    const acceptanceCriteria = criteria.split("\n").map((value) => value.trim()).filter(Boolean);
-    if (acceptanceCriteria.length === 0) {
-      setError("请至少填写一条验收标准。");
-      return;
-    }
+    const acceptanceCriteria = effectiveAcceptanceCriteria;
     if (acceptanceCriteria.length > 20) {
       setError("验收标准不能超过 20 条。");
       return;
@@ -2245,13 +2288,17 @@ function MissionDialog({
       selectedSkillId: deepResearch ? "deep-research" : undefined,
       researchBrief: deepResearch ? {
         question: researchQuestion.trim() || objective.trim(),
-        scope: researchScope.trim(),
-        timeRange: researchTimeRange.trim(),
-        region: researchRegion.trim(),
-        audience: researchAudience.trim(),
-        sourcePreferences: researchSources.split("\n").map((value) => value.trim()).filter(Boolean),
-        exclusions: researchExclusions.split("\n").map((value) => value.trim()).filter(Boolean),
-        deliveryFormat: researchDelivery.trim(),
+        scope: effectiveResearchScope,
+        timeRange: effectiveResearchTimeRange,
+        region: effectiveResearchRegion,
+        audience: effectiveResearchAudience,
+        sourcePreferences: researchSources.trim()
+          ? researchSources.split("\n").map((value) => value.trim()).filter(Boolean)
+          : generatedResearch.sourcePreferences,
+        exclusions: researchExclusions.trim()
+          ? researchExclusions.split("\n").map((value) => value.trim()).filter(Boolean)
+          : generatedResearch.exclusions,
+        deliveryFormat: researchDelivery.trim() || generatedResearch.deliveryFormat,
       } : undefined,
     }, { idempotencyKey: crypto.randomUUID() })).then((succeeded) => {
       if (succeeded) {
@@ -2260,6 +2307,13 @@ function MissionDialog({
         setCriteria("");
         setResearchQuestion("");
         setResearchScope("");
+        setResearchTimeRange("");
+        setResearchRegion("");
+        setResearchAudience("");
+        setResearchSources("");
+        setResearchExclusions("");
+        setResearchDelivery("");
+        setCreationSettingsOpen(false);
       }
     });
   };
@@ -2285,6 +2339,7 @@ function MissionDialog({
     setResearchSources(selected.researchBrief?.sourcePreferences.join("\n") ?? "政府、监管机构与一手来源");
     setResearchExclusions(selected.researchBrief?.exclusions.join("\n") ?? "无法追溯出处的营销材料");
     setResearchDelivery(selected.researchBrief?.deliveryFormat ?? "中文 Markdown 报告");
+    setCreationSettingsOpen(false);
     setCreatingMission(true);
     setEditingPlan(false);
     setDetailPanelOpen(false);
@@ -2517,20 +2572,46 @@ function MissionDialog({
             {conversation && creatingMission && (
               <form className="mission-create" onSubmit={createMission}>
                 <div className="mission-create-heading">
-                  <div><span className="eyebrow">新建任务</span><h3>创建 Mission</h3></div>
+                  <div><span className="eyebrow">新建任务</span><h3>你希望 Mission 最终交付什么？</h3><small>先描述结果；系统会准备通用默认值，需要时再调整。</small></div>
                   <p><span>所属会话</span><strong title={conversation.displayName}>{conversation.displayName}</strong></p>
                 </div>
-                <label>任务模式<select value={mode} onChange={(event) => setMode(event.target.value as "STANDARD" | "DEEP_RESEARCH")}><option value="STANDARD">标准 Mission</option><option value="DEEP_RESEARCH">Deep Research</option></select></label>
-                <label>目标<textarea value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={8000} rows={3} placeholder="描述要持续推进并最终交付的目标" /></label>
-                <label>验收标准（必填，1～20 条）<textarea required value={criteria} onChange={(event) => setCriteria(event.target.value)} maxLength={4000} rows={3} placeholder="每行一条，例如：覆盖关键升级、时间及影响" /></label>
-                {mode === "DEEP_RESEARCH" && <fieldset className="research-brief"><legend>Research brief</legend>
-                  <label>研究问题<textarea value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} maxLength={8000} rows={2} placeholder="留空时使用 Mission 目标" /></label>
-                  <label>范围<textarea value={researchScope} onChange={(event) => setResearchScope(event.target.value)} maxLength={2000} rows={2} /></label>
-                  <div className="research-brief-grid"><label>时间范围<input value={researchTimeRange} onChange={(event) => setResearchTimeRange(event.target.value)} maxLength={256} /></label><label>地区<input value={researchRegion} onChange={(event) => setResearchRegion(event.target.value)} maxLength={256} /></label><label>受众<input value={researchAudience} onChange={(event) => setResearchAudience(event.target.value)} maxLength={256} /></label><label>交付格式<input value={researchDelivery} onChange={(event) => setResearchDelivery(event.target.value)} maxLength={256} /></label></div>
-                  <label>来源偏好（必填）<textarea required value={researchSources} onChange={(event) => setResearchSources(event.target.value)} rows={2} placeholder="至少一项，每行一项" /></label>
-                  <label>排除项（必填）<textarea required value={researchExclusions} onChange={(event) => setResearchExclusions(event.target.value)} rows={2} placeholder="至少一项，每行一项" /></label>
-                </fieldset>}
-                <div className="mission-create-actions">{selected && <button type="button" className="button" onClick={() => setCreatingMission(false)}>返回当前 Mission</button>}<button type="submit" className="button primary-button" disabled={busy || !objective.trim() || !criteria.trim()}><Plus size={15} />创建并生成计划</button></div>
+                <div className="mission-create-field">
+                  <span>任务模式</span>
+                  <div className="mission-mode-options" role="radiogroup" aria-label="任务模式">
+                    <label className={mode === "STANDARD" ? "selected" : ""}><input type="radio" name="mission-mode" value="STANDARD" checked={mode === "STANDARD"} onChange={() => selectMissionMode("STANDARD")} /><span className="mission-mode-icon"><Zap size={17} /></span><span className="mission-mode-copy"><b>标准 Mission</b><small>规划并完成多步骤任务，适合分析、整理和方案执行。</small></span><Check className="mission-mode-check" size={15} /></label>
+                    <label className={mode === "DEEP_RESEARCH" ? "selected" : ""}><input type="radio" name="mission-mode" value="DEEP_RESEARCH" checked={mode === "DEEP_RESEARCH"} onChange={() => selectMissionMode("DEEP_RESEARCH")} /><span className="mission-mode-icon"><Sparkles size={17} /></span><span className="mission-mode-copy"><b>Deep Research</b><small>基于外部来源形成完整报告，包含来源、引用与交付文件。</small></span><Check className="mission-mode-check" size={15} /></label>
+                  </div>
+                </div>
+                <label className="mission-objective-field">目标<textarea aria-label="目标" value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={8000} rows={3} placeholder="例如：梳理以太坊近三年的重要技术迭代，并分析其影响" /><small>用结果语言描述即可，不需要自己拆任务或填写技术参数。</small></label>
+
+                <section className={`mission-generated-brief ${objective.trim() ? "ready" : "empty"}`} aria-live="polite">
+                  <header>
+                    <span className="mission-generated-brief-icon"><Sparkles size={17} /></span>
+                    <div><span className="eyebrow">{mode === "DEEP_RESEARCH" ? "RESEARCH DEFAULTS" : "EXECUTION DEFAULTS"}</span><h4>{objective.trim() ? (mode === "DEEP_RESEARCH" ? "研究默认值已准备" : "执行默认值已准备") : "填写目标后准备默认值"}</h4><p>{objective.trim() ? "已准备通用、可编辑的默认值；计划生成时会结合完整目标。" : "无需先填写研究范围、验收标准或来源偏好。"}</p></div>
+                    {objective.trim() && <span className="mission-generated-ready">默认值已准备</span>}
+                  </header>
+                  {objective.trim() && <>
+                    <div className="mission-generated-grid">
+                      <div><small>{mode === "DEEP_RESEARCH" ? "研究范围" : "任务范围"}</small><b>{mode === "DEEP_RESEARCH" ? effectiveResearchScope : "围绕目标规划并完成多步骤任务"}</b></div>
+                      {mode === "DEEP_RESEARCH" && <div><small>时间</small><b>{effectiveResearchTimeRange}</b></div>}
+                      {mode === "DEEP_RESEARCH" && <div><small>地区</small><b>{effectiveResearchRegion}</b></div>}
+                      <div><small>交付</small><b>{mode === "DEEP_RESEARCH" ? "完整报告、来源与引用" : "任务结果与交付文件"}</b></div>
+                    </div>
+                    <footer><span><CheckCircle2 size={14} />验收标准 {effectiveAcceptanceCriteria.length} 项已准备</span><button type="button" className={creationSettingsOpen ? "open" : ""} onClick={toggleCreationSettings}><Pencil size={13} />{creationSettingsOpen ? "收起设置" : mode === "DEEP_RESEARCH" ? "调整研究设置" : "调整执行设置"}<ChevronDown size={14} /></button></footer>
+                  </>}
+                </section>
+
+                {objective.trim() && creationSettingsOpen && <section className="mission-create-settings">
+                  <header><div><span className="eyebrow">OPTIONAL SETTINGS</span><h4>{mode === "DEEP_RESEARCH" ? "调整研究设置" : "调整执行设置"}</h4><p>以下是通用默认值，不修改也可以直接继续。</p></div><span>可选</span></header>
+                  <label>验收标准<textarea aria-label="验收标准" value={criteria} onChange={(event) => setCriteria(event.target.value)} maxLength={4000} rows={4} /><small>每行一条，最多 20 条；确认计划时仍可调整任务级验收标准。</small></label>
+                  {mode === "DEEP_RESEARCH" && <>
+                    <label>研究问题<textarea value={researchQuestion} onChange={(event) => setResearchQuestion(event.target.value)} maxLength={8000} rows={2} /></label>
+                    <label>研究范围<textarea value={researchScope} onChange={(event) => setResearchScope(event.target.value)} maxLength={2000} rows={2} /></label>
+                    <div className="research-brief-grid"><label>时间范围<input value={researchTimeRange} onChange={(event) => setResearchTimeRange(event.target.value)} maxLength={256} /></label><label>地区<input value={researchRegion} onChange={(event) => setResearchRegion(event.target.value)} maxLength={256} /></label><label>交付受众<input value={researchAudience} onChange={(event) => setResearchAudience(event.target.value)} maxLength={256} /></label><label>交付格式<input value={researchDelivery} onChange={(event) => setResearchDelivery(event.target.value)} maxLength={256} /></label></div>
+                    <details className="mission-source-settings"><summary><span><b>来源与边界</b><small>仅在需要约束来源时调整</small></span><ChevronDown size={15} /></summary><div className="research-brief-grid"><label>优先来源<textarea value={researchSources} onChange={(event) => setResearchSources(event.target.value)} rows={3} /></label><label>排除项<textarea value={researchExclusions} onChange={(event) => setResearchExclusions(event.target.value)} rows={3} /></label></div></details>
+                  </>}
+                </section>}
+                <div className="mission-create-actions">{selected && <button type="button" className="button" onClick={() => setCreatingMission(false)}>返回当前 Mission</button>}<button type="submit" className="button primary-button" disabled={busy || !objective.trim()}><Sparkles size={15} />生成计划</button></div>
               </form>
             )}
             {!creatingMission && (selected ? (
@@ -2576,7 +2657,7 @@ function MissionDialog({
             ) : <div className="empty"><h3>选择或创建 Mission</h3><p>Mission 用于需要拆解、持续运行并最终整合的大任务。</p></div>)}
           </div>
           {detailPanelOpen && <aside className="mission-task-detail" aria-label="Mission 详情面板">
-            {selectedCitation ? <ResearchCitationPanel selection={selectedCitation} onClose={closeDetailPanel} /> : selected && selectedArtifact ? <>
+            {creatingMission ? <div className="mission-creation-guide"><span className="eyebrow">创建后会发生什么</span><h3>先规划，不会立即执行</h3><ol><li><span><Sparkles size={16} /></span><div><b>生成任务计划</b><small>把目标拆成可验证的任务与依赖</small></div></li><li><span><Pencil size={16} /></span><div><b>由你确认或适度调整</b><small>可以修改任务、顺序和早期依赖</small></div></li><li><span><CheckCircle2 size={16} /></span><div><b>确认后后台执行</b><small>关闭页面也不会丢失进度</small></div></li></ol><p><ShieldCheck size={16} /><span><b>保持简单</b><small>只展示模式、计划和交付结果。</small></span></p></div> : selectedCitation ? <ResearchCitationPanel selection={selectedCitation} onClose={closeDetailPanel} /> : selected && selectedArtifact ? <>
               <header className="mission-task-detail-header"><span className="mission-task-detail-number"><Paperclip size={16} /></span><div><span className="eyebrow">交付文件</span><h3>{selectedArtifact.title}</h3><small>{selectedArtifact.fileName}</small></div><button type="button" className="icon" aria-label="关闭交付文件" onClick={closeDetailPanel}><X size={16} /></button></header>
               <div className="mission-task-detail-scroll artifact-reader-scroll"><MissionArtifactReader client={client} mission={selected} artifact={selectedArtifact} /></div>
             </> : !creatingMission && displayedTask ? <>
