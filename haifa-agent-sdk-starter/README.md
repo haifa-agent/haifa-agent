@@ -13,17 +13,18 @@ Web、Memory、Artifact 或 Execution。
 请求超时进入 Starter 的冻结 Run Profile。它不提供发现、fallback、健康路由或动态 Catalog。百炼/方舟
 仍使用各自受治理工厂，原二参数入口继续服务完全自定义 Adapter。
 
+有 `DEEPSEEK_API_KEY` 时，第一个 Agent 只需要一次构建、一次调用：
+
 ```java
-import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.starter.HaifaAgentStarter;
 
-try (HaifaAgent agent = HaifaAgentStarter.builder()
-        .name("hello-agent")
-        .build()) {
-    var response = agent.chat("Say hello in one sentence.").await();
-    System.out.println(response.text());
+try (var haifa = HaifaAgentStarter.create()) {
+    System.out.println(haifa.chat("Hello, Java!").await().text());
 }
 ```
+
+默认 name、instructions、模型和进程内 Store 都由 Starter 提供；需要改变行为时再显式配置，不让
+Hello World 承担生产装配概念。
 
 结构化最终结果使用同一个 Starter 和 Runtime 路径：
 
