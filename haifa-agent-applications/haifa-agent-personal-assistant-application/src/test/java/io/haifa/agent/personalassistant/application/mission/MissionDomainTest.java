@@ -40,6 +40,29 @@ class MissionDomainTest {
     }
 
     @Test
+    void freezesTheConversationModelBindingInTheMissionSnapshot() {
+        MissionModelBinding binding = new MissionModelBinding(
+                "qwen3.7-plus", "Qwen3.7 Plus", "aliyun-bailian", "阿里云百炼", "sha256:configured-model-snapshot");
+
+        PersonalMission mission = PersonalMission.create(
+                "mission-qwen",
+                "conversation-qwen",
+                "local/public-user",
+                "Prepare a research brief",
+                List.of("Brief is reviewed"),
+                MissionConstraints.DEFAULT,
+                Optional.empty(),
+                Optional.empty(),
+                MissionMode.STANDARD,
+                Optional.empty(),
+                binding,
+                NOW);
+
+        assertThat(mission.snapshot().modelBinding()).isEqualTo(binding);
+        assertThat(mission.persistence().modelBinding()).isEqualTo(binding);
+    }
+
+    @Test
     void rejectsMissingDependencyCycleAndDepthOverflow() {
         assertThatThrownBy(() ->
                         validator.validate(List.of(task("task-1", 1, List.of("missing"))), MissionConstraints.DEFAULT))

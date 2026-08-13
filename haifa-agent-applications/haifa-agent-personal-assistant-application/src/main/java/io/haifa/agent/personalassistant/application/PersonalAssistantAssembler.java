@@ -12,6 +12,7 @@ import io.haifa.agent.core.run.AgentRunType;
 import io.haifa.agent.personalassistant.application.execution.PersonalExecutionPlatform;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpConfiguration;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
+import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.mission.MissionTaskRunInput;
 import io.haifa.agent.personalassistant.application.policy.PersonalWebAllowPolicy;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
@@ -99,7 +100,7 @@ public final class PersonalAssistantAssembler {
                             alias.equals("utility_wikipedia_search") || alias.equals("utility_wikipedia_summary"))
                     .forEach(plannerTools::add);
             Set<String> researchTaskTools = new LinkedHashSet<>(plannerTools);
-            var agent = HaifaAgents.builder(profile)
+            var agentBuilder = HaifaAgents.builder(profile)
                     .callerProvider(dependencies.callers())
                     .timeProvider(dependencies.clock()::instant)
                     .toolApprovalPrompts(dependencies.execution()::approvalPrompt)
@@ -194,7 +195,19 @@ public final class PersonalAssistantAssembler {
                             new AgentRunBudget(128_000, 32_000, 128_000, 0, 2, 0, "USD", 0),
                             new AgentRunLimits(4, 0, 1, 120_000, 120_000),
                             Map.of(),
-                            java.util.Optional.of(Set.of())))
+                            java.util.Optional.of(Set.of())));
+            dependencies.modelCatalog().available().stream()
+                    .filter(model ->
+                            !model.id().equals(dependencies.modelCatalog().defaultModelId()))
+                    .flatMap(
+                            model -> missionRunProfiles(
+                                    model,
+                                    dependencies.modelCatalog().defaultModelId(),
+                                    plannerTools,
+                                    researchTaskTools)
+                                    .stream())
+                    .forEach(agentBuilder::runProfile);
+            var agent = agentBuilder
                     .contribute(dependencies.model())
                     .contribute(dependencies.persistence())
                     .contribute(dependencies.conversation())
@@ -245,6 +258,97 @@ public final class PersonalAssistantAssembler {
             }
             throw exception;
         }
+    }
+
+    private static List<ProductRunProfile> missionRunProfiles(
+            PersonalModelOption model, String defaultModelId, Set<String> plannerTools, Set<String> researchTaskTools) {
+        Map<String, Object> structuredOptions = model.capabilities().contains("STRUCTURED_OUTPUT")
+                ? Map.of("response_format", Map.of("type", "json_object"))
+                : Map.of();
+        return List.of(
+                new ProductRunProfile(
+                        SdkMissionRuntimeAccess.profileId(
+                                SdkMissionRuntimeAccess.PLANNER_RUN_PROFILE, model.id(), defaultModelId),
+                        "1.0.0",
+                        model.id(),
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(128_000, 16_000, 128_000, 16, 10, 0, "USD", 0),
+                        new AgentRunLimits(16, 0, 1, 180_000, 120_000),
+                        structuredOptions,
+                        Optional.of(Set.copyOf(plannerTools))),
+                new ProductRunProfile(
+                        SdkMissionRuntimeAccess.profileId(
+                                SdkMissionRuntimeAccess.PLANNER_REPAIR_RUN_PROFILE, model.id(), defaultModelId),
+                        "1.0.0",
+                        model.id(),
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(96_000, 16_000, 96_000, 0, 2, 0, "USD", 0),
+                        new AgentRunLimits(4, 0, 1, 120_000, 120_000),
+                        structuredOptions,
+                        Optional.of(Set.of())),
+                new ProductRunProfile(
+                        SdkMissionRuntimeAccess.profileId(
+                                SdkMissionRuntimeAccess.TASK_RUN_PROFILE, model.id(), defaultModelId),
+                        "1.0.0",
+                        model.id(),
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(
+                                384_000, 64_000, 384_000, SdkMissionRuntimeAccess.TASK_MAX_TOOL_CALLS, 24, 0, "USD", 0),
+                        new AgentRunLimits(48, 0, 1, 600_000, 240_000),
+                        Map.of(
+                                RuntimeControlOptions.FINALIZE_AFTER_TOOL_CALLS,
+                                MissionTaskRunInput.PRIMARY_RESEARCH_TOOL_CALL_STOP_TARGET),
+                        Optional.of(Set.copyOf(researchTaskTools))),
+                new ProductRunProfile(
+                        SdkMissionRuntimeAccess.profileId(
+                                SdkMissionRuntimeAccess.DEPENDENT_TASK_RUN_PROFILE, model.id(), defaultModelId),
+                        "1.0.0",
+                        model.id(),
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(
+                                384_000,
+                                64_000,
+                                384_000,
+                                MissionTaskRunInput.DEPENDENCY_AWARE_TOOL_CALL_HARD_LIMIT,
+                                20,
+                                0,
+                                "USD",
+                                0),
+                        new AgentRunLimits(40, 0, 1, 600_000, 240_000),
+                        Map.of(
+                                RuntimeControlOptions.FINALIZE_AFTER_TOOL_CALLS,
+                                MissionTaskRunInput.DEPENDENCY_AWARE_TOOL_CALL_STOP_TARGET),
+                        Optional.of(Set.copyOf(researchTaskTools))),
+                new ProductRunProfile(
+                        SdkMissionRuntimeAccess.profileId(
+                                SdkMissionRuntimeAccess.TASK_NORMALIZER_RUN_PROFILE, model.id(), defaultModelId),
+                        "1.0.0",
+                        model.id(),
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(128_000, 16_384, 128_000, 0, 4, 0, "USD", 0),
+                        new AgentRunLimits(4, 0, 1, 120_000, 120_000),
+                        structuredOptions,
+                        Optional.of(Set.of())),
+                new ProductRunProfile(
+                        SdkMissionRuntimeAccess.profileId(
+                                SdkMissionRuntimeAccess.SYNTHESIS_RUN_PROFILE, model.id(), defaultModelId),
+                        "1.0.0",
+                        model.id(),
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(128_000, 32_000, 128_000, 0, 2, 0, "USD", 0),
+                        new AgentRunLimits(4, 0, 1, 120_000, 120_000),
+                        structuredOptions,
+                        Optional.of(Set.of())),
+                new ProductRunProfile(
+                        SdkMissionRuntimeAccess.profileId(
+                                SdkMissionRuntimeAccess.RESEARCH_SYNTHESIS_RUN_PROFILE, model.id(), defaultModelId),
+                        "1.0.0",
+                        model.id(),
+                        AgentRunType.CHAT,
+                        new AgentRunBudget(128_000, 32_000, 128_000, 0, 2, 0, "USD", 0),
+                        new AgentRunLimits(4, 0, 1, 120_000, 120_000),
+                        Map.of(),
+                        Optional.of(Set.of())));
     }
 
     static boolean isTransientToolFailure(RuntimeException failure) {
@@ -388,6 +492,17 @@ public final class PersonalAssistantAssembler {
                 @Override
                 public List<PersonalModelOption> available() {
                     return List.of(option);
+                }
+
+                @Override
+                public Optional<MissionModelBinding> binding(String modelId) {
+                    if (!snapshot.modelId().value().equals(modelId)) return Optional.empty();
+                    return Optional.of(new MissionModelBinding(
+                            option.id(),
+                            option.displayName(),
+                            option.providerId(),
+                            option.providerDisplayName(),
+                            snapshot.configurationDigest()));
                 }
             };
         }

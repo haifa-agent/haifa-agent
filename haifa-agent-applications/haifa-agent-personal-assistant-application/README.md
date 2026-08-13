@@ -22,6 +22,12 @@ Runtime 视图实现用例，不依赖 Spring、SQLite 实现、HTTP DTO 或 Con
 
 ## Personal Mission Phase 1–4
 
+创建 Mission 时会读取所属 Conversation 当时选中的模型，并冻结 `modelId`、Provider/Model 展示名和
+Provider Snapshot `configurationDigest`。Planner、Task、Normalizer、Synthesis 与有限 repair 全部使用
+这一个冻结 binding；普通对话之后切换模型不会改变既有 Mission。若当前模型已从目录移除，或相同
+Model ID 的 Snapshot digest 已漂移，Mission 执行 fail closed，不回退到系统默认模型。Mission 公共
+Snapshot schema 为 `pa.mission-snapshot/v2`。
+
 Phase 4 makes Mission usage authoritative at the product boundary. Model tokens, model calls, and
 Tool calls are settled exactly once from Runtime results. Frozen per-Mission token, Tool-call,
 Task, retry, execution-time, and wall-clock limits stop new work deterministically; an active Task

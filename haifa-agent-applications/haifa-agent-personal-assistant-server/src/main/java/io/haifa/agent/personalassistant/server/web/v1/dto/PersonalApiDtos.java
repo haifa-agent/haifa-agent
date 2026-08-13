@@ -101,6 +101,13 @@ public final class PersonalApiDtos {
             Optional<String> plannerRunId,
             Instant createdAt) {}
 
+    public record MissionModelBinding(
+            String modelId,
+            String modelDisplayName,
+            String providerId,
+            String providerDisplayName,
+            String configurationDigest) {}
+
     /**
      * Mission read model. {@code finalResult} remains an encoded compatibility envelope: standard Missions use
      * {@code pa.mission-final-result/v1}; Deep Research deliveries use {@code pa.research-delivery/v2} with a
@@ -110,6 +117,7 @@ public final class PersonalApiDtos {
             String schemaVersion,
             String missionId,
             String conversationId,
+            MissionModelBinding modelBinding,
             String objective,
             List<String> acceptanceCriteria,
             MissionConstraints constraints,

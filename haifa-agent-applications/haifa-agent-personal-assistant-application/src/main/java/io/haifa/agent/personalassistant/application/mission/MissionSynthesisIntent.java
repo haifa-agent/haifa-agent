@@ -9,6 +9,7 @@ public record MissionSynthesisIntent(
         String missionId,
         String conversationId,
         String ownerScope,
+        MissionModelBinding modelBinding,
         MissionMode mode,
         String objective,
         List<String> taskResults,
@@ -20,6 +21,7 @@ public record MissionSynthesisIntent(
         Optional<ResearchBrief> researchBrief,
         MissionUsage preSynthesisUsage) {
     public MissionSynthesisIntent {
+        modelBinding = java.util.Objects.requireNonNull(modelBinding);
         taskResults = List.copyOf(taskResults);
         failedItems = List.copyOf(failedItems);
         completedTaskIds = List.copyOf(completedTaskIds);
@@ -49,11 +51,43 @@ public record MissionSynthesisIntent(
             int maxRevisionAttempts,
             long remainingModelTokens,
             Optional<Instant> deadlineAt,
+            Optional<ResearchBrief> researchBrief,
+            MissionUsage preSynthesisUsage) {
+        this(
+                missionId,
+                conversationId,
+                ownerScope,
+                MissionModelBinding.legacyDefault(),
+                mode,
+                objective,
+                taskResults,
+                failedItems,
+                completedTaskIds,
+                maxRevisionAttempts,
+                remainingModelTokens,
+                deadlineAt,
+                researchBrief,
+                preSynthesisUsage);
+    }
+
+    public MissionSynthesisIntent(
+            String missionId,
+            String conversationId,
+            String ownerScope,
+            MissionMode mode,
+            String objective,
+            List<String> taskResults,
+            List<String> failedItems,
+            List<String> completedTaskIds,
+            int maxRevisionAttempts,
+            long remainingModelTokens,
+            Optional<Instant> deadlineAt,
             Optional<ResearchBrief> researchBrief) {
         this(
                 missionId,
                 conversationId,
                 ownerScope,
+                MissionModelBinding.legacyDefault(),
                 mode,
                 objective,
                 taskResults,
@@ -78,6 +112,7 @@ public record MissionSynthesisIntent(
                 missionId,
                 conversationId,
                 ownerScope,
+                MissionModelBinding.legacyDefault(),
                 mode,
                 objective,
                 taskResults,

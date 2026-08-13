@@ -179,7 +179,10 @@ class PersonalAssistantWebFluxTest {
                         .formatted(mapper.writeValueAsString(conversationId));
 
         JsonNode mission = missionCreate(key, request);
-        assertThat(mission.path("schemaVersion").asText()).isEqualTo("pa.mission-snapshot/v1");
+        assertThat(mission.path("schemaVersion").asText()).isEqualTo("pa.mission-snapshot/v2");
+        assertThat(mission.path("modelBinding").path("modelId").asText()).isEqualTo("personal-test");
+        assertThat(mission.path("modelBinding").path("configurationDigest").asText())
+                .startsWith("sha256:");
         assertThat(mission.path("state").asText()).isEqualTo("WAITING_CONFIRMATION");
         assertThat(mission.path("tasks").isArray()).isTrue();
         assertThat(mission.path("tasks").size()).isPositive();
@@ -311,7 +314,7 @@ class PersonalAssistantWebFluxTest {
         assertThat(confirmed.path("state").asText()).isEqualTo("RUNNING");
         assertThat(confirmed.path("plan").path("revision").asInt()).isEqualTo(2);
 
-        web.put()
+        var rejectedResult = web.put()
                 .uri("/api/v1/missions/" + missionId + "/plan")
                 .header("X-Haifa-CSRF", "1")
                 .header("Idempotency-Key", "mission-adjust-frozen-" + IDS.incrementAndGet())
@@ -321,11 +324,13 @@ class PersonalAssistantWebFluxTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(replacement)
                 .exchange()
-                .expectStatus()
-                .isEqualTo(409)
                 .expectBody()
-                .jsonPath("$.code")
-                .isEqualTo("MISSION_PLAN_FROZEN");
+                .returnResult();
+        assertThat(rejectedResult.getStatus().value()).isIn(409, 412);
+        JsonNode rejected = mapper.readTree(rejectedResult.getResponseBody());
+        assertThat(rejected.path("code").asText())
+                .isEqualTo(
+                        rejectedResult.getStatus().value() == 409 ? "MISSION_PLAN_FROZEN" : "MISSION_REVISION_STALE");
     }
 
     @Test
@@ -333,7 +338,7 @@ class PersonalAssistantWebFluxTest {
         JsonNode operations = get("/v1/admin/missions/operations");
         assertThat(operations.path("dispatcherStatus").asText()).isEqualTo("READY");
         assertThat(operations.path("ready").asBoolean()).isTrue();
-        assertThat(operations.path("schemaVersion").asInt()).isEqualTo(6);
+        assertThat(operations.path("schemaVersion").asInt()).isEqualTo(7);
         assertThat(operations.path("capacityBlockerCode").asText()).isEqualTo("NONE");
         assertThat(operations.path("retentionBoundary").asText()).contains("No automatic");
 

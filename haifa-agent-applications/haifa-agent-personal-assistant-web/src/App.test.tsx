@@ -164,7 +164,14 @@ const missionTask: MissionSnapshot["tasks"][number] = {
   state: "PLANNED",
 };
 const mission: MissionSnapshot = {
-  schemaVersion: "pa.mission-snapshot/v1",
+  schemaVersion: "pa.mission-snapshot/v2",
+  modelBinding: {
+    modelId: "deepseek-v4-flash",
+    modelDisplayName: "DeepSeek V4 Flash",
+    providerId: "deepseek",
+    providerDisplayName: "DeepSeek",
+    configurationDigest: "sha256:test-model-snapshot",
+  },
   missionId: "mission-1",
   conversationId: conversation.id,
   objective: "交付一份可验收的计划",

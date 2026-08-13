@@ -9,6 +9,7 @@ public record MissionDispatchIntent(
         String outboxId,
         String missionId,
         String ownerScope,
+        MissionModelBinding modelBinding,
         String taskId,
         int attemptNo,
         String dispatchKey,
@@ -16,7 +17,31 @@ public record MissionDispatchIntent(
         MissionTaskRunInput runInput,
         Instant claimedAt) {
     public MissionDispatchIntent {
+        modelBinding = Objects.requireNonNull(modelBinding, "modelBinding must not be null");
         runInput = Objects.requireNonNull(runInput, "runInput must not be null");
+    }
+
+    public MissionDispatchIntent(
+            String outboxId,
+            String missionId,
+            String ownerScope,
+            String taskId,
+            int attemptNo,
+            String dispatchKey,
+            String payloadDigest,
+            MissionTaskRunInput runInput,
+            Instant claimedAt) {
+        this(
+                outboxId,
+                missionId,
+                ownerScope,
+                MissionModelBinding.legacyDefault(),
+                taskId,
+                attemptNo,
+                dispatchKey,
+                payloadDigest,
+                runInput,
+                claimedAt);
     }
 
     public MissionDispatchIntent(
@@ -38,6 +63,7 @@ public record MissionDispatchIntent(
                 outboxId,
                 missionId,
                 ownerScope,
+                MissionModelBinding.legacyDefault(),
                 taskId,
                 attemptNo,
                 dispatchKey,

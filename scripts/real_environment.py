@@ -26,10 +26,15 @@ FRONTEND_PORT = 20000
 BACKEND_PORT = 20001
 MCP_PORT = 20002
 DEFAULT_MODEL_ID = "deepseek-chat-flash"
+BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
 SUPPORTED_DEFAULT_MODEL_IDS = (
     "deepseek-chat-pro",
     "deepseek-chat-flash",
     "deepseek-responses-flash",
+    BAILIAN_DEFAULT_MODEL_ID,
+    "qwen3.7-plus",
+    "qwen3.7-flash",
+    "qwen3-vl-plus",
 )
 ALLOWED_MCP_TOOLS = ",".join(
     (
@@ -122,7 +127,15 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--default-model-id",
         choices=SUPPORTED_DEFAULT_MODEL_IDS,
-        default=os.getenv("HAIFA_PERSONAL_DEFAULT_MODEL_ID", DEFAULT_MODEL_ID),
+        default=os.getenv("HAIFA_PERSONAL_DEFAULT_MODEL_ID", "").strip() or None,
+    )
+    result.add_argument(
+        "--bailian-key-file",
+        default=os.getenv("HAIFA_BAILIAN_KEY_FILE", str(workspace / "ss-bailian.txt")),
+    )
+    result.add_argument(
+        "--bailian-region",
+        default=os.getenv("ALIYUN_BAILIAN_REGION", "cn-beijing"),
     )
     result.add_argument(
         "--aliyun-iqs-key-file",
@@ -331,6 +344,23 @@ def read_secret_file(value: str, label: str) -> str:
     return secret
 
 
+def read_key_value_file(path: Path, label: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            fail(f"{label} key file line {line_number} must use KEY:VALUE format.")
+        name, value = (part.strip() for part in line.split(":", 1))
+        if name not in {"API_KEY", "WORKSPACE_ID", "REGION"} or not value:
+            fail(f"{label} key file line {line_number} is invalid.")
+        if name in values:
+            fail(f"{label} key file contains duplicate {name}.")
+        values[name] = value
+    return values
+
+
 def environment_value(name: str) -> str:
     value = os.getenv(name, "").strip()
     if value:
@@ -362,6 +392,50 @@ def optional_openai_environment(environment: Mapping[str, str] | None = None) ->
             )
         return None
     return values["OPENAI_BASE_URL"], values["OPENAI_API_KEY"], values["OPENAI_MODEL_ID"]
+
+
+def optional_bailian_configuration(
+    key_file: str,
+    default_region: str = "cn-beijing",
+    environment: Mapping[str, str] | None = None,
+) -> tuple[str, str, str] | None:
+    source = {
+        name: (environment_value(name) if environment is None else environment.get(name, "").strip())
+        for name in ("DASHSCOPE_API_KEY", "ALIYUN_BAILIAN_WORKSPACE_ID", "ALIYUN_BAILIAN_REGION")
+    }
+    path = Path(key_file).expanduser()
+    file_values: dict[str, str] = {}
+    if path.is_file():
+        file_values = read_key_value_file(path, "Bailian")
+    source["DASHSCOPE_API_KEY"] = source["DASHSCOPE_API_KEY"] or file_values.get("API_KEY", "")
+    source["ALIYUN_BAILIAN_WORKSPACE_ID"] = (
+        source["ALIYUN_BAILIAN_WORKSPACE_ID"] or file_values.get("WORKSPACE_ID", "")
+    )
+    if not source["DASHSCOPE_API_KEY"] and not source["ALIYUN_BAILIAN_WORKSPACE_ID"]:
+        return None
+    source["ALIYUN_BAILIAN_REGION"] = (
+        source["ALIYUN_BAILIAN_REGION"] or file_values.get("REGION", "") or default_region.strip()
+    )
+    configured = [name for name, value in source.items() if value]
+    if not configured:
+        return None
+    missing = [name for name, value in source.items() if not value]
+    if missing:
+        warn(
+            "Ignoring incomplete optional Bailian provider configuration. "
+            f"Configured: {', '.join(configured)}; missing: {', '.join(missing)}."
+        )
+        return None
+    dns_label = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+    workspace_id = source["ALIYUN_BAILIAN_WORKSPACE_ID"].lower()
+    region = source["ALIYUN_BAILIAN_REGION"].lower()
+    if not dns_label.fullmatch(workspace_id) or not dns_label.fullmatch(region):
+        fail("Bailian workspace and region must be valid DNS labels.")
+    return (
+        source["DASHSCOPE_API_KEY"],
+        workspace_id,
+        region,
+    )
 
 
 def restrict_secret_file(path: Path) -> None:
@@ -577,6 +651,7 @@ def backend_environment(
     value: Paths,
     skill_root: Path,
     trusted_manifest: Path | None,
+    bailian: tuple[str, str, str] | None = None,
 ) -> dict[str, str]:
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
@@ -650,28 +725,88 @@ def backend_environment(
         "HAIFA_PERSONAL_MCP_DISPLAY_NAME": "Haifa Utility MCP",
         "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
     }
+    next_provider_index = 1
+    if bailian is not None:
+        bailian_key, workspace_id, region = bailian
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+        endpoint = f"https://{workspace_id}.{region}.maas.aliyuncs.com/compatible-mode/v1"
+        environment.update(
+            {
+                "DASHSCOPE_API_KEY": bailian_key,
+                f"{prefix}_ID": "aliyun-bailian",
+                f"{prefix}_DISPLAYNAME": "阿里云百炼",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": endpoint,
+                f"{prefix}_CREDENTIALREFERENCE": "env://DASHSCOPE_API_KEY",
+                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
+                f"{prefix}_APIBINDINGS_0_DIALECT": "aliyun-bailian-openai-chat",
+                f"{prefix}_MODELS_0_ID": BAILIAN_DEFAULT_MODEL_ID,
+                f"{prefix}_MODELS_0_DISPLAYNAME": "Qwen3.7 Max (2026-05-17)",
+                f"{prefix}_MODELS_0_PROVIDERMODELID": BAILIAN_DEFAULT_MODEL_ID,
+                f"{prefix}_MODELS_0_STYLE": "openai-chat-completions",
+                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_0_CAPABILITIES_2": "REASONING",
+                f"{prefix}_MODELS_0_REASONINGMODE": "ENABLED",
+                f"{prefix}_MODELS_0_CONTEXTWINDOW": "1000000",
+                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "65536",
+                f"{prefix}_MODELS_1_ID": "qwen3.7-plus",
+                f"{prefix}_MODELS_1_DISPLAYNAME": "Qwen3.7 Plus",
+                f"{prefix}_MODELS_1_PROVIDERMODELID": "qwen3.7-plus",
+                f"{prefix}_MODELS_1_STYLE": "openai-chat-completions",
+                f"{prefix}_MODELS_1_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_1_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_1_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+                f"{prefix}_MODELS_1_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_1_CONTEXTWINDOW": "1000000",
+                f"{prefix}_MODELS_1_MAXOUTPUTTOKENS": "65536",
+                f"{prefix}_MODELS_2_ID": "qwen3.7-flash",
+                f"{prefix}_MODELS_2_DISPLAYNAME": "Qwen3.7 Flash",
+                f"{prefix}_MODELS_2_PROVIDERMODELID": "qwen3.7-flash",
+                f"{prefix}_MODELS_2_STYLE": "openai-chat-completions",
+                f"{prefix}_MODELS_2_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_2_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_2_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+                f"{prefix}_MODELS_2_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_2_CONTEXTWINDOW": "1000000",
+                f"{prefix}_MODELS_2_MAXOUTPUTTOKENS": "65536",
+                f"{prefix}_MODELS_3_ID": "qwen3-vl-plus",
+                f"{prefix}_MODELS_3_DISPLAYNAME": "Qwen3 VL Plus",
+                f"{prefix}_MODELS_3_PROVIDERMODELID": "qwen3-vl-plus",
+                f"{prefix}_MODELS_3_STYLE": "openai-chat-completions",
+                f"{prefix}_MODELS_3_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_3_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_3_CAPABILITIES_2": "IMAGE_INPUT",
+                f"{prefix}_MODELS_3_CONTEXTWINDOW": "131072",
+                f"{prefix}_MODELS_3_MAXOUTPUTTOKENS": "8192",
+            }
+        )
+        next_provider_index += 1
     if openai is not None:
         openai_base_url, openai_key, openai_model_id = openai
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
         environment.update(
             {
                 "OPENAI_BASE_URL": openai_base_url,
                 "OPENAI_API_KEY": openai_key,
                 "OPENAI_MODEL_ID": openai_model_id,
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_ID": "local-openai",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_DISPLAYNAME": "Local OpenAI Responses Gateway",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODE": "remote",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_ALLOWDETERMINISTIC": "false",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_NATIVESTREAMING": "true",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT": openai_base_url,
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE": "env://OPENAI_API_KEY",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_STYLE": "openai-responses",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_ID": "local-openai-responses",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_DISPLAYNAME": "Local OpenAI Responses",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID": openai_model_id,
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_STYLE": "openai-responses",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_CONTEXTWINDOW": "131072",
-                "HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_MAXOUTPUTTOKENS": "8192",
+                f"{prefix}_ID": "local-openai",
+                f"{prefix}_DISPLAYNAME": "Local OpenAI Responses Gateway",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": openai_base_url,
+                f"{prefix}_CREDENTIALREFERENCE": "env://OPENAI_API_KEY",
+                f"{prefix}_APIBINDINGS_0_STYLE": "openai-responses",
+                f"{prefix}_MODELS_0_ID": "local-openai-responses",
+                f"{prefix}_MODELS_0_DISPLAYNAME": "Local OpenAI Responses",
+                f"{prefix}_MODELS_0_PROVIDERMODELID": openai_model_id,
+                f"{prefix}_MODELS_0_STYLE": "openai-responses",
+                f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_0_CONTEXTWINDOW": "131072",
+                f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "8192",
             }
         )
     return environment
@@ -754,6 +889,10 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     deepseek_key = read_secret_file(args.deepseek_key_file, "DeepSeek")
     aliyun_key = read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS")
     openai = optional_openai_environment()
+    bailian = optional_bailian_configuration(args.bailian_key_file, args.bailian_region)
+    default_model_id = args.default_model_id or (BAILIAN_DEFAULT_MODEL_ID if bailian else DEFAULT_MODEL_ID)
+    if default_model_id.startswith("qwen") and bailian is None:
+        fail("A Qwen default model requires complete Bailian API key, workspace, and region configuration.")
     continuation = continuation_key(args.continuation_key_file)
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
@@ -811,13 +950,14 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         ("-jar", str(server_jar)),
         backend_environment(
             deepseek_key,
-            args.default_model_id,
+            default_model_id,
             openai,
             aliyun_key,
             continuation,
             value,
             skill_root,
             trusted_manifest,
+            bailian,
         ),
         args.startup_timeout_seconds,
         value,

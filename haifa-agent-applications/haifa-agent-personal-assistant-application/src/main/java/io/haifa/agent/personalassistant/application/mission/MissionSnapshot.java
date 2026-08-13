@@ -9,6 +9,7 @@ public record MissionSnapshot(
         String schemaVersion,
         String missionId,
         String conversationId,
+        MissionModelBinding modelBinding,
         String objective,
         List<String> acceptanceCriteria,
         MissionConstraints constraints,
@@ -26,7 +27,7 @@ public record MissionSnapshot(
         Optional<String> failureCode,
         long pollAfterMillis,
         MissionExecutionSnapshot execution) {
-    public static final String SCHEMA_VERSION = "pa.mission-snapshot/v1";
+    public static final String SCHEMA_VERSION = "pa.mission-snapshot/v2";
 
     static MissionSnapshot from(PersonalMission mission) {
         long poll =
@@ -39,6 +40,7 @@ public record MissionSnapshot(
                 SCHEMA_VERSION,
                 mission.missionId(),
                 mission.conversationId(),
+                mission.modelBinding(),
                 mission.objective(),
                 mission.acceptanceCriteria(),
                 mission.constraints(),
@@ -63,6 +65,7 @@ public record MissionSnapshot(
                 schemaVersion,
                 missionId,
                 conversationId,
+                modelBinding,
                 objective,
                 acceptanceCriteria,
                 constraints,

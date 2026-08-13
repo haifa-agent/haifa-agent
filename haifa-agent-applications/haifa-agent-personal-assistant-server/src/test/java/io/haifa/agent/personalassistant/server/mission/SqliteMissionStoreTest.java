@@ -9,6 +9,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionApplicationSe
 import io.haifa.agent.personalassistant.application.mission.MissionConstraints;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
 import io.haifa.agent.personalassistant.application.mission.MissionListCursor;
+import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanValidator;
 import io.haifa.agent.personalassistant.application.mission.MissionPublishedResult;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
@@ -44,18 +45,22 @@ class SqliteMissionStoreTest {
                 "create-1",
                 "local/public-user",
                 "conversation-1",
+                new MissionModelBinding(
+                        "qwen3.7-plus", "Qwen3.7 Plus", "aliyun-bailian", "阿里云百炼", "sha256:test-qwen-snapshot"),
                 "Prepare a release brief",
                 List.of("Architecture is covered", "Tests are covered"),
                 MissionConstraints.DEFAULT);
 
         MissionSnapshot created = first.create(command);
-        assertThat(firstStore.schemaVersion()).isEqualTo(6);
+        assertThat(firstStore.schemaVersion()).isEqualTo(7);
 
         SqliteMissionStore restartedStore = new SqliteMissionStore(database, new ObjectMapper());
         MissionApplicationService restarted = service(restartedStore, ids);
         MissionSnapshot restored =
                 restarted.find(created.missionId(), "local/public-user").orElseThrow();
         assertThat(restored).isEqualTo(created);
+        assertThat(restored.modelBinding().modelId()).isEqualTo("qwen3.7-plus");
+        assertThat(restored.modelBinding().configurationDigest()).isEqualTo("sha256:test-qwen-snapshot");
         assertThat(restarted.create(command).missionId()).isEqualTo(created.missionId());
 
         MissionSnapshot confirmed = restarted.confirm(new MissionApplicationService.ChangeMission(
@@ -417,7 +422,7 @@ class SqliteMissionStoreTest {
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
                 var statement = connection.prepareStatement(
                         "INSERT INTO personal_schema_history(version,checksum,installed_at_ms) VALUES (?,?,?)")) {
-            statement.setInt(1, 7);
+            statement.setInt(1, 8);
             statement.setString(2, "future");
             statement.setLong(3, CLOCK.instant().toEpochMilli());
             statement.executeUpdate();
