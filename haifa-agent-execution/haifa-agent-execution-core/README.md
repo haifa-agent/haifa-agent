@@ -11,7 +11,8 @@ deadline、输出和审计硬边界。
 实现 `ExecutionBroker`、内存 Journal/输出存储、可替换的 `WorkspaceChangeObserver` 及 `FileChangeSet`
 对账。公共 `LocalIncrementalWorkspaceChangeObserver` 显式绑定一个 `WorkspaceId` 与规范化物理根，首次使用
 建立基线，正常窗口只处理 WatchService 候选；macOS 对短窗口内遗漏的事件使用元数据索引补齐候选，仍只对
-变化候选计算内容哈希；overflow 或状态不确定时仅在该 Workspace 内重同步。产品
+变化候选计算内容哈希；settle deadline 只在事件持续活跃时触发安全重同步，不把安静轮询期间的 Runner
+调度停顿误判为 overflow；真实 overflow 或状态不确定时仅在该 Workspace 内重同步。产品
 只提供 Workspace 内逻辑路径的 ignore policy，不扫描 HOME、AppData、XDG 或其它宿主安装目录。进程启动前观察基线失败以稳定错误
 `WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 明确拒绝，不产生 Execution 记录，也不进入结果未知状态；进程启动后
 观察收敛失败映射为 `WORKSPACE_CHANGE_OBSERVER_RESYNC_FAILED`。
