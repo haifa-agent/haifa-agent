@@ -1,5 +1,11 @@
 # Haifa Personal Assistant Web
 
+## Model contract migration
+
+The generated TypeScript contract now carries exact binding/profile identity, closed controls, and typed PA
+preferences. Until the control-driven selector lands in Phase 2, the existing picker submits the server-recommended
+preference set atomically with the selected binding; it does not infer provider capabilities or send raw options.
+
 The live Run card shows an evidence-based phase summary. It displays observed activity counts
 without presenting them as a percentage; when the Server supplies an authoritative Plan, it shows
 real Todo completion and the current or blocked step. Activity lifecycle events are merged by the

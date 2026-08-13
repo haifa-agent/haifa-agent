@@ -13,6 +13,7 @@ import type {
   MissionSnapshot,
   ReplaceMissionPlan,
   ModelSelection,
+  Model,
   RecommendedQuestions,
   Run,
   StreamEvent,
@@ -65,7 +66,7 @@ export interface PersonalAssistantClient {
   ): Promise<Conversation>;
   selectModel?(
     conversation: Conversation,
-    modelId: string,
+    model: Model,
     options?: CommandOptions,
   ): Promise<ModelSelection>;
   conversation(id: string, signal?: AbortSignal): Promise<Conversation>;
@@ -238,16 +239,21 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
 
   selectModel(
     conversation: Conversation,
-    modelId: string,
+    model: Model,
     options: CommandOptions = {},
-    images: ImageInput[] = [],
   ) {
     return this.request<ModelSelection>(
       `/conversations/${encoded(conversation.id)}/model`,
       {
         method: "PATCH",
         headers: commandHeaders(conversation.model.revision, options.idempotencyKey),
-        body: JSON.stringify({ modelId }),
+        body: JSON.stringify({
+          modelBindingId: model.id,
+          preferenceSchemaVersion: model.preferenceSchemaVersion,
+          profileVersion: model.profileVersion,
+          profileDigest: model.profileDigest,
+          preferences: model.recommendedPreferences,
+        }),
       },
       options.signal,
     );

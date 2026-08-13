@@ -114,7 +114,9 @@ public final class FrozenModelInvoker {
                 binding.configuration().model(),
                 messages.assemble(run.id(), context, binding.configuration().model()),
                 context.tools(),
-                Math.toIntExact(context.budget().outputReserve()),
+                Math.toIntExact(Math.min(
+                        context.budget().outputReserve(),
+                        binding.configuration().model().maxOutputTokens())),
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
                 RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()),
                 binding.configuration().structuredOutput());

@@ -121,7 +121,8 @@ public class PersonalAssistantConfiguration {
             var modelPreferences = new SqlitePersonalModelPreferenceStore(
                     dataDirectory.resolve("personal-assistant.sqlite"),
                     properties.caller().tenant(),
-                    properties.caller().principal());
+                    properties.caller().principal(),
+                    mapper);
             return PersonalAssistantAssembler.assemble(new PersonalAssistantAssembler.Dependencies(
                     tenant,
                     principal,

@@ -20,11 +20,27 @@ import App from "./App";
 
 const model = {
   id: "personal-chat",
+  modelGroupId: "deepseek:deepseek-v4",
   displayName: "Personal Chat",
   providerId: "deepseek",
   providerDisplayName: "DeepSeek",
+  apiStyle: "openai-chat-completions",
+  apiStyleDisplayName: "Chat Completions",
+  availability: "AVAILABLE" as const,
+  unavailableReason: "",
   capabilities: ["TEXT_CHAT", "TOOL_CALLING"],
   contextWindow: 64000,
+  maxOutputTokens: 16000,
+  preferenceSchemaVersion: "1.0",
+  profileVersion: "1.0",
+  profileDigest: `sha256:${"0".repeat(64)}`,
+  controls: {
+    responseMode: { kind: "responseMode" as const, visible: true, readOnly: true, allowedValues: ["RECOMMENDED" as const], recommendedValue: "RECOMMENDED" as const, effectiveSummary: "Recommended", helpText: "Recommended" },
+    reasoningEffort: { kind: "reasoningEffort" as const, visible: false, readOnly: true, allowedValues: ["HIGH" as const], recommendedValue: "HIGH" as const, effectiveSummary: "Disabled", helpText: "Disabled" },
+    responseLength: { kind: "responseLength" as const, visible: true, readOnly: false, allowedValues: ["RECOMMENDED" as const, "SHORT" as const, "STANDARD" as const, "LONG" as const], recommendedValue: "RECOMMENDED" as const, effectiveSummary: "Recommended", helpText: "Recommended" },
+    apiStyle: { kind: "apiStyle" as const, visible: false, readOnly: true, allowedValues: ["personal-chat"], recommendedValue: "personal-chat", effectiveSummary: "Recommended", helpText: "Recommended" },
+  },
+  recommendedPreferences: { responseMode: "RECOMMENDED" as const, effort: null, responseLength: "RECOMMENDED" as const },
 };
 const proModel = {
   ...model,
@@ -252,9 +268,9 @@ function client(): PersonalAssistantClient {
     bootstrap: vi.fn(async () => bootstrap),
     conversations: vi.fn(async () => [conversation]),
     createConversation: vi.fn(async () => conversation),
-    selectModel: vi.fn(async (_conversation, modelId) => ({
+    selectModel: vi.fn(async (_conversation, selectedModel) => ({
       model: [model, proModel, flashModel, bailianModel]
-        .find((candidate) => candidate.id === modelId) ?? model,
+        .find((candidate) => candidate.id === selectedModel.id) ?? model,
       revision: 1,
       available: true,
     })),
@@ -1625,7 +1641,7 @@ describe("Personal Assistant application", () => {
 
     await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
       conversation,
-      proModel.id,
+      proModel,
       { idempotencyKey: expect.any(String) },
     ));
     expect((composer as HTMLTextAreaElement).value).toBe("");
@@ -1653,7 +1669,7 @@ describe("Personal Assistant application", () => {
 
     await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
       conversation,
-      proModel.id,
+      proModel,
       { idempotencyKey: expect.any(String) },
     ));
     expect((composer as HTMLTextAreaElement).value).toBe("保留这段草稿");

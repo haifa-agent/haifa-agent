@@ -3503,8 +3503,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       return;
     }
     if (conversation.activeRunId || !client.selectModel) return;
+    const target = state.bootstrap?.models.find((model) => model.id === modelId);
+    if (!target) return;
     void execute("切换模型", async () => {
-      await client.selectModel!(conversation, modelId, { idempotencyKey: crypto.randomUUID() });
+      await client.selectModel!(conversation, target, { idempotencyKey: crypto.randomUUID() });
       await loadConversation(conversation.id);
       await loadConversations();
     });

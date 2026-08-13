@@ -34,15 +34,75 @@ public final class PersonalApiDtos {
 
     public record Model(
             String id,
+            String modelGroupId,
             String displayName,
             String providerId,
             String providerDisplayName,
+            String apiStyle,
+            String apiStyleDisplayName,
+            String availability,
+            String unavailableReason,
             List<String> capabilities,
-            int contextWindow) {}
+            int contextWindow,
+            int maxOutputTokens,
+            String preferenceSchemaVersion,
+            String profileVersion,
+            String profileDigest,
+            ModelControls controls,
+            ModelPreferences recommendedPreferences) {}
+
+    public record ModelControls(
+            ResponseModeControl responseMode,
+            ReasoningEffortControl reasoningEffort,
+            ResponseLengthControl responseLength,
+            ApiStyleControl apiStyle) {}
+
+    public record ResponseModeControl(
+            String kind,
+            boolean visible,
+            boolean readOnly,
+            List<String> allowedValues,
+            String recommendedValue,
+            String effectiveSummary,
+            String helpText) {}
+
+    public record ReasoningEffortControl(
+            String kind,
+            boolean visible,
+            boolean readOnly,
+            List<String> allowedValues,
+            String recommendedValue,
+            String effectiveSummary,
+            String helpText) {}
+
+    public record ResponseLengthControl(
+            String kind,
+            boolean visible,
+            boolean readOnly,
+            List<String> allowedValues,
+            String recommendedValue,
+            String effectiveSummary,
+            String helpText) {}
+
+    public record ApiStyleControl(
+            String kind,
+            boolean visible,
+            boolean readOnly,
+            List<String> allowedValues,
+            String recommendedValue,
+            String effectiveSummary,
+            String helpText) {}
+
+    public record ModelPreferences(String responseMode, String effort, String responseLength) {}
 
     public record ModelSelection(Model model, long revision, boolean available) {}
 
-    public record SelectModel(String modelId) {}
+    public record SelectModel(
+            String modelBindingId,
+            String preferenceSchemaVersion,
+            String profileVersion,
+            String profileDigest,
+            ModelPreferences preferences) {}
 
     public record Conversation(
             String id,

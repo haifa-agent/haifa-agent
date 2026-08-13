@@ -3,6 +3,7 @@ package io.haifa.agent.personalassistant.server.web.v1.controller;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
 import io.haifa.agent.personalassistant.application.PersonalAssistantApplication;
+import io.haifa.agent.personalassistant.application.mission.MissionApplicationService;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.image.PersonalImageStore;
 import io.haifa.agent.personalassistant.server.observability.PersonalRunLoggingService;
@@ -37,18 +38,21 @@ public final class PersonalAssistantController {
     private final PersonalAssistantProperties properties;
     private final PersonalRunLoggingService runLogging;
     private final PersonalImageStore imageStore;
+    private final MissionApplicationService missions;
 
     public PersonalAssistantController(
             PersonalAssistantApplication application,
             PersonalApiMapper mapper,
             PersonalAssistantProperties properties,
             PersonalRunLoggingService runLogging,
-            PersonalImageStore imageStore) {
+            PersonalImageStore imageStore,
+            MissionApplicationService missions) {
         this.application = application;
         this.mapper = mapper;
         this.properties = properties;
         this.runLogging = runLogging;
         this.imageStore = imageStore;
+        this.missions = missions;
     }
 
     @GetMapping("/bootstrap")
@@ -127,8 +131,30 @@ public final class PersonalAssistantController {
             @RequestHeader("If-Match") String ifMatch,
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @RequestBody PersonalApiDtos.SelectModel request) {
+        if (missions.hasActive(
+                conversationId,
+                properties.caller().tenant() + "/" + properties.caller().principal())) {
+            throw new IllegalStateException("MODEL_SELECTION_ACTIVE_RUN");
+        }
+        var preferences = java.util.Objects.requireNonNull(request.preferences(), "preferences must not be null");
         return mapper.modelSelection(application.selectModel(
-                conversationId, revision(ifMatch), key(idempotencyKey), text(request.modelId(), "modelId")));
+                conversationId,
+                revision(ifMatch),
+                key(idempotencyKey),
+                new io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest(
+                        text(request.modelBindingId(), "modelBindingId"),
+                        text(request.preferenceSchemaVersion(), "preferenceSchemaVersion"),
+                        text(request.profileVersion(), "profileVersion"),
+                        text(request.profileDigest(), "profileDigest"),
+                        new io.haifa.agent.personalassistant.application.PersonalModelPreferences(
+                                io.haifa.agent.personalassistant.application.PersonalResponseMode.valueOf(
+                                        text(preferences.responseMode(), "responseMode")),
+                                java.util.Optional.ofNullable(preferences.effort())
+                                        .map(String::trim)
+                                        .filter(value -> !value.isEmpty())
+                                        .map(io.haifa.agent.model.api.ModelReasoningEffort::valueOf),
+                                io.haifa.agent.personalassistant.application.PersonalResponseLength.valueOf(
+                                        text(preferences.responseLength(), "responseLength"))))));
     }
 
     @GetMapping("/conversations/{conversationId}")

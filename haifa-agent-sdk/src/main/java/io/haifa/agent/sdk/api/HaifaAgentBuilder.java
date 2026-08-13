@@ -253,10 +253,13 @@ public final class HaifaAgentBuilder {
                                     resolveModelSnapshot(model, effectiveProfile, id),
                                     resolvedCapabilities(effectiveProfile, resolution));
                         }
-                        var snapshot = java.util.Optional.ofNullable(
+                        var baseSnapshot = java.util.Optional.ofNullable(
                                         model.snapshots().get(selected.modelId()))
                                 .orElseThrow(() -> new IllegalArgumentException(
                                         "MODEL_SELECTION_REQUIRED: Run Profile model is unavailable"));
+                        var snapshot = selected.effectiveModelParameters()
+                                .map(baseSnapshot::withEffectiveParameters)
+                                .orElse(baseSnapshot);
                         return new ResolvedProfile(
                                 selected.id(),
                                 selected.version(),

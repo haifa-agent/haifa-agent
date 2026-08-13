@@ -222,10 +222,15 @@ class PersonalModelFactoryTest {
                 .containsEntry("thinking_enabled", true)
                 .containsEntry("preserve_thinking", true)
                 .containsEntry("requires_reasoning_continuation", true);
-        assertThat(platform.catalog().binding("qwen3.7-max-2026-05-17")).get().satisfies(binding -> {
-            assertThat(binding.providerId()).isEqualTo("aliyun-bailian");
-            assertThat(binding.configurationDigest()).startsWith("sha256:");
-        });
+        assertThat(platform.catalog().available().stream()
+                        .filter(model -> model.id().equals("qwen3.7-max-2026-05-17"))
+                        .findFirst())
+                .get()
+                .satisfies(model -> {
+                    assertThat(model.availability()).isEqualTo("UNAVAILABLE");
+                    assertThat(model.unavailableReason()).contains("contract verification");
+                });
+        assertThat(platform.catalog().binding("qwen3.7-max-2026-05-17")).isEmpty();
     }
 
     @Test

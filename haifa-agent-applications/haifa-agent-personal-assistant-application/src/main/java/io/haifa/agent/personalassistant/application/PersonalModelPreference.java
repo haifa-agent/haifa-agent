@@ -6,16 +6,26 @@ import java.util.Optional;
 
 public record PersonalModelPreference(
         String conversationId,
-        String modelId,
+        String modelBindingId,
+        String preferenceSchemaVersion,
+        PersonalModelPreferences userPreferences,
+        String preferenceDigest,
         long revision,
         Optional<String> idempotencyKeyDigest,
         Optional<String> requestDigest,
         Instant updatedAt) {
     public PersonalModelPreference {
         conversationId = Objects.requireNonNull(conversationId).trim();
-        modelId = Objects.requireNonNull(modelId).trim();
-        if (conversationId.isEmpty() || modelId.isEmpty() || revision < 0) {
+        modelBindingId = Objects.requireNonNull(modelBindingId).trim();
+        preferenceSchemaVersion =
+                Objects.requireNonNull(preferenceSchemaVersion).trim();
+        userPreferences = Objects.requireNonNull(userPreferences);
+        preferenceDigest = Objects.requireNonNull(preferenceDigest).trim();
+        if (conversationId.isEmpty() || modelBindingId.isEmpty() || preferenceSchemaVersion.isEmpty() || revision < 0) {
             throw new IllegalArgumentException("model preference is invalid");
+        }
+        if (!preferenceDigest.equals(userPreferences.digest())) {
+            throw new IllegalArgumentException("model preference digest is invalid");
         }
         idempotencyKeyDigest = Objects.requireNonNull(idempotencyKeyDigest);
         requestDigest = Objects.requireNonNull(requestDigest);

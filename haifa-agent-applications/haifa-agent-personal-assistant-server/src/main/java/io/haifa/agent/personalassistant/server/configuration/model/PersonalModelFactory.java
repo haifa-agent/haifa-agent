@@ -11,6 +11,7 @@ import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelAdapterCoordinate;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelApiStyles;
+import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinition;
 import io.haifa.agent.model.api.ModelDefinitionId;
@@ -32,11 +33,17 @@ import io.haifa.agent.model.core.StaticModelPlatform;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.OpenAiCompatibleModelProfileFactory;
 import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
 import io.haifa.agent.model.openai.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
 import io.haifa.agent.personalassistant.application.PersonalModelOption;
+import io.haifa.agent.personalassistant.application.PersonalModelPreferences;
+import io.haifa.agent.personalassistant.application.PersonalModelProductDefaults;
+import io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest;
+import io.haifa.agent.personalassistant.application.PersonalResolvedModelSelection;
+import io.haifa.agent.personalassistant.application.PersonalResponseLength;
 import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
@@ -50,6 +57,7 @@ import io.haifa.agent.sdk.product.ProductProviderSuitability;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -115,6 +123,17 @@ public final class PersonalModelFactory {
         StaticModelPlatform modelPlatform = modelPlatform(providers, adapters);
         TenantRef tenant = new TenantRef("personal-product");
         PrincipalRef principal = new PrincipalRef("personal-user", "user");
+        PersonalModelProductDefaults productDefaults = new PersonalModelProductDefaults();
+        Map<String, ModelBindingProfile> profiles = snapshots.values().stream()
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        value -> value.modelId().value(),
+                        value -> OpenAiCompatibleModelProfileFactory.fromSnapshot(value, LocalDate.of(2026, 8, 13))));
+        if (!profiles.get(selected.model().id()).selectable()) {
+            throw new IllegalArgumentException("default Personal model profile is not verified");
+        }
+        Map<String, ConfiguredModel> configuredModels = models.stream()
+                .collect(
+                        java.util.stream.Collectors.toMap(value -> value.model().id(), value -> value));
         PersonalModelCatalog catalog = new PersonalModelCatalog() {
             @Override
             public String defaultModelId() {
@@ -128,22 +147,58 @@ public final class PersonalModelFactory {
                                 tenant, principal, Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING)))
                         .stream()
                         .flatMap(provider -> provider.models().stream()
-                                .map(value -> new PersonalModelOption(
+                                .map(value -> option(
                                         value.id().value(),
                                         value.displayName(),
                                         provider.id().value(),
-                                        provider.displayName(),
-                                        value.capabilities().stream()
-                                                .map(Enum::name)
-                                                .collect(java.util.stream.Collectors.toSet()),
-                                        value.contextWindow())))
+                                        provider.displayName())))
                         .toList();
+            }
+
+            private PersonalModelOption option(
+                    String bindingId, String displayName, String providerId, String providerDisplayName) {
+                ConfiguredModel configured = configuredModels.get(bindingId);
+                ResolvedModelSnapshot frozen = snapshots.get(bindingId);
+                ModelBindingProfile profile = profiles.get(bindingId);
+                String groupId = providerId + ":" + configured.model().providerModelId();
+                List<String> styleBindings = configuredModels.values().stream()
+                        .filter(candidate -> candidate
+                                        .provider()
+                                        .id()
+                                        .equals(configured.provider().id())
+                                && candidate
+                                        .model()
+                                        .providerModelId()
+                                        .equals(configured.model().providerModelId())
+                                && profiles.get(candidate.model().id()).selectable())
+                        .map(candidate -> candidate.model().id())
+                        .sorted()
+                        .toList();
+                if (styleBindings.isEmpty()) styleBindings = List.of(bindingId);
+                return new PersonalModelOption(
+                        bindingId,
+                        groupId,
+                        displayName,
+                        providerId,
+                        providerDisplayName,
+                        frozen.apiStyle().value(),
+                        apiStyleDisplayName(frozen.apiStyle()),
+                        profile.selectable() ? "AVAILABLE" : "UNAVAILABLE",
+                        profile.selectable() ? "" : "Binding profile has not passed contract verification",
+                        frozen.capabilities().stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()),
+                        frozen.contextWindow(),
+                        frozen.maxOutputTokens(),
+                        PersonalModelProductDefaults.PREFERENCE_SCHEMA_VERSION,
+                        profile.version(),
+                        profile.digest(),
+                        productDefaults.controls(profile, bindingId, styleBindings),
+                        PersonalModelPreferences.recommended());
             }
 
             @Override
             public java.util.Optional<PersonalModelOption> find(String modelId) {
                 java.util.Optional<PersonalModelOption> value = available().stream()
-                        .filter(model -> model.id().equals(modelId))
+                        .filter(model -> model.id().equals(modelId) && "AVAILABLE".equals(model.availability()))
                         .findFirst();
                 value.ifPresent(ignored -> modelPlatform.select(new ModelSelectionRequest(
                         tenant,
@@ -165,8 +220,94 @@ public final class PersonalModelFactory {
                             frozen.configurationDigest());
                 });
             }
+
+            @Override
+            public java.util.Optional<ModelBindingProfile> profile(String modelBindingId) {
+                return java.util.Optional.ofNullable(profiles.get(modelBindingId));
+            }
+
+            @Override
+            public PersonalResolvedModelSelection resolve(PersonalModelSelectionRequest request) {
+                PersonalModelOption option = find(request.modelBindingId())
+                        .orElseThrow(() -> new IllegalArgumentException("MODEL_PROFILE_UNAVAILABLE"));
+                if (!option.preferenceSchemaVersion().equals(request.preferenceSchemaVersion())) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_RESELECTION_REQUIRED");
+                }
+                if (!option.profileVersion().equals(request.profileVersion())
+                        || !option.profileDigest().equals(request.profileDigest())) {
+                    throw new IllegalArgumentException("MODEL_PROFILE_STALE");
+                }
+                if (option.controls().responseMode().readOnly()
+                        && request.preferences().responseMode()
+                                != option.controls().responseMode().recommendedValue()) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_READ_ONLY");
+                }
+                if (!option.controls().reasoningEffort().visible()
+                        && request.preferences().effort().isPresent()) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_NOT_VISIBLE");
+                }
+                if (!option.controls()
+                                .responseMode()
+                                .allowedValues()
+                                .contains(request.preferences().responseMode())
+                        || !option.controls()
+                                .responseLength()
+                                .allowedValues()
+                                .contains(request.preferences().responseLength())
+                        || request.preferences()
+                                .effort()
+                                .filter(value -> !option.controls()
+                                        .reasoningEffort()
+                                        .allowedValues()
+                                        .contains(value))
+                                .isPresent()) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_UNSUPPORTED");
+                }
+                var effective = productDefaults.resolve(profiles.get(option.id()), request.preferences());
+                return new PersonalResolvedModelSelection(
+                        option,
+                        request.preferences(),
+                        effective,
+                        conversationProfileId(option.id(), request.preferences()));
+            }
+
+            @Override
+            public List<PersonalResolvedModelSelection> runProfiles() {
+                return available().stream()
+                        .filter(option -> "AVAILABLE".equals(option.availability()))
+                        .flatMap(option -> java.util.Arrays.stream(PersonalResponseLength.values())
+                                .map(length -> resolve(new PersonalModelSelectionRequest(
+                                        option.id(),
+                                        option.preferenceSchemaVersion(),
+                                        option.profileVersion(),
+                                        option.profileDigest(),
+                                        new PersonalModelPreferences(
+                                                io.haifa.agent.personalassistant.application.PersonalResponseMode
+                                                        .RECOMMENDED,
+                                                java.util.Optional.empty(),
+                                                length)))))
+                        .toList();
+            }
         };
         return new Platform(contribution, catalog);
+    }
+
+    private static String apiStyleDisplayName(ApiStyleId style) {
+        if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(style)) return "Chat Completions";
+        if (ModelApiStyles.OPENAI_RESPONSES.equals(style)) return "Responses";
+        if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(style)) return "Anthropic Messages";
+        return "Deterministic";
+    }
+
+    private static String conversationProfileId(String bindingId, PersonalModelPreferences preferences) {
+        String value = bindingId + "|" + preferences.digest();
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "pa-conversation-" + java.util.HexFormat.of().formatHex(digest, 0, 10);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required", impossible);
+        }
     }
 
     private static ResolvedModelSnapshot snapshot(

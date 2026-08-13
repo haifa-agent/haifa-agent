@@ -75,6 +75,69 @@ class PersonalAssistantWebFluxTest {
                 .isEqualTo("UNSUPPORTED_MEDIA_TYPE");
     }
 
+    @Test
+    void modelSelectionAtomicallyValidatesBindingProfileAndPreferences() throws Exception {
+        JsonNode model = get("/api/v1/models").get(0);
+        JsonNode created = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Model preference contract","message":"Reply with one short sentence."}
+                """);
+        awaitTerminal(created.path("activeRunId").asText());
+        JsonNode conversation = awaitConversationIdle(created.path("id").asText());
+
+        var request = mapper.createObjectNode();
+        request.put("modelBindingId", model.path("id").asText());
+        request.put(
+                "preferenceSchemaVersion", model.path("preferenceSchemaVersion").asText());
+        request.put("profileVersion", model.path("profileVersion").asText());
+        request.put("profileDigest", model.path("profileDigest").asText());
+        var preferences = request.putObject("preferences");
+        preferences.put("responseMode", "RECOMMENDED");
+        preferences.putNull("effort");
+        preferences.put("responseLength", "LONG");
+
+        var stale = request.deepCopy();
+        stale.put("profileDigest", "sha256:stale");
+        web.patch()
+                .uri("/api/v1/conversations/{id}/model", created.path("id").asText())
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "model-stale-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + conversation.path("model").path("revision").asText() + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(stale)
+                .exchange()
+                .expectStatus()
+                .isEqualTo(412)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MODEL_PROFILE_STALE");
+
+        web.patch()
+                .uri("/api/v1/conversations/{id}/model", created.path("id").asText())
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "model-selection-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + conversation.path("model").path("revision").asText() + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.model.id")
+                .isEqualTo(model.path("id").asText())
+                .jsonPath("$.model.profileDigest")
+                .isEqualTo(model.path("profileDigest").asText())
+                .jsonPath("$.model.recommendedPreferences.responseLength")
+                .isEqualTo("RECOMMENDED")
+                .jsonPath("$.available")
+                .isEqualTo(true);
+    }
+
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("haifa.personal.data-directory", DATA::toString);
@@ -806,6 +869,25 @@ class PersonalAssistantWebFluxTest {
             Thread.sleep(RUN_STATUS_POLL_INTERVAL);
         } while (System.nanoTime() < deadline);
         throw new AssertionError("run did not become terminal: " + latest);
+    }
+
+    private JsonNode awaitConversationIdle(String conversationId) throws Exception {
+        long deadline = System.nanoTime() + RUN_STATUS_TIMEOUT.toNanos();
+        JsonNode latest;
+        int consecutiveIdleObservations = 0;
+        do {
+            latest = get("/api/v1/conversations/" + conversationId);
+            JsonNode activeRunId = latest.path("activeRunId");
+            if (activeRunId.isMissingNode()
+                    || activeRunId.isNull()
+                    || activeRunId.asText().isBlank()) {
+                if (++consecutiveIdleObservations == 2) return latest;
+            } else {
+                consecutiveIdleObservations = 0;
+            }
+            Thread.sleep(RUN_STATUS_POLL_INTERVAL);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("conversation did not become idle: " + latest);
     }
 
     private static Path temporaryDirectory() {

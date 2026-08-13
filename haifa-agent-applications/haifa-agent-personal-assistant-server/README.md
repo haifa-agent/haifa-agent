@@ -1,5 +1,14 @@
 # Haifa Personal Assistant Server
 
+## Model preference contract
+
+`GET /api/v1/models` publishes only safe binding metadata, profile status/version/digest, closed control profiles,
+and recommended PA preferences. `PATCH /api/v1/conversations/{id}/model` atomically validates the binding identity,
+profile identity, and user preferences under revision and idempotency guards. The SQLite row stores the exact binding
+and typed preference JSON. Because the product is not released, an incompatible legacy preference schema is rebuilt
+transactionally by dropping only `personal_model_preference`; Conversation, Turn, Mission, and every other table are
+left untouched. The legacy table is not dual-read.
+
 The v1 Run response includes an optional authoritative Plan/Todo projection. Activity responses
 use stable operation IDs plus durable event IDs, parent correlation, event time, and optional
 requested/started/completed lifecycle timestamps. Existing Runs without a plan omit `plan` or return `null`.

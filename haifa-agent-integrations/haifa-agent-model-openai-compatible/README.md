@@ -1,5 +1,12 @@
 # Haifa Agent OpenAI-Compatible Model Adapter
 
+## Profile factory
+
+`OpenAiCompatibleModelProfileFactory` derives a versioned binding profile from an already resolved snapshot. It
+recognizes the audited DeepSeek dialect and provider-neutral `standard` bindings only. Vendor-specific bindings that
+have not completed their contract phase are marked unverified instead of inheriting capabilities merely because they
+share an OpenAI-compatible transport. Provider request mapping remains in the dialect/adapter layer.
+
 ## API Style 与 dialect
 
 本模块实现彼此独立的 `openai-chat-completions`、`openai-responses` 与 `anthropic-messages`。三者复用
