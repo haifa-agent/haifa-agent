@@ -31,7 +31,6 @@ Starter 的单次便利调用仍使用同一 Conversation/Run 路径：
 ```java
 try (var agent = HaifaAgentStarter.builder()
         .name("weather-agent")
-        .description("Weather assistant shown in the host UI")
         .instructions("Use disclosed Tools for weather questions.")
         .tool(new WeatherTool())
         .build()) {
@@ -40,8 +39,9 @@ try (var agent = HaifaAgentStarter.builder()
 }
 ```
 
-`name` 和 `description` 是构建后不可变的展示/诊断元数据，不进入 Prompt、模型或 Tool 选择、Policy、
-Checkpoint 或恢复协议。`chat()` 自动生成的幂等键只属于当前进程内这次便利调用；需要重试、继续会话、
+`name` 是构建后不可变的展示元数据，并作为便利 `chat()` 新建 Conversation 的默认 display name；它不进入
+Prompt、模型或 Tool 选择、Policy、Checkpoint 或恢复协议。Agent `description` 暂不暴露。`chat()` 自动生成
+的幂等键只属于当前进程内这次便利调用；需要重试、继续会话、
 revision、取消或事件订阅时，使用下面的显式 Conversation/Run API。
 
 ```java

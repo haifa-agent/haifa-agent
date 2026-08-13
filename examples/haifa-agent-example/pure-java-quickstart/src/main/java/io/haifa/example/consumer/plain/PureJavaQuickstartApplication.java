@@ -9,7 +9,6 @@ public final class PureJavaQuickstartApplication {
     public static void main(String[] arguments) throws Exception {
         try (var agent = HaifaAgentStarter.builder()
                 .name("standalone-weather-agent")
-                .description("Standalone pure Java weather consumer")
                 .instructions("Use weather_get for weather questions, then answer in one sentence.")
                 .tool(new WeatherTool())
                 .build()) {

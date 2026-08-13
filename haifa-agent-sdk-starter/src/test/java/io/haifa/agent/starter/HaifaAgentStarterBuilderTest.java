@@ -93,7 +93,7 @@ public class HaifaAgentStarterBuilderTest {
     }
 
     @Test
-    void exposesDisplayMetadataAndLightweightChatWithoutAddingMetadataToPrompt() throws Exception {
+    void exposesDisplayNameAndLightweightChatWithoutAddingItToPrompt() throws Exception {
         AtomicReference<io.haifa.agent.model.api.AgentChatRequest> request = new AtomicReference<>();
         var model = (io.haifa.agent.model.api.AgentChatModel) value -> {
             request.set(value);
@@ -109,7 +109,6 @@ public class HaifaAgentStarterBuilderTest {
         };
         try (var agent = HaifaAgentStarter.builder()
                 .name("weather-agent")
-                .description("Display-only weather helper")
                 .instructions("Answer weather questions.")
                 .model(model, testSnapshot())
                 .build()) {
@@ -121,10 +120,9 @@ public class HaifaAgentStarterBuilderTest {
             assertThat(response.status().isTerminal()).isTrue();
             assertThat(response.error()).isEmpty();
             assertThat(agent.metadata().name()).isEqualTo("weather-agent");
-            assertThat(agent.metadata().description()).isEqualTo("Display-only weather helper");
             assertThat(request.get().messages())
                     .extracting(io.haifa.agent.model.api.ModelMessage::content)
-                    .noneMatch(text -> text.contains("weather-agent") || text.contains("Display-only weather helper"));
+                    .noneMatch(text -> text.contains("weather-agent"));
 
             var diagnostics = agent.runs().promptDiagnostics(response.runId());
             assertThat(diagnostics.available()).isTrue();
@@ -137,7 +135,7 @@ public class HaifaAgentStarterBuilderTest {
             assertThat(diagnostics.toString())
                     .doesNotContain("Answer weather questions.")
                     .doesNotContain("Hello")
-                    .doesNotContain("Display-only weather helper");
+                    .doesNotContain("weather-agent");
         }
     }
 
@@ -157,10 +155,8 @@ public class HaifaAgentStarterBuilderTest {
     }
 
     @Test
-    void rejectsInvalidDisplayMetadata() {
+    void rejectsInvalidDisplayName() {
         assertThatThrownBy(() -> HaifaAgentStarter.builder().name(" ")).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> HaifaAgentStarter.builder().description("x".repeat(513)))
-                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

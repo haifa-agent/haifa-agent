@@ -3,17 +3,15 @@ package io.haifa.agent.sdk.api;
 import java.util.Objects;
 
 /** Immutable host-declared display metadata that does not affect Agent execution semantics. */
-public record AgentMetadata(String name, String description) {
+public record AgentMetadata(String name) {
     public static final String DEFAULT_NAME = "haifa-agent";
-    public static final String DEFAULT_DESCRIPTION = "Haifa Agent";
 
     public AgentMetadata {
         name = requireText(name, "name", 128);
-        description = requireText(description, "description", 512);
     }
 
     public static AgentMetadata defaults() {
-        return new AgentMetadata(DEFAULT_NAME, DEFAULT_DESCRIPTION);
+        return new AgentMetadata(DEFAULT_NAME);
     }
 
     private static String requireText(String value, String field, int maximumLength) {
