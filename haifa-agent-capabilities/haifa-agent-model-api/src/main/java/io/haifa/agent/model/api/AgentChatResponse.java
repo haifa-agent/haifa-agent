@@ -14,7 +14,8 @@ public record AgentChatResponse(
         ModelUsage usage,
         String systemFingerprint,
         Map<String, Object> metadata,
-        java.util.Optional<SensitiveModelReasoning> reasoning) {
+        java.util.Optional<SensitiveModelReasoning> reasoning,
+        java.util.Optional<Map<String, Object>> structuredOutput) {
     public AgentChatResponse {
         responseId = ModelValues.text(responseId, "responseId");
         actualModelId = ModelValues.text(actualModelId, "actualModelId");
@@ -26,6 +27,9 @@ public record AgentChatResponse(
                 .trim();
         metadata = ModelValues.map(metadata, "metadata");
         reasoning = Objects.requireNonNull(reasoning, "reasoning must not be null");
+        structuredOutput = structuredOutput == null
+                ? java.util.Optional.empty()
+                : structuredOutput.map(value -> ModelValues.map(value, "structuredOutput"));
         if (content.isBlank() && toolCalls.isEmpty()) {
             throw new IllegalArgumentException("response must contain content or tool calls");
         }
@@ -49,6 +53,30 @@ public record AgentChatResponse(
                 usage,
                 systemFingerprint,
                 metadata,
+                java.util.Optional.empty(),
+                java.util.Optional.empty());
+    }
+
+    public AgentChatResponse(
+            String responseId,
+            String actualModelId,
+            String content,
+            List<ModelToolCall> toolCalls,
+            ModelFinishReason finishReason,
+            ModelUsage usage,
+            String systemFingerprint,
+            Map<String, Object> metadata,
+            java.util.Optional<SensitiveModelReasoning> reasoning) {
+        this(
+                responseId,
+                actualModelId,
+                content,
+                toolCalls,
+                finishReason,
+                usage,
+                systemFingerprint,
+                metadata,
+                reasoning,
                 java.util.Optional.empty());
     }
 }

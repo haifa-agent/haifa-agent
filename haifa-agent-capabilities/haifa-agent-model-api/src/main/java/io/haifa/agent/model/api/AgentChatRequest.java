@@ -1,6 +1,7 @@
 package io.haifa.agent.model.api;
 
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -17,7 +18,34 @@ public record AgentChatRequest(
         List<ModelToolSpecification> tools,
         int maxOutputTokens,
         Duration timeout,
-        Map<String, Object> options) {
+        Map<String, Object> options,
+        java.util.Optional<StructuredOutputRequirement> structuredOutput) {
+
+    public AgentChatRequest(
+            ModelCallId callId,
+            AgentRunId runId,
+            int iteration,
+            int attempt,
+            ResolvedModelSnapshot model,
+            List<ModelMessage> messages,
+            List<ModelToolSpecification> tools,
+            int maxOutputTokens,
+            Duration timeout,
+            Map<String, Object> options) {
+        this(
+                callId,
+                runId,
+                iteration,
+                attempt,
+                model,
+                messages,
+                tools,
+                maxOutputTokens,
+                timeout,
+                options,
+                java.util.Optional.empty());
+    }
+
     public AgentChatRequest {
         callId = Objects.requireNonNull(callId, "callId must not be null");
         runId = Objects.requireNonNull(runId, "runId must not be null");
@@ -34,5 +62,6 @@ public record AgentChatRequest(
         timeout = Objects.requireNonNull(timeout, "timeout must not be null");
         if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be positive");
         options = ModelValues.map(options, "options");
+        structuredOutput = Objects.requireNonNullElse(structuredOutput, java.util.Optional.empty());
     }
 }

@@ -26,6 +26,24 @@ DeepSeek V4 Flash 与进程内 Store。需要持久化、身份、治理或自�
 
 ## 成功路径
 
+Starter 的单次便利调用仍使用同一 Conversation/Run 路径：
+
+```java
+try (var agent = HaifaAgentStarter.builder()
+        .name("weather-agent")
+        .description("Weather assistant shown in the host UI")
+        .instructions("Use disclosed Tools for weather questions.")
+        .tool(new WeatherTool())
+        .build()) {
+    var response = agent.chat("What is the weather in Shanghai?").await();
+    System.out.println(response.text());
+}
+```
+
+`name` 和 `description` 是构建后不可变的展示/诊断元数据，不进入 Prompt、模型或 Tool 选择、Policy、
+Checkpoint 或恢复协议。`chat()` 自动生成的幂等键只属于当前进程内这次便利调用；需要重试、继续会话、
+revision、取消或事件订阅时，使用下面的显式 Conversation/Run API。
+
 ```java
 try (HaifaAgent agent = HaifaAgents.builder()
         .product(profile)
@@ -44,6 +62,28 @@ try (HaifaAgent agent = HaifaAgents.builder()
 不复制 Run 状态。`HaifaAgent` 拥有本次装配已成功初始化的 Contribution 和本地 Scheduler：
 关闭时先停止调度，再按能力确定性初始化顺序逆序关闭 Contribution；重复关闭无副作用。构建中途失败
 只释放已经成功初始化的资源。
+
+## 类型化最终输出
+
+需要结构化最终结果时，可以直接把有界 Java record 作为本次 Run 的输出契约：
+
+```java
+public record TripPlan(String city, int days, List<String> activities) {}
+
+AgentResponse<TripPlan> response =
+        agent.chat("Plan a two-day trip.", TripPlan.class).await();
+TripPlan plan = response.value();
+```
+
+SDK 复用 Java Tool 的 record Schema/Codec，生成内容寻址 Schema ID/version，并把精确 JSON Schema 冻结进
+Conversation 创建的 Run 配置。Provider Adapter 显式映射该要求；Runtime 只在模型没有 Tool Call 的最终
+回答上校验冻结 Schema，把结构化 Map 写入权威 `AgentRunResult`，然后 SDK 才从该持久结果解码 record。
+SDK 不从未经校验的文本 JSON 直接构造业务对象。
+
+类型化值只存在于终态 `AgentResponse<T>`；流式文本、Tool Call、Checkpoint 和中间恢复状态不会伪装成
+类型化 partial output。Schema 不匹配、Provider 不支持、拒答和截断分别收敛为安全稳定的 Runtime 错误
+分类，失败响应调用 `value()` 会 fail closed。当前只支持既有 Java record Schema/Codec 的有界类型集合，
+该便利 API 尚未声明 Stable API。
 
 ## 类型化 Java Tool
 
@@ -117,6 +157,14 @@ Run。当前 API 提供：
 
 删除、回收站、Tree/Fork/Clone、Follow-up Queue 和 Retention 不属于该公共边界。SQLite 实现位于
 `haifa-agent-store-sqlite`，SDK 自身不依赖 SQLite；`InMemory` 实现只用于开发和确定性测试。
+
+## 进程内 Prompt Diagnostics
+
+`agent.runs().promptDiagnostics(runId)` 从 Runtime 实际 `ContextTrace` 读取脱敏事实：最终顺序、component
+ID、layer/role、version、SHA-256 digest、token estimate 和来源类别。它不返回 Prompt、用户消息、
+Memory 或 Tool 正文。查询先沿用当前 Caller 的 Run 授权；未授权、尚未构建 Context、或进程重启后
+统一返回 `PROMPT_DIAGNOSTICS_UNAVAILABLE`。该能力没有数据库 Migration、Checkpoint 字段或跨重启
+兼容承诺。
 
 ## 边界
 

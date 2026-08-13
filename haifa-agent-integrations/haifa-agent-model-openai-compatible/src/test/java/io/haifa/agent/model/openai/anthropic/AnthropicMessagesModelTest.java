@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
@@ -116,6 +117,152 @@ class AnthropicMessagesModelTest {
                         .path("tool_use_id")
                         .asText())
                 .isEqualTo("toolu-1");
+    }
+
+    @Test
+    void mapsStandardStructuredOutputFormatAndParsesTerminalObject() throws Exception {
+        response.set(Response.json(
+                200,
+                """
+                {"id":"msg-structured","type":"message","role":"assistant","model":"claude-test",
+                 "content":[{"type":"text","text":%s}],"stop_reason":"end_turn",
+                 "usage":{"input_tokens":4,"output_tokens":3}}
+                """
+                        .formatted(json.writeValueAsString("{\"city\":\"Shanghai\",\"days\":2}"))));
+
+        var actual = model().invoke(structuredRequest(
+                standardSnapshot(
+                        true,
+                        Map.of(
+                                "thinking", "enabled",
+                                "reasoning_token_budget", 1024L,
+                                "reasoning_effort", "high")),
+                List.of()));
+
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        JsonNode format = json.readTree(requestBody.get()).path("output_config").path("format");
+        assertThat(format.path("type").asText()).isEqualTo("json_schema");
+        assertThat(format.path("schema").path("additionalProperties").asBoolean())
+                .isFalse();
+        assertThat(format.has("name")).isFalse();
+        assertThat(format.has("strict")).isFalse();
+        assertThat(json.readTree(requestBody.get())
+                        .path("output_config")
+                        .path("effort")
+                        .asText())
+                .isEqualTo("high");
+    }
+
+    @Test
+    void parsesStandardStructuredOutputAtStreamingTerminalOnly() {
+        response.set(
+                Response.sse(
+                        """
+                event: message_start
+                data: {"type":"message_start","message":{"id":"msg-stream-structured","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"usage":{"input_tokens":3,"output_tokens":0}}}
+
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+                event: content_block_delta
+                data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{\\\"city\\\":\\\"Shanghai\\\",\\\"days\\\":2}"}}
+
+                event: content_block_stop
+                data: {"type":"content_block_stop","index":0}
+
+                event: message_delta
+                data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":3}}
+
+                event: message_stop
+                data: {"type":"message_stop"}
+
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var actual = model().invokeStreaming(structuredRequest(standardSnapshot(true, Map.of()), List.of()), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        assertThat(events).anyMatch(ModelStreamEvent.ContentDelta.class::isInstance);
+    }
+
+    @Test
+    void keepsStandardToolCallsOutsideFinalStructuredOutputValidation() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"msg-tool","type":"message","role":"assistant","model":"claude-test",
+                 "content":[{"type":"tool_use","id":"toolu-weather","name":"weather","input":{"city":"Paris"}}],
+                 "stop_reason":"tool_use","usage":{"input_tokens":4,"output_tokens":3}}
+                """));
+        var tool =
+                new ModelToolSpecification("weather", "1", "Weather", "schema", "1", Map.of("type", "object"), false);
+
+        var actual = model().invoke(structuredRequest(standardSnapshot(true, Map.of()), List.of(tool)));
+
+        assertThat(actual.finishReason()).isEqualTo(ModelFinishReason.TOOL_CALLS);
+        assertThat(actual.toolCalls()).hasSize(1);
+        assertThat(actual.structuredOutput()).isEmpty();
+        assertThat(json.readTree(requestBody.get())
+                        .path("output_config")
+                        .path("format")
+                        .path("type")
+                        .asText())
+                .isEqualTo("json_schema");
+    }
+
+    @Test
+    void rejectsInvalidStandardStructuredOutputAndUnverifiedDeepSeekDialect() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"msg-invalid","type":"message","role":"assistant","model":"claude-test",
+                 "content":[{"type":"text","text":"not-json"}],"stop_reason":"end_turn",
+                 "usage":{"input_tokens":2,"output_tokens":1}}
+                """));
+
+        assertThatThrownBy(() -> model().invoke(structuredRequest(standardSnapshot(true, Map.of()), List.of())))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).providerCode())
+                        .isEqualTo("structured_output_invalid"));
+
+        requestBody.set(null);
+        assertThatThrownBy(() -> model().invoke(structuredRequest(deepSeekSnapshot(Map.of()), List.of())))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).providerCode())
+                        .isEqualTo("structured_output_unsupported"));
+        assertThat(requestBody.get()).isNull();
+    }
+
+    @Test
+    void preservesRefusalAndTruncationBeforeStructuredOutputParsing() {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"msg-refusal","type":"message","role":"assistant","model":"claude-test",
+                 "content":[{"type":"text","text":"cannot comply"}],"stop_reason":"refusal",
+                 "usage":{"input_tokens":2,"output_tokens":1}}
+                """));
+        var refused = model().invoke(structuredRequest(standardSnapshot(true, Map.of()), List.of()));
+        assertThat(refused.finishReason()).isEqualTo(ModelFinishReason.CONTENT_FILTER);
+        assertThat(refused.structuredOutput()).isEmpty();
+
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"msg-truncated","type":"message","role":"assistant","model":"claude-test",
+                 "content":[{"type":"text","text":"{\\\"city\\\":"}],"stop_reason":"max_tokens",
+                 "usage":{"input_tokens":2,"output_tokens":1}}
+                """));
+        var truncated = model().invoke(structuredRequest(standardSnapshot(true, Map.of()), List.of()));
+        assertThat(truncated.finishReason()).isEqualTo(ModelFinishReason.LENGTH);
+        assertThat(truncated.structuredOutput()).isEmpty();
     }
 
     @Test
@@ -500,6 +647,39 @@ class AnthropicMessagesModelTest {
         return request(snapshot, List.of(ModelMessage.text(ModelMessageRole.USER, "hello")), List.of(), Map.of());
     }
 
+    private AgentChatRequest structuredRequest(ResolvedModelSnapshot snapshot, List<ModelToolSpecification> tools) {
+        return new AgentChatRequest(
+                new ModelCallId("call-structured"),
+                new AgentRunId("run-structured"),
+                1,
+                1,
+                snapshot,
+                List.of(ModelMessage.text(ModelMessageRole.USER, "plan")),
+                tools,
+                1024,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement()));
+    }
+
+    private static StructuredOutputRequirement requirement() {
+        return new StructuredOutputRequirement(
+                "java-record:TripPlan",
+                "sha256:test",
+                "TripPlan",
+                Map.of(
+                        "type",
+                        "object",
+                        "additionalProperties",
+                        false,
+                        "properties",
+                        Map.of(
+                                "city", Map.of("type", "string"),
+                                "days", Map.of("type", "integer")),
+                        "required",
+                        List.of("city", "days")));
+    }
+
     private AgentChatRequest request(
             ResolvedModelSnapshot snapshot,
             List<ModelMessage> messages,
@@ -545,6 +725,11 @@ class AnthropicMessagesModelTest {
             boolean nativeStreaming,
             String path,
             Map<String, Object> invocationOptions) {
+        EnumSet<ModelCapability> capabilities =
+                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING);
+        if (AnthropicMessagesDialects.STANDARD.equals(dialect)) {
+            capabilities.add(ModelCapability.STRUCTURED_OUTPUT);
+        }
         return ResolvedModelSnapshot.create(
                 new ModelProviderId("stub"),
                 "provider-v1",
@@ -558,7 +743,7 @@ class AnthropicMessagesModelTest {
                 URI.create("http://127.0.0.1:" + server.getAddress().getPort() + path),
                 new CredentialRef("env://TEST_KEY"),
                 nativeStreaming,
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                capabilities,
                 1_000_000,
                 384_000,
                 Map.of(),

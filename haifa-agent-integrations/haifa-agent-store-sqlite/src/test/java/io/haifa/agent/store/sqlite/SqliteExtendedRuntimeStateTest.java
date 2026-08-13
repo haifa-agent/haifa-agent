@@ -20,6 +20,7 @@ import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.step.AgentStepId;
 import io.haifa.agent.core.step.AgentStepType;
@@ -286,7 +287,7 @@ class SqliteExtendedRuntimeStateTest {
                 URI.create("https://api.deepseek.com"),
                 new CredentialRef("env://DEEPSEEK_API_KEY"),
                 true,
-                Set.of(ModelCapability.TEXT_CHAT),
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.STRUCTURED_OUTPUT),
                 8_192,
                 1_024,
                 Map.of(),
@@ -309,7 +310,21 @@ class SqliteExtendedRuntimeStateTest {
                 "answer",
                 RuntimeOverrides.NONE,
                 List.of(),
-                model);
+                model,
+                Map.of(),
+                Optional.of(new StructuredOutputRequirement(
+                        "java-record:TripPlan",
+                        "sha256:trip-plan",
+                        "TripPlan",
+                        Map.of(
+                                "type",
+                                "object",
+                                "properties",
+                                Map.of("city", Map.of("type", "string")),
+                                "required",
+                                List.of("city"),
+                                "additionalProperties",
+                                false))));
     }
 
     private static SkillActivation activation() {

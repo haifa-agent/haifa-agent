@@ -4,24 +4,45 @@
 `DEEPSEEK_API_KEY`、进程内 Runtime Persistence 和 Conversation Store，不启用文件、Shell、Git、MCP、
 Web、Memory、Artifact 或 Execution。
 
-可信宿主可以通过 `model(adapter, snapshot)` 注册多个 Provider/模型，并通过 `defaultModel(modelId)`
-选择默认模型。自定义目录会替代内置 DeepSeek 目录；Conversation 命令使用已注册 model ID 作为可信
-`runProfileId` 选择后续 Run，不能从 Prompt 注入 endpoint 或 Credential。
+可信宿主可以通过 `model(OpenAiCompatibleModelConfiguration)` 减少现有 OpenAI-compatible Integration 的
+装配样板，也可以继续通过高级 `model(adapter, snapshot)` 注册模型；两种入口都支持多个 Provider/模型，
+并通过 `defaultModel(modelId)` 选择默认模型。自定义目录会替代内置 DeepSeek 目录；Conversation 命令
+使用已注册 model ID 作为可信 `runProfileId` 选择后续 Run，不能从 Prompt 注入 endpoint 或 Credential。
+
+类型化配置生成同一 `ResolvedModelSnapshot` 和精确 Adapter coordinate；模型调用选项进入 Snapshot digest，
+请求超时进入 Starter 的冻结 Run Profile。它不提供发现、fallback、健康路由或动态 Catalog。百炼/方舟
+仍使用各自受治理工厂，原二参数入口继续服务完全自定义 Adapter。
 
 ```java
-import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.sdk.api.HaifaAgent;
-import io.haifa.agent.sdk.conversation.ConversationRecord;
-import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import io.haifa.agent.starter.HaifaAgentStarter;
 
-try (HaifaAgent agent = HaifaAgentStarter.create()) {
-    ConversationRecord conversation = agent.conversations()
-            .start(new StartConversationCommand("hello-1", "Hello Haifa", "Say hello in one sentence."));
-    AgentRunSnapshot completed = agent.runs().await(conversation.activeRunId().orElseThrow());
-    System.out.println(completed.output().orElseThrow());
+try (HaifaAgent agent = HaifaAgentStarter.builder()
+        .name("hello-agent")
+        .description("Minimal quickstart assistant")
+        .build()) {
+    var response = agent.chat("Say hello in one sentence.").await();
+    System.out.println(response.text());
 }
 ```
+
+结构化最终结果使用同一个 Starter 和 Runtime 路径：
+
+```java
+public record TripPlan(String city, int days, List<String> activities) {}
+
+var response = agent.chat("Plan a two-day trip.", TripPlan.class).await();
+TripPlan plan = response.value();
+```
+
+注册模型必须声明 `ModelCapability.STRUCTURED_OUTPUT`，并由其 Adapter 实现对应协议映射。Runtime 在最终
+回答上校验冻结的 record Schema，持久化成功后 SDK 才解码；Tool Loop 仍可先返回 Tool Call，不提供
+类型化 partial stream。当前 API 未声明 Stable。
+
+默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
+`DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name`/`description`
+仅用于展示和诊断，不进入 Prompt 或选择逻辑。多轮、重试、revision、取消和事件订阅继续使用显式
+Conversation/Run API。
 
 运行前设置 `DEEPSEEK_API_KEY`。该入口会访问真实 DeepSeek API 并产生费用。Starter 的进程内状态在
 进程退出后丢失；生产系统应通过 `haifa-agent-sdk` 显式装配持久化、可信 Caller、Policy、Credential

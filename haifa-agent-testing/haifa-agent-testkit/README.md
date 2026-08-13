@@ -1,9 +1,10 @@
 # Haifa Agent Testkit
 
-跨模块测试辅助库。当前提供稳定 Critical Path Catalog、私有 Suite Schema/Loader 和跨平台
-Suite Runner；架构测试扫描 Reactor POM，禁止生产模块直接依赖所有 `haifa-agent-testing` 制品。
-后续只有在两个以上模块确实需要复用时，才在这里加入 `ScriptedChatModel`、安全 Trace 断言、固定
-Clock/ID、Fake Provider 等能力。
+跨模块测试辅助库。除稳定 Critical Path Catalog、私有 Suite Schema/Loader 和跨平台 Suite Runner 外，
+`testing.sdk` 提供最小、确定性的 SDK 测试能力：`ScriptedAgentChatModel`、固定 Clock/ID/Caller、
+`FakeJavaTool`、digest-only Model/Tool 轨迹，以及 Prompt component/digest 和敏感文本负向断言。
+这些测试辅助不会保存完整 Prompt、用户消息或 Tool 参数正文，默认不访问网络。架构测试扫描 Reactor
+POM，禁止生产模块直接依赖所有 `haifa-agent-testing` 制品。
 
 Runner 默认只生成计划。附加的 `runner` JAR 由私有 `test-config/scripts/` 调用；只有显式传入
 `--execute`、安全的仓库外运行根和所需 Secret 后，才会串行执行 Catalog 中的 Maven selector。

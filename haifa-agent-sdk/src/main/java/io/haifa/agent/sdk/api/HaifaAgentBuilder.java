@@ -29,9 +29,12 @@ import io.haifa.agent.sdk.contribution.SkillPlatformContribution;
 import io.haifa.agent.sdk.contribution.ToolPlatformContribution;
 import io.haifa.agent.sdk.internal.DefaultConversationService;
 import io.haifa.agent.sdk.internal.JavaToolAssembly;
+import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import io.haifa.agent.sdk.internal.ProductAssemblyResolver;
 import io.haifa.agent.sdk.internal.SafeConversationService;
 import io.haifa.agent.sdk.memory.AgentMemories;
+import io.haifa.agent.sdk.product.ProductAssembly;
+import io.haifa.agent.sdk.product.ProductAssemblyDiagnostic;
 import io.haifa.agent.sdk.product.ProductAssemblyException;
 import io.haifa.agent.sdk.product.ProductCapabilities;
 import io.haifa.agent.sdk.product.ProductCapabilityId;
@@ -65,6 +68,8 @@ public final class HaifaAgentBuilder {
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
     private RetryPolicy toolRetry = RetryPolicy.none();
     private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
+    private AgentMetadata metadata = AgentMetadata.defaults();
+    private boolean starterDefaultInstructionsInUse;
 
     HaifaAgentBuilder() {}
 
@@ -85,6 +90,18 @@ public final class HaifaAgentBuilder {
 
     public HaifaAgentBuilder timeProvider(TimeProvider value) {
         time = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    /** Sets immutable display/diagnostic metadata; it does not enter Prompt or Run selection. */
+    public HaifaAgentBuilder metadata(AgentMetadata value) {
+        metadata = Objects.requireNonNull(value, "value must not be null");
+        return this;
+    }
+
+    /** Records that a higher-level quickstart builder retained its bounded fallback instructions. */
+    public HaifaAgentBuilder starterDefaultInstructionsInUse() {
+        starterDefaultInstructionsInUse = true;
         return this;
     }
 
@@ -200,14 +217,17 @@ public final class HaifaAgentBuilder {
             throw exception;
         }
         try {
+            var processPromptDiagnostics = new ProcessLocalPromptDiagnostics();
             RuntimeCoreBuilder runtimeBuilder = new RuntimeCoreBuilder()
                     .identifierGenerator(ids)
                     .timeProvider(time)
                     .scheduler(scheduler)
                     .toolApprovalPrompts(toolApprovalPrompts::format)
+                    .structuredOutputSchemaValidator(new io.haifa.agent.tool.core.JsonSchema202012Validator())
                     .toolRetry(toolRetry)
                     .publicToolPolicyDecorator(publicToolPolicyDecorator)
                     .modelImageResolver(modelImageResolver::resolve)
+                    .promptDiagnostics(processPromptDiagnostics)
                     .persistence(persistence.runtimePersistence())
                     .callers(() -> {
                         SdkCaller caller = Objects.requireNonNull(callers.current(), "caller provider returned null");
@@ -282,7 +302,7 @@ public final class HaifaAgentBuilder {
                     effectiveProfile, runtime, persistence, conversation.conversationStore(), callers, ids, time);
             AtomicBoolean lifecycleClosed = new AtomicBoolean();
             var safeConversations = new SafeConversationService(conversationService, lifecycleClosed);
-            var agentRuns = new AgentRuns(runtime);
+            var agentRuns = new AgentRuns(runtime, processPromptDiagnostics);
             var agentMemories = memory == null
                     ? java.util.Optional.<AgentMemories>empty()
                     : java.util.Optional.of(new AgentMemories(
@@ -292,15 +312,34 @@ public final class HaifaAgentBuilder {
                             safeConversations,
                             agentRuns,
                             lifecycleClosed));
+            ProductAssembly resolvedAssembly = resolution.assembly();
+            ProductAssembly assembly = !starterDefaultInstructionsInUse
+                    ? resolvedAssembly
+                    : new ProductAssembly(
+                            resolvedAssembly.profile(),
+                            resolvedAssembly.assemblyDigest(),
+                            resolvedAssembly.contributions(),
+                            java.util.stream.Stream.concat(
+                                            resolvedAssembly.diagnostics().stream(),
+                                            java.util.stream.Stream.of(
+                                                    new ProductAssemblyDiagnostic(
+                                                            ProductAssemblyDiagnostic.Severity.WARNING,
+                                                            "DEFAULT_INSTRUCTIONS_IN_USE",
+                                                            new ProductCapabilityId("agent"),
+                                                            java.util.Optional.empty(),
+                                                            "Starter quickstart instructions are in use; configure trusted product instructions explicitly")))
+                                    .toList());
             return new HaifaAgent(
-                    resolution.assembly(),
+                    assembly,
+                    metadata,
                     agentRuns,
                     safeConversations,
                     agentMemories,
                     artifact == null ? java.util.Optional.empty() : java.util.Optional.of(artifact.service()),
                     scheduler,
                     initialized,
-                    lifecycleClosed);
+                    lifecycleClosed,
+                    ids);
         } catch (RuntimeException | Error exception) {
             scheduler.close();
             closeAfterFailedBuild(initialized, exception);

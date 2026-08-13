@@ -59,6 +59,26 @@ public final class AgentChatResponseMapper {
                     "model returned an unknown finish reason",
                     null);
         }
+        if (request.structuredOutput().isPresent()) {
+            var requirement = request.structuredOutput().orElseThrow();
+            Map<String, Object> output = response.structuredOutput()
+                    .orElseThrow(() -> new ModelInvocationException(
+                            ModelErrorCategory.MALFORMED_RESPONSE,
+                            false,
+                            200,
+                            "structured_output_invalid",
+                            request.callId(),
+                            "model did not return a structured final output",
+                            null));
+            return new FinalAnswerDecision(
+                    AgentRunOutcome.SUCCESS,
+                    response.content(),
+                    requirement.schemaId(),
+                    requirement.schemaVersion(),
+                    output,
+                    List.of(),
+                    List.of());
+        }
         return new FinalAnswerDecision(
                 AgentRunOutcome.SUCCESS,
                 response.content(),

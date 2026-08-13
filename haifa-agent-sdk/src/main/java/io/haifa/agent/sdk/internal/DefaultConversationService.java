@@ -86,7 +86,9 @@ public final class DefaultConversationService implements ConversationService {
                         + "\u0000"
                         + command.runProfileId().orElse("")
                         + "\u0000"
-                        + inputSignature(command.inputs()),
+                        + inputSignature(command.inputs())
+                        + "\u0000"
+                        + structuredOutputSignature(command.structuredOutput()),
                 proposedSession,
                 now);
         ConversationCommandBinding binding = persistence.inTransaction(() -> {
@@ -129,8 +131,8 @@ public final class DefaultConversationService implements ConversationService {
         if (binding.completed()) {
             return requireAuthorized(binding.sessionId(), caller);
         }
-        AgentRunSnapshot run =
-                runtime.start(runRequest(binding, command.message(), command.runProfileId(), command.inputs()));
+        AgentRunSnapshot run = runtime.start(runRequest(
+                binding, command.message(), command.runProfileId(), command.inputs(), command.structuredOutput()));
         return persistence.inTransaction(() -> {
             ConversationRecord activated = conversations.activateRun(
                     binding.sessionId(), binding.dispatchKey(), run.runId(), run.version(), time.now());
@@ -225,7 +227,8 @@ public final class DefaultConversationService implements ConversationService {
                 "submit",
                 command.idempotencyKey(),
                 command.message() + "\u0000" + command.runProfileId().orElse("") + "\u0000"
-                        + inputSignature(command.inputs()),
+                        + inputSignature(command.inputs()) + "\u0000"
+                        + structuredOutputSignature(command.structuredOutput()),
                 command.sessionId(),
                 now);
         ConversationCommandBinding binding = persistence.inTransaction(() -> {
@@ -243,8 +246,8 @@ public final class DefaultConversationService implements ConversationService {
         if (binding.completed()) {
             return reconcileTerminalRun(requireAuthorized(command.sessionId(), caller));
         }
-        AgentRunSnapshot run =
-                runtime.start(runRequest(binding, command.message(), command.runProfileId(), command.inputs()));
+        AgentRunSnapshot run = runtime.start(runRequest(
+                binding, command.message(), command.runProfileId(), command.inputs(), command.structuredOutput()));
         return persistence.inTransaction(() -> {
             ConversationRecord activated = conversations.activateRun(
                     binding.sessionId(), binding.dispatchKey(), run.runId(), run.version(), time.now());
@@ -375,7 +378,8 @@ public final class DefaultConversationService implements ConversationService {
             ConversationCommandBinding binding,
             String message,
             Optional<String> runProfileId,
-            List<io.haifa.agent.core.content.ContentPart> inputs) {
+            List<io.haifa.agent.core.content.ContentPart> inputs,
+            Optional<io.haifa.agent.core.run.StructuredOutputRequirement> structuredOutput) {
         return new AgentRunRequest(
                 binding.dispatchKey(),
                 profile.definitionId(),
@@ -385,7 +389,35 @@ public final class DefaultConversationService implements ConversationService {
                 Optional.empty(),
                 message,
                 inputs,
-                RuntimeOverrides.NONE);
+                RuntimeOverrides.NONE,
+                structuredOutput);
+    }
+
+    private static String structuredOutputSignature(
+            Optional<io.haifa.agent.core.run.StructuredOutputRequirement> requirement) {
+        return requirement
+                .map(value -> CanonicalSdkDigest.sha256(
+                        "structured-output-v1",
+                        value.schemaId(),
+                        value.schemaVersion(),
+                        value.responseName(),
+                        canonicalValue(value.jsonSchema())))
+                .orElse("");
+    }
+
+    private static String canonicalValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            return map.entrySet().stream()
+                    .sorted(java.util.Comparator.comparing(entry -> String.valueOf(entry.getKey())))
+                    .map(entry -> String.valueOf(entry.getKey()) + "=" + canonicalValue(entry.getValue()))
+                    .collect(java.util.stream.Collectors.joining(",", "{", "}"));
+        }
+        if (value instanceof Iterable<?> iterable) {
+            List<String> items = new ArrayList<>();
+            iterable.forEach(item -> items.add(canonicalValue(item)));
+            return String.join(",", items);
+        }
+        return String.valueOf(value);
     }
 
     private static String inputSignature(List<io.haifa.agent.core.content.ContentPart> inputs) {

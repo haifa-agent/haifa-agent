@@ -3,6 +3,8 @@ package io.haifa.agent.sdk.api;
 import io.haifa.agent.artifact.ArtifactService;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.sdk.conversation.ConversationService;
+import io.haifa.agent.sdk.conversation.StartConversationCommand;
+import io.haifa.agent.sdk.internal.StructuredOutputRecords;
 import io.haifa.agent.sdk.memory.AgentMemories;
 import io.haifa.agent.sdk.product.ProductAssembly;
 import io.haifa.agent.sdk.product.ProductAssemblyDiagnostic;
@@ -15,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Fully assembled product runtime with stable product-facing services. */
 public final class HaifaAgent implements AutoCloseable {
     private final ProductAssembly assembly;
+    private final AgentMetadata metadata;
     private final AgentRuns runs;
     private final ConversationService conversations;
     private final Optional<AgentMemories> memories;
@@ -22,17 +25,21 @@ public final class HaifaAgent implements AutoCloseable {
     private final LocalExecutionScheduler scheduler;
     private final List<ProductContribution> lifecycle;
     private final AtomicBoolean closed;
+    private final io.haifa.agent.common.id.IdentifierGenerator ids;
 
     HaifaAgent(
             ProductAssembly assembly,
+            AgentMetadata metadata,
             AgentRuns runs,
             ConversationService conversations,
             Optional<AgentMemories> memories,
             Optional<ArtifactService> artifacts,
             LocalExecutionScheduler scheduler,
             List<ProductContribution> lifecycle,
-            AtomicBoolean closed) {
+            AtomicBoolean closed,
+            io.haifa.agent.common.id.IdentifierGenerator ids) {
         this.assembly = Objects.requireNonNull(assembly, "assembly must not be null");
+        this.metadata = Objects.requireNonNull(metadata, "metadata must not be null");
         this.runs = Objects.requireNonNull(runs, "runs must not be null");
         this.conversations = Objects.requireNonNull(conversations, "conversations must not be null");
         this.memories = Objects.requireNonNull(memories, "memories must not be null");
@@ -40,6 +47,7 @@ public final class HaifaAgent implements AutoCloseable {
         this.scheduler = Objects.requireNonNull(scheduler, "scheduler must not be null");
         this.lifecycle = List.copyOf(Objects.requireNonNull(lifecycle, "lifecycle must not be null"));
         this.closed = Objects.requireNonNull(closed, "closed must not be null");
+        this.ids = Objects.requireNonNull(ids, "ids must not be null");
     }
 
     public ProductAssembly assembly() {
@@ -48,6 +56,31 @@ public final class HaifaAgent implements AutoCloseable {
 
     public List<ProductAssemblyDiagnostic> diagnostics() {
         return assembly.diagnostics();
+    }
+
+    /** Returns immutable display/diagnostic metadata; it is not part of Prompt or selection. */
+    public AgentMetadata metadata() {
+        return metadata;
+    }
+
+    /** Starts a new Conversation and Run through the existing authoritative services. */
+    public AgentChatHandle chat(String message) {
+        requireOpen();
+        String idempotencyKey = "sdk-chat-" + ids.nextValue();
+        var conversation = conversations.start(new StartConversationCommand(idempotencyKey, metadata.name(), message));
+        return new AgentChatHandle(
+                conversation.sessionId(), conversation.activeRunId().orElseThrow(), runs);
+    }
+
+    /** Starts a chat whose terminal result must satisfy the bounded schema generated from a public Java record. */
+    public <T extends Record> AgentResponseHandle<T> chat(String message, Class<T> responseType) {
+        requireOpen();
+        var requirement = StructuredOutputRecords.requirement(responseType);
+        String idempotencyKey = "sdk-chat-" + ids.nextValue();
+        var conversation = conversations.start(new StartConversationCommand(
+                idempotencyKey, metadata.name(), message, Optional.empty(), List.of(), Optional.of(requirement)));
+        return new AgentResponseHandle<>(
+                conversation.sessionId(), conversation.activeRunId().orElseThrow(), runs, responseType);
     }
 
     public AgentRuns runs() {

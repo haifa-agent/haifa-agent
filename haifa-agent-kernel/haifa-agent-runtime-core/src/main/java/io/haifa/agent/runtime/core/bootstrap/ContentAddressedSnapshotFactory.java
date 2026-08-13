@@ -155,6 +155,11 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                 + profile.model().configurationDigest() + "|"
                 + ModelRequestOptions.canonical(profile.modelRequestOptions())
                 + "|"
+                + request.structuredOutput()
+                        .map(value -> value.schemaId() + "@" + value.schemaVersion() + ":" + value.responseName() + ":"
+                                + ModelRequestOptions.canonical(value.jsonSchema()))
+                        .orElse("")
+                + "|"
                 + capabilities.stream()
                         .sorted()
                         .map(value -> value.capabilityId() + "@" + value.version() + ":"
@@ -184,7 +189,8 @@ public final class ContentAddressedSnapshotFactory implements ConfigurationSnaps
                     request.overrides(),
                     capabilities,
                     profile.model(),
-                    profile.modelRequestOptions());
+                    profile.modelRequestOptions(),
+                    request.structuredOutput());
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required by the Java runtime", exception);
         }

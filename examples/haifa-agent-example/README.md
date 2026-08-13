@@ -7,7 +7,7 @@ view, but it deliberately does not inherit the main repository parent POM or joi
 The standalone build contains two complete consumer applications rather than a second catalog of
 SDK teaching snippets:
 
-- `pure-java-quickstart`: one pure Java Conversation and typed Tool application;
+- `pure-java-quickstart`: one pure Java lightweight Chat and typed Tool application;
 - `spring-boot-quickstart`: one Spring Boot application using auto-configured `HaifaAgent` and Tool
   Bean discovery.
 
