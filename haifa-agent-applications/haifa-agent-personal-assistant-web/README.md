@@ -19,6 +19,10 @@ URL without depending on a matching Conversation turn.
 Each Mission has a stable `/missions/{missionId}?conversationId={conversationId}` URL. Direct visits,
 refresh, Mission-list selection, and browser history restore the same Mission workspace.
 
+Generic legacy Mission objectives such as "start deep research" are replaced in the interface with
+the originating user research goal when it is available. Active planning, execution, and synthesis
+states show a motion indicator, completed-task progress, and the current user-facing execution phase.
+
 ## Image composer behavior
 
 For models that declare `IMAGE_INPUT`, the composer exposes one `+` menu for file upload,

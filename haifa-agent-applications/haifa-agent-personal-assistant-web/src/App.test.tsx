@@ -345,6 +345,59 @@ describe("Personal Assistant application", () => {
     expect(window.location.pathname).toBe("/");
   });
 
+  it("derives a meaningful title for a generic research objective and shows live execution detail", async () => {
+    const researchConversation: Conversation = {
+      ...conversation,
+      displayName: "请调用深度研究skill 研究以太坊社区未来3年的技术发展路线和",
+    };
+    const researchTurn: Turn = {
+      ...turns[0],
+      text: "请调用深度研究skill 研究以太坊社区未来3年的技术发展路线和对以太坊的影响",
+      createdAt: "2026-08-13T01:49:09Z",
+    };
+    const runningMission: MissionSnapshot = {
+      ...researchMission,
+      conversationId: researchConversation.id,
+      objective: "开始深度研究",
+      state: "RUNNING",
+      createdAt: "2026-08-13T01:52:24Z",
+      tasks: researchPlanTasks.map((task, index) => ({
+        ...task,
+        state: index === 0 ? "COMPLETED" : index === 1 ? "READY" : "WAITING_DEPENDENCY",
+      })),
+      execution: {
+        dispatcherStatus: "READY",
+        recovering: false,
+        allTasksSettled: false,
+        completedTasks: 1,
+        blockedTasks: 0,
+        currentTaskId: "current-status-operation",
+        latestAttempt: null,
+      },
+    };
+    const api = {
+      ...client(),
+      bootstrap: vi.fn(async () => ({ ...bootstrap, capabilities: [...bootstrap.capabilities, "mission"] })),
+      conversations: vi.fn(async () => [researchConversation]),
+      conversation: vi.fn(async () => researchConversation),
+      turns: vi.fn(async () => [researchTurn]),
+      missions: vi.fn(async () => ({ items: [runningMission], nextCursor: null })),
+      missionSnapshot: vi.fn(async () => runningMission),
+    } satisfies PersonalAssistantClient;
+
+    render(<App client={api} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Mission" }));
+    const dialog = await screen.findByRole("dialog", { name: "Mission" });
+
+    expect((await within(dialog).findAllByText("研究以太坊社区未来3年的技术发展路线和对以太坊的影响")).length)
+      .toBeGreaterThan(0);
+    const liveStatus = within(dialog).getByRole("status", {
+      name: /执行中，任务进度 1\/5，当前任务 当前能力与生态/,
+    });
+    expect(liveStatus.querySelector(".mission-state-spinner")).toBeTruthy();
+    expect(within(dialog).getByText("正在执行：当前能力与生态")).toBeTruthy();
+  });
+
   it("routes the deep-research slash command to a prefilled Mission draft without starting a normal run", async () => {
     const api = {
       ...client(),
@@ -397,7 +450,7 @@ describe("Personal Assistant application", () => {
     ));
     await waitFor(() => expect((composer as HTMLTextAreaElement).disabled).toBe(false));
 
-    fireEvent.change(composer, { target: { value: "调用 deep-research skill 研究数据库安全演进" } });
+    fireEvent.change(composer, { target: { value: "请调用深度研究skill 研究数据库安全演进" } });
     fireEvent.submit(composer.closest("form")!);
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
     expect((within(dialog).getByLabelText("目标") as HTMLTextAreaElement).value).toBe("研究数据库安全演进");
@@ -1102,7 +1155,8 @@ describe("Personal Assistant application", () => {
     const open = await screen.findByRole("button", { name: "Mission" });
     fireEvent.click(open);
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
-    expect(within(dialog).getByRole("status").textContent).toContain("当前离线");
+    expect(within(dialog).getAllByRole("status").some((status) => status.textContent?.includes("当前离线")))
+      .toBe(true);
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.getByRole("dialog", { name: "Mission" })).toBeTruthy();
     expect(within(dialog).queryByRole("complementary", { name: "Mission 详情面板" })).toBeNull();

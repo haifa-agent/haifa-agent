@@ -21,6 +21,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  LoaderCircle,
   Search,
   Save,
   Send,
@@ -55,6 +56,7 @@ import type {
   MissionSnapshot,
   Model,
   Run,
+  Turn,
   TurnImage,
 } from "./api/generated";
 import {
@@ -195,8 +197,17 @@ function explicitDeepResearchObjective(value: string): string | null {
   const normalized = value.trim();
   const slash = /^\/deep-research(?:\s+)([\s\S]+)$/i.exec(normalized);
   if (slash?.[1]?.trim()) return slash[1].trim();
-  const explicit = /^(?:请)?(?:调用|使用)\s*deep-research\s*skill\s*(?:来|进行|做)?\s*[：:]?\s*([\s\S]+)$/i.exec(normalized);
-  return explicit?.[1]?.trim() || null;
+  const skillRequest = /^(?:请)?(?:调用|使用)\s*(?:deep-research|深度研究)\s*skill\s*(?:来|进行|做)?\s*[：:]?\s*([\s\S]+)$/i.exec(normalized);
+  if (skillRequest?.[1]?.trim()) return skillRequest[1].trim();
+  const chineseRequest = /^请(?:进行|做)?\s*深度研究\s*[：:]?\s*([\s\S]+)$/i.exec(normalized);
+  return chineseRequest?.[1]?.trim() || null;
+}
+
+function explicitlyRequestsDeepResearch(value: string): boolean {
+  const normalized = value.trim();
+  return /^\/deep-research(?:\s|$)/i.test(normalized)
+    || /^(?:请)?(?:调用|使用)\s*(?:deep-research|深度研究)\s*skill(?:\s|[：:]|$)/i.test(normalized)
+    || /^请(?:进行|做)?\s*深度研究(?:\s|[：:]|$)/i.test(normalized);
 }
 
 function groupModelsByProvider(models: Model[]): ModelProviderGroup[] {
@@ -1452,6 +1463,34 @@ const missionTerminalStates = new Set([
   "FAILED",
   "CANCELLED",
 ]);
+const missionAnimatedStates = new Set(["PLANNING", "RUNNING", "SYNTHESIZING"]);
+const genericMissionObjective = /^(?:(?:开始|启动|发起)(?:一轮)?(?:深度)?(?:研究|调研)|(?:开始|启动|发起)\s*deep\s*research)\s*(?:任务|mission)?[。！!]?$/i;
+
+function normalizeMissionTitle(value: string): string {
+  return value
+    .trim()
+    .replace(/^(?:请)?(?:调用|使用)\s*(?:deep-research|深度研究)\s*skill\s*(?:来|进行|做)?\s*[：:]?\s*/i, "")
+    .replace(/^请(?:进行|做)?\s*深度研究\s*[：:]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function missionDisplayTitle(
+  mission: MissionSnapshot,
+  conversation: Conversation | null,
+  conversationTurns: Turn[] = [],
+): string {
+  const objective = mission.objective.trim();
+  if (!genericMissionObjective.test(objective) || mission.conversationId !== conversation?.id) return objective;
+  const createdAt = new Date(mission.createdAt).getTime();
+  const userGoal = [...conversationTurns]
+    .filter((turn) => turn.role.toLowerCase() === "user" && new Date(turn.createdAt).getTime() <= createdAt)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .map((turn) => normalizeMissionTitle(turn.text))
+    .find((candidate) => candidate && !genericMissionObjective.test(candidate));
+  const fallback = normalizeMissionTitle(conversation.displayName);
+  return userGoal || (fallback && !genericMissionObjective.test(fallback) ? fallback : objective);
+}
 
 function missionStateLabel(state: string): string {
   return {
@@ -1465,6 +1504,47 @@ function missionStateLabel(state: string): string {
     FAILED: "失败",
     CANCELLED: "已取消",
   }[state] ?? state;
+}
+
+function missionStateAccessibleLabel(mission: MissionSnapshot): string {
+  const label = missionStateLabel(mission.state);
+  const progress = mission.tasks.length
+    ? `，任务进度 ${mission.execution.completedTasks}/${mission.tasks.length}`
+    : "";
+  const currentTask = mission.tasks.find((task) => task.taskId === mission.execution.currentTaskId);
+  const phase = mission.state === "SYNTHESIZING"
+    ? "，正在综合结论并生成报告"
+    : currentTask ? `，当前任务 ${currentTask.title}` : "";
+  return `${label}${progress}${phase}`;
+}
+
+function MissionStateBadge({ mission, detailed = false, live = false }: {
+  mission: MissionSnapshot;
+  detailed?: boolean;
+  live?: boolean;
+}) {
+  const active = missionAnimatedStates.has(mission.state);
+  const progress = detailed && mission.tasks.length
+    ? ` · ${mission.execution.completedTasks}/${mission.tasks.length}`
+    : "";
+  return <span
+    className={`mission-state state-${mission.state.toLowerCase()}${active ? " is-active" : ""}`}
+    role={live ? "status" : undefined}
+    aria-live={live ? "polite" : undefined}
+    aria-label={missionStateAccessibleLabel(mission)}
+  >
+    {active && <LoaderCircle className="mission-state-spinner" size={13} aria-hidden="true" />}
+    <span>{missionStateLabel(mission.state)}{progress}</span>
+  </span>;
+}
+
+function missionExecutionActivity(mission: MissionSnapshot, currentTask?: MissionSnapshot["tasks"][number]): string {
+  if (mission.execution.recovering) return "正在恢复 Mission 执行状态";
+  if (mission.state === "PLANNING") return "正在生成并校验执行计划";
+  if (mission.state === "SYNTHESIZING") return "研究任务已完成，正在综合结论并生成报告";
+  if (mission.state === "RUNNING" && currentTask) return `正在执行：${currentTask.title}`;
+  if (mission.state === "RUNNING") return "正在准备下一项任务";
+  return "";
 }
 
 function missionTaskStateLabel(state: string): string {
@@ -1641,11 +1721,13 @@ function missionDeliveryId(text: string): string | null {
 
 function MissionDeliveryCard({
   mission,
+  title,
   onOpenReport,
   onOpenEvidence,
   onContinue,
 }: {
   mission: MissionSnapshot;
+  title: string;
   onOpenReport(): void;
   onOpenEvidence(): void;
   onContinue(): void;
@@ -1657,7 +1739,7 @@ function MissionDeliveryCard({
     ? "降级完成"
     : result.completionKind === "PARTIAL" ? "部分完成" : "已完成";
   return <section className="mission-delivery-card" aria-label="Deep Research Mission 交付">
-    <header><div><span className="mission-delivery-status"><CheckCircle2 size={15} />{status}</span><h3>{mission.objective}</h3></div><span>Deep Research</span></header>
+    <header><div><span className="mission-delivery-status"><CheckCircle2 size={15} />{status}</span><h3>{title}</h3></div><span>Deep Research</span></header>
     <p>调研报告与完整证据链已生成。普通对话保留摘要，全文与技术交付文件在 Mission 中查看。</p>
     <div className="mission-delivery-metrics" aria-label="证据汇总">
       <span><b>{mission.tasks.filter((task) => task.state === "COMPLETED").length}</b>任务</span>
@@ -2055,6 +2137,7 @@ function normalizeMissionPlanTasks(tasks: MissionPlanTask[]): MissionPlanTask[] 
 function MissionDialog({
   client,
   conversation,
+  conversationTurns,
   initialMissionId,
   initialTaskId,
   initialArtifactFileName,
@@ -2067,6 +2150,7 @@ function MissionDialog({
 }: {
   client: PersonalAssistantClient;
   conversation: Conversation | null;
+  conversationTurns: Turn[];
   initialMissionId: string | null;
   initialTaskId: string | null;
   initialArtifactFileName: string | null;
@@ -2662,6 +2746,7 @@ function MissionDialog({
   const selectedFinalResult = parseMissionFinalResult(selected?.finalResult ?? null);
   const selectedArtifacts = selected ? missionArtifactItems(selected) : [];
   const selectedCurrentTask = selected?.tasks.find((task) => task.taskId === selected.execution.currentTaskId);
+  const selectedActivity = selected ? missionExecutionActivity(selected, selectedCurrentTask) : "";
   const selectedTerminal = selected ? missionTerminalStates.has(selected.state) : false;
   const canCreateMission = Boolean(conversation)
     && !missions.some((mission) => mission.conversationId === conversation?.id && !missionTerminalStates.has(mission.state));
@@ -2671,8 +2756,7 @@ function MissionDialog({
     <section className="mission-execution-summary" aria-label="Mission 执行状态">
       <div className="mission-progress-copy"><span>任务进度</span><b>{selected.execution.completedTasks}/{selected.tasks.length}</b></div>
       <span className="mission-progress-track" aria-hidden="true"><span style={{ width: `${selected.tasks.length ? Math.round((selected.execution.completedTasks / selected.tasks.length) * 100) : 0}%` }} /></span>
-      {selectedCurrentTask && <span>当前任务：{selectedCurrentTask.title}</span>}
-      {selected.execution.recovering && <span>正在恢复执行状态</span>}
+      {selectedActivity && <span className="mission-execution-activity" aria-live="polite"><LoaderCircle className="mission-state-spinner" size={14} aria-hidden="true" />{selectedActivity}</span>}
       <details><summary>技术详情</summary><span>调度状态：{selected.execution.dispatcherStatus}</span>{selected.execution.currentTaskId && <span>内部任务标识已隐藏</span>}</details>
     </section>
     {!editingPlan && <section className="mission-plan-section"><div className="mission-plan-heading"><div><span className="eyebrow">当前计划</span><h4>执行计划 · 第 {selected.plan?.revision ?? "-"} 版</h4></div><span>{selected.tasks.length} 个任务</span></div>
@@ -2715,8 +2799,8 @@ function MissionDialog({
                 setMobileView("content");
                 setError(null);
               }}>
-                <small><span className={`mission-state state-${mission.state.toLowerCase()}`}>{missionStateLabel(mission.state)}</span><time>{dateTime.format(new Date(mission.updatedAt))}</time></small>
-                <span>{mission.objective}</span>
+                <small><MissionStateBadge mission={mission} detailed /><time>{dateTime.format(new Date(mission.updatedAt))}</time></small>
+                <span title={missionDisplayTitle(mission, conversation, conversationTurns)}>{missionDisplayTitle(mission, conversation, conversationTurns)}</span>
                 <span className="mission-card-progress" aria-label={`任务进度 ${mission.execution.completedTasks}/${mission.tasks.length}`}><span style={{ width: `${mission.tasks.length ? Math.round((mission.execution.completedTasks / mission.tasks.length) * 100) : 0}%` }} /></span>
                 <small><span>{missionModeLabel(mission.mode)}</span><span>最近更新 · {missionStateLabel(mission.state)}</span></small>
               </button>
@@ -2771,7 +2855,7 @@ function MissionDialog({
             )}
             {!creatingMission && (selected ? (
               <article className="mission-detail">
-                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span><span className="mission-mode">{missionModeLabel(selected.mode)}</span><h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                <div className="mission-title-row"><div><MissionStateBadge mission={selected} detailed live /><span className="mission-mode">{missionModeLabel(selected.mode)}</span><h3>{missionDisplayTitle(selected, conversation, conversationTurns)}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
                 {selected.blocker && <div className="error-banner" role="alert"><span>{missionFailureMessage(selected)}</span><details><summary>技术详情</summary><code>{selected.blocker}</code></details></div>}
                 {selectedTerminal && selected.finalResult && <MissionFinalResult client={client} mission={selected} onTaskSelect={openTaskDetail} onCitationSelect={openCitation} onCreateFollowUp={beginFollowUp} />}
                 {selectedTerminal ? <details className="mission-process"><summary><span><b>研究过程</b><small>研究说明、验收标准、执行进度与任务计划</small></span><ChevronDown size={16} /></summary><div>{missionProcess}</div></details> : missionProcess}
@@ -3517,10 +3601,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const raw = state.composer.trim();
-    const slashRequested = /^\/deep-research(?:\s|$)/i.test(raw);
-    const explicitRequested = /^(?:请)?(?:调用|使用)\s*deep-research\s*skill(?:\s|[：:]|$)/i.test(raw);
+    const explicitRequested = explicitlyRequestsDeepResearch(raw);
     const objective = composerMode === "DEEP_RESEARCH" ? raw : explicitDeepResearchObjective(raw);
-    if (composerMode === "DEEP_RESEARCH" || slashRequested || explicitRequested) {
+    if (composerMode === "DEEP_RESEARCH" || explicitRequested) {
       if (!objective) {
         dispatch({ type: "error", message: "请补充 Deep Research 的目标。" });
         return;
@@ -3707,7 +3790,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           {conversationMission && !missionTerminalStates.has(conversationMission.state) && (
             <button type="button" className="conversation-mission-card" onClick={() => setMissionOpen(true)}>
               <span><b>Mission</b>{missionStateLabel(conversationMission.state)}</span>
-              <strong>{conversationMission.objective}</strong>
+              <strong>{missionDisplayTitle(conversationMission, state.selectedConversation, state.turns)}</strong>
               <small>{conversationMission.tasks.length} 个计划任务 · 点击查看详情</small>
             </button>
           )}
@@ -3750,6 +3833,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       {deliveryMission
                         ? <MissionDeliveryCard
                             mission={deliveryMission}
+                            title={missionDisplayTitle(deliveryMission, state.selectedConversation, state.turns)}
                             onOpenReport={() => {
                               setRequestedMissionArtifact("research-report.md");
                               navigateToMission(deliveryMission);
@@ -4134,6 +4218,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         <MissionDialog
           client={client}
           conversation={state.selectedConversation}
+          conversationTurns={state.turns}
           initialMissionId={missionRouteId}
           initialTaskId={requestedMissionTaskId}
           initialArtifactFileName={requestedMissionArtifact}
