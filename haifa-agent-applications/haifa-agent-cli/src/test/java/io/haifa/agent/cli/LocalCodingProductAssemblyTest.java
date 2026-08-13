@@ -232,10 +232,12 @@ class LocalCodingProductAssemblyTest {
         Path database = root.resolve("coding-terminal.db");
         CliConfiguration configuration = sqliteConfiguration(database);
         CountDownLatch finishFirstRun = new CountDownLatch(1);
+        CountDownLatch finishQueuedRun = new CountDownLatch(1);
         AtomicInteger modelCalls = new AtomicInteger();
         var model = (io.haifa.agent.model.api.AgentChatModel) request -> {
             int call = modelCalls.incrementAndGet();
             if (call == 1) await(finishFirstRun);
+            if (call == 3) await(finishQueuedRun);
             return call % 2 == 1 ? readWorkspace("restart-read-" + call) : response("answer-" + call);
         };
         io.haifa.agent.core.session.AgentSessionId sessionId;
@@ -264,23 +266,33 @@ class LocalCodingProductAssemblyTest {
         AgentRunId dispatchedRunId;
         try (LocalCodingAgent second = agent(workspace, configuration, model)) {
             LocalCodingSessionClient client = client(second);
-            var listed = client.list(second.projectId(), 10);
-            assertThat(listed).extracting(value -> value.sessionId()).containsExactly(sessionId);
-            var reopened = client.open(sessionId);
-            dispatchedRunId = reopened.activeRun().orElseThrow().runId();
-            assertThat(dispatchedRunId).isNotEqualTo(firstRunId);
-            assertThat(reopened.eventCursor()).isEmpty();
-            assertThat(client.restorableMessages(sessionId, 10)).isEmpty();
-            assertThat(client.history(sessionId, 100).items())
-                    .extracting(value -> value.body())
-                    .contains("first task", "answer-2", "queued task");
+            try {
+                var listed = client.list(second.projectId(), 10);
+                assertThat(listed).extracting(value -> value.sessionId()).containsExactly(sessionId);
+                awaitCondition(
+                        () -> client.open(sessionId)
+                                .activeRun()
+                                .map(activeRun -> !activeRun.runId().equals(firstRunId))
+                                .orElse(false),
+                        "queued follow-up dispatch");
+                var reopened = client.open(sessionId);
+                dispatchedRunId = reopened.activeRun().orElseThrow().runId();
+                assertThat(reopened.eventCursor()).isEmpty();
+                assertThat(client.restorableMessages(sessionId, 10)).isEmpty();
+                assertThat(client.history(sessionId, 100).items())
+                        .extracting(value -> value.body())
+                        .contains("first task", "answer-2", "queued task");
 
-            awaitTerminal(second, dispatchedRunId);
-            assertThat(client.reconcile(sessionId).activeRun()).isEmpty();
-            assertThat(client.events(firstRunId, RunEventCursor.beforeFirst(firstRunId), 200)
-                            .items())
-                    .extracting(value -> value.eventId())
-                    .doesNotHaveDuplicates();
+                finishQueuedRun.countDown();
+                awaitTerminal(second, dispatchedRunId);
+                assertThat(client.reconcile(sessionId).activeRun()).isEmpty();
+                assertThat(client.events(firstRunId, RunEventCursor.beforeFirst(firstRunId), 200)
+                                .items())
+                        .extracting(value -> value.eventId())
+                        .doesNotHaveDuplicates();
+            } finally {
+                finishQueuedRun.countDown();
+            }
         }
 
         try (LocalCodingAgent wrongWorkspace = agent(otherWorkspace, configuration, model)) {
