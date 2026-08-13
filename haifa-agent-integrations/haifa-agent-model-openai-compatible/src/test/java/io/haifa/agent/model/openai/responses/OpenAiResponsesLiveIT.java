@@ -164,7 +164,12 @@ class OpenAiResponsesLiveIT {
     }
 
     private static AgentChatRequest request(ResolvedModelSnapshot snapshot) {
-        return request(snapshot, List.of(ModelMessage.text(ModelMessageRole.USER, "Reply with OK.")), List.of());
+        return request(
+                snapshot,
+                List.of(ModelMessage.text(
+                        ModelMessageRole.USER,
+                        "Check whether 17 multiplied by 19 is greater than 300, then finish with the word OK.")),
+                List.of());
     }
 
     private static AgentChatRequest request(
@@ -185,7 +190,7 @@ class OpenAiResponsesLiveIT {
                 snapshot,
                 messages,
                 tools,
-                64,
+                2_048,
                 Duration.ofSeconds(60),
                 options);
     }

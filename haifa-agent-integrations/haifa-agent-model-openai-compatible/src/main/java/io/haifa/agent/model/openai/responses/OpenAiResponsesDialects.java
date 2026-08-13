@@ -30,7 +30,8 @@ public final class OpenAiResponsesDialects {
                                 "unsupported OpenAI Responses dialect: " + snapshot.dialect());
                 };
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, profile);
-        if (profile == Profile.DEEPSEEK && !"deepseek-v4-flash".equals(snapshot.providerModelId())) {
+        if (profile == Profile.DEEPSEEK
+                && !Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId())) {
             throw new IllegalArgumentException("DeepSeek Responses model profile is not verified");
         }
         return profile;

@@ -15,6 +15,7 @@ export interface CreateConversation {
   displayName: string;
   message: string;
   modelId?: string;
+  modelSelection?: SelectModel;
   images?: Array<ImageInput>;
 }
 
@@ -49,6 +50,7 @@ export interface UpdateConversation {
 export interface Model {
   id: string;
   modelGroupId: string;
+  modelDisplayName: string;
   displayName: string;
   providerId: string;
   providerDisplayName: string;
@@ -121,6 +123,7 @@ export interface ModelPreferences {
 
 export interface ModelSelection {
   model: Model;
+  preferences: ModelPreferences;
   revision: number;
   available: boolean;
 }

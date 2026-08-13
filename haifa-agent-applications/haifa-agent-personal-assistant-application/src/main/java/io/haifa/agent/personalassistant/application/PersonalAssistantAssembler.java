@@ -515,6 +515,7 @@ public final class PersonalAssistantAssembler {
                     snapshot.modelId().value(),
                     snapshot.providerId().value() + ":" + snapshot.providerModelId(),
                     snapshot.modelId().value(),
+                    snapshot.modelId().value(),
                     snapshot.providerId().value(),
                     snapshot.providerId().value(),
                     snapshot.apiStyle().value(),
@@ -529,8 +530,8 @@ public final class PersonalAssistantAssembler {
                     profile.digest(),
                     defaults.controls(
                             profile,
-                            snapshot.modelId().value(),
-                            List.of(snapshot.modelId().value())),
+                            List.of(snapshot.modelId().value()),
+                            snapshot.modelId().value()),
                     PersonalModelPreferences.recommended());
             return new PersonalModelCatalog() {
                 @Override

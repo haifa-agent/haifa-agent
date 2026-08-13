@@ -131,6 +131,25 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 selected.profileVersion(),
                 selected.profileDigest(),
                 selected.recommendedPreferences()));
+        return start(idempotencyKey, displayName, message, selection, inputs);
+    }
+
+    public ConversationView start(
+            String idempotencyKey,
+            String displayName,
+            String message,
+            PersonalModelSelectionRequest request,
+            List<ContentPart> inputs) {
+        return start(idempotencyKey, displayName, message, models.resolve(request), inputs);
+    }
+
+    private ConversationView start(
+            String idempotencyKey,
+            String displayName,
+            String message,
+            PersonalResolvedModelSelection selection,
+            List<ContentPart> inputs) {
+        PersonalModelOption selected = selection.option();
         requireImageInput(selected, inputs);
         ConversationRecord started = agent.conversations()
                 .start(new StartConversationCommand(
@@ -262,7 +281,7 @@ public final class PersonalAssistantApplication implements AutoCloseable {
                 digest(sessionId + "|" + selected.id() + "|" + selected.preferenceSchemaVersion() + "|"
                         + selection.preferences().digest()),
                 TimePrecision.now(clock));
-        return new ModelSelectionView(selected, changed.revision(), true);
+        return new ModelSelectionView(selected, selection.preferences(), changed.revision(), true);
     }
 
     public ConversationView rename(String sessionId, long expectedRevision, String idempotencyKey, String displayName) {
@@ -542,23 +561,10 @@ public final class PersonalAssistantApplication implements AutoCloseable {
     private ModelSelectionView modelSelection(String conversationId) {
         PersonalModelPreference preference = modelPreferences
                 .find(conversationId)
-                .orElseGet(() -> {
-                    PersonalResolvedModelSelection selection = models.defaultSelection();
-                    PersonalModelPreferenceDraft draft = PersonalModelPreferenceDraft.from(selection);
-                    return new PersonalModelPreference(
-                            conversationId,
-                            draft.modelBindingId(),
-                            draft.preferenceSchemaVersion(),
-                            draft.userPreferences(),
-                            draft.preferenceDigest(),
-                            0,
-                            Optional.empty(),
-                            Optional.empty(),
-                            Instant.EPOCH);
-                });
+                .orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
         Optional<PersonalModelOption> available = models.find(preference.modelBindingId());
         PersonalModelOption value = available.orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
-        return new ModelSelectionView(value, preference.revision(), true);
+        return new ModelSelectionView(value, preference.userPreferences(), preference.revision(), true);
     }
 
     private PersonalModelPreference requirePreference(String conversationId) {
@@ -854,7 +860,8 @@ public final class PersonalAssistantApplication implements AutoCloseable {
             long revision,
             ModelSelectionView model) {}
 
-    public record ModelSelectionView(PersonalModelOption model, long revision, boolean available) {}
+    public record ModelSelectionView(
+            PersonalModelOption model, PersonalModelPreferences preferences, long revision, boolean available) {}
 
     public record TurnView(
             String id,

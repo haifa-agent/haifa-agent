@@ -72,7 +72,7 @@ public final class OpenAiCompatibleModelProfileFactory {
                         && Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId());
             case "openai-responses" ->
                 OpenAiResponsesDialects.DEEPSEEK.equals(snapshot.dialect())
-                        && "deepseek-v4-flash".equals(snapshot.providerModelId());
+                        && Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId());
             case "anthropic-messages" ->
                 AnthropicMessagesDialects.DEEPSEEK.equals(snapshot.dialect())
                         && Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId());

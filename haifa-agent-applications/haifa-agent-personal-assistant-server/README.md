@@ -5,9 +5,11 @@
 `GET /api/v1/models` publishes only safe binding metadata, profile status/version/digest, closed control profiles,
 and recommended PA preferences. `PATCH /api/v1/conversations/{id}/model` atomically validates the binding identity,
 profile identity, and user preferences under revision and idempotency guards. The SQLite row stores the exact binding
-and typed preference JSON. Because the product is not released, an incompatible legacy preference schema is rebuilt
-transactionally by dropping only `personal_model_preference`; Conversation, Turn, Mission, and every other table are
-left untouched. The legacy table is not dual-read.
+and typed preference JSON. `POST /api/v1/conversations` accepts the same exact `modelSelection`, so first-turn settings
+are frozen into the initial Run instead of being applied afterward. Because the product is not released, an incompatible legacy preference schema is rebuilt
+transactionally by dropping only `personal_model_preference`. A Conversation without a row in the rebuilt table is
+incompatible and fails closed; it is not assigned a synthetic default and the legacy table is not dual-read. Development
+data cleanup must target only the explicitly identified incompatible Conversation records.
 
 The v1 Run response includes an optional authoritative Plan/Todo projection. Activity responses
 use stable operation IDs plus durable event IDs, parent correlation, event time, and optional
@@ -50,26 +52,45 @@ haifa:
             endpoint: https://api.deepseek.com/anthropic
         models:
           - id: deepseek-chat-pro
-            display-name: DeepSeek Chat Pro
+            display-name: DeepSeek V4 Pro · Chat Completions
+            model-display-name: DeepSeek V4 Pro
             provider-model-id: deepseek-v4-pro
             style: openai-chat-completions
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
           - id: deepseek-responses-flash
-            display-name: DeepSeek Responses Flash
+            display-name: DeepSeek V4 Flash · Responses
+            model-display-name: DeepSeek V4 Flash
             provider-model-id: deepseek-v4-flash
             style: openai-responses
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
           - id: deepseek-anthropic-flash
-            display-name: DeepSeek Anthropic Messages Flash
+            display-name: DeepSeek V4 Flash · Anthropic Messages
+            model-display-name: DeepSeek V4 Flash
             provider-model-id: deepseek-v4-flash
             style: anthropic-messages
             capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
+          - id: deepseek-responses-pro
+            display-name: DeepSeek V4 Pro · Responses
+            model-display-name: DeepSeek V4 Pro
+            provider-model-id: deepseek-v4-pro
+            style: openai-responses
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 1048576
+            max-output-tokens: 393216
+          - id: deepseek-anthropic-pro
+            display-name: DeepSeek V4 Pro · Anthropic Messages
+            model-display-name: DeepSeek V4 Pro
+            provider-model-id: deepseek-v4-pro
+            style: anthropic-messages
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            context-window: 1048576
+            max-output-tokens: 393216
       - id: local-openai
         display-name: Local OpenAI Responses Gateway
         mode: remote
@@ -96,8 +117,10 @@ DeepSeek Anthropic Messages 因 Base URL 与其余 Style 不同，在 Binding �
 Credential 与 `native-streaming` 仍只配置在 Provider。
 
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
-Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型是显式关闭 thinking 的
-`deepseek-chat-flash`；Responses 与 Anthropic Messages 模型仍作为非默认的受信选项保留。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
+Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型是
+`deepseek-chat-flash`，PA 的推荐偏好解析为 thinking/high；用户可以选择快速模式显式关闭 Thinking，或在
+深度模式选择 high/max。Responses 与 Anthropic Messages 模型作为同一供应商模型的高级受信连接方式；
+Responses reasoning 控件当前保持只读。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
 真实环境启动脚本可选装配第二个 `aliyun-bailian` Provider。完整配置要求 API Key、Workspace ID 和

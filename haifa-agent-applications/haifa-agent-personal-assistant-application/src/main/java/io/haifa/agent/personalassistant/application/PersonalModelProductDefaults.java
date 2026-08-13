@@ -1,9 +1,11 @@
 package io.haifa.agent.personalassistant.application;
 
 import io.haifa.agent.model.api.EffectiveModelParameters;
+import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelParameterResolutionRequest;
 import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ModelReasoningPolicy;
 import io.haifa.agent.model.core.DefaultModelParameterResolver;
 import java.util.Optional;
@@ -17,9 +19,13 @@ public final class PersonalModelProductDefaults {
     public EffectiveModelParameters resolve(ModelBindingProfile profile, PersonalModelPreferences preferences) {
         ModelReasoningPolicy reasoning =
                 switch (preferences.responseMode()) {
-                    case RECOMMENDED, FAST -> ModelReasoningPolicy.disabled();
+                    case RECOMMENDED ->
+                        profile.allowedReasoningModes().contains(ModelReasoningMode.ENABLED)
+                                ? ModelReasoningPolicy.enabled(recommendedEffort(profile))
+                                : ModelReasoningPolicy.disabled();
+                    case FAST -> ModelReasoningPolicy.disabled();
                     case DEEP ->
-                        ModelReasoningPolicy.enabled(preferences.effort().orElse(ModelReasoningEffort.HIGH));
+                        ModelReasoningPolicy.enabled(preferences.effort().orElseGet(() -> recommendedEffort(profile)));
                 };
         int requestedOutput =
                 switch (preferences.responseLength()) {
@@ -35,21 +41,31 @@ public final class PersonalModelProductDefaults {
     }
 
     public PersonalModelControls controls(
-            ModelBindingProfile profile, String bindingId, java.util.List<String> styleBindings) {
-        boolean reasoningVisible = false; // Phase 2 opens this only after continuation/recovery validation.
+            ModelBindingProfile profile, java.util.List<String> styleBindings, String recommendedBindingId) {
+        boolean reasoningSelectable = profile.toolReasoningContinuationRequired()
+                && profile.allowedReasoningModes()
+                        .containsAll(java.util.Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED))
+                && (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(profile.apiStyle())
+                        || ModelApiStyles.ANTHROPIC_MESSAGES.equals(profile.apiStyle()));
+        java.util.List<PersonalResponseMode> responseModes = reasoningSelectable
+                ? java.util.List.of(
+                        PersonalResponseMode.RECOMMENDED, PersonalResponseMode.FAST, PersonalResponseMode.DEEP)
+                : java.util.List.of(PersonalResponseMode.RECOMMENDED);
         return new PersonalModelControls(
                 new PersonalModelControls.ResponseModeControl(
                         "responseMode",
                         true,
-                        true,
-                        java.util.List.of(PersonalResponseMode.RECOMMENDED),
+                        !reasoningSelectable,
+                        responseModes,
                         PersonalResponseMode.RECOMMENDED,
-                        "Uses the reviewed Personal Assistant default",
-                        "Quality and latency are balanced by the service."),
+                        reasoningSelectable ? "Thinking on · High" : "Uses the reviewed connection default",
+                        reasoningSelectable
+                                ? "Choose faster direct answers or deeper reasoning when the task needs it."
+                                : "This connection does not expose a verified reasoning switch."),
                 new PersonalModelControls.ReasoningEffortControl(
                         "reasoningEffort",
-                        reasoningVisible,
-                        true,
+                        reasoningSelectable,
+                        !reasoningSelectable,
                         profile.allowedReasoningEfforts().stream().sorted().toList(),
                         profile.allowedReasoningEfforts().contains(ModelReasoningEffort.HIGH)
                                 ? ModelReasoningEffort.HIGH
@@ -57,8 +73,8 @@ public final class PersonalModelProductDefaults {
                                         .sorted()
                                         .findFirst()
                                         .orElse(null),
-                        "Reasoning remains disabled until Phase 2 verification",
-                        "Shown only when this exact binding safely supports selectable effort."),
+                        reasoningSelectable ? "High reasoning effort" : "Reasoning adjustment unavailable",
+                        "Available only in Deep mode for this exact verified connection."),
                 new PersonalModelControls.ResponseLengthControl(
                         "responseLength",
                         true,
@@ -72,7 +88,7 @@ public final class PersonalModelProductDefaults {
                         styleBindings.size() > 1,
                         styleBindings.size() == 1,
                         styleBindings,
-                        bindingId,
+                        recommendedBindingId,
                         "Recommended connection",
                         "Advanced connection style for the same provider model."));
     }
@@ -80,5 +96,14 @@ public final class PersonalModelProductDefaults {
     public static PersonalModelPreferences preferences(
             PersonalResponseMode mode, Optional<ModelReasoningEffort> effort, PersonalResponseLength length) {
         return new PersonalModelPreferences(mode, effort, length);
+    }
+
+    private static ModelReasoningEffort recommendedEffort(ModelBindingProfile profile) {
+        return profile.allowedReasoningEfforts().contains(ModelReasoningEffort.HIGH)
+                ? ModelReasoningEffort.HIGH
+                : profile.allowedReasoningEfforts().stream()
+                        .sorted()
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalArgumentException("reasoning effort is unavailable"));
     }
 }

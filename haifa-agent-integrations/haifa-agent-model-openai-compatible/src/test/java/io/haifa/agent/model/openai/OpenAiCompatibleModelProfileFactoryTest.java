@@ -12,6 +12,7 @@ import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
+import io.haifa.agent.model.openai.responses.OpenAiResponsesDialects;
 import java.net.URI;
 import java.time.LocalDate;
 import java.util.Map;
@@ -76,5 +77,33 @@ class OpenAiCompatibleModelProfileFactoryTest {
 
         assertThat(profile.status()).isEqualTo(ModelProfileStatus.UNVERIFIED);
         assertThat(profile.selectable()).isFalse();
+    }
+
+    @Test
+    void verifiesDeepSeekV4ProResponsesAsAnExactReviewedBinding() {
+        ResolvedModelSnapshot snapshot = ResolvedModelSnapshot.create(
+                new ModelProviderId("deepseek"),
+                "1",
+                new ModelDefinitionId("deepseek-v4-pro-responses"),
+                "1",
+                "deepseek-v4-pro",
+                ModelApiStyles.OPENAI_RESPONSES_ADAPTER,
+                "1",
+                ModelApiStyles.OPENAI_RESPONSES,
+                OpenAiResponsesDialects.DEEPSEEK,
+                URI.create("https://api.deepseek.com"),
+                new CredentialRef("env://DEEPSEEK_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                1_048_576,
+                393_216,
+                Map.of(),
+                Map.of("thinking", "disabled"));
+
+        var profile = OpenAiCompatibleModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 13));
+
+        assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
+        assertThat(profile.selectable()).isTrue();
+        assertThat(profile.toolReasoningContinuationRequired()).isTrue();
     }
 }

@@ -55,6 +55,7 @@ import type {
   MemoryCandidate,
   MissionSnapshot,
   Model,
+  ModelPreferences,
   Run,
   Turn,
   TurnImage,
@@ -111,7 +112,8 @@ function missionIdFromLocation(): string | null {
 type SlashMenuState =
   | { stage: "commands" }
   | { stage: "providers" }
-  | { stage: "models"; providerId: string };
+  | { stage: "models"; providerId: string }
+  | { stage: "settings"; providerId: string; modelGroupId: string };
 
 type ComposerMode = "CHAT" | "DEEP_RESEARCH";
 
@@ -124,7 +126,13 @@ interface MissionDraftRequest {
 interface ModelProviderGroup {
   id: string;
   displayName: string;
-  models: Model[];
+  modelGroups: ModelGroup[];
+}
+
+interface ModelGroup {
+  id: string;
+  displayName: string;
+  bindings: Model[];
 }
 
 type PendingImage = ImageInput & {
@@ -213,18 +221,28 @@ function explicitlyRequestsDeepResearch(value: string): boolean {
 function groupModelsByProvider(models: Model[]): ModelProviderGroup[] {
   const providers = new Map<string, ModelProviderGroup>();
   models.forEach((model) => {
-    const existing = providers.get(model.providerId);
-    if (existing) {
-      existing.models.push(model);
-      return;
+    let provider = providers.get(model.providerId);
+    if (!provider) {
+      provider = { id: model.providerId, displayName: model.providerDisplayName, modelGroups: [] };
+      providers.set(model.providerId, provider);
     }
-    providers.set(model.providerId, {
-      id: model.providerId,
-      displayName: model.providerDisplayName,
-      models: [model],
-    });
+    let group = provider.modelGroups.find((candidate) => candidate.id === model.modelGroupId);
+    if (!group) {
+      group = { id: model.modelGroupId, displayName: model.modelDisplayName, bindings: [] };
+      provider.modelGroups.push(group);
+    }
+    group.bindings.push(model);
   });
   return [...providers.values()];
+}
+
+const responseModeLabels = { RECOMMENDED: "推荐", FAST: "快速", DEEP: "深度" } as const;
+const responseLengthLabels = { RECOMMENDED: "推荐", SHORT: "短", STANDARD: "标准", LONG: "长" } as const;
+const effortLabels: Record<string, string> = { LOW: "Low", MEDIUM: "Medium", HIGH: "High", MAX: "Max" };
+
+function recommendedBinding(group: ModelGroup): Model | null {
+  const recommendedId = group.bindings[0]?.controls.apiStyle.recommendedValue;
+  return group.bindings.find((binding) => binding.id === recommendedId) ?? group.bindings[0] ?? null;
 }
 
 interface RecommendedQuestionState {
@@ -3005,9 +3023,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     useState<RecommendedQuestionState | null>(null);
   const [renameTarget, setRenameTarget] = useState<Conversation | null>(null);
   const [newModelId, setNewModelId] = useState("");
+  const [newModelPreferences, setNewModelPreferences] = useState<ModelPreferences | null>(null);
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [slashFromPlus, setSlashFromPlus] = useState(false);
+  const [modelDraftBindingId, setModelDraftBindingId] = useState("");
+  const [modelDraftPreferences, setModelDraftPreferences] = useState<ModelPreferences | null>(null);
   const [composerMode, setComposerMode] = useState<ComposerMode>("CHAT");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [imageUrl, setImageUrl] = useState("");
@@ -3462,6 +3483,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           return [];
         })
         : sentImages.map(({ kind, url, imageId }) => ({ kind, url, imageId }));
+      const initialModel = state.bootstrap?.models.find((model) => model.id === newModelId);
+      const initialModelSelection = initialModel && newModelPreferences
+        ? { model: initialModel, preferences: newModelPreferences }
+        : undefined;
       const conversation = state.selectedConversation
         ? images.length
           ? await client.submitMessage(state.selectedConversation, message, { idempotencyKey: key }, images)
@@ -3473,12 +3498,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               { idempotencyKey: key },
               newModelId || state.bootstrap?.defaultModelId,
               images,
+              initialModelSelection,
             )
           : await client.createConversation(
               message.slice(0, 32),
               message,
               { idempotencyKey: key },
               newModelId || state.bootstrap?.defaultModelId,
+              [],
+              initialModelSelection,
             );
       if (!retryImages) {
         dispatch({ type: "setComposer", value: "" });
@@ -3496,17 +3524,18 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     });
   };
 
-  const selectModel = (modelId: string) => {
+  const selectModel = (modelId: string, preferences: ModelPreferences) => {
     const conversation = state.selectedConversation;
     if (!conversation) {
       setNewModelId(modelId);
+      setNewModelPreferences(preferences);
       return;
     }
     if (conversation.activeRunId || !client.selectModel) return;
     const target = state.bootstrap?.models.find((model) => model.id === modelId);
     if (!target) return;
     void execute("切换模型", async () => {
-      await client.selectModel!(conversation, target, { idempotencyKey: crypto.randomUUID() });
+      await client.selectModel!(conversation, target, { idempotencyKey: crypto.randomUUID() }, preferences);
       await loadConversation(conversation.id);
       await loadConversations();
     });
@@ -3515,6 +3544,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const configuredModels = state.bootstrap?.models ?? [];
   const modelProviders = groupModelsByProvider(configuredModels);
   const selectedModelId = state.selectedConversation?.model.model.id ?? newModelId;
+  const selectedModelPreferences = state.selectedConversation?.model.preferences
+    ?? newModelPreferences
+    ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId))?.recommendedPreferences
+    ?? null;
   const imageCapable = (state.selectedConversation?.model.model
     ?? configuredModels.find((model) => model.id === (newModelId || state.bootstrap?.defaultModelId)))
     ?.capabilities.includes("IMAGE_INPUT") ?? false;
@@ -3595,14 +3628,21 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     || command.command.slice(1).includes(slashQuery)
     || command.label.toLocaleLowerCase().includes(slashQuery)
   );
-  const selectedSlashProvider = slashMenu?.stage === "models"
+  const selectedSlashProvider = slashMenu?.stage === "models" || slashMenu?.stage === "settings"
     ? modelProviders.find((provider) => provider.id === slashMenu.providerId) ?? null
     : null;
+  const selectedSlashModelGroup = slashMenu?.stage === "settings"
+    ? selectedSlashProvider?.modelGroups.find((group) => group.id === slashMenu.modelGroupId) ?? null
+    : null;
+  const modelDraftBinding = selectedSlashModelGroup?.bindings.find((binding) => binding.id === modelDraftBindingId)
+    ?? (selectedSlashModelGroup ? recommendedBinding(selectedSlashModelGroup) : null);
   const slashItemCount = slashMenu?.stage === "commands"
     ? visibleSlashCommands.length
     : slashMenu?.stage === "providers"
       ? modelProviders.length
-      : selectedSlashProvider?.models.length ?? 0;
+      : slashMenu?.stage === "models"
+        ? selectedSlashProvider?.modelGroups.length ?? 0
+        : 0;
 
   const updateComposer = (value: string) => {
     dispatch({ type: "setComposer", value });
@@ -3634,7 +3674,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       dispatch({ type: "setComposer", value: "/model" });
       setSlashMenu({ stage: "providers" });
       const currentProviderIndex = modelProviders.findIndex((provider) =>
-        provider.models.some((model) => model.id === selectedModelId)
+        provider.modelGroups.some((group) => group.bindings.some((model) => model.id === selectedModelId))
       );
       setSlashActiveIndex(Math.max(0, currentProviderIndex));
       return;
@@ -3643,13 +3683,36 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
       const provider = modelProviders[index];
       if (!provider) return;
       setSlashMenu({ stage: "models", providerId: provider.id });
-      const currentModelIndex = provider.models.findIndex((model) => model.id === selectedModelId);
+      const currentModelIndex = provider.modelGroups.findIndex((group) =>
+        group.bindings.some((model) => model.id === selectedModelId)
+      );
       setSlashActiveIndex(Math.max(0, currentModelIndex));
       return;
     }
-    const model = selectedSlashProvider?.models[index];
-    if (!model) return;
-    selectModel(model.id);
+    if (slashMenu.stage !== "models") return;
+    const group = selectedSlashProvider?.modelGroups[index];
+    if (!group) return;
+    const current = group.bindings.find((binding) => binding.id === selectedModelId);
+    const binding = current ?? recommendedBinding(group);
+    if (!binding) return;
+    setModelDraftBindingId(binding.id);
+    setModelDraftPreferences(current && selectedModelPreferences
+      ? selectedModelPreferences
+      : binding.recommendedPreferences);
+    setSlashMenu({ stage: "settings", providerId: slashMenu.providerId, modelGroupId: group.id });
+    setSlashActiveIndex(0);
+  };
+
+  const updateDraftBinding = (bindingId: string) => {
+    const binding = selectedSlashModelGroup?.bindings.find((candidate) => candidate.id === bindingId);
+    if (!binding) return;
+    setModelDraftBindingId(binding.id);
+    setModelDraftPreferences(binding.recommendedPreferences);
+  };
+
+  const applyModelDraft = () => {
+    if (!modelDraftBinding || !modelDraftPreferences) return;
+    selectModel(modelDraftBinding.id, modelDraftPreferences);
     if (!slashFromPlus) dispatch({ type: "setComposer", value: "" });
     setSlashMenu(null);
     setSlashFromPlus(false);
@@ -3657,7 +3720,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   };
 
   const returnFromSlashMenu = () => {
-    if (slashMenu?.stage === "models") {
+    if (slashMenu?.stage === "settings") {
+      setSlashMenu({ stage: "models", providerId: slashMenu.providerId });
+    } else if (slashMenu?.stage === "models") {
       setSlashMenu({ stage: "providers" });
     } else {
       dispatch({ type: "setComposer", value: "/" });
@@ -3997,7 +4062,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     ? "命令功能"
                     : slashMenu.stage === "providers"
                       ? "选择模型厂商"
-                      : `选择 ${selectedSlashProvider?.displayName ?? ""} 模型`
+                      : slashMenu.stage === "models"
+                        ? `选择 ${selectedSlashProvider?.displayName ?? ""} 模型`
+                        : `设置 ${selectedSlashModelGroup?.displayName ?? ""}`
                 }
               >
                 <header>
@@ -4012,14 +4079,18 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                         ? "命令功能"
                         : slashMenu.stage === "providers"
                           ? "选择模型厂商"
-                          : selectedSlashProvider?.displayName}
+                          : slashMenu.stage === "models"
+                            ? selectedSlashProvider?.displayName
+                            : selectedSlashModelGroup?.displayName}
                     </strong>
                     <span>
                       {slashMenu.stage === "commands"
                         ? "选择一个命令继续"
                         : slashMenu.stage === "providers"
                           ? "先选择提供模型服务的厂商"
-                          : "选择本会话后续消息使用的模型"}
+                          : slashMenu.stage === "models"
+                            ? "选择本会话后续消息使用的模型"
+                            : "优先使用推荐设置，需要时再展开高级连接方式"}
                     </span>
                   </div>
                   <kbd>Esc</kbd>
@@ -4053,34 +4124,104 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <span className="slash-provider-mark">{provider.displayName.slice(0, 1)}</span>
                       <span>
                         <strong>{provider.displayName}</strong>
-                        <small>{provider.models.length} 个可用模型 · {provider.id}</small>
+                        <small>{provider.modelGroups.length} 个可用模型 · {provider.id}</small>
                       </span>
                       <ChevronRight size={17} />
                     </button>
                   ))}
-                  {slashMenu.stage === "models" && selectedSlashProvider?.models.map((model, index) => (
+                  {slashMenu.stage === "models" && selectedSlashProvider?.modelGroups.map((group, index) => (
                     <button
                       type="button"
                       role="option"
                       aria-selected={index === slashActiveIndex}
                       className={index === slashActiveIndex ? "active" : ""}
-                      key={model.id}
+                      key={group.id}
                       onMouseEnter={() => setSlashActiveIndex(index)}
                       onClick={() => activateSlashItem(index)}
                     >
                       <Bot size={18} />
                       <span>
-                        <strong>{model.displayName}</strong>
-                        <small>{model.id}</small>
+                        <strong>{group.displayName}</strong>
+                        <small>{group.bindings.length > 1 ? `${group.bindings.length} 种已验证连接方式` : group.bindings[0]?.apiStyleDisplayName}</small>
                       </span>
-                      {model.id === selectedModelId
+                      {group.bindings.some((binding) => binding.id === selectedModelId)
                         ? <span className="slash-current"><Check size={13} /> 当前</span>
                         : <ChevronRight size={17} />}
                     </button>
                   ))}
-                  {slashItemCount === 0 && <p>没有匹配的命令或可用模型。</p>}
+                  {slashMenu.stage === "settings" && modelDraftBinding && modelDraftPreferences && (
+                    <div className="model-settings-panel">
+                      <div className="model-setting-summary">
+                        <Bot size={20} aria-hidden="true" />
+                        <span><strong>{modelDraftBinding.modelDisplayName}</strong><small>{modelDraftBinding.providerDisplayName} · {modelDraftBinding.controls.responseMode.effectiveSummary}</small></span>
+                      </div>
+                      {modelDraftBinding.controls.responseMode.visible && (
+                        <fieldset disabled={modelDraftBinding.controls.responseMode.readOnly}>
+                          <legend>响应模式</legend>
+                          <div className="model-segmented-control">
+                            {modelDraftBinding.controls.responseMode.allowedValues.map((value) => (
+                              <button type="button" key={value} aria-pressed={modelDraftPreferences.responseMode === value} onClick={() => setModelDraftPreferences({
+                                ...modelDraftPreferences,
+                                responseMode: value,
+                                effort: value === "DEEP" ? modelDraftPreferences.effort : null,
+                              })}>{responseModeLabels[value]}</button>
+                            ))}
+                          </div>
+                          <small>{modelDraftBinding.controls.responseMode.helpText}</small>
+                        </fieldset>
+                      )}
+                      {modelDraftBinding.controls.responseLength.visible && (
+                        <fieldset disabled={modelDraftBinding.controls.responseLength.readOnly}>
+                          <legend>回答长度</legend>
+                          <div className="model-segmented-control">
+                            {modelDraftBinding.controls.responseLength.allowedValues.map((value) => (
+                              <button type="button" key={value} aria-pressed={modelDraftPreferences.responseLength === value} onClick={() => setModelDraftPreferences({
+                                ...modelDraftPreferences,
+                                responseLength: value,
+                              })}>{responseLengthLabels[value]}</button>
+                            ))}
+                          </div>
+                        </fieldset>
+                      )}
+                      {modelDraftBinding.controls.reasoningEffort.visible && modelDraftPreferences.responseMode === "DEEP" && (
+                        <fieldset disabled={modelDraftBinding.controls.reasoningEffort.readOnly}>
+                          <legend>推理强度</legend>
+                          <div className="model-segmented-control">
+                            {modelDraftBinding.controls.reasoningEffort.allowedValues.map((value) => (
+                              <button type="button" key={value} aria-pressed={(modelDraftPreferences.effort ?? modelDraftBinding.controls.reasoningEffort.recommendedValue) === value} onClick={() => setModelDraftPreferences({
+                                ...modelDraftPreferences,
+                                effort: value,
+                              })}>{effortLabels[value] ?? value}</button>
+                            ))}
+                          </div>
+                          <small>{modelDraftBinding.controls.reasoningEffort.helpText}</small>
+                        </fieldset>
+                      )}
+                      {modelDraftBinding.controls.apiStyle.visible && (
+                        <details className="model-advanced-settings">
+                          <summary>高级连接方式</summary>
+                          <label>
+                            <span>API 风格</span>
+                            <select aria-label="API 风格" disabled={modelDraftBinding.controls.apiStyle.readOnly} value={modelDraftBinding.id} onChange={(event) => updateDraftBinding(event.target.value)}>
+                              {modelDraftBinding.controls.apiStyle.allowedValues.map((bindingId) => {
+                                const binding = selectedSlashModelGroup?.bindings.find((candidate) => candidate.id === bindingId);
+                                return binding ? <option key={binding.id} value={binding.id}>{binding.apiStyleDisplayName}</option> : null;
+                              })}
+                            </select>
+                          </label>
+                          <small>{modelDraftBinding.controls.apiStyle.helpText}</small>
+                        </details>
+                      )}
+                      <div className="model-settings-actions">
+                        <button type="button" className="button" onClick={() => setModelDraftPreferences(modelDraftBinding.recommendedPreferences)}>恢复推荐</button>
+                        <button type="button" className="button primary-button" disabled={Boolean(state.selectedConversation?.activeRunId)} onClick={applyModelDraft}>应用设置</button>
+                      </div>
+                      {state.selectedConversation?.activeRunId && <p className="model-settings-locked">当前任务运行中，完成后可修改下一次任务的模型设置。</p>}
+                    </div>
+                  )}
+                  {slashMenu.stage !== "settings" && slashItemCount === 0 && <p>没有匹配的命令或可用模型。</p>}
                 </div>
-                <footer><span>↑↓ 选择</span><span>Enter 确认</span></footer>
+                {slashMenu.stage !== "settings" && <footer><span>↑↓ 选择</span><span>Enter 确认</span></footer>}
               </section>
             )}
             <input
@@ -4149,7 +4290,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       setSlashFromPlus(true);
                       setSlashMenu({ stage: "providers" });
                       const currentProviderIndex = modelProviders.findIndex((provider) =>
-                        provider.models.some((model) => model.id === selectedModelId)
+                        provider.modelGroups.some((group) => group.bindings.some((model) => model.id === selectedModelId))
                       );
                       setSlashActiveIndex(Math.max(0, currentProviderIndex));
                       closeImageTools();
@@ -4245,7 +4386,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                   }
                   if (slashMenu && event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    activateSlashItem(slashActiveIndex);
+                    if (slashMenu.stage === "settings") applyModelDraft();
+                    else activateSlashItem(slashActiveIndex);
                     return;
                   }
                   if (event.key === "Enter" && !event.shiftKey) {

@@ -19,7 +19,8 @@ public final class PersonalApiDtos {
             String defaultModelId,
             List<Model> models) {}
 
-    public record CreateConversation(String displayName, String message, String modelId, List<ImageInput> images) {}
+    public record CreateConversation(
+            String displayName, String message, String modelId, SelectModel modelSelection, List<ImageInput> images) {}
 
     public record SubmitMessage(String message, List<ImageInput> images) {}
 
@@ -35,6 +36,7 @@ public final class PersonalApiDtos {
     public record Model(
             String id,
             String modelGroupId,
+            String modelDisplayName,
             String displayName,
             String providerId,
             String providerDisplayName,
@@ -95,7 +97,7 @@ public final class PersonalApiDtos {
 
     public record ModelPreferences(String responseMode, String effort, String responseLength) {}
 
-    public record ModelSelection(Model model, long revision, boolean available) {}
+    public record ModelSelection(Model model, ModelPreferences preferences, long revision, boolean available) {}
 
     public record SelectModel(
             String modelBindingId,

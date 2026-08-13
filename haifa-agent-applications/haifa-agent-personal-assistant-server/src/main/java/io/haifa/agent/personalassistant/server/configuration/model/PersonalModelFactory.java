@@ -43,7 +43,6 @@ import io.haifa.agent.personalassistant.application.PersonalModelPreferences;
 import io.haifa.agent.personalassistant.application.PersonalModelProductDefaults;
 import io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest;
 import io.haifa.agent.personalassistant.application.PersonalResolvedModelSelection;
-import io.haifa.agent.personalassistant.application.PersonalResponseLength;
 import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
@@ -172,12 +171,16 @@ public final class PersonalModelFactory {
                                         .equals(configured.model().providerModelId())
                                 && profiles.get(candidate.model().id()).selectable())
                         .map(candidate -> candidate.model().id())
-                        .sorted()
+                        .sorted(java.util.Comparator.<String>comparingInt(candidate -> apiStylePriority(
+                                        snapshots.get(candidate).apiStyle()))
+                                .thenComparing(java.util.function.Function.identity()))
                         .toList();
                 if (styleBindings.isEmpty()) styleBindings = List.of(bindingId);
+                String recommendedBindingId = styleBindings.getFirst();
                 return new PersonalModelOption(
                         bindingId,
                         groupId,
+                        configured.model().modelDisplayName(),
                         displayName,
                         providerId,
                         providerDisplayName,
@@ -191,7 +194,7 @@ public final class PersonalModelFactory {
                         PersonalModelProductDefaults.PREFERENCE_SCHEMA_VERSION,
                         profile.version(),
                         profile.digest(),
-                        productDefaults.controls(profile, bindingId, styleBindings),
+                        productDefaults.controls(profile, styleBindings, recommendedBindingId),
                         PersonalModelPreferences.recommended());
             }
 
@@ -263,6 +266,19 @@ public final class PersonalModelFactory {
                                 .isPresent()) {
                     throw new IllegalArgumentException("MODEL_PARAMETER_UNSUPPORTED");
                 }
+                if (option.controls().reasoningEffort().readOnly()
+                        && request.preferences().effort().isPresent()
+                        && !request.preferences()
+                                .effort()
+                                .equals(java.util.Optional.ofNullable(
+                                        option.controls().reasoningEffort().recommendedValue()))) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_READ_ONLY");
+                }
+                if (option.controls().responseLength().readOnly()
+                        && request.preferences().responseLength()
+                                != option.controls().responseLength().recommendedValue()) {
+                    throw new IllegalArgumentException("MODEL_PARAMETER_READ_ONLY");
+                }
                 var effective = productDefaults.resolve(profiles.get(option.id()), request.preferences());
                 return new PersonalResolvedModelSelection(
                         option,
@@ -275,21 +291,36 @@ public final class PersonalModelFactory {
             public List<PersonalResolvedModelSelection> runProfiles() {
                 return available().stream()
                         .filter(option -> "AVAILABLE".equals(option.availability()))
-                        .flatMap(option -> java.util.Arrays.stream(PersonalResponseLength.values())
-                                .map(length -> resolve(new PersonalModelSelectionRequest(
+                        .flatMap(option -> preferenceVariants(option).stream()
+                                .map(preferences -> resolve(new PersonalModelSelectionRequest(
                                         option.id(),
                                         option.preferenceSchemaVersion(),
                                         option.profileVersion(),
                                         option.profileDigest(),
-                                        new PersonalModelPreferences(
-                                                io.haifa.agent.personalassistant.application.PersonalResponseMode
-                                                        .RECOMMENDED,
-                                                java.util.Optional.empty(),
-                                                length)))))
+                                        preferences))))
                         .toList();
             }
         };
         return new Platform(contribution, catalog);
+    }
+
+    private static List<PersonalModelPreferences> preferenceVariants(PersonalModelOption option) {
+        java.util.List<PersonalModelPreferences> result = new java.util.ArrayList<>();
+        for (var mode : option.controls().responseMode().allowedValues()) {
+            for (var length : option.controls().responseLength().allowedValues()) {
+                if (mode != io.haifa.agent.personalassistant.application.PersonalResponseMode.DEEP) {
+                    result.add(new PersonalModelPreferences(mode, java.util.Optional.empty(), length));
+                    continue;
+                }
+                result.add(new PersonalModelPreferences(mode, java.util.Optional.empty(), length));
+                option.controls()
+                        .reasoningEffort()
+                        .allowedValues()
+                        .forEach(effort ->
+                                result.add(new PersonalModelPreferences(mode, java.util.Optional.of(effort), length)));
+            }
+        }
+        return List.copyOf(result);
     }
 
     private static String apiStyleDisplayName(ApiStyleId style) {
@@ -297,6 +328,13 @@ public final class PersonalModelFactory {
         if (ModelApiStyles.OPENAI_RESPONSES.equals(style)) return "Responses";
         if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(style)) return "Anthropic Messages";
         return "Deterministic";
+    }
+
+    private static int apiStylePriority(ApiStyleId style) {
+        if (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(style)) return 0;
+        if (ModelApiStyles.ANTHROPIC_MESSAGES.equals(style)) return 1;
+        if (ModelApiStyles.OPENAI_RESPONSES.equals(style)) return 2;
+        return 3;
     }
 
     private static String conversationProfileId(String bindingId, PersonalModelPreferences preferences) {

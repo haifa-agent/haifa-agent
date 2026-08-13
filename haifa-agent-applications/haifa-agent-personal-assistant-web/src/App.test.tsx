@@ -21,6 +21,7 @@ import App from "./App";
 const model = {
   id: "personal-chat",
   modelGroupId: "deepseek:deepseek-v4",
+  modelDisplayName: "Personal Chat",
   displayName: "Personal Chat",
   providerId: "deepseek",
   providerDisplayName: "DeepSeek",
@@ -45,19 +46,47 @@ const model = {
 const proModel = {
   ...model,
   id: "deepseek-v4-pro",
+  modelGroupId: "deepseek:deepseek-v4-pro",
+  modelDisplayName: "DeepSeek V4 Pro",
   displayName: "DeepSeek V4 Pro",
 };
 const flashModel = {
   ...model,
   id: "deepseek-v4-flash",
+  modelGroupId: "deepseek:deepseek-v4-flash",
+  modelDisplayName: "DeepSeek V4 Flash",
   displayName: "DeepSeek V4 Flash",
 };
 const bailianModel = {
   ...model,
   id: "qwen-plus",
+  modelGroupId: "bailian:qwen-plus",
+  modelDisplayName: "Qwen Plus",
   displayName: "Qwen Plus",
   providerId: "bailian",
   providerDisplayName: "阿里云百炼",
+};
+const configurableChatModel = {
+  ...model,
+  id: "orion-prime-chat",
+  modelGroupId: "orion:prime",
+  modelDisplayName: "Orion Prime",
+  displayName: "Orion Prime · Chat Completions",
+  providerId: "orion",
+  providerDisplayName: "Orion Cloud",
+  controls: {
+    responseMode: { kind: "responseMode" as const, visible: true, readOnly: false, allowedValues: ["RECOMMENDED" as const, "FAST" as const, "DEEP" as const], recommendedValue: "RECOMMENDED" as const, effectiveSummary: "Thinking on · High", helpText: "Choose a response mode." },
+    reasoningEffort: { kind: "reasoningEffort" as const, visible: true, readOnly: false, allowedValues: ["HIGH" as const, "MAX" as const], recommendedValue: "HIGH" as const, effectiveSummary: "High", helpText: "Choose reasoning effort." },
+    responseLength: { kind: "responseLength" as const, visible: true, readOnly: false, allowedValues: ["RECOMMENDED" as const, "SHORT" as const, "LONG" as const], recommendedValue: "RECOMMENDED" as const, effectiveSummary: "Recommended", helpText: "Choose response length." },
+    apiStyle: { kind: "apiStyle" as const, visible: true, readOnly: false, allowedValues: ["orion-prime-chat", "orion-prime-messages"], recommendedValue: "orion-prime-chat", effectiveSummary: "Recommended", helpText: "Choose a verified connection." },
+  },
+};
+const configurableMessagesModel = {
+  ...configurableChatModel,
+  id: "orion-prime-messages",
+  displayName: "Orion Prime · Messages",
+  apiStyle: "anthropic-messages",
+  apiStyleDisplayName: "Anthropic Messages",
 };
 const conversation: Conversation = {
   id: "conversation-1",
@@ -67,7 +96,7 @@ const conversation: Conversation = {
   createdAt: "2026-07-28T01:00:00Z",
   lastActivityAt: "2026-07-28T02:00:00Z",
   revision: 3,
-  model: { model, revision: 0, available: true },
+  model: { model, preferences: model.recommendedPreferences, revision: 0, available: true },
 };
 const turns: Turn[] = [
   {
@@ -271,6 +300,7 @@ function client(): PersonalAssistantClient {
     selectModel: vi.fn(async (_conversation, selectedModel) => ({
       model: [model, proModel, flashModel, bailianModel]
         .find((candidate) => candidate.id === selectedModel.id) ?? model,
+      preferences: selectedModel.recommendedPreferences,
       revision: 1,
       available: true,
     })),
@@ -545,7 +575,7 @@ describe("Personal Assistant application", () => {
 
   it("does not silently discard attachments when Deep Research routing is requested", async () => {
     const imageModel = { ...model, capabilities: [...model.capabilities, "IMAGE_INPUT"] };
-    const imageConversation = { ...conversation, model: { model: imageModel, revision: 0, available: true } };
+    const imageConversation = { ...conversation, model: { ...conversation.model, model: imageModel } };
     const api = {
       ...client(),
       bootstrap: vi.fn(async () => ({
@@ -1442,7 +1472,7 @@ describe("Personal Assistant application", () => {
     const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_INPUT"] };
     const imageConversation = {
       ...conversation,
-      model: { model: imageModel, revision: 0, available: true },
+      model: { ...conversation.model, model: imageModel },
     };
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({ ...bootstrap, defaultModelId: imageModel.id, models: [imageModel] });
@@ -1513,7 +1543,7 @@ describe("Personal Assistant application", () => {
     const imageModel = { ...model, id: "openai-image", capabilities: ["TEXT_CHAT", "IMAGE_INPUT"] };
     const imageConversation = {
       ...conversation,
-      model: { model: imageModel, revision: 0, available: true },
+      model: { ...conversation.model, model: imageModel },
     };
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({ ...bootstrap, defaultModelId: imageModel.id, models: [imageModel] });
@@ -1638,13 +1668,51 @@ describe("Personal Assistant application", () => {
     fireEvent.click(screen.getByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
     const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
     fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
+    const settingsDialog = await screen.findByRole("dialog", { name: "设置 DeepSeek V4 Pro" });
+    fireEvent.click(within(settingsDialog).getByRole("button", { name: "应用设置" }));
 
     await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
       conversation,
       proModel,
       { idempotencyKey: expect.any(String) },
+      proModel.recommendedPreferences,
     ));
     expect((composer as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("renders model settings from backend controls without provider-specific UI branches", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: configurableChatModel.id,
+      models: [configurableChatModel, configurableMessagesModel],
+    });
+
+    render(<App client={api} />);
+
+    const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
+    fireEvent.change(composer, { target: { value: "/" } });
+    fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /Orion Cloud.*1 个可用模型/ }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "选择 Orion Cloud 模型" }))
+      .getByRole("option", { name: /Orion Prime/ }));
+
+    const settings = await screen.findByRole("dialog", { name: "设置 Orion Prime" });
+    fireEvent.click(within(settings).getByText("高级连接方式"));
+    fireEvent.change(within(settings).getByRole("combobox", { name: "API 风格" }), {
+      target: { value: configurableMessagesModel.id },
+    });
+    fireEvent.click(within(settings).getByRole("button", { name: "深度" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "Max" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "长" }));
+    fireEvent.click(within(settings).getByRole("button", { name: "应用设置" }));
+
+    await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
+      conversation,
+      configurableMessagesModel,
+      { idempotencyKey: expect.any(String) },
+      { responseMode: "DEEP", effort: "MAX", responseLength: "LONG" },
+    ));
   });
 
   it("opens Deep Research and model selection from the visible plus menu", async () => {
@@ -1666,11 +1734,14 @@ describe("Personal Assistant application", () => {
     fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
     const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
     fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "设置 DeepSeek V4 Pro" }))
+      .getByRole("button", { name: "应用设置" }));
 
     await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
       conversation,
       proModel,
       { idempotencyKey: expect.any(String) },
+      proModel.recommendedPreferences,
     ));
     expect((composer as HTMLTextAreaElement).value).toBe("保留这段草稿");
   });
@@ -1693,7 +1764,9 @@ describe("Personal Assistant application", () => {
     fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
     const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
     fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "选择 DeepSeek 模型" })).toBeNull());
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "设置 DeepSeek V4 Pro" }))
+      .getByRole("button", { name: "应用设置" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "设置 DeepSeek V4 Pro" })).toBeNull());
 
     fireEvent.change(composer, { target: { value: "使用所选模型开始对话" } });
     fireEvent.keyDown(composer, { key: "Enter" });
@@ -1703,6 +1776,8 @@ describe("Personal Assistant application", () => {
       "使用所选模型开始对话",
       { idempotencyKey: expect.any(String) },
       proModel.id,
+      [],
+      { model: proModel, preferences: proModel.recommendedPreferences },
     ));
   });
 
@@ -1733,6 +1808,8 @@ describe("Personal Assistant application", () => {
       .getByRole("option", { name: /DeepSeek V4 Flash/ })
       .getAttribute("aria-selected")).toBe("true");
     fireEvent.keyDown(composer, { key: "Enter" });
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "设置 DeepSeek V4 Flash" }))
+      .getByRole("button", { name: "应用设置" }));
 
     fireEvent.change(composer, { target: { value: "使用默认模型开始对话" } });
     fireEvent.keyDown(composer, { key: "Enter" });
@@ -1742,6 +1819,8 @@ describe("Personal Assistant application", () => {
       "使用默认模型开始对话",
       { idempotencyKey: expect.any(String) },
       flashModel.id,
+      [],
+      { model: flashModel, preferences: flashModel.recommendedPreferences },
     ));
   });
 

@@ -14,6 +14,7 @@ import type {
   ReplaceMissionPlan,
   ModelSelection,
   Model,
+  ModelPreferences,
   RecommendedQuestions,
   Run,
   StreamEvent,
@@ -54,6 +55,16 @@ export interface StreamHandlers {
   onOpen?(): void;
 }
 
+function selectionRequest(model: Model, preferences: ModelPreferences) {
+  return {
+    modelBindingId: model.id,
+    preferenceSchemaVersion: model.preferenceSchemaVersion,
+    profileVersion: model.profileVersion,
+    profileDigest: model.profileDigest,
+    preferences,
+  };
+}
+
 export interface PersonalAssistantClient {
   bootstrap(signal?: AbortSignal): Promise<Bootstrap>;
   conversations(query?: string, signal?: AbortSignal): Promise<Conversation[]>;
@@ -63,11 +74,13 @@ export interface PersonalAssistantClient {
     options?: CommandOptions,
     modelId?: string,
     images?: ImageInput[],
+    modelSelection?: { model: Model; preferences: ModelPreferences },
   ): Promise<Conversation>;
   selectModel?(
     conversation: Conversation,
     model: Model,
     options?: CommandOptions,
+    preferences?: ModelPreferences,
   ): Promise<ModelSelection>;
   conversation(id: string, signal?: AbortSignal): Promise<Conversation>;
   updateConversation(
@@ -225,13 +238,20 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     options: CommandOptions = {},
     modelId?: string,
     images: ImageInput[] = [],
+    modelSelection?: { model: Model; preferences: ModelPreferences },
   ) {
     return this.request<Conversation>(
       "/conversations",
       {
         method: "POST",
         headers: commandHeaders(undefined, options.idempotencyKey),
-        body: JSON.stringify({ displayName, message, modelId, ...(images.length ? { images } : {}) }),
+        body: JSON.stringify({
+          displayName,
+          message,
+          ...(!modelSelection && modelId ? { modelId } : {}),
+          ...(modelSelection ? { modelSelection: selectionRequest(modelSelection.model, modelSelection.preferences) } : {}),
+          ...(images.length ? { images } : {}),
+        }),
       },
       options.signal,
     );
@@ -241,19 +261,14 @@ export class HttpPersonalAssistantClient implements PersonalAssistantClient {
     conversation: Conversation,
     model: Model,
     options: CommandOptions = {},
+    preferences: ModelPreferences = model.recommendedPreferences,
   ) {
     return this.request<ModelSelection>(
       `/conversations/${encoded(conversation.id)}/model`,
       {
         method: "PATCH",
         headers: commandHeaders(conversation.model.revision, options.idempotencyKey),
-        body: JSON.stringify({
-          modelBindingId: model.id,
-          preferenceSchemaVersion: model.preferenceSchemaVersion,
-          profileVersion: model.profileVersion,
-          profileDigest: model.profileDigest,
-          preferences: model.recommendedPreferences,
-        }),
+        body: JSON.stringify(selectionRequest(model, preferences)),
       },
       options.signal,
     );

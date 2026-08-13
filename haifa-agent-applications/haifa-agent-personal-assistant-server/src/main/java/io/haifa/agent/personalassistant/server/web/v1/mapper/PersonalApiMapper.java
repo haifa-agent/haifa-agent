@@ -126,6 +126,7 @@ public final class PersonalApiMapper {
         return new PersonalApiDtos.Model(
                 value.id(),
                 value.modelGroupId(),
+                value.modelDisplayName(),
                 value.displayName(),
                 value.providerId(),
                 value.providerDisplayName(),
@@ -197,7 +198,8 @@ public final class PersonalApiMapper {
     }
 
     public PersonalApiDtos.ModelSelection modelSelection(PersonalAssistantApplication.ModelSelectionView value) {
-        return new PersonalApiDtos.ModelSelection(model(value.model()), value.revision(), value.available());
+        return new PersonalApiDtos.ModelSelection(
+                model(value.model()), preferences(value.preferences()), value.revision(), value.available());
     }
 
     public PersonalApiDtos.Turn turn(PersonalAssistantApplication.TurnView value) {

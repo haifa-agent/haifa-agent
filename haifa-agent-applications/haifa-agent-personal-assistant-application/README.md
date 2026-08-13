@@ -7,6 +7,11 @@ revision, and idempotency evidence. The application resolves those preferences t
 resolver before each new run and freezes the resulting effective parameters into that run's model snapshot. Switching
 is rejected while a run is active; existing and resumed runs continue to use their original snapshot.
 
+For exact verified DeepSeek Chat Completions and Anthropic Messages bindings, PA maps `RECOMMENDED` to
+thinking/high, `FAST` to thinking disabled, and `DEEP` to thinking with high or max effort. Response length remains a
+closed product preference and is clamped by the binding profile. Responses bindings can be selectable while their
+reasoning control remains read-only. Provider fields and raw token values never enter PA preferences.
+
 Activity projection now correlates lifecycle events by stable Model/Tool/Execution operation ID,
 retains the durable event ID and parent Tool relationship, and folds requested/started/completed
 timestamps into one activity. Run views also include the caller-visible authoritative Plan/Todo

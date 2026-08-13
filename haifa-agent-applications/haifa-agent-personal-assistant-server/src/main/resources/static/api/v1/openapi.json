@@ -385,6 +385,7 @@
           "displayName": {"type": "string"},
           "message": {"type": "string"},
           "modelId": {"type": "string"},
+          "modelSelection": {"$ref": "#/components/schemas/SelectModel"},
           "images": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/ImageInput"}}
         }
       },
@@ -434,10 +435,11 @@
       },
       "Model": {
         "type": "object",
-        "required": ["id", "modelGroupId", "displayName", "providerId", "providerDisplayName", "apiStyle", "apiStyleDisplayName", "availability", "unavailableReason", "capabilities", "contextWindow", "maxOutputTokens", "preferenceSchemaVersion", "profileVersion", "profileDigest", "controls", "recommendedPreferences"],
+        "required": ["id", "modelGroupId", "modelDisplayName", "displayName", "providerId", "providerDisplayName", "apiStyle", "apiStyleDisplayName", "availability", "unavailableReason", "capabilities", "contextWindow", "maxOutputTokens", "preferenceSchemaVersion", "profileVersion", "profileDigest", "controls", "recommendedPreferences"],
         "properties": {
           "id": {"type": "string"},
           "modelGroupId": {"type": "string"},
+          "modelDisplayName": {"type": "string"},
           "displayName": {"type": "string"},
           "providerId": {"type": "string"},
           "providerDisplayName": {"type": "string"},
@@ -520,9 +522,10 @@
       },
       "ModelSelection": {
         "type": "object",
-        "required": ["model", "revision", "available"],
+        "required": ["model", "preferences", "revision", "available"],
         "properties": {
           "model": {"$ref": "#/components/schemas/Model"},
+          "preferences": {"$ref": "#/components/schemas/ModelPreferences"},
           "revision": {"type": "integer", "format": "int64"},
           "available": {"type": "boolean"}
         }

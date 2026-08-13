@@ -6,6 +6,7 @@ import java.util.Set;
 public record PersonalModelOption(
         String id,
         String modelGroupId,
+        String modelDisplayName,
         String displayName,
         String providerId,
         String providerDisplayName,
@@ -24,6 +25,7 @@ public record PersonalModelOption(
     public PersonalModelOption {
         id = text(id, "id");
         modelGroupId = text(modelGroupId, "modelGroupId");
+        modelDisplayName = text(modelDisplayName, "modelDisplayName");
         displayName = text(displayName, "displayName");
         providerId = text(providerId, "providerId");
         providerDisplayName = text(providerDisplayName, "providerDisplayName");

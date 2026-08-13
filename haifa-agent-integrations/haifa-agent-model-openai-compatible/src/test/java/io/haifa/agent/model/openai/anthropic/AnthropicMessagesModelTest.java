@@ -12,6 +12,7 @@ import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.EffectiveModelParameters;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
@@ -431,6 +432,40 @@ class AnthropicMessagesModelTest {
         assertThatThrownBy(() -> model().invoke(simpleRequest(deepSeekSnapshot("claude-sonnet-test", Map.of()))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not verified");
+    }
+
+    @Test
+    void ignoresInternalEffectiveProfileMetadataWhileMappingDeepSeekThinking() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"msg-effective","type":"message","role":"assistant","model":"deepseek-v4-pro",
+                 "content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",
+                 "usage":{"input_tokens":2,"output_tokens":1}}
+                """));
+        var snapshot = deepSeekSnapshot(
+                "deepseek-v4-pro",
+                Map.of(
+                        "thinking",
+                        "enabled",
+                        "reasoning_effort",
+                        "high",
+                        EffectiveModelParameters.PROFILE_VERSION_OPTION,
+                        "1.0",
+                        EffectiveModelParameters.PROFILE_DIGEST_OPTION,
+                        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        EffectiveModelParameters.MAX_OUTPUT_TOKENS_OPTION,
+                        4096));
+
+        assertThat(model().invoke(simpleRequest(snapshot)).content()).isEqualTo("ok");
+
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("thinking").path("type").asText()).isEqualTo("enabled");
+        assertThat(sent.path("output_config").path("effort").asText()).isEqualTo("high");
+        assertThat(sent.has(EffectiveModelParameters.PROFILE_VERSION_OPTION)).isFalse();
+        assertThat(sent.has(EffectiveModelParameters.PROFILE_DIGEST_OPTION)).isFalse();
+        assertThat(sent.has(EffectiveModelParameters.MAX_OUTPUT_TOKENS_OPTION)).isFalse();
     }
 
     @Test

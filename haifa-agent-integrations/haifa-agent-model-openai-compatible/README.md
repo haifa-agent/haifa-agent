@@ -5,7 +5,9 @@
 `OpenAiCompatibleModelProfileFactory` derives a versioned binding profile from an already resolved snapshot. It
 recognizes the audited DeepSeek dialect and provider-neutral `standard` bindings only. Vendor-specific bindings that
 have not completed their contract phase are marked unverified instead of inheriting capabilities merely because they
-share an OpenAI-compatible transport. Provider request mapping remains in the dialect/adapter layer.
+share an OpenAI-compatible transport. DeepSeek V4 Flash and V4 Pro are verified independently for Chat Completions,
+Responses, and Anthropic Messages; product exposure can still keep a verified control read-only. Provider request
+mapping remains in the dialect/adapter layer.
 
 ## API Style 与 dialect
 

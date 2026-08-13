@@ -256,8 +256,8 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
-    void deepSeekRejectsUnverifiedModelAndNonAutomaticToolChoiceBeforeNetwork() {
-        assertThatThrownBy(() -> model().invoke(simpleRequest(deepSeekSnapshot("deepseek-v4-pro"))))
+    void deepSeekRejectsUnknownModelAndNonAutomaticToolChoiceBeforeNetwork() {
+        assertThatThrownBy(() -> model().invoke(simpleRequest(deepSeekSnapshot("deepseek-future"))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not verified");
         var tool = new ModelToolSpecification("lookup", "1", "Lookup", "schema", "1", Map.of("type", "object"), false);

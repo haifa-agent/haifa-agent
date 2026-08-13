@@ -10,6 +10,7 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.HashSet;
@@ -76,6 +77,49 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void conversationCreationPersistsTheExactModelSelectionAtomically() throws Exception {
+        JsonNode model = get("/api/v1/models").get(0);
+        var selection = mapper.createObjectNode();
+        selection.put("modelBindingId", model.path("id").asText());
+        selection.put(
+                "preferenceSchemaVersion", model.path("preferenceSchemaVersion").asText());
+        selection.put("profileVersion", model.path("profileVersion").asText());
+        selection.put("profileDigest", model.path("profileDigest").asText());
+        var preferences = selection.putObject("preferences");
+        preferences.put("responseMode", "RECOMMENDED");
+        preferences.putNull("effort");
+        preferences.put("responseLength", "LONG");
+
+        var request = mapper.createObjectNode();
+        request.put("displayName", "Atomic model selection");
+        request.put("message", "Reply with one short sentence.");
+        request.set("modelSelection", selection);
+
+        JsonNode created = post("/api/v1/conversations", mapper.writeValueAsString(request));
+
+        assertThat(created.path("model").path("model").path("id").asText())
+                .isEqualTo(model.path("id").asText());
+        assertThat(created.path("model")
+                        .path("preferences")
+                        .path("responseMode")
+                        .asText())
+                .isEqualTo("RECOMMENDED");
+        assertThat(created.path("model")
+                        .path("preferences")
+                        .path("responseLength")
+                        .asText())
+                .isEqualTo("LONG");
+        awaitTerminal(created.path("activeRunId").asText());
+        JsonNode conversation = awaitConversationIdle(created.path("id").asText());
+        assertThat(conversation
+                        .path("model")
+                        .path("preferences")
+                        .path("responseLength")
+                        .asText())
+                .isEqualTo("LONG");
+    }
+
+    @Test
     void modelSelectionAtomicallyValidatesBindingProfileAndPreferences() throws Exception {
         JsonNode model = get("/api/v1/models").get(0);
         JsonNode created = post(
@@ -138,6 +182,36 @@ class PersonalAssistantWebFluxTest {
                 .isEqualTo(true);
     }
 
+    @Test
+    void conversationWithoutAnExactModelPreferenceFailsClosed() throws Exception {
+        JsonNode created = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Missing model preference","message":"Reply with one short sentence."}
+                """);
+        awaitTerminal(created.path("activeRunId").asText());
+        String conversationId = created.path("id").asText();
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:"
+                        + DATA.resolve("personal-assistant.sqlite").toAbsolutePath());
+                var statement = connection.prepareStatement(
+                        "DELETE FROM personal_model_preference WHERE conversation_id = ?")) {
+            statement.setString(1, conversationId);
+            assertThat(statement.executeUpdate()).isEqualTo(1);
+        }
+
+        web.get()
+                .uri("/api/v1/conversations/{id}", conversationId)
+                .exchange()
+                .expectStatus()
+                .isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MODEL_SELECTION_REQUIRED");
+
+        removeConversationProjection(conversationId);
+    }
+
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("haifa.personal.data-directory", DATA::toString);
@@ -145,6 +219,26 @@ class PersonalAssistantWebFluxTest {
                 .encodeToString(new byte[32]));
         registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
         registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
+    }
+
+    private static void removeConversationProjection(String conversationId) throws Exception {
+        try (var connection = DriverManager.getConnection(
+                "jdbc:sqlite:" + DATA.resolve("personal-assistant.sqlite").toAbsolutePath())) {
+            connection.setAutoCommit(false);
+            try (var commands =
+                            connection.prepareStatement("DELETE FROM sdk_conversation_command WHERE session_id = ?");
+                    var conversation =
+                            connection.prepareStatement("DELETE FROM sdk_conversation WHERE session_id = ?")) {
+                commands.setString(1, conversationId);
+                commands.executeUpdate();
+                conversation.setString(1, conversationId);
+                assertThat(conversation.executeUpdate()).isEqualTo(1);
+                connection.commit();
+            } catch (Exception exception) {
+                connection.rollback();
+                throw exception;
+            }
+        }
     }
 
     @Test

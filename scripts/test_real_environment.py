@@ -79,6 +79,18 @@ class RealEnvironmentTest(unittest.TestCase):
         )
         self.assertEqual(
             "openai-responses",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_STYLE"],
+        )
+        self.assertEqual(
+            "anthropic-messages",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_STYLE"],
+        )
+        self.assertEqual(
+            "DeepSeek V4 Pro",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_MODELDISPLAYNAME"],
+        )
+        self.assertEqual(
+            "openai-responses",
             environment["HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_STYLE"],
         )
         self.assertEqual("gpt-test", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"])
@@ -210,6 +222,26 @@ class RealEnvironmentTest(unittest.TestCase):
 
         self.assertIsNone(default_arguments.default_model_id)
         self.assertEqual("deepseek-chat-flash", chat_arguments.default_model_id)
+
+    def test_optional_bailian_configuration_does_not_replace_the_verified_default(self) -> None:
+        bailian = ("bailian-secret", "workspace-123", "cn-beijing")
+
+        self.assertEqual(
+            real_environment.DEFAULT_MODEL_ID,
+            real_environment.resolve_default_model_id(None, bailian),
+        )
+        self.assertEqual(
+            real_environment.BAILIAN_DEFAULT_MODEL_ID,
+            real_environment.resolve_default_model_id(
+                real_environment.BAILIAN_DEFAULT_MODEL_ID,
+                bailian,
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "Qwen default model requires"):
+            real_environment.resolve_default_model_id(
+                real_environment.BAILIAN_DEFAULT_MODEL_ID,
+                None,
+            )
 
     def test_rebuild_port_conflict_message_explains_stop_then_rebuild(self) -> None:
         arguments = real_environment.parser().parse_args(["--rebuild"])
