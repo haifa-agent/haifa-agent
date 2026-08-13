@@ -1311,21 +1311,7 @@ function ActivityPanel({
         </div>
         <section className="panel-section">
           <h3>安全活动</h3>
-          <div className="activity-list">
-            {activities.map((activity) => (
-              <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`} key={activity.activityId}>
-                <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
-                  <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
-                </div>
-                <strong>{activity.displayName}</strong>
-                {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
-                {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
-                {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
-                <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
-              </article>
-            ))}
-            {!activities.length && <p className="muted">当前运行尚无 Model、Tool、Skill 或 MCP 活动。</p>}
-          </div>
+          <ActivityFeed activities={activities} emptyText="当前运行尚无 Model、Tool、Skill 或 MCP 活动。" />
         </section>
         <section className="panel-section"><h3>Token 使用</h3><UsagePanel run={run} /></section>
         {run?.error && (
@@ -1342,6 +1328,24 @@ function ActivityPanel({
       </aside>
     </>
   );
+}
+
+function ActivityFeed({ activities, emptyText }: { activities: Activity[]; emptyText: string }) {
+  return <div className="activity-list">
+    {activities.map((activity) => (
+      <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`} key={activity.activityId}>
+        <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
+          <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
+        </div>
+        <strong>{activity.displayName}</strong>
+        {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
+        {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
+        {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
+        <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
+      </article>
+    ))}
+    {!activities.length && <p className="muted">{emptyText}</p>}
+  </div>;
 }
 
 function MemoryDialog({
@@ -2191,6 +2195,9 @@ function MissionDialog({
   const [error, setError] = useState<string | null>(null);
   const [missionInteraction, setMissionInteraction] = useState<Interaction | null>(null);
   const [missionInteractionText, setMissionInteractionText] = useState("");
+  const [missionTaskRun, setMissionTaskRun] = useState<Run | null>(null);
+  const [missionTaskActivities, setMissionTaskActivities] = useState<Activity[]>([]);
+  const [missionTaskActivityStatus, setMissionTaskActivityStatus] = useState<"idle" | "loading" | "current" | "error">("idle");
   const [syncStatus, setSyncStatus] = useState<"loading" | "current" | "syncing" | "stale" | "recovering" | "offline">(
     navigator.onLine ? "loading" : "offline",
   );
@@ -2210,6 +2217,13 @@ function MissionDialog({
   const effectiveResearchTimeRange = researchTimeRange.trim() || generatedResearch.timeRange;
   const effectiveResearchRegion = researchRegion.trim() || generatedResearch.region;
   const effectiveResearchAudience = researchAudience.trim() || generatedResearch.audience;
+  const latestMissionActivityAttempt = selected?.execution.latestAttempt ?? null;
+  const missionActivityAttempt = latestMissionActivityAttempt
+    && (!selected?.execution.currentTaskId || latestMissionActivityAttempt.taskId === selected.execution.currentTaskId)
+    ? latestMissionActivityAttempt
+    : null;
+  const missionActivityRunId = missionActivityAttempt?.runId ?? null;
+  const missionActivityPolling = Boolean(selected && !missionTerminalStates.has(selected.state));
 
   const merge = useCallback((mission: MissionSnapshot) => {
     setSelected((current) => {
@@ -2368,6 +2382,47 @@ function MissionDialog({
       window.clearTimeout(timer);
     };
   }, [client, merge, reconnectEpoch, selected]);
+
+  useEffect(() => {
+    if (!missionActivityRunId) {
+      setMissionTaskRun(null);
+      setMissionTaskActivities([]);
+      setMissionTaskActivityStatus("idle");
+      return;
+    }
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const refresh = async () => {
+      setMissionTaskActivityStatus((current) => current === "idle" ? "loading" : current);
+      try {
+        const [run, activities] = await Promise.all([
+          client.run(missionActivityRunId, controller.signal),
+          client.activities(missionActivityRunId, controller.signal),
+        ]);
+        if (controller.signal.aborted) return;
+        setMissionTaskRun(run);
+        setMissionTaskActivities(activities);
+        setMissionTaskActivityStatus("current");
+        if (!isTerminal(run)) {
+          timer = window.setTimeout(refresh, document.hidden ? 10_000 : 2_000);
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        setMissionTaskActivityStatus("error");
+        if (missionActivityPolling) {
+          timer = window.setTimeout(refresh, document.hidden ? 15_000 : 5_000);
+        }
+      }
+    };
+    setMissionTaskRun(null);
+    setMissionTaskActivities([]);
+    setMissionTaskActivityStatus("loading");
+    void refresh();
+    return () => {
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [client, missionActivityPolling, missionActivityRunId]);
 
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
@@ -2757,6 +2812,7 @@ function MissionDialog({
       <div className="mission-progress-copy"><span>任务进度</span><b>{selected.execution.completedTasks}/{selected.tasks.length}</b></div>
       <span className="mission-progress-track" aria-hidden="true"><span style={{ width: `${selected.tasks.length ? Math.round((selected.execution.completedTasks / selected.tasks.length) * 100) : 0}%` }} /></span>
       {selectedActivity && <span className="mission-execution-activity" aria-live="polite"><LoaderCircle className="mission-state-spinner" size={14} aria-hidden="true" />{selectedActivity}</span>}
+      {missionActivityRunId && missionActivityAttempt?.taskId && <button type="button" className="mission-activity-link" onClick={() => openTaskDetail(missionActivityAttempt.taskId)}><Bot size={13} aria-hidden="true" />查看执行活动{missionTaskActivities.length > 0 ? ` · ${missionTaskActivities.length}` : ""}<ChevronRight size={13} aria-hidden="true" /></button>}
       <details><summary>技术详情</summary><span>调度状态：{selected.execution.dispatcherStatus}</span>{selected.execution.currentTaskId && <span>内部任务标识已隐藏</span>}</details>
     </section>
     {!editingPlan && <section className="mission-plan-section"><div className="mission-plan-heading"><div><span className="eyebrow">当前计划</span><h4>执行计划 · 第 {selected.plan?.revision ?? "-"} 版</h4></div><span>{selected.tasks.length} 个任务</span></div>
@@ -2889,7 +2945,7 @@ function MissionDialog({
                     <button type="button" className="button" disabled={busy} onClick={beginEdit}><Pencil size={14} />适度调整计划</button>
                     <button type="button" className="button primary-button" disabled={busy} onClick={() => void command(() => client.confirmMission!(selected, { idempotencyKey: crypto.randomUUID() }))}><CheckCircle2 size={15} />确认计划</button>
                   </>}
-                  {!missionTerminalStates.has(selected.state) && <button type="button" className="button danger" disabled={busy} onClick={() => void command(() => client.cancelMission!(selected, { idempotencyKey: crypto.randomUUID() }))}>取消 Mission</button>}
+                  {!missionTerminalStates.has(selected.state) && <button type="button" className="mission-cancel-button" disabled={busy} onClick={() => void command(() => client.cancelMission!(selected, { idempotencyKey: crypto.randomUUID() }))}><Square size={10} fill="currentColor" aria-hidden="true" />取消 Mission</button>}
                 </footer>
                 {(selected.state === "RUNNING" || selected.state === "SYNTHESIZING") && <p className="mission-phase-note">Mission 正在后台{selected.state === "SYNTHESIZING" ? "整合最终结果" : "串行执行"}；关闭页面或重启服务后可从持久化状态继续恢复。</p>}
               </article>
@@ -2906,6 +2962,13 @@ function MissionDialog({
                 <dl className="mission-task-metadata">
                   <div><dt>当前状态</dt><dd>{editingPlan ? "待保存" : missionTaskStateLabel(displayedTask.state)}</dd></div>
                 </dl>
+                {!editingPlan && missionActivityRunId && missionActivityAttempt?.taskId === displayedTask.taskId && <section className="mission-task-activity" aria-label="任务执行活动">
+                  <div className="mission-task-section-heading"><h4>执行活动</h4><span aria-live="polite">{missionTaskActivityStatus === "loading" ? "正在加载" : missionTaskActivityStatus === "error" ? "暂时无法同步" : `${missionTaskActivities.length} 项`}</span></div>
+                  {missionTaskActivityStatus === "loading"
+                    ? <p className="mission-task-activity-loading"><LoaderCircle className="mission-state-spinner" size={14} aria-hidden="true" />正在读取 Model、Tool、Skill 与 MCP 调用…</p>
+                    : <ActivityFeed activities={missionTaskActivities} emptyText={missionTaskActivityStatus === "error" ? missionActivityPolling ? "执行活动暂时无法同步，页面会自动重试。" : "执行活动暂时无法同步，请刷新后重试。" : "当前任务尚未产生可展示的执行活动。"} />}
+                  {missionTaskRun && <details className="mission-task-usage"><summary>Token 使用</summary><UsagePanel run={missionTaskRun} /></details>}
+                </section>}
                 <section><div className="mission-task-section-heading"><h4>验收标准</h4><span>{displayedTask.acceptanceCriteria.length} 项</span></div>{displayedTask.acceptanceCriteria.length > 0 ? <ol className="mission-task-criteria">{displayedTask.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ol> : <p className="mission-task-empty">未定义任务级验收标准。</p>}</section>
                 <section><div className="mission-task-section-heading"><h4>依赖任务</h4><span>{displayedTask.dependsOn.length} 项</span></div>{displayedTask.dependsOn.length > 0 ? <div className="mission-task-dependencies">{displayedTask.dependsOn.map((dependencyId) => {
                   const dependency = displayedPlanTasks.find((task) => task.taskId === dependencyId);
@@ -2944,6 +3007,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [newModelId, setNewModelId] = useState("");
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [slashFromPlus, setSlashFromPlus] = useState(false);
   const [composerMode, setComposerMode] = useState<ComposerMode>("CHAT");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [imageUrl, setImageUrl] = useState("");
@@ -3543,6 +3607,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     const slashInput = value.startsWith("/")
       && !value.includes("\n")
       && !/^\/deep-research\s+\S/i.test(value);
+    if (slashInput) setSlashFromPlus(false);
     if (slashInput) closeImageTools();
     if (!slashInput) {
       setSlashMenu(null);
@@ -3583,8 +3648,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     const model = selectedSlashProvider?.models[index];
     if (!model) return;
     selectModel(model.id);
-    dispatch({ type: "setComposer", value: "" });
+    if (!slashFromPlus) dispatch({ type: "setComposer", value: "" });
     setSlashMenu(null);
+    setSlashFromPlus(false);
     setSlashActiveIndex(0);
   };
 
@@ -3919,10 +3985,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             }}
             onDrop={dropImages}
           >
-            <div className="composer-mode-switch" role="group" aria-label="对话模式">
-              <button type="button" className={composerMode === "CHAT" ? "active" : ""} aria-pressed={composerMode === "CHAT"} onClick={() => setComposerMode("CHAT")}><MessageSquarePlus size={14} />普通对话</button>
-              <button type="button" className={composerMode === "DEEP_RESEARCH" ? "active" : ""} aria-pressed={composerMode === "DEEP_RESEARCH"} onClick={() => setComposerMode("DEEP_RESEARCH")}><Sparkles size={14} />Deep Research</button>
-            </div>
+            {composerMode === "DEEP_RESEARCH" && <div className="composer-mode-chip"><Sparkles size={13} aria-hidden="true" /><span>Deep Research</span><button type="button" aria-label="退出 Deep Research 模式" title="退出 Deep Research 模式" onClick={() => setComposerMode("CHAT")}><X size={12} /></button></div>}
             {slashMenu && !composerDisabled && (
               <section
                 className="slash-command-menu"
@@ -4049,16 +4112,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 <span className="image-attachment-count">{pendingImages.length}/4</span>
               </section>
             )}
-            {imageCapable && (
-              <div className="image-add-control" ref={imageToolsRef}>
+            <div className="image-add-control" ref={imageToolsRef}>
                 <button
                   type="button"
                   className="image-add-trigger"
-                  aria-label="添加图片"
-                  aria-controls="image-add-menu"
+                  aria-label="更多功能"
+                  aria-controls="composer-add-menu"
                   aria-expanded={imageToolsOpen}
-                  title="添加图片"
-                  disabled={composerDisabled || pendingImages.length >= 4}
+                  title="更多功能"
+                  disabled={composerDisabled}
                   onClick={() => {
                     setSlashMenu(null);
                     if (imageToolsOpen) closeImageTools();
@@ -4068,28 +4130,49 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                   <Plus size={20} />
                 </button>
                 {imageToolsOpen && (
-                  <section className="image-add-menu" id="image-add-menu" role="dialog" aria-label="添加图片">
+                  <section className="image-add-menu" id="composer-add-menu" role="dialog" aria-label="更多功能">
                     <header>
-                      <strong>添加图片</strong>
-                      <button type="button" aria-label="关闭图片菜单" onClick={closeImageTools}><X size={15} /></button>
+                      <strong>更多功能</strong>
+                      <button type="button" aria-label="关闭更多功能" onClick={closeImageTools}><X size={15} /></button>
                     </header>
-                    <button
+                    <button type="button" onClick={() => {
+                      setComposerMode("DEEP_RESEARCH");
+                      closeImageTools();
+                      window.requestAnimationFrame(() => textareaRef.current?.focus());
+                    }}>
+                      <Sparkles size={17} />
+                      <span><strong>Deep Research</strong><small>输入研究目标后打开 Mission 确认页</small></span>
+                    </button>
+                    <button type="button" onClick={() => {
+                      setSlashFromPlus(true);
+                      setSlashMenu({ stage: "providers" });
+                      const currentProviderIndex = modelProviders.findIndex((provider) =>
+                        provider.models.some((model) => model.id === selectedModelId)
+                      );
+                      setSlashActiveIndex(Math.max(0, currentProviderIndex));
+                      closeImageTools();
+                      window.requestAnimationFrame(() => textareaRef.current?.focus());
+                    }}>
+                      <Bot size={17} />
+                      <span><strong>选择模型</strong><small>选择当前会话后续消息使用的模型</small></span>
+                    </button>
+                    {imageCapable && <button
                       type="button"
                       disabled={composerDisabled || uploadingImage || pendingImages.length >= 4}
                       onClick={() => fileInputRef.current?.click()}
                     >
                       <Paperclip size={17} />
                       <span><strong>{uploadingImage ? "正在上传…" : "上传图片"}</strong><small>选择或拖放，最多 4 张</small></span>
-                    </button>
-                    <button
+                    </button>}
+                    {imageCapable && <button
                       type="button"
                       aria-expanded={imageUrlInputOpen}
                       onClick={() => setImageUrlInputOpen((open) => !open)}
                     >
                       <Link size={17} />
                       <span><strong>添加图片 URL</strong><small>仅支持 HTTPS 图片地址</small></span>
-                    </button>
-                    {imageUrlInputOpen && (
+                    </button>}
+                    {imageCapable && imageUrlInputOpen && (
                       <div className="image-url-popover">
                         <header>
                           <label htmlFor="image-url-input">图片 URL</label>
@@ -4126,8 +4209,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     )}
                   </section>
                 )}
-              </div>
-            )}
+            </div>
             {draggingImages && (
               <div className="image-drop-hint" aria-live="polite">
                 <ImageIcon size={19} /> 松开即可添加图片
@@ -4169,11 +4251,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={runActive ? "当前任务运行中" : composerMode === "DEEP_RESEARCH" ? "描述调研目标，Enter 打开 Mission 确认页" : "输入消息或 / 命令，Enter 发送"}
-                rows={2}
+                placeholder={runActive ? "当前任务运行中" : composerMode === "DEEP_RESEARCH" ? "描述调研目标，Enter 打开 Mission 确认页" : "输入消息，Enter 发送"}
+                rows={4}
               />
             </label>
-            <span className="image-input-hint">{imageCapable ? "支持上传、URL 和拖放图片" : ""}</span>
+            <span className="image-input-hint">{composerMode === "DEEP_RESEARCH" ? "将打开 Mission 确认页" : imageCapable ? "支持图片与 Deep Research" : "点击 + 使用 Deep Research"}</span>
             {failedUserTurn && (
               <button
                 type="button"

@@ -372,7 +372,15 @@ describe("Personal Assistant application", () => {
         completedTasks: 1,
         blockedTasks: 0,
         currentTaskId: "current-status-operation",
-        latestAttempt: null,
+        latestAttempt: {
+          taskId: "current-status-operation",
+          attemptNo: 1,
+          state: "BOUND",
+          sessionId: "session-mission-task",
+          runId: run.id,
+          failureCode: null,
+          updatedAt: "2026-08-13T01:52:30Z",
+        },
       },
     };
     const api = {
@@ -396,6 +404,12 @@ describe("Personal Assistant application", () => {
     });
     expect(liveStatus.querySelector(".mission-state-spinner")).toBeTruthy();
     expect(within(dialog).getByText("正在执行：当前能力与生态")).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "取消 Mission" }).className).toContain("mission-cancel-button");
+    fireEvent.click(await within(dialog).findByRole("button", { name: /查看执行活动/ }));
+    const taskDetail = within(dialog).getByRole("complementary", { name: "Mission 详情面板" });
+    expect(await within(taskDetail).findByText("deepseek-chat")).toBeTruthy();
+    expect(within(taskDetail).getByText("checklist.verify")).toBeTruthy();
+    expect(within(taskDetail).getByText("Input 39,934 · Output 1,409")).toBeTruthy();
   });
 
   it("routes the deep-research slash command to a prefilled Mission draft without starting a normal run", async () => {
@@ -468,8 +482,12 @@ describe("Personal Assistant application", () => {
 
     render(<App client={api} />);
     await screen.findByText("每日计划");
-    fireEvent.click(await screen.findByRole("button", { name: "Deep Research" }));
+    expect(screen.queryByRole("button", { name: "普通对话" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "更多功能" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "更多功能" })).getByRole("button", { name: /Deep Research/ }));
+    expect(screen.getByText("Deep Research")).toBeTruthy();
     const composer = screen.getByRole("textbox", { name: "给个人助理发送消息" });
+    expect(composer.getAttribute("rows")).toBe("4");
     fireEvent.change(composer, { target: { value: "研究数据库兼容性" } });
     fireEvent.submit(composer.closest("form")!);
 
@@ -520,14 +538,15 @@ describe("Personal Assistant application", () => {
 
     render(<App client={api} />);
     await screen.findByText("每日计划");
-    fireEvent.click(screen.getByRole("button", { name: "添加图片" }));
-    const imageDialog = screen.getByRole("dialog", { name: "添加图片" });
+    fireEvent.click(screen.getByRole("button", { name: "更多功能" }));
+    const imageDialog = screen.getByRole("dialog", { name: "更多功能" });
     fireEvent.click(within(imageDialog).getByRole("button", { name: /^添加图片 URL/ }));
     fireEvent.change(within(imageDialog).getByRole("textbox", { name: "图片 URL" }), {
       target: { value: "https://example.com/evidence.png" },
     });
     fireEvent.click(within(imageDialog).getByRole("button", { name: "确认添加图片 URL" }));
-    fireEvent.click(screen.getByRole("button", { name: "Deep Research" }));
+    fireEvent.click(screen.getByRole("button", { name: "更多功能" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "更多功能" })).getByRole("button", { name: /Deep Research/ }));
     const composer = screen.getByRole("textbox", { name: "给个人助理发送消息" });
     fireEvent.change(composer, { target: { value: "研究图片中的证据" } });
     fireEvent.submit(composer.closest("form")!);
@@ -957,7 +976,7 @@ describe("Personal Assistant application", () => {
     expect(within(card).getByRole("button", { name: "查看完整报告" })).toBeTruthy();
     expect(within(card).getByRole("button", { name: "证据与来源" })).toBeTruthy();
     fireEvent.click(within(card).getByRole("button", { name: "继续追问" }));
-    expect((screen.getByPlaceholderText("输入消息或 / 命令，Enter 发送") as HTMLTextAreaElement).value)
+    expect((screen.getByPlaceholderText("输入消息，Enter 发送") as HTMLTextAreaElement).value)
       .toBe("关于“评估数据库路线”，我想继续了解：");
     fireEvent.click(within(card).getByRole("button", { name: "查看完整报告" }));
     const dialog = await screen.findByRole("dialog", { name: "Mission" });
@@ -1417,8 +1436,8 @@ describe("Personal Assistant application", () => {
     const { container } = render(<App client={api} />);
 
     expect(screen.queryByRole("textbox", { name: "图片 URL" })).toBeNull();
-    fireEvent.click(await screen.findByRole("button", { name: "添加图片" }));
-    const imageDialog = screen.getByRole("dialog", { name: "添加图片" });
+    fireEvent.click(await screen.findByRole("button", { name: "更多功能" }));
+    const imageDialog = screen.getByRole("dialog", { name: "更多功能" });
     fireEvent.click(within(imageDialog).getByRole("button", { name: /^添加图片 URL/ }));
     const url = within(imageDialog).getByRole("textbox", { name: "图片 URL" });
     fireEvent.change(url, { target: { value: "https://images.example.test/cat.png" } });
@@ -1446,8 +1465,8 @@ describe("Personal Assistant application", () => {
     ));
 
     await waitFor(() => expect(screen.queryByRole("region", { name: "待发送图片" })).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "添加图片" }));
-    const secondDialog = screen.getByRole("dialog", { name: "添加图片" });
+    fireEvent.click(screen.getByRole("button", { name: "更多功能" }));
+    const secondDialog = screen.getByRole("dialog", { name: "更多功能" });
     fireEvent.click(within(secondDialog).getByRole("button", { name: /^添加图片 URL/ }));
     fireEvent.change(within(secondDialog).getByRole("textbox", { name: "图片 URL" }), {
       target: { value: "https://images.example.test/architecture.png" },
@@ -1479,15 +1498,15 @@ describe("Personal Assistant application", () => {
     vi.mocked(api.conversation).mockResolvedValue(imageConversation);
     render(<App client={api} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "添加图片" }));
-    const imageDialog = screen.getByRole("dialog", { name: "添加图片" });
+    fireEvent.click(await screen.findByRole("button", { name: "更多功能" }));
+    const imageDialog = screen.getByRole("dialog", { name: "更多功能" });
     fireEvent.click(within(imageDialog).getByRole("button", { name: /^添加图片 URL/ }));
     expect(within(imageDialog).getByRole("textbox", { name: "图片 URL" })).toBeTruthy();
     fireEvent.click(within(imageDialog).getByRole("button", { name: "关闭图片 URL" }));
     expect(screen.queryByRole("textbox", { name: "图片 URL" })).toBeNull();
 
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "添加图片" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "更多功能" })).toBeNull();
   });
 
   it("renders sent images inside the user message without exposing opaque ids", async () => {
@@ -1585,7 +1604,7 @@ describe("Personal Assistant application", () => {
 
     render(<App client={api} />);
 
-    const composer = await screen.findByPlaceholderText("输入消息或 / 命令，Enter 发送");
+    const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
     expect(screen.queryByRole("combobox", { name: "选择模型" })).toBeNull();
     fireEvent.change(composer, { target: { value: "/" } });
     expect(await screen.findByRole("dialog", { name: "命令功能" })).toBeTruthy();
@@ -1605,6 +1624,34 @@ describe("Personal Assistant application", () => {
     expect((composer as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("opens Deep Research and model selection from the visible plus menu", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: flashModel.id,
+      models: [proModel, flashModel, bailianModel],
+    });
+
+    render(<App client={api} />);
+    const composer = await screen.findByRole("textbox", { name: "给个人助理发送消息" });
+    fireEvent.change(composer, { target: { value: "保留这段草稿" } });
+    fireEvent.click(screen.getByRole("button", { name: "更多功能" }));
+    const plusMenu = screen.getByRole("dialog", { name: "更多功能" });
+    expect(within(plusMenu).getByRole("button", { name: /Deep Research/ })).toBeTruthy();
+    fireEvent.click(within(plusMenu).getByRole("button", { name: /选择模型/ }));
+
+    fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
+    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
+    fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
+
+    await waitFor(() => expect(api.selectModel).toHaveBeenCalledWith(
+      conversation,
+      proModel.id,
+      { idempotencyKey: expect.any(String) },
+    ));
+    expect((composer as HTMLTextAreaElement).value).toBe("保留这段草稿");
+  });
+
   it("uses the slash-selected model when creating a new conversation", async () => {
     const api = client();
     vi.mocked(api.bootstrap).mockResolvedValue({
@@ -1617,12 +1664,13 @@ describe("Personal Assistant application", () => {
 
     await screen.findByText("每日计划");
     fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
-    const composer = await screen.findByPlaceholderText("输入消息或 / 命令，Enter 发送");
+    const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
     fireEvent.change(composer, { target: { value: "/" } });
     fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
     fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*2 个可用模型/ }));
     const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
     fireEvent.click(within(modelDialog).getByRole("option", { name: /DeepSeek V4 Pro/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "选择 DeepSeek 模型" })).toBeNull());
 
     fireEvent.change(composer, { target: { value: "使用所选模型开始对话" } });
     fireEvent.keyDown(composer, { key: "Enter" });
@@ -1647,7 +1695,7 @@ describe("Personal Assistant application", () => {
 
     await screen.findByText("每日计划");
     fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
-    const composer = await screen.findByPlaceholderText("输入消息或 / 命令，Enter 发送");
+    const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
     fireEvent.change(composer, { target: { value: "/" } });
     fireEvent.keyDown(composer, { key: "Enter" });
 

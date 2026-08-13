@@ -22,6 +22,13 @@ refresh, Mission-list selection, and browser history restore the same Mission wo
 Generic legacy Mission objectives such as "start deep research" are replaced in the interface with
 the originating user research goal when it is available. Active planning, execution, and synthesis
 states show a motion indicator, completed-task progress, and the current user-facing execution phase.
+The current Mission Task reuses the safe Run activity projection to show live Model, Tool, Skill, and
+MCP calls plus authoritative token usage without exposing prompts or raw arguments.
+
+The ordinary Conversation composer defaults to chat with an 80-pixel outer control. Its leading `+`
+menu exposes Deep Research, model selection, and, for image-capable models, image upload and HTTPS
+image URL actions. Selecting Deep Research shows a removable one-shot mode chip instead of a
+permanent mode switch.
 
 ## Image composer behavior
 

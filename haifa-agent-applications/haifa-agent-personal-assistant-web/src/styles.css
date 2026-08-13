@@ -276,12 +276,17 @@
 .mission-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .mission-actions { padding-top: 14px; border-top: 1px solid #e8ebf2; }
 .mission-actions .danger { margin-left: auto; color: #a43c3c; border-color: #efcccc; }
+.mission-cancel-button { min-height: 28px; margin-left: auto; padding: 5px 8px; display: inline-flex; align-items: center; gap: 5px; color: #a43c3c; border: 1px solid #efcccc; border-radius: 8px; background: #fffafa; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.mission-cancel-button:hover, .mission-cancel-button:focus-visible { border-color: #e5aeb7; background: #fff2f4; }
+.mission-cancel-button:disabled { opacity: .58; cursor: wait; }
 .mission-phase-note { margin: 0; padding: 10px 12px; border-radius: 9px; background: #f5f7fb; color: #677087; font-size: 12px; }
 .mission-execution-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #dce4f2; border-radius: 10px; background: #f8faff; color: #48546f; font-size: 12px; }
 .mission-progress-copy { display: flex; align-items: baseline; gap: 5px; }
 .mission-progress-track { min-width: 100px; height: 5px; flex: 1; overflow: hidden; border-radius: 99px; background: #dfe5f1; }
 .mission-progress-track > span { height: 100%; display: block; border-radius: inherit; background: #5d67ca; }
 .mission-execution-activity { display: inline-flex; min-width: 0; align-items: center; gap: 6px; color: #354f87; font-weight: 700; }
+.mission-activity-link { min-height: 28px; padding: 4px 7px; display: inline-flex; align-items: center; gap: 4px; color: #405f9c; border: 1px solid #d9e2f5; border-radius: 8px; background: #f7f9ff; font: inherit; font-size: 10px; font-weight: 750; cursor: pointer; }
+.mission-activity-link:hover, .mission-activity-link:focus-visible { color: #2f54a4; border-color: #bfcdf0; background: #eef3ff; }
 .mission-execution-summary details { margin-left: auto; color: #7a8498; font-size: 10px; }
 .mission-execution-summary details span { display: block; margin-top: 4px; }
 .mission-interaction { display: grid; gap: 9px; padding: 12px; border: 1px solid #f0c66c; border-radius: 10px; background: #fffaf0; }
@@ -301,6 +306,12 @@
 .mission-task-detail-scroll section, .mission-task-metadata { margin: 0 0 13px; padding: 16px; border: 1px solid #e7e7ee; border-radius: 11px; background: #fff; }
 .mission-task-detail-scroll section h4 { margin: 0 0 9px; color: #555f77; font-size: 12px; text-transform: none; letter-spacing: 0; }
 .mission-task-detail-scroll section p { margin: 0; color: #626b80; font-size: 12px; line-height: 1.7; }
+.mission-task-activity .activity-list { margin-top: 10px; }
+.mission-task-activity .activity-card { padding: 10px; background: #fbfcff; }
+.mission-task-activity-loading { display: flex; align-items: center; gap: 6px; color: #526a9c !important; }
+.mission-task-usage { margin-top: 10px; padding-top: 9px; border-top: 1px solid #e7eaf2; }
+.mission-task-usage summary { color: #65728a; font-size: 10px; font-weight: 750; cursor: pointer; }
+.mission-task-usage .usage-grid { margin-top: 8px; }
 .mission-task-metadata { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
 .mission-task-metadata div { min-width: 0; display: grid; gap: 4px; }
 .mission-task-metadata dt { color: #979dad; font-size: 10px; }
@@ -945,24 +956,29 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   grid-area: composer;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto 42px;
-  gap: 5px 9px;
-  padding: 10px 11px 9px;
+  grid-template-rows: 60px;
+  gap: 0 9px;
+  height: 80px;
+  padding: 9px 11px;
+  box-sizing: border-box;
   border: 1px solid #d9dfea;
   border-radius: 18px;
   background: white;
   box-shadow: 0 12px 34px rgb(38 49 77 / 9%);
 }
-.composer-mode-switch { grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; gap: 5px; }
-.composer-mode-switch button { min-height: 26px; padding: 4px 8px; display: inline-flex; align-items: center; gap: 5px; color: #747e92; border: 1px solid transparent; border-radius: 999px; background: transparent; font: inherit; font-size: 10px; font-weight: 750; cursor: pointer; }
-.composer-mode-switch button:hover { color: #4e59a4; background: #f2f3fb; }
-.composer-mode-switch button.active { color: #4e49b7; border-color: #d8d5ef; background: #eeedff; }
+.composer-mode-chip { z-index: 2; position: absolute; top: 7px; left: 54px; width: fit-content; display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px 3px 7px; color: #514bb8; border: 1px solid #dad7f2; border-radius: 999px; background: #f1f0ff; font-size: 10px; font-weight: 750; }
+.composer-mode-chip button { width: 20px; height: 20px; display: grid; place-items: center; padding: 0; color: #6d68a9; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+.composer-mode-chip button:hover, .composer-mode-chip button:focus-visible { color: #40399c; background: #e2e0fb; }
 .composer.deep-research-mode { border-color: #c9c5ef; box-shadow: 0 12px 34px rgb(67 58 145 / 12%); }
-.composer > label { min-width: 0; grid-column: 1 / -1; grid-row: 2; }
-.composer.has-pending-images > label { grid-row: 3; }
+.composer > label { min-width: 0; grid-column: 2 / 4; grid-row: 1; }
+.composer.deep-research-mode textarea { padding-top: 29px; }
+.composer.has-pending-images { height: auto; min-height: 173px; grid-template-rows: 84px 60px; }
+.composer.has-pending-images > label { grid-row: 2; }
+.composer.has-pending-images .composer-mode-chip { top: 100px; }
 .image-attachment-stage { grid-column: 1 / -1; }
 .image-attachment-stage {
   position: relative;
-  grid-row: 2;
+  grid-row: 1;
   min-height: 84px;
   display: flex;
   flex-direction: column;
@@ -1041,8 +1057,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   font-size: 10px;
   font-weight: 750;
 }
-.image-add-control { position: relative; grid-column: 1; grid-row: 3; align-self: center; }
-.composer.has-pending-images .image-add-control { grid-row: 4; }
+.image-add-control { position: relative; grid-column: 1; grid-row: 1; align-self: center; }
+.composer.has-pending-images .image-add-control { grid-row: 2; }
 .image-add-trigger {
   width: 34px;
   height: 34px;
@@ -1125,18 +1141,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   cursor: pointer;
 }
 .image-url-popover > div > button:disabled { opacity: .5; cursor: not-allowed; }
-.image-input-hint {
-  min-width: 0;
-  grid-column: 2;
-  grid-row: 3;
-  align-self: center;
-  overflow: hidden;
-  color: #8b94a6;
-  font-size: 10px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.composer.has-pending-images .image-input-hint { grid-row: 4; }
+.image-input-hint { display: none; }
 .image-drop-hint {
   z-index: 35;
   position: absolute;
@@ -1267,8 +1272,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .composer textarea {
   width: 100%;
-  height: 34px;
-  min-height: 34px;
+  height: 60px;
+  min-height: 60px;
   max-height: 140px;
   resize: none;
   padding: 5px 1px 3px;
@@ -1282,8 +1287,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   width: 36px;
   height: 36px;
   grid-column: 4;
-  grid-row: 3;
-  align-self: end;
+  grid-row: 1;
+  align-self: center;
   justify-content: center;
   padding: 0;
   color: white;
@@ -1292,13 +1297,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: #4c6fff;
   cursor: pointer;
 }
-.composer.has-pending-images .send-button { grid-row: 4; }
+.composer.has-pending-images .send-button { grid-row: 2; }
 .send-button:disabled { color: #9ca6b7; background: #e8ebf0; cursor: not-allowed; }
 .retry-send-button {
   width: 30px;
   height: 30px;
   grid-column: 3;
-  grid-row: 3;
+  grid-row: 1;
   align-self: center;
   display: grid;
   place-items: center;
@@ -1309,7 +1314,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: #fff7f8;
   cursor: pointer;
 }
-.composer.has-pending-images .retry-send-button { grid-row: 4; }
+.composer.has-pending-images .retry-send-button { grid-row: 2; }
 .retry-send-button:hover { color: #8f3e4e; border-color: #e6b7c0; background: #fdeef1; }
 .retry-send-button:disabled { opacity: .5; cursor: not-allowed; }
 
