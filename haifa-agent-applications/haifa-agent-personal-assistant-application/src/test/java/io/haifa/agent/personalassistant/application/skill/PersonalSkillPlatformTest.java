@@ -37,7 +37,7 @@ class PersonalSkillPlatformTest {
                                 Set.of(SkillScope.PRODUCT, SkillScope.USER)));
 
         assertThat(binding.coordinate().declaredVersion())
-                .hasValueSatisfying(version -> assertThat(version.value()).isEqualTo("2.1.0"));
+                .hasValueSatisfying(version -> assertThat(version.value()).isEqualTo("2.2.0"));
         assertThat(binding.coordinate().source().sourceId()).isEqualTo("personal-assistant-bundled");
         assertThat(binding.metadata().toolHints())
                 .extracting(value -> value.value())
@@ -45,8 +45,8 @@ class PersonalSkillPlatformTest {
                         "web_search", "web_fetch", "utility_wikipedia_search", "utility_wikipedia_summary");
         assertThat(platform.bindingReferences().get("deep-research"))
                 .isEqualTo(binding.coordinate().externalForm())
-                .contains("product", "personal-assistant-bundled@1", "deep-research@2.1.0")
-                .endsWith("#sha256:ccdeb4cad9f75b3b7da3aa221d16673a395b792104e81f07a5e2b4da1d9da532");
+                .contains("product", "personal-assistant-bundled@1", "deep-research@2.2.0")
+                .endsWith("#sha256:f17d534b5bced7675eb0bf7c073d84d7490faab1248c2002a24e23694e0f9462");
         assertThat(content.readableResources())
                 .containsKeys(
                         "references/research-types.md",
@@ -110,7 +110,7 @@ class PersonalSkillPlatformTest {
                 .contains("pa.research-task-result/v1", "DISCOVER", "DEEPEN", "CROSS_CHECK")
                 .doesNotContain("sourceRole", "confidence");
         assertThat(content.resource("schemas/research-delivery-v2.json"))
-                .hasSize(2_450)
+                .hasSize(4_016)
                 .contains("pa.research-delivery/v2");
     }
 

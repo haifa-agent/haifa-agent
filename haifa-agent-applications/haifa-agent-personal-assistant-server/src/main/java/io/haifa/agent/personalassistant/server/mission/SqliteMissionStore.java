@@ -10,6 +10,7 @@ import io.haifa.agent.personalassistant.application.mission.MissionException;
 import io.haifa.agent.personalassistant.application.mission.MissionExecutionSnapshot;
 import io.haifa.agent.personalassistant.application.mission.MissionExecutionStore;
 import io.haifa.agent.personalassistant.application.mission.MissionListCursor;
+import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanRevision;
 import io.haifa.agent.personalassistant.application.mission.MissionPublishedResult;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
@@ -49,7 +50,7 @@ import java.util.function.Supplier;
 
 /** Product-owned SQLite migration, Store and UoW. It deliberately does not modify public Runtime mappings. */
 public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork, MissionExecutionStore {
-    private static final int SCHEMA_VERSION = 6;
+    private static final int SCHEMA_VERSION = 7;
     private static final String MIGRATION =
             """
             CREATE TABLE personal_mission (
@@ -276,6 +277,11 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             ALTER TABLE personal_mission ADD COLUMN usage_tool_calls INTEGER NOT NULL DEFAULT 0
                 CHECK(usage_tool_calls >= 0);
             """;
+    private static final String MIGRATION_V7 =
+            """
+            ALTER TABLE personal_mission ADD COLUMN model_binding_json TEXT NOT NULL DEFAULT
+                '{"modelId":"legacy-default","modelDisplayName":"Legacy default model","providerId":"legacy","providerDisplayName":"Legacy configuration","configurationDigest":"legacy-unfrozen"}';
+            """;
 
     private final String jdbcUrl;
     private final Path database;
@@ -385,10 +391,10 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 .prepareStatement(
                         """
                 INSERT INTO personal_mission(
-                    mission_id, conversation_id, owner_scope, objective, acceptance_json, constraints_json,
+                    mission_id, conversation_id, owner_scope, model_binding_json, objective, acceptance_json, constraints_json,
                     selected_skill_id, selected_skill_binding, mode, research_brief_json, state, active_plan_revision_no, confirmed_plan_revision_no, failure_code,
                     version, created_at_ms, updated_at_ms, confirmed_at_ms, finished_at_ms, deadline_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
             bindMission(statement, value);
             statement.executeUpdate();
@@ -891,8 +897,8 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 try (var select = current()
                         .prepareStatement(
                                 """
-                    SELECT mission_id,conversation_id,owner_scope,mode,objective,research_brief_json,
-                           usage_model_tokens,deadline_at_ms
+                    SELECT mission_id,conversation_id,owner_scope,model_binding_json,mode,objective,research_brief_json,
+                           usage_model_tokens,usage_model_calls,usage_tool_calls,deadline_at_ms
                     FROM personal_mission m
                     WHERE state IN ('RUNNING','WAITING_USER','SYNTHESIZING')
                       AND NOT EXISTS (SELECT 1 FROM personal_mission_task t
@@ -934,6 +940,10 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 missionId,
                                 result.getString("conversation_id"),
                                 result.getString("owner_scope"),
+                                json(
+                                        result.getString("model_binding_json"),
+                                        MissionModelBinding.class,
+                                        "model binding"),
                                 enumValue(
                                         io.haifa.agent.personalassistant.application.mission.MissionMode.class,
                                         result.getString("mode"),
@@ -946,7 +956,11 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 Math.max(0, maxModelTokens - result.getLong("usage_model_tokens")),
                                 Optional.of(Instant.ofEpochMilli(result.getLong("deadline_at_ms"))),
                                 Optional.ofNullable(result.getString("research_brief_json"))
-                                        .map(encoded -> json(encoded, ResearchBrief.class, "research brief"))));
+                                        .map(encoded -> json(encoded, ResearchBrief.class, "research brief")),
+                                new MissionUsage(
+                                        result.getLong("usage_model_tokens"),
+                                        result.getLong("usage_model_calls"),
+                                        result.getLong("usage_tool_calls"))));
                     }
                 }
             } catch (SQLException exception) {
@@ -975,7 +989,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 statement.setString(2, synthesis.sessionId());
                 statement.setString(3, synthesis.runId());
                 statement.setString(4, published.finalArtifactId());
-                statement.setString(5, "mission:" + intent.missionId() + ":final-message:v1");
+                statement.setString(5, "mission:" + intent.missionId() + ":final-message:v2");
                 statement.setString(6, json(published.artifactIds()));
                 statement.setString(7, json(published.sources()));
                 statement.setString(8, published.structuredResult());
@@ -1044,6 +1058,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
             applyMigration(connection, 4, MIGRATION_V4);
             applyMigration(connection, 5, MIGRATION_V5);
             applyMigration(connection, 6, MIGRATION_V6);
+            applyMigration(connection, 7, MIGRATION_V7);
         } catch (SQLException exception) {
             throw failure(exception);
         }
@@ -1099,7 +1114,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                     .prepareStatement(
                             """
                     SELECT o.outbox_id,o.mission_id,o.task_id,o.attempt_no,o.payload_json,o.payload_digest,
-                           a.dispatch_key,a.dispatch_payload_digest,m.owner_scope
+                           a.dispatch_key,a.dispatch_payload_digest,m.owner_scope,m.model_binding_json
                     FROM personal_mission_outbox o
                     JOIN personal_mission_task_attempt a
                       ON a.mission_id=o.mission_id AND a.task_id=o.task_id AND a.attempt_no=o.attempt_no
@@ -1134,6 +1149,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                             outboxId,
                             result.getString("mission_id"),
                             result.getString("owner_scope"),
+                            json(result.getString("model_binding_json"), MissionModelBinding.class, "model binding"),
                             result.getString("task_id"),
                             result.getInt("attempt_no"),
                             result.getString("dispatch_key"),
@@ -1670,6 +1686,7 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                 missionId,
                 result.getString("conversation_id"),
                 result.getString("owner_scope"),
+                json(result.getString("model_binding_json"), MissionModelBinding.class, "model binding"),
                 result.getString("objective"),
                 jsonList(result.getString("acceptance_json")),
                 new MissionConstraints(
@@ -1857,10 +1874,11 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
         statement.setString(1, value.missionId());
         statement.setString(2, value.conversationId());
         statement.setString(3, value.ownerScope());
-        statement.setString(4, value.objective());
-        statement.setString(5, json(value.acceptanceCriteria()));
+        statement.setString(4, json(value.modelBinding()));
+        statement.setString(5, value.objective());
+        statement.setString(6, json(value.acceptanceCriteria()));
         statement.setString(
-                6,
+                7,
                 json(new MissionConstraintsPayload(
                         value.constraints().maxTasks(),
                         value.constraints().maxDependencyDepth(),
@@ -1868,23 +1886,23 @@ public final class SqliteMissionStore implements MissionStore, MissionUnitOfWork
                                 .deadlineAt()
                                 .map(Instant::toEpochMilli)
                                 .orElse(null))));
-        nullableString(statement, 7, value.selectedSkillId());
-        nullableString(statement, 8, value.selectedSkillBinding());
-        statement.setString(9, value.mode().name());
+        nullableString(statement, 8, value.selectedSkillId());
+        nullableString(statement, 9, value.selectedSkillBinding());
+        statement.setString(10, value.mode().name());
         if (value.researchBrief().isPresent())
-            statement.setString(10, json(value.researchBrief().orElseThrow()));
-        else statement.setNull(10, java.sql.Types.VARCHAR);
-        statement.setString(11, value.state().name());
-        nullableInteger(statement, 12, value.activePlanRevisionNo());
-        nullableInteger(statement, 13, value.confirmedPlanRevisionNo());
-        nullableString(statement, 14, value.failureCode());
-        statement.setLong(15, value.version());
-        statement.setLong(16, value.createdAt().toEpochMilli());
-        statement.setLong(17, value.updatedAt().toEpochMilli());
-        nullableInstant(statement, 18, value.confirmedAt());
-        nullableInstant(statement, 19, value.finishedAt());
+            statement.setString(11, json(value.researchBrief().orElseThrow()));
+        else statement.setNull(11, java.sql.Types.VARCHAR);
+        statement.setString(12, value.state().name());
+        nullableInteger(statement, 13, value.activePlanRevisionNo());
+        nullableInteger(statement, 14, value.confirmedPlanRevisionNo());
+        nullableString(statement, 15, value.failureCode());
+        statement.setLong(16, value.version());
+        statement.setLong(17, value.createdAt().toEpochMilli());
+        statement.setLong(18, value.updatedAt().toEpochMilli());
+        nullableInstant(statement, 19, value.confirmedAt());
+        nullableInstant(statement, 20, value.finishedAt());
         statement.setLong(
-                20,
+                21,
                 value.constraints()
                         .deadlineAt()
                         .orElse(value.createdAt().plusSeconds(30 * 60L))

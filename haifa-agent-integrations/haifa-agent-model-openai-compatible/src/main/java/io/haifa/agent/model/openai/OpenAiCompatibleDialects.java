@@ -2,12 +2,15 @@ package io.haifa.agent.model.openai;
 
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelProviderDefinition;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Stable dialect identifiers and deterministic frozen-snapshot resolution. */
 public final class OpenAiCompatibleDialects {
@@ -17,6 +20,9 @@ public final class OpenAiCompatibleDialects {
     public static final String ALIYUN_BAILIAN = "aliyun-bailian-openai-chat";
     public static final String VOLCENGINE_ARK = "volcengine-ark-openai-chat";
     public static final String VERSION_1 = "1.0";
+    private static final String BAILIAN_PATH = "/compatible-mode/v1";
+    private static final Pattern BAILIAN_HOST = Pattern.compile("^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\\."
+            + "([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\\.maas\\.aliyuncs\\.com$");
 
     private OpenAiCompatibleDialects() {}
 
@@ -32,7 +38,50 @@ public final class OpenAiCompatibleDialects {
             }
             options.put(ENDPOINT_HOST, host.toLowerCase(Locale.ROOT));
         }
+        if (ALIYUN_BAILIAN.equals(normalizedId)) {
+            freezeBailianEndpoint(configuredEndpoint, options);
+        }
         return Map.copyOf(options);
+    }
+
+    /** Maps provider-neutral reasoning policy into dialect-owned frozen invocation options. */
+    public static Map<String, Object> configuredInvocationOptions(String dialectId, ModelReasoningMode reasoningMode) {
+        String normalizedId = requireText(dialectId, "dialectId");
+        ModelReasoningMode mode = Objects.requireNonNull(reasoningMode, "reasoningMode must not be null");
+        if (!ALIYUN_BAILIAN.equals(normalizedId)) return Map.of();
+        return switch (mode) {
+            case DISABLED -> Map.of("thinking_profile", "none", "thinking_enabled", false);
+            case ENABLED ->
+                Map.of(
+                        "thinking_profile",
+                        "always",
+                        "thinking_enabled",
+                        true,
+                        "preserve_thinking",
+                        true,
+                        "requires_reasoning_continuation",
+                        true);
+            case ADAPTIVE -> Map.of("thinking_profile", "hybrid", "thinking_enabled", true);
+        };
+    }
+
+    private static void freezeBailianEndpoint(URI endpoint, Map<String, Object> options) {
+        String host = endpoint.getHost();
+        if (!"https".equalsIgnoreCase(endpoint.getScheme())
+                || host == null
+                || endpoint.getPort() != -1
+                || endpoint.getUserInfo() != null
+                || endpoint.getQuery() != null
+                || endpoint.getFragment() != null
+                || !BAILIAN_PATH.equals(endpoint.getPath())) {
+            throw new IllegalArgumentException("Bailian endpoint must be a workspace-scoped HTTPS compatible endpoint");
+        }
+        Matcher matcher = BAILIAN_HOST.matcher(host.toLowerCase(Locale.ROOT));
+        if (!matcher.matches()) {
+            throw new IllegalArgumentException("Bailian endpoint host is not allowed");
+        }
+        options.put("workspace_id", matcher.group(1));
+        options.put("region", matcher.group(2));
     }
 
     public static OpenAiCompatibleDialect resolve(ModelProviderDefinition provider) {

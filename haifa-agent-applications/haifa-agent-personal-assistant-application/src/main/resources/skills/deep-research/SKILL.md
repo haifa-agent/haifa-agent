@@ -2,7 +2,7 @@
 name: deep-research
 description: Produce a bounded, cited research result from an explicit research brief.
 metadata:
-  haifa.version: 2.1.0
+  haifa.version: 2.2.0
 allowed-tools: web_search web_fetch utility_wikipedia_search utility_wikipedia_summary
 ---
 

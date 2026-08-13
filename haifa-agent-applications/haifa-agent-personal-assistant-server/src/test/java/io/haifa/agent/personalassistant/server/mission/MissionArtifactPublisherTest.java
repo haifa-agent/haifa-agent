@@ -48,7 +48,22 @@ class MissionArtifactPublisherTest {
             assertThat(manifest.path(field).path("byteCount").asLong()).isPositive();
         }
         assertThat(published.finalMessage())
-                .contains("中文“引号”", "| 主张 | 证据 |", "https://example.test/path?a=1", "```text");
+                .contains("<!-- haifa-mission-delivery:mission-1 -->", "完整报告与证据已保存在 Mission 中")
+                .doesNotContain("中文“引号”", "| 主张 | 证据 |", "```text");
+        assertThat(manifest.path("evidenceSummary").path("totalClaimCount").asInt())
+                .isEqualTo(1);
+        assertThat(manifest.path("evidenceSummary")
+                        .path("singleSourceClaimCount")
+                        .asInt())
+                .isEqualTo(0);
+        assertThat(manifest.path("efficiencyMetrics")
+                        .path("qualityGateRevisionCount")
+                        .asInt())
+                .isZero();
+        assertThat(manifest.path("efficiencyMetrics")
+                        .path("evidencePerMaterialClaim")
+                        .asDouble())
+                .isEqualTo(2.0d);
         assertThat(published.structuredResult()).doesNotContain("中文“引号”", "```text");
     }
 
@@ -124,6 +139,8 @@ class MissionArtifactPublisherTest {
         manifest.put("degraded", true);
         manifest.putArray("degradationReasons").add("REPORT_REQUIRED_SECTION_MISSING");
         manifest.putObject("qualityGate").put("passed", false);
+        manifest.putObject("evidenceSummary");
+        manifest.putObject("efficiencyMetrics");
 
         assertThatThrownBy(() -> MissionArtifactPublisher.validateDeliveryManifest(manifest))
                 .isInstanceOf(MissionException.class)
@@ -223,6 +240,32 @@ class MissionArtifactPublisherTest {
     }
 
     @Test
+    void trustedPublisherAddsUnverifiedAndSingleSourceEvidenceWarnings() throws Exception {
+        ObjectNode task = validTask();
+        ObjectNode claim = (ObjectNode) task.path("claims").get(0);
+        ((ArrayNode) claim.path("supportingSourceIds")).removeAll().add("source-1");
+        claim.put("unverified", true);
+        var metadata = new InMemoryArtifactStore();
+        var service = artifactService(metadata, newIds());
+
+        var published = new MissionArtifactPublisher(service, MAPPER).publish(intent(task), synthesis(validReport()));
+        JsonNode manifest = MAPPER.readTree(published.structuredResult());
+        var report = metadata.findByProject("mission-mission-1").stream()
+                .filter(value -> value.title().equals("research-report.md"))
+                .findFirst()
+                .orElseThrow();
+        String markdown = new String(service.load(report), java.nio.charset.StandardCharsets.UTF_8);
+
+        assertThat(manifest.path("evidenceSummary").path("unverifiedClaimCount").asInt())
+                .isEqualTo(1);
+        assertThat(manifest.path("evidenceSummary")
+                        .path("singleSourceClaimCount")
+                        .asInt())
+                .isEqualTo(1);
+        assertThat(markdown).contains("本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。", "<!-- haifa-single-source-risk: claim-1 -->");
+    }
+
+    @Test
     void canonicalizesSafeLocatorsAndRejectsPrivateOrCredentialedTargets() {
         assertThat(ResearchSourceLocator.normalize(
                                 "https://RESEARCH.stub:443/a/../source-1?b=2&utm_source=x&a=1#fragment")
@@ -296,7 +339,7 @@ class MissionArtifactPublisherTest {
 
     private static String validReport() {
         return """
-                # 热门 AI 产品真实性调查
+                # AI 能力主张证据审查
                 <!-- haifa-section: executive-summary -->
                 ## 执行摘要
                 宣传主张得到部分证据支持，但真实能力受场景和技术限制约束，商业结论仍需谨慎。

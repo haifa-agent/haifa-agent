@@ -69,18 +69,31 @@ public interface MissionRuntimeAccess {
             String runId,
             String structuredOutput,
             MissionUsage usage,
-            java.util.List<String> degradationReasons) {
+            java.util.List<String> degradationReasons,
+            int qualityGateRevisionCount) {
         public SynthesisRunResult(String sessionId, String runId, String structuredOutput) {
-            this(sessionId, runId, structuredOutput, MissionUsage.NONE, java.util.List.of());
+            this(sessionId, runId, structuredOutput, MissionUsage.NONE, java.util.List.of(), 0);
         }
 
         public SynthesisRunResult(String sessionId, String runId, String structuredOutput, MissionUsage usage) {
-            this(sessionId, runId, structuredOutput, usage, java.util.List.of());
+            this(sessionId, runId, structuredOutput, usage, java.util.List.of(), 0);
+        }
+
+        public SynthesisRunResult(
+                String sessionId,
+                String runId,
+                String structuredOutput,
+                MissionUsage usage,
+                java.util.List<String> degradationReasons) {
+            this(sessionId, runId, structuredOutput, usage, degradationReasons, 0);
         }
 
         public SynthesisRunResult {
             usage = java.util.Objects.requireNonNull(usage);
             degradationReasons = java.util.List.copyOf(degradationReasons);
+            if (qualityGateRevisionCount < 0 || qualityGateRevisionCount > 2) {
+                throw new IllegalArgumentException("Quality Gate revision count is invalid");
+            }
         }
     }
 

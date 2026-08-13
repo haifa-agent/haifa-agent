@@ -1,5 +1,8 @@
 # {Report title}
 
+The trusted publisher inserts the `haifa-section: evidence-summary` section and its counts. Do not invent, copy, or
+override evidence totals in model-authored prose.
+
 <!-- haifa-section: executive-summary -->
 ## {Executive summary}
 
@@ -19,6 +22,10 @@ Repeat for every supplied Task ID; invent or omit none:
 ### {Finding title}
 
 Explain evidence `[[source-id]]`, counterevidence, inference, and uncertainty.
+
+Classify every future-facing or impact statement as exactly one of: confirmed fact, official target, community
+proposal, third-party prediction, integrated inference, or unknown/disputed. A lack of discovered counterevidence is
+not cross-validation. Claims supported by only one source remain a limitation even when that source is primary.
 
 <!-- haifa-section: synthesis -->
 ## {Integrated analysis}

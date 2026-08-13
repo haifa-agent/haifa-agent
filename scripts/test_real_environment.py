@@ -119,6 +119,62 @@ class RealEnvironmentTest(unittest.TestCase):
         self.assertFalse(any(name.startswith("OPENAI_") for name in environment))
         self.assertFalse(any(name.startswith("HAIFA_PERSONAL_MODELPROVIDERS_1_") for name in environment))
 
+    def test_bailian_key_value_file_adds_qwen_models_without_exposing_secret_in_names(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=root / "runtime",
+            data=root / "runtime/data",
+            logs=root / "runtime/logs",
+            state=root / "runtime/last-start.json",
+            stop_state=root / "runtime/last-stop.json",
+            maven_wrapper=root / "mvnw",
+        )
+        environment = real_environment.backend_environment(
+            "deepseek-secret",
+            real_environment.BAILIAN_DEFAULT_MODEL_ID,
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            ("bailian-secret", "workspace-123", "cn-beijing"),
+        )
+
+        self.assertEqual("aliyun-bailian", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ID"])
+        self.assertEqual(
+            "https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ENDPOINT"],
+        )
+        self.assertEqual(
+            real_environment.BAILIAN_DEFAULT_MODEL_ID,
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"],
+        )
+        self.assertEqual(
+            "ENABLED",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_REASONINGMODE"],
+        )
+        self.assertEqual(
+            "IMAGE_INPUT",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_3_CAPABILITIES_2"],
+        )
+        self.assertEqual("env://DASHSCOPE_API_KEY", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_CREDENTIALREFERENCE"])
+        self.assertNotIn("bailian-secret", json.dumps(list(environment)))
+
+    def test_bailian_configuration_reads_key_value_file_and_defaults_region(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            key_file = Path(directory) / "ss-bailian.txt"
+            key_file.write_text("API_KEY:test-secret\nWORKSPACE_ID:Workspace-123\n", encoding="utf-8")
+
+            configured = real_environment.optional_bailian_configuration(
+                str(key_file), environment={}
+            )
+
+        self.assertEqual(("test-secret", "workspace-123", "cn-beijing"), configured)
+
     def test_optional_openai_provider_requires_complete_environment_group(self) -> None:
         self.assertIsNone(real_environment.optional_openai_environment({}))
         self.assertIsNone(
@@ -152,7 +208,7 @@ class RealEnvironmentTest(unittest.TestCase):
             ["--default-model-id", "deepseek-chat-flash"]
         )
 
-        self.assertEqual("deepseek-chat-flash", default_arguments.default_model_id)
+        self.assertIsNone(default_arguments.default_model_id)
         self.assertEqual("deepseek-chat-flash", chat_arguments.default_model_id)
 
     def test_rebuild_port_conflict_message_explains_stop_then_rebuild(self) -> None:

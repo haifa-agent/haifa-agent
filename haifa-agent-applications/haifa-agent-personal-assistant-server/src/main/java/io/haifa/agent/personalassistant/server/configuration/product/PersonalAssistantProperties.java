@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.server.configuration.product;
 
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
@@ -275,6 +276,7 @@ public record PersonalAssistantProperties(
             String providerModelId,
             String style,
             Set<ModelCapability> capabilities,
+            ModelReasoningMode reasoningMode,
             int contextWindow,
             int maxOutputTokens) {
         @ConstructorBinding
@@ -286,6 +288,10 @@ public record PersonalAssistantProperties(
             capabilities = Set.copyOf(capabilities == null ? Set.of() : capabilities);
             if (capabilities.isEmpty())
                 throw new IllegalArgumentException("providerModel.capabilities must not be empty");
+            reasoningMode = reasoningMode == null ? ModelReasoningMode.DISABLED : reasoningMode;
+            if (reasoningMode != ModelReasoningMode.DISABLED && !capabilities.contains(ModelCapability.REASONING)) {
+                throw new IllegalArgumentException("providerModel reasoning mode requires REASONING capability");
+            }
             if (contextWindow < 1 || maxOutputTokens < 1 || maxOutputTokens > contextWindow) {
                 throw new IllegalArgumentException("providerModel token limits are invalid");
             }

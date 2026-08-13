@@ -18,6 +18,33 @@ import org.junit.jupiter.api.Test;
 
 class PersonalAssistantProfileTest {
     @Test
+    void conversationProfileExcludesMissionOnlyDeepResearchSkill() {
+        ProductContributionCoordinate coordinate = new ProductContributionCoordinate("test", "1");
+        var profile = PersonalAssistantProfile.create(
+                new PersonalAssistantProfile.ContributionCoordinates(
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate,
+                        coordinate),
+                Set.of(PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS, "user-skill"),
+                Set.of(),
+                Set.of());
+
+        assertThat(profile.allowedSkills())
+                .contains(PersonalAssistantProfile.BUNDLED_SKILL_ALIAS, "user-skill")
+                .doesNotContain(PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS);
+    }
+
+    @Test
     void retriesOnlyExplicitTransientToolFailures() {
         assertThat(PersonalAssistantAssembler.isTransientToolFailure(new ToolInvocationException(
                         "MCP_CALL_DEADLINE_EXCEEDED", ToolDispatchState.OUTCOME_UNKNOWN, "deadline")))
@@ -78,10 +105,8 @@ class PersonalAssistantProfileTest {
                         PersonalAssistantProfile.WEB_FETCH_ALIAS,
                         mcpAlias);
         assertThat(profile.allowedSkills())
-                .contains(
-                        PersonalAssistantProfile.BUNDLED_SKILL_ALIAS,
-                        PersonalAssistantProfile.EXECUTION_SKILL_ALIAS,
-                        PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS);
+                .contains(PersonalAssistantProfile.BUNDLED_SKILL_ALIAS, PersonalAssistantProfile.EXECUTION_SKILL_ALIAS)
+                .doesNotContain(PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS);
         assertThat(profile.instructions())
                 .contains(
                         "Treat the latest user message as the current objective",

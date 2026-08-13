@@ -94,8 +94,11 @@ public final class MissionApplicationService {
     public MissionSnapshot create(CreateMission command) {
         Objects.requireNonNull(command);
         Instant now = now();
+        Optional<ResearchBrief> frozenResearchBrief = ResearchTimeRangeFreezer.freeze(command.researchBrief(), now);
         String requestDigest = MissionValues.digest(
                 command.conversationId(),
+                command.modelBinding().modelId(),
+                command.modelBinding().configurationDigest(),
                 command.objective(),
                 String.join("\u0000", command.acceptanceCriteria()),
                 command.defaultDeadlineApplied()
@@ -126,7 +129,8 @@ public final class MissionApplicationService {
                                 ? Optional.of(requireSkillBinding("deep-research"))
                                 : Optional.empty(),
                         command.mode(),
-                        command.researchBrief(),
+                        frozenResearchBrief,
+                        command.modelBinding(),
                         now));
             }
             return reserved;
@@ -136,6 +140,7 @@ public final class MissionApplicationService {
             try {
                 MissionPlanner.PlanningResult planned = planner.plan(new MissionPlanner.PlanningRequest(
                         mission.missionId(),
+                        mission.modelBinding(),
                         mission.objective(),
                         mission.acceptanceCriteria(),
                         mission.constraints(),
@@ -218,6 +223,7 @@ public final class MissionApplicationService {
         PersonalMission mission = reservation.mission();
         MissionPlanner.PlanningResult planned = planner.plan(new MissionPlanner.PlanningRequest(
                 mission.missionId(),
+                mission.modelBinding(),
                 mission.objective(),
                 mission.acceptanceCriteria(),
                 mission.constraints(),
@@ -349,6 +355,7 @@ public final class MissionApplicationService {
             String idempotencyKey,
             String ownerScope,
             String conversationId,
+            MissionModelBinding modelBinding,
             String objective,
             List<String> acceptanceCriteria,
             MissionConstraints constraints,
@@ -359,6 +366,7 @@ public final class MissionApplicationService {
             idempotencyKey = MissionValues.text(idempotencyKey, "idempotencyKey", 128);
             ownerScope = MissionValues.text(ownerScope, "ownerScope", 256);
             conversationId = MissionValues.text(conversationId, "conversationId", 256);
+            modelBinding = Objects.requireNonNull(modelBinding);
             objective = MissionValues.text(objective, "objective", 8_000);
             acceptanceCriteria = MissionValues.texts(acceptanceCriteria, "acceptanceCriteria", 20, 1_000);
             constraints = Objects.requireNonNull(constraints);
@@ -380,6 +388,27 @@ public final class MissionApplicationService {
                 String idempotencyKey,
                 String ownerScope,
                 String conversationId,
+                MissionModelBinding modelBinding,
+                String objective,
+                List<String> acceptanceCriteria,
+                MissionConstraints constraints) {
+            this(
+                    idempotencyKey,
+                    ownerScope,
+                    conversationId,
+                    modelBinding,
+                    objective,
+                    acceptanceCriteria,
+                    constraints,
+                    MissionMode.STANDARD,
+                    Optional.empty(),
+                    false);
+        }
+
+        public CreateMission(
+                String idempotencyKey,
+                String ownerScope,
+                String conversationId,
                 String objective,
                 List<String> acceptanceCriteria,
                 MissionConstraints constraints,
@@ -389,6 +418,7 @@ public final class MissionApplicationService {
                     idempotencyKey,
                     ownerScope,
                     conversationId,
+                    MissionModelBinding.legacyDefault(),
                     objective,
                     acceptanceCriteria,
                     constraints,
@@ -408,6 +438,7 @@ public final class MissionApplicationService {
                     idempotencyKey,
                     ownerScope,
                     conversationId,
+                    MissionModelBinding.legacyDefault(),
                     objective,
                     acceptanceCriteria,
                     constraints,

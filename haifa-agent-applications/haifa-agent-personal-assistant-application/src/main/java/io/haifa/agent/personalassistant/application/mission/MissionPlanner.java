@@ -9,6 +9,7 @@ public interface MissionPlanner {
 
     record PlanningRequest(
             String missionId,
+            MissionModelBinding modelBinding,
             String objective,
             List<String> acceptanceCriteria,
             MissionConstraints constraints,
@@ -16,6 +17,7 @@ public interface MissionPlanner {
             MissionMode mode,
             Optional<ResearchBrief> researchBrief) {
         public PlanningRequest {
+            modelBinding = java.util.Objects.requireNonNull(modelBinding);
             acceptanceCriteria = List.copyOf(acceptanceCriteria);
             mode = java.util.Objects.requireNonNull(mode);
             researchBrief = java.util.Objects.requireNonNull(researchBrief);
@@ -32,9 +34,29 @@ public interface MissionPlanner {
                 String objective,
                 List<String> acceptanceCriteria,
                 MissionConstraints constraints,
+                int revisionNo,
+                MissionMode mode,
+                Optional<ResearchBrief> researchBrief) {
+            this(
+                    missionId,
+                    MissionModelBinding.legacyDefault(),
+                    objective,
+                    acceptanceCriteria,
+                    constraints,
+                    revisionNo,
+                    mode,
+                    researchBrief);
+        }
+
+        public PlanningRequest(
+                String missionId,
+                String objective,
+                List<String> acceptanceCriteria,
+                MissionConstraints constraints,
                 int revisionNo) {
             this(
                     missionId,
+                    MissionModelBinding.legacyDefault(),
                     objective,
                     acceptanceCriteria,
                     constraints,

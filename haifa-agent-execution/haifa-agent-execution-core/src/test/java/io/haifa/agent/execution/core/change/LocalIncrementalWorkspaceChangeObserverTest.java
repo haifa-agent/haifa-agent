@@ -196,6 +196,25 @@ class LocalIncrementalWorkspaceChangeObserverTest {
     }
 
     @Test
+    void quietWatcherDoesNotResynchronizeOnlyBecauseTheSettleDeadlineElapsed() throws Exception {
+        Path large = root.resolve("large.bin");
+        Files.write(large, new byte[2 * 1024 * 1024]);
+        WorkspaceId workspaceId = new WorkspaceId("delayed-runner-test");
+        AtomicInteger hashes = new AtomicInteger();
+        LocalIncrementalWorkspaceChangeObserver.FileVersionResolver versions = (file, attributes) -> {
+            hashes.incrementAndGet();
+            return deterministicVersion(file, attributes);
+        };
+        var observer = new LocalIncrementalWorkspaceChangeObserver(
+                workspaceId, root, WorkspaceChangeIgnorePolicy.none(), versions, true, 0);
+
+        assertThat(observer.begin(workspaceId).complete()).isEmpty();
+
+        assertThat(hashes).hasValue(1);
+        observer.close();
+    }
+
+    @Test
     void opaqueFileKeysUseTheirStableRepresentation() {
         assertThat(LocalIncrementalWorkspaceChangeObserver.stableFileKey(new OpaqueFileKey("same")))
                 .isEqualTo(LocalIncrementalWorkspaceChangeObserver.stableFileKey(new OpaqueFileKey("same")));

@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelReasoningMode;
+import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
@@ -174,6 +176,88 @@ class PersonalModelFactoryTest {
     }
 
     @Test
+    void freezesBailianWorkspaceAndRegionAsASecondProvider() {
+        var deepSeek = provider(
+                "deepseek",
+                "DeepSeek",
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", OpenAiCompatibleDialects.DEEPSEEK, null)),
+                List.of(model(
+                        "deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek-v4-flash", "openai-chat-completions")));
+        var bailian = provider(
+                "aliyun-bailian",
+                "Alibaba Cloud Model Studio",
+                true,
+                URI.create("https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"),
+                "env://DASHSCOPE_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", OpenAiCompatibleDialects.ALIYUN_BAILIAN, null)),
+                List.of(model(
+                        "qwen3.7-max-2026-05-17",
+                        "Qwen3.7 Max",
+                        "qwen3.7-max-2026-05-17",
+                        "openai-chat-completions",
+                        ModelReasoningMode.ENABLED)));
+
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(deepSeek, bailian), "deepseek-v4-flash", new ObjectMapper(), shell());
+
+        assertThat(platform.catalog().available())
+                .extracting(model -> model.providerId() + "/" + model.id())
+                .contains("aliyun-bailian/qwen3.7-max-2026-05-17");
+        assertThat(platform.contribution()
+                        .snapshots()
+                        .get("qwen3.7-max-2026-05-17")
+                        .providerOptions())
+                .containsEntry("workspace_id", "workspace-123")
+                .containsEntry("region", "cn-beijing");
+        assertThat(platform.contribution()
+                        .snapshots()
+                        .get("qwen3.7-max-2026-05-17")
+                        .invocationOptions())
+                .containsEntry("thinking_profile", "always")
+                .containsEntry("thinking_enabled", true)
+                .containsEntry("preserve_thinking", true)
+                .containsEntry("requires_reasoning_continuation", true);
+        assertThat(platform.catalog().binding("qwen3.7-max-2026-05-17")).get().satisfies(binding -> {
+            assertThat(binding.providerId()).isEqualTo("aliyun-bailian");
+            assertThat(binding.configurationDigest()).startsWith("sha256:");
+        });
+    }
+
+    @Test
+    void rejectsBailianEndpointsOutsideTheWorkspaceScopedEndpointContract() {
+        List<URI> invalidEndpoints = List.of(
+                URI.create("https://workspace-123.cn-shanghai.maas.aliyuncs.com/v1"),
+                URI.create("https://workspace-123.maas.aliyuncs.com/compatible-mode/v1"),
+                URI.create("https://workspace-123.cn-beijing.maas.aliyuncs.com.evil.example/compatible-mode/v1"));
+
+        for (URI endpoint : invalidEndpoints) {
+            var bailian = provider(
+                    "aliyun-bailian",
+                    "Alibaba Cloud Model Studio",
+                    true,
+                    endpoint,
+                    "env://DASHSCOPE_API_KEY",
+                    List.of(new PersonalAssistantProperties.ApiBinding(
+                            "openai-chat-completions", OpenAiCompatibleDialects.ALIYUN_BAILIAN, null)),
+                    List.of(model(
+                            "qwen3.7-max-2026-05-17",
+                            "Qwen3.7 Max",
+                            "qwen3.7-max-2026-05-17",
+                            "openai-chat-completions")));
+
+            assertThatThrownBy(() -> PersonalModelFactory.createPlatform(
+                            List.of(bailian), "qwen3.7-max-2026-05-17", new ObjectMapper(), shell()))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Bailian endpoint");
+        }
+    }
+
+    @Test
     void freezesStandardChatCompletionsDialectForAnArbitraryProviderId() {
         var provider = provider(
                 "third-party-openai",
@@ -266,12 +350,20 @@ class PersonalModelFactoryTest {
 
     private static PersonalAssistantProperties.ProviderModel model(
             String id, String displayName, String providerModelId, String style) {
+        return model(id, displayName, providerModelId, style, ModelReasoningMode.DISABLED);
+    }
+
+    private static PersonalAssistantProperties.ProviderModel model(
+            String id, String displayName, String providerModelId, String style, ModelReasoningMode reasoningMode) {
         return new PersonalAssistantProperties.ProviderModel(
                 id,
                 displayName,
                 providerModelId,
                 style,
-                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
+                reasoningMode == ModelReasoningMode.DISABLED
+                        ? Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING)
+                        : Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                reasoningMode,
                 131_072,
                 8_192);
     }
@@ -279,7 +371,14 @@ class PersonalModelFactoryTest {
     private static PersonalAssistantProperties.ProviderModel textModel(
             String id, String displayName, String providerModelId, String style) {
         return new PersonalAssistantProperties.ProviderModel(
-                id, displayName, providerModelId, style, Set.of(ModelCapability.TEXT_CHAT), 131_072, 8_192);
+                id,
+                displayName,
+                providerModelId,
+                style,
+                Set.of(ModelCapability.TEXT_CHAT),
+                ModelReasoningMode.DISABLED,
+                131_072,
+                8_192);
     }
 
     private static ShellPlatformContribution shell() {

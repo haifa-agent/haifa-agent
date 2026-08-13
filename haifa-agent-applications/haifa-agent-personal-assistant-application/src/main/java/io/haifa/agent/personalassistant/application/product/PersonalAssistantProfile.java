@@ -69,9 +69,8 @@ public final class PersonalAssistantProfile {
         none(requirements, ProductCapabilities.CONTEXT);
 
         Set<String> skills = java.util.stream.Stream.concat(
-                        java.util.stream.Stream.of(
-                                BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS, DEEP_RESEARCH_SKILL_ALIAS),
-                        localSkillAliases.stream())
+                        java.util.stream.Stream.of(BUNDLED_SKILL_ALIAS, EXECUTION_SKILL_ALIAS),
+                        localSkillAliases.stream().filter(alias -> !DEEP_RESEARCH_SKILL_ALIAS.equals(alias)))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         Set<String> allowedTools = java.util.stream.Stream.of(
                         java.util.stream.Stream.of(

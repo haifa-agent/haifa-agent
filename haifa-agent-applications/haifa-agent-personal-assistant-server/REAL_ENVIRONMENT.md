@@ -21,6 +21,8 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 - Utility MCP 仓库：
   `D:\workspace\haifa\haifa-ai\haifa-ai-utility-mcp-server`；
 - DeepSeek Key 文件：`D:\workspace\ss-deepseek.txt`，文件中只放 Key 本身。
+- 可选百炼 Key 文件：`D:\workspace\ss-bailian.txt`，每行使用 `KEY:VALUE`，支持
+  `API_KEY`、`WORKSPACE_ID` 和可选 `REGION`；region 缺省为 `cn-beijing`；
 - Aliyun IQS Key 文件：`D:\workspace\ss-aliyun-iqs.txt`，文件中只放 Key 本身；
 - Personal Skill 根目录：`D:\agents\hermes-agent\optional-skills\finance`，其直接子目录分别包含
   `SKILL.md`。
@@ -30,6 +32,13 @@ Key 文件不能提交到 Git，也不要把内容复制到命令历史、日志
 `OPENAI_BASE_URL`、`OPENAI_API_KEY`、`OPENAI_MODEL_ID` 仅用于可选的本机 OpenAI Responses
 Provider。三项都配置时启用该 Provider；全部缺失或仅配置一部分时继续使用 DeepSeek-only 环境，
 其中不完整配置会输出不含配置值的警告。
+
+百炼只有 API Key、Workspace ID 和 region 全部有效时才作为第二 Provider 启用。可分别用
+`DASHSCOPE_API_KEY`、`ALIYUN_BAILIAN_WORKSPACE_ID`、`ALIYUN_BAILIAN_REGION` 覆盖 Key 文件；后端配置
+只保存 `env://DASHSCOPE_API_KEY`。启用后且未显式指定 `--default-model-id` 时，默认模型为
+`qwen3.7-max-2026-05-17`；通过 `--bailian-region` 可修改默认地域。启动本身不会调用百炼 API。
+该 Max 快照在真实接口中要求 thinking 启用，因此脚本为它冻结 `reasoning-mode=ENABLED`；其它首批
+Qwen 模型仍使用默认禁用策略，除非后续通过单独能力验证调整。
 
 ## 2. 一键启动
 
@@ -108,6 +117,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```powershell
 & .\scripts\start-real-environment.ps1 `
   --deepseek-key-file 'D:\secure\deepseek.txt' `
+  --bailian-key-file 'D:\secure\bailian.txt' `
+  --bailian-region cn-beijing `
   --aliyun-iqs-key-file 'D:\secure\aliyun-iqs.txt' `
   --continuation-key-file 'D:\secure\personal-continuation.txt' `
   --personal-skill-root 'D:\agents\hermes-agent\optional-skills\finance' `
@@ -122,7 +133,7 @@ Continuation Key 文件必须长期保留。删除或更换它会使旧的加密
 后端使用以下关键配置：
 
 ```text
-HAIFA_PERSONAL_DEFAULT_MODEL_ID=deepseek-v4-flash
+HAIFA_PERSONAL_DEFAULT_MODEL_ID=qwen3.7-max-2026-05-17  # 完整百炼配置存在且未显式覆盖时
 HAIFA_PERSONAL_MODELPROVIDERS_0_ID=deepseek
 HAIFA_PERSONAL_MODELPROVIDERS_0_DISPLAYNAME=DeepSeek
 HAIFA_PERSONAL_MODELPROVIDERS_0_MODE=remote
@@ -250,6 +261,8 @@ macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚�
 ```bash
 ./scripts/start-real-environment.sh \
   --deepseek-key-file /absolute/secure/deepseek.txt \
+  --bailian-key-file /absolute/secure/bailian.txt \
+  --bailian-region cn-beijing \
   --aliyun-iqs-key-file /absolute/secure/aliyun-iqs.txt \
   --continuation-key-file /absolute/secure/personal-continuation.txt \
   --utility-mcp-directory /absolute/src/haifa-ai-utility-mcp-server \
@@ -260,6 +273,8 @@ macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚�
 
 ```text
 HAIFA_DEEPSEEK_KEY_FILE
+HAIFA_BAILIAN_KEY_FILE
+ALIYUN_BAILIAN_REGION
 HAIFA_ALIYUN_IQS_KEY_FILE
 HAIFA_PERSONAL_CONTINUATION_KEY_FILE
 HAIFA_UTILITY_MCP_DIRECTORY

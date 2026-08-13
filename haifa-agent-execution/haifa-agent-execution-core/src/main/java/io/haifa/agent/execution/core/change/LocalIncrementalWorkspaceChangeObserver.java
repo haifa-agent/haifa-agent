@@ -44,6 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceChangeObserver, AutoCloseable {
     private static final int MAX_ENTRIES = 1_000_000;
+    private static final long SETTLE_TIMEOUT_NANOS = TimeUnit.MILLISECONDS.toNanos(250);
     private static final boolean NEEDS_METADATA_RECONCILIATION =
             System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
 
@@ -52,6 +53,7 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
     private final WorkspaceChangeIgnorePolicy ignores;
     private final FileVersionResolver versions;
     private final boolean reconcileMetadata;
+    private final long settleTimeoutNanos;
     private final Semaphore window = new Semaphore(1, true);
     private final Map<WatchKey, Path> watchedDirectories = new HashMap<>();
     private Map<ProjectPath, FileVersion> baseline = new LinkedHashMap<>();
@@ -80,11 +82,23 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
             WorkspaceChangeIgnorePolicy ignores,
             FileVersionResolver versions,
             boolean reconcileMetadata) {
+        this(workspaceId, root, ignores, versions, reconcileMetadata, SETTLE_TIMEOUT_NANOS);
+    }
+
+    LocalIncrementalWorkspaceChangeObserver(
+            WorkspaceId workspaceId,
+            Path root,
+            WorkspaceChangeIgnorePolicy ignores,
+            FileVersionResolver versions,
+            boolean reconcileMetadata,
+            long settleTimeoutNanos) {
         this.workspaceId = Objects.requireNonNull(workspaceId, "workspaceId must not be null");
         this.root = normalizeRoot(root);
         this.ignores = Objects.requireNonNull(ignores, "ignores must not be null");
         this.versions = Objects.requireNonNull(versions, "versions must not be null");
         this.reconcileMetadata = reconcileMetadata;
+        if (settleTimeoutNanos < 0) throw new IllegalArgumentException("settleTimeoutNanos must not be negative");
+        this.settleTimeoutNanos = settleTimeoutNanos;
     }
 
     @Override
@@ -268,16 +282,18 @@ public final class LocalIncrementalWorkspaceChangeObserver implements WorkspaceC
         Set<ProjectPath> paths = new HashSet<>();
         boolean overflow = false;
         int quietPolls = settle ? 3 : 0;
-        long deadline = settle ? System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(250) : Long.MAX_VALUE;
+        long deadline = settle ? System.nanoTime() + settleTimeoutNanos : Long.MAX_VALUE;
         try {
             while (true) {
-                if (System.nanoTime() >= deadline) {
-                    overflow = true;
-                    break;
-                }
                 WatchKey key = quietPolls > 0 ? watcher.poll(20, TimeUnit.MILLISECONDS) : watcher.poll();
                 if (key == null) {
                     if (quietPolls-- > 0) continue;
+                    break;
+                }
+                // A delayed runner may resume after the deadline even though the watcher has already been quiet.
+                // Only sustained event activity makes the settle budget unsafe and requires a full rescan.
+                if (System.nanoTime() >= deadline) {
+                    overflow = true;
                     break;
                 }
                 quietPolls = settle ? 3 : 0;

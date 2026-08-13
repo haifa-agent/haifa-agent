@@ -748,11 +748,12 @@
       },
       "MissionSnapshot": {
         "type": "object",
-        "required": ["schemaVersion", "missionId", "conversationId", "objective", "acceptanceCriteria", "constraints", "mode", "researchBrief", "selectedSkillId", "selectedSkillBinding", "state", "plan", "tasks", "blocker", "artifacts", "sources", "finalResult", "version", "createdAt", "updatedAt", "confirmedAt", "finishedAt", "pollAfterMs", "execution"],
+        "required": ["schemaVersion", "missionId", "conversationId", "modelBinding", "objective", "acceptanceCriteria", "constraints", "mode", "researchBrief", "selectedSkillId", "selectedSkillBinding", "state", "plan", "tasks", "blocker", "artifacts", "sources", "finalResult", "version", "createdAt", "updatedAt", "confirmedAt", "finishedAt", "pollAfterMs", "execution"],
         "properties": {
-          "schemaVersion": {"type": "string", "const": "pa.mission-snapshot/v1"},
+          "schemaVersion": {"type": "string", "const": "pa.mission-snapshot/v2"},
           "missionId": {"type": "string"},
           "conversationId": {"type": "string"},
+          "modelBinding": {"$ref": "#/components/schemas/MissionModelBinding"},
           "objective": {"type": "string"},
           "acceptanceCriteria": {"type": "array", "items": {"type": "string"}},
           "constraints": {"$ref": "#/components/schemas/MissionConstraints"},
@@ -766,7 +767,7 @@
           "blocker": {"oneOf": [{"type": "string"}, {"type": "null"}]},
           "artifacts": {"type": "array", "items": {"type": "string"}},
           "sources": {"type": "array", "items": {"type": "string"}},
-          "finalResult": {"description": "Encoded completion envelope. Standard Missions use pa.mission-final-result/v1, historical research Missions use pa.research-final-result/v1, and newly published research deliveries use pa.research-delivery/v2 with a separate Markdown report Artifact.", "oneOf": [{"type": "string"}, {"type": "null"}]},
+          "finalResult": {"description": "Encoded completion envelope. Standard Missions use pa.mission-final-result/v1; Deep Research deliveries use pa.research-delivery/v2 with a separate Markdown report Artifact.", "oneOf": [{"type": "string"}, {"type": "null"}]},
           "version": {"type": "integer", "format": "int64"},
           "createdAt": {"type": "string", "format": "date-time"},
           "updatedAt": {"type": "string", "format": "date-time"},
@@ -774,6 +775,17 @@
           "finishedAt": {"oneOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
           "pollAfterMs": {"type": "integer", "format": "int64", "minimum": 0},
           "execution": {"$ref": "#/components/schemas/MissionExecution"}
+        }
+      },
+      "MissionModelBinding": {
+        "type": "object",
+        "required": ["modelId", "modelDisplayName", "providerId", "providerDisplayName", "configurationDigest"],
+        "properties": {
+          "modelId": {"type": "string"},
+          "modelDisplayName": {"type": "string"},
+          "providerId": {"type": "string"},
+          "providerDisplayName": {"type": "string"},
+          "configurationDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
         }
       },
       "MissionExecution": {
