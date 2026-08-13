@@ -8,10 +8,7 @@ public final class HelloHaifa {
     private HelloHaifa() {}
 
     public static void main(String[] arguments) throws Exception {
-        try (HaifaAgent agent = HaifaAgentStarter.builder()
-                .name("hello-haifa")
-                .description("Minimal Haifa Agent quickstart")
-                .build()) {
+        try (HaifaAgent agent = HaifaAgentStarter.builder().name("hello-haifa").build()) {
             var response =
                     agent.chat("Introduce Haifa Agent in one short sentence.").await();
             System.out.println(response.text());

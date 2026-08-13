@@ -62,7 +62,6 @@ public final class HaifaAgentStarterBuilder {
 
     private String instructions = "You are a helpful assistant. Answer clearly and concisely.";
     private String name = AgentMetadata.DEFAULT_NAME;
-    private String description = AgentMetadata.DEFAULT_DESCRIPTION;
     private boolean defaultInstructions = true;
     private String credentialEnvironmentVariable = API_KEY_ENVIRONMENT_VARIABLE;
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
@@ -77,12 +76,6 @@ public final class HaifaAgentStarterBuilder {
     /** Sets bounded immutable display metadata; it is never added to the Prompt. */
     public HaifaAgentStarterBuilder name(String value) {
         name = requireText(value, "name", 128);
-        return this;
-    }
-
-    /** Sets bounded immutable diagnostic metadata; it is never added to the Prompt. */
-    public HaifaAgentStarterBuilder description(String value) {
-        description = requireText(value, "description", 512);
         return this;
     }
 
@@ -217,7 +210,7 @@ public final class HaifaAgentStarterBuilder {
         ModelBundle model = models.isEmpty() ? deepSeekModel() : configuredModels();
         ProductProfile profile = profile(model.snapshot());
         var builder = HaifaAgents.builder(profile)
-                .metadata(new AgentMetadata(name, description))
+                .metadata(new AgentMetadata(name))
                 .callerProvider(callers)
                 .contribute(model.contribution())
                 .contribute(persistenceContribution())

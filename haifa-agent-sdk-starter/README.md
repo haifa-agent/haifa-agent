@@ -19,7 +19,6 @@ import io.haifa.agent.starter.HaifaAgentStarter;
 
 try (HaifaAgent agent = HaifaAgentStarter.builder()
         .name("hello-agent")
-        .description("Minimal quickstart assistant")
         .build()) {
     var response = agent.chat("Say hello in one sentence.").await();
     System.out.println(response.text());
@@ -40,8 +39,9 @@ TripPlan plan = response.value();
 类型化 partial stream。当前 API 未声明 Stable。
 
 默认 instructions 只是 Quickstart fallback；使用它时 `agent.diagnostics()` 包含
-`DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name`/`description`
-仅用于展示和诊断，不进入 Prompt 或选择逻辑。多轮、重试、revision、取消和事件订阅继续使用显式
+`DEFAULT_INSTRUCTIONS_IN_USE`，显式调用 `instructions(...)` 后该诊断消失。`name` 仅用于展示和
+Conversation display name，不进入 Prompt 或选择逻辑；Agent `description` 暂不暴露。多轮、重试、
+revision、取消和事件订阅继续使用显式
 Conversation/Run API。
 
 运行前设置 `DEEPSEEK_API_KEY`。该入口会访问真实 DeepSeek API 并产生费用。Starter 的进程内状态在
