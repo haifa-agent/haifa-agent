@@ -12,6 +12,7 @@ import java.util.Set;
 public final class AnthropicMessagesDialects {
     public static final String STANDARD = ModelApiBindingDefinition.STANDARD_DIALECT;
     public static final String DEEPSEEK = "deepseek-anthropic-messages";
+    public static final String ZHIPU = "zhipu-anthropic-messages";
 
     private AnthropicMessagesDialects() {}
 
@@ -25,6 +26,7 @@ public final class AnthropicMessagesDialects {
                 switch (snapshot.dialect()) {
                     case STANDARD -> Profile.STANDARD;
                     case DEEPSEEK -> Profile.DEEPSEEK;
+                    case ZHIPU -> Profile.ZHIPU;
                     default ->
                         throw new IllegalArgumentException(
                                 "unsupported Anthropic Messages dialect: " + snapshot.dialect());
@@ -33,6 +35,9 @@ public final class AnthropicMessagesDialects {
         if (profile == Profile.DEEPSEEK
                 && !Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId())) {
             throw new IllegalArgumentException("DeepSeek Anthropic model profile is not verified");
+        }
+        if (profile == Profile.ZHIPU && !"glm-5.2".equals(snapshot.providerModelId())) {
+            throw new IllegalArgumentException("Zhipu Anthropic model profile is not verified");
         }
         return profile;
     }
@@ -64,6 +69,14 @@ public final class AnthropicMessagesDialects {
             throw new IllegalArgumentException(
                     "DeepSeek Anthropic endpoint must be https://api.deepseek.com/anthropic");
         }
+        if (profile == Profile.ZHIPU
+                && !loopback
+                && (!"https".equalsIgnoreCase(value.getScheme())
+                        || !"open.bigmodel.cn".equalsIgnoreCase(host)
+                        || !"/api/anthropic".equals(normalizedPath(value)))) {
+            throw new IllegalArgumentException(
+                    "Zhipu Anthropic endpoint must be https://open.bigmodel.cn/api/anthropic");
+        }
     }
 
     private static String normalizedPath(URI endpoint) {
@@ -75,6 +88,7 @@ public final class AnthropicMessagesDialects {
 
     enum Profile {
         STANDARD,
-        DEEPSEEK
+        DEEPSEEK,
+        ZHIPU
     }
 }

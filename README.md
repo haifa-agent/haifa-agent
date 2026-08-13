@@ -6,7 +6,7 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
 
 - Core 领域模型、`AgentRun` 状态机、Runtime API 与异步 AgentLoop；
 - Provider-neutral 的 Model、Tool、Skill、Credential、Memory 与 Context 契约；
-- OpenAI、DeepSeek、阿里云百炼、火山方舟的 OpenAI-compatible Chat Completions 适配，支持流式输出、Tool Call、最终 usage 和受保护的 reasoning continuation；
+- OpenAI、DeepSeek、阿里云百炼、Kimi、智谱与火山方舟的受治理模型适配；已验证的 Binding 覆盖 Chat Completions、Responses 和 Anthropic Messages，支持流式输出、Tool Call、最终 usage 和受保护的 reasoning continuation；
 - 冻结 Tool Binding、受限 JSON Schema 校验、短生命周期凭据租约与 AES-GCM 本地凭据存储；
 - 固定协议 `2025-11-25` 的 MCP Client，支持 Streamable HTTP 与由 `ExecutionBroker` 托管的 stdio；
 - 兼容 `SKILL.md` 的 Skill API/Core/Base，支持分层发现、内容寻址冻结、摘要披露、Run 级受控激活和资源按需读取；

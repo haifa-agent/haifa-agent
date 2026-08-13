@@ -51,6 +51,31 @@ class DeepSeekAnthropicCompatibilityTest {
                 .isEqualTo(AnthropicMessagesDialects.Profile.STANDARD);
     }
 
+    @Test
+    void acceptsOnlyGlm52AtTheDocumentedZhipuAnthropicEndpoint() {
+        assertThat(AnthropicMessagesDialects.resolve(
+                        snapshot(
+                                "glm-5.2",
+                                AnthropicMessagesDialects.ZHIPU,
+                                URI.create("https://open.bigmodel.cn/api/anthropic")),
+                        false))
+                .isEqualTo(AnthropicMessagesDialects.Profile.ZHIPU);
+        assertThatThrownBy(() -> AnthropicMessagesDialects.resolve(
+                        snapshot(
+                                "glm-5.1",
+                                AnthropicMessagesDialects.ZHIPU,
+                                URI.create("https://open.bigmodel.cn/api/anthropic")),
+                        false))
+                .hasMessageContaining("not verified");
+        assertThatThrownBy(() -> AnthropicMessagesDialects.resolve(
+                        snapshot(
+                                "glm-5.2",
+                                AnthropicMessagesDialects.ZHIPU,
+                                URI.create("https://open.bigmodel.cn/api/paas/v4")),
+                        false))
+                .hasMessageContaining("api/anthropic");
+    }
+
     private static ResolvedModelSnapshot deepSeek(String providerModelId) {
         return snapshot(
                 providerModelId, AnthropicMessagesDialects.DEEPSEEK, URI.create("https://api.deepseek.com/anthropic"));

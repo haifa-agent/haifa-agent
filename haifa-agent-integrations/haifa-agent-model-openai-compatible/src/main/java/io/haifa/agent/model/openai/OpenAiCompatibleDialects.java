@@ -18,6 +18,8 @@ public final class OpenAiCompatibleDialects {
     public static final String STANDARD_IMPLEMENTATION_ID = "openai-chat-completions";
     public static final String DEEPSEEK = "deepseek-openai-chat";
     public static final String ALIYUN_BAILIAN = "aliyun-bailian-openai-chat";
+    public static final String KIMI = "kimi-openai-chat";
+    public static final String ZHIPU = "zhipu-openai-chat";
     public static final String VOLCENGINE_ARK = "volcengine-ark-openai-chat";
     public static final String VERSION_1 = "1.0";
     private static final String BAILIAN_PATH = "/compatible-mode/v1";
@@ -61,7 +63,16 @@ public final class OpenAiCompatibleDialects {
                         true,
                         "requires_reasoning_continuation",
                         true);
-            case ADAPTIVE -> Map.of("thinking_profile", "hybrid", "thinking_enabled", true);
+            case ADAPTIVE ->
+                Map.of(
+                        "thinking_profile",
+                        "hybrid",
+                        "thinking_enabled",
+                        true,
+                        "preserve_thinking",
+                        true,
+                        "requires_reasoning_continuation",
+                        true);
         };
     }
 
@@ -98,6 +109,8 @@ public final class OpenAiCompatibleDialects {
                 StandardOpenAiChatCompletionsDialect.INSTANCE;
             case DEEPSEEK -> DeepSeekOpenAiChatDialect.INSTANCE;
             case ALIYUN_BAILIAN -> AliyunBailianOpenAiChatDialect.INSTANCE;
+            case KIMI -> KimiOpenAiChatDialect.INSTANCE;
+            case ZHIPU -> ZhipuOpenAiChatDialect.INSTANCE;
             case VOLCENGINE_ARK -> VolcengineArkOpenAiChatDialect.INSTANCE;
             default -> throw new IllegalArgumentException("unsupported OpenAI-compatible dialect: " + dialectId);
         };

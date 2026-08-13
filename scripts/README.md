@@ -14,6 +14,10 @@
 `cn-beijing`，可用 `--bailian-region` 修改。只有 API Key、Workspace ID 与 region 完整时才启用，
 配置中只写 `env://DASHSCOPE_API_KEY`，启动脚本不会发起模型调用。
 
+`--kimi-key-file` 与 `--bigmodel-key-file` 可选装配 Kimi 和智谱，默认分别读取仓库同级的
+`ss-kimi.txt`、`ss-bigmodel.txt`；也可使用 `KIMI_API_KEY`、`BIGMODEL_API_KEY`。凭据只进入后端子进程
+环境，配置冻结为 `env://...` 引用。可选 Provider 只扩展模型目录，不自动替换 DeepSeek 默认 Binding。
+
 ```powershell
 .\scripts\start-real-environment.ps1
 .\scripts\start-real-environment.ps1 --stop --dry-run

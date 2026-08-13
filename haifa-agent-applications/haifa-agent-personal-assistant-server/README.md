@@ -123,14 +123,14 @@ Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写�
 Responses reasoning 控件当前保持只读。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
-真实环境启动脚本可选装配第二个 `aliyun-bailian` Provider。完整配置要求 API Key、Workspace ID 和
-region；Credential 在 Spring 配置中始终只是 `env://DASHSCOPE_API_KEY`，Endpoint、实际 Provider
-Model ID 与完整 Snapshot 不返回浏览器。脚本检测到完整百炼配置且未显式传入 `--default-model-id`
-时，默认选择 `qwen3.7-max-2026-05-17`；否则保持 DeepSeek 默认。百炼目录同时提供
-`qwen3.7-plus`、`qwen3.7-flash` 和具有 `IMAGE_INPUT` 的 `qwen3-vl-plus`。当前 max 模型不声明
-`STRUCTURED_OUTPUT`，且真实百炼校验确认该快照只接受启用 thinking。其 Provider-neutral
-`reasoning-mode=ENABLED` 会由百炼 adapter 映射为受保护的 thinking continuation；Mission 应显式选择
-plus 或 flash，产品不会为 Mission 静默替换冻结模型。
+真实环境启动脚本可选装配 `aliyun-bailian`、`kimi` 与 `zhipu` Provider。百炼完整配置要求 API Key、
+Workspace ID 和 region；Kimi 与智谱分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`。Endpoint、
+实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
+`deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
+
+百炼目录提供 Qwen Chat 与已验证的 Max/Plus Responses；Kimi 只提供官方 API Key Chat；智谱提供通用
+OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高级连接方式。所有可见状态、
+推荐值、允许值和只读状态由后端精确 Binding Profile 驱动；UI 不包含 Provider/Model 条件分支。
 
 `IMAGE_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
 最多四个 `{kind: url|upload}` 图片输入。外部 URL 只接受受限 HTTPS；上传通过 `POST /api/v1/images`

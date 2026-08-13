@@ -181,7 +181,7 @@ class PersonalModelFactoryTest {
     }
 
     @Test
-    void freezesBailianWorkspaceAndRegionAsASecondProvider() {
+    void freezesBailianWorkspaceAndRegionAndExposesTheVerifiedBinding() {
         var deepSeek = provider(
                 "deepseek",
                 "DeepSeek",
@@ -232,10 +232,10 @@ class PersonalModelFactoryTest {
                         .findFirst())
                 .get()
                 .satisfies(model -> {
-                    assertThat(model.availability()).isEqualTo("UNAVAILABLE");
-                    assertThat(model.unavailableReason()).contains("contract verification");
+                    assertThat(model.availability()).isEqualTo("AVAILABLE");
+                    assertThat(model.unavailableReason()).isEmpty();
                 });
-        assertThat(platform.catalog().binding("qwen3.7-max-2026-05-17")).isEmpty();
+        assertThat(platform.catalog().binding("qwen3.7-max-2026-05-17")).isPresent();
     }
 
     @Test
@@ -265,6 +265,52 @@ class PersonalModelFactoryTest {
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("Bailian endpoint");
         }
+    }
+
+    @Test
+    void freezesReviewedKimiAndZhipuControlsWithProtectedToolContinuation() {
+        var kimi = provider(
+                "kimi",
+                "Kimi",
+                true,
+                URI.create("https://api.moonshot.cn/v1"),
+                "env://KIMI_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", OpenAiCompatibleDialects.KIMI, null)),
+                List.of(model("kimi-k3", "Kimi K3", "kimi-k3", "openai-chat-completions", ModelReasoningMode.ENABLED)));
+        var zhipu = provider(
+                "zhipu",
+                "Zhipu GLM",
+                true,
+                URI.create("https://open.bigmodel.cn/api/paas/v4"),
+                "env://BIGMODEL_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", OpenAiCompatibleDialects.ZHIPU, null)),
+                List.of(model(
+                        "glm-5.2-chat", "GLM-5.2", "glm-5.2", "openai-chat-completions", ModelReasoningMode.ADAPTIVE)));
+
+        var platform =
+                PersonalModelFactory.createPlatform(List.of(kimi, zhipu), "kimi-k3", new ObjectMapper(), shell());
+
+        assertThat(platform.contribution().snapshots().get("kimi-k3").invocationOptions())
+                .containsEntry("thinking", "enabled")
+                .containsEntry("requires_reasoning_continuation", true);
+        assertThat(platform.contribution().snapshots().get("glm-5.2-chat").invocationOptions())
+                .containsEntry("thinking", "adaptive")
+                .containsEntry("do_sample", false)
+                .containsEntry("clear_thinking", false)
+                .containsEntry("requires_reasoning_continuation", true);
+        var kimiOption = platform.catalog().find("kimi-k3").orElseThrow();
+        assertThat(kimiOption.controls().responseMode().allowedValues())
+                .containsExactly(PersonalResponseMode.RECOMMENDED, PersonalResponseMode.DEEP);
+        assertThat(kimiOption.controls().reasoningEffort().allowedValues())
+                .containsExactly(ModelReasoningEffort.LOW, ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+        var zhipuOption = platform.catalog().find("glm-5.2-chat").orElseThrow();
+        assertThat(zhipuOption.controls().responseMode().allowedValues())
+                .containsExactly(
+                        PersonalResponseMode.RECOMMENDED, PersonalResponseMode.FAST, PersonalResponseMode.DEEP);
+        assertThat(zhipuOption.controls().reasoningEffort().allowedValues())
+                .containsExactly(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
     }
 
     @Test

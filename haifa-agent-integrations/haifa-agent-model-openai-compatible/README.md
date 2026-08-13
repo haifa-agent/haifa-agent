@@ -3,11 +3,10 @@
 ## Profile factory
 
 `OpenAiCompatibleModelProfileFactory` derives a versioned binding profile from an already resolved snapshot. It
-recognizes the audited DeepSeek dialect and provider-neutral `standard` bindings only. Vendor-specific bindings that
-have not completed their contract phase are marked unverified instead of inheriting capabilities merely because they
-share an OpenAI-compatible transport. DeepSeek V4 Flash and V4 Pro are verified independently for Chat Completions,
-Responses, and Anthropic Messages; product exposure can still keep a verified control read-only. Provider request
-mapping remains in the dialect/adapter layer.
+recognizes only exact model/style/dialect combinations that completed contract verification: DeepSeek, selected
+Bailian Qwen bindings, Kimi K3/K2.7/K2.6, and selected Zhipu GLM bindings. Unknown vendor bindings remain unverified
+instead of inheriting capabilities merely because they share an OpenAI-compatible transport. Product exposure can
+still keep a verified control read-only. Provider request mapping remains in the dialect/adapter layer.
 
 ## API Style 与 dialect
 
@@ -64,6 +63,8 @@ Chat Completions 当前支持：
 | OpenAI Chat Completions | `standard` | 是 | 是 | 是 | 不发送厂商扩展 |
 | DeepSeek | `deepseek-openai-chat` | 是 | 是 | 是 | enabled/high，安全 continuation |
 | 阿里云百炼 | `aliyun-bailian-openai-chat` | 是 | 是 | 是 | 由受治理 Qwen profile 决定 |
+| Kimi | `kimi-openai-chat` | 是 | 是 | 是 | K3/K2.7 始终推理，K2.6 可切换，安全 continuation |
+| 智谱 GLM | `zhipu-openai-chat` | 是 | 是 | 是 | 动态/强制 thinking、有效 effort 与采样限制由精确 profile 决定 |
 | 火山方舟 | `volcengine-ark-openai-chat` | 是 | 是 | 是 | 由受治理豆包/Endpoint profile 决定 |
 
 配置通过 Provider 下的 `apiBindings` 声明 Style。省略 dialect 即 `standard`；只有存在已验证协议差异
@@ -82,9 +83,13 @@ function_call_output、reasoning、usage、incomplete/failed 和 Tool 参数分�
 Parser 对累计响应、单事件、事件数、内容和 Tool 参数设限；取消、终态缺失及终态后事件失败关闭。
 
 `standard` 以 OpenAI Responses 契约为准。`deepseek-openai-responses` 只允许已验证的
-`deepseek-v4-flash`，拒绝图片/文件与非 automatic function selection，要求单调 `sequence_number`，
+`deepseek-v4-flash`/`deepseek-v4-pro`，拒绝图片/文件与非 automatic function selection，要求单调 `sequence_number`，
 并以 Responses 终态收敛而不等待 `[DONE]`。本地 `chatgpt2api` 文本与 SSE 使用 `standard`，但普通
 function tool 当前不产生 `function_call`，所以对应模型能力只声明 `TEXT_CHAT`。
+
+`aliyun-bailian-openai-responses` 只允许已经过 Contract 与真实调用验证的 Qwen Max/Plus 精确型号，
+要求 workspace-scoped `/compatible-mode/v1` Endpoint，并映射 `reasoning.effort`。兼容 SSE 允许空字符串
+delta，但仍要求 delta 字段为字符串；空 delta 不产生公共流事件。
 
 ## Anthropic Messages
 
@@ -103,6 +108,10 @@ DeepSeek Anthropic API 使用显式 `deepseek-anthropic-messages` dialect，因�
 冻结 `thinking=disabled`。该 dialect 尚未验证 `output_config.format`，类型化 Structured Output 在网络调用
 前 fail closed。Binding 使用完整 Endpoint 覆盖 `https://api.deepseek.com/anthropic`，共享 Credential 与
 `nativeStreaming` 仍归 Provider 所有。
+
+智谱 Anthropic-compatible 使用独立 `zhipu-anthropic-messages` dialect，只允许 `glm-5.2` 与完整
+`https://open.bigmodel.cn/api/anthropic` Endpoint。Contract/差异测试已通过；真实环境若返回 429，保持
+`MODEL_RATE_LIMITED`，不 fallback 到 Chat 或把限流误报为协议兼容成功。
 
 ## 阿里云百炼
 
@@ -125,7 +134,8 @@ continuation 和恢复所需的冻结选项，将 `DISABLED` 映射为显式关�
 `preserve_thinking`、`reasoning_effort`、`tool_stream`；`tool_stream` 默认不发送。百炼 thinking 复用
 Runtime 的受保护 continuation，raw reasoning 不进入公共输出。
 
-百炼当前仅支持 OpenAI Chat Completions。DashScope 原生协议和百炼 Anthropic-compatible 尚未接入。
+百炼当前支持已验证 Qwen Binding 的 OpenAI Chat Completions 与 Responses。DashScope 原生协议和百炼
+Anthropic-compatible 尚未接入，也不从官方文档存在性推断为可选 Binding。
 
 ## 火山方舟
 
@@ -135,18 +145,16 @@ Runtime 的受保护 continuation，raw reasoning 不进入公共输出。
 profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actual model 仅作为本次结果审计，不修改
 冻结 binding。
 
-### 当前兼容矩阵
+### 当前 Chat 兼容矩阵
 
-| 能力 | OpenAI Chat Completions | DeepSeek | Bailian | Ark |
-| --- | --- | --- | --- | --- |
-| Sync Chat | 是 | 是 | 是 | 是 |
-| SSE Content | 是 | 是 | 是 | 是 |
-| final usage chunk | 是 | 是 | 是 | 是 |
-| Tool Calls | 是 | 是 | 是 | 是 |
-| Image input | 显式 capability | 显式 capability | 显式 capability | 显式 capability |
-| Thinking | 无厂商扩展 | enabled/high | profile-gated | profile-gated |
-| Tool reasoning continuation | 否 | 必须 | profile-gated | profile-gated |
-| Live IT | 未提供 | opt-in | opt-in | opt-in |
+| Provider profile | Sync/SSE | Tool Calls | Thinking | Tool reasoning continuation | Live |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI-compatible `standard` | 是 | 是 | 无厂商扩展 | 否 | 未提供 |
+| DeepSeek | 是 | 是 | enabled/high|max | 必须 | opt-in |
+| Bailian | 是 | 是 | profile-gated | profile-gated | opt-in |
+| Kimi | 是 | 是 | model-gated | 必须 | opt-in |
+| Zhipu | 是 | 是 | dynamic/forced profile | 必须 | opt-in |
+| Ark | 是 | 是 | profile-gated | profile-gated | opt-in |
 
 图片输入不是 dialect 推断结果。冻结模型只有声明 `IMAGE_INPUT` 时才可发送图片；纯文本消息继续使用
 字符串 `content`，包含 `ImageUrlPart` 或临时 `ImageDataPart` 的 USER 消息映射为标准 Chat Completions
@@ -157,6 +165,8 @@ profile allowlist；默认模型不继承 DeepSeek thinking。响应中的 actua
 | OpenAI-compatible | `https://api.openai.com/v1`、受信第三方 HTTPS 主机或显式允许的 loopback `/v1` | `env://OPENAI_API_KEY` | model id | 无 |
 | DeepSeek | `https://api.deepseek.com` | `env://DEEPSEEK_API_KEY` | model id | thinking object |
 | Bailian | `https://{workspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1` | `env://DASHSCOPE_API_KEY` | Qwen model id/alias | enable_thinking/tool_stream |
+| Kimi | `https://api.moonshot.cn/v1` | `env://KIMI_API_KEY` | reviewed Kimi model id | thinking/keep/reasoning_effort |
+| Zhipu | `https://open.bigmodel.cn/api/paas/v4` | `env://BIGMODEL_API_KEY` | reviewed GLM model id | thinking/reasoning_effort/do_sample |
 | Ark | `https://ark.cn-beijing.volces.com/api/v3` | `env://ARK_API_KEY` | typed Model ID/Endpoint ID | thinking/service_tier/token parameter |
 
 标准 OpenAI dialect 可冻结 `native_streaming=false`。此时 Adapter 使用同步 Chat Completions 获取权威

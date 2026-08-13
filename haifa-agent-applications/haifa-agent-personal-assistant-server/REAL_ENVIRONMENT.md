@@ -23,6 +23,8 @@ loopback `20000` 的 Origin，方案中没有反向代理。
 - DeepSeek Key 文件：`D:\workspace\ss-deepseek.txt`，文件中只放 Key 本身。
 - 可选百炼 Key 文件：`D:\workspace\ss-bailian.txt`，每行使用 `KEY:VALUE`，支持
   `API_KEY`、`WORKSPACE_ID` 和可选 `REGION`；region 缺省为 `cn-beijing`；
+- 可选 Kimi Key 文件：`D:\workspace\ss-kimi.txt`，文件中只放 Key 本身；
+- 可选智谱 Key 文件：`D:\workspace\ss-bigmodel.txt`，文件中只放 Key 本身；
 - Aliyun IQS Key 文件：`D:\workspace\ss-aliyun-iqs.txt`，文件中只放 Key 本身；
 - Personal Skill 根目录：`D:\agents\hermes-agent\optional-skills\finance`，其直接子目录分别包含
   `SKILL.md`。
@@ -33,12 +35,12 @@ Key 文件不能提交到 Git，也不要把内容复制到命令历史、日志
 Provider。三项都配置时启用该 Provider；全部缺失或仅配置一部分时继续使用 DeepSeek-only 环境，
 其中不完整配置会输出不含配置值的警告。
 
-百炼只有 API Key、Workspace ID 和 region 全部有效时才作为第二 Provider 启用。可分别用
+百炼只有 API Key、Workspace ID 和 region 全部有效时才启用。可分别用
 `DASHSCOPE_API_KEY`、`ALIYUN_BAILIAN_WORKSPACE_ID`、`ALIYUN_BAILIAN_REGION` 覆盖 Key 文件；后端配置
-只保存 `env://DASHSCOPE_API_KEY`。启用后且未显式指定 `--default-model-id` 时，默认模型为
-`qwen3.7-max-2026-05-17`；通过 `--bailian-region` 可修改默认地域。启动本身不会调用百炼 API。
-该 Max 快照在真实接口中要求 thinking 启用，因此脚本为它冻结 `reasoning-mode=ENABLED`；其它首批
-Qwen 模型仍使用默认禁用策略，除非后续通过单独能力验证调整。
+只保存 `env://DASHSCOPE_API_KEY`。Kimi、智谱可分别用 `KIMI_API_KEY`、`BIGMODEL_API_KEY` 覆盖 Key 文件，
+配置只保存对应 `env://...` 引用。可选 Provider 只扩展目录，未显式指定 `--default-model-id` 时继续使用
+`deepseek-chat-flash`。启动本身不会调用任何模型 API；百炼 Chat/Responses、Kimi Chat、智谱 Chat/
+Anthropic 的真实调用必须另行明确发起。
 
 ## 2. 一键启动
 
@@ -119,6 +121,8 @@ Set-ExecutionPolicy -Scope Process Bypass
   --deepseek-key-file 'D:\secure\deepseek.txt' `
   --bailian-key-file 'D:\secure\bailian.txt' `
   --bailian-region cn-beijing `
+  --kimi-key-file 'D:\secure\kimi.txt' `
+  --bigmodel-key-file 'D:\secure\bigmodel.txt' `
   --aliyun-iqs-key-file 'D:\secure\aliyun-iqs.txt' `
   --continuation-key-file 'D:\secure\personal-continuation.txt' `
   --personal-skill-root 'D:\agents\hermes-agent\optional-skills\finance' `

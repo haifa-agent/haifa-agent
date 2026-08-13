@@ -4,6 +4,7 @@ import io.haifa.agent.model.api.EffectiveModelParameters;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelBindingProfile;
 import io.haifa.agent.model.api.ModelParameterResolutionRequest;
+import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ModelReasoningPolicy;
@@ -19,10 +20,7 @@ public final class PersonalModelProductDefaults {
     public EffectiveModelParameters resolve(ModelBindingProfile profile, PersonalModelPreferences preferences) {
         ModelReasoningPolicy reasoning =
                 switch (preferences.responseMode()) {
-                    case RECOMMENDED ->
-                        profile.allowedReasoningModes().contains(ModelReasoningMode.ENABLED)
-                                ? ModelReasoningPolicy.enabled(recommendedEffort(profile))
-                                : ModelReasoningPolicy.disabled();
+                    case RECOMMENDED -> recommendedReasoning(profile);
                     case FAST -> ModelReasoningPolicy.disabled();
                     case DEEP ->
                         ModelReasoningPolicy.enabled(preferences.effort().orElseGet(() -> recommendedEffort(profile)));
@@ -42,30 +40,40 @@ public final class PersonalModelProductDefaults {
 
     public PersonalModelControls controls(
             ModelBindingProfile profile, java.util.List<String> styleBindings, String recommendedBindingId) {
-        boolean reasoningSelectable = profile.toolReasoningContinuationRequired()
+        boolean reasoningSwitchable = profile.toolReasoningContinuationRequired()
                 && profile.allowedReasoningModes()
                         .containsAll(java.util.Set.of(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED))
                 && (ModelApiStyles.OPENAI_CHAT_COMPLETIONS.equals(profile.apiStyle())
                         || ModelApiStyles.ANTHROPIC_MESSAGES.equals(profile.apiStyle()));
-        java.util.List<PersonalResponseMode> responseModes = reasoningSelectable
+        boolean alwaysReasoning = profile.reasoningBehavior() == ModelReasoningBehavior.ALWAYS
+                && profile.toolReasoningContinuationRequired();
+        boolean effortSelectable =
+                profile.allowedReasoningEfforts().size() > 1 && (reasoningSwitchable || alwaysReasoning);
+        java.util.List<PersonalResponseMode> responseModes = reasoningSwitchable
                 ? java.util.List.of(
                         PersonalResponseMode.RECOMMENDED, PersonalResponseMode.FAST, PersonalResponseMode.DEEP)
-                : java.util.List.of(PersonalResponseMode.RECOMMENDED);
+                : alwaysReasoning && effortSelectable
+                        ? java.util.List.of(PersonalResponseMode.RECOMMENDED, PersonalResponseMode.DEEP)
+                        : java.util.List.of(PersonalResponseMode.RECOMMENDED);
         return new PersonalModelControls(
                 new PersonalModelControls.ResponseModeControl(
                         "responseMode",
                         true,
-                        !reasoningSelectable,
+                        responseModes.size() == 1,
                         responseModes,
                         PersonalResponseMode.RECOMMENDED,
-                        reasoningSelectable ? "Thinking on · High" : "Uses the reviewed connection default",
-                        reasoningSelectable
+                        reasoningSwitchable || alwaysReasoning
+                                ? "Thinking on · High"
+                                : "Uses the reviewed connection default",
+                        reasoningSwitchable
                                 ? "Choose faster direct answers or deeper reasoning when the task needs it."
-                                : "This connection does not expose a verified reasoning switch."),
+                                : alwaysReasoning
+                                        ? "This model always reasons; Deep mode exposes its verified effort levels."
+                                        : "This connection does not expose a verified reasoning switch."),
                 new PersonalModelControls.ReasoningEffortControl(
                         "reasoningEffort",
-                        reasoningSelectable,
-                        !reasoningSelectable,
+                        effortSelectable,
+                        !effortSelectable,
                         profile.allowedReasoningEfforts().stream().sorted().toList(),
                         profile.allowedReasoningEfforts().contains(ModelReasoningEffort.HIGH)
                                 ? ModelReasoningEffort.HIGH
@@ -73,7 +81,7 @@ public final class PersonalModelProductDefaults {
                                         .sorted()
                                         .findFirst()
                                         .orElse(null),
-                        reasoningSelectable ? "High reasoning effort" : "Reasoning adjustment unavailable",
+                        effortSelectable ? "High reasoning effort" : "Reasoning adjustment unavailable",
                         "Available only in Deep mode for this exact verified connection."),
                 new PersonalModelControls.ResponseLengthControl(
                         "responseLength",
@@ -105,5 +113,18 @@ public final class PersonalModelProductDefaults {
                         .sorted()
                         .findFirst()
                         .orElseThrow(() -> new IllegalArgumentException("reasoning effort is unavailable"));
+    }
+
+    private static ModelReasoningPolicy recommendedReasoning(ModelBindingProfile profile) {
+        if (profile.reasoningBehavior() == ModelReasoningBehavior.ADAPTIVE
+                && profile.allowedReasoningModes().contains(ModelReasoningMode.ADAPTIVE)) {
+            return new ModelReasoningPolicy(
+                    ModelReasoningMode.ADAPTIVE,
+                    Optional.of(recommendedEffort(profile)),
+                    java.util.OptionalLong.empty());
+        }
+        return profile.allowedReasoningModes().contains(ModelReasoningMode.ENABLED)
+                ? ModelReasoningPolicy.enabled(recommendedEffort(profile))
+                : ModelReasoningPolicy.disabled();
     }
 }

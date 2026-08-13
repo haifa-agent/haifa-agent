@@ -51,7 +51,7 @@ final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
             throw new IllegalArgumentException("Bailian model profile does not support forced tool choice");
         }
         String profile = String.valueOf(options.getOrDefault("thinking_profile", "none"));
-        boolean enabled = booleanOption(options, "thinking_enabled", "always".equals(profile));
+        boolean enabled = effectiveThinkingEnabled(options, profile);
         body.put("enable_thinking", enabled);
         if (enabled && options.containsKey("thinking_budget"))
             body.put("thinking_budget", options.get("thinking_budget"));
@@ -98,7 +98,7 @@ final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
         if (!Set.of("none", "hybrid", "always").contains(profile)) {
             throw new IllegalArgumentException("unsupported Bailian thinking profile: " + profile);
         }
-        boolean enabled = booleanOption(options, "thinking_enabled", "always".equals(profile));
+        boolean enabled = effectiveThinkingEnabled(options, profile);
         if (enabled && (!reasoningCapability || "none".equals(profile))) {
             throw new IllegalArgumentException("Bailian model profile does not support thinking");
         }
@@ -109,10 +109,11 @@ final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
         if (options.containsKey("thinking_budget") && !enabled) {
             throw new IllegalArgumentException("thinking_budget requires enabled thinking");
         }
-        if (booleanOption(options, "preserve_thinking", false) && !enabled) {
+        boolean dormantHybridThinking = !enabled && "hybrid".equals(profile);
+        if (booleanOption(options, "preserve_thinking", false) && !enabled && !dormantHybridThinking) {
             throw new IllegalArgumentException("preserve_thinking requires enabled thinking");
         }
-        if (booleanOption(options, "requires_reasoning_continuation", false) && !enabled) {
+        if (booleanOption(options, "requires_reasoning_continuation", false) && !enabled && !dormantHybridThinking) {
             throw new IllegalArgumentException("reasoning continuation requires enabled thinking");
         }
         if (booleanOption(options, "tool_stream", false) && !booleanOption(options, "supports_tool_stream", false)) {
@@ -139,5 +140,17 @@ final class AliyunBailianOpenAiChatDialect implements OpenAiCompatibleDialect {
         if (value == null) return fallback;
         if (!(value instanceof Boolean booleanValue)) throw new IllegalArgumentException(key + " must be boolean");
         return booleanValue;
+    }
+
+    private static boolean effectiveThinkingEnabled(Map<String, Object> options, String profile) {
+        Object effective = options.get("thinking");
+        if (effective != null) {
+            String mode = String.valueOf(effective);
+            if (!Set.of("disabled", "enabled", "adaptive").contains(mode)) {
+                throw new IllegalArgumentException("unsupported Bailian effective thinking mode");
+            }
+            return !"disabled".equals(mode);
+        }
+        return booleanOption(options, "thinking_enabled", "always".equals(profile));
     }
 }

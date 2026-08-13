@@ -612,9 +612,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             }
             start();
             switch (type) {
-                case "response.output_text.delta" -> emitContent(text(event, "delta", true));
+                case "response.output_text.delta" -> emitContent(textDelta(event));
                 case "response.reasoning_summary_text.delta", "response.reasoning_text.delta" ->
-                    emitReasoning(text(event, "delta", true));
+                    emitReasoning(textDelta(event));
                 case "response.output_item.added" -> addItem(event);
                 case "response.function_call_arguments.delta" -> functionDelta(event);
                 case "response.completed", "response.incomplete" -> complete(event);
@@ -676,7 +676,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             int outputIndex = nonNegativeInt(request, event, "output_index");
             FunctionItem item = functions.get(outputIndex);
             if (item == null) throw malformed(request, "function arguments arrived before function item");
-            String delta = text(event, "delta", true);
+            String delta = textDelta(event);
             item.arguments.append(delta);
             if (item.arguments.length() > maxResponseBytes)
                 throw malformed(request, "function arguments are too large");
@@ -812,6 +812,12 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 && (!required || !value.textValue().isEmpty())) return value.textValue();
         if (!required) return "";
         throw new IllegalArgumentException("provider response is missing " + field);
+    }
+
+    private static String textDelta(JsonNode event) {
+        JsonNode value = event.get("delta");
+        if (value != null && value.isTextual()) return value.textValue();
+        throw new IllegalArgumentException("provider stream delta must be a string");
     }
 
     private static String optionalText(JsonNode node, String field, String fallback) {

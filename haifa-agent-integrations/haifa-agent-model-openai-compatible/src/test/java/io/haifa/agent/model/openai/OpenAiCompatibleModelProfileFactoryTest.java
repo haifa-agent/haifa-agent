@@ -9,6 +9,7 @@ import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProfileStatus;
 import io.haifa.agent.model.api.ModelProviderId;
+import io.haifa.agent.model.api.ModelReasoningBehavior;
 import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
@@ -105,5 +106,91 @@ class OpenAiCompatibleModelProfileFactoryTest {
         assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
         assertThat(profile.selectable()).isTrue();
         assertThat(profile.toolReasoningContinuationRequired()).isTrue();
+    }
+
+    @Test
+    void modelsKimiAlwaysAndSwitchableThinkingWithoutPretendingTheyAreTheSame() {
+        var k3 = profile(snapshot(
+                "kimi",
+                "kimi-k3-chat",
+                "kimi-k3",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.KIMI,
+                "https://api.moonshot.ai/v1"));
+        var k26 = profile(snapshot(
+                "kimi",
+                "kimi-k2-6-chat",
+                "kimi-k2.6",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.KIMI,
+                "https://api.moonshot.ai/v1"));
+
+        assertThat(k3.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ALWAYS);
+        assertThat(k3.allowedReasoningModes()).containsExactly(ModelReasoningMode.ENABLED);
+        assertThat(k3.allowedReasoningEfforts())
+                .containsExactlyInAnyOrder(
+                        ModelReasoningEffort.LOW, ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+        assertThat(k26.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.OPTIONAL);
+        assertThat(k26.allowedReasoningModes())
+                .containsExactlyInAnyOrder(ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED);
+        assertThat(k26.allowedReasoningEfforts()).containsExactly(ModelReasoningEffort.HIGH);
+    }
+
+    @Test
+    void verifiesOnlyReviewedBailianResponsesAndZhipuChatProfiles() {
+        var bailian = profile(snapshot(
+                "aliyun-bailian",
+                "qwen-plus-responses",
+                "qwen3.7-plus",
+                ModelApiStyles.OPENAI_RESPONSES,
+                OpenAiResponsesDialects.ALIYUN_BAILIAN,
+                "https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"));
+        var glm = profile(snapshot(
+                "zhipu",
+                "glm-5-2-chat",
+                "glm-5.2",
+                ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
+                OpenAiCompatibleDialects.ZHIPU,
+                "https://open.bigmodel.cn/api/paas/v4"));
+
+        assertThat(bailian.selectable()).isTrue();
+        assertThat(bailian.toolReasoningContinuationRequired()).isFalse();
+        assertThat(glm.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ADAPTIVE);
+        assertThat(glm.allowedReasoningModes())
+                .containsExactlyInAnyOrder(
+                        ModelReasoningMode.DISABLED, ModelReasoningMode.ENABLED, ModelReasoningMode.ADAPTIVE);
+        assertThat(glm.allowedReasoningEfforts())
+                .containsExactlyInAnyOrder(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+    }
+
+    private static io.haifa.agent.model.api.ModelBindingProfile profile(ResolvedModelSnapshot snapshot) {
+        return OpenAiCompatibleModelProfileFactory.fromSnapshot(snapshot, LocalDate.of(2026, 8, 13));
+    }
+
+    private static ResolvedModelSnapshot snapshot(
+            String provider,
+            String binding,
+            String providerModel,
+            io.haifa.agent.model.api.ApiStyleId style,
+            String dialect,
+            String endpoint) {
+        return ResolvedModelSnapshot.create(
+                new ModelProviderId(provider),
+                "1",
+                new ModelDefinitionId(binding),
+                "1",
+                providerModel,
+                ModelApiStyles.adapterType(style),
+                "1",
+                style,
+                dialect,
+                URI.create(endpoint),
+                new CredentialRef("env://TEST_API_KEY"),
+                true,
+                Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
+                1_048_576,
+                131_072,
+                Map.of(),
+                Map.of("thinking", "enabled"));
     }
 }

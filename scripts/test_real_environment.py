@@ -166,7 +166,7 @@ class RealEnvironmentTest(unittest.TestCase):
             environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"],
         )
         self.assertEqual(
-            "ENABLED",
+            "ADAPTIVE",
             environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_REASONINGMODE"],
         )
         self.assertEqual(
@@ -186,6 +186,47 @@ class RealEnvironmentTest(unittest.TestCase):
             )
 
         self.assertEqual(("test-secret", "workspace-123", "cn-beijing"), configured)
+
+    def test_kimi_and_zhipu_keys_add_only_reviewed_api_styles_and_never_enter_configuration_names(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=root / "runtime",
+            data=root / "runtime/data",
+            logs=root / "runtime/logs",
+            state=root / "runtime/last-start.json",
+            stop_state=root / "runtime/last-stop.json",
+            maven_wrapper=root / "mvnw",
+        )
+
+        environment = real_environment.backend_environment(
+            "deepseek-secret",
+            "deepseek-chat-flash",
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            kimi_key="kimi-secret",
+            bigmodel_key="bigmodel-secret",
+        )
+
+        self.assertEqual("kimi", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ID"])
+        self.assertEqual("kimi-openai-chat", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_APIBINDINGS_0_DIALECT"])
+        self.assertEqual("kimi-k3", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_MODELS_0_PROVIDERMODELID"])
+        self.assertEqual("zhipu", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_ID"])
+        self.assertEqual("zhipu-openai-chat", environment["HAIFA_PERSONAL_MODELPROVIDERS_2_APIBINDINGS_0_DIALECT"])
+        self.assertEqual(
+            "zhipu-anthropic-messages",
+            environment["HAIFA_PERSONAL_MODELPROVIDERS_2_APIBINDINGS_1_DIALECT"],
+        )
+        self.assertFalse(any("responses" in key.lower() for key in environment if key.startswith("HAIFA_PERSONAL_MODELPROVIDERS_2_")))
+        names = json.dumps(list(environment))
+        self.assertNotIn("kimi-secret", names)
+        self.assertNotIn("bigmodel-secret", names)
 
     def test_optional_openai_provider_requires_complete_environment_group(self) -> None:
         self.assertIsNone(real_environment.optional_openai_environment({}))

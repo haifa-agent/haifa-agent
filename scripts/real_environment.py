@@ -38,6 +38,15 @@ SUPPORTED_DEFAULT_MODEL_IDS = (
     "qwen3.7-plus",
     "qwen3.7-flash",
     "qwen3-vl-plus",
+    "qwen3.7-max-responses",
+    "qwen3.7-plus-responses",
+    "kimi-k3",
+    "kimi-k2.7-code",
+    "kimi-k2.6",
+    "glm-5.2-chat",
+    "glm-5.2-anthropic",
+    "glm-5.1-chat",
+    "glm-5-chat",
 )
 ALLOWED_MCP_TOOLS = ",".join(
     (
@@ -139,6 +148,14 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--bailian-region",
         default=os.getenv("ALIYUN_BAILIAN_REGION", "cn-beijing"),
+    )
+    result.add_argument(
+        "--kimi-key-file",
+        default=os.getenv("HAIFA_KIMI_KEY_FILE", str(workspace / "ss-kimi.txt")),
+    )
+    result.add_argument(
+        "--bigmodel-key-file",
+        default=os.getenv("HAIFA_BIGMODEL_KEY_FILE", str(workspace / "ss-bigmodel.txt")),
     )
     result.add_argument(
         "--aliyun-iqs-key-file",
@@ -345,6 +362,16 @@ def read_secret_file(value: str, label: str) -> str:
     if not secret:
         fail(f"{label} key file is empty: {path}")
     return secret
+
+
+def optional_secret_file(value: str, label: str, environment_name: str) -> str | None:
+    configured = environment_value(environment_name)
+    if configured:
+        return configured
+    path = Path(value).expanduser()
+    if not path.exists():
+        return None
+    return read_secret_file(value, label)
 
 
 def read_key_value_file(path: Path, label: str) -> dict[str, str]:
@@ -655,6 +682,8 @@ def backend_environment(
     skill_root: Path,
     trusted_manifest: Path | None,
     bailian: tuple[str, str, str] | None = None,
+    kimi_key: str | None = None,
+    bigmodel_key: str | None = None,
 ) -> dict[str, str]:
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
@@ -770,6 +799,8 @@ def backend_environment(
                 f"{prefix}_CREDENTIALREFERENCE": "env://DASHSCOPE_API_KEY",
                 f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
                 f"{prefix}_APIBINDINGS_0_DIALECT": "aliyun-bailian-openai-chat",
+                f"{prefix}_APIBINDINGS_1_STYLE": "openai-responses",
+                f"{prefix}_APIBINDINGS_1_DIALECT": "aliyun-bailian-openai-responses",
                 f"{prefix}_MODELS_0_ID": BAILIAN_DEFAULT_MODEL_ID,
                 f"{prefix}_MODELS_0_DISPLAYNAME": "Qwen3.7 Max (2026-05-17)",
                 f"{prefix}_MODELS_0_PROVIDERMODELID": BAILIAN_DEFAULT_MODEL_ID,
@@ -777,7 +808,7 @@ def backend_environment(
                 f"{prefix}_MODELS_0_CAPABILITIES_0": "TEXT_CHAT",
                 f"{prefix}_MODELS_0_CAPABILITIES_1": "TOOL_CALLING",
                 f"{prefix}_MODELS_0_CAPABILITIES_2": "REASONING",
-                f"{prefix}_MODELS_0_REASONINGMODE": "ENABLED",
+                f"{prefix}_MODELS_0_REASONINGMODE": "ADAPTIVE",
                 f"{prefix}_MODELS_0_CONTEXTWINDOW": "1000000",
                 f"{prefix}_MODELS_0_MAXOUTPUTTOKENS": "65536",
                 f"{prefix}_MODELS_1_ID": "qwen3.7-plus",
@@ -788,6 +819,7 @@ def backend_environment(
                 f"{prefix}_MODELS_1_CAPABILITIES_1": "TOOL_CALLING",
                 f"{prefix}_MODELS_1_CAPABILITIES_2": "STRUCTURED_OUTPUT",
                 f"{prefix}_MODELS_1_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_1_REASONINGMODE": "ADAPTIVE",
                 f"{prefix}_MODELS_1_CONTEXTWINDOW": "1000000",
                 f"{prefix}_MODELS_1_MAXOUTPUTTOKENS": "65536",
                 f"{prefix}_MODELS_2_ID": "qwen3.7-flash",
@@ -798,6 +830,7 @@ def backend_environment(
                 f"{prefix}_MODELS_2_CAPABILITIES_1": "TOOL_CALLING",
                 f"{prefix}_MODELS_2_CAPABILITIES_2": "STRUCTURED_OUTPUT",
                 f"{prefix}_MODELS_2_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_2_REASONINGMODE": "ADAPTIVE",
                 f"{prefix}_MODELS_2_CONTEXTWINDOW": "1000000",
                 f"{prefix}_MODELS_2_MAXOUTPUTTOKENS": "65536",
                 f"{prefix}_MODELS_3_ID": "qwen3-vl-plus",
@@ -809,8 +842,114 @@ def backend_environment(
                 f"{prefix}_MODELS_3_CAPABILITIES_2": "IMAGE_INPUT",
                 f"{prefix}_MODELS_3_CONTEXTWINDOW": "131072",
                 f"{prefix}_MODELS_3_MAXOUTPUTTOKENS": "8192",
+                f"{prefix}_MODELS_4_ID": "qwen3.7-max-responses",
+                f"{prefix}_MODELS_4_DISPLAYNAME": "Qwen3.7 Max (2026-05-17) · Responses",
+                f"{prefix}_MODELS_4_MODELDISPLAYNAME": "Qwen3.7 Max (2026-05-17)",
+                f"{prefix}_MODELS_4_PROVIDERMODELID": BAILIAN_DEFAULT_MODEL_ID,
+                f"{prefix}_MODELS_4_STYLE": "openai-responses",
+                f"{prefix}_MODELS_4_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_4_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_4_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+                f"{prefix}_MODELS_4_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_4_REASONINGMODE": "ADAPTIVE",
+                f"{prefix}_MODELS_4_CONTEXTWINDOW": "1000000",
+                f"{prefix}_MODELS_4_MAXOUTPUTTOKENS": "65536",
+                f"{prefix}_MODELS_5_ID": "qwen3.7-plus-responses",
+                f"{prefix}_MODELS_5_DISPLAYNAME": "Qwen3.7 Plus · Responses",
+                f"{prefix}_MODELS_5_MODELDISPLAYNAME": "Qwen3.7 Plus",
+                f"{prefix}_MODELS_5_PROVIDERMODELID": "qwen3.7-plus",
+                f"{prefix}_MODELS_5_STYLE": "openai-responses",
+                f"{prefix}_MODELS_5_CAPABILITIES_0": "TEXT_CHAT",
+                f"{prefix}_MODELS_5_CAPABILITIES_1": "TOOL_CALLING",
+                f"{prefix}_MODELS_5_CAPABILITIES_2": "STRUCTURED_OUTPUT",
+                f"{prefix}_MODELS_5_CAPABILITIES_3": "REASONING",
+                f"{prefix}_MODELS_5_REASONINGMODE": "ADAPTIVE",
+                f"{prefix}_MODELS_5_CONTEXTWINDOW": "1000000",
+                f"{prefix}_MODELS_5_MAXOUTPUTTOKENS": "65536",
             }
         )
+        next_provider_index += 1
+    if kimi_key is not None:
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+        environment.update(
+            {
+                "KIMI_API_KEY": kimi_key,
+                f"{prefix}_ID": "kimi",
+                f"{prefix}_DISPLAYNAME": "Kimi",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": "https://api.moonshot.cn/v1",
+                f"{prefix}_CREDENTIALREFERENCE": "env://KIMI_API_KEY",
+                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
+                f"{prefix}_APIBINDINGS_0_DIALECT": "kimi-openai-chat",
+            }
+        )
+        kimi_models = (
+            ("kimi-k3", "Kimi K3", "ENABLED", "1000000"),
+            ("kimi-k2.7-code", "Kimi K2.7 Code", "ENABLED", "262144"),
+            ("kimi-k2.6", "Kimi K2.6", "ENABLED", "262144"),
+        )
+        for model_index, (model_id, display_name, reasoning_mode, context_window) in enumerate(kimi_models):
+            model_prefix = f"{prefix}_MODELS_{model_index}"
+            environment.update(
+                {
+                    f"{model_prefix}_ID": model_id,
+                    f"{model_prefix}_DISPLAYNAME": display_name,
+                    f"{model_prefix}_MODELDISPLAYNAME": display_name,
+                    f"{model_prefix}_PROVIDERMODELID": model_id,
+                    f"{model_prefix}_STYLE": "openai-chat-completions",
+                    f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
+                    f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
+                    f"{model_prefix}_CAPABILITIES_2": "REASONING",
+                    f"{model_prefix}_REASONINGMODE": reasoning_mode,
+                    f"{model_prefix}_CONTEXTWINDOW": context_window,
+                    f"{model_prefix}_MAXOUTPUTTOKENS": "131072",
+                }
+            )
+        next_provider_index += 1
+    if bigmodel_key is not None:
+        prefix = f"HAIFA_PERSONAL_MODELPROVIDERS_{next_provider_index}"
+        environment.update(
+            {
+                "BIGMODEL_API_KEY": bigmodel_key,
+                f"{prefix}_ID": "zhipu",
+                f"{prefix}_DISPLAYNAME": "智谱 GLM",
+                f"{prefix}_MODE": "remote",
+                f"{prefix}_ALLOWDETERMINISTIC": "false",
+                f"{prefix}_NATIVESTREAMING": "true",
+                f"{prefix}_ENDPOINT": "https://open.bigmodel.cn/api/paas/v4",
+                f"{prefix}_CREDENTIALREFERENCE": "env://BIGMODEL_API_KEY",
+                f"{prefix}_APIBINDINGS_0_STYLE": "openai-chat-completions",
+                f"{prefix}_APIBINDINGS_0_DIALECT": "zhipu-openai-chat",
+                f"{prefix}_APIBINDINGS_1_STYLE": "anthropic-messages",
+                f"{prefix}_APIBINDINGS_1_DIALECT": "zhipu-anthropic-messages",
+                f"{prefix}_APIBINDINGS_1_ENDPOINT": "https://open.bigmodel.cn/api/anthropic",
+            }
+        )
+        zhipu_models = (
+            ("glm-5.2-chat", "GLM-5.2", "glm-5.2", "openai-chat-completions"),
+            ("glm-5.2-anthropic", "GLM-5.2 · Anthropic Messages", "glm-5.2", "anthropic-messages"),
+            ("glm-5.1-chat", "GLM-5.1", "glm-5.1", "openai-chat-completions"),
+            ("glm-5-chat", "GLM-5", "glm-5", "openai-chat-completions"),
+        )
+        for model_index, (binding_id, display_name, provider_model_id, style) in enumerate(zhipu_models):
+            model_prefix = f"{prefix}_MODELS_{model_index}"
+            environment.update(
+                {
+                    f"{model_prefix}_ID": binding_id,
+                    f"{model_prefix}_DISPLAYNAME": display_name,
+                    f"{model_prefix}_MODELDISPLAYNAME": "GLM-5.2" if provider_model_id == "glm-5.2" else display_name,
+                    f"{model_prefix}_PROVIDERMODELID": provider_model_id,
+                    f"{model_prefix}_STYLE": style,
+                    f"{model_prefix}_CAPABILITIES_0": "TEXT_CHAT",
+                    f"{model_prefix}_CAPABILITIES_1": "TOOL_CALLING",
+                    f"{model_prefix}_CAPABILITIES_2": "REASONING",
+                    f"{model_prefix}_REASONINGMODE": "ADAPTIVE",
+                    f"{model_prefix}_CONTEXTWINDOW": "1000000",
+                    f"{model_prefix}_MAXOUTPUTTOKENS": "131072",
+                }
+            )
         next_provider_index += 1
     if openai is not None:
         openai_base_url, openai_key, openai_model_id = openai
@@ -843,10 +982,16 @@ def backend_environment(
 def resolve_default_model_id(
     requested: str | None,
     bailian: tuple[str, str, str] | None,
+    kimi_key: str | None = None,
+    bigmodel_key: str | None = None,
 ) -> str:
     selected = requested or DEFAULT_MODEL_ID
     if selected.startswith("qwen") and bailian is None:
         fail("A Qwen default model requires complete Bailian API key, workspace, and region configuration.")
+    if selected.startswith("kimi") and kimi_key is None:
+        fail("A Kimi default model requires a Kimi API key.")
+    if selected.startswith("glm") and bigmodel_key is None:
+        fail("A GLM default model requires a BigModel API key.")
     return selected
 
 
@@ -928,7 +1073,9 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     aliyun_key = read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS")
     openai = optional_openai_environment()
     bailian = optional_bailian_configuration(args.bailian_key_file, args.bailian_region)
-    default_model_id = resolve_default_model_id(args.default_model_id, bailian)
+    kimi_key = optional_secret_file(args.kimi_key_file, "Kimi", "KIMI_API_KEY")
+    bigmodel_key = optional_secret_file(args.bigmodel_key_file, "BigModel", "BIGMODEL_API_KEY")
+    default_model_id = resolve_default_model_id(args.default_model_id, bailian, kimi_key, bigmodel_key)
     continuation = continuation_key(args.continuation_key_file)
     for directory in (value.runtime, value.data, value.logs):
         directory.mkdir(parents=True, exist_ok=True)
@@ -994,6 +1141,8 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
             skill_root,
             trusted_manifest,
             bailian,
+            kimi_key,
+            bigmodel_key,
         ),
         args.startup_timeout_seconds,
         value,

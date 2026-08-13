@@ -313,11 +313,13 @@ public final class PersonalModelFactory {
                     continue;
                 }
                 result.add(new PersonalModelPreferences(mode, java.util.Optional.empty(), length));
-                option.controls()
-                        .reasoningEffort()
-                        .allowedValues()
-                        .forEach(effort ->
-                                result.add(new PersonalModelPreferences(mode, java.util.Optional.of(effort), length)));
+                if (option.controls().reasoningEffort().visible()) {
+                    option.controls()
+                            .reasoningEffort()
+                            .allowedValues()
+                            .forEach(effort -> result.add(
+                                    new PersonalModelPreferences(mode, java.util.Optional.of(effort), length)));
+                }
             }
         }
         return List.copyOf(result);
@@ -440,8 +442,32 @@ public final class PersonalModelFactory {
         if (OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(binding.dialect())) {
             return OpenAiCompatibleDialects.configuredInvocationOptions(binding.dialect(), reasoningMode);
         }
+        if (io.haifa.agent.model.openai.responses.OpenAiResponsesDialects.ALIYUN_BAILIAN.equals(binding.dialect())) {
+            return Map.of(
+                    "reasoning_effort",
+                    reasoningMode == io.haifa.agent.model.api.ModelReasoningMode.DISABLED ? "none" : "high");
+        }
+        if (OpenAiCompatibleDialects.KIMI.equals(binding.dialect())) {
+            return Map.of(
+                    "thinking",
+                    reasoningMode.name().toLowerCase(java.util.Locale.ROOT),
+                    "requires_reasoning_continuation",
+                    reasoningMode != io.haifa.agent.model.api.ModelReasoningMode.DISABLED);
+        }
+        if (OpenAiCompatibleDialects.ZHIPU.equals(binding.dialect())) {
+            return Map.of(
+                    "thinking",
+                    reasoningMode.name().toLowerCase(java.util.Locale.ROOT),
+                    "do_sample",
+                    false,
+                    "clear_thinking",
+                    false,
+                    "requires_reasoning_continuation",
+                    reasoningMode != io.haifa.agent.model.api.ModelReasoningMode.DISABLED);
+        }
         return OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
                         || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())
+                        || AnthropicMessagesDialects.ZHIPU.equals(binding.dialect())
                 ? Map.of("thinking", reasoningMode.name().toLowerCase(java.util.Locale.ROOT))
                 : Map.of();
     }

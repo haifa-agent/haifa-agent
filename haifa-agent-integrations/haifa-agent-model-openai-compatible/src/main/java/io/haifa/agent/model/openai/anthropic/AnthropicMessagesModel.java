@@ -333,6 +333,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             body.put("thinking", Map.of("type", "disabled"));
             return;
         }
+        if ("adaptive".equals(mode) && profile == AnthropicMessagesDialects.Profile.ZHIPU) {
+            mode = "enabled";
+        }
         if (!"enabled".equals(mode)) throw new IllegalArgumentException("Anthropic thinking mode is unsupported");
         Map<String, Object> thinking = new LinkedHashMap<>();
         thinking.put("type", "enabled");
@@ -348,6 +351,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         if (effort != null) {
             String value = String.valueOf(effort);
             List<String> allowed = profile == AnthropicMessagesDialects.Profile.DEEPSEEK
+                            || profile == AnthropicMessagesDialects.Profile.ZHIPU
                     ? List.of("high", "max")
                     : List.of("low", "medium", "high", "max");
             if (!allowed.contains(value))
