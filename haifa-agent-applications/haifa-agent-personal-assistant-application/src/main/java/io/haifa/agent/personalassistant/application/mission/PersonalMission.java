@@ -11,6 +11,7 @@ public final class PersonalMission {
     private final String missionId;
     private final String conversationId;
     private final String ownerScope;
+    private final MissionModelBinding modelBinding;
     private final String objective;
     private final List<String> acceptanceCriteria;
     private final MissionConstraints constraints;
@@ -34,6 +35,7 @@ public final class PersonalMission {
         missionId = MissionValues.text(value.missionId(), "missionId", 256);
         conversationId = MissionValues.text(value.conversationId(), "conversationId", 256);
         ownerScope = MissionValues.text(value.ownerScope(), "ownerScope", 256);
+        modelBinding = Objects.requireNonNull(value.modelBinding());
         objective = MissionValues.text(value.objective(), "objective", 8_000);
         acceptanceCriteria = MissionValues.texts(value.acceptanceCriteria(), "acceptanceCriteria", 20, 1_000);
         constraints = Objects.requireNonNull(value.constraints());
@@ -91,6 +93,7 @@ public final class PersonalMission {
                 Optional.empty(),
                 MissionMode.STANDARD,
                 Optional.empty(),
+                MissionModelBinding.legacyDefault(),
                 at);
     }
 
@@ -105,12 +108,14 @@ public final class PersonalMission {
             Optional<String> selectedSkillBinding,
             MissionMode mode,
             Optional<ResearchBrief> researchBrief,
+            MissionModelBinding modelBinding,
             Instant at) {
         Instant now = MissionValues.millisecond(at, "at");
         return new PersonalMission(new Persistence(
                 missionId,
                 conversationId,
                 ownerScope,
+                modelBinding,
                 objective,
                 acceptanceCriteria,
                 constraints,
@@ -128,6 +133,33 @@ public final class PersonalMission {
                 Optional.empty(),
                 Optional.empty(),
                 List.of()));
+    }
+
+    public static PersonalMission create(
+            String missionId,
+            String conversationId,
+            String ownerScope,
+            String objective,
+            List<String> acceptanceCriteria,
+            MissionConstraints constraints,
+            Optional<String> selectedSkillId,
+            Optional<String> selectedSkillBinding,
+            MissionMode mode,
+            Optional<ResearchBrief> researchBrief,
+            Instant at) {
+        return create(
+                missionId,
+                conversationId,
+                ownerScope,
+                objective,
+                acceptanceCriteria,
+                constraints,
+                selectedSkillId,
+                selectedSkillBinding,
+                mode,
+                researchBrief,
+                MissionModelBinding.legacyDefault(),
+                at);
     }
 
     public static PersonalMission reconstitute(Persistence value) {
@@ -201,6 +233,7 @@ public final class PersonalMission {
                 missionId,
                 conversationId,
                 ownerScope,
+                modelBinding,
                 objective,
                 acceptanceCriteria,
                 constraints,
@@ -276,6 +309,10 @@ public final class PersonalMission {
         return ownerScope;
     }
 
+    MissionModelBinding modelBinding() {
+        return modelBinding;
+    }
+
     String objective() {
         return objective;
     }
@@ -343,6 +380,7 @@ public final class PersonalMission {
             String missionId,
             String conversationId,
             String ownerScope,
+            MissionModelBinding modelBinding,
             String objective,
             List<String> acceptanceCriteria,
             MissionConstraints constraints,
@@ -361,8 +399,54 @@ public final class PersonalMission {
             Optional<Instant> finishedAt,
             List<MissionPlanRevision> revisions) {
         public Persistence {
+            modelBinding = Objects.requireNonNull(modelBinding);
             acceptanceCriteria = List.copyOf(acceptanceCriteria);
             revisions = List.copyOf(revisions);
+        }
+
+        public Persistence(
+                String missionId,
+                String conversationId,
+                String ownerScope,
+                String objective,
+                List<String> acceptanceCriteria,
+                MissionConstraints constraints,
+                Optional<String> selectedSkillId,
+                Optional<String> selectedSkillBinding,
+                MissionMode mode,
+                Optional<ResearchBrief> researchBrief,
+                MissionState state,
+                Optional<Integer> activePlanRevisionNo,
+                Optional<Integer> confirmedPlanRevisionNo,
+                Optional<String> failureCode,
+                long version,
+                Instant createdAt,
+                Instant updatedAt,
+                Optional<Instant> confirmedAt,
+                Optional<Instant> finishedAt,
+                List<MissionPlanRevision> revisions) {
+            this(
+                    missionId,
+                    conversationId,
+                    ownerScope,
+                    MissionModelBinding.legacyDefault(),
+                    objective,
+                    acceptanceCriteria,
+                    constraints,
+                    selectedSkillId,
+                    selectedSkillBinding,
+                    mode,
+                    researchBrief,
+                    state,
+                    activePlanRevisionNo,
+                    confirmedPlanRevisionNo,
+                    failureCode,
+                    version,
+                    createdAt,
+                    updatedAt,
+                    confirmedAt,
+                    finishedAt,
+                    revisions);
         }
 
         public Persistence(
@@ -387,6 +471,7 @@ public final class PersonalMission {
                     missionId,
                     conversationId,
                     ownerScope,
+                    MissionModelBinding.legacyDefault(),
                     objective,
                     acceptanceCriteria,
                     constraints,

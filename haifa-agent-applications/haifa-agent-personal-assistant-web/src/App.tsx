@@ -21,6 +21,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  LoaderCircle,
   Search,
   Save,
   Send,
@@ -55,6 +56,7 @@ import type {
   MissionSnapshot,
   Model,
   Run,
+  Turn,
   TurnImage,
 } from "./api/generated";
 import {
@@ -110,6 +112,14 @@ type SlashMenuState =
   | { stage: "commands" }
   | { stage: "providers" }
   | { stage: "models"; providerId: string };
+
+type ComposerMode = "CHAT" | "DEEP_RESEARCH";
+
+interface MissionDraftRequest {
+  requestId: string;
+  idempotencyKey: string;
+  objective: string;
+}
 
 interface ModelProviderGroup {
   id: string;
@@ -175,7 +185,30 @@ const slashCommands = [
     label: "选择模型",
     description: "按模型厂商和模型切换当前会话使用的 LLM",
   },
+  {
+    id: "deep-research",
+    command: "/deep-research",
+    label: "发起深度调研",
+    description: "将当前目标带入 Mission，确认研究设置和计划后再执行",
+  },
 ] as const;
+
+function explicitDeepResearchObjective(value: string): string | null {
+  const normalized = value.trim();
+  const slash = /^\/deep-research(?:\s+)([\s\S]+)$/i.exec(normalized);
+  if (slash?.[1]?.trim()) return slash[1].trim();
+  const skillRequest = /^(?:请)?(?:调用|使用)\s*(?:deep-research|深度研究)\s*skill\s*(?:来|进行|做)?\s*[：:]?\s*([\s\S]+)$/i.exec(normalized);
+  if (skillRequest?.[1]?.trim()) return skillRequest[1].trim();
+  const chineseRequest = /^请(?:进行|做)?\s*深度研究\s*[：:]?\s*([\s\S]+)$/i.exec(normalized);
+  return chineseRequest?.[1]?.trim() || null;
+}
+
+function explicitlyRequestsDeepResearch(value: string): boolean {
+  const normalized = value.trim();
+  return /^\/deep-research(?:\s|$)/i.test(normalized)
+    || /^(?:请)?(?:调用|使用)\s*(?:deep-research|深度研究)\s*skill(?:\s|[：:]|$)/i.test(normalized)
+    || /^请(?:进行|做)?\s*深度研究(?:\s|[：:]|$)/i.test(normalized);
+}
 
 function groupModelsByProvider(models: Model[]): ModelProviderGroup[] {
   const providers = new Map<string, ModelProviderGroup>();
@@ -1278,21 +1311,7 @@ function ActivityPanel({
         </div>
         <section className="panel-section">
           <h3>安全活动</h3>
-          <div className="activity-list">
-            {activities.map((activity) => (
-              <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`} key={activity.activityId}>
-                <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
-                  <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
-                </div>
-                <strong>{activity.displayName}</strong>
-                {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
-                {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
-                {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
-                <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
-              </article>
-            ))}
-            {!activities.length && <p className="muted">当前运行尚无 Model、Tool、Skill 或 MCP 活动。</p>}
-          </div>
+          <ActivityFeed activities={activities} emptyText="当前运行尚无 Model、Tool、Skill 或 MCP 活动。" />
         </section>
         <section className="panel-section"><h3>Token 使用</h3><UsagePanel run={run} /></section>
         {run?.error && (
@@ -1309,6 +1328,24 @@ function ActivityPanel({
       </aside>
     </>
   );
+}
+
+function ActivityFeed({ activities, emptyText }: { activities: Activity[]; emptyText: string }) {
+  return <div className="activity-list">
+    {activities.map((activity) => (
+      <article className={`activity-card ${activity.parentActivityId ? "activity-child" : ""}`} key={activity.activityId}>
+        <div className={`activity-kind kind-${activity.kind.toLowerCase()}`}>
+          <ActivityIcon kind={activity.kind} /><span>{activity.kind}</span><small>{statusLabel(activity.status)}</small>
+        </div>
+        <strong>{activity.displayName}</strong>
+        {activity.safeTargetSummary && <pre className="activity-summary">{activity.safeTargetSummary}</pre>}
+        {activity.safeResultSummary && <pre className="activity-summary safe-result">{activity.safeResultSummary}</pre>}
+        {activity.parentActivityId && <small className="activity-relation">关联上级操作</small>}
+        <time>{formatTime(activity.startedAt ?? activity.requestedAt ?? activity.occurredAt)}</time>
+      </article>
+    ))}
+    {!activities.length && <p className="muted">{emptyText}</p>}
+  </div>;
 }
 
 function MemoryDialog({
@@ -1430,6 +1467,34 @@ const missionTerminalStates = new Set([
   "FAILED",
   "CANCELLED",
 ]);
+const missionAnimatedStates = new Set(["PLANNING", "RUNNING", "SYNTHESIZING"]);
+const genericMissionObjective = /^(?:(?:开始|启动|发起)(?:一轮)?(?:深度)?(?:研究|调研)|(?:开始|启动|发起)\s*deep\s*research)\s*(?:任务|mission)?[。！!]?$/i;
+
+function normalizeMissionTitle(value: string): string {
+  return value
+    .trim()
+    .replace(/^(?:请)?(?:调用|使用)\s*(?:deep-research|深度研究)\s*skill\s*(?:来|进行|做)?\s*[：:]?\s*/i, "")
+    .replace(/^请(?:进行|做)?\s*深度研究\s*[：:]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function missionDisplayTitle(
+  mission: MissionSnapshot,
+  conversation: Conversation | null,
+  conversationTurns: Turn[] = [],
+): string {
+  const objective = mission.objective.trim();
+  if (!genericMissionObjective.test(objective) || mission.conversationId !== conversation?.id) return objective;
+  const createdAt = new Date(mission.createdAt).getTime();
+  const userGoal = [...conversationTurns]
+    .filter((turn) => turn.role.toLowerCase() === "user" && new Date(turn.createdAt).getTime() <= createdAt)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .map((turn) => normalizeMissionTitle(turn.text))
+    .find((candidate) => candidate && !genericMissionObjective.test(candidate));
+  const fallback = normalizeMissionTitle(conversation.displayName);
+  return userGoal || (fallback && !genericMissionObjective.test(fallback) ? fallback : objective);
+}
 
 function missionStateLabel(state: string): string {
   return {
@@ -1443,6 +1508,47 @@ function missionStateLabel(state: string): string {
     FAILED: "失败",
     CANCELLED: "已取消",
   }[state] ?? state;
+}
+
+function missionStateAccessibleLabel(mission: MissionSnapshot): string {
+  const label = missionStateLabel(mission.state);
+  const progress = mission.tasks.length
+    ? `，任务进度 ${mission.execution.completedTasks}/${mission.tasks.length}`
+    : "";
+  const currentTask = mission.tasks.find((task) => task.taskId === mission.execution.currentTaskId);
+  const phase = mission.state === "SYNTHESIZING"
+    ? "，正在综合结论并生成报告"
+    : currentTask ? `，当前任务 ${currentTask.title}` : "";
+  return `${label}${progress}${phase}`;
+}
+
+function MissionStateBadge({ mission, detailed = false, live = false }: {
+  mission: MissionSnapshot;
+  detailed?: boolean;
+  live?: boolean;
+}) {
+  const active = missionAnimatedStates.has(mission.state);
+  const progress = detailed && mission.tasks.length
+    ? ` · ${mission.execution.completedTasks}/${mission.tasks.length}`
+    : "";
+  return <span
+    className={`mission-state state-${mission.state.toLowerCase()}${active ? " is-active" : ""}`}
+    role={live ? "status" : undefined}
+    aria-live={live ? "polite" : undefined}
+    aria-label={missionStateAccessibleLabel(mission)}
+  >
+    {active && <LoaderCircle className="mission-state-spinner" size={13} aria-hidden="true" />}
+    <span>{missionStateLabel(mission.state)}{progress}</span>
+  </span>;
+}
+
+function missionExecutionActivity(mission: MissionSnapshot, currentTask?: MissionSnapshot["tasks"][number]): string {
+  if (mission.execution.recovering) return "正在恢复 Mission 执行状态";
+  if (mission.state === "PLANNING") return "正在生成并校验执行计划";
+  if (mission.state === "SYNTHESIZING") return "研究任务已完成，正在综合结论并生成报告";
+  if (mission.state === "RUNNING" && currentTask) return `正在执行：${currentTask.title}`;
+  if (mission.state === "RUNNING") return "正在准备下一项任务";
+  return "";
 }
 
 function missionTaskStateLabel(state: string): string {
@@ -1502,6 +1608,21 @@ type ParsedMissionFinalResult = {
   sourceCount?: number;
   unverifiedClaimCount?: number;
   unresolvedQuestionCount?: number;
+  evidenceSummary?: {
+    totalClaimCount: number;
+    unverifiedClaimCount: number;
+    singleSourceClaimCount: number;
+    counterevidenceClaimCount: number;
+    unresolvedQuestionCount: number;
+  };
+  efficiencyMetrics?: {
+    tokensPerValidSource: number;
+    duplicateSearchFetchRatio: number;
+    evidencePerMaterialClaim: number;
+    singleSourceClaimRatio: number;
+    synthesisTokenRatio: number;
+    qualityGateRevisionCount: number;
+  };
   qualityGate?: { passed?: boolean; failedChecks?: string[] };
   completedItems?: string[];
   failedItems?: string[];
@@ -1532,11 +1653,18 @@ function parseMissionFinalResult(value: string | null): ParsedMissionFinalResult
     const schemaVersion = typeof parsed.schemaVersion === "string" ? parsed.schemaVersion : undefined;
     if (schemaVersion && ![
       "pa.mission-final-result/v1",
-      "pa.research-final-result/v1",
       "pa.research-delivery/v2",
     ].includes(schemaVersion)) {
       return { schemaVersion, unsupportedVersion: true };
     }
+    const numericRecord = (field: string): Record<string, number> | undefined => {
+      const candidate = parsed[field];
+      if (typeof candidate !== "object" || candidate === null) return undefined;
+      const entries = Object.entries(candidate).filter((entry): entry is [string, number] => typeof entry[1] === "number");
+      return Object.fromEntries(entries);
+    };
+    const evidence = numericRecord("evidenceSummary");
+    const efficiency = numericRecord("efficiencyMetrics");
     return {
       schemaVersion,
       directAnswer: typeof parsed.directAnswer === "string" ? parsed.directAnswer : undefined,
@@ -1551,6 +1679,21 @@ function parseMissionFinalResult(value: string | null): ParsedMissionFinalResult
       sourceCount: typeof parsed.sourceCount === "number" ? parsed.sourceCount : undefined,
       unverifiedClaimCount: typeof parsed.unverifiedClaimCount === "number" ? parsed.unverifiedClaimCount : undefined,
       unresolvedQuestionCount: typeof parsed.unresolvedQuestionCount === "number" ? parsed.unresolvedQuestionCount : undefined,
+      evidenceSummary: evidence ? {
+        totalClaimCount: evidence.totalClaimCount ?? 0,
+        unverifiedClaimCount: evidence.unverifiedClaimCount ?? 0,
+        singleSourceClaimCount: evidence.singleSourceClaimCount ?? 0,
+        counterevidenceClaimCount: evidence.counterevidenceClaimCount ?? 0,
+        unresolvedQuestionCount: evidence.unresolvedQuestionCount ?? 0,
+      } : undefined,
+      efficiencyMetrics: efficiency ? {
+        tokensPerValidSource: efficiency.tokensPerValidSource ?? 0,
+        duplicateSearchFetchRatio: efficiency.duplicateSearchFetchRatio ?? 0,
+        evidencePerMaterialClaim: efficiency.evidencePerMaterialClaim ?? 0,
+        singleSourceClaimRatio: efficiency.singleSourceClaimRatio ?? 0,
+        synthesisTokenRatio: efficiency.synthesisTokenRatio ?? 0,
+        qualityGateRevisionCount: efficiency.qualityGateRevisionCount ?? 0,
+      } : undefined,
       qualityGate: typeof parsed.qualityGate === "object" && parsed.qualityGate !== null
         ? {
             passed: typeof (parsed.qualityGate as Record<string, unknown>).passed === "boolean"
@@ -1572,6 +1715,49 @@ function parseMissionFinalResult(value: string | null): ParsedMissionFinalResult
   } catch {
     return { directAnswer: value };
   }
+}
+
+const missionDeliveryMarker = /^<!--\s*haifa-mission-delivery:\s*([a-zA-Z0-9._:-]+)\s*-->/;
+
+function missionDeliveryId(text: string): string | null {
+  return missionDeliveryMarker.exec(text.trimStart())?.[1] ?? null;
+}
+
+function MissionDeliveryCard({
+  mission,
+  title,
+  onOpenReport,
+  onOpenEvidence,
+  onContinue,
+}: {
+  mission: MissionSnapshot;
+  title: string;
+  onOpenReport(): void;
+  onOpenEvidence(): void;
+  onContinue(): void;
+}) {
+  const result = parseMissionFinalResult(mission.finalResult);
+  if (!result || result.schemaVersion !== "pa.research-delivery/v2") return null;
+  const evidence = result.evidenceSummary;
+  const status = result.degraded
+    ? "降级完成"
+    : result.completionKind === "PARTIAL" ? "部分完成" : "已完成";
+  return <section className="mission-delivery-card" aria-label="Deep Research Mission 交付">
+    <header><div><span className="mission-delivery-status"><CheckCircle2 size={15} />{status}</span><h3>{title}</h3></div><span>Deep Research</span></header>
+    <p>调研报告与完整证据链已生成。普通对话保留摘要，全文与技术交付文件在 Mission 中查看。</p>
+    <div className="mission-delivery-metrics" aria-label="证据汇总">
+      <span><b>{mission.tasks.filter((task) => task.state === "COMPLETED").length}</b>任务</span>
+      <span><b>{evidence?.totalClaimCount ?? 0}</b>结论</span>
+      <span><b>{result.sourceCount ?? 0}</b>来源</span>
+      <span><b>{evidence?.unresolvedQuestionCount ?? result.unresolvedQuestionCount ?? 0}</b>未决</span>
+    </div>
+    {(evidence?.unverifiedClaimCount ?? result.unverifiedClaimCount ?? 0) > 0 && <p className="mission-delivery-warning"><CircleAlert size={15} />本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。</p>}
+    <div className="mission-delivery-actions">
+      <button type="button" className="button primary" onClick={onOpenReport}>查看完整报告</button>
+      <button type="button" className="button" onClick={onOpenEvidence}>证据与来源</button>
+      <button type="button" className="button" onClick={onContinue}>继续追问</button>
+    </div>
+  </section>;
 }
 
 function parseResearchSourcesArtifact(value: string): MarkdownResearchSource[] {
@@ -1743,6 +1929,10 @@ const degradationLabels: Record<string, string> = {
   REPORT_SOURCES_MISSING: "报告缺少可解析来源引用",
   REPORT_CITATION_INVALID: "报告包含无法闭合的来源引用",
   REPORT_ONLY_METADATA: "报告内容不足，仅包含执行元数据",
+  REPORT_EVIDENCE_SUMMARY_INVALID: "证据汇总与可信计数不一致",
+  REPORT_UNVERIFIED_WARNING_MISSING: "报告缺少待核实结论警告",
+  REPORT_UNRESOLVED_COVERAGE_MISSING: "报告未覆盖全部未决问题",
+  REPORT_SINGLE_SOURCE_RISK_MISSING: "报告未披露单一来源结论风险",
   REPORT_SYNTHESIS_DEGRADED: "模型综合过程发生降级",
 };
 
@@ -1856,11 +2046,14 @@ function MissionFinalResult({
   if (v2) {
     const visibleSourceCount = result.sourceCount
       ?? (embeddedReport.status === "ready" ? embeddedReport.research.sources.length : 0);
+    const evidence = result.evidenceSummary;
     return <section className="research-result" aria-label="Deep Research 最终交付">
-      <div className="research-result-heading"><div><span className="eyebrow">FINAL DELIVERY</span><h4>{status}</h4></div><div className="research-result-metrics"><span>{visibleSourceCount} 个来源</span><span>{result.unverifiedClaimCount ?? 0} 个待核实结论</span><span>{result.unresolvedQuestionCount ?? 0} 个未决问题</span></div></div>
+      <div className="research-result-heading"><div><span className="eyebrow">FINAL DELIVERY</span><h4>{status}</h4></div><div className="research-result-metrics"><span>{visibleSourceCount} 个来源</span><span>{evidence?.totalClaimCount ?? 0} 个主要结论</span><span>{evidence?.unverifiedClaimCount ?? result.unverifiedClaimCount ?? 0} 个待核实</span><span>{evidence?.singleSourceClaimCount ?? 0} 个单一来源</span><span>{evidence?.counterevidenceClaimCount ?? 0} 个有反向证据</span><span>{evidence?.unresolvedQuestionCount ?? result.unresolvedQuestionCount ?? 0} 个未决问题</span></div></div>
       {result.degraded && <p className="warning-banner">最终综合未完全达到质量门禁，已保留可读报告和已收集证据。</p>}
+      {(evidence?.unverifiedClaimCount ?? result.unverifiedClaimCount ?? 0) > 0 && <p className="warning-banner">本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。</p>}
       {(result.degradationReasons?.length ?? 0) > 0 && <><h5>降级原因</h5><ul>{result.degradationReasons!.map((reason) => <li key={reason}>{degradationLabels[reason] ?? "综合质量检查未通过"}<details><summary>技术详情</summary><code>{reason}</code></details></li>)}</ul></>}
       {(result.affectedTaskIds?.length ?? 0) > 0 && <p><b>受影响任务：</b>{result.affectedTaskIds!.join("、")}</p>}
+      {result.efficiencyMetrics && <details className="research-efficiency"><summary>质量与成本指标</summary><dl><div><dt>每个有效来源 Token</dt><dd>{result.efficiencyMetrics.tokensPerValidSource}</dd></div><div><dt>重复 Search/Fetch 比率</dt><dd>{number.format(result.efficiencyMetrics.duplicateSearchFetchRatio * 100)}%</dd></div><div><dt>每个结论证据数</dt><dd>{result.efficiencyMetrics.evidencePerMaterialClaim}</dd></div><div><dt>单一来源结论比率</dt><dd>{number.format(result.efficiencyMetrics.singleSourceClaimRatio * 100)}%</dd></div><div><dt>Synthesis Token 比率</dt><dd>{number.format(result.efficiencyMetrics.synthesisTokenRatio * 100)}%</dd></div><div><dt>质量门禁修订次数</dt><dd>{result.efficiencyMetrics.qualityGateRevisionCount}</dd></div></dl></details>}
       {reportId && <div className="research-report-actions">
         <button className="button" type="button" onClick={() => document.getElementById(reportSectionId)?.scrollIntoView({ behavior: "smooth", block: "start" })}>阅读全文</button>
         <a className="button" href={missionArtifactUrl(mission.missionId, reportId)} download={result.reportArtifactRef?.title ?? "research-report.md"} aria-disabled={downloadState === "downloading" || !client.missionArtifact} onClick={(event) => void downloadReport(event)}>{downloadState === "downloading" ? "下载中…" : downloadState === "downloaded" ? "已下载" : downloadState === "failed" ? "下载失败" : "下载 Markdown"}</a>
@@ -1948,16 +2141,26 @@ function normalizeMissionPlanTasks(tasks: MissionPlanTask[]): MissionPlanTask[] 
 function MissionDialog({
   client,
   conversation,
+  conversationTurns,
   initialMissionId,
   initialTaskId,
+  initialArtifactFileName,
+  initialDraft,
+  webResearchAvailable,
+  onDraftCreated,
   onClose,
   onChanged,
   onSelected,
 }: {
   client: PersonalAssistantClient;
   conversation: Conversation | null;
+  conversationTurns: Turn[];
   initialMissionId: string | null;
   initialTaskId: string | null;
+  initialArtifactFileName: string | null;
+  initialDraft: MissionDraftRequest | null;
+  webResearchAvailable: boolean;
+  onDraftCreated(): void;
   onClose(): void;
   onChanged(mission: MissionSnapshot | null): void;
   onSelected(mission: MissionSnapshot): void;
@@ -1992,6 +2195,9 @@ function MissionDialog({
   const [error, setError] = useState<string | null>(null);
   const [missionInteraction, setMissionInteraction] = useState<Interaction | null>(null);
   const [missionInteractionText, setMissionInteractionText] = useState("");
+  const [missionTaskRun, setMissionTaskRun] = useState<Run | null>(null);
+  const [missionTaskActivities, setMissionTaskActivities] = useState<Activity[]>([]);
+  const [missionTaskActivityStatus, setMissionTaskActivityStatus] = useState<"idle" | "loading" | "current" | "error">("idle");
   const [syncStatus, setSyncStatus] = useState<"loading" | "current" | "syncing" | "stale" | "recovering" | "offline">(
     navigator.onLine ? "loading" : "offline",
   );
@@ -2011,6 +2217,13 @@ function MissionDialog({
   const effectiveResearchTimeRange = researchTimeRange.trim() || generatedResearch.timeRange;
   const effectiveResearchRegion = researchRegion.trim() || generatedResearch.region;
   const effectiveResearchAudience = researchAudience.trim() || generatedResearch.audience;
+  const latestMissionActivityAttempt = selected?.execution.latestAttempt ?? null;
+  const missionActivityAttempt = latestMissionActivityAttempt
+    && (!selected?.execution.currentTaskId || latestMissionActivityAttempt.taskId === selected.execution.currentTaskId)
+    ? latestMissionActivityAttempt
+    : null;
+  const missionActivityRunId = missionActivityAttempt?.runId ?? null;
+  const missionActivityPolling = Boolean(selected && !missionTerminalStates.has(selected.state));
 
   const merge = useCallback((mission: MissionSnapshot) => {
     setSelected((current) => {
@@ -2056,6 +2269,16 @@ function MissionDialog({
   }, [initialTaskId, selected]);
 
   useEffect(() => {
+    if (!selected || !initialArtifactFileName) return;
+    const artifact = missionArtifactItems(selected).find((candidate) => candidate.fileName === initialArtifactFileName);
+    if (!artifact) return;
+    setSelectedArtifact(artifact);
+    setSelectedCitation(null);
+    setDetailPanelOpen(true);
+    setMobileView("detail");
+  }, [initialArtifactFileName, selected]);
+
+  useEffect(() => {
     if (!client.missions) {
       setError("当前 Server 未发布 Mission 能力。");
       return;
@@ -2071,12 +2294,40 @@ function MissionDialog({
           ?? (conversation
             ? page.items.find((mission) => mission.conversationId === conversation.id)
             : page.items[0]);
-        setSelected(current ?? null);
-        setCreatingMission(current == null);
-        onChanged(current ?? null);
-        if (current) onSelected(current);
+        const active = conversation
+          ? page.items.find((mission) => mission.conversationId === conversation.id
+            && !missionTerminalStates.has(mission.state))
+          : undefined;
+        if (initialDraft && conversation && !active) {
+          setSelected(current ?? null);
+          setMode("DEEP_RESEARCH");
+          setObjective(initialDraft.objective);
+          setCriteria("");
+          setResearchQuestion(initialDraft.objective);
+          setResearchScope("");
+          setResearchTimeRange("");
+          setResearchRegion("");
+          setResearchAudience("");
+          setResearchSources("");
+          setResearchExclusions("");
+          setResearchDelivery("");
+          setCreationSettingsOpen(false);
+          setCreatingMission(true);
+          setDetailPanelOpen(false);
+          setMobileView("content");
+          setError(null);
+          onChanged(current ?? null);
+        } else {
+          const selectedMission = active ?? current ?? null;
+          setSelected(selectedMission);
+          setCreatingMission(selectedMission == null);
+          onChanged(selectedMission);
+          if (selectedMission) onSelected(selectedMission);
+          setError(initialDraft && active
+            ? "当前会话已有进行中的 Mission。请打开当前 Mission，取消后重建，或换一个会话。"
+            : null);
+        }
         setSyncStatus(navigator.onLine ? "current" : "offline");
-        setError(null);
       })
       .catch((reason) => {
         if (!controller.signal.aborted) {
@@ -2097,7 +2348,7 @@ function MissionDialog({
       controller.abort();
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [client, conversation, initialMissionId, onChanged, onSelected, reconnectEpoch]);
+  }, [client, conversation, initialDraft, initialMissionId, onChanged, onSelected, reconnectEpoch, webResearchAvailable]);
 
   useEffect(() => {
     if (!selected || missionTerminalStates.has(selected.state) || !client.missionSnapshot) return;
@@ -2131,6 +2382,47 @@ function MissionDialog({
       window.clearTimeout(timer);
     };
   }, [client, merge, reconnectEpoch, selected]);
+
+  useEffect(() => {
+    if (!missionActivityRunId) {
+      setMissionTaskRun(null);
+      setMissionTaskActivities([]);
+      setMissionTaskActivityStatus("idle");
+      return;
+    }
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const refresh = async () => {
+      setMissionTaskActivityStatus((current) => current === "idle" ? "loading" : current);
+      try {
+        const [run, activities] = await Promise.all([
+          client.run(missionActivityRunId, controller.signal),
+          client.activities(missionActivityRunId, controller.signal),
+        ]);
+        if (controller.signal.aborted) return;
+        setMissionTaskRun(run);
+        setMissionTaskActivities(activities);
+        setMissionTaskActivityStatus("current");
+        if (!isTerminal(run)) {
+          timer = window.setTimeout(refresh, document.hidden ? 10_000 : 2_000);
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        setMissionTaskActivityStatus("error");
+        if (missionActivityPolling) {
+          timer = window.setTimeout(refresh, document.hidden ? 15_000 : 5_000);
+        }
+      }
+    };
+    setMissionTaskRun(null);
+    setMissionTaskActivities([]);
+    setMissionTaskActivityStatus("loading");
+    void refresh();
+    return () => {
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [client, missionActivityPolling, missionActivityRunId]);
 
   const handleDialogKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
@@ -2300,8 +2592,9 @@ function MissionDialog({
           : generatedResearch.exclusions,
         deliveryFormat: researchDelivery.trim() || generatedResearch.deliveryFormat,
       } : undefined,
-    }, { idempotencyKey: crypto.randomUUID() })).then((succeeded) => {
+    }, { idempotencyKey: initialDraft?.idempotencyKey ?? crypto.randomUUID() })).then((succeeded) => {
       if (succeeded) {
+        onDraftCreated();
         setCreatingMission(false);
         setObjective("");
         setCriteria("");
@@ -2508,6 +2801,7 @@ function MissionDialog({
   const selectedFinalResult = parseMissionFinalResult(selected?.finalResult ?? null);
   const selectedArtifacts = selected ? missionArtifactItems(selected) : [];
   const selectedCurrentTask = selected?.tasks.find((task) => task.taskId === selected.execution.currentTaskId);
+  const selectedActivity = selected ? missionExecutionActivity(selected, selectedCurrentTask) : "";
   const selectedTerminal = selected ? missionTerminalStates.has(selected.state) : false;
   const canCreateMission = Boolean(conversation)
     && !missions.some((mission) => mission.conversationId === conversation?.id && !missionTerminalStates.has(mission.state));
@@ -2517,8 +2811,8 @@ function MissionDialog({
     <section className="mission-execution-summary" aria-label="Mission 执行状态">
       <div className="mission-progress-copy"><span>任务进度</span><b>{selected.execution.completedTasks}/{selected.tasks.length}</b></div>
       <span className="mission-progress-track" aria-hidden="true"><span style={{ width: `${selected.tasks.length ? Math.round((selected.execution.completedTasks / selected.tasks.length) * 100) : 0}%` }} /></span>
-      {selectedCurrentTask && <span>当前任务：{selectedCurrentTask.title}</span>}
-      {selected.execution.recovering && <span>正在恢复执行状态</span>}
+      {selectedActivity && <span className="mission-execution-activity" aria-live="polite"><LoaderCircle className="mission-state-spinner" size={14} aria-hidden="true" />{selectedActivity}</span>}
+      {missionActivityRunId && missionActivityAttempt?.taskId && <button type="button" className="mission-activity-link" onClick={() => openTaskDetail(missionActivityAttempt.taskId)}><Bot size={13} aria-hidden="true" />查看执行活动{missionTaskActivities.length > 0 ? ` · ${missionTaskActivities.length}` : ""}<ChevronRight size={13} aria-hidden="true" /></button>}
       <details><summary>技术详情</summary><span>调度状态：{selected.execution.dispatcherStatus}</span>{selected.execution.currentTaskId && <span>内部任务标识已隐藏</span>}</details>
     </section>
     {!editingPlan && <section className="mission-plan-section"><div className="mission-plan-heading"><div><span className="eyebrow">当前计划</span><h4>执行计划 · 第 {selected.plan?.revision ?? "-"} 版</h4></div><span>{selected.tasks.length} 个任务</span></div>
@@ -2532,7 +2826,7 @@ function MissionDialog({
         <header className="mission-dialog-header">
           <div className="mission-dialog-brand"><span className="brand-mark"><Brain size={19} /></span><div><strong>Haifa Assistant</strong><small>Mission 工作台</small></div></div>
           <div className="mission-dialog-heading"><span className="eyebrow">LONG-RUNNING WORK</span><h2 id="mission-title">Mission</h2></div>
-          <button ref={closeButtonRef} type="button" className="icon" aria-label="关闭 Mission" onClick={onClose}><X size={18} /></button>
+          <button ref={closeButtonRef} type="button" className="button mission-return" aria-label="回到对话" onClick={onClose}><MessageSquarePlus size={15} />回到对话</button>
         </header>
         {error && <div className="error-banner" role="alert"><CircleAlert size={16} /><span>{error}</span></div>}
         <nav className="mission-mobile-tabs" aria-label="Mission 工作台视图">
@@ -2561,8 +2855,8 @@ function MissionDialog({
                 setMobileView("content");
                 setError(null);
               }}>
-                <small><span className={`mission-state state-${mission.state.toLowerCase()}`}>{missionStateLabel(mission.state)}</span><time>{dateTime.format(new Date(mission.updatedAt))}</time></small>
-                <span>{mission.objective}</span>
+                <small><MissionStateBadge mission={mission} detailed /><time>{dateTime.format(new Date(mission.updatedAt))}</time></small>
+                <span title={missionDisplayTitle(mission, conversation, conversationTurns)}>{missionDisplayTitle(mission, conversation, conversationTurns)}</span>
                 <span className="mission-card-progress" aria-label={`任务进度 ${mission.execution.completedTasks}/${mission.tasks.length}`}><span style={{ width: `${mission.tasks.length ? Math.round((mission.execution.completedTasks / mission.tasks.length) * 100) : 0}%` }} /></span>
                 <small><span>{missionModeLabel(mission.mode)}</span><span>最近更新 · {missionStateLabel(mission.state)}</span></small>
               </button>
@@ -2582,6 +2876,7 @@ function MissionDialog({
                     <label className={mode === "DEEP_RESEARCH" ? "selected" : ""}><input type="radio" name="mission-mode" value="DEEP_RESEARCH" checked={mode === "DEEP_RESEARCH"} onChange={() => selectMissionMode("DEEP_RESEARCH")} /><span className="mission-mode-icon"><Sparkles size={17} /></span><span className="mission-mode-copy"><b>Deep Research</b><small>基于外部来源形成完整报告，包含来源、引用与交付文件。</small></span><Check className="mission-mode-check" size={15} /></label>
                   </div>
                 </div>
+                {mode === "DEEP_RESEARCH" && !webResearchAvailable && <div className="mission-capability-warning" role="alert"><WifiOff size={16} /><span><b>Deep Research 暂不可用</b>请先配置 Web Search/Fetch Provider；当前草稿不会生成计划或产生外部调用。</span></div>}
                 <label className="mission-objective-field">目标<textarea aria-label="目标" value={objective} onChange={(event) => setObjective(event.target.value)} maxLength={8000} rows={3} placeholder="例如：梳理以太坊近三年的重要技术迭代，并分析其影响" /><small>用结果语言描述即可，不需要自己拆任务或填写技术参数。</small></label>
 
                 <section className={`mission-generated-brief ${objective.trim() ? "ready" : "empty"}`} aria-live="polite">
@@ -2611,12 +2906,12 @@ function MissionDialog({
                     <details className="mission-source-settings"><summary><span><b>来源与边界</b><small>仅在需要约束来源时调整</small></span><ChevronDown size={15} /></summary><div className="research-brief-grid"><label>优先来源<textarea value={researchSources} onChange={(event) => setResearchSources(event.target.value)} rows={3} /></label><label>排除项<textarea value={researchExclusions} onChange={(event) => setResearchExclusions(event.target.value)} rows={3} /></label></div></details>
                   </>}
                 </section>}
-                <div className="mission-create-actions">{selected && <button type="button" className="button" onClick={() => setCreatingMission(false)}>返回当前 Mission</button>}<button type="submit" className="button primary-button" disabled={busy || !objective.trim()}><Sparkles size={15} />生成计划</button></div>
+                <div className="mission-create-actions">{selected && <button type="button" className="button" onClick={() => setCreatingMission(false)}>返回当前 Mission</button>}<button type="submit" className="button primary-button" disabled={busy || !objective.trim() || (mode === "DEEP_RESEARCH" && !webResearchAvailable)}><Sparkles size={15} />生成计划</button></div>
               </form>
             )}
             {!creatingMission && (selected ? (
               <article className="mission-detail">
-                <div className="mission-title-row"><div><span className={`mission-state state-${selected.state.toLowerCase()}`}>{missionStateLabel(selected.state)}</span><span className="mission-mode">{missionModeLabel(selected.mode)}</span><h3>{selected.objective}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
+                <div className="mission-title-row"><div><MissionStateBadge mission={selected} detailed live /><span className="mission-mode">{missionModeLabel(selected.mode)}</span><span className="mission-mode">{selected.modelBinding.providerDisplayName} · {selected.modelBinding.modelDisplayName}</span><h3>{missionDisplayTitle(selected, conversation, conversationTurns)}</h3></div><button type="button" className="icon" title="刷新" aria-label="刷新 Mission" disabled={busy || !client.missionSnapshot} onClick={() => void command(() => client.missionSnapshot!(selected.missionId))}><RefreshCw size={16} /></button></div>
                 {selected.blocker && <div className="error-banner" role="alert"><span>{missionFailureMessage(selected)}</span><details><summary>技术详情</summary><code>{selected.blocker}</code></details></div>}
                 {selectedTerminal && selected.finalResult && <MissionFinalResult client={client} mission={selected} onTaskSelect={openTaskDetail} onCitationSelect={openCitation} onCreateFollowUp={beginFollowUp} />}
                 {selectedTerminal ? <details className="mission-process"><summary><span><b>研究过程</b><small>研究说明、验收标准、执行进度与任务计划</small></span><ChevronDown size={16} /></summary><div>{missionProcess}</div></details> : missionProcess}
@@ -2650,7 +2945,7 @@ function MissionDialog({
                     <button type="button" className="button" disabled={busy} onClick={beginEdit}><Pencil size={14} />适度调整计划</button>
                     <button type="button" className="button primary-button" disabled={busy} onClick={() => void command(() => client.confirmMission!(selected, { idempotencyKey: crypto.randomUUID() }))}><CheckCircle2 size={15} />确认计划</button>
                   </>}
-                  {!missionTerminalStates.has(selected.state) && <button type="button" className="button danger" disabled={busy} onClick={() => void command(() => client.cancelMission!(selected, { idempotencyKey: crypto.randomUUID() }))}>取消 Mission</button>}
+                  {!missionTerminalStates.has(selected.state) && <button type="button" className="mission-cancel-button" disabled={busy} onClick={() => void command(() => client.cancelMission!(selected, { idempotencyKey: crypto.randomUUID() }))}><Square size={10} fill="currentColor" aria-hidden="true" />取消 Mission</button>}
                 </footer>
                 {(selected.state === "RUNNING" || selected.state === "SYNTHESIZING") && <p className="mission-phase-note">Mission 正在后台{selected.state === "SYNTHESIZING" ? "整合最终结果" : "串行执行"}；关闭页面或重启服务后可从持久化状态继续恢复。</p>}
               </article>
@@ -2667,6 +2962,13 @@ function MissionDialog({
                 <dl className="mission-task-metadata">
                   <div><dt>当前状态</dt><dd>{editingPlan ? "待保存" : missionTaskStateLabel(displayedTask.state)}</dd></div>
                 </dl>
+                {!editingPlan && missionActivityRunId && missionActivityAttempt?.taskId === displayedTask.taskId && <section className="mission-task-activity" aria-label="任务执行活动">
+                  <div className="mission-task-section-heading"><h4>执行活动</h4><span aria-live="polite">{missionTaskActivityStatus === "loading" ? "正在加载" : missionTaskActivityStatus === "error" ? "暂时无法同步" : `${missionTaskActivities.length} 项`}</span></div>
+                  {missionTaskActivityStatus === "loading"
+                    ? <p className="mission-task-activity-loading"><LoaderCircle className="mission-state-spinner" size={14} aria-hidden="true" />正在读取 Model、Tool、Skill 与 MCP 调用…</p>
+                    : <ActivityFeed activities={missionTaskActivities} emptyText={missionTaskActivityStatus === "error" ? missionActivityPolling ? "执行活动暂时无法同步，页面会自动重试。" : "执行活动暂时无法同步，请刷新后重试。" : "当前任务尚未产生可展示的执行活动。"} />}
+                  {missionTaskRun && <details className="mission-task-usage"><summary>Token 使用</summary><UsagePanel run={missionTaskRun} /></details>}
+                </section>}
                 <section><div className="mission-task-section-heading"><h4>验收标准</h4><span>{displayedTask.acceptanceCriteria.length} 项</span></div>{displayedTask.acceptanceCriteria.length > 0 ? <ol className="mission-task-criteria">{displayedTask.acceptanceCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ol> : <p className="mission-task-empty">未定义任务级验收标准。</p>}</section>
                 <section><div className="mission-task-section-heading"><h4>依赖任务</h4><span>{displayedTask.dependsOn.length} 项</span></div>{displayedTask.dependsOn.length > 0 ? <div className="mission-task-dependencies">{displayedTask.dependsOn.map((dependencyId) => {
                   const dependency = displayedPlanTasks.find((task) => task.taskId === dependencyId);
@@ -2705,6 +3007,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const [newModelId, setNewModelId] = useState("");
   const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [slashFromPlus, setSlashFromPlus] = useState(false);
+  const [composerMode, setComposerMode] = useState<ComposerMode>("CHAT");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [imageUrl, setImageUrl] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -2721,8 +3025,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   >(null);
   const [missionRouteId, setMissionRouteId] = useState<string | null>(() => missionIdFromLocation());
   const [missionOpen, setMissionOpen] = useState(() => missionIdFromLocation() != null);
+  const [missionDraft, setMissionDraft] = useState<MissionDraftRequest | null>(null);
   const [conversationMission, setConversationMission] = useState<MissionSnapshot | null>(null);
+  const [conversationMissions, setConversationMissions] = useState<MissionSnapshot[]>([]);
   const [requestedMissionTaskId, setRequestedMissionTaskId] = useState<string | null>(null);
+  const [requestedMissionArtifact, setRequestedMissionArtifact] = useState<string | null>(null);
   const [researchReadingContext, setResearchReadingContext] = useState<
     (MarkdownResearchContext & { missionId: string }) | null
   >(null);
@@ -2730,6 +3037,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const handleMissionChanged = useCallback((mission: MissionSnapshot | null) => {
     if (!mission || mission.conversationId === state.selectedConversationId) {
       setConversationMission(mission);
+      setConversationMissions((current) => {
+        if (!mission) return current;
+        return [mission, ...current.filter((candidate) => candidate.missionId !== mission.missionId)];
+      });
     }
   }, [state.selectedConversationId]);
 
@@ -2766,15 +3077,22 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   useEffect(() => {
     if (!state.selectedConversationId || !client.missions) {
       setConversationMission(null);
+      setConversationMissions([]);
       return;
     }
     const controller = new AbortController();
     client.missions(state.selectedConversationId, controller.signal)
       .then((page) => {
-        if (!controller.signal.aborted) setConversationMission(page.items[0] ?? null);
+        if (!controller.signal.aborted) {
+          setConversationMissions(page.items);
+          setConversationMission(page.items[0] ?? null);
+        }
       })
       .catch(() => {
-        if (!controller.signal.aborted) setConversationMission(null);
+        if (!controller.signal.aborted) {
+          setConversationMissions([]);
+          setConversationMission(null);
+        }
       });
     return () => controller.abort();
   }, [client, state.selectedConversationId]);
@@ -3286,7 +3604,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
   const updateComposer = (value: string) => {
     dispatch({ type: "setComposer", value });
-    const slashInput = value.startsWith("/") && !value.includes("\n");
+    const slashInput = value.startsWith("/")
+      && !value.includes("\n")
+      && !/^\/deep-research\s+\S/i.test(value);
+    if (slashInput) setSlashFromPlus(false);
     if (slashInput) closeImageTools();
     if (!slashInput) {
       setSlashMenu(null);
@@ -3299,7 +3620,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   const activateSlashItem = (index: number) => {
     if (!slashMenu) return;
     if (slashMenu.stage === "commands") {
-      if (!visibleSlashCommands[index]) return;
+      const command = visibleSlashCommands[index];
+      if (!command) return;
+      if (command.id === "deep-research") {
+        dispatch({ type: "setComposer", value: "/deep-research " });
+        setSlashMenu(null);
+        setSlashActiveIndex(0);
+        window.requestAnimationFrame(() => textareaRef.current?.focus());
+        return;
+      }
       dispatch({ type: "setComposer", value: "/model" });
       setSlashMenu({ stage: "providers" });
       const currentProviderIndex = modelProviders.findIndex((provider) =>
@@ -3319,8 +3648,9 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     const model = selectedSlashProvider?.models[index];
     if (!model) return;
     selectModel(model.id);
-    dispatch({ type: "setComposer", value: "" });
+    if (!slashFromPlus) dispatch({ type: "setComposer", value: "" });
     setSlashMenu(null);
+    setSlashFromPlus(false);
     setSlashActiveIndex(0);
   };
 
@@ -3336,6 +3666,39 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const raw = state.composer.trim();
+    const explicitRequested = explicitlyRequestsDeepResearch(raw);
+    const objective = composerMode === "DEEP_RESEARCH" ? raw : explicitDeepResearchObjective(raw);
+    if (composerMode === "DEEP_RESEARCH" || explicitRequested) {
+      if (!objective) {
+        dispatch({ type: "error", message: "请补充 Deep Research 的目标。" });
+        return;
+      }
+      if (!state.selectedConversation) {
+        dispatch({ type: "error", message: "请先选择一个已有会话，再从该会话发起 Deep Research Mission。" });
+        return;
+      }
+      if (!state.bootstrap?.capabilities.includes("mission") || !client.createMission) {
+        dispatch({ type: "error", message: "当前 Server 未发布 Mission 能力。" });
+        return;
+      }
+      if (pendingImages.length > 0) {
+        dispatch({ type: "error", message: "Deep Research Mission 暂不支持图片或附件引用。请移除附件后再继续，附件不会被静默丢弃。" });
+        return;
+      }
+      previousFocus.current = document.activeElement as HTMLElement;
+      setMissionDraft({
+        requestId: crypto.randomUUID(),
+        idempotencyKey: crypto.randomUUID(),
+        objective,
+      });
+      setMissionRouteId(null);
+      setMissionOpen(true);
+      setComposerMode("CHAT");
+      setSlashMenu(null);
+      dispatch({ type: "setComposer", value: "" });
+      return;
+    }
     submitMessage(state.composer);
   };
 
@@ -3399,8 +3762,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
   }, []);
   const closeMission = useCallback(() => {
     setMissionOpen(false);
+    setMissionDraft(null);
     setMissionRouteId(null);
     setRequestedMissionTaskId(null);
+    setRequestedMissionArtifact(null);
     const query = new URLSearchParams(window.location.search);
     if (state.selectedConversationId) query.set(conversationIdParameter, state.selectedConversationId);
     const queryText = query.toString();
@@ -3457,6 +3822,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
           {state.bootstrap?.capabilities.includes("mission") && (
             <button className="button mission-button" onClick={(event) => {
               previousFocus.current = event.currentTarget;
+              setMissionDraft(null);
               setMissionOpen(true);
             }}>
               <CheckCircle2 size={16} /> Mission
@@ -3487,10 +3853,10 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             <div><span className="eyebrow">PERSONAL ASSISTANT</span><h1>{state.selectedConversation?.displayName ?? "新会话"}</h1></div>
             {state.run && <span className="run-state">{statusLabel(state.run.status)}</span>}
           </div>
-          {conversationMission && (
+          {conversationMission && !missionTerminalStates.has(conversationMission.state) && (
             <button type="button" className="conversation-mission-card" onClick={() => setMissionOpen(true)}>
               <span><b>Mission</b>{missionStateLabel(conversationMission.state)}</span>
-              <strong>{conversationMission.objective}</strong>
+              <strong>{missionDisplayTitle(conversationMission, state.selectedConversation, state.turns)}</strong>
               <small>{conversationMission.tasks.length} 个计划任务 · 点击查看详情</small>
             </button>
           )}
@@ -3511,7 +3877,12 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
               <>
                 {state.turns.map((turn) => {
                   const assistant = turn.role.toLowerCase() === "assistant";
+                  const deliveryId = assistant ? missionDeliveryId(turn.text) : null;
+                  const deliveryMission = deliveryId
+                    ? conversationMissions.find((mission) => mission.missionId === deliveryId) ?? null
+                    : null;
                   const research = assistant
+                    && !deliveryMission
                     && turn.text.includes("<!-- haifa-section:")
                     && researchReadingContext
                     && researchReadingContext.missionId === conversationMission?.missionId
@@ -3522,10 +3893,31 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     ? recommendedQuestions
                     : null;
                   return (
-                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}`} key={turn.id}>
+                    <article className={`message ${assistant ? "assistant" : "user"}${turn.images?.length ? " has-images" : ""}${research || embeddedResearch ? " research-report-message" : ""}${deliveryMission ? " mission-delivery-message" : ""}`} key={turn.id}>
                       <span className="message-role">{assistant ? "Haifa" : "你"}</span>
                       {turn.images?.length > 0 && <TurnImages images={turn.images} />}
-                      <MessageContent text={turn.text} research={research} researchAnchorPrefix={`conversation-turn-${turn.id}`} onResearchTaskSelect={openResearchTask} /><time>{formatTime(turn.createdAt)}</time>
+                      {deliveryMission
+                        ? <MissionDeliveryCard
+                            mission={deliveryMission}
+                            title={missionDisplayTitle(deliveryMission, state.selectedConversation, state.turns)}
+                            onOpenReport={() => {
+                              setRequestedMissionArtifact("research-report.md");
+                              navigateToMission(deliveryMission);
+                              setMissionOpen(true);
+                            }}
+                            onOpenEvidence={() => {
+                              setRequestedMissionArtifact("sources.json");
+                              navigateToMission(deliveryMission);
+                              setMissionOpen(true);
+                            }}
+                            onContinue={() => {
+                              setComposerMode("CHAT");
+                              dispatch({ type: "setComposer", value: `关于“${deliveryMission.objective}”，我想继续了解：` });
+                              window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus(), 0);
+                            }}
+                          />
+                        : <MessageContent text={turn.text} research={research} researchAnchorPrefix={`conversation-turn-${turn.id}`} onResearchTaskSelect={openResearchTask} />}
+                      <time>{formatTime(turn.createdAt)}</time>
                       {assistant && (
                         <div className="message-actions">
                           <MessageCopyButton text={turn.text} />
@@ -3578,7 +3970,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             </div>
           )}
           <form
-            className={`composer${imageCapable ? " image-capable" : ""}${pendingImages.length ? " has-pending-images" : ""}${draggingImages ? " image-dragging" : ""}`}
+            className={`composer${composerMode === "DEEP_RESEARCH" ? " deep-research-mode" : ""}${imageCapable ? " image-capable" : ""}${pendingImages.length ? " has-pending-images" : ""}${draggingImages ? " image-dragging" : ""}`}
             onSubmit={submit}
             onDragEnter={(event) => {
               event.preventDefault();
@@ -3593,6 +3985,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
             }}
             onDrop={dropImages}
           >
+            {composerMode === "DEEP_RESEARCH" && <div className="composer-mode-chip"><Sparkles size={13} aria-hidden="true" /><span>Deep Research</span><button type="button" aria-label="退出 Deep Research 模式" title="退出 Deep Research 模式" onClick={() => setComposerMode("CHAT")}><X size={12} /></button></div>}
             {slashMenu && !composerDisabled && (
               <section
                 className="slash-command-menu"
@@ -3719,16 +4112,15 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 <span className="image-attachment-count">{pendingImages.length}/4</span>
               </section>
             )}
-            {imageCapable && (
-              <div className="image-add-control" ref={imageToolsRef}>
+            <div className="image-add-control" ref={imageToolsRef}>
                 <button
                   type="button"
                   className="image-add-trigger"
-                  aria-label="添加图片"
-                  aria-controls="image-add-menu"
+                  aria-label="更多功能"
+                  aria-controls="composer-add-menu"
                   aria-expanded={imageToolsOpen}
-                  title="添加图片"
-                  disabled={composerDisabled || pendingImages.length >= 4}
+                  title="更多功能"
+                  disabled={composerDisabled}
                   onClick={() => {
                     setSlashMenu(null);
                     if (imageToolsOpen) closeImageTools();
@@ -3738,28 +4130,49 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                   <Plus size={20} />
                 </button>
                 {imageToolsOpen && (
-                  <section className="image-add-menu" id="image-add-menu" role="dialog" aria-label="添加图片">
+                  <section className="image-add-menu" id="composer-add-menu" role="dialog" aria-label="更多功能">
                     <header>
-                      <strong>添加图片</strong>
-                      <button type="button" aria-label="关闭图片菜单" onClick={closeImageTools}><X size={15} /></button>
+                      <strong>更多功能</strong>
+                      <button type="button" aria-label="关闭更多功能" onClick={closeImageTools}><X size={15} /></button>
                     </header>
-                    <button
+                    <button type="button" onClick={() => {
+                      setComposerMode("DEEP_RESEARCH");
+                      closeImageTools();
+                      window.requestAnimationFrame(() => textareaRef.current?.focus());
+                    }}>
+                      <Sparkles size={17} />
+                      <span><strong>Deep Research</strong><small>输入研究目标后打开 Mission 确认页</small></span>
+                    </button>
+                    <button type="button" onClick={() => {
+                      setSlashFromPlus(true);
+                      setSlashMenu({ stage: "providers" });
+                      const currentProviderIndex = modelProviders.findIndex((provider) =>
+                        provider.models.some((model) => model.id === selectedModelId)
+                      );
+                      setSlashActiveIndex(Math.max(0, currentProviderIndex));
+                      closeImageTools();
+                      window.requestAnimationFrame(() => textareaRef.current?.focus());
+                    }}>
+                      <Bot size={17} />
+                      <span><strong>选择模型</strong><small>选择当前会话后续消息使用的模型</small></span>
+                    </button>
+                    {imageCapable && <button
                       type="button"
                       disabled={composerDisabled || uploadingImage || pendingImages.length >= 4}
                       onClick={() => fileInputRef.current?.click()}
                     >
                       <Paperclip size={17} />
                       <span><strong>{uploadingImage ? "正在上传…" : "上传图片"}</strong><small>选择或拖放，最多 4 张</small></span>
-                    </button>
-                    <button
+                    </button>}
+                    {imageCapable && <button
                       type="button"
                       aria-expanded={imageUrlInputOpen}
                       onClick={() => setImageUrlInputOpen((open) => !open)}
                     >
                       <Link size={17} />
                       <span><strong>添加图片 URL</strong><small>仅支持 HTTPS 图片地址</small></span>
-                    </button>
-                    {imageUrlInputOpen && (
+                    </button>}
+                    {imageCapable && imageUrlInputOpen && (
                       <div className="image-url-popover">
                         <header>
                           <label htmlFor="image-url-input">图片 URL</label>
@@ -3796,8 +4209,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     )}
                   </section>
                 )}
-              </div>
-            )}
+            </div>
             {draggingImages && (
               <div className="image-drop-hint" aria-live="polite">
                 <ImageIcon size={19} /> 松开即可添加图片
@@ -3839,11 +4251,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
-                placeholder={runActive ? "当前任务运行中" : "输入消息或 / 命令，Enter 发送"}
-                rows={2}
+                placeholder={runActive ? "当前任务运行中" : composerMode === "DEEP_RESEARCH" ? "描述调研目标，Enter 打开 Mission 确认页" : "输入消息，Enter 发送"}
+                rows={4}
               />
             </label>
-            <span className="image-input-hint">{imageCapable ? "支持上传、URL 和拖放图片" : ""}</span>
+            <span className="image-input-hint">{composerMode === "DEEP_RESEARCH" ? "将打开 Mission 确认页" : imageCapable ? "支持图片与 Deep Research" : "点击 + 使用 Deep Research"}</span>
             {failedUserTurn && (
               <button
                 type="button"
@@ -3856,7 +4268,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                 <RefreshCw size={16} aria-hidden="true" />
               </button>
             )}
-            <Button type="submit" className="send-button" aria-label="发送消息" busy={Boolean(state.pending)} disabled={composerDisabled || (!state.composer.trim() && !pendingImages.length)}>
+            <Button type="submit" className="send-button" aria-label={composerMode === "DEEP_RESEARCH" ? "准备 Deep Research" : "发送消息"} busy={Boolean(state.pending)} disabled={composerDisabled || (!state.composer.trim() && !pendingImages.length)}>
               <Send size={18} />
             </Button>
           </form>
@@ -3888,8 +4300,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
         <MissionDialog
           client={client}
           conversation={state.selectedConversation}
+          conversationTurns={state.turns}
           initialMissionId={missionRouteId}
           initialTaskId={requestedMissionTaskId}
+          initialArtifactFileName={requestedMissionArtifact}
+          initialDraft={missionDraft}
+          webResearchAvailable={Boolean(state.bootstrap?.capabilities.includes("web-research"))}
+          onDraftCreated={() => setMissionDraft(null)}
           onClose={closeMission}
           onChanged={handleMissionChanged}
           onSelected={navigateToMission}

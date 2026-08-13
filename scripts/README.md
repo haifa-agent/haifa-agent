@@ -10,6 +10,10 @@
 状态文件写入。运行方法和安全边界见
 [`haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md`](../haifa-agent-applications/haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md)。
 
+真实环境可从 `--bailian-key-file` 指定的 `KEY:VALUE` 文件可选装配阿里云百炼；region 默认
+`cn-beijing`，可用 `--bailian-region` 修改。只有 API Key、Workspace ID 与 region 完整时才启用，
+配置中只写 `env://DASHSCOPE_API_KEY`，启动脚本不会发起模型调用。
+
 ```powershell
 .\scripts\start-real-environment.ps1
 .\scripts\start-real-environment.ps1 --stop --dry-run

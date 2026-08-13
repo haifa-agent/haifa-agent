@@ -51,6 +51,7 @@ class MissionExecutionCoordinatorTest {
             assertThat(revisions).hasValue(failuresBeforePass);
             assertThat(delivery.synthesis().structuredOutput()).isEqualTo("revision-" + failuresBeforePass);
             assertThat(delivery.synthesis().usage().modelTokens()).isEqualTo(100L + 10L * failuresBeforePass);
+            assertThat(delivery.synthesis().qualityGateRevisionCount()).isEqualTo(failuresBeforePass);
             assertThat(delivery.published().completionKind()).isEqualTo("COMPLETE");
         }
     }
@@ -372,7 +373,7 @@ class MissionExecutionCoordinatorTest {
             if (interruption == Interruption.FINAL_MESSAGE && attempt == 1) {
                 throw new IllegalStateException("injected final-message interruption");
             }
-            uniqueFinalMessages.add("mission:" + missionId + ":final-message:v1");
+            uniqueFinalMessages.add("mission:" + missionId + ":final-message:v2");
         }
     }
 

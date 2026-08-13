@@ -87,6 +87,7 @@ public final class PersonalMissionController {
                 key(idempotencyKey),
                 ownerScope(),
                 conversationId,
+                application.missionModelBinding(conversationId),
                 text(request.objective(), "objective", 8_000),
                 criteria,
                 constraints(request.constraints()),

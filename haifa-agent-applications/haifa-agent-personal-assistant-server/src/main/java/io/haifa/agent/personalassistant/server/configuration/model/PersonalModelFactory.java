@@ -37,6 +37,7 @@ import io.haifa.agent.model.openai.anthropic.AnthropicMessagesModel;
 import io.haifa.agent.model.openai.responses.OpenAiResponsesModel;
 import io.haifa.agent.personalassistant.application.PersonalModelCatalog;
 import io.haifa.agent.personalassistant.application.PersonalModelOption;
+import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.personalassistant.server.observability.LoggingAgentChatModel;
@@ -151,6 +152,19 @@ public final class PersonalModelFactory {
                         Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING))));
                 return value;
             }
+
+            @Override
+            public java.util.Optional<MissionModelBinding> binding(String modelId) {
+                return find(modelId).map(value -> {
+                    ResolvedModelSnapshot frozen = snapshots.get(value.id());
+                    return new MissionModelBinding(
+                            value.id(),
+                            value.displayName(),
+                            value.providerId(),
+                            value.providerDisplayName(),
+                            frozen.configurationDigest());
+                });
+            }
         };
         return new Platform(contribution, catalog);
     }
@@ -161,7 +175,7 @@ public final class PersonalModelFactory {
         ApiStyleId style = new ApiStyleId(model.style());
         URI endpoint = binding.endpoint() == null ? provider.endpoint() : binding.endpoint();
         Map<String, Object> providerOptions = providerOptions(binding, endpoint);
-        Map<String, Object> invocationOptions = invocationOptions(binding);
+        Map<String, Object> invocationOptions = invocationOptions(binding, model.reasoningMode());
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(provider.id()),
                 "1.0.0",
@@ -199,7 +213,7 @@ public final class PersonalModelFactory {
                                     model.capabilities(),
                                     model.contextWindow(),
                                     model.maxOutputTokens(),
-                                    invocationOptions(binding(provider, model.style())),
+                                    invocationOptions(binding(provider, model.style()), model.reasoningMode()),
                                     Map.of(),
                                     new ApiStyleId(model.style())))
                             .toList();
@@ -242,10 +256,14 @@ public final class PersonalModelFactory {
         return Map.copyOf(options);
     }
 
-    private static Map<String, Object> invocationOptions(PersonalAssistantProperties.ApiBinding binding) {
+    private static Map<String, Object> invocationOptions(
+            PersonalAssistantProperties.ApiBinding binding, io.haifa.agent.model.api.ModelReasoningMode reasoningMode) {
+        if (OpenAiCompatibleDialects.ALIYUN_BAILIAN.equals(binding.dialect())) {
+            return OpenAiCompatibleDialects.configuredInvocationOptions(binding.dialect(), reasoningMode);
+        }
         return OpenAiCompatibleDialects.DEEPSEEK.equals(binding.dialect())
                         || AnthropicMessagesDialects.DEEPSEEK.equals(binding.dialect())
-                ? Map.of("thinking", "disabled")
+                ? Map.of("thinking", reasoningMode.name().toLowerCase(java.util.Locale.ROOT))
                 : Map.of();
     }
 

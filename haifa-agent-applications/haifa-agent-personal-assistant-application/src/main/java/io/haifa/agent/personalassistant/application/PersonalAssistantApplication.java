@@ -16,6 +16,7 @@ import io.haifa.agent.memory.api.MemoryRef;
 import io.haifa.agent.memory.api.MemoryStatus;
 import io.haifa.agent.memory.api.MemoryVersion;
 import io.haifa.agent.personalassistant.application.mcp.PersonalMcpPlatform;
+import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.product.PersonalAssistantProfile;
 import io.haifa.agent.personalassistant.application.recommendation.PersonalQuestionRecommender;
@@ -134,6 +135,12 @@ public final class PersonalAssistantApplication implements AutoCloseable {
 
     public Optional<ConversationView> conversation(String sessionId) {
         return agent.conversations().find(new AgentSessionId(sessionId)).map(this::conversation);
+    }
+
+    public MissionModelBinding missionModelBinding(String conversationId) {
+        PersonalModelPreference preference = requirePreference(conversationId);
+        return models.binding(preference.modelId())
+                .orElseThrow(() -> new IllegalStateException("MODEL_SELECTION_REQUIRED"));
     }
 
     public List<ConversationView> conversations(Optional<String> query, Set<String> statuses, int limit) {

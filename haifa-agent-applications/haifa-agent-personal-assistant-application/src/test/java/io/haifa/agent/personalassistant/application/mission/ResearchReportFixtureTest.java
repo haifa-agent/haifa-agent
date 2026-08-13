@@ -42,7 +42,7 @@ class ResearchReportFixtureTest {
     void coversAiProductClaimEvidenceCounterevidenceInferenceUnknownAndJudgment() {
         assertFixture(
                 report(
-                        "热门 AI 产品真实性调查",
+                        "AI 能力主张证据审查",
                         "truth-task",
                         "宣传主张、主张来源、原始/技术证据、独立验证、反证或限制、技术来源与商业模式",
                         "事实、推断和未知必须分开；证据强度为中，判断为部分证实，热度不能替代真实性判断",
@@ -85,6 +85,10 @@ class ResearchReportFixtureTest {
     private static String report(String title, String taskId, String finding, String synthesis, String conclusion) {
         return """
                 # %s
+                <!-- haifa-section: evidence-summary -->
+                ## 证据状态
+                <!-- haifa-evidence-counts: total=0 unverified=0 single-source=0 counterevidence=0 unresolved=0 -->
+                可信发布器已提供证据计数，本离线结构 Fixture 不声明真实主要结论。
                 <!-- haifa-section: executive-summary -->
                 ## 执行摘要
                 本报告给出证据约束的核心结论、关键限制和下一步建议，避免把未验证信息写成事实。

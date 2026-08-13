@@ -104,6 +104,13 @@ DeepSeek Anthropic API 使用显式 `deepseek-anthropic-messages` dialect，因�
 都必须是合法 DNS label。本地示例可使用 `env://DASHSCOPE_API_KEY`，生产应接入现有 Credential
 binding/lease。
 
+当产品通过通用 OpenAI-compatible 配置接入百炼时，dialect 会从同一受信 Endpoint 严格解析并冻结
+`workspace_id` 与 `region`。只接受 HTTPS、无端口/查询/片段、路径精确为 `/compatible-mode/v1`，且
+主机精确匹配 `{workspaceId}.{region}.maas.aliyuncs.com`；错误地域格式、Workspace、路径或外部域名
+都会在装配期 fail closed。该冻结逻辑留在本 adapter，不向 Personal Assistant 公共配置增加百炼字段。
+产品只声明 Provider-neutral reasoning mode；adapter 将 `ENABLED` 映射为百炼 `always` thinking、受保护
+continuation 和恢复所需的冻结选项，将 `DISABLED` 映射为显式关闭，不根据模型名称猜测行为。
+
 模型 profile 显式声明 `thinking_profile=none|hybrid|always`、`thinking_enabled`、
 `supports_tool_stream` 等能力。只有受支持且显式启用时才发送 `thinking_budget`、
 `preserve_thinking`、`reasoning_effort`、`tool_stream`；`tool_stream` 默认不发送。百炼 thinking 复用

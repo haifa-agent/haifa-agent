@@ -13,6 +13,8 @@ Server 只接受 `haifa.personal.model-providers` 受信 Provider 列表和显�
 和 Conversation 只返回脱敏信息；Endpoint、
 Credential、`providerModelId`、Adapter 和完整 Snapshot 不进入浏览器。模型偏好保存在 Personal
 SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 production 可选列表。
+Bootstrap 仅在 `web_search` 与 `web_fetch` 均完成受信注册时发布 `web-research` 能力，供 Web 在创建
+Deep Research 计划前做确定性可用性检查；该标记不包含 Provider、Endpoint 或凭据细节。
 
 Provider 是接入实例，持有共享 Endpoint、Credential、`native-streaming` 和运行模式；每个 Provider
 通过 `api-bindings` 声明一个或多个 API Style，再由 Model 的 `style` 精确引用。Binding 省略 dialect
@@ -89,6 +91,15 @@ Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写�
 `deepseek-chat-flash`；Responses 与 Anthropic Messages 模型仍作为非默认的受信选项保留。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
+真实环境启动脚本可选装配第二个 `aliyun-bailian` Provider。完整配置要求 API Key、Workspace ID 和
+region；Credential 在 Spring 配置中始终只是 `env://DASHSCOPE_API_KEY`，Endpoint、实际 Provider
+Model ID 与完整 Snapshot 不返回浏览器。脚本检测到完整百炼配置且未显式传入 `--default-model-id`
+时，默认选择 `qwen3.7-max-2026-05-17`；否则保持 DeepSeek 默认。百炼目录同时提供
+`qwen3.7-plus`、`qwen3.7-flash` 和具有 `IMAGE_INPUT` 的 `qwen3-vl-plus`。当前 max 模型不声明
+`STRUCTURED_OUTPUT`，且真实百炼校验确认该快照只接受启用 thinking。其 Provider-neutral
+`reasoning-mode=ENABLED` 会由百炼 adapter 映射为受保护的 thinking continuation；Mission 应显式选择
+plus 或 flash，产品不会为 Mission 静默替换冻结模型。
+
 `IMAGE_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
 最多四个 `{kind: url|upload}` 图片输入。外部 URL 只接受受限 HTTPS；上传通过 `POST /api/v1/images`
 写入 `<data-directory>/images`，单文件上限 10 MiB、目录上限 1 GiB，类型限 PNG/JPEG/WEBP/非动画
@@ -101,7 +112,12 @@ Personal Assistant 的本机 Spring Boot WebFlux 交付模块。默认只监听
 
 ## Personal Mission Phase 1–4
 
-Phase 4 advances the Personal Mission schema to V6 and persists authoritative model-token,
+The Bailian Mission binding migration advances the Personal Mission schema to V7. It persists the
+Conversation-selected model ID, safe display names, Provider ID, and exact configuration digest. Planner, Task,
+Normalizer, Synthesis, and bounded repair resolve model-specific Runtime profiles from that immutable binding;
+catalog removal or digest drift fails closed. Existing rows migrate to an explicit legacy-default sentinel.
+
+Phase 4 introduced schema V6 and persists authoritative model-token,
 model-call, and Tool-call usage. Configured upper bounds are validated at startup and admission
 stops only new Mission dispatch when the SQLite or Artifact store reaches its stop threshold;
 running work remains observable and can converge. Readiness requires the single Dispatcher owner,
@@ -122,8 +138,9 @@ uses only the approved `web.search` / `web.fetch` pipeline, validates canonical 
 citation closure and quote bounds, then applies a deterministic marked-Markdown Report Gate and at most two stable
 idempotent revisions. It publishes report, sources, claim-evidence and unresolved Artifacts, validates their
 hash/version/media type, and publishes the code-owned `pa.research-delivery/v2` manifest last as the fifth owner-only
-Artifact plus one idempotent final Conversation message. Existing v1 delivery JSON remains read-only compatible and
-the existing Mission columns carry v2 without a database Migration. The deterministic offline
+Artifact plus one idempotent, concise final Conversation delivery marker. The manifest includes trusted Evidence
+Summary and efficiency metrics derived from settled Task Evidence and Runtime usage; the existing Mission columns
+carry v2 without a database Migration. The deterministic offline
 Stub exercises the same Tool/Skill/Runtime path; it is not a production network provider.
 
 Server 提供 `/api/v1/missions` 的 create/list/get/snapshot、确认前完整计划 replace/regenerate、confirm

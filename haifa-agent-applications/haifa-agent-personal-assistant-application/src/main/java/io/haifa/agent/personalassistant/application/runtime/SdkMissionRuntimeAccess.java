@@ -25,6 +25,7 @@ import io.haifa.agent.personalassistant.application.PersonalModelOption;
 import io.haifa.agent.personalassistant.application.mission.MissionDispatchIntent;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
 import io.haifa.agent.personalassistant.application.mission.MissionMode;
+import io.haifa.agent.personalassistant.application.mission.MissionModelBinding;
 import io.haifa.agent.personalassistant.application.mission.MissionPlanner;
 import io.haifa.agent.personalassistant.application.mission.MissionRuntimeAccess;
 import io.haifa.agent.personalassistant.application.mission.MissionSynthesisIntent;
@@ -89,7 +90,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     private final PrincipalRef principal;
     private final TimeProvider time;
     private final PersonalModelCatalog models;
-    private final String modelId;
+    private final String defaultModelId;
     private final SkillContent deepResearchSkill;
 
     public SdkMissionRuntimeAccess(
@@ -99,7 +100,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             PrincipalRef principal,
             TimeProvider time,
             PersonalModelCatalog models,
-            String modelId,
+            String defaultModelId,
             SkillContent deepResearchSkill) {
         this.agent = Objects.requireNonNull(agent);
         this.persistence = Objects.requireNonNull(persistence);
@@ -107,12 +108,13 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         this.principal = Objects.requireNonNull(principal);
         this.time = Objects.requireNonNull(time);
         this.models = Objects.requireNonNull(models);
-        this.modelId = Objects.requireNonNull(modelId);
+        this.defaultModelId = Objects.requireNonNull(defaultModelId);
         this.deepResearchSkill = Objects.requireNonNull(deepResearchSkill);
     }
 
     @Override
     public PlannerRunResult runPlanner(MissionPlanner.PlanningRequest request) {
+        String modelId = modelId(request.modelBinding());
         PersonalModelOption model = models.available().stream()
                 .filter(value -> value.id().equals(modelId))
                 .findFirst()
@@ -146,13 +148,18 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                         "missionId",
                                         request.missionId(),
                                         "planRevisionNo",
-                                        request.revisionNo())));
+                                        request.revisionNo(),
+                                        "modelId",
+                                        modelId,
+                                        "modelConfigurationDigest",
+                                        request.modelBinding().configurationDigest())));
             } else {
                 AgentSession value = existing.orElseThrow();
                 if (!value.tenant().equals(tenant)
                         || !value.owner().equals(principal)
                         || !"MISSION_PLANNER".equals(value.metadata().get("sessionKind"))
-                        || !request.missionId().equals(value.metadata().get("missionId"))) {
+                        || !request.missionId().equals(value.metadata().get("missionId"))
+                        || !modelId.equals(value.metadata().get("modelId"))) {
                     throw new MissionException("MISSION_SESSION_CONFLICT", "Planner Session ownership is invalid");
                 }
             }
@@ -164,7 +171,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         dispatchKey,
                         new AgentDefinitionId("personal-assistant"),
                         Optional.of(new AgentDefinitionVersion(1, 0, 0)),
-                        PLANNER_RUN_PROFILE,
+                        profileId(PLANNER_RUN_PROFILE, modelId, defaultModelId),
                         sessionId,
                         Optional.empty(),
                         plannerPrompt(request, currentUtcDate()),
@@ -206,7 +213,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         if (repairAttemptNo != 1) {
             throw new IllegalArgumentException("Only the single bounded Mission Plan repair attempt is supported");
         }
-        requireStructuredOutput("Mission Plan repair");
+        String modelId = modelId(request.modelBinding());
+        requireStructuredOutput("Mission Plan repair", modelId);
         String stable = digest(
                 request.missionId(),
                 Integer.toString(request.revisionNo()),
@@ -241,13 +249,18 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                         "sourcePlannerRunId",
                                         invalidRun.runId(),
                                         "repairAttemptNo",
-                                        Integer.toString(repairAttemptNo))));
+                                        Integer.toString(repairAttemptNo),
+                                        "modelId",
+                                        modelId,
+                                        "modelConfigurationDigest",
+                                        request.modelBinding().configurationDigest())));
             } else {
                 AgentSession value = existing.orElseThrow();
                 if (!value.tenant().equals(tenant)
                         || !value.owner().equals(principal)
                         || !"MISSION_PLANNER_REPAIR".equals(value.metadata().get("sessionKind"))
                         || !request.missionId().equals(value.metadata().get("missionId"))
+                        || !modelId.equals(value.metadata().get("modelId"))
                         || !invalidRun.runId().equals(value.metadata().get("sourcePlannerRunId"))) {
                     throw new MissionException(
                             "MISSION_SESSION_CONFLICT", "Planner repair Session ownership is invalid");
@@ -262,7 +275,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                 + invalidRun.runId(),
                         new AgentDefinitionId("personal-assistant"),
                         Optional.of(new AgentDefinitionVersion(1, 0, 0)),
-                        PLANNER_REPAIR_RUN_PROFILE,
+                        profileId(PLANNER_REPAIR_RUN_PROFILE, modelId, defaultModelId),
                         sessionId,
                         Optional.empty(),
                         plannerRepairPrompt(
@@ -299,7 +312,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
 
     @Override
     public TaskRunBinding startTask(MissionDispatchIntent intent) {
-        requireStructuredOutput("Mission Task");
+        String modelId = modelId(intent.modelBinding());
+        requireStructuredOutput("Mission Task", modelId);
         String stable = digest(intent.missionId(), intent.taskId(), Integer.toString(intent.attemptNo()));
         AgentSessionId sessionId = new AgentSessionId("mission-task-" + stable.substring("sha256:".length(), 38));
         persistence.inTransaction(() -> {
@@ -316,17 +330,23 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                 null,
                                 SessionScope.EPHEMERAL,
                                 time.now(),
-                                Map.of(
-                                        "productId", "haifa-personal-assistant",
-                                        "sessionKind", "MISSION_TASK",
-                                        "missionId", intent.missionId(),
-                                        "taskId", intent.taskId(),
-                                        "attemptNo", Integer.toString(intent.attemptNo()),
-                                        "dispatchPayloadDigest", intent.payloadDigest(),
-                                        "executionProfileId", intent.runInput().executionProfileId(),
-                                        "resultSchemaId", intent.resultSchemaId(),
-                                        "resultSchemaVersion", intent.resultSchemaVersion(),
-                                        "taskObjective", intent.objective())));
+                                Map.ofEntries(
+                                        Map.entry("productId", "haifa-personal-assistant"),
+                                        Map.entry("sessionKind", "MISSION_TASK"),
+                                        Map.entry("missionId", intent.missionId()),
+                                        Map.entry("taskId", intent.taskId()),
+                                        Map.entry("attemptNo", Integer.toString(intent.attemptNo())),
+                                        Map.entry("dispatchPayloadDigest", intent.payloadDigest()),
+                                        Map.entry(
+                                                "executionProfileId",
+                                                intent.runInput().executionProfileId()),
+                                        Map.entry("resultSchemaId", intent.resultSchemaId()),
+                                        Map.entry("resultSchemaVersion", intent.resultSchemaVersion()),
+                                        Map.entry("taskObjective", intent.objective()),
+                                        Map.entry("modelId", modelId),
+                                        Map.entry(
+                                                "modelConfigurationDigest",
+                                                intent.modelBinding().configurationDigest()))));
             } else {
                 AgentSession value = existing.orElseThrow();
                 if (!value.tenant().equals(tenant)
@@ -335,6 +355,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         || !intent.missionId().equals(value.metadata().get("missionId"))
                         || !intent.taskId().equals(value.metadata().get("taskId"))
                         || !intent.payloadDigest().equals(value.metadata().get("dispatchPayloadDigest"))
+                        || !modelId.equals(value.metadata().get("modelId"))
                         || !intent.runInput()
                                 .executionProfileId()
                                 .equals(value.metadata().get("executionProfileId"))) {
@@ -349,7 +370,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         intent.dispatchKey(),
                         new AgentDefinitionId("personal-assistant"),
                         Optional.of(new AgentDefinitionVersion(1, 0, 0)),
-                        intent.runInput().executionProfileId(),
+                        profileId(intent.runInput().executionProfileId(), modelId, defaultModelId),
                         sessionId,
                         Optional.empty(),
                         objective,
@@ -510,8 +531,15 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                 throw new MissionException(
                         "MISSION_TASK_METADATA_INVALID", "Mission Task Session is missing its frozen task ID");
             }
+            Object frozenModelId = sourceSession.metadata().get("modelId");
+            String missionModelId = frozenModelId instanceof String value && !value.isBlank() ? value : defaultModelId;
             NormalizedTaskResult normalized = normalizeResearchTaskResult(
-                    runId, persistedRun.orElseThrow().sessionId(), taskId, taskObjective, result.orElseThrow());
+                    runId,
+                    persistedRun.orElseThrow().sessionId(),
+                    taskId,
+                    taskObjective,
+                    result.orElseThrow(),
+                    missionModelId);
             return new TaskRunObservation(
                     runId,
                     TaskRunState.COMPLETED,
@@ -525,8 +553,13 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     }
 
     private NormalizedTaskResult normalizeResearchTaskResult(
-            String sourceRunId, AgentSessionId sourceSessionId, String taskId, String taskObjective, String result) {
-        requireStructuredOutput("Mission Task result normalization");
+            String sourceRunId,
+            AgentSessionId sourceSessionId,
+            String taskId,
+            String taskObjective,
+            String result,
+            String modelId) {
+        requireStructuredOutput("Mission Task result normalization", modelId);
         String prompt = taskNormalizationPrompt(taskId, taskObjective, result, deepResearchSkill);
         MissionUsage normalizationUsage = MissionUsage.NONE;
         String lastFailure = "MISSION_TASK_NORMALIZATION_FAILED";
@@ -537,7 +570,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                     + ":attempt:" + attemptNo,
                             new AgentDefinitionId("personal-assistant"),
                             Optional.of(new AgentDefinitionVersion(1, 0, 0)),
-                            TASK_NORMALIZER_RUN_PROFILE,
+                            profileId(TASK_NORMALIZER_RUN_PROFILE, modelId, defaultModelId),
                             sourceSessionId,
                             Optional.empty(),
                             prompt,
@@ -1010,7 +1043,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
         if (intent.mode() != MissionMode.STANDARD || repairAttemptNo != 1) {
             throw new MissionException("MISSION_SYNTHESIS_REPAIR_INVALID", "Synthesis repair request is invalid");
         }
-        requireStructuredOutput("Mission Synthesis repair");
+        String modelId = modelId(intent.modelBinding());
+        requireStructuredOutput("Mission Synthesis repair", modelId);
         AgentSessionId sessionId = synthesisSession(intent, STANDARD_SYNTHESIS_PROTOCOL_VERSION);
         String dispatchKey = standardSynthesisRepairDispatchKey(intent.missionId(), invalid.runId(), repairAttemptNo);
         var started = agent.runs()
@@ -1018,7 +1052,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         dispatchKey,
                         new AgentDefinitionId("personal-assistant"),
                         Optional.of(new AgentDefinitionVersion(1, 0, 0)),
-                        SYNTHESIS_RUN_PROFILE,
+                        profileId(SYNTHESIS_RUN_PROFILE, modelId, defaultModelId),
                         sessionId,
                         Optional.empty(),
                         standardSynthesisRepairPrompt(
@@ -1060,7 +1094,8 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
             SynthesisRunResult previous,
             ReportQualityGate.Result quality,
             int revisionAttempt) {
-        if (intent.mode() != MissionMode.DEEP_RESEARCH) requireStructuredOutput("Mission Synthesis");
+        String modelId = modelId(intent.modelBinding());
+        if (intent.mode() != MissionMode.DEEP_RESEARCH) requireStructuredOutput("Mission Synthesis", modelId);
         String protocolVersion = intent.mode() == MissionMode.DEEP_RESEARCH
                 ? SYNTHESIS_PROTOCOL_VERSION
                 : STANDARD_SYNTHESIS_PROTOCOL_VERSION;
@@ -1078,7 +1113,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                         dispatchKey,
                         new AgentDefinitionId("personal-assistant"),
                         Optional.of(new AgentDefinitionVersion(1, 0, 0)),
-                        profile,
+                        profileId(profile, modelId, defaultModelId),
                         sessionId,
                         Optional.empty(),
                         prompt,
@@ -1132,8 +1167,11 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     private AgentSessionId synthesisSession(MissionSynthesisIntent intent, String protocolVersion) {
         String stable = digest(intent.missionId(), "synthesis", protocolVersion);
         AgentSessionId sessionId = new AgentSessionId("mission-synthesis-" + stable.substring("sha256:".length(), 38));
+        String modelId = modelId(intent.modelBinding());
         persistence.inTransaction(() -> {
-            if (persistence.runtimePersistence().sessions().find(sessionId).isEmpty()) {
+            Optional<AgentSession> existing =
+                    persistence.runtimePersistence().sessions().find(sessionId);
+            if (existing.isEmpty()) {
                 persistence
                         .runtimePersistence()
                         .sessions()
@@ -1145,9 +1183,25 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                 SessionScope.EPHEMERAL,
                                 time.now(),
                                 Map.of(
-                                        "productId", "haifa-personal-assistant",
-                                        "sessionKind", "MISSION_SYNTHESIS",
-                                        "missionId", intent.missionId())));
+                                        "productId",
+                                        "haifa-personal-assistant",
+                                        "sessionKind",
+                                        "MISSION_SYNTHESIS",
+                                        "missionId",
+                                        intent.missionId(),
+                                        "modelId",
+                                        modelId,
+                                        "modelConfigurationDigest",
+                                        intent.modelBinding().configurationDigest())));
+            } else {
+                AgentSession value = existing.orElseThrow();
+                if (!value.tenant().equals(tenant)
+                        || !value.owner().equals(principal)
+                        || !"MISSION_SYNTHESIS".equals(value.metadata().get("sessionKind"))
+                        || !intent.missionId().equals(value.metadata().get("missionId"))
+                        || !modelId.equals(value.metadata().get("modelId"))) {
+                    throw new MissionException("MISSION_SESSION_CONFLICT", "Synthesis Session ownership is invalid");
+                }
             }
             return null;
         });
@@ -1569,7 +1623,7 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
     @Override
     public void appendFinalMessage(
             String conversationId, String missionId, String synthesisRunId, String finalMessage) {
-        String stable = digest(missionId, "final-message", "v1");
+        String stable = digest(missionId, "final-message", "v2");
         AgentMessageId messageId = new AgentMessageId("mission-final-" + stable.substring("sha256:".length(), 38));
         persistence.inTransaction(() -> {
             if (persistence.runtimePersistence().state().message(messageId).isEmpty()) {
@@ -1589,14 +1643,14 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                                         "missionId",
                                         missionId,
                                         "messageKey",
-                                        "mission:" + missionId + ":final-message:v1"),
+                                        "mission:" + missionId + ":final-message:v2"),
                                 time.now()));
             }
             return null;
         });
     }
 
-    private PersonalModelOption requireStructuredOutput(String operation) {
+    private PersonalModelOption requireStructuredOutput(String operation, String modelId) {
         PersonalModelOption model = models.available().stream()
                 .filter(value -> value.id().equals(modelId))
                 .findFirst()
@@ -1607,6 +1661,27 @@ public final class SdkMissionRuntimeAccess implements MissionRuntimeAccess {
                     "MODEL_STRUCTURED_OUTPUT_UNAVAILABLE", operation + " requires structured output");
         }
         return model;
+    }
+
+    private String modelId(MissionModelBinding binding) {
+        if ("legacy-default".equals(binding.modelId())) return defaultModelId;
+        MissionModelBinding available = models.binding(binding.modelId())
+                .orElseThrow(() -> new MissionException(
+                        "MISSION_MODEL_SNAPSHOT_UNAVAILABLE", "Frozen Mission model is unavailable"));
+        if (!available.configurationDigest().equals(binding.configurationDigest())) {
+            throw new MissionException(
+                    "MISSION_MODEL_SNAPSHOT_UNAVAILABLE", "Frozen Mission model configuration has changed");
+        }
+        return binding.modelId();
+    }
+
+    public static String profileId(String baseProfileId, String modelId, String defaultModelId) {
+        Objects.requireNonNull(baseProfileId);
+        Objects.requireNonNull(modelId);
+        Objects.requireNonNull(defaultModelId);
+        if (modelId.equals(defaultModelId)) return baseProfileId;
+        String frozen = digest(modelId);
+        return baseProfileId + "-model-" + frozen.substring("sha256:".length(), "sha256:".length() + 16);
     }
 
     private LocalDate currentUtcDate() {

@@ -287,6 +287,7 @@ export interface MissionSnapshot {
   schemaVersion: string;
   missionId: string;
   conversationId: string;
+  modelBinding: MissionModelBinding;
   objective: string;
   acceptanceCriteria: Array<string>;
   constraints: MissionConstraints;
@@ -308,6 +309,14 @@ export interface MissionSnapshot {
   finishedAt: string | null;
   pollAfterMs: number;
   execution: MissionExecution;
+}
+
+export interface MissionModelBinding {
+  modelId: string;
+  modelDisplayName: string;
+  providerId: string;
+  providerDisplayName: string;
+  configurationDigest: string;
 }
 
 export interface MissionExecution {

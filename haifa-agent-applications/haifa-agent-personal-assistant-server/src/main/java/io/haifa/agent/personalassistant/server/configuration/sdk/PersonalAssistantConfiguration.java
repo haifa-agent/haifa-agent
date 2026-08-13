@@ -26,6 +26,7 @@ import io.haifa.agent.personalassistant.server.mission.MissionOperationsService;
 import io.haifa.agent.personalassistant.server.mission.RuntimeMissionPlanner;
 import io.haifa.agent.personalassistant.server.mission.SqliteMissionStore;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
+import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
 import io.haifa.agent.sdk.api.SdkCaller;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
@@ -70,7 +71,8 @@ public class PersonalAssistantConfiguration {
             PersonalImageStore imageStore) {
         Path dataDirectory = prepare(properties.dataDirectory());
         byte[] key = decodeKey(properties.continuationKeyBase64());
-        var protector = new AesGcmModelContinuationProtector(new SecretKeySpec(key, "AES"), new SecureRandom());
+        ModelContinuationProtector protector =
+                new AesGcmModelContinuationProtector(new SecretKeySpec(key, "AES"), new SecureRandom());
         var sqlite = SqliteSdkProductContributions.initialize(
                 new SqliteStoreConfiguration(
                         dataDirectory.resolve("personal-assistant.sqlite").toAbsolutePath(), 1_250, 4 * 1024 * 1024),

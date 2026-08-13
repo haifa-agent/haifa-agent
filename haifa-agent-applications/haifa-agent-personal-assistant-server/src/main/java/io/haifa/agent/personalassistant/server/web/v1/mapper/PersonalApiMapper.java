@@ -55,6 +55,12 @@ public final class PersonalApiMapper {
                 value.schemaVersion(),
                 value.missionId(),
                 value.conversationId(),
+                new PersonalApiDtos.MissionModelBinding(
+                        value.modelBinding().modelId(),
+                        value.modelBinding().modelDisplayName(),
+                        value.modelBinding().providerId(),
+                        value.modelBinding().providerDisplayName(),
+                        value.modelBinding().configurationDigest()),
                 value.objective(),
                 value.acceptanceCriteria(),
                 constraints,

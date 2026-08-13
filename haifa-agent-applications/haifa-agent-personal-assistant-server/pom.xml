@@ -38,6 +38,7 @@
     </dependencyManagement>
     <dependencies>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-personal-assistant-application</artifactId></dependency>
+        <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-runtime-core</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-web</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-sdk</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-store-sqlite</artifactId></dependency>

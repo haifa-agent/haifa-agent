@@ -143,11 +143,11 @@ class MissionApplicationServiceTest {
                 MissionExecutionStore.unavailable(),
                 Map.of(
                         "deep-research",
-                        "product/classpath:personal-assistant-bundled@1/deep-research@2.1.0#sha256:test"));
+                        "product/classpath:personal-assistant-bundled@1/deep-research@2.2.0#sha256:test"));
         ResearchBrief brief = new ResearchBrief(
                 "What does the evidence show?",
                 "bounded",
-                "2025-2026",
+                "过去3年至今",
                 "global",
                 "technical",
                 List.of("primary sources"),
@@ -165,15 +165,70 @@ class MissionApplicationServiceTest {
                 Optional.of(brief)));
 
         assertThat(snapshot.mode()).isEqualTo(MissionMode.DEEP_RESEARCH);
-        assertThat(snapshot.researchBrief()).contains(brief);
+        assertThat(snapshot.researchBrief()).hasValueSatisfying(frozen -> {
+            assertThat(frozen.question()).isEqualTo(brief.question());
+            assertThat(frozen.timeRange()).isEqualTo("2023-08-08 至 2026-08-08（UTC，创建时冻结）");
+        });
         assertThat(snapshot.selectedSkillId()).contains("deep-research");
         assertThat(snapshot.selectedSkillBinding()).hasValueSatisfying(binding -> assertThat(binding)
-                .contains("personal-assistant-bundled", "deep-research@2.1.0", "#sha256:"));
+                .contains("personal-assistant-bundled", "deep-research@2.2.0", "#sha256:"));
         assertThat(snapshot.plan().orElseThrow().tasks()).allSatisfy(task -> {
             assertThat(task.taskType()).isEqualTo("RESEARCH");
             assertThat(task.requiredSkillIds()).containsExactly("deep-research");
             assertThat(task.resultSchemaId()).isEqualTo("pa.research-task-result");
         });
+    }
+
+    @Test
+    void relativeResearchRangeRemainsIdempotentAfterTheCreationDateChanges() {
+        InMemoryMissionStore store = new InMemoryMissionStore();
+        AtomicInteger ids = new AtomicInteger();
+        ResearchBrief brief = new ResearchBrief(
+                "What does the evidence show?",
+                "bounded",
+                "过去一年",
+                "global",
+                "technical",
+                List.of("primary sources"),
+                List.of("opinion"),
+                "Markdown report");
+        var command = new MissionApplicationService.CreateMission(
+                "research-replay",
+                "local/public-user",
+                "conversation-replay",
+                "Research a bounded question",
+                List.of("Every material claim is cited"),
+                MissionConstraints.DEFAULT,
+                MissionMode.DEEP_RESEARCH,
+                Optional.of(brief));
+        Map<String, String> bindings = Map.of(
+                "deep-research", "product/classpath:personal-assistant-bundled@1/deep-research@2.2.0#sha256:test");
+        MissionApplicationService firstDay = service(store, ids, CLOCK, bindings);
+        MissionApplicationService followingDay =
+                service(store, ids, Clock.offset(CLOCK, java.time.Duration.ofDays(1)), bindings);
+
+        MissionSnapshot created = firstDay.create(command);
+        MissionSnapshot replayed = followingDay.create(command);
+
+        assertThat(replayed.missionId()).isEqualTo(created.missionId());
+        assertThat(replayed.researchBrief()).isEqualTo(created.researchBrief());
+        assertThat(replayed.researchBrief().orElseThrow().timeRange()).isEqualTo("2025-08-08 至 2026-08-08（UTC，创建时冻结）");
+    }
+
+    private static MissionApplicationService service(
+            InMemoryMissionStore store, AtomicInteger ids, Clock clock, Map<String, String> bindings) {
+        return new MissionApplicationService(
+                store,
+                store,
+                new DeterministicMissionPlanner(),
+                new MissionPlanValidator(
+                        Set.of("GENERAL", "RESEARCH"),
+                        Set.of("deep-research"),
+                        Set.of("pa.task-result@v1", "pa.research-task-result@v1")),
+                () -> "research-mission-" + ids.incrementAndGet(),
+                clock,
+                MissionExecutionStore.unavailable(),
+                bindings);
     }
 
     private static MissionApplicationService.CreateMission command(String key, String conversation, String objective) {

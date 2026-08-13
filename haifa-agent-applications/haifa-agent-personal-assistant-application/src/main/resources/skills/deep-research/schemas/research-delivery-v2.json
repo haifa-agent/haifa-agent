@@ -6,7 +6,7 @@
     "schemaVersion", "completionKind", "degraded", "degradationReasons",
     "reportArtifactRef", "sourcesArtifactRef", "claimEvidenceArtifactRef", "unresolvedArtifactRef",
     "coveredTaskIds", "affectedTaskIds", "sourceCount", "unverifiedClaimCount",
-    "unresolvedQuestionCount", "qualityGate"
+    "unresolvedQuestionCount", "evidenceSummary", "efficiencyMetrics", "qualityGate"
   ],
   "properties": {
     "schemaVersion": { "const": "pa.research-delivery/v2" },
@@ -22,6 +22,37 @@
     "sourceCount": { "type": "integer", "minimum": 0, "maximum": 24 },
     "unverifiedClaimCount": { "type": "integer", "minimum": 0, "maximum": 320 },
     "unresolvedQuestionCount": { "type": "integer", "minimum": 0, "maximum": 160 },
+    "evidenceSummary": {
+      "type": "object",
+      "required": [
+        "totalClaimCount", "unverifiedClaimCount", "singleSourceClaimCount",
+        "counterevidenceClaimCount", "unresolvedQuestionCount"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "totalClaimCount": { "type": "integer", "minimum": 0, "maximum": 320 },
+        "unverifiedClaimCount": { "type": "integer", "minimum": 0, "maximum": 320 },
+        "singleSourceClaimCount": { "type": "integer", "minimum": 0, "maximum": 320 },
+        "counterevidenceClaimCount": { "type": "integer", "minimum": 0, "maximum": 320 },
+        "unresolvedQuestionCount": { "type": "integer", "minimum": 0, "maximum": 160 }
+      }
+    },
+    "efficiencyMetrics": {
+      "type": "object",
+      "required": [
+        "tokensPerValidSource", "duplicateSearchFetchRatio", "evidencePerMaterialClaim",
+        "singleSourceClaimRatio", "synthesisTokenRatio", "qualityGateRevisionCount"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tokensPerValidSource": { "type": "number", "minimum": 0 },
+        "duplicateSearchFetchRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidencePerMaterialClaim": { "type": "number", "minimum": 0 },
+        "singleSourceClaimRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "synthesisTokenRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "qualityGateRevisionCount": { "type": "integer", "minimum": 0, "maximum": 2 }
+      }
+    },
     "qualityGate": {
       "type": "object",
       "required": ["passed", "failedChecks"],

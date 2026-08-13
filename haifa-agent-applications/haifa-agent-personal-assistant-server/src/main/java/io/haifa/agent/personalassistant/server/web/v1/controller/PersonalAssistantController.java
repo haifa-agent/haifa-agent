@@ -53,25 +53,35 @@ public final class PersonalAssistantController {
 
     @GetMapping("/bootstrap")
     PersonalApiDtos.Bootstrap bootstrap() {
+        List<String> capabilities = new ArrayList<>(List.of(
+                "conversation",
+                "usage",
+                "tool",
+                "skill",
+                "mcp",
+                "memory",
+                "interaction",
+                "approval",
+                "shell",
+                "execution",
+                "recommended-questions",
+                "mission",
+                "sse"));
+        Set<String> registeredTools = application.capabilities().registrations().stream()
+                .filter(registration -> "TOOL".equals(registration.kind()))
+                .map(
+                        io.haifa.agent.personalassistant.application.PersonalCapabilityRegistry.CapabilityRegistration
+                                ::name)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        if (registeredTools.containsAll(Set.of("web_search", "web_fetch"))) {
+            capabilities.add("web-research");
+        }
         return new PersonalApiDtos.Bootstrap(
                 "Haifa Personal Assistant",
                 "v1",
                 "connected",
                 properties.caller().principal(),
-                List.of(
-                        "conversation",
-                        "usage",
-                        "tool",
-                        "skill",
-                        "mcp",
-                        "memory",
-                        "interaction",
-                        "approval",
-                        "shell",
-                        "execution",
-                        "recommended-questions",
-                        "mission",
-                        "sse"),
+                List.copyOf(capabilities),
                 application.productDigest(),
                 properties.defaultModelId(),
                 application.models().stream().map(mapper::model).toList());

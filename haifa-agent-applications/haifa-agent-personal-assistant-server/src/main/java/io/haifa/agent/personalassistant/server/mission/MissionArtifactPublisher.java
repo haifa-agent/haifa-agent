@@ -33,6 +33,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -130,8 +131,12 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         LinkedHashSet<String> availableSourceIds =
                 new LinkedHashSet<>(evidence.sources().keySet());
         availableSourceIds.addAll(evidence.sourceAliases().keySet());
+        ReportQualityGate.EvidenceSummary summary = evidenceSummary(evidence);
         ReportQualityGate.Result quality = reportQualityGate.evaluate(
-                synthesis.structuredOutput(), intent.completedTaskIds(), Set.copyOf(availableSourceIds));
+                trustedReport(synthesis.structuredOutput(), evidence, summary),
+                intent.completedTaskIds(),
+                Set.copyOf(availableSourceIds),
+                summary);
         if (synthesis.degradationReasons().isEmpty()) return quality;
         List<ReportQualityGate.Failure> failures = new ArrayList<>(quality.failures());
         failures.add(new ReportQualityGate.Failure("REPORT_SYNTHESIS_DEGRADED", synthesis.degradationReasons()));
@@ -163,7 +168,9 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                     "MISSION_RESULT_SCHEMA_INVALID", "Degraded delivery cannot pass its quality gate");
         }
         ResearchEvidence evidence = evidence(intent.taskResults());
-        String reportText = canonicalizeReportCitations(synthesis.structuredOutput(), evidence.sourceAliases());
+        ReportQualityGate.EvidenceSummary summary = evidenceSummary(evidence);
+        String reportText = canonicalizeReportCitations(
+                trustedReport(synthesis.structuredOutput(), evidence, summary), evidence.sourceAliases());
 
         ObjectNode sourcesDocument = mapper.createObjectNode();
         sourcesDocument.put("schemaVersion", "pa.research-sources/v1");
@@ -220,6 +227,31 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         unverified.addAll(evidence.aggregateDowngradedClaimIds());
         manifest.put("unverifiedClaimCount", unverified.size());
         manifest.put("unresolvedQuestionCount", evidence.unresolvedQuestions().size());
+        ObjectNode evidenceSummary = manifest.putObject("evidenceSummary");
+        evidenceSummary.put("totalClaimCount", summary.totalClaims());
+        evidenceSummary.put("unverifiedClaimCount", summary.unverifiedClaims());
+        evidenceSummary.put("singleSourceClaimCount", summary.singleSourceClaims());
+        evidenceSummary.put("counterevidenceClaimCount", summary.counterevidenceClaims());
+        evidenceSummary.put(
+                "unresolvedQuestionCount", summary.unresolvedQuestions().size());
+        ObjectNode efficiency = manifest.putObject("efficiencyMetrics");
+        long totalTokens = Math.addExact(
+                intent.preSynthesisUsage().modelTokens(), synthesis.usage().modelTokens());
+        int validSources = (int) evidence.sources().values().stream()
+                .filter(source -> "FETCHED".equals(source.path("status").asText()))
+                .count();
+        efficiency.put("tokensPerValidSource", ratio(totalTokens, validSources));
+        efficiency.put(
+                "duplicateSearchFetchRatio",
+                ratio(evidence.duplicateResearchOperations(), evidence.researchOperations()));
+        int evidenceLinks = evidence.claims().values().stream()
+                .mapToInt(claim -> claim.path("supportingSourceIds").size()
+                        + claim.path("opposingSourceIds").size())
+                .sum();
+        efficiency.put("evidencePerMaterialClaim", ratio(evidenceLinks, summary.totalClaims()));
+        efficiency.put("singleSourceClaimRatio", ratio(summary.singleSourceClaims(), summary.totalClaims()));
+        efficiency.put("synthesisTokenRatio", ratio(synthesis.usage().modelTokens(), totalTokens));
+        efficiency.put("qualityGateRevisionCount", synthesis.qualityGateRevisionCount());
         ObjectNode gate = manifest.putObject("qualityGate");
         gate.put("passed", quality.passed());
         gate.set("failedChecks", mapper.valueToTree(quality.failureCodes()));
@@ -228,6 +260,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         validateReference(sources, sourcesRef);
         validateReference(claims, claimsRef);
         validateReference(unresolved, unresolvedRef);
+        validateEvidenceConsistency(manifest, sourcesDocument, claimsDocument, unresolvedDocument);
         if (manifest.toString().contains("research-delivery.json")) {
             throw new MissionException("REPORT_ARTIFACT_INCONSISTENT", "Delivery manifest cannot self-reference");
         }
@@ -241,7 +274,7 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                         .map(value -> value.get("normalizedLocator").asText())
                         .toList(),
                 encode(manifest),
-                reportText,
+                conversationDeliveryMessage(intent, manifest),
                 partial ? "PARTIAL" : "COMPLETE");
     }
 
@@ -255,7 +288,9 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 && manifest.path("degraded").isBoolean()
                 && manifest.path("degradationReasons").isArray()
                 && manifest.path("qualityGate").isObject()
-                && manifest.path("qualityGate").path("passed").isBoolean();
+                && manifest.path("qualityGate").path("passed").isBoolean()
+                && manifest.path("evidenceSummary").isObject()
+                && manifest.path("efficiencyMetrics").isObject();
         if (!validEnvelope) {
             throw new MissionException("MISSION_RESULT_SCHEMA_INVALID", "Research delivery manifest is invalid");
         }
@@ -267,6 +302,50 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             throw new MissionException(
                     "MISSION_RESULT_SCHEMA_INVALID", "Research delivery degradation semantics are inconsistent");
         }
+    }
+
+    private static void validateEvidenceConsistency(
+            JsonNode manifest, JsonNode sourcesDocument, JsonNode claimsDocument, JsonNode unresolvedDocument) {
+        JsonNode evidence = manifest.path("evidenceSummary");
+        JsonNode claims = claimsDocument.path("claims");
+        long unverified = java.util.stream.StreamSupport.stream(claims.spliterator(), false)
+                .filter(claim -> claim.path("unverified").asBoolean())
+                .count();
+        long singleSource = java.util.stream.StreamSupport.stream(claims.spliterator(), false)
+                .filter(claim -> claim.path("supportingSourceIds").size() == 1)
+                .count();
+        long counterevidence = java.util.stream.StreamSupport.stream(claims.spliterator(), false)
+                .filter(claim -> !claim.path("opposingSourceIds").isEmpty())
+                .count();
+        boolean consistent = manifest.path("sourceCount").asInt(-1)
+                        == sourcesDocument.path("sources").size()
+                && manifest.path("unverifiedClaimCount").asLong(-1) == unverified
+                && manifest.path("unresolvedQuestionCount").asInt(-1)
+                        == unresolvedDocument.path("unresolvedQuestions").size()
+                && evidence.path("totalClaimCount").asInt(-1) == claims.size()
+                && evidence.path("unverifiedClaimCount").asLong(-1) == unverified
+                && evidence.path("singleSourceClaimCount").asLong(-1) == singleSource
+                && evidence.path("counterevidenceClaimCount").asLong(-1) == counterevidence
+                && evidence.path("unresolvedQuestionCount").asInt(-1)
+                        == unresolvedDocument.path("unresolvedQuestions").size();
+        if (!consistent) {
+            throw new MissionException(
+                    "REPORT_ARTIFACT_INCONSISTENT", "Evidence counts contradict the published Artifacts");
+        }
+    }
+
+    private static String conversationDeliveryMessage(MissionSynthesisIntent intent, JsonNode manifest) {
+        String state = "COMPLETE".equals(manifest.path("completionKind").asText()) ? "已完成" : "部分完成";
+        return "<!-- haifa-mission-delivery:" + intent.missionId() + " -->\n"
+                + "Deep Research Mission " + state + "。完整报告与证据已保存在 Mission 中。\n"
+                + "来源 " + manifest.path("sourceCount").asInt() + " 个 · 待核实结论 "
+                + manifest.path("unverifiedClaimCount").asInt() + " 个 · 未决问题 "
+                + manifest.path("unresolvedQuestionCount").asInt() + " 个";
+    }
+
+    private static double ratio(long numerator, long denominator) {
+        if (denominator <= 0) return 0.0d;
+        return Math.round(((double) numerator / denominator) * 10_000.0d) / 10_000.0d;
     }
 
     private static String canonicalizeReportCitations(String report, Map<String, String> sourceAliases) {
@@ -310,12 +389,19 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
         Map<String, String> sourceAliases = new LinkedHashMap<>();
         List<NormalizedTask> taskObjects = new ArrayList<>();
         LinkedHashSet<String> unresolved = new LinkedHashSet<>();
+        LinkedHashSet<String> uniqueResearchOperations = new LinkedHashSet<>();
+        int researchOperations = 0;
         for (String encoded : taskResults) {
             JsonNode task = object(encoded, "Research Task result");
             requireSchema(task, "pa.research-task-result/v1");
             requiredText(task, "brief", 8_000);
             JsonNode queries = requiredArray(task, "queries", 20);
             validateQueries(queries);
+            for (JsonNode query : queries) {
+                researchOperations++;
+                uniqueResearchOperations.add(
+                        "search:" + query.path("query").asText().trim().toLowerCase(Locale.ROOT));
+            }
             JsonNode limits = requiredObject(task, "limitsUsed");
             validateLimits(limits);
             if (!STOP_REASONS.contains(requiredText(task, "stopReason", 64))) invalid("stopReason is invalid");
@@ -335,6 +421,8 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             Map<String, JsonNode> taskSourceIndex = new LinkedHashMap<>();
             for (JsonNode source : taskSources) {
                 SourceIdentity identity = validateSource(source);
+                researchOperations++;
+                uniqueResearchOperations.add("fetch:" + identity.canonicalId());
                 String previousAlias = taskAliases.putIfAbsent(identity.originalId(), identity.canonicalId());
                 if (previousAlias != null && !previousAlias.equals(identity.canonicalId())) {
                     invalid("Source ID is ambiguous within a Task");
@@ -386,7 +474,81 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
                 claims,
                 Set.copyOf(requiredUnverified),
                 Set.copyOf(aggregateDowngraded),
-                List.copyOf(unresolved));
+                List.copyOf(unresolved),
+                researchOperations,
+                researchOperations - uniqueResearchOperations.size());
+    }
+
+    private static ReportQualityGate.EvidenceSummary evidenceSummary(ResearchEvidence evidence) {
+        int unverified = (int) evidence.claims().values().stream()
+                .filter(claim -> claim.path("unverified").asBoolean())
+                .count();
+        int singleSource = (int) evidence.claims().values().stream()
+                .filter(claim -> claim.path("supportingSourceIds").size() == 1)
+                .count();
+        int counterevidence = (int) evidence.claims().values().stream()
+                .filter(claim -> !claim.path("opposingSourceIds").isEmpty())
+                .count();
+        return new ReportQualityGate.EvidenceSummary(
+                evidence.claims().size(), unverified, singleSource, counterevidence, evidence.unresolvedQuestions());
+    }
+
+    private static String trustedReport(
+            String modelReport, ResearchEvidence evidence, ReportQualityGate.EvidenceSummary summary) {
+        StringBuilder status = new StringBuilder()
+                .append("<!-- haifa-section: evidence-summary -->\n")
+                .append("## 证据状态\n\n")
+                .append("<!-- haifa-evidence-counts: total=")
+                .append(summary.totalClaims())
+                .append(" unverified=")
+                .append(summary.unverifiedClaims())
+                .append(" single-source=")
+                .append(summary.singleSourceClaims())
+                .append(" counterevidence=")
+                .append(summary.counterevidenceClaims())
+                .append(" unresolved=")
+                .append(summary.unresolvedQuestions().size())
+                .append(" -->\n")
+                .append("- 主要结论：")
+                .append(summary.totalClaims())
+                .append("\n")
+                .append("- 待核实：")
+                .append(summary.unverifiedClaims())
+                .append("\n")
+                .append("- 仅单一来源支持：")
+                .append(summary.singleSourceClaims())
+                .append("\n")
+                .append("- 发现反向证据：")
+                .append(summary.counterevidenceClaims())
+                .append("\n")
+                .append("- 未决问题：")
+                .append(summary.unresolvedQuestions().size())
+                .append("\n");
+        if (summary.unverifiedClaims() > 0) {
+            status.append("\n> 本报告包含尚未充分核实的判断，不应解读为所有关键结论均已确认。\n");
+        }
+        StringBuilder risks = new StringBuilder("\n\n### 可信代码补充的证据限制\n\n");
+        evidence.claims().forEach((claimId, claim) -> {
+            if (claim.path("supportingSourceIds").size() == 1) {
+                risks.append("<!-- haifa-single-source-risk: ")
+                        .append(claimId)
+                        .append(" -->\n")
+                        .append("- 单一来源结论：")
+                        .append(claim.path("claim").asText())
+                        .append("\n");
+            }
+        });
+        summary.unresolvedQuestions()
+                .forEach(question -> risks.append("- 未决问题：").append(question).append("\n"));
+        String sourceMarker = "<!-- haifa-section: sources -->";
+        String report = modelReport == null ? "" : modelReport;
+        int sourceAt = report.toLowerCase(Locale.ROOT).indexOf(sourceMarker);
+        if (sourceAt >= 0) {
+            report = report.substring(0, sourceAt) + risks + "\n" + report.substring(sourceAt);
+        } else {
+            report = report + risks;
+        }
+        return status.append("\n").append(report).toString();
     }
 
     private SourceIdentity validateSource(JsonNode source) {
@@ -796,7 +958,9 @@ public final class MissionArtifactPublisher implements MissionResultPublisher {
             Map<String, JsonNode> claims,
             Set<String> requiredUnverifiedClaimIds,
             Set<String> aggregateDowngradedClaimIds,
-            List<String> unresolvedQuestions) {}
+            List<String> unresolvedQuestions,
+            int researchOperations,
+            int duplicateResearchOperations) {}
 
     private record NormalizedTask(JsonNode value, Map<String, String> sourceAliases, Map<String, JsonNode> sources) {}
 
