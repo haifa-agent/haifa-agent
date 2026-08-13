@@ -1,7 +1,6 @@
 # Changelog
 
-- 修复 macOS CI 调度停顿被误判为 WatchService overflow、进而对未变化大文件重复全量哈希的问题；
-  settle deadline 现在只在事件持续活跃时触发安全重同步。
+
 - 暂不暴露没有消费方的 Agent `description` 元数据：移除 SDK/Starter 字段、Builder 方法和 Spring 属性；
   保留 `name` 作为宿主展示值与便利 Conversation display name，Tool/Skill description 不受影响。
 - SDK 新增 `chat(message, Record.class)` 类型化最终输出：复用 Java record Schema/Codec，把输出契约冻结进
