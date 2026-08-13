@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
@@ -125,6 +126,113 @@ class OpenAiCompatibleChatModelTest {
         assertThat(sent.has("thinking")).isFalse();
         assertThat(sent.has("reasoning_effort")).isFalse();
         assertThat(authorization.get()).isEqualTo("Bearer test-secret");
+    }
+
+    @Test
+    void appliesTypedSamplingOptionFrozenInTheModelSnapshot() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"resp-temperature","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ready"}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """));
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("call-temperature"),
+                new AgentRunId("run-temperature"),
+                1,
+                1,
+                openAiSnapshot(Map.of("temperature", 0.25d)),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "hello")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of());
+
+        model().invoke(request);
+
+        assertThat(json.readTree(requestBody.get()).path("temperature").asDouble())
+                .isEqualTo(0.25d);
+    }
+
+    @Test
+    void mapsFrozenRecordRequirementToJsonSchemaAndParsesTheStructuredFinalObject() throws Exception {
+        provider = openAiProvider(
+                URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"));
+        response.set(Response.json(
+                200,
+                """
+                {"id":"resp-structured","model":"gpt-5.6-luna",
+                 "choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":%s}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """
+                        .formatted(json.writeValueAsString("{\"city\":\"Shanghai\",\"days\":2}"))));
+        var requirement = requirement();
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("call-structured"),
+                new AgentRunId("run-structured"),
+                1,
+                1,
+                openAiSnapshot(),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "plan")),
+                List.of(),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement));
+
+        var actual = model().invoke(request);
+
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        JsonNode format = json.readTree(requestBody.get()).path("response_format");
+        assertThat(format.path("type").asText()).isEqualTo("json_schema");
+        assertThat(format.path("json_schema").path("name").asText()).isEqualTo("TripPlan");
+        assertThat(format.path("json_schema").path("strict").asBoolean()).isTrue();
+        assertThat(format.path("json_schema")
+                        .path("schema")
+                        .path("required")
+                        .get(1)
+                        .asText())
+                .isEqualTo("days");
+    }
+
+    @Test
+    void keepsDeepSeekToolTurnsAvailableWhileUsingJsonObjectModeForTheFinalSchema() throws Exception {
+        response.set(Response.json(
+                200,
+                """
+                {"id":"resp-tool","model":"deepseek-v4-pro",
+                 "choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                   "tool_calls":[{"id":"call-weather","type":"function","function":{"name":"weather","arguments":%s}}]}}],
+                 "usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}
+                """
+                        .formatted(json.writeValueAsString("{\"city\":\"Shanghai\"}"))));
+        var tool = new ModelToolSpecification(
+                "weather", "1", "Weather", "weather-input", "1", Map.of("type", "object"), false);
+        AgentChatRequest request = new AgentChatRequest(
+                new ModelCallId("call-structured-tool"),
+                new AgentRunId("run-structured-tool"),
+                1,
+                1,
+                snapshot(),
+                List.of(ModelMessage.text(ModelMessageRole.USER, "plan")),
+                List.of(tool),
+                1024,
+                Duration.ofSeconds(5),
+                Map.of(),
+                java.util.Optional.of(requirement()));
+
+        var actual = model().invoke(request);
+
+        assertThat(actual.toolCalls()).hasSize(1);
+        assertThat(actual.structuredOutput()).isEmpty();
+        JsonNode sent = json.readTree(requestBody.get());
+        assertThat(sent.path("response_format").path("type").asText()).isEqualTo("json_object");
+        assertThat(sent.path("messages").get(1).path("role").asText()).isEqualTo("developer");
+        assertThat(sent.path("messages").get(1).path("content").asText()).contains("additionalProperties");
     }
 
     @Test
@@ -508,7 +616,7 @@ class OpenAiCompatibleChatModelTest {
                 List.of(),
                 16,
                 Duration.ofSeconds(1),
-                Map.of("temperature", 0));
+                Map.of("unsupported_option", 0));
         assertThatThrownBy(() -> model().invoke(unsupported))
                 .isInstanceOf(ModelInvocationException.class)
                 .satisfies(error -> assertThat(((ModelInvocationException) error).category())
@@ -765,6 +873,10 @@ class OpenAiCompatibleChatModelTest {
     }
 
     private ResolvedModelSnapshot openAiSnapshot() {
+        return openAiSnapshot(Map.of());
+    }
+
+    private ResolvedModelSnapshot openAiSnapshot(Map<String, Object> invocationOptions) {
         return ResolvedModelSnapshot.create(
                 provider.id(),
                 provider.version(),
@@ -778,11 +890,33 @@ class OpenAiCompatibleChatModelTest {
                 provider.endpoint(),
                 provider.credentialRef(),
                 provider.nativeStreaming(),
-                EnumSet.of(ModelCapability.TEXT_CHAT, ModelCapability.IMAGE_INPUT, ModelCapability.TOOL_CALLING),
+                EnumSet.of(
+                        ModelCapability.TEXT_CHAT,
+                        ModelCapability.IMAGE_INPUT,
+                        ModelCapability.TOOL_CALLING,
+                        ModelCapability.STRUCTURED_OUTPUT),
                 128_000,
                 8_192,
                 provider.options(),
-                Map.of());
+                invocationOptions);
+    }
+
+    private static StructuredOutputRequirement requirement() {
+        return new StructuredOutputRequirement(
+                "java-record:TripPlan",
+                "sha256:test",
+                "TripPlan",
+                Map.of(
+                        "type",
+                        "object",
+                        "additionalProperties",
+                        false,
+                        "properties",
+                        Map.of(
+                                "city", Map.of("type", "string"),
+                                "days", Map.of("type", "integer")),
+                        "required",
+                        List.of("city", "days")));
     }
 
     private ModelProviderDefinition provider(URI endpoint) {

@@ -143,7 +143,8 @@ public class HaifaAgentFacadeTest {
                 .build()) {
             var conversation =
                     agent.conversations().start(new StartConversationCommand("start", "Private", "secret text"));
-            agent.runs().await(conversation.activeRunId().orElseThrow());
+            var runId = conversation.activeRunId().orElseThrow();
+            agent.runs().await(runId);
             caller.set(new SdkCaller(new TenantRef("tenant"), new PrincipalRef("bob", "user")));
 
             assertThat(agent.conversations().find(conversation.sessionId())).isEmpty();
@@ -152,7 +153,21 @@ public class HaifaAgentFacadeTest {
             assertThatThrownBy(() -> agent.conversations().turns(conversation.sessionId()))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("CONVERSATION_UNAVAILABLE");
+            assertThat(agent.runs().promptDiagnostics(runId).available()).isFalse();
+            assertThat(agent.runs().promptDiagnostics(runId).statusCode()).isEqualTo("PROMPT_DIAGNOSTICS_UNAVAILABLE");
         }
+    }
+
+    @Test
+    void lightweightChatFailsWithStableClosedError() {
+        HaifaAgent agent = HaifaAgents.builder(SdkTestFixtures.profile("personal", Map.of()))
+                .contributeAll(SdkTestFixtures.baseContributions())
+                .build();
+        agent.close();
+
+        assertThatThrownBy(() -> agent.chat("hello"))
+                .isInstanceOf(HaifaAgentException.class)
+                .hasMessage("AGENT_CLOSED");
     }
 
     @Test

@@ -6,6 +6,7 @@ import io.haifa.agent.core.reference.RunConfigurationSnapshotRef;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.runtime.api.RuntimeOverrides;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
@@ -15,6 +16,7 @@ import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /** Immutable materialized configuration whose content hash is referenced by the Core run aggregate. */
@@ -37,7 +39,8 @@ public record RuntimeConfigurationSnapshot(
         RuntimeOverrides overrides,
         List<EffectiveCapability> capabilities,
         ResolvedModelSnapshot model,
-        Map<String, Object> modelRequestOptions) {
+        Map<String, Object> modelRequestOptions,
+        Optional<StructuredOutputRequirement> structuredOutput) {
     public RuntimeConfigurationSnapshot(
             RunConfigurationSnapshotRef reference,
             AgentDefinitionId definitionId,
@@ -75,7 +78,8 @@ public record RuntimeConfigurationSnapshot(
                 overrides,
                 capabilities,
                 model,
-                Map.of());
+                Map.of(),
+                Optional.empty());
     }
 
     public RuntimeConfigurationSnapshot(
@@ -116,7 +120,51 @@ public record RuntimeConfigurationSnapshot(
                 overrides,
                 capabilities,
                 model,
-                Map.of());
+                Map.of(),
+                Optional.empty());
+    }
+
+    public RuntimeConfigurationSnapshot(
+            RunConfigurationSnapshotRef reference,
+            AgentDefinitionId definitionId,
+            AgentDefinitionVersion definitionVersion,
+            String profileId,
+            String profileVersion,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            List<FrozenToolBinding> toolBindings,
+            List<FrozenSkillBinding> skillBindings,
+            SkillContentDigest skillCatalogDigest,
+            String skillResolutionPolicyRef,
+            SkillTrustSnapshot skillTrust,
+            Set<AgentDefinitionId> allowedChildAgents,
+            String agentInstruction,
+            RuntimeOverrides overrides,
+            List<EffectiveCapability> capabilities,
+            ResolvedModelSnapshot model,
+            Map<String, Object> modelRequestOptions) {
+        this(
+                reference,
+                definitionId,
+                definitionVersion,
+                profileId,
+                profileVersion,
+                runType,
+                budget,
+                limits,
+                toolBindings,
+                skillBindings,
+                skillCatalogDigest,
+                skillResolutionPolicyRef,
+                skillTrust,
+                allowedChildAgents,
+                agentInstruction,
+                overrides,
+                capabilities,
+                model,
+                modelRequestOptions,
+                Optional.empty());
     }
 
     public RuntimeConfigurationSnapshot {
@@ -151,6 +199,7 @@ public record RuntimeConfigurationSnapshot(
         model = Objects.requireNonNull(model, "model must not be null");
         modelRequestOptions = ModelRequestOptions.freeze(Objects.requireNonNullElse(modelRequestOptions, Map.of()));
         RuntimeControlOptions.validate(modelRequestOptions, budget);
+        structuredOutput = Objects.requireNonNullElse(structuredOutput, Optional.empty());
     }
 
     public Set<String> allowedTools() {

@@ -1,6 +1,7 @@
 package io.haifa.agent.model.openai;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
@@ -292,6 +293,19 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     null);
         }
         dialect(request).validateSnapshot(request.model(), allowInsecureHttp);
+        if (request.structuredOutput().isPresent()
+                && !request.model()
+                        .capabilities()
+                        .contains(io.haifa.agent.model.api.ModelCapability.STRUCTURED_OUTPUT)) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "structured_output_unsupported",
+                    "selected model does not support structured output",
+                    null);
+        }
     }
 
     private URI chatCompletionsUri(URI endpoint) {
@@ -301,24 +315,70 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     }
 
     private Map<String, Object> requestBody(AgentChatRequest request, boolean stream) {
+        Map<String, Object> options = invocationOptions(request);
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model().providerModelId());
-        body.put("messages", request.messages().stream().map(this::message).toList());
+        List<Map<String, Object>> messages =
+                new ArrayList<>(request.messages().stream().map(this::message).toList());
+        request.structuredOutput().ifPresent(requirement -> {
+            if (!io.haifa.agent.model.api.ModelApiBindingDefinition.STANDARD_DIALECT.equals(
+                    request.model().dialect())) {
+                messages.add(Map.of(
+                        "role",
+                        "developer",
+                        "content",
+                        "When producing the final answer, return one JSON object that exactly matches this schema: "
+                                + writeJson(requirement.jsonSchema())));
+            }
+        });
+        body.put("messages", List.copyOf(messages));
         if (!request.tools().isEmpty()) {
             body.put("tools", request.tools().stream().map(this::tool).toList());
-            body.put("tool_choice", request.options().getOrDefault("tool_choice", "auto"));
+            body.put("tool_choice", options.getOrDefault("tool_choice", "auto"));
         }
         body.put("max_tokens", request.maxOutputTokens());
         dialect(request).applyRequest(request, body);
         body.put("stream", stream);
         if (stream) body.put("stream_options", Map.of("include_usage", true));
-        Object responseFormat = request.options().get("response_format");
+        Object temperature = options.get("temperature");
+        if (temperature != null) body.put("temperature", validateTemperature(temperature));
+        if (request.structuredOutput().isPresent() && options.containsKey("response_format")) {
+            throw new IllegalArgumentException("structured output cannot be combined with response_format options");
+        }
+        Object responseFormat = request.structuredOutput().isPresent()
+                ? structuredResponseFormat(request, request.structuredOutput().orElseThrow())
+                : options.get("response_format");
         if (responseFormat != null) body.put("response_format", validateResponseFormat(responseFormat));
-        if (request.options().keySet().stream()
-                .anyMatch(key -> !key.equals("response_format") && !key.equals("tool_choice"))) {
+        if (options.keySet().stream()
+                .anyMatch(key ->
+                        !key.equals("response_format") && !key.equals("tool_choice") && !key.equals("temperature"))) {
             throw new IllegalArgumentException("unsupported model invocation option");
         }
         return body;
+    }
+
+    private static Map<String, Object> invocationOptions(AgentChatRequest request) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        copyOption(request.model().invocationOptions(), values, "temperature");
+        copyOption(request.model().invocationOptions(), values, "tool_choice");
+        copyOption(request.model().invocationOptions(), values, "response_format");
+        values.putAll(request.options());
+        return Map.copyOf(values);
+    }
+
+    private static void copyOption(Map<String, Object> source, Map<String, Object> target, String key) {
+        if (source.containsKey(key)) target.put(key, source.get(key));
+    }
+
+    private static double validateTemperature(Object configured) {
+        if (!(configured instanceof Number number)) {
+            throw new IllegalArgumentException("temperature must be numeric");
+        }
+        double value = number.doubleValue();
+        if (!Double.isFinite(value) || value < 0.0d || value > 2.0d) {
+            throw new IllegalArgumentException("temperature must be between 0.0 and 2.0");
+        }
+        return value;
     }
 
     private AgentChatResponse parseStream(AgentChatRequest request, InputStream stream, ModelStreamSink sink)
@@ -441,10 +501,57 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
     }
 
     private Object validateResponseFormat(Object value) {
-        if (!(value instanceof Map<?, ?> map) || !"json_object".equals(map.get("type")) || map.size() != 1) {
-            throw new IllegalArgumentException("response_format must be {type=json_object}");
+        if (!(value instanceof Map<?, ?> map)) {
+            throw new IllegalArgumentException("response_format must be an object");
+        }
+        if ("json_object".equals(map.get("type")) && map.size() == 1) return Map.of("type", "json_object");
+        if ("json_schema".equals(map.get("type")) && map.get("json_schema") instanceof Map<?, ?>) {
+            return value;
+        }
+        throw new IllegalArgumentException("response_format type is unsupported");
+    }
+
+    private static Map<String, Object> structuredResponseFormat(
+            AgentChatRequest request, io.haifa.agent.core.run.StructuredOutputRequirement requirement) {
+        if (io.haifa.agent.model.api.ModelApiBindingDefinition.STANDARD_DIALECT.equals(
+                request.model().dialect())) {
+            return Map.of(
+                    "type",
+                    "json_schema",
+                    "json_schema",
+                    Map.of(
+                            "name", requirement.responseName(),
+                            "strict", true,
+                            "schema", requirement.jsonSchema()));
         }
         return Map.of("type", "json_object");
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return json.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalArgumentException("structured output schema cannot be serialized", exception);
+        }
+    }
+
+    private java.util.Optional<Map<String, Object>> structuredOutput(
+            AgentChatRequest request, String content, List<ModelToolCall> toolCalls) {
+        if (request.structuredOutput().isEmpty() || !toolCalls.isEmpty()) return java.util.Optional.empty();
+        try {
+            JsonNode value = json.readTree(content);
+            if (!value.isObject()) throw new IllegalArgumentException("structured output must be an object");
+            return java.util.Optional.of(json.convertValue(value, new TypeReference<Map<String, Object>>() {}));
+        } catch (JsonProcessingException | IllegalArgumentException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "structured_output_invalid",
+                    "provider returned invalid structured output",
+                    exception);
+        }
     }
 
     private static String requireAdapterType(ModelProviderDefinition provider) {
@@ -633,7 +740,8 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                 Map.of("reasoningCharacters", reasoningContent.length()),
                 reasoningContent.isEmpty() || !retainReasoning(request, finishReason)
                         ? java.util.Optional.empty()
-                        : java.util.Optional.of(SensitiveModelReasoning.of(reasoningContent)));
+                        : java.util.Optional.of(SensitiveModelReasoning.of(reasoningContent)),
+                structuredOutput(request, content, toolCalls));
     }
 
     private List<ModelToolCall> parseToolCalls(AgentChatRequest request, JsonNode node) {
@@ -930,7 +1038,8 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     Map.of("reasoningCharacters", reasoning.length()),
                     reasoning.isEmpty() || !retainReasoning(request, finalReason)
                             ? java.util.Optional.empty()
-                            : java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString())));
+                            : java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString())),
+                    structuredOutput(request, content.toString(), calls));
         }
 
         private String consistentText(JsonNode node, String field, String current) {

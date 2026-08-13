@@ -3,6 +3,7 @@ package io.haifa.agent.sdk.conversation;
 import io.haifa.agent.core.content.ContentPart;
 import io.haifa.agent.core.content.ImageUrlContentPart;
 import io.haifa.agent.core.content.StoredImageContentPart;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import java.util.List;
 import java.util.Objects;
 
@@ -11,14 +12,24 @@ public record StartConversationCommand(
         String displayName,
         String message,
         java.util.Optional<String> runProfileId,
-        List<ContentPart> inputs) {
+        List<ContentPart> inputs,
+        java.util.Optional<StructuredOutputRequirement> structuredOutput) {
     public StartConversationCommand(String idempotencyKey, String displayName, String message) {
-        this(idempotencyKey, displayName, message, java.util.Optional.empty(), List.of());
+        this(idempotencyKey, displayName, message, java.util.Optional.empty(), List.of(), java.util.Optional.empty());
     }
 
     public StartConversationCommand(
             String idempotencyKey, String displayName, String message, java.util.Optional<String> runProfileId) {
-        this(idempotencyKey, displayName, message, runProfileId, List.of());
+        this(idempotencyKey, displayName, message, runProfileId, List.of(), java.util.Optional.empty());
+    }
+
+    public StartConversationCommand(
+            String idempotencyKey,
+            String displayName,
+            String message,
+            java.util.Optional<String> runProfileId,
+            List<ContentPart> inputs) {
+        this(idempotencyKey, displayName, message, runProfileId, inputs, java.util.Optional.empty());
     }
 
     public StartConversationCommand {
@@ -28,6 +39,7 @@ public record StartConversationCommand(
         runProfileId = Objects.requireNonNull(runProfileId, "runProfileId must not be null")
                 .map(value -> requireText(value, "runProfileId", 256));
         inputs = imageInputs(inputs);
+        structuredOutput = Objects.requireNonNullElse(structuredOutput, java.util.Optional.empty());
     }
 
     private static String requireText(String value, String field, int limit) {

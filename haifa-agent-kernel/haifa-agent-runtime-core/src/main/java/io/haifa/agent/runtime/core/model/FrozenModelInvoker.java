@@ -8,6 +8,8 @@ import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.ModelCallId;
+import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
@@ -91,6 +93,17 @@ public final class FrozenModelInvoker {
             throw new IllegalArgumentException("model binding belongs to another configuration snapshot");
         }
         ModelCallId callId = new ModelCallId(ids.nextValue());
+        if (binding.configuration().structuredOutput().isPresent()
+                && !binding.configuration().model().capabilities().contains(ModelCapability.STRUCTURED_OUTPUT)) {
+            throw new ModelInvocationException(
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "structured_output_unsupported",
+                    callId,
+                    "selected model does not support structured output",
+                    null);
+        }
         int attempt = Math.max(
                 1, Math.toIntExact(Math.min(Integer.MAX_VALUE, run.usage().modelCalls())));
         AgentChatRequest request = new AgentChatRequest(
@@ -103,7 +116,8 @@ public final class FrozenModelInvoker {
                 context.tools(),
                 Math.toIntExact(context.budget().outputReserve()),
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
-                RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()));
+                RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()),
+                binding.configuration().structuredOutput());
         appendLifecycle(binding, run, callId, iteration, attempt, "model.call.started", "STARTED", 0, 0, "", "NONE");
         output.started(run.id(), callId.value(), attempt, iteration);
         AgentChatResponse response;

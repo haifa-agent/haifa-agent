@@ -166,7 +166,6 @@ public final class DecisionExecutor {
     private AgentLoopDirective executeFinal(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
         var readiness = completionGuard.evaluate(run, decision);
         if (!readiness.ready()) {
-            int attempt = loopContext.recordRepairAttempt();
             List<String> missingEvidence = readiness.blockers().stream()
                     .map(CompletionBlocker::evidenceRequirement)
                     .distinct()
@@ -182,6 +181,30 @@ public final class DecisionExecutor {
                     .map(blocker -> blocker.code() + ": " + blocker.safeMessage())
                     .distinct()
                     .toList();
+            if (blockerCodes.contains("STRUCTURED_OUTPUT_INVALID")) {
+                events.append(
+                        run.id(),
+                        "run.structured-termination",
+                        Map.of(
+                                "reason",
+                                "STRUCTURED_OUTPUT_INVALID",
+                                "attempts",
+                                0,
+                                "blockerCodes",
+                                blockerCodes,
+                                "missingEvidence",
+                                missingEvidence),
+                        time.now());
+                transitions.failed(
+                        run,
+                        new AgentError(
+                                AgentErrorCode.MODEL_STRUCTURED_OUTPUT_INVALID,
+                                Map.of("blockerCodes", blockerCodes, "missingEvidence", missingEvidence),
+                                ids.nextValue(),
+                                time.now()));
+                return AgentLoopDirective.STOP;
+            }
+            int attempt = loopContext.recordRepairAttempt();
             int remainingPercent = loopContext
                     .budgetSnapshot()
                     .map(value -> value.remainingPercent())
@@ -203,7 +226,9 @@ public final class DecisionExecutor {
                 transitions.failed(
                         run,
                         new AgentError(
-                                AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED,
+                                blockerCodes.contains("STRUCTURED_OUTPUT_INVALID")
+                                        ? AgentErrorCode.MODEL_STRUCTURED_OUTPUT_INVALID
+                                        : AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED,
                                 Map.of(
                                         "blockerCodes", blockerCodes,
                                         "missingEvidence", missingEvidence,

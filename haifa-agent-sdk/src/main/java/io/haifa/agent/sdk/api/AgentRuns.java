@@ -17,6 +17,8 @@ import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventSubscription;
 import io.haifa.agent.runtime.api.RunOutputCursor;
 import io.haifa.agent.runtime.api.RunOutputSubscription;
+import io.haifa.agent.sdk.diagnostics.PromptDiagnostics;
+import io.haifa.agent.sdk.internal.ProcessLocalPromptDiagnostics;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -25,9 +27,11 @@ import java.util.Optional;
 /** Stable run query and control facade; Runtime construction remains hidden. */
 public final class AgentRuns {
     private final io.haifa.agent.runtime.api.AgentRuntime runtime;
+    private final ProcessLocalPromptDiagnostics promptDiagnostics;
 
-    AgentRuns(io.haifa.agent.runtime.api.AgentRuntime runtime) {
+    AgentRuns(io.haifa.agent.runtime.api.AgentRuntime runtime, ProcessLocalPromptDiagnostics promptDiagnostics) {
         this.runtime = Objects.requireNonNull(runtime, "runtime must not be null");
+        this.promptDiagnostics = Objects.requireNonNull(promptDiagnostics, "promptDiagnostics must not be null");
     }
 
     /** Starts one standard Run. Products remain responsible for trusted Session creation and request construction. */
@@ -41,6 +45,16 @@ public final class AgentRuns {
 
     public Optional<AgentRunViewSnapshot> view(AgentRunId runId) {
         return runtime.view(Objects.requireNonNull(runId, "runId must not be null"));
+    }
+
+    /**
+     * Returns redacted Prompt composition evidence when this process built Context for an
+     * authorized Run. This method does not promise availability across process restarts.
+     */
+    public PromptDiagnostics promptDiagnostics(AgentRunId runId) {
+        Objects.requireNonNull(runId, "runId must not be null");
+        if (runtime.find(runId).isEmpty()) return PromptDiagnostics.unavailable(runId);
+        return promptDiagnostics.find(runId);
     }
 
     public Optional<AgentPlanView> plan(AgentRunId runId) {

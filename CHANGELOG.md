@@ -1,7 +1,19 @@
 # Changelog
 
+- SDK 新增 `chat(message, Record.class)` 类型化最终输出：复用 Java record Schema/Codec，把输出契约冻结进
+  Run 配置，由 OpenAI-compatible Adapter 映射并在 Runtime 终态校验、持久化后解码；Tool Loop 不受最终
+  Schema 限制，不提供类型化 partial stream，Unsupported/Invalid/Refusal/Truncation 保持稳定分类。
+- Anthropic Messages Structured Output 按 dialect 分流：`standard` 映射官方 `output_config.format`
+  JSON Schema，DeepSeek Anthropic-compatible 在未验证该字段前继续 fail closed。
+- OpenAI-compatible Integration 新增类型化模型配置 Builder，覆盖现有 Chat Completions、Responses 与
+  Anthropic Messages style 的标准/DeepSeek profile，并把超时和受限调用选项纳入冻结配置；Starter
+  保留原有 `model(adapter, snapshot)` 高级入口。
+
 ## 0.1.0-SNAPSHOT
 
+- SDK 新增复用现有 Conversation/Runtime 的轻量 `chat()` Facade、纯展示 `name`/`description`、Starter
+  默认指令诊断、Caller-scoped 进程内 Prompt Diagnostics，以及确定性 SDK Testkit；不声明 Stable API，
+  不增加 Prompt 持久化或新的生产 Starter。
 - 将遗漏在工作区外的 SDK 示例工程迁入 `examples/haifa-agent-example`，保持非 Reactor 外部消费者边界；
   独立工程精简为 Pure Java 与 Spring Boot 完整应用，五个不重复的教学主题归入分层 SDK 示例。
 - Runtime Demo 统一迁入 `io.haifa.example.runtime`，将薄启动入口与 Model-only、Raw Tool、MCP、Skill

@@ -59,6 +59,21 @@ public enum AgentErrorCode {
             "Model returned an invalid response",
             AgentErrorCategory.MODEL,
             Retryability.RETRYABLE),
+    MODEL_STRUCTURED_OUTPUT_UNSUPPORTED(
+            "MODEL_STRUCTURED_OUTPUT_UNSUPPORTED",
+            "Selected model does not support structured output",
+            AgentErrorCategory.CONFIGURATION,
+            Retryability.NOT_RETRYABLE),
+    MODEL_STRUCTURED_OUTPUT_INVALID(
+            "MODEL_STRUCTURED_OUTPUT_INVALID",
+            "Model returned invalid structured output",
+            AgentErrorCategory.VALIDATION,
+            Retryability.NOT_RETRYABLE),
+    MODEL_OUTPUT_TRUNCATED(
+            "MODEL_OUTPUT_TRUNCATED",
+            "Model output was truncated",
+            AgentErrorCategory.RESOURCE_LIMIT,
+            Retryability.NOT_RETRYABLE),
     MODEL_CANCELLED(
             "MODEL_CANCELLED", "Model request was cancelled", AgentErrorCategory.CANCELLED, Retryability.NOT_RETRYABLE),
     MODEL_CALL_FAILED(

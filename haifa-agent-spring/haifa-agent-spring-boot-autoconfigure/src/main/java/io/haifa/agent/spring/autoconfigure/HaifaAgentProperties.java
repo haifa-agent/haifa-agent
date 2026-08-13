@@ -12,6 +12,12 @@ public final class HaifaAgentProperties {
     /** Trusted system instructions frozen into each Run. */
     private String instructions;
 
+    /** Trusted display name; it does not enter Prompt or routing. */
+    private String name;
+
+    /** Trusted display description; it does not enter Prompt or routing. */
+    private String description;
+
     /** Safe model adapter settings; model identity and Thinking mode are intentionally fixed. */
     private final Model model = new Model();
 
@@ -52,6 +58,22 @@ public final class HaifaAgentProperties {
      */
     public void setInstructions(String instructions) {
         this.instructions = instructions;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
     }
 
     /**

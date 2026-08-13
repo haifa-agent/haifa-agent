@@ -190,6 +190,29 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 && !request.model().capabilities().contains(io.haifa.agent.model.api.ModelCapability.TOOL_CALLING)) {
             throw new IllegalArgumentException("selected model does not declare tool calling capability");
         }
+        if (request.structuredOutput().isPresent() && profile == AnthropicMessagesDialects.Profile.DEEPSEEK) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "structured_output_unsupported",
+                    "DeepSeek Anthropic Messages structured output is not verified",
+                    null);
+        }
+        if (request.structuredOutput().isPresent()
+                && !request.model()
+                        .capabilities()
+                        .contains(io.haifa.agent.model.api.ModelCapability.STRUCTURED_OUTPUT)) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "structured_output_unsupported",
+                    "selected model does not support structured output",
+                    null);
+        }
         return profile;
     }
 
@@ -265,6 +288,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             throw new IllegalArgumentException("tool_choice requires at least one tool");
         }
         configureThinking(body, options, profile);
+        configureStructuredOutput(body, request);
         if (options.keySet().stream()
                 .anyMatch(key -> !key.equals("thinking")
                         && !key.equals("reasoning_token_budget")
@@ -273,6 +297,18 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             throw new IllegalArgumentException("unsupported Anthropic Messages invocation option");
         }
         return Map.copyOf(body);
+    }
+
+    private static void configureStructuredOutput(Map<String, Object> body, AgentChatRequest request) {
+        request.structuredOutput().ifPresent(requirement -> {
+            Map<String, Object> outputConfig = new LinkedHashMap<>();
+            Object configured = body.get("output_config");
+            if (configured instanceof Map<?, ?> map) {
+                map.forEach((key, value) -> outputConfig.put(String.valueOf(key), value));
+            }
+            outputConfig.put("format", Map.of("type", "json_schema", "schema", requirement.jsonSchema()));
+            body.put("output_config", Map.copyOf(outputConfig));
+        });
     }
 
     private static Map<String, Object> options(AgentChatRequest request) {
@@ -530,7 +566,29 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                         "stopReason", stopReason,
                         "reasoningBlocks", parsed.reasoning().size(),
                         "reasoningCharacters", parsed.reasoningCharacters()),
-                protectedReasoning);
+                protectedReasoning,
+                structuredOutput(request, parsed.text(), parsed.calls(), finish));
+    }
+
+    private Optional<Map<String, Object>> structuredOutput(
+            AgentChatRequest request, String content, List<ModelToolCall> toolCalls, ModelFinishReason finish) {
+        if (request.structuredOutput().isEmpty() || !toolCalls.isEmpty() || finish != ModelFinishReason.STOP) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode value = json.readTree(content);
+            if (!value.isObject()) throw new IllegalArgumentException("structured output must be an object");
+            return Optional.of(json.convertValue(value, new TypeReference<Map<String, Object>>() {}));
+        } catch (JsonProcessingException | IllegalArgumentException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "structured_output_invalid",
+                    "provider returned invalid structured output",
+                    exception);
+        }
     }
 
     private ModelFinishReason finishReason(AgentChatRequest request, String stopReason, List<ModelToolCall> calls) {

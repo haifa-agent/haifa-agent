@@ -1,7 +1,6 @@
 package io.haifa.example.consumer.spring;
 
 import io.haifa.agent.sdk.api.HaifaAgent;
-import io.haifa.agent.sdk.conversation.StartConversationCommand;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -18,12 +17,7 @@ public final class HelloAgentRunner implements CommandLineRunner {
 
     @Override
     public void run(String... arguments) throws Exception {
-        var conversation = agent.conversations()
-                .start(new StartConversationCommand(
-                        "standalone-spring-start",
-                        "Standalone Spring Boot",
-                        "Use office_hours to report the Shanghai office schedule in one sentence."));
-        var completed = agent.runs().await(conversation.activeRunId().orElseThrow());
-        System.out.println(completed.output().orElseThrow());
+        var response = agent.chat("Use office_hours to report the Shanghai office schedule in one sentence.").await();
+        System.out.println(response.text());
     }
 }

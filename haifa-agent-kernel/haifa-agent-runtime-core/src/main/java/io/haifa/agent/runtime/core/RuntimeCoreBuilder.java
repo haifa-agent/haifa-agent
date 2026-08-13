@@ -59,6 +59,7 @@ import io.haifa.agent.runtime.core.completion.CompletionPolicy;
 import io.haifa.agent.runtime.core.completion.CompletionPolicyResult;
 import io.haifa.agent.runtime.core.completion.DefaultCompletionGuard;
 import io.haifa.agent.runtime.core.completion.DefaultRunFinalizer;
+import io.haifa.agent.runtime.core.completion.FrozenStructuredOutputValidator;
 import io.haifa.agent.runtime.core.completion.OutputContractValidator;
 import io.haifa.agent.runtime.core.completion.RequiredArtifactChecker;
 import io.haifa.agent.runtime.core.completion.TodoConvergenceChecker;
@@ -130,6 +131,7 @@ import io.haifa.agent.runtime.core.tool.ToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.tool.ToolResultNormalizer;
 import io.haifa.agent.runtime.core.tool.TrustedSkillScriptPublicToolPolicy;
 import io.haifa.agent.runtime.core.trace.FailureDiagnosticSink;
+import io.haifa.agent.runtime.core.trace.PromptDiagnosticsSink;
 import io.haifa.agent.runtime.core.trace.TracePort;
 import io.haifa.agent.skill.api.SkillCatalog;
 import io.haifa.agent.skill.api.SkillContentLoader;
@@ -177,6 +179,9 @@ public final class RuntimeCoreBuilder {
                 + request.binding().coordinate().externalForm());
     };
     private ToolSchemaValidator toolSchemaValidator = (schema, instance) -> new ToolSchemaValidationResult(List.of());
+    private ToolSchemaValidator structuredOutputSchemaValidator = (schema, instance) ->
+            new ToolSchemaValidationResult(List.of(new io.haifa.agent.tool.api.ToolSchemaValidationError(
+                    "$", "validator", "structured output schema validator is unavailable")));
     private boolean toolPlatformConfigured;
     private ToolPolicy toolPolicy = new DefaultToolPolicy();
     private PublicToolPolicy publicToolPolicy;
@@ -199,6 +204,7 @@ public final class RuntimeCoreBuilder {
     private PersistenceRetryPolicy persistenceRetry = PersistenceRetryPolicy.none();
     private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
     private TracePort trace = TracePort.noop();
+    private PromptDiagnosticsSink promptDiagnostics = PromptDiagnosticsSink.noop();
     private FailureDiagnosticSink failureDiagnostics = FailureDiagnosticSink.noop();
     private RunInputPort runInputs;
     private ToolResultNormalizer toolResultNormalizer = new BoundedToolResultNormalizer(4_000, 100);
@@ -416,6 +422,12 @@ public final class RuntimeCoreBuilder {
         return this;
     }
 
+    /** Registers a best-effort process-local consumer of redacted Context trace facts. */
+    public RuntimeCoreBuilder promptDiagnostics(PromptDiagnosticsSink value) {
+        promptDiagnostics = Objects.requireNonNull(value);
+        return this;
+    }
+
     public RuntimeCoreBuilder failureDiagnostics(FailureDiagnosticSink value) {
         failureDiagnostics = Objects.requireNonNull(value);
         return this;
@@ -428,6 +440,12 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder outputContractValidator(OutputContractValidator value) {
         outputContract = Objects.requireNonNull(value);
+        return this;
+    }
+
+    /** Configures the bounded JSON Schema validator used by the frozen terminal output contract. */
+    public RuntimeCoreBuilder structuredOutputSchemaValidator(ToolSchemaValidator value) {
+        structuredOutputSchemaValidator = Objects.requireNonNull(value);
         return this;
     }
 
@@ -603,13 +621,18 @@ public final class RuntimeCoreBuilder {
         AgentRuntimeMiddlewareChain middleware = new AgentRuntimeMiddlewareChain(configuredMiddleware);
         TodoReconciliationService todoReconciliation =
                 new TodoReconciliationService(state, new TodoConvergenceChecker());
+        OutputContractValidator configuredOutputContract =
+                new FrozenStructuredOutputValidator(state, structuredOutputSchemaValidator);
+        OutputContractValidator productOutputContract = outputContract;
+        OutputContractValidator combinedOutputContract = (run, decision) ->
+                configuredOutputContract.isValid(run, decision) && productOutputContract.isValid(run, decision);
         DefaultCompletionGuard completion = new DefaultCompletionGuard(
                 state,
                 pipeline,
                 interactions,
                 delegations,
                 todoReconciliation,
-                outputContract,
+                combinedOutputContract,
                 requiredArtifacts,
                 completionPolicy);
         ResumeCheckpointSelector checkpointSelections = new ResumeCheckpointSelector();
@@ -683,6 +706,7 @@ public final class RuntimeCoreBuilder {
                 ids,
                 time,
                 trace,
+                promptDiagnostics,
                 new RuntimeStateReconciler(state, attempts, interactions, pipeline, time, configuredOwnership),
                 middleware,
                 runInputApplier);

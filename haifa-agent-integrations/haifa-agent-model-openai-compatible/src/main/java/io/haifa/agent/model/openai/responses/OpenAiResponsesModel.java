@@ -1,6 +1,7 @@
 package io.haifa.agent.model.openai.responses;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
@@ -189,6 +190,19 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 && !request.model().capabilities().contains(io.haifa.agent.model.api.ModelCapability.TOOL_CALLING)) {
             throw new IllegalArgumentException("selected model does not declare tool calling capability");
         }
+        if (request.structuredOutput().isPresent()
+                && !request.model()
+                        .capabilities()
+                        .contains(io.haifa.agent.model.api.ModelCapability.STRUCTURED_OUTPUT)) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.INVALID_REQUEST,
+                    false,
+                    0,
+                    "structured_output_unsupported",
+                    "selected model does not support structured output",
+                    null);
+        }
         return profile;
     }
 
@@ -236,6 +250,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
     private Map<String, Object> requestBody(
             AgentChatRequest request, OpenAiResponsesDialects.Profile profile, boolean stream) {
+        Map<String, Object> options = invocationOptions(request);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model().providerModelId());
         body.put("input", inputItems(request, profile));
@@ -246,23 +261,49 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         if (!instructions.isEmpty()) body.put("instructions", instructions);
         if (!request.tools().isEmpty()) {
             body.put("tools", request.tools().stream().map(this::tool).toList());
-            Object toolChoice = request.options().getOrDefault("tool_choice", "auto");
+            Object toolChoice = options.getOrDefault("tool_choice", "auto");
             if (profile == OpenAiResponsesDialects.Profile.DEEPSEEK && !"auto".equals(toolChoice)) {
                 throw new IllegalArgumentException("DeepSeek Responses supports only automatic function selection");
             }
             body.put("tool_choice", toolChoice);
         }
-        Object format = request.options().get("response_format");
+        if (request.structuredOutput().isPresent() && options.containsKey("response_format")) {
+            throw new IllegalArgumentException("structured output cannot be combined with response_format options");
+        }
+        Object format = request.structuredOutput().isPresent()
+                ? Map.<String, Object>of(
+                        "type",
+                        "json_schema",
+                        "name",
+                        request.structuredOutput().orElseThrow().responseName(),
+                        "strict",
+                        true,
+                        "schema",
+                        request.structuredOutput().orElseThrow().jsonSchema())
+                : options.get("response_format");
         if (format != null) body.put("text", Map.of("format", responseFormat(format)));
-        Object effort = request.options().get("reasoning_effort");
+        Object effort = options.get("reasoning_effort");
         if (effort != null) body.put("reasoning", Map.of("effort", reasoningEffort(effort)));
-        if (request.options().keySet().stream()
+        if (options.keySet().stream()
                 .anyMatch(key -> !key.equals("response_format")
                         && !key.equals("tool_choice")
                         && !key.equals("reasoning_effort"))) {
             throw new IllegalArgumentException("unsupported Responses invocation option");
         }
         return Map.copyOf(body);
+    }
+
+    private static Map<String, Object> invocationOptions(AgentChatRequest request) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        copyOption(request.model().invocationOptions(), values, "response_format");
+        copyOption(request.model().invocationOptions(), values, "tool_choice");
+        copyOption(request.model().invocationOptions(), values, "reasoning_effort");
+        values.putAll(request.options());
+        return Map.copyOf(values);
+    }
+
+    private static void copyOption(Map<String, Object> source, Map<String, Object> target, String key) {
+        if (source.containsKey(key)) target.put(key, source.get(key));
     }
 
     private List<Map<String, Object>> inputItems(AgentChatRequest request, OpenAiResponsesDialects.Profile profile) {
@@ -429,7 +470,27 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 Map.of("status", status, "reasoningCharacters", reasoning.length()),
                 retainReasoning
                         ? java.util.Optional.of(SensitiveModelReasoning.of(reasoning.toString()))
-                        : java.util.Optional.empty());
+                        : java.util.Optional.empty(),
+                structuredOutput(request, content.toString(), calls));
+    }
+
+    private java.util.Optional<Map<String, Object>> structuredOutput(
+            AgentChatRequest request, String content, List<ModelToolCall> toolCalls) {
+        if (request.structuredOutput().isEmpty() || !toolCalls.isEmpty()) return java.util.Optional.empty();
+        try {
+            JsonNode value = json.readTree(content);
+            if (!value.isObject()) throw new IllegalArgumentException("structured output must be an object");
+            return java.util.Optional.of(json.convertValue(value, new TypeReference<Map<String, Object>>() {}));
+        } catch (JsonProcessingException | IllegalArgumentException exception) {
+            throw failure(
+                    request,
+                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    false,
+                    200,
+                    "structured_output_invalid",
+                    "provider returned invalid structured output",
+                    exception);
+        }
     }
 
     private void parseOutputItem(

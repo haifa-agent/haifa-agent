@@ -14,6 +14,7 @@ class SdkArchitectureTest {
             "io.haifa.agent.sdk.api",
             "io.haifa.agent.sdk.conversation",
             "io.haifa.agent.sdk.contribution",
+            "io.haifa.agent.sdk.diagnostics",
             "io.haifa.agent.sdk.product",
             "io.haifa.agent.sdk.tool");
     private static final Set<String> FORBIDDEN_PREFIXES = Set.of(

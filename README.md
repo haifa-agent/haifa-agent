@@ -21,10 +21,14 @@ Haifa Agent 是面向 Java 生态的通用 Agent Runtime 与产品开发平台�
   V6 提供全人工确认的 Memory Candidate、正式 Memory 与最小只写 Audit，
   revision、单活动 Run 与重启恢复；
 - 类型化 `JavaTool<I, O>`、Java record Schema/Codec、单 Tool Catalog 合并，以及默认 DeepSeek V4
-  Flash 的纯 Java `haifa-agent-sdk-starter`；
+  Flash 的纯 Java `haifa-agent-sdk-starter`；Starter 还提供展示元数据、轻量 `chat()` 调用、默认指令
+  诊断和不含 Prompt 正文的进程内 Prompt Diagnostics；SDK 还支持把 Java record 冻结为最终输出契约，
+  由 Provider Adapter 映射、Runtime 校验并持久化后再解码为类型化终态值；
 - Spring Boot Starter 与自动装配：默认创建单例 `HaifaAgent`、收集 `JavaTool` Bean、生成配置元数据，
   支持有序 Starter Customizer，并在应用关闭时释放 Agent；默认模型仍为 DeepSeek V4 Flash 且关闭
   Thinking，可信宿主可显式注册多 Provider/多模型目录；
+- OpenAI-compatible Integration 提供有界类型化模型配置，可生成三种既有 API style 的精确 Adapter、
+  冻结 Snapshot、超时与已支持选项；高级 Adapter/Snapshot 装配入口继续保留；
 - 可运行的 `haifa-agent-sdk-example`，按 Basic、Intermediate、Advanced 分层覆盖 Quickstart、类型化
   Tool、多模型选择、Conversation、Run 观察/控制、可信 Caller 与 SQLite 单机持久化参考装配；该示例
   模块不是发布制品；

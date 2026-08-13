@@ -16,6 +16,8 @@ import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.model.openai.OpenAiCompatibleModelConfiguration;
+import io.haifa.agent.sdk.api.AgentMetadata;
 import io.haifa.agent.sdk.api.HaifaAgent;
 import io.haifa.agent.sdk.api.HaifaAgents;
 import io.haifa.agent.sdk.api.SdkCallerProvider;
@@ -59,6 +61,9 @@ public final class HaifaAgentStarterBuilder {
             new ProductContributionCoordinate("starter.conversation.memory", VERSION);
 
     private String instructions = "You are a helpful assistant. Answer clearly and concisely.";
+    private String name = AgentMetadata.DEFAULT_NAME;
+    private String description = AgentMetadata.DEFAULT_DESCRIPTION;
+    private boolean defaultInstructions = true;
     private String credentialEnvironmentVariable = API_KEY_ENVIRONMENT_VARIABLE;
     private SdkCallerProvider callers = SdkCallerProvider.defaultPublicUser();
     private Function<String, String> environment = System::getenv;
@@ -69,6 +74,18 @@ public final class HaifaAgentStarterBuilder {
 
     HaifaAgentStarterBuilder() {}
 
+    /** Sets bounded immutable display metadata; it is never added to the Prompt. */
+    public HaifaAgentStarterBuilder name(String value) {
+        name = requireText(value, "name", 128);
+        return this;
+    }
+
+    /** Sets bounded immutable diagnostic metadata; it is never added to the Prompt. */
+    public HaifaAgentStarterBuilder description(String value) {
+        description = requireText(value, "description", 512);
+        return this;
+    }
+
     /**
      * Sets the trusted system instructions frozen into every Run created by this Starter.
      *
@@ -77,6 +94,7 @@ public final class HaifaAgentStarterBuilder {
      */
     public HaifaAgentStarterBuilder instructions(String value) {
         instructions = requireText(value, "instructions");
+        defaultInstructions = false;
         return this;
     }
 
@@ -155,7 +173,25 @@ public final class HaifaAgentStarterBuilder {
         Objects.requireNonNull(model, "model must not be null");
         Objects.requireNonNull(snapshot, "snapshot must not be null");
         String modelId = snapshot.modelId().value();
-        if (models.putIfAbsent(modelId, new ModelRegistration(model, snapshot)) != null) {
+        if (models.putIfAbsent(modelId, new ModelRegistration(model, snapshot, Duration.ofSeconds(60))) != null) {
+            throw new IllegalArgumentException("model IDs must be unique");
+        }
+        return this;
+    }
+
+    /**
+     * Registers a typed OpenAI-compatible model configuration. The adapter coordinate, frozen
+     * snapshot, invocation options, and request timeout remain part of the ordinary Runtime path.
+     *
+     * @param configuration typed Integration configuration
+     * @return this builder
+     */
+    public HaifaAgentStarterBuilder model(OpenAiCompatibleModelConfiguration configuration) {
+        OpenAiCompatibleModelConfiguration value =
+                Objects.requireNonNull(configuration, "configuration must not be null");
+        String modelId = value.snapshot().modelId().value();
+        if (models.putIfAbsent(modelId, new ModelRegistration(value.model(), value.snapshot(), value.requestTimeout()))
+                != null) {
             throw new IllegalArgumentException("model IDs must be unique");
         }
         return this;
@@ -181,15 +217,16 @@ public final class HaifaAgentStarterBuilder {
         ModelBundle model = models.isEmpty() ? deepSeekModel() : configuredModels();
         ProductProfile profile = profile(model.snapshot());
         var builder = HaifaAgents.builder(profile)
+                .metadata(new AgentMetadata(name, description))
                 .callerProvider(callers)
                 .contribute(model.contribution())
                 .contribute(persistenceContribution())
                 .contribute(conversationContribution())
                 .tools(tools);
-        model.snapshots().values().stream()
-                .filter(snapshot -> !snapshot.modelId().equals(model.snapshot().modelId()))
-                .map(this::runProfile)
-                .forEach(builder::runProfile);
+        if (defaultInstructions) {
+            builder.starterDefaultInstructionsInUse();
+        }
+        models.values().stream().map(this::runProfile).forEach(builder::runProfile);
         return builder.build();
     }
 
@@ -307,14 +344,16 @@ public final class HaifaAgentStarterBuilder {
                 Set.of());
     }
 
-    private io.haifa.agent.sdk.product.ProductRunProfile runProfile(ResolvedModelSnapshot snapshot) {
+    private io.haifa.agent.sdk.product.ProductRunProfile runProfile(ModelRegistration registration) {
+        ResolvedModelSnapshot snapshot = registration.snapshot();
+        long requestTimeoutMillis = registration.requestTimeout().toMillis();
         return new io.haifa.agent.sdk.product.ProductRunProfile(
                 snapshot.modelId().value(),
                 VERSION,
                 snapshot.modelId().value(),
                 io.haifa.agent.core.run.AgentRunType.CHAT,
                 new AgentRunBudget(65_536, 8_192, 65_536, 16, 16, 0, "USD", 100),
-                new AgentRunLimits(16, 0, 1, 120_000, 60_000),
+                new AgentRunLimits(16, 0, 1, Math.max(120_000, requestTimeoutMillis), requestTimeoutMillis),
                 Map.of());
     }
 
@@ -346,13 +385,24 @@ public final class HaifaAgentStarterBuilder {
     }
 
     private static String requireText(String value, String field) {
+        return requireText(value, field, 32_000);
+    }
+
+    private static String requireText(String value, String field, int maximumLength) {
         String normalized =
                 Objects.requireNonNull(value, field + " must not be null").trim();
         if (normalized.isEmpty()) throw new IllegalArgumentException(field + " must not be blank");
+        if (normalized.length() > maximumLength) throw new IllegalArgumentException(field + " is too long");
         return normalized;
     }
 
-    private record ModelRegistration(AgentChatModel model, ResolvedModelSnapshot snapshot) {}
+    private record ModelRegistration(AgentChatModel model, ResolvedModelSnapshot snapshot, Duration requestTimeout) {
+        private ModelRegistration {
+            Objects.requireNonNull(model, "model must not be null");
+            Objects.requireNonNull(snapshot, "snapshot must not be null");
+            Objects.requireNonNull(requestTimeout, "requestTimeout must not be null");
+        }
+    }
 
     private record ModelBundle(
             ModelContribution contribution,

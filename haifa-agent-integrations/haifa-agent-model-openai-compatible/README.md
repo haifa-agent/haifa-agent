@@ -6,6 +6,48 @@
 Java HTTP、凭据解析和安全限制，但分别拥有自己的请求/响应 DTO 与 SSE accumulator，不跨 Style 复用
 `messages`、`choices`、Item 或 Content Block parser。Provider ID 不参与 Style 或 dialect 推断。
 
+普通宿主可以使用 `OpenAiCompatibleModelConfiguration.builder(credentialResolver)` 类型化装配三种已实现
+Style 的 adapter、`ResolvedModelSnapshot`、连接/请求超时和受限调用选项。类型化路径只开放 `standard`
+与 DeepSeek profile；百炼和方舟继续使用各自的受治理工厂，不能借此绕过 workspace、region 或模型
+profile 校验。Builder 只接收 `CredentialRef`，DeepSeek 始终冻结 `thinking=disabled`。
+
+```java
+var configured = OpenAiCompatibleModelConfiguration.builder(new EnvironmentCredentialResolver())
+        .providerId("deepseek")
+        .modelId("deepseek-chat")
+        .providerModelId("deepseek-v4-pro")
+        .dialect(OpenAiCompatibleModelConfiguration.Dialect.DEEPSEEK)
+        .endpoint(URI.create("https://api.deepseek.com"))
+        .credentialRef(new CredentialRef("env://DEEPSEEK_API_KEY"))
+        .capabilities(Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING))
+        .tokenLimits(1_048_576, 8_192)
+        .requestTimeout(Duration.ofSeconds(60))
+        .temperature(0.2)
+        .toolChoice(OpenAiCompatibleModelConfiguration.ToolChoice.AUTO)
+        .build();
+```
+
+`temperature` 仅适用于 Chat Completions；`responseFormat(JSON_OBJECT)` 仅适用于声明
+`STRUCTURED_OUTPUT` 的 Chat Completions/Responses。该格式选项不是 Java record 解码或结构化最终输出 API。
+所有 endpoint 必须是干净的 HTTPS URI。高级宿主仍可直接构造 Adapter 与 Snapshot。
+
+## Runtime 结构化最终输出映射
+
+SDK 的 `chat(message, Record.class)` 会把精确输出 Schema 作为 provider-neutral request requirement 传到
+Adapter。该动态 Run 要求与上面的静态 `responseFormat(JSON_OBJECT)` 配置不同：
+
+| API style / dialect | 请求映射 | 终态处理 |
+| --- | --- | --- |
+| Chat Completions `standard` | 原生 `response_format.type=json_schema`，携带 name、strict 与精确 Schema | 无 Tool Call 的最终 content 必须是 JSON object，归一化后由 Runtime 再校验冻结 Schema |
+| Chat Completions DeepSeek/现有非标准 dialect | `response_format.type=json_object`，并以有界 developer instruction 披露最终 Schema | Tool Call 不受最终 Schema 限制；最终 object 仍由 Runtime 作为权威门禁 |
+| OpenAI Responses `standard` | `text.format.type=json_schema`，携带 name、strict 与精确 Schema | 最终 output text 归一化后由 Runtime 再校验冻结 Schema |
+| Anthropic Messages `standard` | 原生 `output_config.format.type=json_schema`，携带精确 Schema | 最终 text block 归一化后由 Runtime 再校验冻结 Schema |
+| DeepSeek Anthropic Messages | 当前没有已验证的 `output_config.format` 兼容证据，稳定返回 `structured_output_unsupported` | 不降级成提示词解析或未校验 JSON |
+
+Adapter 只负责协议映射和 JSON object 归一化，不决定业务 record 是否有效。Tool Calls 优先进入既有
+Runtime Tool Pipeline；只有最终回答才触发 Schema 门禁。无效 JSON、能力缺失、Provider 拒答和输出截断
+分别保持稳定错误分类，SDK 只从持久化的 `AgentRunResult.structuredOutput` 解码类型化值。
+
 Chat Completions 当前支持：
 
 | Provider | dialect id | 同步 | SSE | Tool Call | Thinking |
@@ -42,11 +84,16 @@ function tool 当前不产生 `function_call`，所以对应模型能力只声�
 `tool_result`、`input_schema`、usage 和 named SSE。thinking、signature 与 redacted thinking 只作为受保护
 continuation 保留，不进入公共输出；Tool 参数 JSON、累计响应、事件数和单事件均受限。
 
+`standard` Structured Output 使用官方 `output_config.format` JSON Schema；已有 `output_config.effort` 会与
+format 合并。Schema 只约束最终直接输出，不限制 Tool Call、Tool Result 或 Thinking；同步和 SSE 都只在
+终态 text block 归一化 structured Map，拒答与截断先保持各自 finish reason。
+
 DeepSeek Anthropic API 使用显式 `deepseek-anthropic-messages` dialect，因为其 ignored/unsupported 字段、
 模型映射与 thinking 行为不完全等同 Anthropic standard。该 dialect 仅允许已验证的
 `deepseek-v4-flash`/`deepseek-v4-pro`，拒绝图片、文档、redacted thinking 和 server tools；产品默认
-冻结 `thinking=disabled`。Binding 使用完整 Endpoint 覆盖 `https://api.deepseek.com/anthropic`，共享
-Credential 与 `nativeStreaming` 仍归 Provider 所有。
+冻结 `thinking=disabled`。该 dialect 尚未验证 `output_config.format`，类型化 Structured Output 在网络调用
+前 fail closed。Binding 使用完整 Endpoint 覆盖 `https://api.deepseek.com/anthropic`，共享 Credential 与
+`nativeStreaming` 仍归 Provider 所有。
 
 ## 阿里云百炼
 
