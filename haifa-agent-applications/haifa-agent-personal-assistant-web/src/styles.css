@@ -1868,7 +1868,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 5px;
   padding: 10px 8px;
 }
-.admin-kind-list button {
+.admin-kind-list button, .admin-model-provider {
   width: 100%;
   display: flex;
   align-items: center;
@@ -1887,8 +1887,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-color: #bfdbfe;
   background: #eff6ff;
 }
-.admin-kind-list button span { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 750; }
-.admin-kind-list button strong {
+.admin-kind-list button span, .admin-model-provider span { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 750; }
+.admin-kind-list button strong, .admin-model-provider strong {
   min-width: 24px;
   padding: 3px 6px;
   color: #475569;
@@ -1896,6 +1896,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   text-align: center;
   border-radius: 999px;
   background: #e8eef6;
+}
+.admin-model-boundary {
+  margin: auto 10px 12px;
+  padding: 12px;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.55;
+  border: 1px solid #e3e9f1;
+  border-radius: 10px;
+  background: #f8fafc;
 }
 .admin-catalog-digests {
   margin: auto 10px 12px;
@@ -1969,6 +1979,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-radius: 999px;
   background: #eaf8f0;
 }
+.admin-capability-ready.failed { color: #b42318; background: #fef0ee; }
 .admin-capability-description {
   margin: 16px 0;
   color: #4b5870;

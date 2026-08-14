@@ -194,6 +194,8 @@ public final class PersonalModelFactory {
                         PersonalModelProductDefaults.PREFERENCE_SCHEMA_VERSION,
                         profile.version(),
                         profile.digest(),
+                        profile.status(),
+                        profile.lastVerifiedOn(),
                         productDefaults.controls(profile, styleBindings, recommendedBindingId),
                         PersonalModelPreferences.recommended());
             }

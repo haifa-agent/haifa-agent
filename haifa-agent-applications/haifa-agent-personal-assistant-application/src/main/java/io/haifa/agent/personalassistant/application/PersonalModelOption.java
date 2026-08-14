@@ -1,5 +1,7 @@
 package io.haifa.agent.personalassistant.application;
 
+import io.haifa.agent.model.api.ModelProfileStatus;
+import java.time.LocalDate;
 import java.util.Objects;
 import java.util.Set;
 
@@ -20,6 +22,8 @@ public record PersonalModelOption(
         String preferenceSchemaVersion,
         String profileVersion,
         String profileDigest,
+        ModelProfileStatus profileStatus,
+        LocalDate lastVerifiedOn,
         PersonalModelControls controls,
         PersonalModelPreferences recommendedPreferences) {
     public PersonalModelOption {
@@ -41,6 +45,8 @@ public record PersonalModelOption(
         preferenceSchemaVersion = text(preferenceSchemaVersion, "preferenceSchemaVersion");
         profileVersion = text(profileVersion, "profileVersion");
         profileDigest = text(profileDigest, "profileDigest");
+        profileStatus = Objects.requireNonNull(profileStatus, "profileStatus must not be null");
+        lastVerifiedOn = Objects.requireNonNull(lastVerifiedOn, "lastVerifiedOn must not be null");
         controls = Objects.requireNonNull(controls, "controls must not be null");
         recommendedPreferences =
                 Objects.requireNonNull(recommendedPreferences, "recommendedPreferences must not be null");

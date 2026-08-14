@@ -771,6 +771,23 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void adminListsOnlySafeVersionedModelValidationMetadata() throws Exception {
+        JsonNode models = get("/v1/admin/models");
+
+        assertThat(models.path("bindings").isArray()).isTrue();
+        assertThat(models.path("bindings")).isNotEmpty();
+        JsonNode binding = models.path("bindings").get(0);
+        assertThat(binding.path("id").asText()).isNotBlank();
+        assertThat(binding.path("profileVersion").asText()).isNotBlank();
+        assertThat(binding.path("profileDigest").asText()).startsWith("sha256:");
+        assertThat(binding.path("preferenceSchemaVersion").asText()).isNotBlank();
+        assertThat(binding.path("validationStatus").asText()).isEqualTo("VERIFIED");
+        assertThat(binding.path("lastVerifiedOn").asText()).matches("\\d{4}-\\d{2}-\\d{2}");
+        assertThat(models.toString())
+                .doesNotContain("credential", "apiKey", "secret", "endpoint", "reasoning_content", "rawReasoning");
+    }
+
+    @Test
     void adminBuildsOneRunTreeWithoutExposingPromptOrToolPayloads() throws Exception {
         String sensitivePrompt = "[tool] private-admin-prompt-7f29";
         JsonNode conversation = post(

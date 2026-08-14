@@ -73,6 +73,33 @@ public final class PersonalAdminController {
                         .toList());
     }
 
+    @GetMapping("/models")
+    PersonalAdminDtos.Models models() {
+        return new PersonalAdminDtos.Models(application.models().stream()
+                .map(value -> new PersonalAdminDtos.ModelBinding(
+                        value.id(),
+                        value.modelGroupId(),
+                        value.modelDisplayName(),
+                        value.displayName(),
+                        value.providerId(),
+                        value.providerDisplayName(),
+                        value.apiStyle(),
+                        value.apiStyleDisplayName(),
+                        value.availability(),
+                        "AVAILABLE".equals(value.availability())
+                                ? java.util.Optional.empty()
+                                : java.util.Optional.of("MODEL_PROFILE_NOT_VERIFIED"),
+                        value.capabilities().stream().sorted().toList(),
+                        value.contextWindow(),
+                        value.maxOutputTokens(),
+                        value.preferenceSchemaVersion(),
+                        value.profileVersion(),
+                        value.profileDigest(),
+                        value.profileStatus().name(),
+                        value.lastVerifiedOn()))
+                .toList());
+    }
+
     @GetMapping("/missions/operations")
     PersonalAdminDtos.MissionOperations missionOperations() {
         var value = missionOperations.snapshot();

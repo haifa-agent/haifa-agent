@@ -1,5 +1,6 @@
 import type {
   AdminCapabilities,
+  AdminModels,
   AdminRun,
   AdminSession,
   AdminTrace,
@@ -17,6 +18,7 @@ export interface PersonalAdminClient {
   runs(sessionId: string, signal?: AbortSignal): Promise<AdminRun[]>;
   trace(sessionId: string, runId: string, signal?: AbortSignal): Promise<AdminTrace>;
   capabilities(signal?: AbortSignal): Promise<AdminCapabilities>;
+  models(signal?: AbortSignal): Promise<AdminModels>;
 }
 
 function encoded(value: string): string {
@@ -62,5 +64,9 @@ export class HttpPersonalAdminClient implements PersonalAdminClient {
 
   capabilities(signal?: AbortSignal) {
     return this.get<AdminCapabilities>("/capabilities", signal);
+  }
+
+  models(signal?: AbortSignal) {
+    return this.get<AdminModels>("/models", signal);
   }
 }

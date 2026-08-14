@@ -5,6 +5,8 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import io.haifa.agent.application.project.product.ProjectProductService;
+import io.haifa.agent.model.api.ModelBindingProfile;
+import io.haifa.agent.model.core.DefaultModelParameterResolver;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,22 @@ class ProjectApplicationArchitectureTest {
     void ordinaryProductMethodsDoNotExposeWorkspace() {
         assertThatNoWorkspaceParameter("start");
         assertThatNoWorkspaceParameter("continueSession");
+    }
+
+    @Test
+    void commonModelProfilesAndResolverAreReusableWithoutPersonalAssistantTypes() {
+        org.assertj.core.api.Assertions.assertThat(ModelBindingProfile.class).isPublic();
+        org.assertj.core.api.Assertions.assertThat(DefaultModelParameterResolver.class)
+                .isPublic();
+
+        var classes = new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("io.haifa.agent.model.api", "io.haifa.agent.model.core");
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("io.haifa.agent.personalassistant..")
+                .check(classes);
     }
 
     private static void assertThatNoWorkspaceParameter(String name) {

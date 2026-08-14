@@ -236,6 +236,7 @@ Server 另提供与普通产品 API 隔离的只读本机诊断面：
 ```text
 GET /v1/admin/
 GET /v1/admin/capabilities
+GET /v1/admin/models
 GET /v1/admin/sessions
 GET /v1/admin/sessions/{sessionId}/runs
 GET /v1/admin/sessions/{sessionId}/runs/{runId}/tree
@@ -244,6 +245,11 @@ GET /v1/admin/sessions/{sessionId}/runs/{runId}/tree
 `capabilities` 返回产品组装时冻结的 Tool、已审核 MCP Server 和 Skill 注册快照，包括定义身份、版本与
 摘要、风险和审批策略、Schema、资源声明、MCP 协议与导入工具、Skill 元数据与资源索引；不会返回
 凭据值、MCP Session ID 或运行时 Lease。
+
+`models` 返回当前可选 Model Binding 的安全诊断投影：Provider/Model 展示身份、API Style、能力、
+Profile/Preference Schema 版本与摘要、审核状态和 `lastVerifiedOn`。该日期表示内置 Profile 最近一次
+完成契约审核的日期，不是实时健康检查；不可用项只允许返回稳定安全错误码。Endpoint、Credential、
+Provider 原始响应和 reasoning 内容不进入该接口。
 
 诊断树直接读取同一 SQLite 事实源，并在解码前校验各 payload 的实际字节哈希。它展示冻结配置
 引用、Attempt、Step、Tool/Checkpoint/Interaction 关联、Skill、Runtime Event、安全错误详情和

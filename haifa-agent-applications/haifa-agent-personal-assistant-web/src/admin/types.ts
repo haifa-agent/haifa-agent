@@ -67,3 +67,28 @@ export interface AdminCapabilities {
   skillResolutionPolicy: string;
   registrations: AdminCapability[];
 }
+
+export interface AdminModelBinding {
+  id: string;
+  modelGroupId: string;
+  modelDisplayName: string;
+  displayName: string;
+  providerId: string;
+  providerDisplayName: string;
+  apiStyle: string;
+  apiStyleDisplayName: string;
+  availability: string;
+  safeErrorCode: string | null;
+  capabilities: string[];
+  contextWindow: number;
+  maxOutputTokens: number;
+  preferenceSchemaVersion: string;
+  profileVersion: string;
+  profileDigest: string;
+  validationStatus: string;
+  lastVerifiedOn: string;
+}
+
+export interface AdminModels {
+  bindings: AdminModelBinding[];
+}

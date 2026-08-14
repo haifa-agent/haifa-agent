@@ -528,6 +528,8 @@ public final class PersonalAssistantAssembler {
                     PersonalModelProductDefaults.PREFERENCE_SCHEMA_VERSION,
                     profile.version(),
                     profile.digest(),
+                    profile.status(),
+                    profile.lastVerifiedOn(),
                     defaults.controls(
                             profile,
                             List.of(snapshot.modelId().value()),
