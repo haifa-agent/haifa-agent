@@ -9,6 +9,9 @@ defaults, and help text. It submits the exact selection atomically for a new Con
 Conversation; it does not infer provider capabilities or send raw options. Changing API style restores that binding's
 reviewed defaults instead of carrying incompatible parameters across protocols.
 
+Bindings reported as unavailable remain visible for diagnostics but are disabled. The picker displays the Server's
+safe unavailable reason and never infers availability from Provider names or model IDs.
+
 The live Run card shows an evidence-based phase summary. It displays observed activity counts
 without presenting them as a percentage; when the Server supplies an authoritative Plan, it shows
 real Todo completion and the current or blocked step. Activity lifecycle events are merged by the

@@ -31,6 +31,9 @@ Integration 与 E2E 之间的层级：
 - `haifa-agent-integration-tests`：确定性的跨模块和测试编排契约验证；
 - `haifa-agent-e2e-tests`：完整 CLI/AgentRun 路径，包含 Simulated 与显式 opt-in Live E2E。
 
+主仓绑定的手工 Terminal 测试驱动位于 [`scripts/`](scripts/README.md)。它们保留公共测试选择器、
+产品级断言与证据生成逻辑；独立 `test-config` 只负责 Suite、环境和预算编排。
+
 真实外部 Provider 的窄 Probe 与对应 Adapter 相邻保存，例如 CP-01 的 `DeepSeekLiveIT`；需要完整
 产品入口的 Live 场景进入 E2E 模块。可执行 Runtime 示例已迁入 Applications，不再作为测试模块。
 

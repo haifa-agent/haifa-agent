@@ -57,6 +57,15 @@ const flashModel = {
   modelDisplayName: "DeepSeek V4 Flash",
   displayName: "DeepSeek V4 Flash",
 };
+const unavailableModel = {
+  ...model,
+  id: "deepseek-experimental",
+  modelGroupId: "deepseek:experimental",
+  modelDisplayName: "DeepSeek Experimental",
+  displayName: "DeepSeek Experimental",
+  availability: "UNAVAILABLE" as const,
+  unavailableReason: "Binding profile has not passed contract verification",
+};
 const bailianModel = {
   ...model,
   id: "qwen-plus",
@@ -1678,6 +1687,31 @@ describe("Personal Assistant application", () => {
       proModel.recommendedPreferences,
     ));
     expect((composer as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("keeps unavailable models visible with the backend reason but prevents selection", async () => {
+    const api = client();
+    vi.mocked(api.bootstrap).mockResolvedValue({
+      ...bootstrap,
+      defaultModelId: proModel.id,
+      models: [proModel, unavailableModel],
+    });
+
+    render(<App client={api} />);
+
+    const composer = await screen.findByPlaceholderText("输入消息，Enter 发送");
+    fireEvent.change(composer, { target: { value: "/" } });
+    fireEvent.click(await screen.findByRole("option", { name: /选择模型/ }));
+    fireEvent.click(await screen.findByRole("option", { name: /DeepSeek.*1 个可用模型.*1 个不可用/ }));
+
+    const modelDialog = await screen.findByRole("dialog", { name: "选择 DeepSeek 模型" });
+    const unavailable = within(modelDialog).getByRole("option", {
+      name: /DeepSeek Experimental.*不可用.*Binding profile has not passed contract verification/,
+    }) as HTMLButtonElement;
+    expect(unavailable.disabled).toBe(true);
+    fireEvent.click(unavailable);
+    expect(screen.queryByRole("dialog", { name: "设置 DeepSeek Experimental" })).toBeNull();
+    expect(api.selectModel).not.toHaveBeenCalled();
   });
 
   it("renders model settings from backend controls without provider-specific UI branches", async () => {

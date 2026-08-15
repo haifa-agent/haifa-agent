@@ -32,6 +32,54 @@
       "coverageMode": "EXACT"
     },
     {
+      "assetId": "terminal-test-drivers-directory",
+      "path": "haifa-agent-testing/scripts",
+      "kind": "DIRECTORY",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/README.md"],
+      "replacement": "",
+      "rationale": "Repository-bound Terminal test drivers live under the public testing infrastructure boundary.",
+      "coverageMode": "EXACT"
+    },
+    {
+      "assetId": "terminal-test-drivers-readme",
+      "path": "haifa-agent-testing/scripts/README.md",
+      "kind": "README",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/README.md", "scripts/README.md"],
+      "replacement": "",
+      "rationale": "Documents safe execution and the boundary between public test logic and private suite configuration.",
+      "coverageMode": "EXACT"
+    },
+    {
+      "assetId": "terminal-ui-offline-smoke-driver",
+      "path": "haifa-agent-testing/scripts/terminal-ui-smoke.mjs",
+      "kind": "SCRIPT",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/scripts/README.md", "docs/testing/07-coding-agent-terminal-test-plan.md"],
+      "replacement": "",
+      "rationale": "No-provider Windows ConPTY smoke driver for production CLI startup and deferred command behavior.",
+      "coverageMode": "EXACT"
+    },
+    {
+      "assetId": "terminal-ui-phase-c-quality-driver",
+      "path": "haifa-agent-testing/scripts/terminal-ui-phase-c-quality.mjs",
+      "kind": "SCRIPT",
+      "lifecycle": "ACTIVE",
+      "disposition": "KEEP",
+      "owner": "testing-platform",
+      "referencedBy": ["haifa-agent-testing/scripts/README.md"],
+      "replacement": "",
+      "rationale": "Deterministic Terminal quality test selector and evidence manifest driver.",
+      "coverageMode": "EXACT"
+    },
+    {
       "assetId": "testing-domain-glossary",
       "path": "haifa-agent-testing/TESTING-DOMAIN-GLOSSARY.md",
       "kind": "README",

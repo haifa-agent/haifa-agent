@@ -91,6 +91,10 @@ function tool 当前不产生 `function_call`，所以对应模型能力只声�
 要求 workspace-scoped `/compatible-mode/v1` Endpoint，并映射 `reasoning.effort`。兼容 SSE 允许空字符串
 delta，但仍要求 delta 字段为字符串；空 delta 不产生公共流事件。
 
+DeepSeek 与百炼 Responses Binding 当前只发布固定的推荐推理 Profile：`ENABLED/HIGH`。共享 Profile
+不声明尚未逐 dialect 验证的关闭能力，也不会把缺失参数解释为关闭。后续只有在对应 Responses dialect
+完成显式关闭映射、请求体 Contract 和真实 API 验证后，才会扩展可选 mode/effort；`standard` 不做推断。
+
 ## Anthropic Messages
 
 `AnthropicMessagesModel` 以 Anthropic Messages 官方契约作为 `standard`：请求使用 `POST /v1/messages`、

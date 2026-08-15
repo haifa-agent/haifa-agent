@@ -1223,6 +1223,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-color: #d8e2ff;
   background: #f0f4ff;
 }
+.slash-command-options > button:disabled,
+.slash-command-options > button:disabled:hover,
+.slash-command-options > button:disabled.active {
+  color: #8a93a4;
+  border-color: transparent;
+  background: #f7f8fa;
+  cursor: not-allowed;
+  opacity: .78;
+}
 .slash-command-options code,
 .slash-provider-mark {
   min-width: 52px;

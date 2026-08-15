@@ -45,6 +45,15 @@ public final class OpenAiCompatibleModelProfileFactory {
                     status,
                     verifiedOn);
         }
+        if (verifiedReadOnlyResponsesBinding(snapshot)) {
+            return reasoningProfile(
+                    snapshot,
+                    verifiedOn,
+                    ModelReasoningBehavior.ALWAYS,
+                    Set.of(ModelReasoningMode.ENABLED),
+                    Set.of(ModelReasoningEffort.HIGH),
+                    requiresToolReasoningContinuation(snapshot));
+        }
         if (verifiedKimiK3(snapshot)) {
             return reasoningProfile(
                     snapshot,
@@ -150,6 +159,11 @@ public final class OpenAiCompatibleModelProfileFactory {
                 || verifiedZhipuDynamic52(snapshot)
                 || verifiedZhipuDynamicLegacy(snapshot)
                 || verifiedZhipuForced(snapshot);
+    }
+
+    private static boolean verifiedReadOnlyResponsesBinding(ResolvedModelSnapshot snapshot) {
+        return ModelApiStyles.OPENAI_RESPONSES.equals(snapshot.apiStyle())
+                && (verifiedDeepSeekBinding(snapshot) || verifiedBailianBinding(snapshot));
     }
 
     private static boolean verifiedBailianBinding(ResolvedModelSnapshot snapshot) {
