@@ -53,8 +53,7 @@ class CriticalPathResultProjectionTest {
     }
 
     private static MatrixManifest.Combination combination() {
-        return new MatrixManifest.Combination(
-                "windows-primary", "windows", "deepseek", "deepseek-v4-pro", "aliyun-iqs", "utility-mcp");
+        return new MatrixManifest.Combination("windows-primary", "windows");
     }
 
     private static Map<String, Object> result(String caseId, MavenTestEvidence.Status status) {

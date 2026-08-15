@@ -3,9 +3,7 @@ package io.haifa.agent.testing.delivery;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.testing.evidence.EvidenceFinalizer;
 import io.haifa.agent.testing.evidence.EvidenceSecretScanner;
-import io.haifa.agent.testing.process.ProcessTreeCleanup;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -24,8 +22,8 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
     Result collect(Path repeat, Input input, Collection<String> selectedSecrets) throws IOException {
         writeJson(repeat.resolve("acceptance-result.json"), input.acceptanceArtifact());
         writeJson(
-                repeat.resolve("driver-contract-result.json"),
-                input.driverContract().artifact());
+                repeat.resolve("coding-client-contract-result.json"),
+                input.clientContract().artifact());
         Map<String, Object> resultUsage = resultUsage(input.runtime(), input.wallTimeMillis());
         LinkedHashMap<String, Object> usageArtifact = new LinkedHashMap<>(resultUsage);
         usageArtifact.put("schemaVersion", 1);
@@ -55,13 +53,11 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
                         input.caseTenBoundedConvergence(),
                         "terminalStateObserved",
                         input.runtime().terminalStateObserved()));
-        writeJson(repeat.resolve("process-cleanup.json"), input.processCleanup().artifact(input.driverExitStatus()));
         EvidenceSecretScanner.Result secretScan = EvidenceSecretScanner.scan(repeat, selectedSecrets);
         writeJson(repeat.resolve("secret-scan.json"), secretScan);
 
         Result result = assemble(input, secretScan, resultUsage);
         writeJson(repeat.resolve("result.json"), result.resultArtifact());
-        Files.deleteIfExists(repeat.resolve("driver-result.json"));
         EvidenceFinalizer.finalizeEvidence(repeat);
         return result;
     }
@@ -71,7 +67,7 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
         Objects.requireNonNull(secretScan, "secretScan must not be null");
         Objects.requireNonNull(resultUsage, "resultUsage must not be null");
         boolean gatePassed =
-                input.preliminaryGatePassed() && input.processCleanup().passed() && secretScan.passed();
+                input.preliminaryGatePassed() && input.clientContract().passed() && secretScan.passed();
         String nativeStatus = gatePassed ? "GATE_PASSED" : "GATE_FAILED";
         CaseMetadata testCase = input.testCase();
         Map<String, Object> resultArtifact = Map.of(
@@ -108,8 +104,9 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
         summary.put("caseId", testCase.caseId());
         summary.put("caseVersion", testCase.caseVersion());
         summary.put("repetition", input.repetition());
-        summary.put("driverExitStatus", input.driverExitStatus());
-        summary.put("driverContractPassed", input.driverContract().passed());
+        summary.put("clientContractPassed", input.clientContract().passed());
+        summary.put("terminalStatus", input.clientContract().terminalStatus());
+        summary.put("publicEventCount", input.clientContract().publicEventCount());
         summary.put("wallTimeSeconds", Math.round(input.wallTimeSeconds() * 1000.0) / 1000.0);
         summary.put("acceptancePassed", input.acceptancePassed());
         summary.put("boundedConvergence", input.boundedConvergence());
@@ -188,8 +185,7 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
     record Input(
             CaseMetadata testCase,
             int repetition,
-            int driverExitStatus,
-            TerminalDriverResultContract.Validation driverContract,
+            CodingClientExecutionContract clientContract,
             double wallTimeSeconds,
             long wallTimeMillis,
             boolean acceptancePassed,
@@ -198,7 +194,6 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
             boolean caseTenBoundedConvergence,
             boolean preliminaryGatePassed,
             AutonomousDeliveryRuntimeEvidenceReader.Evidence runtime,
-            ProcessTreeCleanup.Result processCleanup,
             int iterations,
             boolean withinBudget,
             boolean workspaceChanged,
@@ -206,11 +201,10 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
             String failureAtomicity) {
         Input {
             Objects.requireNonNull(testCase, "testCase must not be null");
-            Objects.requireNonNull(driverContract, "driverContract must not be null");
+            Objects.requireNonNull(clientContract, "clientContract must not be null");
             acceptanceArtifact =
                     Map.copyOf(Objects.requireNonNull(acceptanceArtifact, "acceptanceArtifact must not be null"));
             Objects.requireNonNull(runtime, "runtime must not be null");
-            Objects.requireNonNull(processCleanup, "processCleanup must not be null");
             Objects.requireNonNull(failureAtomicity, "failureAtomicity must not be null");
         }
     }

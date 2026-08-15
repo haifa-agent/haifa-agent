@@ -24,13 +24,14 @@ jobs:
             matrix:
                 include:
                     - os: ubuntu-latest
-                      combination: linux-deepseek-primary
+                      combination: linux-primary
                     - os: windows-latest
-                      combination: windows-deepseek-primary
+                      combination: windows-primary
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key
@@ -77,20 +78,21 @@ jobs:
                 include:
                     - suite: nightly-v1
                       os: ubuntu-latest
-                      combination: linux-deepseek-primary
+                      combination: linux-primary
                     - suite: nightly-v1
                       os: windows-latest
-                      combination: windows-deepseek-primary
+                      combination: windows-primary
                     - suite: release-v1
                       os: ubuntu-latest
-                      combination: linux-deepseek
+                      combination: linux-release
                     - suite: release-v1
                       os: windows-latest
-                      combination: windows-deepseek
+                      combination: windows-release
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key

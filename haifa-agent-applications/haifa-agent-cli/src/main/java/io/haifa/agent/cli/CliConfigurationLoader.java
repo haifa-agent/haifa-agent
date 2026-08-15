@@ -153,8 +153,8 @@ final class CliConfigurationLoader {
                         style,
                         binding.dialect(),
                         nativeStreaming,
-                        nullableText(provider, "workspaceId"),
-                        nullableText(provider, "region"),
+                        expandedNullable(provider, "workspaceId"),
+                        expandedNullable(provider, "region"),
                         text(model, "id", ""),
                         text(model, "displayName", text(model, "id", "")),
                         capabilities(model),
@@ -228,9 +228,14 @@ final class CliConfigurationLoader {
                 });
     }
 
+    private String expandedNullable(Map<String, Object> source, String key) {
+        String value = nullableText(source, key);
+        return value == null ? null : expandEnvironment(value);
+    }
+
     private record Binding(String dialect, String endpoint) {}
 
-    private static ProjectPersistenceConfiguration persistence(Map<String, Object> source) {
+    private ProjectPersistenceConfiguration persistence(Map<String, Object> source) {
         String configuredMode = environment("HAIFA_PERSISTENCE_MODE").orElseGet(() -> text(source, "mode", "MEMORY"));
         ProjectPersistenceMode mode = ProjectPersistenceMode.parse(configuredMode);
         String database =
@@ -389,7 +394,7 @@ final class CliConfigurationLoader {
         return List.copyOf(result);
     }
 
-    private static List<CliConfiguration.McpServer> mcpServers(Map<String, Object> mcp) {
+    private List<CliConfiguration.McpServer> mcpServers(Map<String, Object> mcp) {
         Object configured = mcp.get("servers");
         if (configured == null) return List.of();
         if (!(configured instanceof List<?> servers)) {
@@ -404,7 +409,7 @@ final class CliConfigurationLoader {
             raw.forEach((key, value) -> server.put(String.valueOf(key), value));
             String id = requiredText(server, "id", "configuration mcp server id");
             String displayName = text(server, "displayName", id);
-            String endpoint = requiredText(server, "endpoint", "configuration mcp server endpoint");
+            String endpoint = expandEnvironment(requiredText(server, "endpoint", "configuration mcp server endpoint"));
             result.add(new CliConfiguration.McpServer(
                     id,
                     displayName,
@@ -538,7 +543,9 @@ final class CliConfigurationLoader {
         }
     }
 
-    private static Optional<String> environment(String key) {
-        return Optional.ofNullable(System.getenv(key)).map(String::trim).filter(value -> !value.isEmpty());
+    private Optional<String> environment(String key) {
+        return Optional.ofNullable(modelEnvironment.apply(key))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty());
     }
 }

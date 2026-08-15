@@ -120,8 +120,6 @@ class AutonomousDeliveryGateResultAggregatorTest {
         return new AutonomousDeliveryMatrixManifest.Combination(
                 "linux-primary",
                 "linux",
-                "deepseek",
-                "deepseek-v4-pro",
                 "unix-pty",
                 "local-native",
                 "deny",

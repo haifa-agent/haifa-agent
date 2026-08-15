@@ -76,8 +76,8 @@ final class AutonomousDeliveryResultProjection {
         if (Boolean.TRUE.equals(result.get("gatePassed"))) {
             return "NONE";
         }
-        if (!Boolean.TRUE.equals(result.get("driverContractPassed"))) {
-            return "DRIVER_CONTRACT";
+        if (!Boolean.TRUE.equals(result.get("clientContractPassed"))) {
+            return "CODING_CLIENT_CONTRACT";
         }
         if (!Boolean.TRUE.equals(result.get("boundedConvergence"))) {
             return "BUDGET_OR_CONVERGENCE";

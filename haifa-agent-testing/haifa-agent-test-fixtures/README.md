@@ -8,6 +8,7 @@
 - 至少被两个测试模块或多个产品级 Suite 复用；
 - 规模小、可人工审查、无需 Git LFS；
 - 不包含秘密、个人/生产数据、真实 Host Path、完整 Prompt、reasoning 或原始 Provider 响应；
+- Fixture 文件名、协议字段和内容必须保持供应商中立；特定供应商服务只能由外部 Agent Profile 与环境配置注入；
 - 不包含 `target/`、缓存、运行数据库、Trace、Transcript、lock 或 Quarantine；
 - 外部来源内容必须记录来源、版本、许可证和内容摘要；
 - 脚本默认不得访问公网，也不得操作复制后的 Fixture 根目录之外。

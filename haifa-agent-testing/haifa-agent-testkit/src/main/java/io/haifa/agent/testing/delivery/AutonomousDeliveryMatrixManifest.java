@@ -5,23 +5,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
-/** Versioned platform and provider bindings for Autonomous Delivery campaigns. */
+/** Versioned platform and host-execution bindings for Autonomous Delivery campaigns. */
 public record AutonomousDeliveryMatrixManifest(
-        int schemaVersion,
-        String matrixId,
-        String compatibleAgentBaselineCommit,
-        String strategy,
-        List<Combination> combinations) {
+        int schemaVersion, String matrixId, String strategy, List<Combination> combinations) {
 
     public AutonomousDeliveryMatrixManifest {
-        if (schemaVersion != 1) {
-            throw new IllegalArgumentException("Autonomous Delivery matrix schemaVersion must be 1");
+        if (schemaVersion != 2) {
+            throw new IllegalArgumentException("Autonomous Delivery matrix schemaVersion must be 2");
         }
         matrixId = identifier(matrixId, "matrixId");
-        compatibleAgentBaselineCommit = require(compatibleAgentBaselineCommit, "compatibleAgentBaselineCommit");
-        if (!compatibleAgentBaselineCommit.matches("[0-9a-f]{40}")) {
-            throw new IllegalArgumentException("compatibleAgentBaselineCommit must be a full lowercase Git commit");
-        }
         strategy = require(strategy, "strategy");
         if (!"explicit".equals(strategy)) {
             throw new IllegalArgumentException("Autonomous Delivery matrix strategy must be explicit");
@@ -52,8 +44,6 @@ public record AutonomousDeliveryMatrixManifest(
     public record Combination(
             String id,
             String platform,
-            String modelProvider,
-            String modelId,
             String terminalBackend,
             String sandboxProfile,
             String networkPolicy,
@@ -65,8 +55,6 @@ public record AutonomousDeliveryMatrixManifest(
         public Combination {
             id = identifier(id, "combination.id");
             platform = require(platform, "combination.platform");
-            modelProvider = identifier(modelProvider, "combination.modelProvider");
-            modelId = require(modelId, "combination.modelId");
             terminalBackend = identifier(terminalBackend, "combination.terminalBackend");
             sandboxProfile = identifier(sandboxProfile, "combination.sandboxProfile");
             networkPolicy = identifier(networkPolicy, "combination.networkPolicy");

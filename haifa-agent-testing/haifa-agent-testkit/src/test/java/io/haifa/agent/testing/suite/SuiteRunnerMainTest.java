@@ -86,6 +86,7 @@ class SuiteRunnerMainTest {
                                 runRoot,
                                 "missing-suite",
                                 currentPlatform() + "-primary",
+                                "coding-primary",
                                 false),
                         Map.of()));
         assertTrue(exception.getMessage().contains("not inventoried"));
@@ -120,11 +121,19 @@ class SuiteRunnerMainTest {
                 """);
         commitRepository(configRoot);
         commitRepository(projectRoot);
+        writeAgentProfile(configRoot, projectRoot);
+        commitRepository(configRoot);
 
         int exitCode = new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", false),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                false),
                         Map.of());
 
         assertEquals(0, exitCode);
@@ -168,7 +177,13 @@ class SuiteRunnerMainTest {
         assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", false),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                false),
                         Map.of()));
     }
 
@@ -197,13 +212,20 @@ class SuiteRunnerMainTest {
                     blocking: true
                 """);
         commitRepository(projectRoot);
+        writeAgentProfile(configRoot, projectRoot);
         commitRepository(configRoot);
         Files.writeString(configRoot.resolve("untracked-override.yaml"), "unsafe: true");
 
         assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", true),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                true),
                         Map.of()));
         assertEquals(false, Files.exists(runRoot));
     }
@@ -233,14 +255,21 @@ class SuiteRunnerMainTest {
                     blocking: true
                 """);
         commitRepository(projectRoot);
+        writeAgentProfile(configRoot, projectRoot);
         commitRepository(configRoot);
 
         assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", true),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                true),
                         Map.of(
-                                "DEEPSEEK_API_KEY",
+                                "MODEL_API_KEY",
                                 "test-only-placeholder",
                                 "HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD",
                                 "2.99")));
@@ -272,14 +301,21 @@ class SuiteRunnerMainTest {
                     blocking: true
                 """);
         commitRepository(projectRoot);
+        writeAgentProfile(configRoot, projectRoot);
         commitRepository(configRoot);
 
         assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", true),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                true),
                         Map.of(
-                                "DEEPSEEK_API_KEY",
+                                "MODEL_API_KEY",
                                 "test-only-placeholder",
                                 "HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD",
                                 "3.0",
@@ -297,6 +333,30 @@ class SuiteRunnerMainTest {
                 configRoot.resolve("assets/testing-assets-v2.json"),
                 "haifa-agent-test-config",
                 "assets/testing-assets-v2.json");
+    }
+
+    private static void writeAgentProfile(Path configRoot, Path projectRoot) throws Exception {
+        Path configuration = configRoot.resolve("environments/coding-primary.yaml");
+        Files.createDirectories(configuration.getParent());
+        Files.writeString(
+                configuration,
+                """
+                provider:
+                  credentialRef: env://MODEL_API_KEY
+                """);
+        String configurationSha256 = io.haifa.agent.testing.evidence.Sha256Digests.file(configuration);
+        Path profile = configRoot.resolve("agent-profiles/coding-primary.yaml");
+        Files.createDirectories(profile.getParent());
+        Files.writeString(
+                profile,
+                """
+                schemaVersion: 1
+                profileId: coding-primary
+                compatibleAgentBaselineCommit: %s
+                configurationRef: environments/coding-primary.yaml
+                configurationSha256: %s
+                """
+                        .formatted(gitOutput(projectRoot, "rev-parse", "HEAD"), configurationSha256));
     }
 
     private static void writeInventory(Path inventory, String repositoryId, String inventoryPath) throws Exception {
@@ -328,28 +388,16 @@ class SuiteRunnerMainTest {
 
     private static String matrix() {
         return """
-                schemaVersion: 1
+                schemaVersion: 2
                 matrixId: primary-v1
                 strategy: explicit
                 combinations:
                   - id: linux-primary
                     platform: linux
-                    modelProvider: deepseek
-                    modelId: deepseek-v4-pro
-                    webProvider: aliyun
-                    mcpTarget: utility
                   - id: macos-primary
                     platform: macos
-                    modelProvider: deepseek
-                    modelId: deepseek-v4-pro
-                    webProvider: aliyun
-                    mcpTarget: utility
                   - id: windows-primary
                     platform: windows
-                    modelProvider: deepseek
-                    modelId: deepseek-v4-pro
-                    webProvider: aliyun
-                    mcpTarget: utility
                 """;
     }
 
@@ -381,5 +429,20 @@ class SuiteRunnerMainTest {
             throw new IOException(
                     "git test setup failed: " + new String(output, java.nio.charset.StandardCharsets.UTF_8));
         }
+    }
+
+    private static String gitOutput(Path repository, String... arguments) throws Exception {
+        java.util.ArrayList<String> command = new java.util.ArrayList<>();
+        command.add("git");
+        command.add("-C");
+        command.add(repository.toString());
+        command.addAll(java.util.List.of(arguments));
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        byte[] output = process.getInputStream().readAllBytes();
+        if (process.waitFor() != 0) {
+            throw new IOException(
+                    "git test setup failed: " + new String(output, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return new String(output, java.nio.charset.StandardCharsets.UTF_8).trim();
     }
 }

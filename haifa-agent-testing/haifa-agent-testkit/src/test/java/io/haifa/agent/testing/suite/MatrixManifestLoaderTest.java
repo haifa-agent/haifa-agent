@@ -36,22 +36,14 @@ class MatrixManifestLoaderTest {
 
     private static String validMatrix() {
         return """
-                schemaVersion: 1
+                schemaVersion: 2
                 matrixId: primary-v1
                 strategy: explicit
                 combinations:
                   - id: linux-primary
                     platform: linux
-                    modelProvider: deepseek
-                    modelId: deepseek-v4-pro
-                    webProvider: aliyun
-                    mcpTarget: utility
                   - id: windows-primary
                     platform: windows
-                    modelProvider: deepseek
-                    modelId: deepseek-v4-pro
-                    webProvider: aliyun
-                    mcpTarget: utility
                 """;
     }
 }

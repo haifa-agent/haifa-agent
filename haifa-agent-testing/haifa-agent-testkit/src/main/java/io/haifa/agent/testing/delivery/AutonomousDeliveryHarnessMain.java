@@ -6,6 +6,8 @@ import io.haifa.agent.testing.assets.TestingAssetPreflight;
 import io.haifa.agent.testing.evidence.EvidenceFinalizer;
 import io.haifa.agent.testing.repository.RepositoryRevision;
 import io.haifa.agent.testing.run.SafeRunRoot;
+import io.haifa.agent.testing.suite.AgentProfileManifestLoader;
+import io.haifa.agent.testing.suite.ResolvedAgentProfile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,7 +56,8 @@ public final class AutonomousDeliveryHarnessMain {
         AutonomousDeliverySuiteManifest suite = null;
         AutonomousDeliveryStubGateManifest stubSuite = null;
         String matrixId = DEFAULT_MATRIX_ID;
-        if (List.of("stub-gate-plan", "stub-gate").contains(options.command())) {
+        boolean platformCommand = List.of("platform-gate-plan", "platform-gate").contains(options.command());
+        if (platformCommand) {
             stubSuite = new AutonomousDeliveryStubGateManifestLoader().load(options.configRoot(), options.suiteId());
             matrixId = stubSuite.matrixRef();
         } else if (options.suiteId() != null) {
@@ -68,18 +71,31 @@ public final class AutonomousDeliveryHarnessMain {
         DeliveryHostProfile hostProfile = combination.requireCurrentHost();
         RepositoryRevision productRevision = RepositoryRevision.inspect(options.projectRoot());
         RepositoryRevision testConfigRevision = RepositoryRevision.inspect(options.configRoot());
-        productRevision.requireCompatibleBaseline(
-                options.projectRoot(), matrix.compatibleAgentBaselineCommit(), "Autonomous Delivery matrix");
+        ResolvedAgentProfile agentProfile = platformCommand
+                ? null
+                : new AgentProfileManifestLoader().load(options.configRoot(), options.agentProfileId());
+        if (agentProfile != null) {
+            productRevision.requireCompatibleBaseline(
+                    options.projectRoot(), agentProfile.manifest().compatibleAgentBaselineCommit(), "Agent Profile");
+        }
         AutonomousDeliveryExecutionPlan.Frozen executionPlan = suite == null
                 ? null
                 : AutonomousDeliveryExecutionPlan.freeze(
-                        catalog, suite, matrix, combination, productRevision, testConfigRevision);
-        if (options.command().equals("stub-gate-plan")) {
-            printStubPlan(stubSuite, matrix, combination, productRevision, testConfigRevision);
+                        catalog, suite, matrix, combination, agentProfile, productRevision, testConfigRevision);
+        if (options.command().equals("platform-gate-plan")) {
+            printPlatformPlan(stubSuite, matrix, combination, productRevision, testConfigRevision);
             return;
         }
         if (options.command().equals("plan")) {
-            printPlan(catalog, suite, matrix, combination, productRevision, testConfigRevision, executionPlan);
+            printPlan(
+                    catalog,
+                    suite,
+                    matrix,
+                    combination,
+                    agentProfile,
+                    productRevision,
+                    testConfigRevision,
+                    executionPlan);
             return;
         }
         List<Path> repositories =
@@ -92,9 +108,9 @@ public final class AutonomousDeliveryHarnessMain {
                             options.runParent(),
                             repositories,
                             catalog,
-                            options.historicalBaselineRoots(),
                             matrix,
                             combination,
+                            agentProfile,
                             productRevision,
                             testConfigRevision);
             System.out.println("Created campaign: " + campaign);
@@ -104,9 +120,9 @@ public final class AutonomousDeliveryHarnessMain {
             runPhaseZeroGate(options, catalog, repositories, matrix, combination, productRevision, testConfigRevision);
             return;
         }
-        if (options.command().equals("stub-gate")) {
+        if (options.command().equals("platform-gate")) {
             if (!options.execute()) {
-                throw new IllegalArgumentException("stub-gate requires explicit --execute");
+                throw new IllegalArgumentException("platform-gate requires explicit --execute");
             }
             productRevision.requireClean("product repository");
             testConfigRevision.requireClean("test-config repository");
@@ -115,9 +131,9 @@ public final class AutonomousDeliveryHarnessMain {
             String build = requireCommit(options.buildCommit());
             productRevision.requireCommit(build, "product repository");
             if (stubSuite == null) {
-                throw new IllegalArgumentException("--suite is required for the Stub Gate");
+                throw new IllegalArgumentException("--suite is required for the Platform Gate");
             }
-            Path gate = new AutonomousDeliveryStubGate(clock)
+            Path gate = new AutonomousDeliveryPlatformGate(clock)
                     .run(
                             campaign,
                             build,
@@ -132,7 +148,7 @@ public final class AutonomousDeliveryHarnessMain {
                             options.javaExecutable(),
                             options.gitExecutable(),
                             options.nodePtyModule());
-            System.out.println("Autonomous Delivery Stub Gate PASS: " + gate);
+            System.out.println("Autonomous Delivery Platform Gate PASS: " + gate);
             return;
         }
         if (List.of("phase-1-gate", "phase-2-gate", "phase-3-gate").contains(options.command())) {
@@ -164,7 +180,7 @@ public final class AutonomousDeliveryHarnessMain {
                             build,
                             suite,
                             catalog,
-                            options.cliJar(),
+                            agentProfile,
                             toolchains,
                             hostProfile,
                             options.projectRoot(),
@@ -266,11 +282,12 @@ public final class AutonomousDeliveryHarnessMain {
             AutonomousDeliverySuiteManifest suite,
             AutonomousDeliveryMatrixManifest matrix,
             AutonomousDeliveryMatrixManifest.Combination combination,
+            ResolvedAgentProfile agentProfile,
             RepositoryRevision productRevision,
             RepositoryRevision testConfigRevision,
             AutonomousDeliveryExecutionPlan.Frozen executionPlan) {
         System.out.printf(
-                "Catalog %s version=%s digest=%s cases=%d matrix=%s baseline=%s "
+                "Catalog %s version=%s digest=%s cases=%d matrix=%s agentProfile=%s assembly=%s "
                         + "combination=%s platform=%s "
                         + "pty=%s sandbox=%s shell=%s isolation=%s execute=false%n",
                 catalog.catalogId(),
@@ -278,7 +295,8 @@ public final class AutonomousDeliveryHarnessMain {
                 catalog.catalogSha256(),
                 catalog.cases().size(),
                 matrix.matrixId(),
-                matrix.compatibleAgentBaselineCommit(),
+                agentProfile.profileId(),
+                agentProfile.agentAssemblyDigest(),
                 combination.id(),
                 combination.platform(),
                 combination.terminalBackend(),
@@ -317,14 +335,14 @@ public final class AutonomousDeliveryHarnessMain {
         System.out.println("Plan only. No campaign or external call was created.");
     }
 
-    private static void printStubPlan(
+    private static void printPlatformPlan(
             AutonomousDeliveryStubGateManifest suite,
             AutonomousDeliveryMatrixManifest matrix,
             AutonomousDeliveryMatrixManifest.Combination combination,
             RepositoryRevision productRevision,
             RepositoryRevision testConfigRevision) {
         System.out.printf(
-                "Stub Gate Suite %s type=%s dependency=%s platform=%s matrix=%s combination=%s "
+                "Platform Gate Suite %s type=%s dependency=%s platform=%s matrix=%s combination=%s "
                         + "pty=%s sandbox=%s shell=%s isolation=%s externalCalls=0 cost=0 execute=false%n",
                 suite.suiteId(),
                 suite.gateType(),
@@ -343,7 +361,7 @@ public final class AutonomousDeliveryHarnessMain {
                 testConfigRevision.commit(),
                 testConfigRevision.dirty());
         suite.requiredChecks().forEach(check -> System.out.println("  check=" + check));
-        System.out.println("Plan only. No Coding Case, campaign, external call, or cost was created.");
+        System.out.println("Plan only. No capability case, campaign, external call, or cost was created.");
     }
 
     private Path requireCampaign(
@@ -363,7 +381,7 @@ public final class AutonomousDeliveryHarnessMain {
             throw new IllegalArgumentException("campaign root is missing campaign.json");
         }
         JsonNode campaignManifest = json.readTree(manifest.toFile());
-        if (campaignManifest.path("schemaVersion").asInt(-1) != 3
+        if (campaignManifest.path("schemaVersion").asInt(-1) != 4
                 || !campaignManifest.path("matrixRef").asText("").equals(matrix.matrixId())
                 || !campaignManifest
                         .path("matrixCombination")
@@ -408,7 +426,7 @@ public final class AutonomousDeliveryHarnessMain {
             String buildCommit,
             String suiteId,
             String matrixCombination,
-            List<Path> historicalBaselineRoots,
+            String agentProfileId,
             boolean execute,
             String approvedExecutionPlanSha256,
             long approvedMaxCostMinorUnits,
@@ -430,7 +448,7 @@ public final class AutonomousDeliveryHarnessMain {
             String buildCommit = null;
             String suiteId = null;
             String matrixCombination = null;
-            List<Path> historicalBaselineRoots = new ArrayList<>();
+            String agentProfileId = null;
             boolean execute = false;
             String approvedExecutionPlanSha256 = null;
             long approvedMaxCostMinorUnits = 0;
@@ -446,10 +464,10 @@ public final class AutonomousDeliveryHarnessMain {
             for (int index = 0; index < arguments.length; index++) {
                 switch (arguments[index]) {
                     case "plan",
-                            "stub-gate-plan",
+                            "platform-gate-plan",
                             "initialize-campaign",
                             "phase-0-gate",
-                            "stub-gate",
+                            "platform-gate",
                             "phase-1-gate",
                             "phase-2-gate",
                             "phase-3-gate" -> command = arguments[index];
@@ -461,7 +479,7 @@ public final class AutonomousDeliveryHarnessMain {
                         buildCommit = value(arguments, ++index).toLowerCase(Locale.ROOT);
                     case "--suite" -> suiteId = value(arguments, ++index);
                     case "--matrix-combination" -> matrixCombination = value(arguments, ++index);
-                    case "--baseline-root" -> historicalBaselineRoots.add(Path.of(value(arguments, ++index)));
+                    case "--agent-profile" -> agentProfileId = value(arguments, ++index);
                     case "--execute" -> execute = true;
                     case "--approved-plan-sha256" ->
                         approvedExecutionPlanSha256 = value(arguments, ++index).toLowerCase(Locale.ROOT);
@@ -494,7 +512,7 @@ public final class AutonomousDeliveryHarnessMain {
                     buildCommit,
                     suiteId,
                     matrixCombination,
-                    List.copyOf(historicalBaselineRoots),
+                    agentProfileId,
                     execute,
                     approvedExecutionPlanSha256,
                     approvedMaxCostMinorUnits,

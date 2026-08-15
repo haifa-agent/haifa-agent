@@ -16,6 +16,11 @@ Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSession
 Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-terminal` 只负责 UI，不是第二个
 可执行胖 JAR。
 
+非 CLI 宿主和产品语义测试使用公开装配入口 `StandaloneCodingAgents.open(workspace, configuration)`；
+返回的 `StandaloneCodingAgent` 暴露 `CodingSessionClient`、`ProjectId` 和安全的装配元数据，并通过
+`close()` 统一释放资源。需要为每次隔离运行注入不同 SQLite/Transcript 路径时，可使用接收显式环境
+Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case。
+
 生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
 字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
 Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。

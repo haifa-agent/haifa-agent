@@ -83,6 +83,40 @@ final class CliExecutionPlatform implements AutoCloseable {
             WorkspaceId workspaceId,
             Path workspaceRoot,
             PrintStream output) {
+        return create(
+                configuration,
+                workspaces,
+                bindings,
+                locations,
+                files,
+                changeSets,
+                changeSetService,
+                identifiers,
+                time,
+                clock,
+                policy,
+                workspaceId,
+                workspaceRoot,
+                output,
+                System.getenv());
+    }
+
+    static CliExecutionPlatform create(
+            CliConfiguration.Execution configuration,
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            LocalWorkspaceLocationStore locations,
+            LocalWorkspaceFileService files,
+            InMemoryFileChangeSetStore changeSets,
+            FileChangeSetService changeSetService,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            Clock clock,
+            CodingAgentPolicyAssembly policy,
+            WorkspaceId workspaceId,
+            Path workspaceRoot,
+            PrintStream output,
+            Map<String, String> hostEnvironment) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         HostShell shell = shell(configuration);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
@@ -105,6 +139,9 @@ final class CliExecutionPlatform implements AutoCloseable {
         var resolvedEnvironment = CliExecutionEnvironment.resolve(
                 configuration,
                 selected.providerId(),
+                hostEnvironment,
+                System.getProperty("os.name", ""),
+                Path.of(System.getProperty("user.home", ".")),
                 localConfiguration.controlRoot(),
                 workspaceRoot,
                 localConfiguration.controlRoot().resolve("host-scratch"));

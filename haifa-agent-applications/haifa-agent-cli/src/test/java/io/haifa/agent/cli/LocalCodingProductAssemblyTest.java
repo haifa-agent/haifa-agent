@@ -3,9 +3,9 @@ package io.haifa.agent.cli;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.haifa.agent.application.coding.terminal.session.LocalCodingSessionClient;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
+import io.haifa.agent.application.project.product.coding.client.LocalCodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
@@ -78,10 +78,11 @@ class LocalCodingProductAssemblyTest {
                 "inspect the fixture\r/quit\r".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         var runner = new LocalCodingTerminalRunner(
                 (selectedWorkspace, selectedConfiguration, output, traceObserver) -> {
-                    LocalCodingAgent agent = LocalCodingAgent.create(
+                    StandaloneCodingAgent standalone = StandaloneCodingAgents.open(
                             selectedWorkspace, selectedConfiguration, output, model, traceObserver);
+                    LocalCodingAgent agent = standalone.localAgent();
                     assembled.set(agent);
-                    return agent;
+                    return standalone;
                 },
                 () -> Tui4jTerminalIo.streams(terminalInput, terminalOutput, List.of("TERM=xterm-256color")));
 
@@ -120,10 +121,11 @@ class LocalCodingProductAssemblyTest {
         PipedOutputStream writer = new PipedOutputStream(input);
         var runner = new LocalCodingTerminalRunner(
                 (selectedWorkspace, selectedConfiguration, output, traceObserver) -> {
-                    LocalCodingAgent agent = LocalCodingAgent.create(
+                    StandaloneCodingAgent standalone = StandaloneCodingAgents.open(
                             selectedWorkspace, selectedConfiguration, output, model, traceObserver);
+                    LocalCodingAgent agent = standalone.localAgent();
                     assembled.set(agent);
-                    return agent;
+                    return standalone;
                 },
                 () -> Tui4jTerminalIo.streams(input, terminalOutput, List.of("TERM=xterm-256color")));
         Thread runnerThread = Thread.ofPlatform()

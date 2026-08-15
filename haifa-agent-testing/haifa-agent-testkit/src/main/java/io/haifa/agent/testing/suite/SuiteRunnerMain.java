@@ -55,8 +55,11 @@ public final class SuiteRunnerMain {
         SuiteManifest manifest = new SuiteManifestLoader().load(configRoot, options.suiteId());
         MatrixManifest matrix = new MatrixManifestLoader().load(configRoot, manifest.matrixRef());
         MatrixManifest.Combination combination = matrix.requireCombination(options.matrixCombination());
-        SuiteExecutionPlanFingerprint executionPlan =
-                SuiteExecutionPlanFingerprint.create(manifest, combination, productRevision, testConfigRevision);
+        ResolvedAgentProfile agentProfile = new AgentProfileManifestLoader().load(configRoot, options.agentProfile());
+        productRevision.requireCompatibleBaseline(
+                projectRoot, agentProfile.manifest().compatibleAgentBaselineCommit(), "Agent Profile");
+        SuiteExecutionPlanFingerprint executionPlan = SuiteExecutionPlanFingerprint.create(
+                manifest, combination, agentProfile, productRevision, testConfigRevision);
         String currentPlatform = currentPlatform();
         if (!combination.platform().equals(currentPlatform)) {
             throw new IllegalArgumentException("matrix combination "
@@ -68,14 +71,14 @@ public final class SuiteRunnerMain {
         }
 
         System.out.printf(
-                "Suite %s matrix=%s combination=%s platform=%s model=%s/%s cases=%d "
+                "Suite %s matrix=%s combination=%s platform=%s agentProfile=%s assembly=%s cases=%d "
                         + "budget=%dmin cost<=%.2f execute=%s%n",
                 manifest.suiteId(),
                 manifest.matrixRef(),
                 combination.id(),
                 combination.platform(),
-                combination.modelProvider(),
-                combination.modelId(),
+                agentProfile.profileId(),
+                agentProfile.agentAssemblyDigest(),
                 manifest.cases().size(),
                 manifest.budget().maxWallTimeMinutes(),
                 manifest.budget().maxEstimatedCostUsd(),
@@ -112,7 +115,7 @@ public final class SuiteRunnerMain {
         double approvedMaxEstimatedCostUsd = requireApprovedMaxEstimatedCost(manifest, environment);
         String approvedExecutionPlanSha256 = requireApprovedExecutionPlan(executionPlan, environment);
         SecretPreflight.ResolvedSecrets selectedSecrets =
-                SecretPreflight.require(environment, requiredSecretNames(manifest));
+                SecretPreflight.require(environment, agentProfile.credentialEnvironmentNames());
         Instant startedAt = Instant.now();
         Path executionRoot = createExecutionRoot(runRoot, manifest.suiteId(), startedAt);
         System.out.println("Execution evidence id=" + executionRoot.getFileName());
@@ -129,7 +132,8 @@ public final class SuiteRunnerMain {
                         repetition,
                         deadline,
                         environment,
-                        combination);
+                        combination,
+                        agentProfile);
                 results.add(result);
                 if (!Boolean.TRUE.equals(result.get("successful")) && selection.blocking()) {
                     writeReport(
@@ -138,6 +142,7 @@ public final class SuiteRunnerMain {
                             executionRoot,
                             manifest,
                             combination,
+                            agentProfile,
                             productRevision,
                             testConfigRevision,
                             approvedMaxEstimatedCostUsd,
@@ -156,6 +161,7 @@ public final class SuiteRunnerMain {
                 executionRoot,
                 manifest,
                 combination,
+                agentProfile,
                 productRevision,
                 testConfigRevision,
                 approvedMaxEstimatedCostUsd,
@@ -175,7 +181,8 @@ public final class SuiteRunnerMain {
             int repetition,
             Instant deadline,
             Map<String, String> inheritedEnvironment,
-            MatrixManifest.Combination combination)
+            MatrixManifest.Combination combination,
+            ResolvedAgentProfile agentProfile)
             throws Exception {
         Duration remaining = Duration.between(Instant.now(), deadline);
         if (remaining.isZero() || remaining.isNegative()) {
@@ -195,14 +202,12 @@ public final class SuiteRunnerMain {
         childEnvironment.put("HAIFA_TEST_RUN_ROOT", executionRoot.toString());
         childEnvironment.put("HAIFA_TEST_MATRIX_COMBINATION", combination.id());
         childEnvironment.put("HAIFA_TEST_PLATFORM", combination.platform());
-        childEnvironment.put("HAIFA_TEST_MODEL_PROVIDER", combination.modelProvider());
-        childEnvironment.put("HAIFA_TEST_MODEL_ID", combination.modelId());
-        childEnvironment.put("HAIFA_TEST_WEB_PROVIDER", combination.webProvider());
-        childEnvironment.put("HAIFA_TEST_MCP_TARGET", combination.mcpTarget());
+        childEnvironment.put("HAIFA_TEST_AGENT_PROFILE", agentProfile.profileId());
+        childEnvironment.put(
+                "HAIFA_TEST_AGENT_CONFIG", agentProfile.configurationPath().toString());
+        childEnvironment.put("HAIFA_TEST_AGENT_ASSEMBLY_DIGEST", agentProfile.agentAssemblyDigest());
         childEnvironment.put("HAIFA_SUITE_EXECUTION", "true");
-        childEnvironment.put("HAIFA_DEEPSEEK_LIVE_TEST", "true");
-        childEnvironment.put("HAIFA_UTILITY_MCP_TEST", "true");
-        childEnvironment.put("HAIFA_CLI_LIVE_E2E_TEST", "true");
+        childEnvironment.put("HAIFA_CODING_CLIENT_LIVE_TEST", "true");
         if (isCodingCase(testCase.caseId())) {
             Path codingRoot = Files.createDirectory(caseRoot.resolve("coding"));
             Files.writeString(
@@ -214,6 +219,16 @@ public final class SuiteRunnerMain {
             childEnvironment.put("HAIFA_FT_MODE", "LIVE");
             childEnvironment.put("HAIFA_FT_RUN_ID", runId);
             childEnvironment.put("HAIFA_FT_ROOT", codingRoot.toString());
+        }
+        if (testCase.caseId().equals("CP-10") || testCase.caseId().equals("CP-11")) {
+            Path persistenceRoot = Files.createDirectory(caseRoot.resolve("persistence"));
+            childEnvironment.put(
+                    "HAIFA_SQLITE_DATABASE_PATH",
+                    persistenceRoot.resolve("runtime.db").toString());
+            childEnvironment.put(
+                    "HAIFA_TRANSCRIPT_ROOT",
+                    Files.createDirectory(persistenceRoot.resolve("transcripts"))
+                            .toString());
         }
 
         Instant caseStartedAt = Instant.now();
@@ -268,7 +283,7 @@ public final class SuiteRunnerMain {
                 "-pl",
                 testCase.module(),
                 "-am",
-                "-Pci-integration",
+                "-Pci-integration-only",
                 "-DskipITs=false",
                 "-Dfailsafe.failIfNoSpecifiedTests=false",
                 "-Dhaifa.failsafe.reportsDirectory=" + reportsRoot,
@@ -282,6 +297,7 @@ public final class SuiteRunnerMain {
             Path executionRoot,
             SuiteManifest manifest,
             MatrixManifest.Combination combination,
+            ResolvedAgentProfile agentProfile,
             RepositoryRevision productRevision,
             RepositoryRevision testConfigRevision,
             double approvedMaxEstimatedCostUsd,
@@ -301,7 +317,7 @@ public final class SuiteRunnerMain {
         boolean testResultsSuccessful =
                 results.stream().allMatch(value -> Boolean.TRUE.equals(value.get("successful")));
         LinkedHashMap<String, Object> report = new LinkedHashMap<>();
-        report.put("schemaVersion", 3);
+        report.put("schemaVersion", 4);
         report.put("executionId", executionRoot.getFileName().toString());
         report.put("evidenceLayoutVersion", 1);
         report.put("evidenceManifest", "manifest.sha256");
@@ -309,6 +325,8 @@ public final class SuiteRunnerMain {
         report.put("suiteId", manifest.suiteId());
         report.put("matrixRef", manifest.matrixRef());
         report.put("matrixCombination", combination);
+        report.put("agentProfile", agentProfile.manifest());
+        report.put("agentAssemblyDigest", agentProfile.agentAssemblyDigest());
         report.put("suiteBudget", manifest.budget());
         report.put("approvedMaxEstimatedCostUsd", approvedMaxEstimatedCostUsd);
         report.put("executionPlan", executionPlan);
@@ -386,13 +404,6 @@ public final class SuiteRunnerMain {
         return approved;
     }
 
-    private static List<String> requiredSecretNames(SuiteManifest manifest) {
-        return manifest.cases().stream()
-                .flatMap(selection -> CriticalPathCatalog.require(selection.caseId()).requiredSecrets().stream())
-                .distinct()
-                .toList();
-    }
-
     private static Path requireDirectory(Path value, String field) {
         Path normalized = Objects.requireNonNull(value, field + " must not be null")
                 .toAbsolutePath()
@@ -427,6 +438,7 @@ public final class SuiteRunnerMain {
             Path runRoot,
             String suiteId,
             String matrixCombination,
+            String agentProfile,
             boolean execute) {
         static Options parse(String[] arguments) {
             Map<String, String> environment = System.getenv();
@@ -435,6 +447,7 @@ public final class SuiteRunnerMain {
             Path runRoot = path(environment.get("HAIFA_TEST_RUN_ROOT"), null);
             String suiteId = environment.getOrDefault("HAIFA_TEST_SUITE", "pr-real-v1");
             String matrixCombination = environment.get("HAIFA_TEST_MATRIX_COMBINATION");
+            String agentProfile = environment.get("HAIFA_TEST_AGENT_PROFILE");
             boolean execute = false;
             for (int index = 0; index < arguments.length; index++) {
                 switch (arguments[index]) {
@@ -443,6 +456,7 @@ public final class SuiteRunnerMain {
                     case "--run-root" -> runRoot = Path.of(requireArgument(arguments, ++index));
                     case "--suite" -> suiteId = requireArgument(arguments, ++index);
                     case "--matrix-combination" -> matrixCombination = requireArgument(arguments, ++index);
+                    case "--agent-profile" -> agentProfile = requireArgument(arguments, ++index);
                     case "--execute" -> execute = true;
                     default -> throw new IllegalArgumentException("unknown argument: " + arguments[index]);
                 }
@@ -451,7 +465,10 @@ public final class SuiteRunnerMain {
             if (matrixCombination == null || matrixCombination.isBlank()) {
                 throw new IllegalArgumentException("HAIFA_TEST_MATRIX_COMBINATION or --matrix-combination is required");
             }
-            return new Options(projectRoot, configRoot, runRoot, suiteId, matrixCombination, execute);
+            if (agentProfile == null || agentProfile.isBlank()) {
+                throw new IllegalArgumentException("HAIFA_TEST_AGENT_PROFILE or --agent-profile is required");
+            }
+            return new Options(projectRoot, configRoot, runRoot, suiteId, matrixCombination, agentProfile, execute);
         }
 
         private static Path path(String value, Path fallback) {

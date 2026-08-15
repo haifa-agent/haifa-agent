@@ -24,7 +24,7 @@ haifa-agent-cli
         v
 haifa-agent-coding-terminal
   tui4j Program/Model、Viewport、Textarea、Selector、Reducer、View
-  只通过 CodingSessionClient 读取和提交产品事实
+  只通过 coding-agent 模块公开的 CodingSessionClient 读取和提交产品事实
         |
         v
 haifa-agent-coding-agent

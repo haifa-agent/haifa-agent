@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.haifa.agent.testing.repository.RepositoryRevision;
+import io.haifa.agent.testing.suite.AgentProfileManifest;
+import io.haifa.agent.testing.suite.ResolvedAgentProfile;
+import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -15,12 +18,18 @@ class AutonomousDeliveryExecutionPlanTest {
     @Test
     void fingerprintIsDeterministicAndRevisionBound() {
         AutonomousDeliveryCaseCatalog catalog = AutonomousDeliveryCaseCatalog.loadVerified();
-        AutonomousDeliveryExecutionPlan.Frozen first =
-                AutonomousDeliveryExecutionPlan.freeze(catalog, suite(), matrix(), combination(), PRODUCT, CONFIG);
-        AutonomousDeliveryExecutionPlan.Frozen second =
-                AutonomousDeliveryExecutionPlan.freeze(catalog, suite(), matrix(), combination(), PRODUCT, CONFIG);
+        AutonomousDeliveryExecutionPlan.Frozen first = AutonomousDeliveryExecutionPlan.freeze(
+                catalog, suite(), matrix(), combination(), profile(), PRODUCT, CONFIG);
+        AutonomousDeliveryExecutionPlan.Frozen second = AutonomousDeliveryExecutionPlan.freeze(
+                catalog, suite(), matrix(), combination(), profile(), PRODUCT, CONFIG);
         AutonomousDeliveryExecutionPlan.Frozen changed = AutonomousDeliveryExecutionPlan.freeze(
-                catalog, suite(), matrix(), combination(), new RepositoryRevision("3".repeat(40), false), CONFIG);
+                catalog,
+                suite(),
+                matrix(),
+                combination(),
+                profile(),
+                new RepositoryRevision("3".repeat(40), false),
+                CONFIG);
 
         assertEquals(first.sha256(), second.sha256());
         assertEquals(64, first.sha256().length());
@@ -30,7 +39,13 @@ class AutonomousDeliveryExecutionPlanTest {
     @Test
     void liveExecutionRequiresTheExactApprovedFingerprint() {
         AutonomousDeliveryExecutionPlan.Frozen plan = AutonomousDeliveryExecutionPlan.freeze(
-                AutonomousDeliveryCaseCatalog.loadVerified(), suite(), matrix(), combination(), PRODUCT, CONFIG);
+                AutonomousDeliveryCaseCatalog.loadVerified(),
+                suite(),
+                matrix(),
+                combination(),
+                profile(),
+                PRODUCT,
+                CONFIG);
 
         AutonomousDeliveryExecutionPlan.requireApproved(plan, plan.sha256());
         assertThrows(IllegalArgumentException.class, () -> AutonomousDeliveryExecutionPlan.requireApproved(plan, null));
@@ -56,16 +71,13 @@ class AutonomousDeliveryExecutionPlanTest {
     }
 
     private static AutonomousDeliveryMatrixManifest matrix() {
-        return new AutonomousDeliveryMatrixManifest(
-                1, "autonomous-delivery-v1", PRODUCT.commit(), "explicit", List.of(combination()));
+        return new AutonomousDeliveryMatrixManifest(2, "autonomous-delivery-v1", "explicit", List.of(combination()));
     }
 
     private static AutonomousDeliveryMatrixManifest.Combination combination() {
         return new AutonomousDeliveryMatrixManifest.Combination(
-                "windows-deepseek-host-trusted",
+                "windows-host-trusted",
                 "windows",
-                "deepseek",
-                "deepseek-v4-flash",
                 "conpty",
                 "host-guarded",
                 "allow",
@@ -73,5 +85,14 @@ class AutonomousDeliveryExecutionPlanTest {
                 "TRUSTED_HOST_ONLY",
                 "windows-host-trusted-v1",
                 1);
+    }
+
+    private static ResolvedAgentProfile profile() {
+        return new ResolvedAgentProfile(
+                new AgentProfileManifest(
+                        1, "standard-client", PRODUCT.commit(), "agents/standard.yaml", "a".repeat(64)),
+                Path.of("agents/standard.yaml"),
+                "b".repeat(64),
+                List.of("TEST_API_KEY"));
     }
 }

@@ -192,13 +192,24 @@ final class LocalCodingAgent implements AutoCloseable {
             CliConfiguration configuration,
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver) {
+        return createWithTrace(workspaceRoot, configuration, output, traceObserver, System.getenv());
+    }
+
+    static LocalCodingAgent createWithTrace(
+            Path workspaceRoot,
+            CliConfiguration configuration,
+            PrintStream output,
+            Consumer<RuntimeTraceEvent> traceObserver,
+            Map<String, String> environment) {
+        Map<String, String> resolvedEnvironment =
+                Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
         boolean allowInsecureLoopback =
-                allowInsecureLoopback(configuration, System.getenv("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
+                allowInsecureLoopback(configuration, resolvedEnvironment.get("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
         var http = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         var json = new ObjectMapper();
-        var credentials = new EnvironmentCredentialResolver();
+        var credentials = new EnvironmentCredentialResolver(resolvedEnvironment::get);
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
@@ -212,7 +223,8 @@ final class LocalCodingAgent implements AutoCloseable {
                         new ModelAdapterKey(ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0"), responses,
                         new ModelAdapterKey(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"), anthropic),
                 traceObserver,
-                resolveContinuationProtector(configuration));
+                resolveContinuationProtector(configuration, resolvedEnvironment),
+                resolvedEnvironment);
     }
 
     static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
@@ -258,7 +270,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 output,
                 model,
                 traceObserver,
-                resolveContinuationProtector(configuration));
+                resolveContinuationProtector(configuration, System.getenv()));
     }
 
     static LocalCodingAgent create(
@@ -275,7 +287,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 output,
                 Map.of(new ModelAdapterKey(selected.adapterType(), selected.adapterVersion()), model),
                 traceObserver,
-                continuationProtector);
+                continuationProtector,
+                System.getenv());
     }
 
     private static LocalCodingAgent create(
@@ -284,7 +297,10 @@ final class LocalCodingAgent implements AutoCloseable {
             PrintStream output,
             Map<ModelAdapterKey, AgentChatModel> modelAdapters,
             Consumer<RuntimeTraceEvent> traceObserver,
-            ModelContinuationProtector continuationProtector) {
+            ModelContinuationProtector continuationProtector,
+            Map<String, String> environment) {
+        Map<String, String> resolvedEnvironment =
+                Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
         LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
         workspaceRoot = workspaceIdentity.providerRoot();
         TrustedProjectResourceCatalog resources = new TrustedProjectResourceCatalog(workspaceRoot);
@@ -311,7 +327,8 @@ final class LocalCodingAgent implements AutoCloseable {
             var skillPlatform = ProjectSkillPlatform.baseAndUserDirectorySkills(
                     tenant, principal, Optional.empty(), false, skillDirectories);
             CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
-            CliWebPlatform webPlatform = CliWebPlatform.create(configuration.web(), principal);
+            CliWebPlatform webPlatform =
+                    CliWebPlatform.create(configuration.web(), principal, resolvedEnvironment::get);
             var projects = new InMemoryProjectStore();
             var workspaces = new InMemoryWorkspaceStore();
             var bindings = new InMemoryWorkspaceBindingStore();
@@ -412,7 +429,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             policy,
                             workspaceId,
                             workspaceRoot,
-                            output)
+                            output,
+                            resolvedEnvironment)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
             var provider = new ProjectToolExecutor(
@@ -842,7 +860,8 @@ final class LocalCodingAgent implements AutoCloseable {
         return null;
     }
 
-    private static ModelContinuationProtector resolveContinuationProtector(CliConfiguration configuration) {
+    private static ModelContinuationProtector resolveContinuationProtector(
+            CliConfiguration configuration, Map<String, String> environment) {
         if (configuration.persistence().mode() == ProjectPersistenceMode.MEMORY
                 || configuration.persistence().protection() == ProjectPersistenceProtection.NONE) {
             return null;
@@ -852,7 +871,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 .protectorReference()
                 .orElseThrow(() -> new IllegalArgumentException("durable continuation protector is not configured"));
         String environmentName = reference.substring("env://".length());
-        String encoded = System.getenv(environmentName);
+        String encoded = environment.get(environmentName);
         if (encoded == null || encoded.isBlank()) {
             throw new IllegalArgumentException("durable continuation protector secret is unavailable");
         }

@@ -55,8 +55,9 @@ public final class HaifaCliMain {
                     terminalRunner.run(workspace, configuration, startup, output, trace);
                     return 0;
                 }
-                try (LocalCodingAgent agent =
-                        LocalCodingAgent.createWithTrace(workspace, configuration, output, trace)) {
+                try (StandaloneCodingAgent standalone =
+                        StandaloneCodingAgents.open(workspace, configuration, output, trace)) {
+                    LocalCodingAgent agent = standalone.localAgent();
                     java.util.concurrent.atomic.AtomicReference<AgentRunOutputListener> outputListener =
                             new java.util.concurrent.atomic.AtomicReference<>();
                     AtomicBoolean streamed = attachStreamingOutput(outputListener::set, output);

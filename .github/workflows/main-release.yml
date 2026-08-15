@@ -25,15 +25,16 @@ jobs:
             matrix:
                 include:
                     - os: ubuntu-latest
-                      combination: linux-deepseek
+                      combination: linux-release
                     - os: macos-latest
-                      combination: macos-deepseek
+                      combination: macos-release
                     - os: windows-latest
-                      combination: windows-deepseek
+                      combination: windows-release
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key

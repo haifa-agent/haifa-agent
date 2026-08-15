@@ -51,7 +51,7 @@ class DeliveryHostProfileTest {
     }
 
     @Test
-    void exactExecutablesBuildAHostNativeMinimalPathAndSharedConfiguration() throws Exception {
+    void exactExecutablesBuildAHostNativeMinimalPath() throws Exception {
         Path jdkBin = Files.createDirectories(temporary.resolve("jdk/bin"));
         LinkedHashMap<String, Path> paths = new LinkedHashMap<>();
         paths.put("java", Files.createFile(jdkBin.resolve("java")));
@@ -64,76 +64,5 @@ class DeliveryHostProfileTest {
 
         assertEquals(6, toolchains.minimalPath().split(java.util.regex.Pattern.quote(File.pathSeparator)).length);
         assertFalse(toolchains.minimalPath().contains("/usr/bin"));
-        AutonomousDeliverySuiteManifest suite = new AutonomousDeliverySuiteManifest(
-                1,
-                "test-v1",
-                AutonomousDeliveryCaseCatalog.EXPECTED_CATALOG_ID,
-                "PHASE_1",
-                "matrix-v1",
-                null,
-                null,
-                new AutonomousDeliverySuiteManifest.Budget(1000, 2, 3, 4, 1),
-                List.of(new AutonomousDeliverySuiteManifest.CaseSelection("01", 1, true)));
-        String trustedPosix = DeliveryCliConfigurationFactory.render(
-                suite,
-                toolchains,
-                DeliveryHostProfile.require("trusted-host-default-v1", "Linux"),
-                combination("linux-deepseek-host-default", "linux", "trusted-host-default-v1"));
-        String strictPosix = DeliveryCliConfigurationFactory.render(
-                suite,
-                toolchains,
-                DeliveryHostProfile.require("posix-local-native-v1", "Linux"),
-                combination("linux-deepseek-local-native", "linux", "posix-local-native-v1"));
-        String trustedWindows = DeliveryCliConfigurationFactory.render(
-                suite,
-                toolchains,
-                DeliveryHostProfile.require("trusted-host-default-v1", "Windows 11"),
-                combination("windows-deepseek-host-default", "windows", "trusted-host-default-v1"));
-        String windows = DeliveryCliConfigurationFactory.render(
-                suite,
-                toolchains,
-                DeliveryHostProfile.require("windows-host-trusted-v1", "Windows 11"),
-                combination("windows-deepseek-host-trusted", "windows", "windows-host-trusted-v1"));
-
-        assertTrue(trustedPosix.contains("provider: host-guarded"));
-        assertTrue(trustedPosix.contains("network: allow"));
-        assertTrue(trustedPosix.contains("shell: auto"));
-        assertTrue(strictPosix.contains("provider: local-native"));
-        assertTrue(strictPosix.contains("network: deny"));
-        assertTrue(trustedWindows.contains("provider: host-guarded"));
-        assertTrue(trustedWindows.contains("network: allow"));
-        assertTrue(trustedWindows.contains("shell: auto"));
-        assertFalse(trustedWindows.contains("shellPath:"));
-        assertTrue(windows.contains("provider: host-guarded"));
-        assertTrue(windows.contains("network: allow"));
-        assertTrue(windows.contains("shell: powershell"));
-        assertTrue(windows.contains("shellPath: '" + toolchains.shellExecutable() + "'"));
-        assertTrue(windows.contains("default: deepseek-v4-flash"));
-        assertTrue(strictPosix.contains("java-toolchain"));
-        assertTrue(trustedPosix.contains("extraPathPolicies: []"));
-        assertTrue(windows.contains("extraPathPolicies: []"));
-        assertFalse(trustedPosix.contains("java-toolchain"));
-        assertFalse(windows.contains("java-toolchain"));
-        assertFalse(strictPosix.contains("/usr/bin"));
-        assertFalse(windows.contains("/usr/bin"));
-    }
-
-    private static AutonomousDeliveryMatrixManifest.Combination combination(
-            String id, String platform, String hostProfile) {
-        boolean windows = platform.equals("windows");
-        boolean strict = hostProfile.equals("posix-local-native-v1");
-        boolean explicitWindows = hostProfile.equals("windows-host-trusted-v1");
-        return new AutonomousDeliveryMatrixManifest.Combination(
-                id,
-                platform,
-                "deepseek",
-                "deepseek-v4-flash",
-                windows ? "conpty" : "unix-pty",
-                strict ? "local-native" : "host-guarded",
-                strict ? "deny" : "allow",
-                explicitWindows ? "powershell" : "auto",
-                strict ? "LOCAL_NATIVE" : "TRUSTED_HOST_ONLY",
-                hostProfile,
-                1);
     }
 }

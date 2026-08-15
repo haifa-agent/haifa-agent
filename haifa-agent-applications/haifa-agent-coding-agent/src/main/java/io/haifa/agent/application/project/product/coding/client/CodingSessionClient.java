@@ -1,4 +1,4 @@
-package io.haifa.agent.application.coding.terminal.session;
+package io.haifa.agent.application.project.product.coding.client;
 
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
@@ -27,7 +27,7 @@ import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.util.List;
 import java.util.Optional;
 
-/** Stable product/API boundary consumed by the terminal application. */
+/** Stable Coding Agent product API consumed by local hosts and user interfaces. */
 public interface CodingSessionClient {
     CodingSessionView create(ProjectId projectId, String firstTurn, String idempotencyKey);
 

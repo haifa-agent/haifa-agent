@@ -353,8 +353,10 @@ class PersonalAssistantWebFluxTest {
         var modelSelection = mapper.createObjectNode();
         modelSelection.put("modelBindingId", selectedModel.path("id").asText());
         modelSelection.put(
-                "preferenceSchemaVersion", selectedModel.path("preferenceSchemaVersion").asText());
-        modelSelection.put("profileVersion", selectedModel.path("profileVersion").asText());
+                "preferenceSchemaVersion",
+                selectedModel.path("preferenceSchemaVersion").asText());
+        modelSelection.put(
+                "profileVersion", selectedModel.path("profileVersion").asText());
         modelSelection.put("profileDigest", selectedModel.path("profileDigest").asText());
         var preferences = modelSelection.putObject("preferences");
         preferences.put("responseMode", "RECOMMENDED");
@@ -376,8 +378,7 @@ class PersonalAssistantWebFluxTest {
                 .jsonPath("$.preferences.responseLength")
                 .isEqualTo("LONG");
         JsonNode missionAfterModelChange = get("/api/v1/missions/" + missionId + "/snapshot");
-        assertThat(missionAfterModelChange.path("modelBinding"))
-                .isEqualTo(mission.path("modelBinding"));
+        assertThat(missionAfterModelChange.path("modelBinding")).isEqualTo(mission.path("modelBinding"));
 
         JsonNode duplicate = missionCreate(key, request);
         assertThat(duplicate.path("missionId").asText()).isEqualTo(missionId);

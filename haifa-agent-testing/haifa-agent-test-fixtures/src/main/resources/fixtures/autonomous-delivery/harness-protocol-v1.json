@@ -1,19 +1,17 @@
 {
   "schemaVersion": 1,
   "protocolId": "haifa-autonomous-delivery-harness",
-  "protocolVersion": "1.3.0",
+  "protocolVersion": "2.0.0",
   "matrixBinding": {
     "explicitCombinationRequired": true,
-    "campaignSchemaVersion": 3,
-    "phaseSummarySchemaVersion": 3,
-    "runManifestSchemaVersion": 3,
+    "campaignSchemaVersion": 4,
+    "phaseSummarySchemaVersion": 4,
+    "runManifestSchemaVersion": 4,
     "matrixRefRequired": true,
-    "compatibleAgentBaselineCommitRequired": true,
+    "agentProfileRequired": true,
     "requiredFields": [
       "id",
       "platform",
-      "modelProvider",
-      "modelId",
       "terminalBackend",
       "sandboxProfile",
       "networkPolicy",
@@ -41,7 +39,7 @@
     "freshTranscript": true,
     "freshRecording": true,
     "freshScratch": true,
-    "freshModelSession": true,
+    "freshAgentSession": true,
     "acceptanceOutsideWorkspace": true,
     "failedRunsRetained": true
   },

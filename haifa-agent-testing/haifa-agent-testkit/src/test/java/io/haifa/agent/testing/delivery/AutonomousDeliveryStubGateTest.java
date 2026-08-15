@@ -21,7 +21,7 @@ class AutonomousDeliveryStubGateTest {
         Path object = Files.writeString(workspace.resolve("object"), "fixture");
         Files.getFileAttributeView(object, DosFileAttributeView.class).setReadOnly(true);
 
-        AutonomousDeliveryStubGate.deleteTree(temporaryDirectory.resolve("workspace"));
+        AutonomousDeliveryPlatformGate.deleteTree(temporaryDirectory.resolve("workspace"));
 
         assertFalse(Files.exists(temporaryDirectory.resolve("workspace")));
     }

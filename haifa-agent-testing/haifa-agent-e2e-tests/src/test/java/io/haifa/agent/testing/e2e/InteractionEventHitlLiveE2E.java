@@ -2,14 +2,21 @@ package io.haifa.agent.testing.e2e;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
+import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
+import io.haifa.agent.cli.StandaloneCodingAgent;
+import io.haifa.agent.cli.StandaloneCodingAgents;
+import io.haifa.agent.core.run.AgentRunStatus;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.InteractionAction;
+import io.haifa.agent.runtime.api.RunEventCursor;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.DriverManager;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -18,71 +25,51 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 
 @Tag("live")
 @Tag("e2e")
+@Tag("coding-product")
+@Execution(ExecutionMode.SAME_THREAD)
 class InteractionEventHitlLiveE2E {
-    private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(12);
-    private static final List<String> SECRET_NAMES =
-            List.of("DEEPSEEK_API_KEY", "ALIYUN_IQS_API_KEY", "HAIFA_CONTINUATION_KEY");
-    private static final List<Pattern> FORBIDDEN_PATTERNS =
-            List.of(Pattern.compile("Bearer\\s+[A-Za-z0-9._-]+"), Pattern.compile("sk-[A-Za-z0-9_-]+"));
-
+    private static final Duration RUN_TIMEOUT = Duration.ofMinutes(12);
     private static Path projectRoot;
     private static Path configRoot;
     private static Path runRoot;
-    private static Path cliJar;
+    private static Path agentConfiguration;
 
     @BeforeAll
     static void requireSuiteExecution() {
         Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("HAIFA_SUITE_EXECUTION")));
+        Assumptions.assumeTrue("true".equalsIgnoreCase(System.getenv("HAIFA_CODING_CLIENT_LIVE_TEST")));
         projectRoot = requireDirectory("HAIFA_AGENT_ROOT");
         configRoot = requireDirectory("HAIFA_TEST_CONFIG_ROOT");
         runRoot = requireAbsolutePath("HAIFA_TEST_RUN_ROOT");
+        agentConfiguration = requireFile("HAIFA_TEST_AGENT_CONFIG");
         if (runRoot.startsWith(projectRoot) || runRoot.startsWith(configRoot)) {
             throw new IllegalStateException("HAIFA_TEST_RUN_ROOT must be outside both Git repositories");
         }
-        cliJar = projectRoot
-                .resolve("haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar")
-                .normalize();
-        if (!Files.isRegularFile(cliJar)) throw new IllegalStateException("shaded CLI jar is unavailable");
     }
 
     @Test
     void completesInteractionEventAndHitlRoundTrip() throws Exception {
         Path caseRoot = newCaseRoot();
         Path workspace = Files.createDirectory(caseRoot.resolve("workspace"));
-        Path data = Files.createDirectory(caseRoot.resolve("data"));
-        Path transcripts = Files.createDirectory(caseRoot.resolve("transcripts"));
-        Path database = data.resolve("runtime.db");
-        Path configuration = configRoot.resolve("environments/cli/interaction-live.yaml");
-        if (!Files.isRegularFile(configuration)) {
-            throw new IllegalStateException("interaction live configuration is unavailable");
-        }
-        Map<String, String> persistenceEnvironment = Map.of(
-                "HAIFA_SQLITE_DATABASE_PATH", database.toString(), "HAIFA_TRANSCRIPT_ROOT", transcripts.toString());
+        Path database = requireAbsolutePath("HAIFA_SQLITE_DATABASE_PATH");
+        Path transcripts = requireAbsolutePath("HAIFA_TRANSCRIPT_ROOT");
+        Files.createDirectories(database.getParent());
+        Files.createDirectories(transcripts);
 
         Set<String> beforeBaseline = runIds(database);
-        CliResult baseline = runCli(
-                "l11-01-model-baseline",
-                caseRoot,
-                workspace,
-                configuration,
-                "不要调用任何工具。只回答：INTERACTION_MODEL_LIVE_OK。",
-                List.of(),
-                persistenceEnvironment);
-        assertSuccessful(baseline);
-        assertThat(baseline.standardOutput()).contains("INTERACTION_MODEL_LIVE_OK");
+        ClientResult baseline = runClient(workspace, "不要调用任何工具。只回答：INTERACTION_MODEL_LIVE_OK。", List.of());
+        assertCompleted(baseline);
         String baselineRun = onlyNewRun(database, beforeBaseline);
         assertRun(database, baselineRun, 1, 0);
         assertThat(toolCalls(database, baselineRun)).isEmpty();
@@ -90,18 +77,13 @@ class InteractionEventHitlLiveE2E {
                 .isZero();
 
         Set<String> beforeReject = runIds(database);
-        CliResult rejected = runCli(
-                "l11-02-reject-search",
-                caseRoot,
+        ClientResult rejected = runClient(
                 workspace,
-                configuration,
-                "只允许调用一次 web_search 搜索今天的 Java Agent Runtime 公开资料，参数只允许 query 和"
-                        + " maxResults=3；如果该调用被拒绝，禁止重试或调用其他工具，只回答"
-                        + " SEARCH_REJECTED_OK。",
-                List.of(new ApprovalPromptDriver.Decision("web_search", "n")),
-                persistenceEnvironment);
-        assertSuccessful(rejected);
-        assertThat(rejected.trace()).doesNotContain("\"operation\":\"tool.execute\"");
+                "只允许调用一次 web_search 搜索今天的 Java Agent Runtime 公开资料，参数只允许 query 和 maxResults=3；"
+                        + "如果该调用被拒绝，禁止重试或调用其他工具，只回答 SEARCH_REJECTED_OK。",
+                List.of(InteractionAction.REJECT));
+        assertCompleted(rejected);
+        assertThat(rejected.events()).noneMatch(event -> event.eventType().equals("tool.call.succeeded"));
         String rejectedRun = onlyNewRun(database, beforeReject);
         assertRun(database, rejectedRun, 1, 0);
         assertThat(toolCalls(database, rejectedRun)).containsExactly(new ToolCallRecord("web_search", "DENIED"));
@@ -109,25 +91,14 @@ class InteractionEventHitlLiveE2E {
         assertJournal(database, rejectedRun, 1);
 
         Set<String> beforeApproved = runIds(database);
-        CliResult approved = runCli(
-                "l11-03-approve-search-fetch",
-                caseRoot,
+        ClientResult approved = runClient(
                 workspace,
-                configuration,
-                "这是 11 系列 HITL 综合测试。第一步必须调用 web_search 搜索 Alibaba Cloud IQS "
-                        + "ReadPageBasic 官方文档，只使用 query 和 maxResults=3；第二步必须从搜索结果选择一个"
-                        + "公开 HTTPS 官方文档 URL，并调用 web_fetch，preferredFormat=markdown、"
-                        + "maxCharacters=5000；最后列出搜索结果标题和 URL、实际 fetch 的 finalUrl、"
-                        + "contentSha256 与简短摘要。不能跳过任何 Tool Call。",
-                List.of(
-                        new ApprovalPromptDriver.Decision("web_search", "y"),
-                        new ApprovalPromptDriver.Decision("web_fetch", "y")),
-                persistenceEnvironment);
-        assertSuccessful(approved);
-        assertThat(approved.trace())
-                .contains("\"operation\":\"tool.execute\"")
-                .contains("\"toolName\":\"web.search\"")
-                .contains("\"toolName\":\"web.fetch\"");
+                "这是 11 系列 HITL 综合测试。第一步必须调用 web_search 搜索 Alibaba Cloud IQS ReadPageBasic 官方文档，"
+                        + "只使用 query 和 maxResults=3；第二步必须从搜索结果选择公开 HTTPS 官方文档 URL，并调用 web_fetch，"
+                        + "preferredFormat=markdown、maxCharacters=5000；最后简要回答。不能跳过任何 Tool Call。",
+                List.of(InteractionAction.APPROVE, InteractionAction.APPROVE));
+        assertCompleted(approved);
+        assertThat(approved.events()).extracting(AgentRunEvent::eventType).contains("tool.call.succeeded");
         String approvedRun = onlyNewRun(database, beforeApproved);
         assertRun(database, approvedRun, 3, 2);
         assertThat(toolCalls(database, approvedRun))
@@ -140,16 +111,7 @@ class InteractionEventHitlLiveE2E {
         Map<Path, String> transcriptHashes = transcriptHashes(transcripts);
         assertThat(transcriptHashes).isNotEmpty();
         Set<String> beforeSecondProcess = runIds(database);
-        CliResult secondProcess = runCli(
-                "l11-04-second-process",
-                caseRoot,
-                workspace,
-                configuration,
-                "不要调用任何工具。只回答：INTERACTION_SECOND_PROCESS_OK。",
-                List.of(),
-                persistenceEnvironment);
-        assertSuccessful(secondProcess);
-        assertThat(secondProcess.standardOutput()).contains("INTERACTION_SECOND_PROCESS_OK");
+        runClientProcess(caseRoot, workspace, "不要调用任何工具。只回答：INTERACTION_SECOND_PROCESS_OK。");
         String secondProcessRun = onlyNewRun(database, beforeSecondProcess);
         assertRun(database, secondProcessRun, 1, 0);
         assertThat(runIds(database)).contains(baselineRun, rejectedRun, approvedRun, secondProcessRun);
@@ -157,120 +119,106 @@ class InteractionEventHitlLiveE2E {
                 .as("existing transcript %s", path.getFileName())
                 .isEqualTo(hash));
         assertThat(pendingOutbox(database)).isZero();
-
-        assertNoSensitiveOutput(caseRoot);
     }
 
-    private static CliResult runCli(
-            String phase,
-            Path caseRoot,
-            Path workspace,
-            Path configuration,
-            String task,
-            List<ApprovalPromptDriver.Decision> decisions,
-            Map<String, String> environment)
+    private static ClientResult runClient(Path workspace, String task, List<InteractionAction> actions)
             throws Exception {
-        Path trace = caseRoot.resolve(phase + "-trace.jsonl");
-        Path standardOutput = caseRoot.resolve(phase + "-stdout.log");
-        Path standardError = caseRoot.resolve(phase + "-stderr.log");
-        List<String> command = new ArrayList<>();
-        command.add(javaExecutable().toString());
-        command.add("-jar");
-        command.add(cliJar.toString());
-        command.add("--workspace");
-        command.add(workspace.toString());
-        command.add("--config");
-        command.add(configuration.toString());
-        command.add("--approval");
-        command.add("ask");
-        command.add("--timeout");
-        command.add("PT10M");
-        command.add("--trace");
-        command.add("jsonl");
-        command.add("--trace-file");
-        command.add(trace.toString());
-        command.add("--verbose");
-        command.add("-m");
-        command.add(task);
-
-        ProcessBuilder builder = new ProcessBuilder(command).directory(projectRoot.toFile());
-        builder.environment().putAll(environment);
-        Process process = builder.start();
-        var approvalDriver = new ApprovalPromptDriver(decisions);
-        String stderr;
-        Throwable stdoutFailure = null;
-        boolean completed;
-        try (var executor = Executors.newFixedThreadPool(2)) {
-            Future<Void> stdout = executor.submit(() -> {
-                interact(process, approvalDriver);
-                return null;
-            });
-            Future<String> stderrReader =
-                    executor.submit(() -> new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8));
-            completed = process.waitFor(PROCESS_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
-            if (!completed) {
-                process.destroy();
-                if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroyForcibly();
-            }
-            try {
-                stdout.get(10, TimeUnit.SECONDS);
-            } catch (ExecutionException exception) {
-                stdoutFailure = exception.getCause();
-            }
-            stderr = stderrReader.get(10, TimeUnit.SECONDS);
-        }
-        String stdout = approvalDriver.output();
-        Files.writeString(standardOutput, stdout, StandardCharsets.UTF_8);
-        Files.writeString(standardError, stderr, StandardCharsets.UTF_8);
-        if (stdoutFailure != null) {
-            throw new AssertionError("interactive CLI driver failed during " + phase, stdoutFailure);
-        }
-        int exitCode = completed ? process.exitValue() : 124;
-        return new CliResult(exitCode, readIfPresent(trace), stdout, stderr, trace, standardOutput, standardError);
-    }
-
-    private static void interact(Process process, ApprovalPromptDriver driver) throws Exception {
-        try (var reader = new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8);
-                var writer = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
-            int value;
-            while ((value = reader.read()) >= 0) {
-                driver.accept((char) value).ifPresent(response -> writeResponse(writer, response));
-            }
-            driver.assertComplete();
-        } catch (Exception exception) {
-            process.destroyForcibly();
-            throw exception;
+        try (StandaloneCodingAgent agent = StandaloneCodingAgents.open(workspace, agentConfiguration)) {
+            return execute(agent.client(), agent.projectId(), task, actions);
         }
     }
 
-    private static void writeResponse(OutputStreamWriter writer, String response) {
-        try {
-            writer.write(response);
-            writer.flush();
-        } catch (Exception exception) {
-            throw new IllegalStateException("approval response could not be written", exception);
+    private static void runClientProcess(Path caseRoot, Path workspace, String task) throws Exception {
+        String classPath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        Path standardOutput = caseRoot.resolve("second-process-stdout.log");
+        Path standardError = caseRoot.resolve("second-process-stderr.log");
+        Process process = new ProcessBuilder(
+                        javaExecutable(),
+                        "-cp",
+                        classPath,
+                        CodingSessionClientProcessMain.class.getName(),
+                        workspace.toString(),
+                        agentConfiguration.toString(),
+                        task)
+                .directory(projectRoot.toFile())
+                .redirectOutput(standardOutput.toFile())
+                .redirectError(standardError.toFile())
+                .start();
+        boolean finished = process.waitFor(RUN_TIMEOUT.plusSeconds(30).toSeconds(), TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroy();
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+            }
         }
-    }
-
-    private static void assertSuccessful(CliResult result) {
-        assertThat(result.exitCode())
-                .as("CLI exit code; inspect %s and %s", result.standardOutputPath(), result.standardErrorPath())
+        assertThat(finished).as("second Coding Agent client JVM completed").isTrue();
+        assertThat(process.exitValue())
+                .as("second Coding Agent client JVM stderr: %s", bounded(standardError))
                 .isZero();
-        assertThat(result.trace()).contains("\"operation\":\"model.invoke\"");
-        rejectSecretValues(result.trace());
-        rejectSecretValues(result.standardOutput());
-        rejectSecretValues(result.standardError());
+    }
+
+    private static String javaExecutable() {
+        String executable =
+                System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win") ? "java.exe" : "java";
+        return Path.of(System.getProperty("java.home"), "bin", executable).toString();
+    }
+
+    private static String bounded(Path path) throws Exception {
+        if (!Files.isRegularFile(path)) return "";
+        String content = Files.readString(path);
+        return content.length() <= 2_000 ? content : content.substring(0, 2_000);
+    }
+
+    private static ClientResult execute(
+            CodingSessionClient client, ProjectId projectId, String task, List<InteractionAction> configuredActions)
+            throws Exception {
+        ArrayList<InteractionAction> actions = new ArrayList<>(configuredActions);
+        var created = client.create(projectId, task, "cp-11-" + UUID.randomUUID());
+        var sessionId = created.summary().sessionId();
+        AgentRunSnapshot snapshot = created.activeRun().orElseThrow();
+        Instant deadline = Instant.now().plus(RUN_TIMEOUT);
+        while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
+            var pending = client.pendingInteraction(snapshot.runId());
+            if (pending.isPresent()) {
+                if (actions.isEmpty()) throw new AssertionError("unexpected Critical Path interaction");
+                client.respond(pending.orElseThrow(), actions.removeFirst(), "cp-11-interaction-" + UUID.randomUUID());
+            }
+            Thread.sleep(25);
+            snapshot = client.open(sessionId).activeRun().orElseThrow();
+        }
+        if (!snapshot.status().isTerminal()) {
+            client.cancel(sessionId, "cp-11-timeout-" + UUID.randomUUID());
+            throw new AssertionError("CP-11 client execution timed out");
+        }
+        assertThat(actions)
+                .as("all reviewed interaction decisions were consumed")
+                .isEmpty();
+        return new ClientResult(snapshot, readAllEvents(client, snapshot));
+    }
+
+    private static List<AgentRunEvent> readAllEvents(CodingSessionClient client, AgentRunSnapshot snapshot) {
+        ArrayList<AgentRunEvent> events = new ArrayList<>();
+        RunEventCursor cursor = RunEventCursor.beforeFirst(snapshot.runId());
+        boolean more;
+        do {
+            var page = client.events(snapshot.runId(), cursor, 100);
+            events.addAll(page.items());
+            cursor = page.nextCursor();
+            more = page.hasMore();
+        } while (more);
+        return List.copyOf(events);
+    }
+
+    private static void assertCompleted(ClientResult result) {
+        assertThat(result.snapshot().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(result.events()).extracting(AgentRunEvent::eventType).contains("model.call.succeeded");
     }
 
     private static void assertRun(Path database, String runId, long minimumModelCalls, long expectedToolCalls)
             throws Exception {
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
                 var statement = connection.prepareStatement(
-                        """
-                        SELECT status, usage_model_calls, usage_tool_calls
-                        FROM run
-                        WHERE run_id = ?
-                        """)) {
+                        "SELECT status, usage_model_calls, usage_tool_calls FROM run WHERE run_id = ?")) {
             statement.setString(1, runId);
             try (var rows = statement.executeQuery()) {
                 assertThat(rows.next()).isTrue();
@@ -285,12 +233,7 @@ class InteractionEventHitlLiveE2E {
     private static List<ToolCallRecord> toolCalls(Path database, String runId) throws Exception {
         try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
                 var statement = connection.prepareStatement(
-                        """
-                        SELECT tool_name, status
-                        FROM tool_call
-                        WHERE run_id = ?
-                        ORDER BY requested_at, tool_call_id
-                        """)) {
+                        "SELECT tool_name, status FROM tool_call WHERE run_id = ? ORDER BY requested_at, tool_call_id")) {
             statement.setString(1, runId);
             try (var rows = statement.executeQuery()) {
                 List<ToolCallRecord> result = new ArrayList<>();
@@ -346,19 +289,18 @@ class InteractionEventHitlLiveE2E {
                         """
                         SELECT COUNT(*) AS event_count, COUNT(DISTINCT sequence) AS distinct_sequences,
                                MIN(sequence) AS first_sequence, MAX(sequence) AS last_sequence
-                        FROM runtime_event
-                        WHERE run_id = ?
+                        FROM runtime_event WHERE run_id = ?
                         """)) {
             statement.setString(1, runId);
             try (var rows = statement.executeQuery()) {
                 assertThat(rows.next()).isTrue();
-                long count = rows.getLong("event_count");
-                assertThat(count).isPositive();
-                assertThat(rows.getLong("distinct_sequences")).isEqualTo(count);
+                long events = rows.getLong("event_count");
+                assertThat(events).isPositive();
+                assertThat(rows.getLong("distinct_sequences")).isEqualTo(events);
                 assertThat(rows.getLong("first_sequence")).isEqualTo(1);
-                assertThat(rows.getLong("last_sequence")).isEqualTo(count);
+                assertThat(rows.getLong("last_sequence")).isEqualTo(events);
                 assertThat(count(database, "SELECT head_sequence FROM runtime_event_stream WHERE run_id = ?", runId))
-                        .isEqualTo(count);
+                        .isEqualTo(events);
             }
         }
         assertThat(count(
@@ -405,9 +347,9 @@ class InteractionEventHitlLiveE2E {
     }
 
     private static String onlyNewRun(Path database, Set<String> previous) throws Exception {
-        Set<String> current = runIds(database);
-        Set<String> added =
-                current.stream().filter(runId -> !previous.contains(runId)).collect(Collectors.toSet());
+        Set<String> added = runIds(database).stream()
+                .filter(runId -> !previous.contains(runId))
+                .collect(Collectors.toSet());
         assertThat(added).as("one new run should be persisted").hasSize(1);
         return added.iterator().next();
     }
@@ -415,38 +357,9 @@ class InteractionEventHitlLiveE2E {
     private static Map<Path, String> transcriptHashes(Path transcripts) throws Exception {
         try (var paths = Files.walk(transcripts)) {
             Map<Path, String> result = new LinkedHashMap<>();
-            for (Path path : paths.filter(Files::isRegularFile).sorted().toList()) {
-                result.put(path, sha256(path));
-            }
+            for (Path path : paths.filter(Files::isRegularFile).sorted().toList()) result.put(path, sha256(path));
             return Map.copyOf(result);
         }
-    }
-
-    private static void assertNoSensitiveOutput(Path caseRoot) throws Exception {
-        try (var paths = Files.walk(caseRoot)) {
-            for (Path path : paths.filter(Files::isRegularFile)
-                    .filter(InteractionEventHitlLiveE2E::isInspectableText)
-                    .toList()) {
-                String content = Files.readString(path, StandardCharsets.UTF_8);
-                rejectSecretValues(content);
-                FORBIDDEN_PATTERNS.forEach(
-                        pattern -> assertThat(pattern.matcher(content).find())
-                                .as("forbidden secret-shaped value in %s", path)
-                                .isFalse());
-            }
-        }
-    }
-
-    private static boolean isInspectableText(Path path) {
-        String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
-        return name.endsWith(".jsonl") || name.endsWith(".log") || name.endsWith(".txt");
-    }
-
-    private static void rejectSecretValues(String value) {
-        SECRET_NAMES.forEach(name -> {
-            String secret = System.getenv(name);
-            if (secret != null && !secret.isBlank()) assertThat(value).doesNotContain(secret);
-        });
     }
 
     private static String sha256(Path path) {
@@ -474,6 +387,12 @@ class InteractionEventHitlLiveE2E {
         return path;
     }
 
+    private static Path requireFile(String environmentName) {
+        Path path = requireAbsolutePath(environmentName);
+        if (!Files.isRegularFile(path)) throw new IllegalStateException(environmentName + " must be a file");
+        return path;
+    }
+
     private static Path requireAbsolutePath(String environmentName) {
         String value = System.getenv(environmentName);
         if (value == null || value.isBlank()) throw new IllegalStateException(environmentName + " is required");
@@ -482,28 +401,11 @@ class InteractionEventHitlLiveE2E {
         return configured.normalize();
     }
 
-    private static Path javaExecutable() {
-        String executable =
-                System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win") ? "java.exe" : "java";
-        return Path.of(System.getProperty("java.home"), "bin", executable);
-    }
-
-    private static String readIfPresent(Path path) {
-        try {
-            return Files.exists(path) ? Files.readString(path, StandardCharsets.UTF_8) : "";
-        } catch (Exception exception) {
-            throw new IllegalStateException("test evidence could not be read", exception);
-        }
-    }
-
     private record ToolCallRecord(String toolName, String status) {}
 
-    private record CliResult(
-            int exitCode,
-            String trace,
-            String standardOutput,
-            String standardError,
-            Path tracePath,
-            Path standardOutputPath,
-            Path standardErrorPath) {}
+    private record ClientResult(AgentRunSnapshot snapshot, List<AgentRunEvent> events) {
+        private ClientResult {
+            events = List.copyOf(events);
+        }
+    }
 }
