@@ -71,6 +71,33 @@ class CliWebPlatformTest {
                 .hasMessageContaining("environment variable is unavailable");
     }
 
+    @Test
+    void assemblesTavilyForSearchAndFetchWithSeparateBindings() {
+        var configuration = new CliConfiguration.Web(
+                new CliConfiguration.WebProvider(
+                        true,
+                        "tavily",
+                        io.haifa.agent.web.provider.TavilyWebSearchProvider.DEFAULT_ENDPOINT,
+                        "env://TAVILY_API_KEY",
+                        java.time.Duration.ofSeconds(20),
+                        1024 * 1024),
+                new CliConfiguration.WebProvider(
+                        true,
+                        "tavily",
+                        io.haifa.agent.web.provider.TavilyFetchProvider.DEFAULT_ENDPOINT,
+                        "env://TAVILY_API_KEY",
+                        java.time.Duration.ofSeconds(20),
+                        2 * 1024 * 1024));
+
+        var platform = CliWebPlatform.create(
+                configuration, new PrincipalRef("local-user", "user"), ignored -> "tavily-secret");
+
+        assertThat(platform.contributions())
+                .extracting(
+                        contribution -> contribution.definition().providerId().value())
+                .containsExactly("web-search.tavily", "web-fetch.tavily");
+    }
+
     private static CliConfiguration.Web enabledWeb() {
         return new CliConfiguration.Web(
                 new CliConfiguration.WebProvider(

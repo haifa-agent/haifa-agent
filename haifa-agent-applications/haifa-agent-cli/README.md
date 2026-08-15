@@ -504,7 +504,7 @@ fail closed。Source root 不进入 Prompt、Tool 参数或 Runtime 配置快照
 
 Web Tool 默认关闭。启用 Search 时需同时把 `web.search` 加入 `tools.enabled` 并设置
 `web.search.enabled: true`；可选 Provider 为 `aliyun`、`brave`、`tavily`。启用 Fetch 时同理加入
-`web.fetch`，可选 Provider 为 `aliyun`、`browserless`。Browserless 默认使用
+`web.fetch`，可选 Provider 为 `aliyun`、`browserless`、`tavily`。Browserless 默认使用
 `https://production-sfo.browserless.io/content` 与 `env://BROWSERLESS_TOKEN`；例如：
 
 ```yaml
@@ -521,6 +521,10 @@ Browserless Token 只通过 Authorization 请求头发送，不要把 `?token=..
 `env://` 引用在启动期把密钥写入进程内加密 Credential Store，Runtime 在实际 Tool 调用期签发短期
 `CredentialLease`。网络与凭据 Tool 默认仍按 `approval.mode` 进入审批策略，不会自动切换 Provider
 或在失败时返回示例内容。
+
+Tavily Search 与 Fetch 可分别选择，也可同时使用 `env://TAVILY_API_KEY`。Fetch 默认调用
+`https://api.tavily.com/extract` 并返回 Markdown 或纯文本；Provider 仍为两个 Tool 建立独立、精确的
+Credential Binding。
 
 CLI 的 DeepSeek 和百炼冻结配置均强制关闭 thinking，并通过 Runtime output listener 实时打印安全的 answer delta；
 reasoning 原文不会进入终端。使用 `--verbose` 时只会打印供应商报告的 reasoning token 计数，不记录或展示

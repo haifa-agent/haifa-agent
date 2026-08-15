@@ -136,7 +136,7 @@ Profile 显式 allowlist 后，`skill.load` / `skill.resource.read` 才作为
 `SkillToolCatalogContribution` 写入同一个 `ProjectToolCatalog`。
 
 显式启用的 `web.search` / `web.fetch` 也写入同一个 `ToolCatalogBuilder`。Search 可精确选择 Aliyun、
-Brave 或 Tavily，Fetch 当前只允许 Aliyun。具体 Provider、endpoint、非秘密配置和 Fetch URL Policy
+Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Provider、endpoint、非秘密配置和 Fetch URL Policy
 进入冻结 binding；Provider 不读取环境变量、不保存 Credential、不执行 fallback。
 
 配置、权限和精确 Tool 身份继续使用点号命名；模型披露使用 Provider-safe Alias，例如 `file.read -> file_read`、`git.status -> git_status` 和 `execution.run -> execution_run`。Alias 只影响模型协议，不改变 Provider 执行时收到的精确 Tool 名称。

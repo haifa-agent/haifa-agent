@@ -326,6 +326,7 @@ final class CliConfigurationLoader {
             return switch (providerId) {
                 case "aliyun" -> io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT;
                 case "browserless" -> io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT;
+                case "tavily" -> io.haifa.agent.web.provider.TavilyFetchProvider.DEFAULT_ENDPOINT;
                 default -> throw new IllegalArgumentException("web.fetch.provider is unsupported");
             };
         }

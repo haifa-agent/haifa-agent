@@ -454,8 +454,8 @@ record CliConfiguration(
             if (!Set.of("aliyun", "brave", "tavily").contains(search.providerId())) {
                 throw new IllegalArgumentException("web.search.provider must be aliyun, brave, or tavily");
             }
-            if (!Set.of("aliyun", "browserless").contains(fetch.providerId())) {
-                throw new IllegalArgumentException("web.fetch.provider must be aliyun or browserless");
+            if (!Set.of("aliyun", "browserless", "tavily").contains(fetch.providerId())) {
+                throw new IllegalArgumentException("web.fetch.provider must be aliyun, browserless, or tavily");
             }
         }
 

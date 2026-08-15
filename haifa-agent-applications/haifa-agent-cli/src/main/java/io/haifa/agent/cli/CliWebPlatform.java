@@ -28,6 +28,7 @@ import io.haifa.agent.web.provider.AliyunFetchProvider;
 import io.haifa.agent.web.provider.AliyunSearchProvider;
 import io.haifa.agent.web.provider.BraveWebSearchProvider;
 import io.haifa.agent.web.provider.BrowserlessFetchProvider;
+import io.haifa.agent.web.provider.TavilyFetchProvider;
 import io.haifa.agent.web.provider.TavilyWebSearchProvider;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
@@ -192,6 +193,14 @@ final class CliWebPlatform {
                         clock);
             case "browserless" ->
                 new BrowserlessFetchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            case "tavily" ->
+                new TavilyFetchProvider(
                         client,
                         mapper,
                         configuration.endpoint(),

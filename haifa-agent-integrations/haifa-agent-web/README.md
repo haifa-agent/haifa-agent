@@ -21,13 +21,18 @@ size explicitly; the conservative default prevents a handful of fetched pages fr
 当前 Provider：
 
 - Search：Aliyun IQS、Brave、Tavily。
-- Fetch：Aliyun IQS、Browserless Content API。
+- Fetch：Aliyun IQS、Browserless Content API、Tavily Extract API。
 
 Browserless Fetch 调用 `/content` 获取执行 JavaScript 后的完整 HTML，因此返回格式固定为 `html`，即使
 Tool 输入偏好为 Markdown 或纯文本也不会伪造转换结果。API Token 只通过 `Authorization: Bearer ...`
 请求头注入，不进入 Endpoint、请求正文或冻结配置；`X-Response-Code` 表示目标页面失败时不会把拦截页
 误报为可用来源。默认云端 Endpoint 为 `https://production-sfo.browserless.io/content`，产品可显式冻结
 其他 Browserless Cloud 区域或自托管 HTTPS Endpoint。
+
+Tavily Fetch 调用 `/extract`，按 Tool 的格式偏好请求 Markdown 或纯文本，并继续保留最终 URL、内容摘要、
+截断状态与不可信外部内容标记。Search 与 Fetch 使用不同的 Credential Definition，但产品可把二者分别
+绑定到同一个 `env://TAVILY_API_KEY`；默认 Endpoint 分别为 `https://api.tavily.com/search` 和
+`https://api.tavily.com/extract`。
 
 验证：
 

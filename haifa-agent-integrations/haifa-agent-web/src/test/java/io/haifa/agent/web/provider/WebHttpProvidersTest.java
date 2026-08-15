@@ -259,6 +259,58 @@ class WebHttpProvidersTest {
     }
 
     @Test
+    void tavilyFetchUsesExtractAndMapsCleanedMarkdown() {
+        response.set(
+                """
+                {"request_id":"tv-extract-1","results":[
+                  {"url":"https://example.com/final","raw_content":"# Extracted page\\n\\nUseful content"}
+                ],"failed_results":[]}
+                """);
+        var provider = new TavilyFetchProvider(
+                client(), mapper, baseUri.resolve("/extract"), Duration.ofSeconds(5), 64 * 1024);
+
+        var result = provider.fetch(
+                new WebFetchRequest(URI.create("https://example.com/page"), WebContentFormat.MARKDOWN, 10_000),
+                context());
+
+        JsonNode body = captured.get().body();
+        assertThat(result.content()).contains("Useful content");
+        assertThat(result.format()).isEqualTo(WebContentFormat.MARKDOWN);
+        assertThat(result.mediaType()).isEqualTo("text/markdown");
+        assertThat(result.finalUrl()).hasToString("https://example.com/final");
+        assertThat(captured.get().path()).isEqualTo("/extract");
+        assertThat(captured.get().authorization()).isEqualTo("Bearer test-key");
+        assertThat(body.path("urls").get(0).asText()).isEqualTo("https://example.com/page");
+        assertThat(body.path("extract_depth").asText()).isEqualTo("basic");
+        assertThat(body.path("format").asText()).isEqualTo("markdown");
+        assertThat(body.path("include_images").asBoolean()).isFalse();
+        assertThat(body.path("include_favicon").asBoolean()).isFalse();
+        assertThat(body.path("include_usage").asBoolean()).isFalse();
+    }
+
+    @Test
+    void tavilyFetchReportsUnavailableExtractionWithoutLeakingProviderDetails() {
+        response.set(
+                """
+                {"results":[],"failed_results":[
+                  {"url":"https://example.com/private","error":"provider-private-detail"}
+                ]}
+                """);
+        var provider = new TavilyFetchProvider(
+                client(), mapper, baseUri.resolve("/extract"), Duration.ofSeconds(5), 64 * 1024);
+
+        assertThatThrownBy(() -> provider.fetch(
+                        new WebFetchRequest(URI.create("https://example.com/private"), WebContentFormat.TEXT, 10_000),
+                        context()))
+                .isInstanceOfSatisfying(WebProviderException.class, exception -> {
+                    assertThat(exception.failureCode())
+                            .isEqualTo(io.haifa.agent.web.WebFailureCode.WEB_PROVIDER_FAILED);
+                    assertThat(exception.dispatchState()).isEqualTo(WebDispatchState.ACKNOWLEDGED);
+                    assertThat(exception.getMessage()).doesNotContain("provider-private-detail");
+                });
+    }
+
+    @Test
     void errorsDoNotReturnStubSuccessAndPreserveAcknowledgedState() {
         status.set(429);
         var provider = new BraveWebSearchProvider(

@@ -217,7 +217,7 @@ Server 负责：
 
 - 显式装配 Product Profile、Model、SQLite、Policy、Memory、Tool、Skill 和 MCP；
 - 装配 Personal Mission Store、Planner、Application Service 与版本化 HTTP/OpenAPI；
-- 按配置启用公共 `haifa-agent-web` 的 Aliyun IQS Search/Fetch，并把环境变量凭据绑定到
+- 按配置分别启用公共 `haifa-agent-web` 的 Search/Fetch Provider，并把各自的环境变量凭据绑定到
   Runtime `CredentialBroker`，不把 Key 放入 Profile、Tool Definition 或日志；
 - `/api/v1` 版本化 HTTP DTO、OpenAPI、显式 Mapper 和稳定安全错误；
 - 图片上传的 magic-byte/MIME 校验、本地有界 Store，以及调用模型前的摘要复核；
@@ -322,14 +322,27 @@ $env:HAIFA_PERSONAL_MCP_DISPLAY_NAME='Haifa Utility MCP'
 外部 endpoint 只接受 `http` loopback 地址和 `20002+` 端口。发现失败、Tool 缺失或本地审查失败都会
 使 Server 启动失败；不会回退到 embedded echo。
 
-Web Tool 默认关闭。启用后会同时装配 `web_search -> web.search` 和
-`web_fetch -> web.fetch`，当前 Personal Profile 固定使用 Aliyun IQS：
+Web Search 与 Fetch 默认关闭并独立配置。默认 Provider 组合为 Aliyun IQS Search 与 Browserless Fetch；
+启用后分别装配 `web_search -> web.search` 和 `web_fetch -> web.fetch`：
 
 ```powershell
-$env:HAIFA_PERSONAL_WEB_ENABLED='true'
-$env:HAIFA_PERSONAL_WEB_CREDENTIAL='env://ALIYUN_IQS_API_KEY'
+$env:HAIFA_PERSONAL_WEB_SEARCH_ENABLED='true'
+$env:HAIFA_PERSONAL_WEB_SEARCH_PROVIDER='aliyun'
+$env:HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT='https://cloud-iqs.aliyuncs.com/search/unified'
+$env:HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL='env://ALIYUN_IQS_API_KEY'
 $env:ALIYUN_IQS_API_KEY='<aliyun-iqs-key>'
+
+$env:HAIFA_PERSONAL_WEB_FETCH_ENABLED='true'
+$env:HAIFA_PERSONAL_WEB_FETCH_PROVIDER='browserless'
+$env:HAIFA_PERSONAL_WEB_FETCH_ENDPOINT='https://production-sfo.browserless.io/content'
+$env:HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL='env://BROWSERLESS_TOKEN'
+$env:BROWSERLESS_TOKEN='<browserless-token>'
 ```
+
+Search 可选 `aliyun`、`brave`、`tavily`；Fetch 可选 `aliyun`、`browserless`、`tavily`。选择 Tavily 时
+Search Endpoint 为 `https://api.tavily.com/search`，Fetch Endpoint 为 `https://api.tavily.com/extract`，
+两项 Credential Reference 都可指向 `env://TAVILY_API_KEY`，但仍会生成两个精确 Credential Binding。
+兼容变量 `HAIFA_PERSONAL_WEB_ENABLED` 仍可同时启用两项，但不会再让两项共享一个解析后的秘密。
 
 可信本地 Skill Source 的配置值是“包含各 Skill 子目录的根目录”。例如 finance 集合应配置为：
 

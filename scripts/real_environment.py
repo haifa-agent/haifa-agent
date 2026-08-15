@@ -162,6 +162,24 @@ def parser() -> argparse.ArgumentParser:
         default=os.getenv("HAIFA_ALIYUN_IQS_KEY_FILE", str(workspace / "ss-aliyun-iqs.txt")),
     )
     result.add_argument(
+        "--browserless-key-file",
+        default=os.getenv("HAIFA_BROWSERLESS_KEY_FILE", str(workspace / "ss-browserless.txt")),
+    )
+    result.add_argument(
+        "--tavily-key-file",
+        default=os.getenv("HAIFA_TAVILY_KEY_FILE", str(workspace / "ss-tavily.txt")),
+    )
+    result.add_argument(
+        "--web-search-provider",
+        choices=("aliyun", "tavily"),
+        default=os.getenv("HAIFA_PERSONAL_WEB_SEARCH_PROVIDER", "aliyun"),
+    )
+    result.add_argument(
+        "--web-fetch-provider",
+        choices=("aliyun", "browserless", "tavily"),
+        default=os.getenv("HAIFA_PERSONAL_WEB_FETCH_PROVIDER", "browserless"),
+    )
+    result.add_argument(
         "--continuation-key-file",
         default=os.getenv(
             "HAIFA_PERSONAL_CONTINUATION_KEY_FILE",
@@ -684,10 +702,13 @@ def backend_environment(
     bailian: tuple[str, str, str] | None = None,
     kimi_key: str | None = None,
     bigmodel_key: str | None = None,
+    browserless_token: str | None = None,
+    tavily_key: str | None = None,
+    web_search_provider: str = "aliyun",
+    web_fetch_provider: str = "aliyun",
 ) -> dict[str, str]:
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
-        "ALIYUN_IQS_API_KEY": aliyun_key,
         "HAIFA_PERSONAL_CONTINUATION_KEY": continuation,
         "HAIFA_PERSONAL_DATA_DIR": str(value.data),
         "HAIFA_PERSONAL_DEFAULT_MODEL_ID": default_model_id,
@@ -770,8 +791,6 @@ def backend_environment(
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_CONTEXTWINDOW": "1048576",
         "HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_MAXOUTPUTTOKENS": "393216",
         "HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL": "true",
-        "HAIFA_PERSONAL_WEB_ENABLED": "true",
-        "HAIFA_PERSONAL_WEB_CREDENTIAL": "env://ALIYUN_IQS_API_KEY",
         "HAIFA_PERSONAL_SKILL_ROOT": str(skill_root),
         "HAIFA_PERSONAL_TRUSTED_SCRIPT_MANIFEST": str(trusted_manifest or ""),
         "HAIFA_PERSONAL_MCP_MODE": "external",
@@ -782,6 +801,44 @@ def backend_environment(
         "HAIFA_PERSONAL_MCP_DISPLAY_NAME": "Haifa Utility MCP",
         "HAIFA_PERSONAL_EXECUTION_TRUSTED_HOST_ENABLED": "true",
     }
+    web_provider_specs = {
+        "aliyun": {
+            "secret": aliyun_key,
+            "environment": "ALIYUN_IQS_API_KEY",
+            "search_endpoint": "https://cloud-iqs.aliyuncs.com/search/unified",
+            "fetch_endpoint": "https://cloud-iqs.aliyuncs.com/readpage/basic",
+        },
+        "browserless": {
+            "secret": browserless_token or "",
+            "environment": "BROWSERLESS_TOKEN",
+            "fetch_endpoint": "https://production-sfo.browserless.io/content",
+        },
+        "tavily": {
+            "secret": tavily_key or "",
+            "environment": "TAVILY_API_KEY",
+            "search_endpoint": "https://api.tavily.com/search",
+            "fetch_endpoint": "https://api.tavily.com/extract",
+        },
+    }
+    for operation, provider in (("SEARCH", web_search_provider), ("FETCH", web_fetch_provider)):
+        spec = web_provider_specs.get(provider)
+        endpoint_key = f"{operation.lower()}_endpoint"
+        if spec is None or endpoint_key not in spec:
+            raise ValueError(f"{provider} does not support Personal Web {operation.lower()}")
+        secret = str(spec["secret"])
+        if not secret:
+            raise ValueError(f"{provider} credential is required for Personal Web {operation.lower()}")
+        environment_name = str(spec["environment"])
+        environment[environment_name] = secret
+        prefix = f"HAIFA_PERSONAL_WEB_{operation}"
+        environment.update(
+            {
+                f"{prefix}_ENABLED": "true",
+                f"{prefix}_PROVIDER": provider,
+                f"{prefix}_ENDPOINT": str(spec[endpoint_key]),
+                f"{prefix}_CREDENTIAL": f"env://{environment_name}",
+            }
+        )
     next_provider_index = 1
     if bailian is not None:
         bailian_key, workspace_id, region = bailian
@@ -1070,7 +1127,22 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
             fail(f"Trusted script manifest is not a file: {trusted_manifest}")
 
     deepseek_key = read_secret_file(args.deepseek_key_file, "DeepSeek")
-    aliyun_key = read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS")
+    selected_web_providers = {args.web_search_provider, args.web_fetch_provider}
+    aliyun_key = (
+        read_secret_file(args.aliyun_iqs_key_file, "Aliyun IQS")
+        if "aliyun" in selected_web_providers
+        else ""
+    )
+    browserless_token = (
+        read_secret_file(args.browserless_key_file, "Browserless")
+        if "browserless" in selected_web_providers
+        else None
+    )
+    tavily_key = (
+        read_secret_file(args.tavily_key_file, "Tavily")
+        if "tavily" in selected_web_providers
+        else None
+    )
     openai = optional_openai_environment()
     bailian = optional_bailian_configuration(args.bailian_key_file, args.bailian_region)
     kimi_key = optional_secret_file(args.kimi_key_file, "Kimi", "KIMI_API_KEY")
@@ -1143,6 +1215,10 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
             bailian,
             kimi_key,
             bigmodel_key,
+            browserless_token,
+            tavily_key,
+            args.web_search_provider,
+            args.web_fetch_provider,
         ),
         args.startup_timeout_seconds,
         value,
@@ -1189,7 +1265,10 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     print(f"  Backend OpenAPI:  http://127.0.0.1:{BACKEND_PORT}/api/v1/openapi.json")
     print(f"  Utility MCP:      http://127.0.0.1:{MCP_PORT}/mcp")
     print(f"  MCP health:       http://127.0.0.1:{MCP_PORT}/actuator/health")
-    print("  Web Tools:        web.search, web.fetch (Aliyun IQS)")
+    print(
+        "  Web Tools:        "
+        f"web.search ({args.web_search_provider}), web.fetch ({args.web_fetch_provider})"
+    )
     print(f"\nState: {value.state}")
     print(f"Logs:  {value.logs}")
     print("Secrets were loaded into child process environments only and were not printed.")
