@@ -14,7 +14,7 @@
 
 ## 0.1.0-SNAPSHOT
 
-- SDK 新增复用现有 Conversation/Runtime 的轻量 `chat()` Facade、纯展示 `name`/`description`、Starter
+- SDK 新增复用现有 Conversation/Runtime 的轻量 `chat()` Facade、展示用 `name`、Starter
   默认指令诊断、Caller-scoped 进程内 Prompt Diagnostics，以及确定性 SDK Testkit；不声明 Stable API，
   不增加 Prompt 持久化或新的生产 Starter。
 - 将遗漏在工作区外的 SDK 示例工程迁入 `examples/haifa-agent-example`，保持非 Reactor 外部消费者边界；

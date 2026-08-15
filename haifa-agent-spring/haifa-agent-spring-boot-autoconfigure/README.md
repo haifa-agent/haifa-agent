@@ -15,8 +15,7 @@
 | 属性 | 默认值 | 含义 |
 | --- | --- | --- |
 | `haifa.agent.enabled` | `true` | 是否启用默认 Agent 自动装配 |
-| `haifa.agent.name` | `haifa-agent` | 仅用于展示/诊断的 Agent 名称 |
-| `haifa.agent.description` | `Haifa Agent` | 仅用于展示/诊断的 Agent 描述 |
+| `haifa.agent.name` | `haifa-agent` | 展示及 Conversation display name |
 | `haifa.agent.instructions` | Starter 默认值 | 可信系统指令 |
 | `haifa.agent.model.credential-environment-variable` | `DEEPSEEK_API_KEY` | 凭据环境变量名，不是凭据值 |
 | `haifa.agent.model.connect-timeout` | `10s` | 模型 HTTP 连接超时 |
@@ -25,5 +24,5 @@
 Thinking disabled。高级应用可声明自己的 `HaifaAgent` 或 `SdkCallerProvider` Bean；生产凭据接入由
 应用拥有的 `HaifaAgent` 装配负责。
 
-`name`、`description`、`instructions` 和有序 `HaifaAgentStarterCustomizer` 都映射到同一个纯 Java
+`name`、`instructions` 和有序 `HaifaAgentStarterCustomizer` 都映射到同一个纯 Java
 Starter Builder；自动装配没有复制 Chat、Prompt 或 Runtime 语义，也没有新增 Store-specific Starter。
