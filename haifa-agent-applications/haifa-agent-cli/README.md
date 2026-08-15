@@ -504,7 +504,20 @@ fail closed。Source root 不进入 Prompt、Tool 参数或 Runtime 配置快照
 
 Web Tool 默认关闭。启用 Search 时需同时把 `web.search` 加入 `tools.enabled` 并设置
 `web.search.enabled: true`；可选 Provider 为 `aliyun`、`brave`、`tavily`。启用 Fetch 时同理加入
-`web.fetch`，但当前 `web.fetch.provider` 只能是 `aliyun`。Provider 不读取环境变量；CLI 根据
+`web.fetch`，可选 Provider 为 `aliyun`、`browserless`。Browserless 默认使用
+`https://production-sfo.browserless.io/content` 与 `env://BROWSERLESS_TOKEN`；例如：
+
+```yaml
+tools:
+  enabled: [file.read, web.fetch]
+web:
+  fetch:
+    enabled: true
+    provider: browserless
+    credentialRef: env://BROWSERLESS_TOKEN
+```
+
+Browserless Token 只通过 Authorization 请求头发送，不要把 `?token=...` 写进 Endpoint。Provider 不读取环境变量；CLI 根据
 `env://` 引用在启动期把密钥写入进程内加密 Credential Store，Runtime 在实际 Tool 调用期签发短期
 `CredentialLease`。网络与凭据 Tool 默认仍按 `approval.mode` 进入审批策略，不会自动切换 Provider
 或在失败时返回示例内容。

@@ -1,5 +1,7 @@
 # Changelog
 
+- `web.fetch` 新增 Browserless Content Provider：通过短期 Credential Lease 和 Authorization 请求头获取
+  JavaScript 渲染后的 HTML，识别目标页面失败状态，并支持 CLI 以 `env://BROWSERLESS_TOKEN` 显式选择。
 - Personal Assistant 模型选择改为 Provider → 模型 → 设置的后端 Profile 驱动体验；DeepSeek V4 Flash/Pro
   的 Chat 与 Anthropic Binding 支持推荐/快速/深度和 high/max，Responses 作为高级连接方式保持推理只读；
   首轮 Conversation 原子保存精确 Binding 与偏好，raw reasoning 只在受保护 Tool continuation/恢复链内流转。

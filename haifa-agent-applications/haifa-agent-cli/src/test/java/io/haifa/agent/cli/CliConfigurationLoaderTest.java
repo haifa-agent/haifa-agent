@@ -729,6 +729,36 @@ class CliConfigurationLoaderTest {
     }
 
     @Test
+    void loadsBrowserlessFetchWithSecureDefaults() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-browserless", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                tools:
+                  enabled: [file.read, web.fetch]
+                web:
+                  search:
+                    enabled: false
+                    provider: aliyun
+                  fetch:
+                    enabled: true
+                    provider: browserless
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(new String[] {"-m", "web", "--config", configuration.toString()}),
+                        Path.of("."));
+
+        assertThat(result.web().fetch().enabled()).isTrue();
+        assertThat(result.web().fetch().providerId()).isEqualTo("browserless");
+        assertThat(result.web().fetch().endpoint())
+                .isEqualTo(io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT);
+        assertThat(result.web().fetch().credentialRef()).isEqualTo("env://BROWSERLESS_TOKEN");
+        assertThat(result.web().fetch().endpoint().getQuery()).isNull();
+    }
+
+    @Test
     void rejectsWebToolAndProviderEnablementMismatch() {
         CliConfiguration defaults = CliConfiguration.defaults();
 

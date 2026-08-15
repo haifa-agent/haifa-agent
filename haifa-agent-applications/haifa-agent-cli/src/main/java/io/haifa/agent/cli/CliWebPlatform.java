@@ -27,6 +27,7 @@ import io.haifa.agent.web.WebToolCatalogContribution;
 import io.haifa.agent.web.provider.AliyunFetchProvider;
 import io.haifa.agent.web.provider.AliyunSearchProvider;
 import io.haifa.agent.web.provider.BraveWebSearchProvider;
+import io.haifa.agent.web.provider.BrowserlessFetchProvider;
 import io.haifa.agent.web.provider.TavilyWebSearchProvider;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
@@ -180,16 +181,25 @@ final class CliWebPlatform {
 
     private static WebFetchProvider fetchProvider(
             CliConfiguration.WebProvider configuration, HttpClient client, ObjectMapper mapper, Clock clock) {
-        if (!configuration.providerId().equals("aliyun")) {
-            throw new IllegalArgumentException("only Aliyun Web Fetch is supported");
-        }
-        return new AliyunFetchProvider(
-                client,
-                mapper,
-                configuration.endpoint(),
-                configuration.timeout(),
-                configuration.maxResponseBytes(),
-                clock);
+        return switch (configuration.providerId()) {
+            case "aliyun" ->
+                new AliyunFetchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            case "browserless" ->
+                new BrowserlessFetchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            default -> throw new IllegalArgumentException("unsupported Web Fetch provider");
+        };
     }
 
     private static AesGcmCredentialStore encryptedStore() {

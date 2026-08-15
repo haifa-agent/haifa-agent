@@ -24,7 +24,7 @@ class CliWebPlatformTest {
         CliConfiguration.Web configuration = enabledWeb();
         var platform = CliWebPlatform.create(configuration, principal, name -> switch (name) {
             case "BRAVE_SEARCH_API_KEY" -> "brave-secret";
-            case "ALIYUN_IQS_API_KEY" -> "aliyun-secret";
+            case "BROWSERLESS_TOKEN" -> "browserless-secret";
             default -> null;
         });
 
@@ -34,7 +34,7 @@ class CliWebPlatformTest {
         assertThat(platform.contributions())
                 .extracting(
                         contribution -> contribution.definition().providerId().value())
-                .containsExactly("web-search.brave", "web-fetch.aliyun");
+                .containsExactly("web-search.brave", "web-fetch.browserless");
 
         for (var contribution : platform.contributions()) {
             var definition = contribution.definition();
@@ -82,9 +82,9 @@ class CliWebPlatformTest {
                         1024 * 1024),
                 new CliConfiguration.WebProvider(
                         true,
-                        "aliyun",
-                        io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT,
-                        "env://ALIYUN_IQS_API_KEY",
+                        "browserless",
+                        io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT,
+                        "env://BROWSERLESS_TOKEN",
                         java.time.Duration.ofSeconds(20),
                         2 * 1024 * 1024));
     }
