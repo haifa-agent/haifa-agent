@@ -1,5 +1,14 @@
 # Haifa Personal Assistant Web
 
+## Model contract migration
+
+The generated TypeScript contract carries exact binding/profile identity, closed controls, and typed PA preferences.
+The `+` menu groups bindings by Provider and provider model, then renders dedicated response-mode, response-length,
+reasoning-effort, and advanced API-style controls from Server-provided visibility, read-only state, allowed values,
+defaults, and help text. It submits the exact selection atomically for a new Conversation or idle existing
+Conversation; it does not infer provider capabilities or send raw options. Changing API style restores that binding's
+reviewed defaults instead of carrying incompatible parameters across protocols.
+
 The live Run card shows an evidence-based phase summary. It displays observed activity counts
 without presenting them as a percentage; when the Server supplies an authoritative Plan, it shows
 real Todo completion and the current or blocked step. Activity lifecycle events are merged by the

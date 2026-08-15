@@ -16,7 +16,9 @@ class ModelCoreArchitectureTest {
                         "com.fasterxml.jackson..",
                         "org.springframework..",
                         "com.openai..",
-                        "com.deepseek..")
+                        "com.deepseek..",
+                        "io.haifa.agent.personalassistant..",
+                        "io.haifa.agent.coding..")
                 .check(new ClassFileImporter().importPackages("io.haifa.agent.model.core"));
     }
 }

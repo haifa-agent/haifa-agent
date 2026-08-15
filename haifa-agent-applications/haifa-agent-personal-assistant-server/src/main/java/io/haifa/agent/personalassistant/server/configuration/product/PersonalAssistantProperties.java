@@ -273,6 +273,7 @@ public record PersonalAssistantProperties(
     public record ProviderModel(
             String id,
             String displayName,
+            String modelDisplayName,
             String providerModelId,
             String style,
             Set<ModelCapability> capabilities,
@@ -283,6 +284,8 @@ public record PersonalAssistantProperties(
         public ProviderModel {
             id = text(id, "providerModel.id");
             displayName = text(displayName == null ? id : displayName, "providerModel.displayName");
+            modelDisplayName =
+                    text(modelDisplayName == null ? displayName : modelDisplayName, "providerModel.modelDisplayName");
             providerModelId = text(providerModelId, "providerModel.providerModelId");
             style = identifier(style, "providerModel.style");
             capabilities = Set.copyOf(capabilities == null ? Set.of() : capabilities);

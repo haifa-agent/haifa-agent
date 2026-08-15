@@ -10,6 +10,7 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.HashSet;
@@ -75,6 +76,142 @@ class PersonalAssistantWebFluxTest {
                 .isEqualTo("UNSUPPORTED_MEDIA_TYPE");
     }
 
+    @Test
+    void conversationCreationPersistsTheExactModelSelectionAtomically() throws Exception {
+        JsonNode model = get("/api/v1/models").get(0);
+        var selection = mapper.createObjectNode();
+        selection.put("modelBindingId", model.path("id").asText());
+        selection.put(
+                "preferenceSchemaVersion", model.path("preferenceSchemaVersion").asText());
+        selection.put("profileVersion", model.path("profileVersion").asText());
+        selection.put("profileDigest", model.path("profileDigest").asText());
+        var preferences = selection.putObject("preferences");
+        preferences.put("responseMode", "RECOMMENDED");
+        preferences.putNull("effort");
+        preferences.put("responseLength", "LONG");
+
+        var request = mapper.createObjectNode();
+        request.put("displayName", "Atomic model selection");
+        request.put("message", "Reply with one short sentence.");
+        request.set("modelSelection", selection);
+
+        JsonNode created = post("/api/v1/conversations", mapper.writeValueAsString(request));
+
+        assertThat(created.path("model").path("model").path("id").asText())
+                .isEqualTo(model.path("id").asText());
+        assertThat(created.path("model")
+                        .path("preferences")
+                        .path("responseMode")
+                        .asText())
+                .isEqualTo("RECOMMENDED");
+        assertThat(created.path("model")
+                        .path("preferences")
+                        .path("responseLength")
+                        .asText())
+                .isEqualTo("LONG");
+        awaitTerminal(created.path("activeRunId").asText());
+        JsonNode conversation = awaitConversationIdle(created.path("id").asText());
+        assertThat(conversation
+                        .path("model")
+                        .path("preferences")
+                        .path("responseLength")
+                        .asText())
+                .isEqualTo("LONG");
+    }
+
+    @Test
+    void modelSelectionAtomicallyValidatesBindingProfileAndPreferences() throws Exception {
+        JsonNode model = get("/api/v1/models").get(0);
+        JsonNode created = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Model preference contract","message":"Reply with one short sentence."}
+                """);
+        awaitTerminal(created.path("activeRunId").asText());
+        JsonNode conversation = awaitConversationIdle(created.path("id").asText());
+
+        var request = mapper.createObjectNode();
+        request.put("modelBindingId", model.path("id").asText());
+        request.put(
+                "preferenceSchemaVersion", model.path("preferenceSchemaVersion").asText());
+        request.put("profileVersion", model.path("profileVersion").asText());
+        request.put("profileDigest", model.path("profileDigest").asText());
+        var preferences = request.putObject("preferences");
+        preferences.put("responseMode", "RECOMMENDED");
+        preferences.putNull("effort");
+        preferences.put("responseLength", "LONG");
+
+        var stale = request.deepCopy();
+        stale.put("profileDigest", "sha256:stale");
+        web.patch()
+                .uri("/api/v1/conversations/{id}/model", created.path("id").asText())
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "model-stale-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + conversation.path("model").path("revision").asText() + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(stale)
+                .exchange()
+                .expectStatus()
+                .isEqualTo(412)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MODEL_PROFILE_STALE");
+
+        web.patch()
+                .uri("/api/v1/conversations/{id}/model", created.path("id").asText())
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "model-selection-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + conversation.path("model").path("revision").asText() + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.model.id")
+                .isEqualTo(model.path("id").asText())
+                .jsonPath("$.model.profileDigest")
+                .isEqualTo(model.path("profileDigest").asText())
+                .jsonPath("$.model.recommendedPreferences.responseLength")
+                .isEqualTo("RECOMMENDED")
+                .jsonPath("$.available")
+                .isEqualTo(true);
+    }
+
+    @Test
+    void conversationWithoutAnExactModelPreferenceFailsClosed() throws Exception {
+        JsonNode created = post(
+                "/api/v1/conversations",
+                """
+                {"displayName":"Missing model preference","message":"Reply with one short sentence."}
+                """);
+        awaitTerminal(created.path("activeRunId").asText());
+        String conversationId = created.path("id").asText();
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:"
+                        + DATA.resolve("personal-assistant.sqlite").toAbsolutePath());
+                var statement = connection.prepareStatement(
+                        "DELETE FROM personal_model_preference WHERE conversation_id = ?")) {
+            statement.setString(1, conversationId);
+            assertThat(statement.executeUpdate()).isEqualTo(1);
+        }
+
+        web.get()
+                .uri("/api/v1/conversations/{id}", conversationId)
+                .exchange()
+                .expectStatus()
+                .isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo("MODEL_SELECTION_REQUIRED");
+
+        removeConversationProjection(conversationId);
+    }
+
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("haifa.personal.data-directory", DATA::toString);
@@ -82,6 +219,26 @@ class PersonalAssistantWebFluxTest {
                 .encodeToString(new byte[32]));
         registry.add("haifa.personal.mcp.port", () -> MCP_PORT);
         registry.add("haifa.personal.execution.trusted-host-enabled", () -> "true");
+    }
+
+    private static void removeConversationProjection(String conversationId) throws Exception {
+        try (var connection = DriverManager.getConnection(
+                "jdbc:sqlite:" + DATA.resolve("personal-assistant.sqlite").toAbsolutePath())) {
+            connection.setAutoCommit(false);
+            try (var commands =
+                            connection.prepareStatement("DELETE FROM sdk_conversation_command WHERE session_id = ?");
+                    var conversation =
+                            connection.prepareStatement("DELETE FROM sdk_conversation WHERE session_id = ?")) {
+                commands.setString(1, conversationId);
+                commands.executeUpdate();
+                conversation.setString(1, conversationId);
+                assertThat(conversation.executeUpdate()).isEqualTo(1);
+                connection.commit();
+            } catch (Exception exception) {
+                connection.rollback();
+                throw exception;
+            }
+        }
     }
 
     @Test
@@ -614,6 +771,23 @@ class PersonalAssistantWebFluxTest {
     }
 
     @Test
+    void adminListsOnlySafeVersionedModelValidationMetadata() throws Exception {
+        JsonNode models = get("/v1/admin/models");
+
+        assertThat(models.path("bindings").isArray()).isTrue();
+        assertThat(models.path("bindings")).isNotEmpty();
+        JsonNode binding = models.path("bindings").get(0);
+        assertThat(binding.path("id").asText()).isNotBlank();
+        assertThat(binding.path("profileVersion").asText()).isNotBlank();
+        assertThat(binding.path("profileDigest").asText()).startsWith("sha256:");
+        assertThat(binding.path("preferenceSchemaVersion").asText()).isNotBlank();
+        assertThat(binding.path("validationStatus").asText()).isEqualTo("VERIFIED");
+        assertThat(binding.path("lastVerifiedOn").asText()).matches("\\d{4}-\\d{2}-\\d{2}");
+        assertThat(models.toString())
+                .doesNotContain("credential", "apiKey", "secret", "endpoint", "reasoning_content", "rawReasoning");
+    }
+
+    @Test
     void adminBuildsOneRunTreeWithoutExposingPromptOrToolPayloads() throws Exception {
         String sensitivePrompt = "[tool] private-admin-prompt-7f29";
         JsonNode conversation = post(
@@ -806,6 +980,25 @@ class PersonalAssistantWebFluxTest {
             Thread.sleep(RUN_STATUS_POLL_INTERVAL);
         } while (System.nanoTime() < deadline);
         throw new AssertionError("run did not become terminal: " + latest);
+    }
+
+    private JsonNode awaitConversationIdle(String conversationId) throws Exception {
+        long deadline = System.nanoTime() + RUN_STATUS_TIMEOUT.toNanos();
+        JsonNode latest;
+        int consecutiveIdleObservations = 0;
+        do {
+            latest = get("/api/v1/conversations/" + conversationId);
+            JsonNode activeRunId = latest.path("activeRunId");
+            if (activeRunId.isMissingNode()
+                    || activeRunId.isNull()
+                    || activeRunId.asText().isBlank()) {
+                if (++consecutiveIdleObservations == 2) return latest;
+            } else {
+                consecutiveIdleObservations = 0;
+            }
+            Thread.sleep(RUN_STATUS_POLL_INTERVAL);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("conversation did not become idle: " + latest);
     }
 
     private static Path temporaryDirectory() {

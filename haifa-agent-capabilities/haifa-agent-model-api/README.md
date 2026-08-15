@@ -1,5 +1,12 @@
 # Haifa Agent Model API
 
+## Binding profiles and effective parameters
+
+`ModelBindingProfile` is the provider-neutral, versioned capability and parameter contract for one exact model
+binding. `EffectiveModelParameters` contains only values validated against that trusted profile. A run derives a new
+`ResolvedModelSnapshot` with those effective values and a new digest; endpoint and credential data remain frozen and
+are never exposed as user preferences. Product-specific controls and labels do not belong in this module.
+
 ## Reasoning safety
 
 Reasoning policy is represented by typed mode/effort values and normalized into frozen snapshot options.

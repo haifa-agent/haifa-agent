@@ -9,11 +9,20 @@ public final class InMemoryPersonalModelPreferenceStore implements PersonalModel
     private final Map<String, PersonalModelPreference> values = new LinkedHashMap<>();
 
     @Override
-    public synchronized PersonalModelPreference create(String conversationId, String modelId, Instant at) {
+    public synchronized PersonalModelPreference create(
+            String conversationId, PersonalModelPreferenceDraft preference, Instant at) {
         return values.computeIfAbsent(
                 conversationId,
                 ignored -> new PersonalModelPreference(
-                        conversationId, modelId, 0, Optional.empty(), Optional.empty(), at));
+                        conversationId,
+                        preference.modelBindingId(),
+                        preference.preferenceSchemaVersion(),
+                        preference.userPreferences(),
+                        preference.preferenceDigest(),
+                        0,
+                        Optional.empty(),
+                        Optional.empty(),
+                        at));
     }
 
     @Override
@@ -25,7 +34,7 @@ public final class InMemoryPersonalModelPreferenceStore implements PersonalModel
     public synchronized PersonalModelPreference change(
             String conversationId,
             long expectedRevision,
-            String modelId,
+            PersonalModelPreferenceDraft preference,
             String idempotencyKeyDigest,
             String requestDigest,
             Instant at) {
@@ -39,7 +48,10 @@ public final class InMemoryPersonalModelPreferenceStore implements PersonalModel
         if (current.revision() != expectedRevision) throw new IllegalStateException("MODEL_REVISION_STALE");
         PersonalModelPreference changed = new PersonalModelPreference(
                 conversationId,
-                modelId,
+                preference.modelBindingId(),
+                preference.preferenceSchemaVersion(),
+                preference.userPreferences(),
+                preference.preferenceDigest(),
                 current.revision() + 1,
                 Optional.of(idempotencyKeyDigest),
                 Optional.of(requestDigest),

@@ -385,6 +385,7 @@
           "displayName": {"type": "string"},
           "message": {"type": "string"},
           "modelId": {"type": "string"},
+          "modelSelection": {"$ref": "#/components/schemas/SelectModel"},
           "images": {"type": "array", "maxItems": 4, "items": {"$ref": "#/components/schemas/ImageInput"}}
         }
       },
@@ -434,29 +435,111 @@
       },
       "Model": {
         "type": "object",
-        "required": ["id", "displayName", "providerId", "providerDisplayName", "capabilities", "contextWindow"],
+        "required": ["id", "modelGroupId", "modelDisplayName", "displayName", "providerId", "providerDisplayName", "apiStyle", "apiStyleDisplayName", "availability", "unavailableReason", "capabilities", "contextWindow", "maxOutputTokens", "preferenceSchemaVersion", "profileVersion", "profileDigest", "controls", "recommendedPreferences"],
         "properties": {
           "id": {"type": "string"},
+          "modelGroupId": {"type": "string"},
+          "modelDisplayName": {"type": "string"},
           "displayName": {"type": "string"},
           "providerId": {"type": "string"},
           "providerDisplayName": {"type": "string"},
+          "apiStyle": {"type": "string"},
+          "apiStyleDisplayName": {"type": "string"},
+          "availability": {"type": "string", "enum": ["AVAILABLE", "UNAVAILABLE"]},
+          "unavailableReason": {"type": "string"},
           "capabilities": {"type": "array", "items": {"type": "string"}},
-          "contextWindow": {"type": "integer"}
+          "contextWindow": {"type": "integer"},
+          "maxOutputTokens": {"type": "integer"},
+          "preferenceSchemaVersion": {"type": "string"},
+          "profileVersion": {"type": "string"},
+          "profileDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "controls": {"$ref": "#/components/schemas/ModelControls"},
+          "recommendedPreferences": {"$ref": "#/components/schemas/ModelPreferences"}
+        }
+      },
+      "ModelControls": {
+        "type": "object",
+        "required": ["responseMode", "reasoningEffort", "responseLength", "apiStyle"],
+        "properties": {
+          "responseMode": {"$ref": "#/components/schemas/ResponseModeControl"},
+          "reasoningEffort": {"$ref": "#/components/schemas/ReasoningEffortControl"},
+          "responseLength": {"$ref": "#/components/schemas/ResponseLengthControl"},
+          "apiStyle": {"$ref": "#/components/schemas/ApiStyleControl"}
+        }
+      },
+      "ResponseModeControl": {
+        "type": "object",
+        "required": ["kind", "visible", "readOnly", "allowedValues", "recommendedValue", "effectiveSummary", "helpText"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["responseMode"]},
+          "visible": {"type": "boolean"}, "readOnly": {"type": "boolean"},
+          "allowedValues": {"type": "array", "items": {"type": "string", "enum": ["RECOMMENDED", "FAST", "DEEP"]}},
+          "recommendedValue": {"type": "string", "enum": ["RECOMMENDED", "FAST", "DEEP"]},
+          "effectiveSummary": {"type": "string"}, "helpText": {"type": "string"}
+        }
+      },
+      "ReasoningEffortControl": {
+        "type": "object",
+        "required": ["kind", "visible", "readOnly", "allowedValues", "effectiveSummary", "helpText"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["reasoningEffort"]},
+          "visible": {"type": "boolean"}, "readOnly": {"type": "boolean"},
+          "allowedValues": {"type": "array", "items": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "MAX"]}},
+          "recommendedValue": {"type": ["string", "null"], "enum": ["LOW", "MEDIUM", "HIGH", "MAX", null]},
+          "effectiveSummary": {"type": "string"}, "helpText": {"type": "string"}
+        }
+      },
+      "ResponseLengthControl": {
+        "type": "object",
+        "required": ["kind", "visible", "readOnly", "allowedValues", "recommendedValue", "effectiveSummary", "helpText"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["responseLength"]},
+          "visible": {"type": "boolean"}, "readOnly": {"type": "boolean"},
+          "allowedValues": {"type": "array", "items": {"type": "string", "enum": ["RECOMMENDED", "SHORT", "STANDARD", "LONG"]}},
+          "recommendedValue": {"type": "string", "enum": ["RECOMMENDED", "SHORT", "STANDARD", "LONG"]},
+          "effectiveSummary": {"type": "string"}, "helpText": {"type": "string"}
+        }
+      },
+      "ApiStyleControl": {
+        "type": "object",
+        "required": ["kind", "visible", "readOnly", "allowedValues", "recommendedValue", "effectiveSummary", "helpText"],
+        "properties": {
+          "kind": {"type": "string", "enum": ["apiStyle"]},
+          "visible": {"type": "boolean"}, "readOnly": {"type": "boolean"},
+          "allowedValues": {"type": "array", "items": {"type": "string"}},
+          "recommendedValue": {"type": "string"},
+          "effectiveSummary": {"type": "string"}, "helpText": {"type": "string"}
+        }
+      },
+      "ModelPreferences": {
+        "type": "object",
+        "required": ["responseMode", "responseLength"],
+        "properties": {
+          "responseMode": {"type": "string", "enum": ["RECOMMENDED", "FAST", "DEEP"]},
+          "effort": {"type": ["string", "null"], "enum": ["LOW", "MEDIUM", "HIGH", "MAX", null]},
+          "responseLength": {"type": "string", "enum": ["RECOMMENDED", "SHORT", "STANDARD", "LONG"]}
         }
       },
       "ModelSelection": {
         "type": "object",
-        "required": ["model", "revision", "available"],
+        "required": ["model", "preferences", "revision", "available"],
         "properties": {
           "model": {"$ref": "#/components/schemas/Model"},
+          "preferences": {"$ref": "#/components/schemas/ModelPreferences"},
           "revision": {"type": "integer", "format": "int64"},
           "available": {"type": "boolean"}
         }
       },
       "SelectModel": {
         "type": "object",
-        "required": ["modelId"],
-        "properties": {"modelId": {"type": "string"}}
+        "required": ["modelBindingId", "preferenceSchemaVersion", "profileVersion", "profileDigest", "preferences"],
+        "properties": {
+          "modelBindingId": {"type": "string"},
+          "preferenceSchemaVersion": {"type": "string"},
+          "profileVersion": {"type": "string"},
+          "profileDigest": {"type": "string"},
+          "preferences": {"$ref": "#/components/schemas/ModelPreferences"}
+        }
       },
       "Conversation": {
         "type": "object",

@@ -18,6 +18,7 @@ import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -32,10 +33,14 @@ class DeepSeekLiveIT {
         var response = model(apiKey)
                 .invoke(request(
                         snapshot(),
-                        List.of(ModelMessage.text(ModelMessageRole.USER, "Reply with exactly CP01_OK.")),
+                        List.of(
+                                ModelMessage.text(
+                                        ModelMessageRole.USER,
+                                        "Analyze whether 17 multiplied by 19 is greater than 300, then reply with exactly CP01_OK.")),
                         List.of()));
 
         assertThat(response.content()).contains("CP01_OK");
+        assertThat(response.reasoning()).isPresent();
         assertThat(response.usage().inputTokens() + response.usage().outputTokens())
                 .isGreaterThan(0);
     }
@@ -102,13 +107,17 @@ class DeepSeekLiveIT {
 
     private static ResolvedModelSnapshot snapshot() {
         var provider = DeepSeekDefaults.provider();
+        String providerModelId = System.getenv().getOrDefault("HAIFA_DEEPSEEK_MODEL_ID", "deepseek-v4-pro");
+        if (!Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(providerModelId)) {
+            throw new IllegalArgumentException("requested DeepSeek live model is not verified");
+        }
         var definition = provider.models().getFirst();
         return ResolvedModelSnapshot.create(
                 provider.id(),
                 provider.version(),
                 definition.id(),
                 definition.version(),
-                definition.providerModelId(),
+                providerModelId,
                 ModelApiStyles.adapterType(definition.style()),
                 "1.0.0",
                 definition.style(),
@@ -118,9 +127,9 @@ class DeepSeekLiveIT {
                 provider.nativeStreaming(),
                 definition.capabilities(),
                 definition.contextWindow(),
-                64,
+                definition.maxOutputTokens(),
                 provider.options(),
-                Map.of("thinking", "disabled"));
+                Map.of("thinking", "enabled", "reasoning_effort", "high"));
     }
 
     private static AgentChatRequest request(
@@ -133,7 +142,7 @@ class DeepSeekLiveIT {
                 snapshot,
                 messages,
                 tools,
-                64,
+                2_048,
                 Duration.ofSeconds(60),
                 Map.of());
     }

@@ -125,15 +125,81 @@ public final class PersonalApiMapper {
     public PersonalApiDtos.Model model(io.haifa.agent.personalassistant.application.PersonalModelOption value) {
         return new PersonalApiDtos.Model(
                 value.id(),
+                value.modelGroupId(),
+                value.modelDisplayName(),
                 value.displayName(),
                 value.providerId(),
                 value.providerDisplayName(),
+                value.apiStyle(),
+                value.apiStyleDisplayName(),
+                value.availability(),
+                value.unavailableReason(),
                 value.capabilities().stream().sorted().toList(),
-                value.contextWindow());
+                value.contextWindow(),
+                value.maxOutputTokens(),
+                value.preferenceSchemaVersion(),
+                value.profileVersion(),
+                value.profileDigest(),
+                controls(value.controls()),
+                preferences(value.recommendedPreferences()));
+    }
+
+    private PersonalApiDtos.ModelControls controls(
+            io.haifa.agent.personalassistant.application.PersonalModelControls value) {
+        return new PersonalApiDtos.ModelControls(
+                new PersonalApiDtos.ResponseModeControl(
+                        value.responseMode().kind(),
+                        value.responseMode().visible(),
+                        value.responseMode().readOnly(),
+                        value.responseMode().allowedValues().stream()
+                                .map(Enum::name)
+                                .toList(),
+                        value.responseMode().recommendedValue().name(),
+                        value.responseMode().effectiveSummary(),
+                        value.responseMode().helpText()),
+                new PersonalApiDtos.ReasoningEffortControl(
+                        value.reasoningEffort().kind(),
+                        value.reasoningEffort().visible(),
+                        value.reasoningEffort().readOnly(),
+                        value.reasoningEffort().allowedValues().stream()
+                                .map(Enum::name)
+                                .toList(),
+                        value.reasoningEffort().recommendedValue() == null
+                                ? null
+                                : value.reasoningEffort().recommendedValue().name(),
+                        value.reasoningEffort().effectiveSummary(),
+                        value.reasoningEffort().helpText()),
+                new PersonalApiDtos.ResponseLengthControl(
+                        value.responseLength().kind(),
+                        value.responseLength().visible(),
+                        value.responseLength().readOnly(),
+                        value.responseLength().allowedValues().stream()
+                                .map(Enum::name)
+                                .toList(),
+                        value.responseLength().recommendedValue().name(),
+                        value.responseLength().effectiveSummary(),
+                        value.responseLength().helpText()),
+                new PersonalApiDtos.ApiStyleControl(
+                        value.apiStyle().kind(),
+                        value.apiStyle().visible(),
+                        value.apiStyle().readOnly(),
+                        value.apiStyle().allowedValues(),
+                        value.apiStyle().recommendedValue(),
+                        value.apiStyle().effectiveSummary(),
+                        value.apiStyle().helpText()));
+    }
+
+    private PersonalApiDtos.ModelPreferences preferences(
+            io.haifa.agent.personalassistant.application.PersonalModelPreferences value) {
+        return new PersonalApiDtos.ModelPreferences(
+                value.responseMode().name(),
+                value.effort().map(Enum::name).orElse(null),
+                value.responseLength().name());
     }
 
     public PersonalApiDtos.ModelSelection modelSelection(PersonalAssistantApplication.ModelSelectionView value) {
-        return new PersonalApiDtos.ModelSelection(model(value.model()), value.revision(), value.available());
+        return new PersonalApiDtos.ModelSelection(
+                model(value.model()), preferences(value.preferences()), value.revision(), value.available());
     }
 
     public PersonalApiDtos.Turn turn(PersonalAssistantApplication.TurnView value) {

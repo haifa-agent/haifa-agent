@@ -13,7 +13,12 @@ class ModelApiArchitectureTest {
                 .should()
                 .dependOnClassesThat()
                 .resideInAnyPackage(
-                        "com.fasterxml.jackson..", "org.springframework..", "com.openai..", "com.deepseek..")
+                        "com.fasterxml.jackson..",
+                        "org.springframework..",
+                        "com.openai..",
+                        "com.deepseek..",
+                        "io.haifa.agent.personalassistant..",
+                        "io.haifa.agent.coding..")
                 .check(classes);
     }
 }

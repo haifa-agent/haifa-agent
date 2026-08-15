@@ -6,8 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelReasoningEffort;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
+import io.haifa.agent.personalassistant.application.PersonalModelPreferences;
+import io.haifa.agent.personalassistant.application.PersonalModelSelectionRequest;
+import io.haifa.agent.personalassistant.application.PersonalResponseLength;
+import io.haifa.agent.personalassistant.application.PersonalResponseMode;
 import io.haifa.agent.personalassistant.server.configuration.product.PersonalAssistantProperties;
 import io.haifa.agent.sdk.api.SdkConfigurationDigest;
 import io.haifa.agent.sdk.contribution.SdkContributionMetadata;
@@ -176,7 +181,7 @@ class PersonalModelFactoryTest {
     }
 
     @Test
-    void freezesBailianWorkspaceAndRegionAsASecondProvider() {
+    void freezesBailianWorkspaceAndRegionAndExposesTheVerifiedBinding() {
         var deepSeek = provider(
                 "deepseek",
                 "DeepSeek",
@@ -222,10 +227,15 @@ class PersonalModelFactoryTest {
                 .containsEntry("thinking_enabled", true)
                 .containsEntry("preserve_thinking", true)
                 .containsEntry("requires_reasoning_continuation", true);
-        assertThat(platform.catalog().binding("qwen3.7-max-2026-05-17")).get().satisfies(binding -> {
-            assertThat(binding.providerId()).isEqualTo("aliyun-bailian");
-            assertThat(binding.configurationDigest()).startsWith("sha256:");
-        });
+        assertThat(platform.catalog().available().stream()
+                        .filter(model -> model.id().equals("qwen3.7-max-2026-05-17"))
+                        .findFirst())
+                .get()
+                .satisfies(model -> {
+                    assertThat(model.availability()).isEqualTo("AVAILABLE");
+                    assertThat(model.unavailableReason()).isEmpty();
+                });
+        assertThat(platform.catalog().binding("qwen3.7-max-2026-05-17")).isPresent();
     }
 
     @Test
@@ -255,6 +265,52 @@ class PersonalModelFactoryTest {
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("Bailian endpoint");
         }
+    }
+
+    @Test
+    void freezesReviewedKimiAndZhipuControlsWithProtectedToolContinuation() {
+        var kimi = provider(
+                "kimi",
+                "Kimi",
+                true,
+                URI.create("https://api.moonshot.cn/v1"),
+                "env://KIMI_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", OpenAiCompatibleDialects.KIMI, null)),
+                List.of(model("kimi-k3", "Kimi K3", "kimi-k3", "openai-chat-completions", ModelReasoningMode.ENABLED)));
+        var zhipu = provider(
+                "zhipu",
+                "Zhipu GLM",
+                true,
+                URI.create("https://open.bigmodel.cn/api/paas/v4"),
+                "env://BIGMODEL_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", OpenAiCompatibleDialects.ZHIPU, null)),
+                List.of(model(
+                        "glm-5.2-chat", "GLM-5.2", "glm-5.2", "openai-chat-completions", ModelReasoningMode.ADAPTIVE)));
+
+        var platform =
+                PersonalModelFactory.createPlatform(List.of(kimi, zhipu), "kimi-k3", new ObjectMapper(), shell());
+
+        assertThat(platform.contribution().snapshots().get("kimi-k3").invocationOptions())
+                .containsEntry("thinking", "enabled")
+                .containsEntry("requires_reasoning_continuation", true);
+        assertThat(platform.contribution().snapshots().get("glm-5.2-chat").invocationOptions())
+                .containsEntry("thinking", "adaptive")
+                .containsEntry("do_sample", false)
+                .containsEntry("clear_thinking", false)
+                .containsEntry("requires_reasoning_continuation", true);
+        var kimiOption = platform.catalog().find("kimi-k3").orElseThrow();
+        assertThat(kimiOption.controls().responseMode().allowedValues())
+                .containsExactly(PersonalResponseMode.RECOMMENDED, PersonalResponseMode.DEEP);
+        assertThat(kimiOption.controls().reasoningEffort().allowedValues())
+                .containsExactly(ModelReasoningEffort.LOW, ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+        var zhipuOption = platform.catalog().find("glm-5.2-chat").orElseThrow();
+        assertThat(zhipuOption.controls().responseMode().allowedValues())
+                .containsExactly(
+                        PersonalResponseMode.RECOMMENDED, PersonalResponseMode.FAST, PersonalResponseMode.DEEP);
+        assertThat(zhipuOption.controls().reasoningEffort().allowedValues())
+                .containsExactly(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
     }
 
     @Test
@@ -308,6 +364,144 @@ class PersonalModelFactoryTest {
     }
 
     @Test
+    void exposesVerifiedDeepSeekThinkingControlsAndRegistersEveryPreferenceProfile() {
+        var provider = provider(
+                "deepseek",
+                "DeepSeek",
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-chat-completions", OpenAiCompatibleDialects.DEEPSEEK, null)),
+                List.of(model(
+                        "deepseek-chat-pro",
+                        "DeepSeek V4 Pro · Chat Completions",
+                        "deepseek-v4-pro",
+                        "openai-chat-completions",
+                        ModelReasoningMode.ENABLED)));
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(provider), "deepseek-chat-pro", new ObjectMapper(), shell());
+        var option = platform.catalog().available().getFirst();
+
+        assertThat(option.controls().responseMode().readOnly()).isFalse();
+        assertThat(option.controls().responseMode().allowedValues())
+                .containsExactly(
+                        PersonalResponseMode.RECOMMENDED, PersonalResponseMode.FAST, PersonalResponseMode.DEEP);
+        assertThat(option.controls().reasoningEffort().visible()).isTrue();
+        assertThat(option.controls().reasoningEffort().allowedValues())
+                .containsExactly(ModelReasoningEffort.HIGH, ModelReasoningEffort.MAX);
+        assertThat(option.controls().responseMode().effectiveSummary()).isEqualTo("Thinking on · High");
+        assertThat(platform.catalog().runProfiles()).hasSize(20);
+
+        var recommended = platform.catalog().defaultSelection();
+        assertThat(recommended.effectiveParameters().reasoning().mode()).isEqualTo(ModelReasoningMode.ENABLED);
+        assertThat(recommended.effectiveParameters().reasoning().effort()).contains(ModelReasoningEffort.HIGH);
+
+        var fast = platform.catalog()
+                .resolve(new PersonalModelSelectionRequest(
+                        option.id(),
+                        option.preferenceSchemaVersion(),
+                        option.profileVersion(),
+                        option.profileDigest(),
+                        new PersonalModelPreferences(
+                                PersonalResponseMode.FAST,
+                                java.util.Optional.empty(),
+                                PersonalResponseLength.RECOMMENDED)));
+        assertThat(fast.effectiveParameters().reasoning().mode()).isEqualTo(ModelReasoningMode.DISABLED);
+
+        var deep = platform.catalog()
+                .resolve(new PersonalModelSelectionRequest(
+                        option.id(),
+                        option.preferenceSchemaVersion(),
+                        option.profileVersion(),
+                        option.profileDigest(),
+                        new PersonalModelPreferences(
+                                PersonalResponseMode.DEEP,
+                                java.util.Optional.of(ModelReasoningEffort.MAX),
+                                PersonalResponseLength.LONG)));
+        assertThat(deep.effectiveParameters().reasoning().mode()).isEqualTo(ModelReasoningMode.ENABLED);
+        assertThat(deep.effectiveParameters().reasoning().effort()).contains(ModelReasoningEffort.MAX);
+        assertThat(deep.effectiveParameters().maxOutputTokens()).isEqualTo(8_192);
+    }
+
+    @Test
+    void keepsResponsesReasoningControlsReadOnlyUntilItsToggleContractIsVerified() {
+        var provider = provider(
+                "deepseek",
+                "DeepSeek",
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(new PersonalAssistantProperties.ApiBinding(
+                        "openai-responses", "deepseek-openai-responses", null)),
+                List.of(model(
+                        "deepseek-responses-pro",
+                        "DeepSeek V4 Pro · Responses",
+                        "deepseek-v4-pro",
+                        "openai-responses",
+                        ModelReasoningMode.ENABLED)));
+        var platform = PersonalModelFactory.createPlatform(
+                List.of(provider), "deepseek-responses-pro", new ObjectMapper(), shell());
+        var option = platform.catalog().available().getFirst();
+
+        assertThat(option.availability()).isEqualTo("AVAILABLE");
+        assertThat(option.controls().responseMode().readOnly()).isTrue();
+        assertThat(option.controls().responseMode().allowedValues()).containsExactly(PersonalResponseMode.RECOMMENDED);
+        assertThat(option.controls().reasoningEffort().visible()).isFalse();
+        assertThat(platform.catalog().runProfiles()).hasSize(4);
+    }
+
+    @Test
+    void recommendsChatBindingConsistentlyForEveryStyleOfTheSameProviderModel() {
+        var provider = provider(
+                "deepseek",
+                "DeepSeek",
+                true,
+                URI.create("https://api.deepseek.com"),
+                "env://DEEPSEEK_API_KEY",
+                List.of(
+                        new PersonalAssistantProperties.ApiBinding(
+                                "openai-responses", "deepseek-openai-responses", null),
+                        new PersonalAssistantProperties.ApiBinding(
+                                "anthropic-messages",
+                                "deepseek-anthropic-messages",
+                                URI.create("https://api.deepseek.com/anthropic")),
+                        new PersonalAssistantProperties.ApiBinding(
+                                "openai-chat-completions", OpenAiCompatibleDialects.DEEPSEEK, null)),
+                List.of(
+                        model(
+                                "deepseek-responses-pro",
+                                "DeepSeek V4 Pro · Responses",
+                                "deepseek-v4-pro",
+                                "openai-responses",
+                                ModelReasoningMode.ENABLED),
+                        model(
+                                "deepseek-anthropic-pro",
+                                "DeepSeek V4 Pro · Anthropic Messages",
+                                "deepseek-v4-pro",
+                                "anthropic-messages",
+                                ModelReasoningMode.ENABLED),
+                        model(
+                                "deepseek-chat-pro",
+                                "DeepSeek V4 Pro · Chat Completions",
+                                "deepseek-v4-pro",
+                                "openai-chat-completions",
+                                ModelReasoningMode.ENABLED)));
+
+        var options = PersonalModelFactory.createPlatform(
+                        List.of(provider), "deepseek-chat-pro", new ObjectMapper(), shell())
+                .catalog()
+                .available();
+
+        assertThat(options)
+                .extracting(option -> option.controls().apiStyle().recommendedValue())
+                .containsOnly("deepseek-chat-pro");
+        assertThat(options)
+                .allSatisfy(option -> assertThat(option.controls().apiStyle().allowedValues())
+                        .containsExactly("deepseek-chat-pro", "deepseek-anthropic-pro", "deepseek-responses-pro"));
+    }
+
+    @Test
     void permitsInsecureHttpOnlyForExplicitLoopbackModelEndpoints() {
         var loopback = provider(
                 "openai",
@@ -358,6 +552,7 @@ class PersonalModelFactoryTest {
         return new PersonalAssistantProperties.ProviderModel(
                 id,
                 displayName,
+                displayName,
                 providerModelId,
                 style,
                 reasoningMode == ModelReasoningMode.DISABLED
@@ -372,6 +567,7 @@ class PersonalModelFactoryTest {
             String id, String displayName, String providerModelId, String style) {
         return new PersonalAssistantProperties.ProviderModel(
                 id,
+                displayName,
                 displayName,
                 providerModelId,
                 style,

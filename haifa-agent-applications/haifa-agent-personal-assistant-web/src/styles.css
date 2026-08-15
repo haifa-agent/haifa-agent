@@ -1260,6 +1260,23 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   text-overflow: ellipsis;
 }
 .slash-command-options > p { margin: 12px; color: #80899a; font-size: 11px; text-align: center; }
+.model-settings-panel { display: grid; gap: 12px; padding: 10px; }
+.model-setting-summary { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #e2e6ee; border-radius: 12px; background: #f8f9fc; }
+.model-setting-summary > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.model-setting-summary strong { font-size: 13px; }
+.model-setting-summary small, .model-settings-panel fieldset > small, .model-advanced-settings > small { color: #747f92; font-size: 10px; line-height: 1.5; }
+.model-settings-panel fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.model-settings-panel legend { margin-bottom: 7px; color: #35415a; font-size: 11px; font-weight: 750; }
+.model-segmented-control { display: grid; grid-auto-columns: 1fr; grid-auto-flow: column; gap: 4px; padding: 3px; border: 1px solid #dde2ec; border-radius: 10px; background: #f3f5f8; }
+.model-segmented-control button { min-height: 32px; padding: 5px 9px; color: #5e687a; border: 0; border-radius: 7px; background: transparent; cursor: pointer; font: inherit; font-size: 11px; }
+.model-segmented-control button[aria-pressed="true"] { color: #334fbd; background: #fff; box-shadow: 0 1px 5px rgb(30 42 78 / 12%); font-weight: 750; }
+.model-segmented-control button:disabled { cursor: not-allowed; opacity: .65; }
+.model-advanced-settings { padding: 9px 10px; border: 1px solid #e2e6ee; border-radius: 10px; }
+.model-advanced-settings summary { color: #4c5870; cursor: pointer; font-size: 11px; font-weight: 700; }
+.model-advanced-settings label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; margin: 10px 0 5px; color: #5f697b; font-size: 10px; }
+.model-advanced-settings select { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid #d9deea; border-radius: 8px; background: #fff; color: #303b52; }
+.model-settings-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.model-settings-locked { margin: -4px 0 0; color: #a46718; font-size: 10px; text-align: right; }
 .slash-current { display: inline-flex; align-items: center; gap: 4px; color: #39775c; font-size: 10px; font-weight: 700; }
 .slash-command-menu footer {
   display: flex;
@@ -1851,7 +1868,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 5px;
   padding: 10px 8px;
 }
-.admin-kind-list button {
+.admin-kind-list button, .admin-model-provider {
   width: 100%;
   display: flex;
   align-items: center;
@@ -1870,8 +1887,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-color: #bfdbfe;
   background: #eff6ff;
 }
-.admin-kind-list button span { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 750; }
-.admin-kind-list button strong {
+.admin-kind-list button span, .admin-model-provider span { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 750; }
+.admin-kind-list button strong, .admin-model-provider strong {
   min-width: 24px;
   padding: 3px 6px;
   color: #475569;
@@ -1879,6 +1896,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   text-align: center;
   border-radius: 999px;
   background: #e8eef6;
+}
+.admin-model-boundary {
+  margin: auto 10px 12px;
+  padding: 12px;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.55;
+  border: 1px solid #e3e9f1;
+  border-radius: 10px;
+  background: #f8fafc;
 }
 .admin-catalog-digests {
   margin: auto 10px 12px;
@@ -1952,6 +1979,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-radius: 999px;
   background: #eaf8f0;
 }
+.admin-capability-ready.failed { color: #b42318; background: #fef0ee; }
 .admin-capability-description {
   margin: 16px 0;
   color: #4b5870;
@@ -2029,6 +2057,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 @media (max-width: 760px) {
+  .model-settings-panel { padding: 8px; }
+  .model-segmented-control { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .model-settings-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .topbar { padding: 0 9px; }
   .brand span, .connection { display: none; }
   .brand strong { max-width: 160px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

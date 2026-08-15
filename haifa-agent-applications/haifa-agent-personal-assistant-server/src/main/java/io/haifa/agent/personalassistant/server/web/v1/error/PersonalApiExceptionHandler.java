@@ -1,5 +1,6 @@
 package io.haifa.agent.personalassistant.server.web.v1.error;
 
+import io.haifa.agent.model.api.ModelParameterResolutionException;
 import io.haifa.agent.personalassistant.application.mission.MissionException;
 import io.haifa.agent.personalassistant.server.web.v1.dto.PersonalApiDtos;
 import io.haifa.agent.sdk.api.HaifaAgentException;
@@ -70,8 +71,29 @@ public final class PersonalApiExceptionHandler {
                 exchange.getRequest().getPath().value(),
                 exception.getClass().getName(),
                 origin(exception));
-        return ResponseEntity.badRequest()
-                .body(new PersonalApiDtos.Error("INVALID_REQUEST", "The request is invalid.", correlation));
+        String candidate = exception.getMessage();
+        String code = candidate != null && candidate.matches("[A-Z][A-Z0-9_]{2,63}") ? candidate : "INVALID_REQUEST";
+        HttpStatus status = code.contains("STALE")
+                ? HttpStatus.PRECONDITION_FAILED
+                : code.contains("UNAVAILABLE") ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status)
+                .body(new PersonalApiDtos.Error(code, "The request is invalid.", correlation));
+    }
+
+    @ExceptionHandler(ModelParameterResolutionException.class)
+    ResponseEntity<PersonalApiDtos.Error> modelParameters(
+            ModelParameterResolutionException exception, ServerWebExchange exchange) {
+        String code =
+                switch (exception.failure()) {
+                    case PROFILE_UNAVAILABLE, BINDING_MISMATCH -> "MODEL_PROFILE_UNAVAILABLE";
+                    case PROFILE_STALE -> "MODEL_PROFILE_STALE";
+                    default -> "MODEL_PARAMETER_UNSUPPORTED";
+                };
+        HttpStatus status = "MODEL_PROFILE_STALE".equals(code)
+                ? HttpStatus.PRECONDITION_FAILED
+                : "MODEL_PROFILE_UNAVAILABLE".equals(code) ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status)
+                .body(new PersonalApiDtos.Error(code, "The model preferences are invalid.", correlation(exchange)));
     }
 
     @ExceptionHandler(ServerWebInputException.class)

@@ -10,6 +10,7 @@ import com.sun.net.httpserver.HttpServer;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.CredentialRef;
+import io.haifa.agent.model.api.EffectiveModelParameters;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
@@ -19,6 +20,8 @@ import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessage;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelProviderDefinition;
+import io.haifa.agent.model.api.ModelReasoningEffort;
+import io.haifa.agent.model.api.ModelReasoningPolicy;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ResolvedCredential;
@@ -93,6 +96,63 @@ class AliyunBailianOpenAiChatTest {
         assertThat(result.usage().cacheHitTokens()).isEqualTo(6);
         assertThat(result.usage().reasoningTokens()).isEqualTo(2);
         assertThat(result.toString()).doesNotContain("private thought");
+    }
+
+    @Test
+    void acceptsEffectiveProfileMetadataWhileMappingOnlyBailianRequestFields() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"bailian-effective","model":"configured-qwen","choices":[{"finish_reason":"stop",
+                 "message":{"content":"answer"}}],"usage":{"prompt_tokens":10,"completion_tokens":4}}
+                """));
+        var base = snapshot(provider);
+        var effective = new EffectiveModelParameters(
+                base.modelId(),
+                "1.0",
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ModelReasoningPolicy.enabled(ModelReasoningEffort.HIGH),
+                8192);
+
+        model(provider).invoke(request(base.withEffectiveParameters(effective), Map.of()));
+
+        JsonNode sent = json.readTree(body.get());
+        assertThat(sent.path("enable_thinking").asBoolean()).isTrue();
+        assertThat(sent.path("reasoning_effort").asText()).isEqualTo("high");
+        assertThat(sent.has("profile_version")).isFalse();
+        assertThat(sent.has("profile_digest")).isFalse();
+    }
+
+    @Test
+    void keepsHybridContinuationPolicyDormantWhenEffectiveThinkingIsDisabled() throws Exception {
+        response.set(
+                Response.json(
+                        200,
+                        """
+                {"id":"bailian-fast","model":"configured-qwen","choices":[{"finish_reason":"stop",
+                 "message":{"content":"answer"}}],"usage":{"prompt_tokens":10,"completion_tokens":4}}
+                """));
+        var configured = provider(
+                provider.endpoint(),
+                OpenAiCompatibleDialects.configuredInvocationOptions(
+                        OpenAiCompatibleDialects.ALIYUN_BAILIAN, io.haifa.agent.model.api.ModelReasoningMode.ADAPTIVE));
+        var base = snapshot(configured);
+        var effective = new EffectiveModelParameters(
+                base.modelId(),
+                "1.0",
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                ModelReasoningPolicy.disabled(),
+                8192);
+
+        model(configured).invoke(request(base.withEffectiveParameters(effective), Map.of()));
+
+        JsonNode sent = json.readTree(body.get());
+        assertThat(sent.path("enable_thinking").asBoolean()).isFalse();
+        assertThat(sent.has("preserve_thinking")).isFalse();
+        assertThat(base.invocationOptions())
+                .containsEntry("preserve_thinking", true)
+                .containsEntry("requires_reasoning_continuation", true);
     }
 
     @Test

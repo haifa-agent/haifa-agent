@@ -1,8 +1,8 @@
 # Changelog
 
-
-- 暂不暴露没有消费方的 Agent `description` 元数据：移除 SDK/Starter 字段、Builder 方法和 Spring 属性；
-  保留 `name` 作为宿主展示值与便利 Conversation display name，Tool/Skill description 不受影响。
+- Personal Assistant 模型选择改为 Provider → 模型 → 设置的后端 Profile 驱动体验；DeepSeek V4 Flash/Pro
+  的 Chat 与 Anthropic Binding 支持推荐/快速/深度和 high/max，Responses 作为高级连接方式保持推理只读；
+  首轮 Conversation 原子保存精确 Binding 与偏好，raw reasoning 只在受保护 Tool continuation/恢复链内流转。
 - SDK 新增 `chat(message, Record.class)` 类型化最终输出：复用 Java record Schema/Codec，把输出契约冻结进
   Run 配置，由 OpenAI-compatible Adapter 映射并在 Runtime 终态校验、持久化后解码；Tool Loop 不受最终
   Schema 限制，不提供类型化 partial stream，Unsupported/Invalid/Refusal/Truncation 保持稳定分类。

@@ -3,6 +3,7 @@ import {
   Bot,
   Boxes,
   CircleAlert,
+  Cpu,
   Database,
   ListTree,
   RefreshCw,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AdminCapabilityDetail } from "./admin/AdminCapabilityDetail";
+import { AdminModelDetail } from "./admin/AdminModelDetail";
 import { AdminTraceTree } from "./admin/AdminTraceTree";
 import {
   HttpPersonalAdminClient,
@@ -20,6 +22,7 @@ import {
 import type {
   AdminCapabilities,
   AdminCapabilityKind,
+  AdminModels,
   AdminRun,
   AdminSession,
   AdminTrace,
@@ -90,6 +93,8 @@ export default function AdminApp({
 }) {
   const capabilityMode = window.location.pathname.replace(/\/+$/, "")
     .endsWith("/capabilities");
+  const modelMode = window.location.pathname.replace(/\/+$/, "")
+    .endsWith("/models");
   const initial = initialSelection();
   const initialCapability = initialCapabilitySelection();
   const [sessions, setSessions] = useState<AdminSession[]>([]);
@@ -111,9 +116,12 @@ export default function AdminApp({
     initialCapability.capabilityId,
   );
   const [capabilityQuery, setCapabilityQuery] = useState("");
+  const [models, setModels] = useState<AdminModels | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [modelQuery, setModelQuery] = useState("");
 
   useEffect(() => {
-    if (capabilityMode) return;
+    if (capabilityMode || modelMode) return;
     const controller = new AbortController();
     setLoading(true);
     setError(null);
@@ -150,7 +158,7 @@ export default function AdminApp({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [capabilityMode, client, refreshVersion]);
+  }, [capabilityMode, client, modelMode, refreshVersion]);
 
   useEffect(() => {
     if (!capabilityMode) return;
@@ -177,6 +185,31 @@ export default function AdminApp({
       });
     return () => controller.abort();
   }, [capabilityMode, client, refreshVersion]);
+
+  useEffect(() => {
+    if (!modelMode) return;
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    void client.models(controller.signal)
+      .then((value) => {
+        setModels(value);
+        setSelectedModelId((current) =>
+          value.bindings.some((item) => item.id === current)
+            ? current
+            : value.bindings[0]?.id ?? null,
+        );
+      })
+      .catch((value: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(value instanceof Error ? value.message : "模型诊断加载失败");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [client, modelMode, refreshVersion]);
 
   const chooseSession = async (sessionId: string) => {
     setLoading(true);
@@ -241,6 +274,20 @@ export default function AdminApp({
   }, [capabilities, capabilityQuery, selectedKind]);
   const selectedCapability = capabilities?.registrations
     .find((item) => item.id === selectedCapabilityId) ?? null;
+  const visibleModels = useMemo(() => {
+    const normalized = modelQuery.trim().toLocaleLowerCase();
+    return (models?.bindings ?? []).filter((item) => !normalized ||
+      item.modelDisplayName.toLocaleLowerCase().includes(normalized) ||
+      item.providerDisplayName.toLocaleLowerCase().includes(normalized) ||
+      item.apiStyleDisplayName.toLocaleLowerCase().includes(normalized));
+  }, [modelQuery, models]);
+  const selectedModel = models?.bindings.find((item) => item.id === selectedModelId) ?? null;
+  const providerCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    models?.bindings.forEach((item) =>
+      counts.set(item.providerDisplayName, (counts.get(item.providerDisplayName) ?? 0) + 1));
+    return [...counts.entries()];
+  }, [models]);
 
   const chooseCapabilityKind = (kind: AdminCapabilityKind) => {
     const capabilityId = capabilities?.registrations
@@ -264,15 +311,18 @@ export default function AdminApp({
             <span className="admin-brand-icon"><Bot size={19} /></span>
             <div>
               <strong>Haifa Agent</strong>
-              <span>{capabilityMode ? "Registered Capabilities" : "Run Diagnostics"}</span>
+              <span>{modelMode ? "Model Profiles" : capabilityMode ? "Registered Capabilities" : "Run Diagnostics"}</span>
             </div>
           </div>
           <nav className="admin-primary-nav" aria-label="Admin 功能">
-            <a className={!capabilityMode ? "selected" : ""} href="/admin/">
+            <a className={!capabilityMode && !modelMode ? "selected" : ""} href="/admin/">
               <ListTree size={14} />Runs
             </a>
             <a className={capabilityMode ? "selected" : ""} href="/admin/capabilities">
               <Boxes size={14} />Capabilities
+            </a>
+            <a className={modelMode ? "selected" : ""} href="/admin/models">
+              <Cpu size={14} />Models
             </a>
           </nav>
         </div>
@@ -290,7 +340,7 @@ export default function AdminApp({
         </button>
       </header>
 
-      {!capabilityMode && <div className="admin-workspace">
+      {!capabilityMode && !modelMode && <div className="admin-workspace">
         <aside className="admin-rail sessions" aria-label="Sessions">
           <div className="admin-rail-heading">
             <span>SESSIONS</span><strong>{sessions.length}</strong>
@@ -466,6 +516,74 @@ export default function AdminApp({
               <div className="admin-loading">
                 <RefreshCw className="spin" size={20} />正在读取冻结注册快照…
               </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {modelMode && (
+        <div className="admin-capability-workspace">
+          <aside className="admin-rail admin-kind-rail" aria-label="模型 Provider">
+            <div className="admin-rail-heading">
+              <span>MODEL PROVIDERS</span>
+              <strong>{providerCounts.length}</strong>
+            </div>
+            <div className="admin-kind-list">
+              {providerCounts.map(([provider, count]) => (
+                <div className="admin-model-provider" key={provider}>
+                  <span><Bot size={16} />{provider}</span><strong>{count}</strong>
+                </div>
+              ))}
+            </div>
+            <p className="admin-model-boundary">
+              仅展示安全的 Binding、版本与验证元数据；连接、凭据和推理正文保持隐藏。
+            </p>
+          </aside>
+
+          <aside className="admin-rail admin-capability-list-rail" aria-label="模型 Binding">
+            <div className="admin-rail-heading">
+              <span>MODEL BINDINGS</span>
+              <strong>{models?.bindings.length ?? 0}</strong>
+            </div>
+            <label className="admin-search">
+              <Search size={15} />
+              <input
+                aria-label="搜索模型 Binding"
+                placeholder="按模型、Provider 或 API Style 搜索"
+                value={modelQuery}
+                onChange={(event) => setModelQuery(event.target.value)}
+              />
+            </label>
+            <div className="admin-list">
+              {visibleModels.map((model) => (
+                <button
+                  className={`admin-list-item admin-capability-item ${model.id === selectedModelId ? "selected" : ""}`}
+                  key={model.id}
+                  type="button"
+                  onClick={() => setSelectedModelId(model.id)}
+                >
+                  <span className="admin-list-title">{model.modelDisplayName}</span>
+                  <span className="admin-objective">{model.apiStyleDisplayName}</span>
+                  <span>
+                    {model.profileVersion}
+                    <i className={`admin-status ${model.validationStatus === "VERIFIED" ? "succeeded" : "failed"}`}>
+                      {model.validationStatus}
+                    </i>
+                  </span>
+                </button>
+              ))}
+              {!visibleModels.length && <p className="admin-empty">没有匹配的模型 Binding</p>}
+            </div>
+          </aside>
+
+          <section className="admin-main admin-capability-main">
+            {error && <div className="admin-error"><CircleAlert size={17} />{error}</div>}
+            {selectedModel && <AdminModelDetail model={selectedModel} />}
+            {!selectedModel && !loading && !error && (
+              <div className="admin-empty large">当前没有可展示的模型诊断数据。</div>
+            )}
+            {loading && (
+              <div className="admin-loading"><RefreshCw className="spin" size={20} />正在读取模型 Profile…</div>
             )}
           </section>
         </div>

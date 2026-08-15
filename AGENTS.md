@@ -123,7 +123,10 @@ testing 位于 Reactor 末端，可按测试需要依赖产品模块；产品模
 - `AgentRunSnapshot` 是运行中视图，`AgentRunResult` 是最终结构化结果，`AgentRunHandle` 只是查询、等待和控制的便利层。
 - 公共 `AgentRunRequest` 不允许注入 Tenant、Principal 或配置快照引用；这些信息从可信 Caller Context 解析。
 - Tool Call/Result 必须保留关联 ID；有副作用且结果不确定的工具不得盲目自动重放。
-- 不要启用 DeepSeek thinking。启用前必须先补齐 `reasoning_content` 在消息、Tool Call、Checkpoint、恢复与安全审计中的持久语义。
+- DeepSeek thinking 只能按 `HAIFA-ADR-023` 对精确验证的产品 Binding 开放；Personal Assistant 当前只允许
+  V4 Flash/Pro 的 Chat Completions 与 Anthropic Messages 使用推荐/快速/深度，Responses reasoning 只读，
+  其他产品继续保持各自既有默认。`reasoning_content` 只在受保护的 Tool continuation、Checkpoint 与恢复链
+  内传递，不得进入公共 DTO、日志、Activity、Admin、测试输出或浏览器。
 - 测试和日志不得输出 API Key、完整 Prompt、凭据内容或原始供应商响应。
 - 新增依赖前检查它应归属纯 Java BOM 还是 Spring BOM，并确认没有破坏模块边界。
 

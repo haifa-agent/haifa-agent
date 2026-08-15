@@ -4,6 +4,7 @@ import AdminApp from "./AdminApp";
 import type { PersonalAdminClient } from "./admin/client";
 import type {
   AdminCapabilities,
+  AdminModels,
   AdminRun,
   AdminSession,
   AdminTrace,
@@ -120,12 +121,38 @@ const capabilities: AdminCapabilities = {
   ],
 };
 
+const models: AdminModels = {
+  bindings: [
+    {
+      id: "deepseek-v4-flash-openai-chat",
+      modelGroupId: "deepseek:deepseek-v4-flash",
+      modelDisplayName: "DeepSeek V4 Flash",
+      displayName: "DeepSeek V4 Flash Chat",
+      providerId: "deepseek",
+      providerDisplayName: "DeepSeek",
+      apiStyle: "openai-chat-completions",
+      apiStyleDisplayName: "Chat Completions",
+      availability: "AVAILABLE",
+      safeErrorCode: null,
+      capabilities: ["TEXT_CHAT", "TOOL_CALLING", "REASONING"],
+      contextWindow: 131072,
+      maxOutputTokens: 8192,
+      preferenceSchemaVersion: "pa-model-preference-v1",
+      profileVersion: "deepseek-v4-flash-chat-v1",
+      profileDigest: "sha256:admin-safe-profile-digest",
+      validationStatus: "VERIFIED",
+      lastVerifiedOn: "2026-08-13",
+    },
+  ],
+};
+
 function client(): PersonalAdminClient {
   return {
     sessions: vi.fn(async () => [session]),
     runs: vi.fn(async () => [run]),
     trace: vi.fn(async () => trace),
     capabilities: vi.fn(async () => capabilities),
+    models: vi.fn(async () => models),
   };
 }
 
@@ -178,5 +205,20 @@ describe("Personal Assistant Admin application", () => {
     expect(api.capabilities).toHaveBeenCalled();
     expect(api.sessions).not.toHaveBeenCalled();
     expect(new URL(window.location.href).searchParams.get("kind")).toBe("skill");
+  });
+
+  it("shows safe model profile and validation metadata without loading run data", async () => {
+    window.history.replaceState(null, "", "/admin/models");
+    const api = client();
+    render(<AdminApp client={api} />);
+
+    expect((await screen.findAllByText("DeepSeek V4 Flash")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("deepseek-v4-flash-chat-v1").length).toBeGreaterThan(0);
+    expect(screen.getByText("pa-model-preference-v1")).toBeTruthy();
+    expect(screen.getByText("2026-08-13")).toBeTruthy();
+    expect(screen.getByText("sha256:admin-safe-profile-digest")).toBeTruthy();
+    expect(api.models).toHaveBeenCalled();
+    expect(api.sessions).not.toHaveBeenCalled();
+    expect(screen.queryByText(/apiKey|credential|reasoning_content/)).toBeNull();
   });
 });

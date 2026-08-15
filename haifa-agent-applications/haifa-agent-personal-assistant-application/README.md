@@ -1,5 +1,17 @@
 # Haifa Personal Assistant Application
 
+## Conversation model preferences
+
+A Conversation stores one exact binding ID, preference schema version, closed PA user preferences, preference digest,
+revision, and idempotency evidence. The application resolves those preferences through the shared model profile
+resolver before each new run and freezes the resulting effective parameters into that run's model snapshot. Switching
+is rejected while a run is active; existing and resumed runs continue to use their original snapshot.
+
+For exact verified DeepSeek Chat Completions and Anthropic Messages bindings, PA maps `RECOMMENDED` to
+thinking/high, `FAST` to thinking disabled, and `DEEP` to thinking with high or max effort. Response length remains a
+closed product preference and is clamped by the binding profile. Responses bindings can be selectable while their
+reasoning control remains read-only. Provider fields and raw token values never enter PA preferences.
+
 Activity projection now correlates lifecycle events by stable Model/Tool/Execution operation ID,
 retains the durable event ID and parent Tool relationship, and folds requested/started/completed
 timestamps into one activity. Run views also include the caller-visible authoritative Plan/Todo
@@ -8,6 +20,11 @@ snapshot when one exists; no plan is synthesized from prompts or event counts.
 The safe Activity projection includes durable Model, Tool, Skill, and MCP lifecycle
 events. Model activities expose only model identity, physical attempt coordinates,
 status, token counts, finish reason, and normalized failure codes.
+
+`PersonalModelOption` keeps the exact Profile status and last verified date alongside the version and digest. Product
+HTTP mappings may expose only the fields needed by their surface: ordinary PA model selection remains control-driven,
+while the loopback Admin projection can show safe validation metadata without accessing provider connections,
+credentials, or reasoning content.
 
 Conversation 保存受信任的内部 Model ID 偏好。新 Conversation 可显式选择模型；空闲态切换使用独立
 revision 和幂等键，只影响下一 Turn 的新 Run。模型缺失时新 Run fail closed，历史 Run 仍使用原快照。

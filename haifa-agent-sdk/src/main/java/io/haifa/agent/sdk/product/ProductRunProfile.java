@@ -3,6 +3,7 @@ package io.haifa.agent.sdk.product;
 import io.haifa.agent.core.run.AgentRunBudget;
 import io.haifa.agent.core.run.AgentRunLimits;
 import io.haifa.agent.core.run.AgentRunType;
+import io.haifa.agent.model.api.EffectiveModelParameters;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,6 +21,7 @@ public record ProductRunProfile(
         AgentRunBudget budget,
         AgentRunLimits limits,
         Map<String, Object> modelRequestOptions,
+        Optional<EffectiveModelParameters> effectiveModelParameters,
         Optional<Set<String>> allowedTools) {
     public ProductRunProfile(
             String id,
@@ -29,7 +31,19 @@ public record ProductRunProfile(
             AgentRunBudget budget,
             AgentRunLimits limits,
             Map<String, Object> modelRequestOptions) {
-        this(id, version, modelId, runType, budget, limits, modelRequestOptions, Optional.empty());
+        this(id, version, modelId, runType, budget, limits, modelRequestOptions, Optional.empty(), Optional.empty());
+    }
+
+    public ProductRunProfile(
+            String id,
+            String version,
+            String modelId,
+            AgentRunType runType,
+            AgentRunBudget budget,
+            AgentRunLimits limits,
+            Map<String, Object> modelRequestOptions,
+            Optional<Set<String>> allowedTools) {
+        this(id, version, modelId, runType, budget, limits, modelRequestOptions, Optional.empty(), allowedTools);
     }
 
     public ProductRunProfile {
@@ -41,6 +55,12 @@ public record ProductRunProfile(
         limits = Objects.requireNonNull(limits, "limits must not be null");
         modelRequestOptions =
                 freezeMap(Objects.requireNonNull(modelRequestOptions, "modelRequestOptions must not be null"));
+        effectiveModelParameters =
+                Objects.requireNonNull(effectiveModelParameters, "effectiveModelParameters must not be null");
+        if (effectiveModelParameters.isPresent()
+                && !effectiveModelParameters.orElseThrow().bindingId().value().equals(modelId)) {
+            throw new IllegalArgumentException("effectiveModelParameters must target modelId");
+        }
         allowedTools = Objects.requireNonNull(allowedTools, "allowedTools must not be null")
                 .map(ProductRunProfile::freezeToolAliases);
     }

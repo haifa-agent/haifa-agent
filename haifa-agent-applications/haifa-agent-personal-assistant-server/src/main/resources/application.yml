@@ -60,33 +60,53 @@ haifa:
             endpoint: https://api.deepseek.com/anthropic
         models:
           - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_ID:deepseek-chat-pro}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME:DeepSeek Chat Pro}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_DISPLAYNAME:DeepSeek V4 Pro · Chat Completions}
+            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_MODELDISPLAYNAME:DeepSeek V4 Pro}
             provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID:deepseek-v4-pro}
             style: openai-chat-completions
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
           - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID:deepseek-chat-flash}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME:DeepSeek Chat Flash}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME:DeepSeek V4 Flash · Chat Completions}
+            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_MODELDISPLAYNAME:DeepSeek V4 Flash}
             provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID:deepseek-v4-flash}
             style: openai-chat-completions
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
           - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_ID:deepseek-responses-flash}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_DISPLAYNAME:DeepSeek Responses Flash}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_DISPLAYNAME:DeepSeek V4 Flash · Responses}
+            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_MODELDISPLAYNAME:DeepSeek V4 Flash}
             provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_2_PROVIDERMODELID:deepseek-v4-flash}
             style: openai-responses
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
           - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_ID:deepseek-anthropic-flash}
-            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_DISPLAYNAME:DeepSeek Anthropic Messages Flash}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_DISPLAYNAME:DeepSeek V4 Flash · Anthropic Messages}
+            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_MODELDISPLAYNAME:DeepSeek V4 Flash}
             provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_3_PROVIDERMODELID:deepseek-v4-flash}
             style: anthropic-messages
             capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
+          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_ID:deepseek-responses-pro}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_DISPLAYNAME:DeepSeek V4 Pro · Responses}
+            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_MODELDISPLAYNAME:DeepSeek V4 Pro}
+            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_4_PROVIDERMODELID:deepseek-v4-pro}
+            style: openai-responses
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 1048576
+            max-output-tokens: 393216
+          - id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_ID:deepseek-anthropic-pro}
+            display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_DISPLAYNAME:DeepSeek V4 Pro · Anthropic Messages}
+            model-display-name: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_MODELDISPLAYNAME:DeepSeek V4 Pro}
+            provider-model-id: ${HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_5_PROVIDERMODELID:deepseek-v4-pro}
+            style: anthropic-messages
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            context-window: 1048576
+            max-output-tokens: 393216
     default-model-id: ${HAIFA_PERSONAL_DEFAULT_MODEL_ID:deepseek-chat-flash}
     allow-insecure-loopback-model: ${HAIFA_PERSONAL_ALLOW_INSECURE_LOOPBACK_MODEL:true}
     web:

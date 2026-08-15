@@ -1,6 +1,7 @@
 package io.haifa.agent.personalassistant.server.web.admin.v1.dto;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -50,6 +51,28 @@ public final class PersonalAdminDtos {
             Map<String, Object> details) {}
 
     public record CapabilityAttribute(String label, String value, String tone) {}
+
+    public record Models(List<ModelBinding> bindings) {}
+
+    public record ModelBinding(
+            String id,
+            String modelGroupId,
+            String modelDisplayName,
+            String displayName,
+            String providerId,
+            String providerDisplayName,
+            String apiStyle,
+            String apiStyleDisplayName,
+            String availability,
+            Optional<String> safeErrorCode,
+            List<String> capabilities,
+            int contextWindow,
+            int maxOutputTokens,
+            String preferenceSchemaVersion,
+            String profileVersion,
+            String profileDigest,
+            String validationStatus,
+            LocalDate lastVerifiedOn) {}
 
     public record MissionOperations(
             String dispatcherStatus,

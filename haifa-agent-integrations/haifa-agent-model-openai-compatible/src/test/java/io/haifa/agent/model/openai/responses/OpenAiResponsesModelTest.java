@@ -200,6 +200,33 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void acceptsEmptyTextAndReasoningDeltasFromCompatibleStreams() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"type":"response.created","sequence_number":0,"response":{"id":"resp-empty-delta","status":"in_progress"}}
+
+                data: {"type":"response.reasoning_text.delta","sequence_number":1,"item_id":"reasoning-1","output_index":0,"content_index":0,"delta":""}
+
+                data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg-1","output_index":1,"content_index":0,"delta":""}
+
+                data: {"type":"response.completed","sequence_number":3,"response":{"id":"resp-empty-delta","status":"completed","model":"gpt-test","output":[{"id":"msg-1","type":"message","content":[{"type":"output_text","text":"ready"}]}],"usage":{"input_tokens":2,"output_tokens":1}}}
+
+                """));
+        List<ModelStreamEvent> events = new ArrayList<>();
+
+        var actual = model().invokeStreaming(simpleRequest(standardSnapshot(true)), event -> {
+            events.add(event);
+            return ModelStreamControl.CONTINUE;
+        });
+
+        assertThat(actual.content()).isEqualTo("ready");
+        assertThat(events)
+                .extracting(event -> event.getClass().getSimpleName())
+                .containsExactly("Started", "UsageReported");
+    }
+
+    @Test
     void bridgesSynchronousResponsesWhenProviderDisablesNativeStreaming() throws Exception {
         response.set(
                 Response.json(
@@ -256,8 +283,8 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
-    void deepSeekRejectsUnverifiedModelAndNonAutomaticToolChoiceBeforeNetwork() {
-        assertThatThrownBy(() -> model().invoke(simpleRequest(deepSeekSnapshot("deepseek-v4-pro"))))
+    void deepSeekRejectsUnknownModelAndNonAutomaticToolChoiceBeforeNetwork() {
+        assertThatThrownBy(() -> model().invoke(simpleRequest(deepSeekSnapshot("deepseek-future"))))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not verified");
         var tool = new ModelToolSpecification("lookup", "1", "Lookup", "schema", "1", Map.of("type", "object"), false);

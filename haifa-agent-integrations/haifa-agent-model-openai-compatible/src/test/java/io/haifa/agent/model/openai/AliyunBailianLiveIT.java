@@ -48,8 +48,8 @@ class AliyunBailianLiveIT {
                         modelId,
                         "Bailian Live Model",
                         EnumSet.of(ModelCapability.TEXT_CHAT),
-                        32_768,
-                        64,
+                        131_072,
+                        8_192,
                         Map.of("thinking_profile", "none", "thinking_enabled", false))));
         var definition = provider.models().getFirst();
         var adapter = new OpenAiCompatibleChatModel(
@@ -84,12 +84,15 @@ class AliyunBailianLiveIT {
                 1,
                 1,
                 snapshot,
-                List.of(ModelMessage.text(ModelMessageRole.USER, "Reply with the single word OK.")),
+                List.of(
+                        ModelMessage.text(
+                                ModelMessageRole.USER,
+                                "Analyze whether 17 multiplied by 19 is greater than 300, then reply with exactly BAILIAN_OK.")),
                 List.of(),
-                64,
+                2_048,
                 Duration.ofSeconds(60),
                 Map.of()));
 
-        assertThat(result.content()).isNotBlank();
+        assertThat(result.content()).contains("BAILIAN_OK");
     }
 }

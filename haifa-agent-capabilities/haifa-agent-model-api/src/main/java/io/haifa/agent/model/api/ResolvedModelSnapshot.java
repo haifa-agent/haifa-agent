@@ -7,6 +7,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -144,6 +145,45 @@ public record ResolvedModelSnapshot(
                 frozenProviderOptions,
                 frozenInvocationOptions,
                 digest);
+    }
+
+    /** Derives a run-specific snapshot from a trusted, profile-validated parameter set. */
+    public ResolvedModelSnapshot withEffectiveParameters(EffectiveModelParameters parameters) {
+        Objects.requireNonNull(parameters, "parameters must not be null");
+        if (!modelId.equals(parameters.bindingId())) {
+            throw new IllegalArgumentException("effective parameters target a different model binding");
+        }
+        if (parameters.maxOutputTokens() > maxOutputTokens) {
+            throw new IllegalArgumentException("effective output token limit exceeds the binding limit");
+        }
+        Map<String, Object> options = new LinkedHashMap<>(invocationOptions);
+        options.keySet()
+                .removeAll(Set.of(
+                        "thinking",
+                        "reasoning_effort",
+                        "reasoning_token_budget",
+                        EffectiveModelParameters.PROFILE_VERSION_OPTION,
+                        EffectiveModelParameters.PROFILE_DIGEST_OPTION,
+                        EffectiveModelParameters.MAX_OUTPUT_TOKENS_OPTION));
+        options.putAll(parameters.frozenOptions());
+        return create(
+                providerId,
+                providerVersion,
+                modelId,
+                modelVersion,
+                providerModelId,
+                adapterType,
+                adapterVersion,
+                apiStyle,
+                dialect,
+                endpoint,
+                credentialRef,
+                nativeStreaming,
+                capabilities,
+                contextWindow,
+                parameters.maxOutputTokens(),
+                providerOptions,
+                options);
     }
 
     private static URI normalizeEndpoint(URI endpoint) {

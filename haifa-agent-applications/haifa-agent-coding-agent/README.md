@@ -1,5 +1,13 @@
 # Haifa Coding Agent
 
+## Shared model profile readiness
+
+Coding model preferences remain product-owned and this phase does not add `/thinking`, change the Session Store, or
+change Terminal UI. A compile-time architecture test imports the public `ModelBindingProfile` and
+`DefaultModelParameterResolver` contracts and verifies that Model API/Core have no Personal Assistant dependency.
+Future Coding controls can therefore reuse the common validation and snapshot semantics without copying PA DTOs or
+provider dialect logic.
+
 ## Prompt-first 自主交付
 
 Coding Agent 的基础工作方法由产品拥有的版本化资源

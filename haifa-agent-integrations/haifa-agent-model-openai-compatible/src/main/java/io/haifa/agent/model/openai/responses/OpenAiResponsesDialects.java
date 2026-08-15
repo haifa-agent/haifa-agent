@@ -12,6 +12,7 @@ import java.util.Set;
 public final class OpenAiResponsesDialects {
     public static final String STANDARD = ModelApiBindingDefinition.STANDARD_DIALECT;
     public static final String DEEPSEEK = "deepseek-openai-responses";
+    public static final String ALIYUN_BAILIAN = "aliyun-bailian-openai-responses";
 
     private OpenAiResponsesDialects() {}
 
@@ -25,13 +26,20 @@ public final class OpenAiResponsesDialects {
                 switch (snapshot.dialect()) {
                     case STANDARD -> Profile.STANDARD;
                     case DEEPSEEK -> Profile.DEEPSEEK;
+                    case ALIYUN_BAILIAN -> Profile.ALIYUN_BAILIAN;
                     default ->
                         throw new IllegalArgumentException(
                                 "unsupported OpenAI Responses dialect: " + snapshot.dialect());
                 };
         validateEndpoint(snapshot.endpoint(), allowInsecureHttp, profile);
-        if (profile == Profile.DEEPSEEK && !"deepseek-v4-flash".equals(snapshot.providerModelId())) {
+        if (profile == Profile.DEEPSEEK
+                && !Set.of("deepseek-v4-flash", "deepseek-v4-pro").contains(snapshot.providerModelId())) {
             throw new IllegalArgumentException("DeepSeek Responses model profile is not verified");
+        }
+        if (profile == Profile.ALIYUN_BAILIAN
+                && !Set.of("qwen3.8-max-preview", "qwen3.7-max", "qwen3.7-max-2026-05-17", "qwen3.7-plus")
+                        .contains(snapshot.providerModelId())) {
+            throw new IllegalArgumentException("Bailian Responses model profile is not verified");
         }
         return profile;
     }
@@ -61,6 +69,15 @@ public final class OpenAiResponsesDialects {
                         || !normalizedPath(value).isEmpty())) {
             throw new IllegalArgumentException("DeepSeek Responses endpoint must be https://api.deepseek.com");
         }
+        if (profile == Profile.ALIYUN_BAILIAN && !loopback) {
+            String normalizedHost = host.toLowerCase(Locale.ROOT);
+            boolean workspaceHost = normalizedHost.matches("[a-z0-9-]+\\.[a-z0-9-]+\\.maas\\.aliyuncs\\.com");
+            if (!"https".equalsIgnoreCase(value.getScheme())
+                    || !workspaceHost
+                    || !"/compatible-mode/v1".equals(normalizedPath(value))) {
+                throw new IllegalArgumentException("Bailian Responses endpoint must be workspace scoped");
+            }
+        }
     }
 
     private static String normalizedPath(URI endpoint) {
@@ -72,6 +89,7 @@ public final class OpenAiResponsesDialects {
 
     enum Profile {
         STANDARD,
-        DEEPSEEK
+        DEEPSEEK,
+        ALIYUN_BAILIAN
     }
 }

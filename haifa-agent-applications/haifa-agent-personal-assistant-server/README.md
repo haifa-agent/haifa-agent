@@ -1,5 +1,16 @@
 # Haifa Personal Assistant Server
 
+## Model preference contract
+
+`GET /api/v1/models` publishes only safe binding metadata, profile status/version/digest, closed control profiles,
+and recommended PA preferences. `PATCH /api/v1/conversations/{id}/model` atomically validates the binding identity,
+profile identity, and user preferences under revision and idempotency guards. The SQLite row stores the exact binding
+and typed preference JSON. `POST /api/v1/conversations` accepts the same exact `modelSelection`, so first-turn settings
+are frozen into the initial Run instead of being applied afterward. Because the product is not released, an incompatible legacy preference schema is rebuilt
+transactionally by dropping only `personal_model_preference`. A Conversation without a row in the rebuilt table is
+incompatible and fails closed; it is not assigned a synthetic default and the legacy table is not dual-read. Development
+data cleanup must target only the explicitly identified incompatible Conversation records.
+
 The v1 Run response includes an optional authoritative Plan/Todo projection. Activity responses
 use stable operation IDs plus durable event IDs, parent correlation, event time, and optional
 requested/started/completed lifecycle timestamps. Existing Runs without a plan omit `plan` or return `null`.
@@ -41,26 +52,45 @@ haifa:
             endpoint: https://api.deepseek.com/anthropic
         models:
           - id: deepseek-chat-pro
-            display-name: DeepSeek Chat Pro
+            display-name: DeepSeek V4 Pro · Chat Completions
+            model-display-name: DeepSeek V4 Pro
             provider-model-id: deepseek-v4-pro
             style: openai-chat-completions
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
           - id: deepseek-responses-flash
-            display-name: DeepSeek Responses Flash
+            display-name: DeepSeek V4 Flash · Responses
+            model-display-name: DeepSeek V4 Flash
             provider-model-id: deepseek-v4-flash
             style: openai-responses
             capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
           - id: deepseek-anthropic-flash
-            display-name: DeepSeek Anthropic Messages Flash
+            display-name: DeepSeek V4 Flash · Anthropic Messages
+            model-display-name: DeepSeek V4 Flash
             provider-model-id: deepseek-v4-flash
             style: anthropic-messages
             capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
-            context-window: 131072
-            max-output-tokens: 8192
+            context-window: 1048576
+            max-output-tokens: 393216
+          - id: deepseek-responses-pro
+            display-name: DeepSeek V4 Pro · Responses
+            model-display-name: DeepSeek V4 Pro
+            provider-model-id: deepseek-v4-pro
+            style: openai-responses
+            capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+            context-window: 1048576
+            max-output-tokens: 393216
+          - id: deepseek-anthropic-pro
+            display-name: DeepSeek V4 Pro · Anthropic Messages
+            model-display-name: DeepSeek V4 Pro
+            provider-model-id: deepseek-v4-pro
+            style: anthropic-messages
+            capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+            context-window: 1048576
+            max-output-tokens: 393216
       - id: local-openai
         display-name: Local OpenAI Responses Gateway
         mode: remote
@@ -87,18 +117,20 @@ DeepSeek Anthropic Messages 因 Base URL 与其余 Style 不同，在 Binding �
 Credential 与 `native-streaming` 仍只配置在 Provider。
 
 `allow-insecure-loopback-model` 只允许显式的 `http` loopback 模型端点；任何外部 HTTP 地址仍会在
-Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型是显式关闭 thinking 的
-`deepseek-chat-flash`；Responses 与 Anthropic Messages 模型仍作为非默认的受信选项保留。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
+Server 装配期失败。凭据只通过 `env://OPENAI_API_KEY` 解析，不写入 YAML、日志或浏览器响应。默认模型是
+`deepseek-chat-flash`，PA 的推荐偏好解析为 thinking/high；用户可以选择快速模式显式关闭 Thinking，或在
+深度模式选择 high/max。Responses 与 Anthropic Messages 模型作为同一供应商模型的高级受信连接方式；
+Responses reasoning 控件当前保持只读。本地中转当前只声明 `TEXT_CHAT`，因此不会出现在 Personal 所需
 `TEXT_CHAT + TOOL_CALLING` 的可选列表中；Snapshot 仍按 `standard` Responses 冻结真实能力边界。
 
-真实环境启动脚本可选装配第二个 `aliyun-bailian` Provider。完整配置要求 API Key、Workspace ID 和
-region；Credential 在 Spring 配置中始终只是 `env://DASHSCOPE_API_KEY`，Endpoint、实际 Provider
-Model ID 与完整 Snapshot 不返回浏览器。脚本检测到完整百炼配置且未显式传入 `--default-model-id`
-时，默认选择 `qwen3.7-max-2026-05-17`；否则保持 DeepSeek 默认。百炼目录同时提供
-`qwen3.7-plus`、`qwen3.7-flash` 和具有 `IMAGE_INPUT` 的 `qwen3-vl-plus`。当前 max 模型不声明
-`STRUCTURED_OUTPUT`，且真实百炼校验确认该快照只接受启用 thinking。其 Provider-neutral
-`reasoning-mode=ENABLED` 会由百炼 adapter 映射为受保护的 thinking continuation；Mission 应显式选择
-plus 或 flash，产品不会为 Mission 静默替换冻结模型。
+真实环境启动脚本可选装配 `aliyun-bailian`、`kimi` 与 `zhipu` Provider。百炼完整配置要求 API Key、
+Workspace ID 和 region；Kimi 与智谱分别使用 `env://KIMI_API_KEY`、`env://BIGMODEL_API_KEY`。Endpoint、
+实际 Provider Model ID 与完整 Snapshot 不返回浏览器。检测到可选 Provider 时只扩展目录，默认仍是
+`deepseek-chat-flash`；只有显式传入 `--default-model-id` 才改变默认 Binding。
+
+百炼目录提供 Qwen Chat 与已验证的 Max/Plus Responses；Kimi 只提供官方 API Key Chat；智谱提供通用
+OpenAI Chat，并仅为 GLM-5.2 提供通过 Contract 的 Anthropic Messages 高级连接方式。所有可见状态、
+推荐值、允许值和只读状态由后端精确 Binding Profile 驱动；UI 不包含 Provider/Model 条件分支。
 
 `IMAGE_INPUT` 是模型级显式能力，不根据 Provider ID 或模型名猜测。启用后，Conversation 请求可带
 最多四个 `{kind: url|upload}` 图片输入。外部 URL 只接受受限 HTTPS；上传通过 `POST /api/v1/images`
@@ -204,6 +236,7 @@ Server 另提供与普通产品 API 隔离的只读本机诊断面：
 ```text
 GET /v1/admin/
 GET /v1/admin/capabilities
+GET /v1/admin/models
 GET /v1/admin/sessions
 GET /v1/admin/sessions/{sessionId}/runs
 GET /v1/admin/sessions/{sessionId}/runs/{runId}/tree
@@ -212,6 +245,11 @@ GET /v1/admin/sessions/{sessionId}/runs/{runId}/tree
 `capabilities` 返回产品组装时冻结的 Tool、已审核 MCP Server 和 Skill 注册快照，包括定义身份、版本与
 摘要、风险和审批策略、Schema、资源声明、MCP 协议与导入工具、Skill 元数据与资源索引；不会返回
 凭据值、MCP Session ID 或运行时 Lease。
+
+`models` 返回当前可选 Model Binding 的安全诊断投影：Provider/Model 展示身份、API Style、能力、
+Profile/Preference Schema 版本与摘要、审核状态和 `lastVerifiedOn`。该日期表示内置 Profile 最近一次
+完成契约审核的日期，不是实时健康检查；不可用项只允许返回稳定安全错误码。Endpoint、Credential、
+Provider 原始响应和 reasoning 内容不进入该接口。
 
 诊断树直接读取同一 SQLite 事实源，并在解码前校验各 payload 的实际字节哈希。它展示冻结配置
 引用、Attempt、Step、Tool/Checkpoint/Interaction 关联、Skill、Runtime Event、安全错误详情和

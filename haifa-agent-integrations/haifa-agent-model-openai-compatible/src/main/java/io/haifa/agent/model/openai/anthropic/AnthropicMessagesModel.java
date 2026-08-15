@@ -9,6 +9,7 @@ import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
 import io.haifa.agent.model.api.CredentialResolver;
+import io.haifa.agent.model.api.EffectiveModelParameters;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
@@ -313,6 +314,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
 
     private static Map<String, Object> options(AgentChatRequest request) {
         Map<String, Object> options = new LinkedHashMap<>(request.model().invocationOptions());
+        options.remove(EffectiveModelParameters.PROFILE_VERSION_OPTION);
+        options.remove(EffectiveModelParameters.PROFILE_DIGEST_OPTION);
+        options.remove(EffectiveModelParameters.MAX_OUTPUT_TOKENS_OPTION);
         options.putAll(request.options());
         return Map.copyOf(options);
     }
@@ -329,6 +333,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             body.put("thinking", Map.of("type", "disabled"));
             return;
         }
+        if ("adaptive".equals(mode) && profile == AnthropicMessagesDialects.Profile.ZHIPU) {
+            mode = "enabled";
+        }
         if (!"enabled".equals(mode)) throw new IllegalArgumentException("Anthropic thinking mode is unsupported");
         Map<String, Object> thinking = new LinkedHashMap<>();
         thinking.put("type", "enabled");
@@ -344,6 +351,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         if (effort != null) {
             String value = String.valueOf(effort);
             List<String> allowed = profile == AnthropicMessagesDialects.Profile.DEEPSEEK
+                            || profile == AnthropicMessagesDialects.Profile.ZHIPU
                     ? List.of("high", "max")
                     : List.of("low", "medium", "high", "max");
             if (!allowed.contains(value))

@@ -36,6 +36,7 @@ import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelStreamSink;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
+import io.haifa.agent.model.api.SensitiveModelReasoning;
 import io.haifa.agent.policy.api.ApprovalMode;
 import io.haifa.agent.policy.api.PolicySnapshot;
 import io.haifa.agent.policy.api.PolicySnapshotRef;
@@ -292,6 +293,79 @@ class SqliteRuntimeRecoveryTest {
                             ExecutionAttemptStatus.SUCCEEDED);
             assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
                     .isPresent();
+        }
+    }
+
+    @Test
+    void recoversProtectedReasoningContinuationFromCheckpointForToolRoundTrip() throws Exception {
+        AtomicInteger providerCalls = new AtomicInteger();
+        AgentRunId runId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processA = toolRuntime(
+                    first,
+                    model(reasoningToolResponse("checkpoint-private-reasoning")),
+                    "reasoning-process-a",
+                    new TestIds("reasoning-a"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL);
+            runId = processA.runtime().start(request("reasoning-checkpoint")).runId();
+            processA.scheduler().runAll();
+
+            assertThat(processA.runtime().find(runId).orElseThrow().status())
+                    .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+            assertThat(processA.ports().checkpoints().latest(runId)).isPresent();
+            assertThat(processA.ports().state().modelContinuations(runId)).singleElement();
+            assertThat(providerCalls).hasValue(0);
+            InteractionRequest interaction =
+                    processA.ports().interactions().pending(runId).orElseThrow();
+            processA.runtime().respond(approvalResponse(runId, interaction.id(), "reasoning-approval"));
+            AgentRunExecutionAttempt active = first.attempts().activeFor(runId).orElseThrow();
+            long expected = active.version();
+            active.start("reasoning-process-a", NOW);
+            first.attempts().save(active, expected);
+        }
+
+        AtomicReference<AgentChatRequest> resumedRequest = new AtomicReference<>();
+        AgentChatModel resumedModel = request -> {
+            resumedRequest.set(request);
+            return finalResponse("reasoning continuation recovered");
+        };
+        try (SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance processB = toolRuntime(
+                    reopened,
+                    resumedModel,
+                    "reasoning-process-b",
+                    new TestIds("reasoning-b"),
+                    providerCalls,
+                    ToolPolicyDecision.REQUIRE_APPROVAL);
+            processB.runtime().recover(runId);
+            processB.scheduler().runAll();
+
+            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(providerCalls).hasValue(1);
+            assertThat(resumedRequest.get().messages())
+                    .anyMatch(message -> message.role() == ModelMessageRole.ASSISTANT
+                            && message.toolCalls().stream()
+                                    .anyMatch(call ->
+                                            call.providerCorrelationId().value().equals("provider-tool-call"))
+                            && message.reasoning()
+                                    .orElseThrow()
+                                    .use(java.util.function.Function.identity())
+                                    .equals("checkpoint-private-reasoning"))
+                    .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                            && message.providerCorrelationId()
+                                    .orElseThrow()
+                                    .value()
+                                    .equals("provider-tool-call"));
+            assertThat(processB.ports().attempts().attemptsFor(runId).getLast().resumedFromCheckpointId())
+                    .isPresent();
+        }
+
+        try (var paths = java.nio.file.Files.list(directory)) {
+            for (Path path : paths.filter(java.nio.file.Files::isRegularFile).toList()) {
+                assertThat(new String(java.nio.file.Files.readAllBytes(path), StandardCharsets.ISO_8859_1))
+                        .doesNotContain("checkpoint-private-reasoning");
+            }
         }
     }
 
@@ -1083,6 +1157,19 @@ class SqliteRuntimeRecoveryTest {
                 ModelUsage.unpriced(1, 1),
                 "",
                 Map.of());
+    }
+
+    private static AgentChatResponse reasoningToolResponse(String reasoning) {
+        return new AgentChatResponse(
+                "response-reasoning-tool",
+                "test-model",
+                "",
+                List.of(new ModelToolCall(new ProviderToolCallCorrelationId("provider-tool-call"), "write", Map.of())),
+                ModelFinishReason.TOOL_CALLS,
+                ModelUsage.unpriced(1, 1),
+                "",
+                Map.of(),
+                Optional.of(SensitiveModelReasoning.of(reasoning)));
     }
 
     private static AgentChatResponse twoToolResponse() {

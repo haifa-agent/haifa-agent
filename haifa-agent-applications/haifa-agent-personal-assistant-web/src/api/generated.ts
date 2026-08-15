@@ -15,6 +15,7 @@ export interface CreateConversation {
   displayName: string;
   message: string;
   modelId?: string;
+  modelSelection?: SelectModel;
   images?: Array<ImageInput>;
 }
 
@@ -48,21 +49,91 @@ export interface UpdateConversation {
 
 export interface Model {
   id: string;
+  modelGroupId: string;
+  modelDisplayName: string;
   displayName: string;
   providerId: string;
   providerDisplayName: string;
+  apiStyle: string;
+  apiStyleDisplayName: string;
+  availability: "AVAILABLE" | "UNAVAILABLE";
+  unavailableReason: string;
   capabilities: Array<string>;
   contextWindow: number;
+  maxOutputTokens: number;
+  preferenceSchemaVersion: string;
+  profileVersion: string;
+  profileDigest: string;
+  controls: ModelControls;
+  recommendedPreferences: ModelPreferences;
+}
+
+export interface ModelControls {
+  responseMode: ResponseModeControl;
+  reasoningEffort: ReasoningEffortControl;
+  responseLength: ResponseLengthControl;
+  apiStyle: ApiStyleControl;
+}
+
+export interface ResponseModeControl {
+  kind: "responseMode";
+  visible: boolean;
+  readOnly: boolean;
+  allowedValues: Array<"RECOMMENDED" | "FAST" | "DEEP">;
+  recommendedValue: "RECOMMENDED" | "FAST" | "DEEP";
+  effectiveSummary: string;
+  helpText: string;
+}
+
+export interface ReasoningEffortControl {
+  kind: "reasoningEffort";
+  visible: boolean;
+  readOnly: boolean;
+  allowedValues: Array<"LOW" | "MEDIUM" | "HIGH" | "MAX">;
+  recommendedValue?: string | null;
+  effectiveSummary: string;
+  helpText: string;
+}
+
+export interface ResponseLengthControl {
+  kind: "responseLength";
+  visible: boolean;
+  readOnly: boolean;
+  allowedValues: Array<"RECOMMENDED" | "SHORT" | "STANDARD" | "LONG">;
+  recommendedValue: "RECOMMENDED" | "SHORT" | "STANDARD" | "LONG";
+  effectiveSummary: string;
+  helpText: string;
+}
+
+export interface ApiStyleControl {
+  kind: "apiStyle";
+  visible: boolean;
+  readOnly: boolean;
+  allowedValues: Array<string>;
+  recommendedValue: string;
+  effectiveSummary: string;
+  helpText: string;
+}
+
+export interface ModelPreferences {
+  responseMode: "RECOMMENDED" | "FAST" | "DEEP";
+  effort?: string | null;
+  responseLength: "RECOMMENDED" | "SHORT" | "STANDARD" | "LONG";
 }
 
 export interface ModelSelection {
   model: Model;
+  preferences: ModelPreferences;
   revision: number;
   available: boolean;
 }
 
 export interface SelectModel {
-  modelId: string;
+  modelBindingId: string;
+  preferenceSchemaVersion: string;
+  profileVersion: string;
+  profileDigest: string;
+  preferences: ModelPreferences;
 }
 
 export interface Conversation {

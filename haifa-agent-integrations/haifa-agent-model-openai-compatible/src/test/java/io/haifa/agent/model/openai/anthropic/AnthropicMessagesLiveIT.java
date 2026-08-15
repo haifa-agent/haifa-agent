@@ -49,6 +49,9 @@ class AnthropicMessagesLiveIT {
 
         assertThat(response.responseId()).isNotBlank();
         assertThat(response.content()).isNotBlank();
+        assertThat(response.metadata().get("reasoningBlocks")).isInstanceOf(Number.class);
+        assertThat(((Number) response.metadata().get("reasoningBlocks")).longValue())
+                .isPositive();
         assertThat(response.usage().outputTokens()).isPositive();
         assertThat(events).anyMatch(ModelStreamEvent.ContentDelta.class::isInstance);
         assertThat(events).anyMatch(ModelStreamEvent.UsageReported.class::isInstance);
@@ -105,7 +108,12 @@ class AnthropicMessagesLiveIT {
     }
 
     private static AgentChatRequest request(ResolvedModelSnapshot snapshot) {
-        return request(snapshot, List.of(ModelMessage.text(ModelMessageRole.USER, "Reply with OK.")), List.of());
+        return request(
+                snapshot,
+                List.of(ModelMessage.text(
+                        ModelMessageRole.USER,
+                        "Check whether 17 multiplied by 19 is greater than 300, then finish with the word OK.")),
+                List.of());
     }
 
     private static AgentChatRequest request(
@@ -118,7 +126,7 @@ class AnthropicMessagesLiveIT {
                 snapshot,
                 messages,
                 tools,
-                64,
+                2_048,
                 Duration.ofSeconds(60),
                 Map.of());
     }
@@ -165,8 +173,8 @@ class AnthropicMessagesLiveIT {
                 Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING, ModelCapability.REASONING),
                 131_072,
                 8_192,
-                Map.of("thinking", "disabled"),
-                Map.of("thinking", "disabled"));
+                Map.of(),
+                Map.of("thinking", "enabled", "reasoning_effort", "high"));
     }
 
     private static boolean enabled(String name) {

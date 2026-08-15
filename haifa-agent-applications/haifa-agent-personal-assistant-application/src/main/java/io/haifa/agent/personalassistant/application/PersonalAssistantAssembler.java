@@ -196,6 +196,19 @@ public final class PersonalAssistantAssembler {
                             new AgentRunLimits(4, 0, 1, 120_000, 120_000),
                             Map.of(),
                             java.util.Optional.of(Set.of())));
+            dependencies
+                    .modelCatalog()
+                    .runProfiles()
+                    .forEach(selection -> agentBuilder.runProfile(new ProductRunProfile(
+                            selection.runProfileId(),
+                            "1.0.0",
+                            selection.option().id(),
+                            AgentRunType.CHAT,
+                            profile.budget(),
+                            profile.limits(),
+                            Map.of(),
+                            Optional.of(selection.effectiveParameters()),
+                            Optional.empty())));
             dependencies.modelCatalog().available().stream()
                     .filter(model ->
                             !model.id().equals(dependencies.modelCatalog().defaultModelId()))
@@ -476,13 +489,52 @@ public final class PersonalAssistantAssembler {
 
         private static PersonalModelCatalog defaultCatalog(ModelContribution model) {
             var snapshot = model.snapshot();
+            boolean reasoning = snapshot.capabilities().contains(io.haifa.agent.model.api.ModelCapability.REASONING);
+            var profile = io.haifa.agent.model.api.ModelBindingProfile.create(
+                    snapshot.modelId(),
+                    snapshot.apiStyle(),
+                    "1.0",
+                    snapshot.capabilities(),
+                    reasoning
+                            ? io.haifa.agent.model.api.ModelReasoningBehavior.OPTIONAL
+                            : io.haifa.agent.model.api.ModelReasoningBehavior.NONE,
+                    reasoning
+                            ? java.util.EnumSet.of(
+                                    io.haifa.agent.model.api.ModelReasoningMode.DISABLED,
+                                    io.haifa.agent.model.api.ModelReasoningMode.ENABLED)
+                            : Set.of(io.haifa.agent.model.api.ModelReasoningMode.DISABLED),
+                    reasoning ? Set.of(io.haifa.agent.model.api.ModelReasoningEffort.HIGH) : Set.of(),
+                    java.util.OptionalLong.empty(),
+                    1,
+                    snapshot.maxOutputTokens(),
+                    false,
+                    io.haifa.agent.model.api.ModelProfileStatus.VERIFIED,
+                    java.time.LocalDate.of(2026, 8, 13));
+            var defaults = new PersonalModelProductDefaults();
             var option = new PersonalModelOption(
                     snapshot.modelId().value(),
+                    snapshot.providerId().value() + ":" + snapshot.providerModelId(),
+                    snapshot.modelId().value(),
                     snapshot.modelId().value(),
                     snapshot.providerId().value(),
                     snapshot.providerId().value(),
+                    snapshot.apiStyle().value(),
+                    snapshot.apiStyle().value(),
+                    "AVAILABLE",
+                    "",
                     snapshot.capabilities().stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()),
-                    snapshot.contextWindow());
+                    snapshot.contextWindow(),
+                    snapshot.maxOutputTokens(),
+                    PersonalModelProductDefaults.PREFERENCE_SCHEMA_VERSION,
+                    profile.version(),
+                    profile.digest(),
+                    profile.status(),
+                    profile.lastVerifiedOn(),
+                    defaults.controls(
+                            profile,
+                            List.of(snapshot.modelId().value()),
+                            snapshot.modelId().value()),
+                    PersonalModelPreferences.recommended());
             return new PersonalModelCatalog() {
                 @Override
                 public String defaultModelId() {
@@ -503,6 +555,38 @@ public final class PersonalAssistantAssembler {
                             option.providerId(),
                             option.providerDisplayName(),
                             snapshot.configurationDigest()));
+                }
+
+                @Override
+                public Optional<io.haifa.agent.model.api.ModelBindingProfile> profile(String modelBindingId) {
+                    return option.id().equals(modelBindingId) ? Optional.of(profile) : Optional.empty();
+                }
+
+                @Override
+                public PersonalResolvedModelSelection resolve(PersonalModelSelectionRequest request) {
+                    if (!option.id().equals(request.modelBindingId())
+                            || !option.preferenceSchemaVersion().equals(request.preferenceSchemaVersion())
+                            || !profile.version().equals(request.profileVersion())
+                            || !profile.digest().equals(request.profileDigest())) {
+                        throw new IllegalArgumentException("MODEL_PROFILE_STALE");
+                    }
+                    var effective = defaults.resolve(profile, request.preferences());
+                    String runProfileId = "pa-conversation-"
+                            + request.preferences().responseLength().name().toLowerCase(java.util.Locale.ROOT);
+                    return new PersonalResolvedModelSelection(option, request.preferences(), effective, runProfileId);
+                }
+
+                @Override
+                public List<PersonalResolvedModelSelection> runProfiles() {
+                    return java.util.Arrays.stream(PersonalResponseLength.values())
+                            .map(length -> resolve(new PersonalModelSelectionRequest(
+                                    option.id(),
+                                    option.preferenceSchemaVersion(),
+                                    option.profileVersion(),
+                                    option.profileDigest(),
+                                    new PersonalModelPreferences(
+                                            PersonalResponseMode.RECOMMENDED, Optional.empty(), length))))
+                            .toList();
                 }
             };
         }
