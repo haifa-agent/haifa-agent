@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-const repositoryRoot = path.resolve(scriptDirectory, "..");
+const repositoryRoot = path.resolve(scriptDirectory, "..", "..");
 
 function parseArguments(values) {
   const result = new Map();
@@ -16,7 +16,7 @@ function parseArguments(values) {
     const value = values[index + 1];
     if (!key?.startsWith("--") || value == null) {
       throw new Error(
-        "Usage: node scripts/terminal-ui-phase-c-quality.mjs " +
+        "Usage: node haifa-agent-testing/scripts/terminal-ui-phase-c-quality.mjs " +
           "--run-root <new-absolute-path-outside-repository> [--timeout-seconds <seconds>]",
       );
     }

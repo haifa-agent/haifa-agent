@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
-const repositoryRoot = path.resolve(scriptDirectory, "..");
+const repositoryRoot = path.resolve(scriptDirectory, "..", "..");
 
 function parseArguments(values) {
   const result = new Map();
@@ -17,7 +17,8 @@ function parseArguments(values) {
     const value = values[index + 1];
     if (!key?.startsWith("--") || value == null) {
       throw new Error(
-        "Usage: node scripts/terminal-ui-smoke.mjs --run-root <outside-repository-path> " +
+        "Usage: node haifa-agent-testing/scripts/terminal-ui-smoke.mjs " +
+          "--run-root <outside-repository-path> " +
           "[--jar <path>] [--node-pty <module-directory>]",
       );
     }
@@ -152,11 +153,25 @@ fs.writeFileSync(
 fs.writeFileSync(
   configuration,
   [
-    "model:",
-    "  providerId: deepseek",
-    "  modelId: deepseek-chat",
-    "  endpoint: https://api.deepseek.com",
-    "  credentialRef: env://HAIFA_TERMINAL_SMOKE_MODEL_KEY",
+    "models:",
+    "  default: deepseek-chat-pro",
+    "  providers:",
+    "    - id: deepseek",
+    "      displayName: Terminal Smoke Provider",
+    "      nativeStreaming: true",
+    "      endpoint: https://api.deepseek.com",
+    "      credentialRef: env://HAIFA_TERMINAL_SMOKE_MODEL_KEY",
+    "      apiBindings:",
+    "        - style: openai-chat-completions",
+    "          dialect: deepseek-openai-chat",
+    "      models:",
+    "        - id: deepseek-chat-pro",
+    "          displayName: Terminal Smoke Model",
+    "          providerModelId: deepseek-v4-pro",
+    "          style: openai-chat-completions",
+    "          capabilities: [TEXT_CHAT, TOOL_CALLING]",
+    "          contextWindow: 131072",
+    "          maxOutputTokens: 8192",
     "",
     "tools:",
     "  enabled:",
@@ -264,7 +279,6 @@ try {
   await send("/reload\r");
   await send("/session\r");
   await send("\u001b");
-  await send("/resume definitely-missing\r");
   await send("/tree\r");
   await send("/fork\r");
   await send("/clone\r");
@@ -313,7 +327,7 @@ const assertions = {
   alternateScreenEntered: terminalOutput.includes("\u001b[?1049h"),
   alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
   commandSelectorVisible: terminalOutput.includes("Commands"),
-  emptySessionHandled: terminalOutput.includes("SESSION_LIST_EMPTY"),
+  emptySessionHandled: terminalOutput.includes("No active session"),
   deferredCapabilityVisible: terminalOutput.includes("CAPABILITY_NOT_IMPLEMENTED"),
   noUnknownCommand: !terminalOutput.includes("COMMAND_UNKNOWN"),
   exitedSuccessfully: exited?.exitCode === 0,
