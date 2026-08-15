@@ -257,11 +257,6 @@ public final class MissionApplicationService {
         return unitOfWork.execute(() -> store.find(missionId, ownerScope).map(this::snapshot));
     }
 
-    public boolean hasActive(String conversationId, String ownerScope) {
-        return unitOfWork.execute(
-                () -> store.findActive(conversationId, ownerScope).isPresent());
-    }
-
     public List<MissionSnapshot> list(String ownerScope, Optional<String> conversationId, int limit) {
         return list(ownerScope, conversationId, Optional.empty(), limit);
     }

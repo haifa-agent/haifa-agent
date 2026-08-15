@@ -105,6 +105,9 @@ class OpenAiCompatibleModelProfileFactoryTest {
 
         assertThat(profile.status()).isEqualTo(ModelProfileStatus.VERIFIED);
         assertThat(profile.selectable()).isTrue();
+        assertThat(profile.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ALWAYS);
+        assertThat(profile.allowedReasoningModes()).containsExactly(ModelReasoningMode.ENABLED);
+        assertThat(profile.allowedReasoningEfforts()).containsExactly(ModelReasoningEffort.HIGH);
         assertThat(profile.toolReasoningContinuationRequired()).isTrue();
     }
 
@@ -154,6 +157,9 @@ class OpenAiCompatibleModelProfileFactoryTest {
                 "https://open.bigmodel.cn/api/paas/v4"));
 
         assertThat(bailian.selectable()).isTrue();
+        assertThat(bailian.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ALWAYS);
+        assertThat(bailian.allowedReasoningModes()).containsExactly(ModelReasoningMode.ENABLED);
+        assertThat(bailian.allowedReasoningEfforts()).containsExactly(ModelReasoningEffort.HIGH);
         assertThat(bailian.toolReasoningContinuationRequired()).isFalse();
         assertThat(glm.reasoningBehavior()).isEqualTo(ModelReasoningBehavior.ADAPTIVE);
         assertThat(glm.allowedReasoningModes())

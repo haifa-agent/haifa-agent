@@ -10,7 +10,8 @@ is rejected while a run is active; existing and resumed runs continue to use the
 For exact verified DeepSeek Chat Completions and Anthropic Messages bindings, PA maps `RECOMMENDED` to
 thinking/high, `FAST` to thinking disabled, and `DEEP` to thinking with high or max effort. Response length remains a
 closed product preference and is clamped by the binding profile. Responses bindings can be selectable while their
-reasoning control remains read-only. Provider fields and raw token values never enter PA preferences.
+reasoning control remains read-only at the reviewed `ENABLED/HIGH` Profile. Provider fields and raw token values never
+enter PA preferences.
 
 Activity projection now correlates lifecycle events by stable Model/Tool/Execution operation ID,
 retains the durable event ID and parent Tool relationship, and folds requested/started/completed
@@ -44,6 +45,9 @@ Provider Snapshot `configurationDigest`。Planner、Task、Normalizer、Synthesi
 这一个冻结 binding；普通对话之后切换模型不会改变既有 Mission。若当前模型已从目录移除，或相同
 Model ID 的 Snapshot digest 已漂移，Mission 执行 fail closed，不回退到系统默认模型。Mission 公共
 Snapshot schema 为 `pa.mission-snapshot/v2`。
+
+活跃 Mission 不阻止所属 Conversation 修改后续普通对话使用的模型偏好；Mission 始终继续使用创建时
+冻结的 binding。普通对话自身存在活动 Run 时仍禁止切换，避免当前 Run 与界面所示偏好产生歧义。
 
 Phase 4 makes Mission usage authoritative at the product boundary. Model tokens, model calls, and
 Tool calls are settled exactly once from Runtime results. Frozen per-Mission token, Tool-call,

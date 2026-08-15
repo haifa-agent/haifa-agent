@@ -347,6 +347,38 @@ class PersonalAssistantWebFluxTest {
         assertThat(mission.path("sources").size()).isZero();
         String missionId = mission.path("missionId").asText();
 
+        awaitTerminal(conversation.path("activeRunId").asText());
+        JsonNode idleConversation = awaitConversationIdle(conversationId);
+        JsonNode selectedModel = get("/api/v1/models").get(0);
+        var modelSelection = mapper.createObjectNode();
+        modelSelection.put("modelBindingId", selectedModel.path("id").asText());
+        modelSelection.put(
+                "preferenceSchemaVersion", selectedModel.path("preferenceSchemaVersion").asText());
+        modelSelection.put("profileVersion", selectedModel.path("profileVersion").asText());
+        modelSelection.put("profileDigest", selectedModel.path("profileDigest").asText());
+        var preferences = modelSelection.putObject("preferences");
+        preferences.put("responseMode", "RECOMMENDED");
+        preferences.putNull("effort");
+        preferences.put("responseLength", "LONG");
+        web.patch()
+                .uri("/api/v1/conversations/{id}/model", conversationId)
+                .header("X-Haifa-CSRF", "1")
+                .header("Idempotency-Key", "model-during-mission-" + IDS.incrementAndGet())
+                .header(
+                        "If-Match",
+                        '"' + idleConversation.path("model").path("revision").asText() + '"')
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(modelSelection)
+                .exchange()
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.preferences.responseLength")
+                .isEqualTo("LONG");
+        JsonNode missionAfterModelChange = get("/api/v1/missions/" + missionId + "/snapshot");
+        assertThat(missionAfterModelChange.path("modelBinding"))
+                .isEqualTo(mission.path("modelBinding"));
+
         JsonNode duplicate = missionCreate(key, request);
         assertThat(duplicate.path("missionId").asText()).isEqualTo(missionId);
 

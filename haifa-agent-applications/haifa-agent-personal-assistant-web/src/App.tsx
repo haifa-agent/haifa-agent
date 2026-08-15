@@ -236,13 +236,32 @@ function groupModelsByProvider(models: Model[]): ModelProviderGroup[] {
   return [...providers.values()];
 }
 
+function availableBindings(group: ModelGroup): Model[] {
+  return group.bindings.filter((binding) => binding.availability === "AVAILABLE");
+}
+
+function unavailableBindings(group: ModelGroup): Model[] {
+  return group.bindings.filter((binding) => binding.availability === "UNAVAILABLE");
+}
+
+function unavailableModelReason(group: ModelGroup): string {
+  return unavailableBindings(group)
+    .map((binding) => binding.unavailableReason.trim())
+    .find(Boolean) ?? "模型连接尚未通过验证";
+}
+
+function availableModelGroupCount(provider: ModelProviderGroup): number {
+  return provider.modelGroups.filter((group) => availableBindings(group).length > 0).length;
+}
+
 const responseModeLabels = { RECOMMENDED: "推荐", FAST: "快速", DEEP: "深度" } as const;
 const responseLengthLabels = { RECOMMENDED: "推荐", SHORT: "短", STANDARD: "标准", LONG: "长" } as const;
 const effortLabels: Record<string, string> = { LOW: "Low", MEDIUM: "Medium", HIGH: "High", MAX: "Max" };
 
 function recommendedBinding(group: ModelGroup): Model | null {
-  const recommendedId = group.bindings[0]?.controls.apiStyle.recommendedValue;
-  return group.bindings.find((binding) => binding.id === recommendedId) ?? group.bindings[0] ?? null;
+  const available = availableBindings(group);
+  const recommendedId = available[0]?.controls.apiStyle.recommendedValue;
+  return available.find((binding) => binding.id === recommendedId) ?? available[0] ?? null;
 }
 
 interface RecommendedQuestionState {
@@ -3692,7 +3711,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
     if (slashMenu.stage !== "models") return;
     const group = selectedSlashProvider?.modelGroups[index];
     if (!group) return;
-    const current = group.bindings.find((binding) => binding.id === selectedModelId);
+    const current = availableBindings(group).find((binding) => binding.id === selectedModelId);
     const binding = current ?? recommendedBinding(group);
     if (!binding) return;
     setModelDraftBindingId(binding.id);
@@ -3705,7 +3724,7 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
 
   const updateDraftBinding = (bindingId: string) => {
     const binding = selectedSlashModelGroup?.bindings.find((candidate) => candidate.id === bindingId);
-    if (!binding) return;
+    if (!binding || binding.availability !== "AVAILABLE") return;
     setModelDraftBindingId(binding.id);
     setModelDraftPreferences(binding.recommendedPreferences);
   };
@@ -4124,7 +4143,13 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <span className="slash-provider-mark">{provider.displayName.slice(0, 1)}</span>
                       <span>
                         <strong>{provider.displayName}</strong>
-                        <small>{provider.modelGroups.length} 个可用模型 · {provider.id}</small>
+                        <small>
+                          {availableModelGroupCount(provider)} 个可用模型
+                          {provider.modelGroups.length > availableModelGroupCount(provider)
+                            ? ` · ${provider.modelGroups.length - availableModelGroupCount(provider)} 个不可用`
+                            : ""}
+                          {` · ${provider.id}`}
+                        </small>
                       </span>
                       <ChevronRight size={17} />
                     </button>
@@ -4134,6 +4159,8 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       type="button"
                       role="option"
                       aria-selected={index === slashActiveIndex}
+                      aria-disabled={availableBindings(group).length === 0}
+                      disabled={availableBindings(group).length === 0}
                       className={index === slashActiveIndex ? "active" : ""}
                       key={group.id}
                       onMouseEnter={() => setSlashActiveIndex(index)}
@@ -4142,7 +4169,11 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                       <Bot size={18} />
                       <span>
                         <strong>{group.displayName}</strong>
-                        <small>{group.bindings.length > 1 ? `${group.bindings.length} 种已验证连接方式` : group.bindings[0]?.apiStyleDisplayName}</small>
+                        <small>
+                          {availableBindings(group).length === 0
+                            ? `不可用 · ${unavailableModelReason(group)}`
+                            : `${availableBindings(group).length} 种可用连接方式${unavailableBindings(group).length > 0 ? ` · ${unavailableBindings(group).length} 种不可用` : ""}`}
+                        </small>
                       </span>
                       {group.bindings.some((binding) => binding.id === selectedModelId)
                         ? <span className="slash-current"><Check size={13} /> 当前</span>
@@ -4203,10 +4234,14 @@ export default function App({ client = defaultClient }: { client?: PersonalAssis
                           <label>
                             <span>API 风格</span>
                             <select aria-label="API 风格" disabled={modelDraftBinding.controls.apiStyle.readOnly} value={modelDraftBinding.id} onChange={(event) => updateDraftBinding(event.target.value)}>
-                              {modelDraftBinding.controls.apiStyle.allowedValues.map((bindingId) => {
-                                const binding = selectedSlashModelGroup?.bindings.find((candidate) => candidate.id === bindingId);
-                                return binding ? <option key={binding.id} value={binding.id}>{binding.apiStyleDisplayName}</option> : null;
-                              })}
+                              {selectedSlashModelGroup?.bindings
+                                .filter((binding) => modelDraftBinding.controls.apiStyle.allowedValues.includes(binding.id)
+                                  || binding.availability === "UNAVAILABLE")
+                                .map((binding) => (
+                                  <option key={binding.id} value={binding.id} disabled={binding.availability !== "AVAILABLE"}>
+                                    {binding.apiStyleDisplayName}{binding.availability === "UNAVAILABLE" ? ` · 不可用：${binding.unavailableReason || "尚未通过验证"}` : ""}
+                                  </option>
+                                ))}
                             </select>
                           </label>
                           <small>{modelDraftBinding.controls.apiStyle.helpText}</small>

@@ -11,6 +11,9 @@ transactionally by dropping only `personal_model_preference`. A Conversation wit
 incompatible and fails closed; it is not assigned a synthetic default and the legacy table is not dual-read. Development
 data cleanup must target only the explicitly identified incompatible Conversation records.
 
+An active Mission does not block this endpoint because the Mission already owns an immutable model binding. An active
+ordinary Conversation Run still blocks the change until that Run reaches a terminal state.
+
 The v1 Run response includes an optional authoritative Plan/Todo projection. Activity responses
 use stable operation IDs plus durable event IDs, parent correlation, event time, and optional
 requested/started/completed lifecycle timestamps. Existing Runs without a plan omit `plan` or return `null`.
