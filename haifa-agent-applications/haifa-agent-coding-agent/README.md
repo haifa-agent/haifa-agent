@@ -5,7 +5,8 @@
 `io.haifa.agent.application.project.product.coding.client.CodingSessionClient` 是 Coding Agent 的稳定产品
 API；`LocalCodingSessionClient` 是当前进程内实现。Terminal、其他 UI 和测试只依赖该契约，不从
 Terminal 模块反向取得产品能力，也不直接访问 Runtime Store。独立产品的具体 Runtime、模型、Tool、
-Persistence 装配仍由最高层应用模块负责。
+Persistence 装配仍由最高层应用模块负责。`CodingSessionView.activeRun` 只表示当前活动 Run；需要等待或
+核验终态的客户端必须保存 `runId`，并通过 `CodingSessionClient.findRun` 查询作用域内的权威 Snapshot。
 
 ## Shared model profile readiness
 

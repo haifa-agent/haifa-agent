@@ -174,6 +174,12 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public java.util.Optional<io.haifa.agent.runtime.api.AgentRunSnapshot> findRun(AgentRunId runId) {
+        requireRunScoped(runId);
+        return runtime.find(runId);
+    }
+
+    @Override
     public CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
         requireScoped(sessionId);
         return history.map(value -> value.recent(sessionId, limit))

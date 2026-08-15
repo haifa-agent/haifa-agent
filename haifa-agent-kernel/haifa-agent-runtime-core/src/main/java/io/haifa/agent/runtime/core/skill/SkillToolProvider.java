@@ -58,39 +58,46 @@ public final class SkillToolProvider implements ToolProvider {
                 request.toolCallId().value());
         request.observer().dispatched();
         ToolResult result;
-        switch (request.binding().definition().name().value()) {
-            case "skill.load" -> {
-                var activation = skills.activate(activationRequest);
-                result = result(
-                        "Activated Skill " + activation.binding().alias().value(),
-                        Map.of(
-                                "skill", activation.binding().alias().value(),
-                                "digest",
-                                        activation
-                                                .binding()
-                                                .coordinate()
-                                                .contentDigest()
-                                                .value(),
-                                "activated", true,
-                                "instructionBytes", activation.instructionBytes(),
-                                "estimatedTokens", activation.estimatedTokens()));
+        try {
+            switch (request.binding().definition().name().value()) {
+                case "skill.load" -> {
+                    var activation = skills.activate(activationRequest);
+                    result = result(
+                            "Activated Skill " + activation.binding().alias().value(),
+                            Map.of(
+                                    "skill", activation.binding().alias().value(),
+                                    "digest",
+                                            activation
+                                                    .binding()
+                                                    .coordinate()
+                                                    .contentDigest()
+                                                    .value(),
+                                    "activated", true,
+                                    "instructionBytes", activation.instructionBytes(),
+                                    "estimatedTokens", activation.estimatedTokens()));
+                }
+                case "skill.resource.read" -> {
+                    String path = requiredText(request, "path");
+                    SkillResourceRead resource = skills.readResource(activationRequest, path);
+                    result = result(
+                            "Read activated Skill resource",
+                            Map.of(
+                                    "skill", alias,
+                                    "source",
+                                            resource.binding()
+                                                    .coordinate()
+                                                    .source()
+                                                    .externalForm(),
+                                    "path", resource.resource().relativePath(),
+                                    "digest", resource.resource().digest().value(),
+                                    "mediaType", resource.resource().mediaType(),
+                                    "securityLabel", "untrusted-skill-resource",
+                                    "content", resource.content()));
+                }
+                default -> throw new IllegalArgumentException("unsupported Skill tool");
             }
-            case "skill.resource.read" -> {
-                String path = requiredText(request, "path");
-                SkillResourceRead resource = skills.readResource(activationRequest, path);
-                result = result(
-                        "Read activated Skill resource",
-                        Map.of(
-                                "skill", alias,
-                                "source",
-                                        resource.binding().coordinate().source().externalForm(),
-                                "path", resource.resource().relativePath(),
-                                "digest", resource.resource().digest().value(),
-                                "mediaType", resource.resource().mediaType(),
-                                "securityLabel", "untrusted-skill-resource",
-                                "content", resource.content()));
-            }
-            default -> throw new IllegalArgumentException("unsupported Skill tool");
+        } catch (SkillRequestRejectedException rejected) {
+            result = failure(rejected, alias);
         }
         request.observer().acknowledged();
         return result;
@@ -98,6 +105,16 @@ public final class SkillToolProvider implements ToolProvider {
 
     private static ToolResult result(String summary, Map<String, Object> data) {
         return new ToolResult(true, summary, data, List.of(), List.of(), false);
+    }
+
+    private static ToolResult failure(SkillRequestRejectedException rejected, String alias) {
+        return new ToolResult(
+                false,
+                rejected.getMessage(),
+                Map.of("failureCode", rejected.failureCode(), "skill", alias),
+                List.of(),
+                List.of(),
+                false);
     }
 
     private static String requiredText(ToolInvocationRequest request, String name) {

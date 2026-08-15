@@ -144,7 +144,7 @@ class CriticalPathClientLiveE2E {
                 client.respond(interaction, InteractionAction.APPROVE, "critical-path-approve-" + UUID.randomUUID());
             }
             Thread.sleep(25);
-            snapshot = client.open(sessionId).activeRun().orElseThrow();
+            snapshot = client.findRun(snapshot.runId()).orElseThrow();
         }
         if (!snapshot.status().isTerminal()) {
             client.cancel(sessionId, "critical-path-timeout-" + UUID.randomUUID());
@@ -167,8 +167,25 @@ class CriticalPathClientLiveE2E {
     }
 
     private static void assertCompleted(ClientResult result) {
-        assertThat(result.snapshot().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(result.snapshot().status())
+                .as("safe run failure: %s", safeFailure(result.snapshot()))
+                .isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(modelCalls(result)).isNotEmpty();
+    }
+
+    private static String safeFailure(AgentRunSnapshot snapshot) {
+        return snapshot.error()
+                .map(error -> "code="
+                        + error.code().wireCode()
+                        + ", category="
+                        + error.category()
+                        + ", retryability="
+                        + error.retryability()
+                        + ", details="
+                        + error.details()
+                        + ", diagnosticId="
+                        + error.optionalDiagnosticId().orElse("none"))
+                .orElse("none");
     }
 
     private static List<RunEventPayloads.ModelLifecycle> modelCalls(ClientResult result) {

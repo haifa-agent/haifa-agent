@@ -156,7 +156,6 @@ class CodingAgentLiveE2E {
         specification.protectedPaths().forEach(path -> assertThat(digest(workspace.resolve(path)))
                 .as("protected workspace path %s", path)
                 .isEqualTo(protectedBefore.get(path)));
-        assertRealModelEvidence(outcome.events(), metadata);
         Map<String, String> after = fileDigests(workspace);
         List<String> changedPaths = changedPaths(before, after);
         writeEvidence(
@@ -173,6 +172,7 @@ class CodingAgentLiveE2E {
             throw new AssertionError(
                     "live coding run did not complete: " + safeFailureSummary(outcome.completed(), outcome.events()));
         }
+        assertRealModelEvidence(outcome.events(), metadata);
         if (specification.approval().equals("ASK_REJECT")) {
             verifyRejectedApproval(workspace, outcome.events(), outcome.rejectedApprovals());
         } else {
@@ -203,14 +203,26 @@ class CodingAgentLiveE2E {
             if (pending.isPresent()) {
                 var request = pending.orElseThrow();
                 boolean reject = specification.approval().equals("ASK_REJECT");
-                client.respond(
-                        request,
-                        reject ? InteractionAction.REJECT : InteractionAction.APPROVE,
-                        "live-e2e-" + (reject ? "reject-" : "approve-") + request.requestId());
-                if (reject) rejectedApprovals++;
+                AgentRunSnapshot latest = client.findRun(completed.runId()).orElseThrow();
+                if (latest.status().isTerminal()) {
+                    completed = latest;
+                    break;
+                }
+                try {
+                    client.respond(
+                            request,
+                            reject ? InteractionAction.REJECT : InteractionAction.APPROVE,
+                            "live-e2e-" + (reject ? "reject-" : "approve-") + request.requestId());
+                    if (reject) rejectedApprovals++;
+                } catch (IllegalStateException responseRace) {
+                    latest = client.findRun(completed.runId()).orElseThrow();
+                    if (!latest.status().isTerminal()) throw responseRace;
+                    completed = latest;
+                    break;
+                }
             }
             Thread.sleep(25);
-            completed = client.open(sessionId).activeRun().orElseThrow();
+            completed = client.findRun(completed.runId()).orElseThrow();
         }
         if (!completed.status().isTerminal()) {
             client.cancel(sessionId, "live-e2e-timeout-" + specification.caseId());

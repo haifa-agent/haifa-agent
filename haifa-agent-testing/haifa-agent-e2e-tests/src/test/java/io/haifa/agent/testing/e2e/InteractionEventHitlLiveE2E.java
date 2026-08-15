@@ -184,7 +184,7 @@ class InteractionEventHitlLiveE2E {
                 client.respond(pending.orElseThrow(), actions.removeFirst(), "cp-11-interaction-" + UUID.randomUUID());
             }
             Thread.sleep(25);
-            snapshot = client.open(sessionId).activeRun().orElseThrow();
+            snapshot = client.findRun(snapshot.runId()).orElseThrow();
         }
         if (!snapshot.status().isTerminal()) {
             client.cancel(sessionId, "cp-11-timeout-" + UUID.randomUUID());

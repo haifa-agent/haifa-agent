@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -48,9 +49,9 @@ def main() -> int:
             if fragment not in content:
                 raise RuntimeError(f"required text is missing from {relative}")
 
-    output = root / ".verify-out"
-    shutil.rmtree(output, ignore_errors=True)
-    output.mkdir()
+    output_root = root / ".verify-out"
+    output_root.mkdir(exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix="run-", dir=output_root))
     sources = [str(root / relative) for relative in configuration["sources"]]
     run(
         [executable("HAIFA_JAVAC_EXECUTABLE", "javac"), "--release", "21", "-d", str(output), *sources],

@@ -65,7 +65,8 @@ public final class DefaultSkillActivationService implements SkillActivationServi
     public SkillContent content(SkillActivationRequest request) {
         AgentRun run = validateCaller(request);
         SkillActivation activation = state.skillActivation(run.id(), request.alias())
-                .orElseThrow(() -> new SecurityException("skill must be activated before content is read"));
+                .orElseThrow(() -> new SkillRequestRejectedException(
+                        "SKILL_NOT_ACTIVATED", "skill must be activated before content is read"));
         return contentLoader.load(activation.binding(), visibility(run));
     }
 
@@ -77,8 +78,12 @@ public final class DefaultSkillActivationService implements SkillActivationServi
         SkillResourceRef indexed = content.binding().packageIndex().resources().stream()
                 .filter(resource -> resource.relativePath().equals(normalizedPath))
                 .findFirst()
-                .orElseThrow(() -> new SecurityException("skill resource is not present in the frozen index"));
-        if (!indexed.readableText()) throw new SecurityException("skill resource is not readable text");
+                .orElseThrow(() -> new SkillRequestRejectedException(
+                        "SKILL_RESOURCE_NOT_INDEXED", "skill resource is not present in the frozen index"));
+        if (!indexed.readableText() || !content.readableResources().containsKey(normalizedPath)) {
+            throw new SkillRequestRejectedException(
+                    "SKILL_RESOURCE_NOT_TEXT", "skill resource is not an auxiliary readable text resource");
+        }
         String value = content.resource(indexed.relativePath());
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         if (indexed.byteSize() != bytes.length || !indexed.digest().value().equals(sha256(bytes))) {
@@ -102,7 +107,8 @@ public final class DefaultSkillActivationService implements SkillActivationServi
         return configuration.skillBindings().stream()
                 .filter(binding -> binding.alias().equals(request.alias()))
                 .findFirst()
-                .orElseThrow(() -> new SecurityException("skill is not allowed by the frozen run configuration"));
+                .orElseThrow(() -> new SkillRequestRejectedException(
+                        "SKILL_NOT_ALLOWED", "skill is not allowed by the frozen run configuration"));
     }
 
     private static SkillVisibilityContext visibility(AgentRun run) {

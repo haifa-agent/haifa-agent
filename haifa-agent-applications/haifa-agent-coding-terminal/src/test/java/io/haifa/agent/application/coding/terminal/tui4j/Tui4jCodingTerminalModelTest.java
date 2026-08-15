@@ -32,6 +32,7 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
@@ -407,6 +408,11 @@ class Tui4jCodingTerminalModelTest {
         @Override
         public CodingSessionView reconcile(AgentSessionId sessionId) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<AgentRunSnapshot> findRun(AgentRunId runId) {
+            return Optional.empty();
         }
 
         @Override

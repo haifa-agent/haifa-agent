@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
@@ -49,5 +50,10 @@ class CodingAgentE2EFixtureTest {
         }
         assertThat(CodingAgentE2EFixtureTest.class.getResource("/coding-e2e/support/verify_java.py"))
                 .isNotNull();
+        try (var input = Objects.requireNonNull(
+                CodingAgentE2EFixtureTest.class.getResourceAsStream("/coding-e2e/support/verify_java.py"))) {
+            String verifier = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(verifier).contains("tempfile.mkdtemp").doesNotContain("shutil.rmtree(output");
+        }
     }
 }

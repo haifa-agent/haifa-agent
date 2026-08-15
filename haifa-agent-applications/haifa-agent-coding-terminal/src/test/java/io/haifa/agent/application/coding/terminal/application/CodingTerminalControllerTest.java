@@ -767,6 +767,11 @@ class CodingTerminalControllerTest {
         }
 
         @Override
+        public Optional<AgentRunSnapshot> findRun(AgentRunId runId) {
+            return view.activeRun().filter(snapshot -> snapshot.runId().equals(runId));
+        }
+
+        @Override
         public void submit(AgentSessionId sessionId, String message, String idempotencyKey) {
             submitAttempts++;
             if (submitFailure != null) {

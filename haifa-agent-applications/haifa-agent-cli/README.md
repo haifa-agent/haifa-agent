@@ -496,7 +496,8 @@ CLI Coding Profile 显式允许 `task-planning` 与 `result-verification` 两个
 Skill 包中的脚本。
 
 `skills.localDirectories` 是 CLI 可信控制面配置，不接受模型或 Run 参数提供目录。每个 `root` 必须是
-已存在、可读、非符号链接的绝对目录。Source 会有界递归穿过分类目录，并把首个包含 `SKILL.md`
+已存在、可读、非符号链接的绝对目录，也可以用完整的 `${ENV_NAME}` 占位符从进程环境注入该绝对路径。
+Source 会有界递归穿过分类目录，并把首个包含 `SKILL.md`
 的目录视为包根，不再进入该包的资源子目录；例如可发现
 `D:\haifa-agent-config\skills\creative\ascii-art\SKILL.md`。当前 CLI 把这些来源绑定为本地用户的
 `USER` Scope；`origin` 只允许 `created` 或 `imported`，`parserMode` 只允许 `strict` 或

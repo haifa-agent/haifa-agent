@@ -343,10 +343,11 @@ class LocalCodingProductAssemblyTest {
 
     private static void awaitTerminal(LocalCodingAgent agent, AgentRunId runId) throws InterruptedException {
         Instant deadline = Instant.now().plusSeconds(10);
-        var snapshot = agent.runtime().find(runId).orElseThrow();
+        LocalCodingSessionClient client = client(agent);
+        var snapshot = client.findRun(runId).orElseThrow();
         while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
             Thread.sleep(20);
-            snapshot = agent.runtime().find(runId).orElseThrow();
+            snapshot = client.findRun(runId).orElseThrow();
         }
         assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
     }

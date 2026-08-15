@@ -217,7 +217,7 @@ final class AutonomousDeliveryRepeatExecutor {
                             "autonomous-delivery-approve-" + UUID.randomUUID());
                 }
                 Thread.sleep(25);
-                snapshot = client.open(sessionId).activeRun().orElseThrow();
+                snapshot = client.findRun(snapshot.runId()).orElseThrow();
             }
             completedWithinBudget = snapshot.status().isTerminal();
             if (!completedWithinBudget) {

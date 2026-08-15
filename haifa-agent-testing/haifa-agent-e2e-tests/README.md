@@ -24,6 +24,8 @@ Local Native 严格验证由独立 Gate 负责，真实 Provider 仍不会由普
 
 Coding CLI Case 001～008 的可见验证已统一为共享 `verify_java.py` 内核与 Fixture 本地
 `verify.json`，`verify.sh` 和 `verify.ps1` 只负责选择平台入口；Case 版本统一提升为 `2.0`。
+每次验证在 `.verify-out/` 下使用独立的 Run 输出目录，并随仓库外的 Case Root 保留；重复执行或
+Windows 短暂文件占用不会复用或删除任何一次验证的编译目录。
 Case 009 验证审批拒绝后的零副作用，不包含验证脚本。隐藏 Oracle 仍由 E2E Java 测试独立执行，
 不会把 Workspace 内可修改的可见验证器当作最终判定依据。
 

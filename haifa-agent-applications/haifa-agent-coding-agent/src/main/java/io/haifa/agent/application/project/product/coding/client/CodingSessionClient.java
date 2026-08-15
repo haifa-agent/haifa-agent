@@ -16,6 +16,7 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
@@ -40,6 +41,9 @@ public interface CodingSessionClient {
     CodingSessionView open(AgentSessionId sessionId);
 
     CodingSessionView reconcile(AgentSessionId sessionId);
+
+    /** Finds an authoritative Run snapshot, including terminal Runs, within this product client's project scope. */
+    Optional<AgentRunSnapshot> findRun(AgentRunId runId);
 
     default CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
         return CodingSessionHistoryPage.empty(sessionId);

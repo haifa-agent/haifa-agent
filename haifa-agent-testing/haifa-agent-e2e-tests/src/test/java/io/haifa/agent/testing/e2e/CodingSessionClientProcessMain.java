@@ -42,7 +42,7 @@ public final class CodingSessionClientProcessMain {
                     return 3;
                 }
                 sleep();
-                snapshot = client.open(sessionId).activeRun().orElseThrow();
+                snapshot = client.findRun(snapshot.runId()).orElseThrow();
             }
             if (!snapshot.status().isTerminal()) {
                 client.cancel(sessionId, "coding-client-process-timeout-" + UUID.randomUUID());

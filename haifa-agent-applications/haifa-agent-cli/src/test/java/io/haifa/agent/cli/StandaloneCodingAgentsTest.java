@@ -83,4 +83,56 @@ class StandaloneCodingAgentsTest {
             assertThat(agent.toString()).doesNotContain("embedded-test-credential");
         }
     }
+
+    @Test
+    void environmentInjectedCompatibleSkillIsValidatedDuringPublicAssembly() throws Exception {
+        Path workspace = Files.createDirectory(root.resolve("skill-workspace"));
+        Path skillRoot = Files.createDirectory(root.resolve("skill-root"));
+        Path skillPackage = Files.createDirectory(skillRoot.resolve("external-procedure"));
+        Files.writeString(
+                skillPackage.resolve("SKILL.md"),
+                """
+                ---
+                name: external-procedure
+                description: A reviewed external procedure.
+                metadata:
+                  external:
+                    tags: [reviewed]
+                ---
+                # External procedure
+
+                Follow the reviewed procedure.
+                """);
+        Path compatible = writeSkillConfiguration("compatible", "compatible");
+
+        try (StandaloneCodingAgent agent = StandaloneCodingAgents.open(
+                workspace, compatible, Map.of("EMBEDDED_SKILL_ROOT", skillRoot.toString()))) {
+            assertThat(agent.client()).isNotNull();
+        }
+
+        Path strict = writeSkillConfiguration("strict", "strict");
+        assertThatThrownBy(() -> StandaloneCodingAgents.open(
+                        workspace, strict, Map.of("EMBEDDED_SKILL_ROOT", skillRoot.toString())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("configured allowed Skills are unavailable: external-procedure")
+                .hasMessageContaining("SKILL_PARSE_FAILED");
+    }
+
+    private Path writeSkillConfiguration(String name, String parserMode) throws Exception {
+        Path configuration = root.resolve(name + "-skill.yaml");
+        Files.writeString(
+                configuration,
+                """
+                skills:
+                  allowed: [external-procedure]
+                  localDirectories:
+                    - id: reviewed-external-skills
+                      root: ${EMBEDDED_SKILL_ROOT}
+                      priority: 100
+                      parserMode: %s
+                      origin: imported
+                """
+                        .formatted(parserMode));
+        return configuration;
+    }
 }
