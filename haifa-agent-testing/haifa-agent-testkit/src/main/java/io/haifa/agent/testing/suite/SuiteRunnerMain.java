@@ -136,6 +136,7 @@ public final class SuiteRunnerMain {
                         agentProfile);
                 results.add(result);
                 if (!Boolean.TRUE.equals(result.get("successful")) && selection.blocking()) {
+                    results.addAll(notRunResultsAfter(manifest, testCase.caseId(), repetition));
                     writeReport(
                             projectRoot,
                             configRoot,
@@ -171,6 +172,37 @@ public final class SuiteRunnerMain {
                 results,
                 selectedSecrets.values());
         return evidenceSafe && results.stream().allMatch(value -> Boolean.TRUE.equals(value.get("successful"))) ? 0 : 1;
+    }
+
+    static List<Map<String, Object>> notRunResultsAfter(
+            SuiteManifest manifest, String blockingCaseId, int blockingRepetition) {
+        List<Map<String, Object>> notRun = new ArrayList<>();
+        boolean blockingExecutionFound = false;
+        for (SuiteManifest.CaseSelection selection : manifest.cases()) {
+            for (int repetition = 1; repetition <= selection.repetitions(); repetition++) {
+                if (!blockingExecutionFound) {
+                    blockingExecutionFound =
+                            selection.caseId().equals(blockingCaseId) && repetition == blockingRepetition;
+                    continue;
+                }
+                String runId = "not-run-" + selection.caseId().toLowerCase(Locale.ROOT) + "-r" + repetition;
+                LinkedHashMap<String, Object> result = new LinkedHashMap<>();
+                result.put("caseId", selection.caseId());
+                result.put("repetition", repetition);
+                result.put("runId", runId);
+                result.put("status", MavenTestEvidence.Status.NOT_RUN);
+                result.put("successful", false);
+                result.put("durationMillis", 0L);
+                result.put("notRunReason", "BLOCKING_CASE_FAILED");
+                result.put("blockedByCaseId", blockingCaseId);
+                result.put("evidenceRef", "reports/" + manifest.suiteId() + "-result.json");
+                notRun.add(Map.copyOf(result));
+            }
+        }
+        if (!blockingExecutionFound) {
+            throw new IllegalArgumentException("blocking execution is not present in the suite");
+        }
+        return List.copyOf(notRun);
     }
 
     private Map<String, Object> executeCase(
@@ -220,16 +252,7 @@ public final class SuiteRunnerMain {
             childEnvironment.put("HAIFA_FT_RUN_ID", runId);
             childEnvironment.put("HAIFA_FT_ROOT", codingRoot.toString());
         }
-        if (testCase.caseId().equals("CP-10") || testCase.caseId().equals("CP-11")) {
-            Path persistenceRoot = Files.createDirectory(caseRoot.resolve("persistence"));
-            childEnvironment.put(
-                    "HAIFA_SQLITE_DATABASE_PATH",
-                    persistenceRoot.resolve("runtime.db").toString());
-            childEnvironment.put(
-                    "HAIFA_TRANSCRIPT_ROOT",
-                    Files.createDirectory(persistenceRoot.resolve("transcripts"))
-                            .toString());
-        }
+        configureCaseEnvironment(childEnvironment, testCase, caseRoot);
 
         Instant caseStartedAt = Instant.now();
         System.out.printf("Running %s repetition=%d runId=%s%n", testCase.caseId(), repetition, runId);
@@ -284,11 +307,25 @@ public final class SuiteRunnerMain {
                 testCase.module(),
                 "-am",
                 "-Pci-integration-only",
+                "-DskipUnitTests=true",
                 "-DskipITs=false",
+                "-Denforcer.skip=true",
+                "-Djacoco.skip=true",
                 "-Dfailsafe.failIfNoSpecifiedTests=false",
                 "-Dhaifa.failsafe.reportsDirectory=" + reportsRoot,
                 "-Dit.test=" + testCase.testSelector(),
                 "verify");
+    }
+
+    static void configureCaseEnvironment(
+            Map<String, String> childEnvironment, CriticalPathCase testCase, Path caseRoot) throws IOException {
+        if (!testCase.caseId().equals("CP-10") && !testCase.caseId().equals("CP-11")) return;
+        Path persistenceRoot = Files.createDirectory(caseRoot.resolve("persistence"));
+        childEnvironment.put("HAIFA_PERSISTENCE_MODE", "SQLITE_WITH_JSONL");
+        childEnvironment.put("HAIFA_SQLITE_DATABASE_PATH", persistenceRoot.resolve("runtime.db").toString());
+        childEnvironment.put(
+                "HAIFA_TRANSCRIPT_ROOT",
+                Files.createDirectory(persistenceRoot.resolve("transcripts")).toString());
     }
 
     private boolean writeReport(

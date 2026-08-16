@@ -10,7 +10,7 @@ YAML 加载、stdio 与退出码由独立 CLI Platform Gate 验证，不属于 C
 - `CP-02`～`CP-06`：九套版本化 Coding Live E2E 中的关键路径 Selector，保留原 Case ID、
   独立 Oracle、脏 Workspace、失败恢复和审批拒绝零副作用断言；
 - `CP-07`：真实模型发现并调用 `skill_load`，Trace 必须记录 `haifa-runtime-skill`；
-- `CP-08`：真实模型依次调用 `web.search` 和 `web.fetch`；
+- `CP-08`：真实模型依次调用模型可见的 `web_search` 和 `web_fetch`；
 - `CP-10`：真实 AgentRun 写入 SQLite，JSONL Transcript 投影非空；
 - `CP-09`：标准客户端发现并调用 Utility MCP；
 - `CP-11`：在同一持久化装配中程序化完成模型基线、Search 拒绝、Search/Fetch 逐次批准和重新装配

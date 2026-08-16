@@ -70,7 +70,7 @@ class CriticalPathClientLiveE2E {
                 runClient("cp-07", "只调用一次 skill_load 加载 ascii-art。加载成功后不要调用其他工具，立即只输出一个包含 HAIFA AGENT 的简短纯文本 ASCII 图。");
 
         assertCompleted(result);
-        assertSucceededTool(result, "skill.load");
+        assertSucceededTool(result, "skill_load");
     }
 
     @Test
@@ -80,8 +80,8 @@ class CriticalPathClientLiveE2E {
                 "必须先调用 web_search 搜索 Alibaba Cloud IQS ReadPageBasic 官方文档，再从结果选择公开 HTTPS 官方 URL 调用 web_fetch；最后简要回答。");
 
         assertCompleted(result);
-        assertSucceededTool(result, "web.search");
-        assertSucceededTool(result, "web.fetch");
+        assertSucceededTool(result, "web_search");
+        assertSucceededTool(result, "web_fetch");
     }
 
     @Test
@@ -89,7 +89,7 @@ class CriticalPathClientLiveE2E {
         ClientResult result = runClient("cp-09", "必须调用 mcp.utility.calculate 计算 7*6；只根据工具结果回答。禁止自行心算替代工具调用。");
 
         assertCompleted(result);
-        assertSucceededTool(result, "mcp.utility.calculate");
+        assertSucceededTool(result, "utility_calculate");
     }
 
     @Test

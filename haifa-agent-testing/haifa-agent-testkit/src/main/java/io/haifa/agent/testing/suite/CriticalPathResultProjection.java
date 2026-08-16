@@ -46,6 +46,8 @@ final class CriticalPathResultProjection {
                     case FAILED, ERROR, TIMEOUT -> TestResultProjection.Status.FAIL;
                 };
         String runId = String.valueOf(result.get("runId"));
+        String evidenceRef =
+                result.containsKey("evidenceRef") ? String.valueOf(result.get("evidenceRef")) : "runs/" + runId;
         return new TestResultProjection(
                 1,
                 SUITE_SYSTEM,
@@ -65,7 +67,7 @@ final class CriticalPathResultProjection {
                 null,
                 ((Number) result.get("durationMillis")).longValue(),
                 Map.of("costKnown", false),
-                "runs/" + runId,
+                evidenceRef,
                 nativeStatus == MavenTestEvidence.Status.PASSED ? "NONE" : nativeStatus.name());
     }
 }

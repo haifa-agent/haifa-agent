@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -14,6 +15,30 @@ import org.junit.jupiter.api.io.TempDir;
 class SuiteRunnerMainTest {
     @TempDir
     Path temporaryDirectory;
+
+    @Test
+    void recordsEveryRemainingRepetitionAsNotRunAfterABlockingFailure() {
+        SuiteManifest suite = new SuiteManifest(
+                1,
+                "blocking-v1",
+                "primary-v1",
+                new SuiteManifest.Budget(30, 3, 1),
+                java.util.List.of(
+                        new SuiteManifest.CaseSelection("CP-01", 2, true),
+                        new SuiteManifest.CaseSelection("CP-02", 1, true),
+                        new SuiteManifest.CaseSelection("CP-03", 1, true)));
+
+        var results = SuiteRunnerMain.notRunResultsAfter(suite, "CP-01", 1);
+
+        assertEquals(3, results.size());
+        assertEquals("CP-01", results.get(0).get("caseId"));
+        assertEquals(2, results.get(0).get("repetition"));
+        assertEquals(MavenTestEvidence.Status.NOT_RUN, results.get(0).get("status"));
+        assertEquals("CP-03", results.get(2).get("caseId"));
+        assertEquals("BLOCKING_CASE_FAILED", results.get(2).get("notRunReason"));
+        assertEquals("CP-01", results.get(2).get("blockedByCaseId"));
+        assertEquals("reports/blocking-v1-result.json", results.get(2).get("evidenceRef"));
+    }
 
     @Test
     void routesFailsafeReportsIntoTheCaseEvidenceDirectory() throws Exception {
@@ -26,6 +51,27 @@ class SuiteRunnerMainTest {
 
         assertTrue(command.contains("-Dhaifa.failsafe.reportsDirectory=" + reportsRoot));
         assertTrue(command.stream().noneMatch(value -> value.startsWith("-Dfailsafe.reportsDirectory=")));
+        assertTrue(command.contains("-DskipUnitTests=true"));
+        assertTrue(command.contains("-Denforcer.skip=true"));
+        assertTrue(command.contains("-Djacoco.skip=true"));
+        assertTrue(command.stream().noneMatch("-Dshade.skip=true"::equals));
+    }
+
+    @Test
+    void configuresDurablePersistenceForPersistenceCases() throws Exception {
+        Path caseRoot = Files.createDirectory(temporaryDirectory.resolve("cp-10"));
+        Map<String, String> environment = new HashMap<>();
+
+        SuiteRunnerMain.configureCaseEnvironment(environment, CriticalPathCatalog.require("CP-10"), caseRoot);
+
+        assertEquals("SQLITE_WITH_JSONL", environment.get("HAIFA_PERSISTENCE_MODE"));
+        assertEquals(
+                caseRoot.resolve("persistence/runtime.db").toString(),
+                environment.get("HAIFA_SQLITE_DATABASE_PATH"));
+        assertEquals(
+                caseRoot.resolve("persistence/transcripts").toString(),
+                environment.get("HAIFA_TRANSCRIPT_ROOT"));
+        assertTrue(Files.isDirectory(caseRoot.resolve("persistence/transcripts")));
     }
 
     @Test

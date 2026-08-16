@@ -109,9 +109,9 @@ cases:
       (`sh verify.sh` on POSIX or `powershell -NoProfile -File verify.ps1` on Windows), and inspect its expected
       failure; (2) fix Range.contains so both interval endpoints are inclusive and negative values outside the
       interval remain rejected; (3) after the final file modification, invoke execution.run exactly once more with
-      the same platform verification entry and workdir `.`. There must be exactly two execution.run invocations in
-      the whole task. When the second invocation succeeds, call no more tools and immediately return the final
-      response.
+      the same platform verification entry and workdir `.`; (4) when the second invocation succeeds, invoke git_diff
+      exactly once to inspect the final unstaged diff. There must be exactly two execution.run invocations in the
+      whole task. After inspecting the final diff, call no more tools and immediately return the final response.
 
   - caseId: HF-06-E2E-CLI-009
     caseVersion: "1.0"

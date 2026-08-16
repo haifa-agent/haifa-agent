@@ -8,6 +8,10 @@ POM，禁止生产模块直接依赖所有 `haifa-agent-testing` 制品。
 
 Runner 默认只生成计划。附加的 `runner` JAR 由私有 `test-config/scripts/` 调用；只有显式传入
 `--execute`、安全的仓库外运行根和所需 Secret 后，才会串行执行 Catalog 中的 Maven selector。
+每个 Live Case 使用 `ci-integration-only` 和精确 Failsafe selector；依赖模块 Surefire、重复的
+Enforcer 和 JaCoCo 报告在 Case 进程中跳过；CLI shaded JAR 仍由当前 Reactor 生命周期产生。
+上述门禁由同一 SHA 的独立 L3 执行一次，
+不在每个付费 Case 前重复。
 `assets.TestingAssetPreflight` 是 Critical Path Suite Runner 与 Autonomous Delivery Harness
 共同的首个治理前置步骤；它在加载 Suite/Matrix 或创建任何运行产物前校验主仓和 `test-config`
 Schema 2 资产台账的生命周期、覆盖范围及引用，避免两个正式入口产生不同的 Orphan 判定。Schema 2
