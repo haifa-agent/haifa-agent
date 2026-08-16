@@ -31,30 +31,20 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-/** Executes the Windows production CLI through real ConPTY and a process-local loopback model Stub. */
-final class AutonomousDeliveryStubGate {
+/** Executes the independent CLI/PTY Platform Gate through a process-local loopback model Stub. */
+final class AutonomousDeliveryPlatformGate {
     static final String GATE_TYPE = "AUTONOMOUS_DELIVERY_PLATFORM_STUB";
     static final String STUB_CREDENTIAL = "local-conpty-stub-key";
     private static final DateTimeFormatter GATE_TIME =
             DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
-    private static final List<String> PROVIDER_ENVIRONMENT = List.of(
-            "DEEPSEEK_API_KEY",
-            "BAILIAN_API_KEY",
-            "DASHSCOPE_API_KEY",
-            "ARK_API_KEY",
-            "VOLCENGINE_API_KEY",
-            "HAIFA_DEEPSEEK_LIVE_TEST",
-            "HAIFA_BAILIAN_LIVE_TEST",
-            "HAIFA_ARK_LIVE_TEST");
-
     private final ObjectMapper json;
     private final Clock clock;
 
-    AutonomousDeliveryStubGate(Clock clock) {
+    AutonomousDeliveryPlatformGate(Clock clock) {
         this(new ObjectMapper(), clock);
     }
 
-    AutonomousDeliveryStubGate(ObjectMapper json, Clock clock) {
+    AutonomousDeliveryPlatformGate(ObjectMapper json, Clock clock) {
         this.json = Objects.requireNonNull(json, "json must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
@@ -87,7 +77,7 @@ final class AutonomousDeliveryStubGate {
         String javaVersion = toolVersion(java, "-version");
         String gitVersion = toolVersion(git, "--version");
 
-        Path gate = campaign.resolve("stub-gate")
+        Path gate = campaign.resolve("platform-gate")
                 .resolve("build-" + buildCommit)
                 .resolve("gate-" + GATE_TIME.format(now()));
         Files.createDirectories(gate.getParent());
@@ -117,7 +107,7 @@ final class AutonomousDeliveryStubGate {
         driver.directory(project.toFile());
         driver.redirectErrorStream(true);
         driver.redirectOutput(output.toFile());
-        PROVIDER_ENVIRONMENT.forEach(driver.environment()::remove);
+        ExternalAccessEnvironment.isolate(driver.environment());
         Process process = driver.start();
         ProcessTreeCleanup.Tracker tracker = ProcessTreeCleanup.track(process);
         boolean completed = process.waitFor(suite.budget().maxWallTimeMillis(), TimeUnit.MILLISECONDS);
@@ -236,6 +226,16 @@ final class AutonomousDeliveryStubGate {
                         && driverContract.passed()
                         && driverCleanup.naturalExit());
         checks.put(
+                "SHADED_JAR",
+                Sha256Digests.file(cli).equals(rawManifest.path("jarSha256").asText("")));
+        checks.put(
+                "ARGUMENTS",
+                "governance".equals(rawManifest.path("mode").asText(""))
+                        && "stub".equals(rawManifest.path("providerMode").asText("")));
+        checks.put("YAML", driverAssertions.getOrDefault("seedRunCompleted", false));
+        checks.put("STDIO", Files.size(terminalEvidence.resolve("session.cast")) > 0 && driverContract.passed());
+        checks.put("EXIT_CODE", exitStatus == 0 && driverAssertions.getOrDefault("exitedSuccessfully", false));
+        checks.put(
                 "APPROVAL",
                 driverAssertions.getOrDefault("deniedShellRejected", false)
                         && driverAssertions.getOrDefault("deniedShellNotExecuted", false)
@@ -335,7 +335,7 @@ final class AutonomousDeliveryStubGate {
         productRevision.requireUnchanged(productRevisionAfter, "product repository");
         testConfigRevision.requireUnchanged(testConfigRevisionAfter, "test-config repository");
         if (!successful) {
-            throw new IllegalStateException("Autonomous Delivery Stub Gate failed reviewed checks");
+            throw new IllegalStateException("Autonomous Delivery Platform Gate failed reviewed checks");
         }
         return gate;
     }
@@ -440,7 +440,7 @@ final class AutonomousDeliveryStubGate {
                 || !"allow".equals(combination.networkPolicy())
                 || !"powershell".equals(combination.shell())
                 || !"TRUSTED_HOST_ONLY".equals(combination.isolationAssurance())) {
-            throw new IllegalArgumentException("Stub Gate requires the reviewed Windows Host Trusted combination");
+            throw new IllegalArgumentException("Platform Gate requires the reviewed Windows Host Trusted combination");
         }
     }
 
@@ -486,7 +486,7 @@ final class AutonomousDeliveryStubGate {
 
     private static void copySanitized(Path source, Path target, Collection<Path> sensitivePaths) throws IOException {
         if (!Files.isRegularFile(source)) {
-            throw new IOException("required Stub Gate artifact is unavailable: " + source.getFileName());
+            throw new IOException("required Platform Gate artifact is unavailable: " + source.getFileName());
         }
         String content = Files.readString(source, StandardCharsets.UTF_8);
         for (Path path : sensitivePaths) content = redact(content, path);

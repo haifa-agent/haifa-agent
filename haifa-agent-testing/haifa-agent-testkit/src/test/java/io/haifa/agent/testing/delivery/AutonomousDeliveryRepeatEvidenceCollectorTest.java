@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.haifa.agent.testing.evidence.EvidenceSecretScanner;
-import io.haifa.agent.testing.process.ProcessTreeCleanup;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -17,9 +16,7 @@ class AutonomousDeliveryRepeatEvidenceCollectorTest {
                 Map.of("modelCalls", 2L, "toolCalls", 4L, "wallTimeMillis", 1250L, "costKnown", false);
 
         AutonomousDeliveryRepeatEvidenceCollector.Result result = AutonomousDeliveryRepeatEvidenceCollector.assemble(
-                input(true, new ProcessTreeCleanup.Result(true, 2, 0, 0, false, true)),
-                new EvidenceSecretScanner.Result(1, true, List.of()),
-                usage);
+                input(true, clientContract(true)), new EvidenceSecretScanner.Result(1, true, List.of()), usage);
 
         assertTrue(result.gatePassed());
         assertEquals(true, result.resultArtifact().get("successful"));
@@ -34,26 +31,26 @@ class AutonomousDeliveryRepeatEvidenceCollectorTest {
     }
 
     @Test
-    void processOrSecretFailureCannotBecomeGatePass() {
-        AutonomousDeliveryRepeatEvidenceCollector.Result processFailure =
+    void clientOrSecretFailureCannotBecomeGatePass() {
+        AutonomousDeliveryRepeatEvidenceCollector.Result clientFailure =
                 AutonomousDeliveryRepeatEvidenceCollector.assemble(
-                        input(true, new ProcessTreeCleanup.Result(true, 2, 1, 0, false, false)),
+                        input(true, clientContract(false)),
                         new EvidenceSecretScanner.Result(1, true, List.of()),
                         Map.of());
         AutonomousDeliveryRepeatEvidenceCollector.Result secretFailure =
                 AutonomousDeliveryRepeatEvidenceCollector.assemble(
-                        input(true, new ProcessTreeCleanup.Result(true, 2, 0, 0, false, true)),
+                        input(true, clientContract(true)),
                         new EvidenceSecretScanner.Result(1, false, List.of("driver.log")),
                         Map.of());
 
-        assertFalse(processFailure.gatePassed());
+        assertFalse(clientFailure.gatePassed());
         assertFalse(secretFailure.gatePassed());
-        assertEquals(false, processFailure.resultArtifact().get("successful"));
+        assertEquals(false, clientFailure.resultArtifact().get("successful"));
         assertEquals(false, secretFailure.summary().get("gatePassed"));
     }
 
     private static AutonomousDeliveryRepeatEvidenceCollector.Input input(
-            boolean preliminaryGatePassed, ProcessTreeCleanup.Result cleanup) {
+            boolean preliminaryGatePassed, CodingClientExecutionContract clientContract) {
         AutonomousDeliveryRuntimeEvidenceReader.Evidence runtime = new AutonomousDeliveryRuntimeEvidenceReader.Evidence(
                 "COMPLETED",
                 100,
@@ -75,8 +72,7 @@ class AutonomousDeliveryRepeatEvidenceCollectorTest {
                 new AutonomousDeliveryRepeatEvidenceCollector.CaseMetadata(
                         "01", "2.0.0", "JAVA", "BUG_FIX", List.of("EDIT", "VERIFY"), List.of("FAILURE_ATOMICITY")),
                 1,
-                0,
-                new TerminalDriverResultContract.Validation(true, List.of()),
+                clientContract,
                 1.25,
                 1250,
                 true,
@@ -85,11 +81,24 @@ class AutonomousDeliveryRepeatEvidenceCollectorTest {
                 false,
                 preliminaryGatePassed,
                 runtime,
-                cleanup,
                 2,
                 true,
                 true,
                 true,
                 "PASS");
+    }
+
+    private static CodingClientExecutionContract clientContract(boolean passed) {
+        return new CodingClientExecutionContract(
+                true,
+                true,
+                true,
+                true,
+                passed,
+                "COMPLETED",
+                5,
+                "a".repeat(64),
+                "b".repeat(64),
+                passed ? List.of() : List.of("CLIENT_CLOSE_FAILED"));
     }
 }

@@ -283,7 +283,7 @@ Windows PowerShell：
 java -jar .\haifa-agent-applications\haifa-agent-cli\target\haifa-agent-cli-0.1.0-SNAPSHOT.jar --help
 ```
 
-精确测试使用 L1 串行反馈；模块完整测试和全仓增量测试使用 L2 固定四线程；最终门禁使用 L3。
+精确测试使用 L1 串行反馈；模块完整测试和全仓增量测试使用 L2 固定四线程；最终门禁使用 L3 固定两线程。
 统一入口会记录脱敏指标并避免按 CPU 核数无界放大并发。直接调用 Wrapper 仍受支持，但不作为日常
 全仓测试的推荐入口。
 

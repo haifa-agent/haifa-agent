@@ -26,74 +26,58 @@ public final class CriticalPathCatalog {
                 live(
                         "CP-01",
                         "Primary model connectivity",
-                        ":haifa-agent-model-openai-compatible",
-                        "DeepSeekLiveIT",
-                        "DEEPSEEK_API_KEY"),
+                        ":haifa-agent-e2e-tests",
+                        "CriticalPathClientLiveE2E#completesAgentBaselineTurn"),
                 e2e(
                         "CP-02",
                         "Single-file boundary defect repair",
                         ":haifa-agent-e2e-tests",
-                        "CodingAgentLiveE2E#repairsSingleFileBoundaryDefect",
-                        "DEEPSEEK_API_KEY"),
+                        "CodingAgentLiveE2E#repairsSingleFileBoundaryDefect"),
                 e2e(
                         "CP-03",
                         "Multi-file feature implementation",
                         ":haifa-agent-e2e-tests",
-                        "CodingAgentLiveE2E#implementsMultiFileDiscountFeature",
-                        "DEEPSEEK_API_KEY"),
+                        "CodingAgentLiveE2E#implementsMultiFileDiscountFeature"),
                 e2e(
                         "CP-04",
                         "Execution failure diagnosis and recovery",
                         ":haifa-agent-e2e-tests",
-                        "CodingAgentLiveE2E#diagnosesFailedExecutionAndRecovers",
-                        "DEEPSEEK_API_KEY"),
+                        "CodingAgentLiveE2E#diagnosesFailedExecutionAndRecovers"),
                 e2e(
                         "CP-05",
                         "Dirty workspace preservation",
                         ":haifa-agent-e2e-tests",
-                        "CodingAgentLiveE2E#preservesUnrelatedDirtyWorkspaceContent",
-                        "DEEPSEEK_API_KEY"),
+                        "CodingAgentLiveE2E#preservesUnrelatedDirtyWorkspaceContent"),
                 e2e(
                         "CP-06",
                         "Rejected approval has no side effect",
                         ":haifa-agent-e2e-tests",
-                        "CodingAgentLiveE2E#rejectedApprovalProducesNoSideEffect",
-                        "DEEPSEEK_API_KEY"),
+                        "CodingAgentLiveE2E#rejectedApprovalProducesNoSideEffect"),
                 e2e(
                         "CP-07",
                         "Reviewed Skill activation",
                         ":haifa-agent-e2e-tests",
-                        "CriticalPathLiveE2E#activatesReviewedSkill",
-                        "DEEPSEEK_API_KEY"),
-                new CriticalPathCase(
+                        "CriticalPathClientLiveE2E#activatesReviewedSkill"),
+                e2e(
                         "CP-08",
                         "Web search followed by fetch",
-                        CriticalPathCase.TestScope.E2E,
                         ":haifa-agent-e2e-tests",
-                        "CriticalPathLiveE2E#searchesAndFetchesPublicWebContent",
-                        true,
-                        List.of("DEEPSEEK_API_KEY", "ALIYUN_IQS_API_KEY")),
-                live(
+                        "CriticalPathClientLiveE2E#searchesAndFetchesPublicWebContent"),
+                e2e(
                         "CP-09",
-                        "Utility MCP protocol compatibility",
-                        ":haifa-agent-mcp",
-                        "UtilityMcpCompatibilityLiveIT"),
-                new CriticalPathCase(
+                        "Coding Agent discovers and calls Utility MCP",
+                        ":haifa-agent-e2e-tests",
+                        "CriticalPathClientLiveE2E#discoversAndCallsUtilityMcp"),
+                e2e(
                         "CP-10",
                         "SQLite authority and JSONL projection",
-                        CriticalPathCase.TestScope.E2E,
                         ":haifa-agent-e2e-tests",
-                        "CriticalPathLiveE2E#persistsRunToSqliteAndJsonl",
-                        true,
-                        List.of("DEEPSEEK_API_KEY", "HAIFA_CONTINUATION_KEY")),
-                new CriticalPathCase(
+                        "CriticalPathClientLiveE2E#persistsRunToSqliteAndJsonl"),
+                e2e(
                         "CP-11",
                         "Interaction, event journal, and HITL round trip",
-                        CriticalPathCase.TestScope.E2E,
                         ":haifa-agent-e2e-tests",
-                        "InteractionEventHitlLiveE2E#completesInteractionEventAndHitlRoundTrip",
-                        true,
-                        List.of("DEEPSEEK_API_KEY", "ALIYUN_IQS_API_KEY", "HAIFA_CONTINUATION_KEY")));
+                        "InteractionEventHitlLiveE2E#completesInteractionEventAndHitlRoundTrip"));
         LinkedHashMap<String, CriticalPathCase> result = new LinkedHashMap<>();
         for (CriticalPathCase value : cases) {
             if (result.put(value.caseId(), value) != null) {
@@ -103,15 +87,11 @@ public final class CriticalPathCatalog {
         return Collections.unmodifiableMap(result);
     }
 
-    private static CriticalPathCase live(
-            String id, String title, String module, String selector, String... requiredSecrets) {
-        return new CriticalPathCase(
-                id, title, CriticalPathCase.TestScope.LIVE, module, selector, true, List.of(requiredSecrets));
+    private static CriticalPathCase live(String id, String title, String module, String selector) {
+        return new CriticalPathCase(id, title, CriticalPathCase.TestScope.LIVE, module, selector, true);
     }
 
-    private static CriticalPathCase e2e(
-            String id, String title, String module, String selector, String... requiredSecrets) {
-        return new CriticalPathCase(
-                id, title, CriticalPathCase.TestScope.E2E, module, selector, true, List.of(requiredSecrets));
+    private static CriticalPathCase e2e(String id, String title, String module, String selector) {
+        return new CriticalPathCase(id, title, CriticalPathCase.TestScope.E2E, module, selector, true);
     }
 }

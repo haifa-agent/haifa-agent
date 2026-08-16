@@ -34,6 +34,24 @@ class ProjectApplicationArchitectureTest {
     }
 
     @Test
+    void codingClientIsAProductBoundaryIndependentOfTerminalAndCli() {
+        var classes = new ClassFileImporter()
+                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                .importPackages("io.haifa.agent.application.project.product.coding.client");
+
+        noClasses()
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage(
+                        "io.haifa.agent.application.coding.terminal..",
+                        "io.haifa.agent.cli..",
+                        "io.haifa.agent.model.openai..",
+                        "io.haifa.agent.sandbox.host..",
+                        "io.haifa.agent.sandbox.localnative..")
+                .check(classes);
+    }
+
+    @Test
     void applicationPersistenceUsesTheStoreMyBatisBoundaryInsteadOfJdbc() {
         var classes = new ClassFileImporter()
                 .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)

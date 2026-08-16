@@ -4,19 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunStatus;
-import io.haifa.agent.model.api.ModelApiStyles;
-import io.haifa.agent.model.api.ModelCapability;
-import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
-import io.haifa.agent.runtime.api.InteractionResponse;
-import io.haifa.agent.runtime.api.InteractionResponseId;
-import io.haifa.agent.runtime.api.InteractionResponseType;
-import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
-import java.io.ByteArrayOutputStream;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.InteractionAction;
+import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RunEventPayloads;
 import java.io.IOException;
-import java.io.PrintStream;
 import java.lang.reflect.Method;
-import java.net.URI;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -50,22 +47,18 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
 /** Real-provider Coding E2E owned by the central E2E test module. */
 @Tag("live")
 @Tag("functional")
-@Tag("cli-coding")
+@Tag("coding-product")
 @Tag("p0")
 @Execution(ExecutionMode.SAME_THREAD)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class CodingAgentLiveE2E {
-    private static final String LIVE_SWITCH = "HAIFA_CLI_LIVE_E2E_TEST";
-    private static final String EXECUTION_PROVIDER = "HAIFA_CLI_LIVE_E2E_EXECUTION_PROVIDER";
-    private static final String EXECUTION_NETWORK = "HAIFA_CLI_LIVE_E2E_EXECUTION_NETWORK";
+    private static final String LIVE_SWITCH = "HAIFA_CODING_CLIENT_LIVE_TEST";
     private static final String ROOT_SENTINEL = ".haifa-cli-live-e2e-root";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Map<String, CaseSpec> CASES = loadCases();
     private static Path approvedRoot;
+    private static Path agentConfiguration;
     private static String runId;
-    private static String expectedProviderId;
-    private static String credentialEnvironmentName;
-    private static CliConfiguration.Model liveModel;
 
     @BeforeAll
     static void requireExplicitLiveEnvironment() throws Exception {
@@ -74,10 +67,11 @@ class CodingAgentLiveE2E {
                 "real-model CLI E2E requires " + LIVE_SWITCH + "=true");
         requireEnvironment("HAIFA_FT_ENABLED", "true");
         requireEnvironment("HAIFA_FT_MODE", "LIVE");
-        liveModel = liveModel();
-        String apiKey = System.getenv(credentialEnvironmentName);
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalStateException(credentialEnvironmentName + " is required");
+        agentConfiguration = Path.of(requiredEnvironment("HAIFA_TEST_AGENT_CONFIG"))
+                .toAbsolutePath()
+                .normalize();
+        if (!Files.isRegularFile(agentConfiguration)) {
+            throw new IllegalStateException("HAIFA_TEST_AGENT_CONFIG must identify a standard Coding Agent YAML");
         }
         runId = requiredEnvironment("HAIFA_FT_RUN_ID");
         approvedRoot =
@@ -150,129 +144,107 @@ class CodingAgentLiveE2E {
         String sentinelBefore = sha256(approvedRoot.resolve(ROOT_SENTINEL));
         Map<String, String> protectedBefore = specification.protectedPaths().stream()
                 .collect(Collectors.toMap(path -> path, path -> digest(workspace.resolve(path))));
-        ByteArrayOutputStream capturedBytes = new ByteArrayOutputStream();
-        PrintStream captured = new PrintStream(capturedBytes, true, StandardCharsets.UTF_8);
-        CliConfiguration configuration = configuration(specification);
         Instant startedAt = now();
-        int rejectedApprovals = 0;
-        io.haifa.agent.runtime.api.AgentRunSnapshot completed;
-        List<RuntimeTraceEvent> traces;
-
-        try (LocalCodingAgent agent = LocalCodingAgent.create(workspace, configuration, captured)) {
-            var accepted = agent.start(specification.task());
-            Instant deadline = startedAt.plusSeconds(specification.timeoutSeconds());
-            completed = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!completed.status().isTerminal() && now().isBefore(deadline)) {
-                var pending = agent.interactions().pending(accepted.runId());
-                if (pending.isPresent()) {
-                    if (!specification.approval().equals("ASK_REJECT")) {
-                        throw new AssertionError("unexpected approval request for automatically approved case");
-                    }
-                    var request = pending.orElseThrow();
-                    agent.runtime()
-                            .respond(new InteractionResponse(
-                                    new InteractionResponseId(
-                                            agent.identifiers().nextValue()),
-                                    request.id(),
-                                    request.runId(),
-                                    InteractionResponseType.REJECT,
-                                    List.of(),
-                                    "live-e2e-reject-" + request.id().value(),
-                                    agent.time().now()));
-                    rejectedApprovals++;
-                }
-                Thread.sleep(25);
-                completed = agent.runtime().find(accepted.runId()).orElseThrow();
-            }
-            if (!completed.status().isTerminal()) {
-                agent.cancel(accepted.runId());
-                throw new AssertionError("live coding case exceeded its bounded timeout");
-            }
-            traces = agent.traceEvents();
+        ClientOutcome outcome;
+        StandaloneCodingAgentMetadata metadata;
+        try (StandaloneCodingAgent agent = StandaloneCodingAgents.open(workspace, agentConfiguration)) {
+            metadata = agent.metadata();
+            outcome = executeCase(specification, agent.client(), agent.projectId(), startedAt);
         }
 
-        String capturedOutput = capturedBytes.toString(StandardCharsets.UTF_8);
-        rejectSensitiveOutput(capturedOutput);
         assertThat(sha256(approvedRoot.resolve(ROOT_SENTINEL))).isEqualTo(sentinelBefore);
         specification.protectedPaths().forEach(path -> assertThat(digest(workspace.resolve(path)))
                 .as("protected workspace path %s", path)
                 .isEqualTo(protectedBefore.get(path)));
-        assertRealModelEvidence(traces);
         Map<String, String> after = fileDigests(workspace);
         List<String> changedPaths = changedPaths(before, after);
         writeEvidence(
                 specification,
-                completed,
-                traces,
+                outcome.completed(),
+                outcome.events(),
+                metadata,
                 fixtureDigest,
                 Duration.between(startedAt, now()),
-                rejectedApprovals,
+                outcome.rejectedApprovals(),
                 changedPaths,
                 "PENDING");
-        if (completed.status() != AgentRunStatus.COMPLETED) {
-            throw new AssertionError("live coding run did not complete: " + safeFailureSummary(completed, traces));
+        if (outcome.completed().status() != AgentRunStatus.COMPLETED) {
+            throw new AssertionError(
+                    "live coding run did not complete: " + safeFailureSummary(outcome.completed(), outcome.events()));
         }
+        assertRealModelEvidence(outcome.events(), metadata);
         if (specification.approval().equals("ASK_REJECT")) {
-            verifyRejectedApproval(workspace, traces, rejectedApprovals);
+            verifyRejectedApproval(workspace, outcome.events(), outcome.rejectedApprovals());
         } else {
-            verifyOracle(specification.caseId(), workspace, caseRoot.resolve("oracle-classes"), traces);
+            verifyOracle(specification.caseId(), workspace, caseRoot.resolve("oracle-classes"), outcome.events());
         }
         writeEvidence(
                 specification,
-                completed,
-                traces,
+                outcome.completed(),
+                outcome.events(),
+                metadata,
                 fixtureDigest,
                 Duration.between(startedAt, now()),
-                rejectedApprovals,
+                outcome.rejectedApprovals(),
                 changedPaths,
                 "PASSED");
     }
 
-    private static CliConfiguration configuration(CaseSpec specification) {
-        CliConfiguration defaults = CliConfiguration.defaults();
-        ApprovalMode approval = specification.approval().equals("ASK_REJECT") ? ApprovalMode.ASK : ApprovalMode.AUTO;
-        return new CliConfiguration(
-                liveModel,
-                defaults.enabledTools(),
-                List.of(),
-                liveExecution(System.getenv()),
-                approval,
-                Duration.ofSeconds(specification.timeoutSeconds()),
-                defaults.maxIterations(),
-                specification.maxToolCalls());
-    }
-
-    static CliConfiguration.Execution liveExecution(Map<String, String> environment) {
-        CliConfiguration.Execution defaults = CliConfiguration.defaults().execution();
-        String provider = optionalEnvironment(environment, EXECUTION_PROVIDER);
-        String network = optionalEnvironment(environment, EXECUTION_NETWORK);
-        if (provider == null && network == null) {
-            return defaults;
+    private static ClientOutcome executeCase(
+            CaseSpec specification, CodingSessionClient client, ProjectId projectId, Instant startedAt)
+            throws Exception {
+        var created = client.create(projectId, specification.task(), "live-e2e-create-" + specification.caseId());
+        var sessionId = created.summary().sessionId();
+        AgentRunSnapshot completed = created.activeRun().orElseThrow();
+        Instant deadline = startedAt.plusSeconds(specification.timeoutSeconds());
+        int rejectedApprovals = 0;
+        while (!completed.status().isTerminal() && now().isBefore(deadline)) {
+            var pending = client.pendingInteraction(completed.runId());
+            if (pending.isPresent()) {
+                var request = pending.orElseThrow();
+                boolean reject = specification.approval().equals("ASK_REJECT");
+                AgentRunSnapshot latest = client.findRun(completed.runId()).orElseThrow();
+                if (latest.status().isTerminal()) {
+                    completed = latest;
+                    break;
+                }
+                try {
+                    client.respond(
+                            request,
+                            reject ? InteractionAction.REJECT : InteractionAction.APPROVE,
+                            "live-e2e-" + (reject ? "reject-" : "approve-") + request.requestId());
+                    if (reject) rejectedApprovals++;
+                } catch (IllegalStateException responseRace) {
+                    latest = client.findRun(completed.runId()).orElseThrow();
+                    if (!latest.status().isTerminal()) throw responseRace;
+                    completed = latest;
+                    break;
+                }
+            }
+            Thread.sleep(25);
+            completed = client.findRun(completed.runId()).orElseThrow();
         }
-        if (!"host-guarded".equals(provider) || !"allow".equals(network)) {
-            throw new IllegalStateException(EXECUTION_PROVIDER + "=host-guarded and " + EXECUTION_NETWORK
-                    + "=allow must be set together for an explicitly trusted live E2E workspace");
+        if (!completed.status().isTerminal()) {
+            client.cancel(sessionId, "live-e2e-timeout-" + specification.caseId());
+            throw new AssertionError("live coding case exceeded its bounded timeout");
         }
-        return new CliConfiguration.Execution(
-                provider,
-                network,
-                defaults.shell(),
-                defaults.shellPath(),
-                defaults.defaultTimeout(),
-                defaults.maximumTimeout(),
-                defaults.maxOutputBytes(),
-                defaults.maxOutputLines(),
-                defaults.maxProcesses(),
-                defaults.inheritEnvironment(),
-                defaults.extraPathPolicies());
+        return new ClientOutcome(completed, readAllEvents(client, completed), rejectedApprovals);
     }
 
-    private static String optionalEnvironment(Map<String, String> environment, String name) {
-        String value = environment.get(name);
-        return value == null || value.isBlank() ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
+    private static List<AgentRunEvent> readAllEvents(CodingSessionClient client, AgentRunSnapshot completed) {
+        java.util.ArrayList<AgentRunEvent> events = new java.util.ArrayList<>();
+        RunEventCursor cursor = RunEventCursor.beforeFirst(completed.runId());
+        boolean more;
+        do {
+            var page = client.events(completed.runId(), cursor, 100);
+            events.addAll(page.items());
+            cursor = page.nextCursor();
+            more = page.hasMore();
+        } while (more);
+        return List.copyOf(events);
     }
 
-    private static void verifyOracle(String caseId, Path workspace, Path classes, List<RuntimeTraceEvent> traces)
+    private static void verifyOracle(String caseId, Path workspace, Path classes, List<AgentRunEvent> events)
             throws Exception {
         switch (caseId) {
             case "HF-06-E2E-CLI-001" -> {
@@ -405,47 +377,46 @@ class CodingAgentLiveE2E {
                     assertThat(contains.invoke(instance, 2)).isEqualTo(true);
                     assertThat(contains.invoke(instance, -3)).isEqualTo(false);
                 }
-                List<Boolean> executionResults = toolResults(traces, "execution.run");
-                assertThat(executionResults).contains(false, true);
-                assertThat(executionResults).hasSizeGreaterThanOrEqualTo(2);
+                assertThat(events)
+                        .extracting(AgentRunEvent::eventType)
+                        .contains("execution.failed", "execution.completed");
             }
             default -> throw new IllegalArgumentException("no oracle for " + caseId);
         }
     }
 
-    private static void verifyRejectedApproval(Path workspace, List<RuntimeTraceEvent> traces, int rejectedApprovals) {
+    private static void verifyRejectedApproval(Path workspace, List<AgentRunEvent> events, int rejectedApprovals) {
         assertThat(rejectedApprovals).isGreaterThanOrEqualTo(1);
         assertThat(Files.notExists(workspace.resolve("requested.txt"))).isTrue();
-        long executedSideEffects = traces.stream()
-                .filter(event -> event.operation().equals("tool.execute"))
-                .map(event -> String.valueOf(event.safeAttributes().get("toolName")))
+        long executedSideEffects = events.stream()
+                .map(AgentRunEvent::payload)
+                .filter(RunEventPayloads.ToolLifecycle.class::isInstance)
+                .map(RunEventPayloads.ToolLifecycle.class::cast)
+                .filter(event -> event.status().equals("SUCCEEDED"))
+                .map(RunEventPayloads.ToolLifecycle::displayName)
                 .filter(Set.of("file.create", "file.write", "execution.run")::contains)
                 .count();
         assertThat(executedSideEffects).isZero();
     }
 
-    private static void assertRealModelEvidence(List<RuntimeTraceEvent> traces) {
-        List<RuntimeTraceEvent> modelCalls = traces.stream()
-                .filter(event -> event.operation().equals("model.invoke"))
+    private static void assertRealModelEvidence(List<AgentRunEvent> events, StandaloneCodingAgentMetadata metadata) {
+        List<RunEventPayloads.ModelLifecycle> modelCalls = events.stream()
+                .map(AgentRunEvent::payload)
+                .filter(RunEventPayloads.ModelLifecycle.class::isInstance)
+                .map(RunEventPayloads.ModelLifecycle.class::cast)
+                .filter(event -> event.status().equals("SUCCEEDED"))
                 .toList();
         assertThat(modelCalls).isNotEmpty();
         modelCalls.forEach(event -> {
-            assertThat(String.valueOf(event.safeAttributes().get("providerId"))).isEqualTo(expectedProviderId);
-            assertThat(String.valueOf(event.safeAttributes().get("modelId"))).isNotBlank();
-            assertThat(String.valueOf(event.safeAttributes().get("adapterVersion")))
-                    .isNotBlank();
-            assertThat(String.valueOf(event.safeAttributes().get("modelCallId")))
-                    .isNotBlank();
-            assertThat(String.valueOf(event.safeAttributes().get("responseId"))).isNotBlank();
-            assertThat(((Number) event.safeAttributes().get("inputTokens")).longValue())
-                    .isPositive();
-            assertThat(((Number) event.safeAttributes().get("outputTokens")).longValue())
-                    .isPositive();
+            assertThat(event.providerId()).isEqualTo(metadata.providerId());
+            assertThat(event.modelId()).isEqualTo(metadata.modelId());
+            assertThat(event.modelCallId()).isNotBlank();
+            assertThat(event.inputTokens()).isPositive();
+            assertThat(event.outputTokens()).isPositive();
         });
     }
 
-    private static String safeFailureSummary(
-            io.haifa.agent.runtime.api.AgentRunSnapshot snapshot, List<RuntimeTraceEvent> traces) {
+    private static String safeFailureSummary(AgentRunSnapshot snapshot, List<AgentRunEvent> events) {
         String error = snapshot.error()
                 .map(value -> value.code().wireCode() + "/" + value.category().name() + "/"
                         + value.details().entrySet().stream()
@@ -453,43 +424,11 @@ class CodingAgentLiveE2E {
                                 .map(entry -> entry.getKey() + "=" + String.valueOf(entry.getValue()))
                                 .collect(Collectors.joining(",")))
                 .orElse("none");
-        String operations = traces.stream()
-                .skip(Math.max(0, traces.size() - 40L))
-                .map(event -> event.operation() + safeTraceSuffix(event))
+        String operations = events.stream()
+                .skip(Math.max(0, events.size() - 40L))
+                .map(AgentRunEvent::eventType)
                 .collect(Collectors.joining(" -> "));
         return "status=" + snapshot.status().name() + ", error=" + error + ", recent=" + operations;
-    }
-
-    private static String safeTraceSuffix(RuntimeTraceEvent event) {
-        if (event.operation().equals("model.error")) {
-            return "[type=" + event.safeAttributes().getOrDefault("exceptionType", "unknown") + ",category="
-                    + event.safeAttributes().getOrDefault("category", "unknown") + ",http="
-                    + event.safeAttributes().getOrDefault("httpStatus", "unknown") + ",providerCode="
-                    + event.safeAttributes().getOrDefault("providerCode", "unknown") + "]";
-        }
-        if (event.operation().equals("tool.execute")) {
-            return "[" + event.safeAttributes().getOrDefault("toolName", "unknown") + "]";
-        }
-        if (event.operation().equals("tool.persisted")) {
-            return "[successful=" + event.safeAttributes().getOrDefault("successful", "unknown") + "]";
-        }
-        return "";
-    }
-
-    private static List<Boolean> toolResults(List<RuntimeTraceEvent> traces, String toolName) {
-        Set<String> calls = traces.stream()
-                .filter(event -> event.operation().equals("tool.execute"))
-                .filter(event -> toolName.equals(event.safeAttributes().get("toolName")))
-                .flatMap(event -> event.toolCallId().stream())
-                .map(value -> value.value())
-                .collect(Collectors.toSet());
-        return traces.stream()
-                .filter(event -> event.operation().equals("tool.persisted"))
-                .filter(event -> event.toolCallId()
-                        .map(value -> calls.contains(value.value()))
-                        .orElse(false))
-                .map(event -> (Boolean) event.safeAttributes().get("successful"))
-                .toList();
     }
 
     private static void compile(Path workspace, Path output) throws Exception {
@@ -536,39 +475,37 @@ class CodingAgentLiveE2E {
 
     private static void writeEvidence(
             CaseSpec specification,
-            io.haifa.agent.runtime.api.AgentRunSnapshot completed,
-            List<RuntimeTraceEvent> traces,
+            AgentRunSnapshot completed,
+            List<AgentRunEvent> events,
+            StandaloneCodingAgentMetadata metadata,
             String fixtureDigest,
             Duration duration,
             int rejectedApprovals,
             List<String> changedPaths,
             String oracle)
             throws Exception {
-        List<Map<String, Object>> modelCalls = traces.stream()
-                .filter(event -> event.operation().equals("model.invoke"))
-                .map(event -> Map.<String, Object>ofEntries(
-                        Map.entry("providerId", event.safeAttributes().get("providerId")),
-                        Map.entry("providerVersion", event.safeAttributes().get("providerVersion")),
-                        Map.entry("modelId", event.safeAttributes().get("modelId")),
-                        Map.entry("modelVersion", event.safeAttributes().get("modelVersion")),
-                        Map.entry("adapterVersion", event.safeAttributes().get("adapterVersion")),
-                        Map.entry("modelCallId", event.safeAttributes().get("modelCallId")),
-                        Map.entry("responseId", event.safeAttributes().get("responseId")),
-                        Map.entry("inputTokens", event.safeAttributes().get("inputTokens")),
-                        Map.entry("outputTokens", event.safeAttributes().get("outputTokens")),
-                        Map.entry("cacheHitTokens", event.safeAttributes().get("cacheHitTokens")),
-                        Map.entry("cacheMissTokens", event.safeAttributes().get("cacheMissTokens")),
-                        Map.entry("reasoningTokens", event.safeAttributes().get("reasoningTokens"))))
+        List<Map<String, Object>> modelCalls = events.stream()
+                .map(AgentRunEvent::payload)
+                .filter(RunEventPayloads.ModelLifecycle.class::isInstance)
+                .map(RunEventPayloads.ModelLifecycle.class::cast)
+                .map(event -> Map.<String, Object>of(
+                        "providerId", event.providerId(),
+                        "modelId", event.modelId(),
+                        "modelCallId", event.modelCallId(),
+                        "status", event.status(),
+                        "inputTokens", event.inputTokens(),
+                        "outputTokens", event.outputTokens(),
+                        "finishReason", event.finishReason(),
+                        "reasonCode", event.reasonCode()))
                 .toList();
-        long toolCalls = traces.stream()
-                .filter(event -> event.operation().equals("tool.execute"))
+        long toolCalls = events.stream()
+                .filter(event -> event.eventType().equals("tool.call.requested"))
                 .count();
-        long failedTools = traces.stream()
-                .filter(event -> event.operation().equals("tool.persisted"))
-                .filter(event -> Boolean.FALSE.equals(event.safeAttributes().get("successful")))
+        long failedTools = events.stream()
+                .filter(event -> event.eventType().equals("tool.call.failed"))
                 .count();
         Map<String, Object> evidence = new LinkedHashMap<>();
-        evidence.put("schemaVersion", "1.0");
+        evidence.put("schemaVersion", 2);
         evidence.put("batchId", runId);
         evidence.put("caseId", specification.caseId());
         evidence.put("caseVersion", specification.caseVersion());
@@ -576,6 +513,7 @@ class CodingAgentLiveE2E {
         evidence.put("runId", completed.runId().value());
         evidence.put("status", completed.status().name());
         evidence.put("durationMillis", duration.toMillis());
+        evidence.put("agentAssemblyDigest", metadata.assemblyDigest());
         evidence.put("modelCalls", modelCalls);
         evidence.put("toolCalls", toolCalls);
         evidence.put("failedToolCalls", failedTools);
@@ -586,16 +524,6 @@ class CodingAgentLiveE2E {
         Path reports = Files.createDirectories(base.resolve("target/coding-agent-live-e2e-evidence"));
         JSON.writerWithDefaultPrettyPrinter()
                 .writeValue(reports.resolve(specification.caseId() + ".json").toFile(), evidence);
-    }
-
-    private static void rejectSensitiveOutput(String output) {
-        String apiKey = System.getenv(credentialEnvironmentName);
-        if (apiKey != null && !apiKey.isBlank() && output.contains(apiKey)) {
-            throw new AssertionError("captured CLI output contains a credential");
-        }
-        if (output.contains("reasoning_content")) {
-            throw new AssertionError("captured CLI output contains reasoning content metadata");
-        }
     }
 
     private static Map<String, String> fileDigests(Path root) throws Exception {
@@ -713,47 +641,6 @@ class CodingAgentLiveE2E {
         return value.trim();
     }
 
-    private static CliConfiguration.Model liveModel() {
-        String provider = System.getenv()
-                .getOrDefault("HAIFA_CLI_LIVE_E2E_PROVIDER", "deepseek")
-                .trim()
-                .toLowerCase(java.util.Locale.ROOT);
-        expectedProviderId = provider;
-        return switch (provider) {
-            case "deepseek" -> {
-                credentialEnvironmentName = "DEEPSEEK_API_KEY";
-                yield CliConfiguration.defaults().model();
-            }
-            case "aliyun-bailian" -> {
-                credentialEnvironmentName = "DASHSCOPE_API_KEY";
-                String modelId = System.getenv().getOrDefault("HAIFA_BAILIAN_MODEL_ID", "qwen-plus");
-                String region = System.getenv().getOrDefault("HAIFA_BAILIAN_REGION", "cn-beijing");
-                String workspaceId = requiredEnvironment("HAIFA_BAILIAN_WORKSPACE_ID");
-                URI endpoint =
-                        URI.create("https://" + workspaceId + "." + region + ".maas.aliyuncs.com/compatible-mode/v1");
-                yield new CliConfiguration.Model(
-                        provider,
-                        "Alibaba Cloud Bailian",
-                        modelId,
-                        endpoint,
-                        null,
-                        "env://" + credentialEnvironmentName,
-                        ModelApiStyles.OPENAI_CHAT_COMPLETIONS,
-                        OpenAiCompatibleDialects.ALIYUN_BAILIAN,
-                        true,
-                        workspaceId,
-                        region,
-                        modelId,
-                        modelId,
-                        Set.of(ModelCapability.TEXT_CHAT, ModelCapability.TOOL_CALLING),
-                        131_072,
-                        8_192);
-            }
-            default ->
-                throw new IllegalStateException("HAIFA_CLI_LIVE_E2E_PROVIDER must be deepseek or aliyun-bailian");
-        };
-    }
-
     private static void requireEnvironment(String name, String expected) {
         if (!expected.equalsIgnoreCase(requiredEnvironment(name))) {
             throw new IllegalStateException(name + " must be " + expected);
@@ -762,6 +649,13 @@ class CodingAgentLiveE2E {
 
     private static Instant now() {
         return Instant.ofEpochMilli(System.currentTimeMillis());
+    }
+
+    private record ClientOutcome(AgentRunSnapshot completed, List<AgentRunEvent> events, int rejectedApprovals) {
+        private ClientOutcome {
+            completed = Objects.requireNonNull(completed, "completed must not be null");
+            events = List.copyOf(Objects.requireNonNull(events, "events must not be null"));
+        }
     }
 
     private record CaseCatalog(List<CaseSpec> cases) {

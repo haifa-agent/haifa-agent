@@ -302,7 +302,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 SandboxProcessStatus status;
                 boolean treeTerminated = true;
                 Integer exitCode = null;
-                if (cancelRequested) {
+                if (outcome == WaitOutcome.CANCELLED) {
                     treeTerminated = terminateTree(process);
                     status = treeTerminated ? SandboxProcessStatus.CANCELLED : SandboxProcessStatus.UNKNOWN;
                 } else if (outcome == WaitOutcome.FINISHED) {
@@ -440,7 +440,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 long waitMillis = Math.max(1, Math.min(20, remainingMillis));
                 process.waitFor(waitMillis, TimeUnit.MILLISECONDS);
             }
-            return WaitOutcome.FINISHED;
+            return cancelRequested ? WaitOutcome.CANCELLED : WaitOutcome.FINISHED;
         }
 
         @Override

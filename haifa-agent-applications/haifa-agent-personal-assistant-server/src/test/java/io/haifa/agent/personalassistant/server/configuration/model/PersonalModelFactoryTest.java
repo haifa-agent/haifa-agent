@@ -449,13 +449,10 @@ class PersonalModelFactoryTest {
         assertThat(option.controls().responseMode().allowedValues()).containsExactly(PersonalResponseMode.RECOMMENDED);
         assertThat(option.controls().reasoningEffort().visible()).isFalse();
         assertThat(platform.catalog().runProfiles()).hasSize(4);
-        assertThat(platform.catalog().runProfiles())
-                .allSatisfy(selection -> {
-                    assertThat(selection.effectiveParameters().reasoning().mode())
-                            .isEqualTo(ModelReasoningMode.ENABLED);
-                    assertThat(selection.effectiveParameters().reasoning().effort())
-                            .contains(ModelReasoningEffort.HIGH);
-                });
+        assertThat(platform.catalog().runProfiles()).allSatisfy(selection -> {
+            assertThat(selection.effectiveParameters().reasoning().mode()).isEqualTo(ModelReasoningMode.ENABLED);
+            assertThat(selection.effectiveParameters().reasoning().effort()).contains(ModelReasoningEffort.HIGH);
+        });
     }
 
     @Test

@@ -24,13 +24,14 @@ jobs:
             matrix:
                 include:
                     - os: ubuntu-latest
-                      combination: linux-deepseek-primary
+                      combination: linux-primary
                     - os: windows-latest
-                      combination: windows-deepseek-primary
+                      combination: windows-primary
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key
@@ -77,20 +78,21 @@ jobs:
                 include:
                     - suite: nightly-v1
                       os: ubuntu-latest
-                      combination: linux-deepseek-primary
+                      combination: linux-primary
                     - suite: nightly-v1
                       os: windows-latest
-                      combination: windows-deepseek-primary
+                      combination: windows-primary
                     - suite: release-v1
                       os: ubuntu-latest
-                      combination: linux-deepseek
+                      combination: linux-release
                     - suite: release-v1
                       os: windows-latest
-                      combination: windows-deepseek
+                      combination: windows-release
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key
@@ -148,10 +150,10 @@ jobs:
                   cache: maven
             - name: Verify architecture and tests (Unix)
               if: runner.os != 'Windows'
-              run: sh ./mvnw --batch-mode --no-transfer-progress -T 4 -Pci-fast clean verify
+              run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pci-fast clean verify
             - name: Verify architecture and tests (Windows)
               if: runner.os == 'Windows'
-              run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 4 -Pci-fast clean verify
+              run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 2 -Pci-fast clean verify
 
     integration:
         name: Integration verify
@@ -167,7 +169,7 @@ jobs:
                   java-version: "21"
                   cache: maven
             - name: Run Failsafe integration route
-              run: sh ./mvnw --batch-mode --no-transfer-progress -T 4 -Pci-integration-only verify
+              run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pci-integration-only verify
 
     release-artifacts:
         name: Release artifact contracts
@@ -184,7 +186,7 @@ jobs:
                   cache: maven
             - name: Build CLI release artifacts without rerunning tests
               run: >-
-                  sh ./mvnw --batch-mode --no-transfer-progress -T 4
+                  sh ./mvnw --batch-mode --no-transfer-progress -T 2
                   -pl :haifa-agent-cli -am -Prelease-artifacts verify
             - name: CLI entrypoint smoke
               run: java -jar haifa-agent-applications/haifa-agent-cli/target/haifa-agent-cli-0.1.0-SNAPSHOT.jar --help

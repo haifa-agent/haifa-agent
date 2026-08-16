@@ -37,7 +37,6 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelApiStyles;
-import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelDefinitionId;
 import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
@@ -100,6 +99,7 @@ import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.io.PrintStream;
@@ -109,7 +109,6 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -192,13 +191,24 @@ final class LocalCodingAgent implements AutoCloseable {
             CliConfiguration configuration,
             PrintStream output,
             Consumer<RuntimeTraceEvent> traceObserver) {
+        return createWithTrace(workspaceRoot, configuration, output, traceObserver, System.getenv());
+    }
+
+    static LocalCodingAgent createWithTrace(
+            Path workspaceRoot,
+            CliConfiguration configuration,
+            PrintStream output,
+            Consumer<RuntimeTraceEvent> traceObserver,
+            Map<String, String> environment) {
+        Map<String, String> resolvedEnvironment =
+                Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
         boolean allowInsecureLoopback =
-                allowInsecureLoopback(configuration, System.getenv("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
+                allowInsecureLoopback(configuration, resolvedEnvironment.get("HAIFA_ALLOW_INSECURE_LOOPBACK_MODEL"));
         var http = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         var json = new ObjectMapper();
-        var credentials = new EnvironmentCredentialResolver();
+        var credentials = new EnvironmentCredentialResolver(resolvedEnvironment::get);
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
@@ -212,7 +222,8 @@ final class LocalCodingAgent implements AutoCloseable {
                         new ModelAdapterKey(ModelApiStyles.OPENAI_RESPONSES_ADAPTER, "1.0.0"), responses,
                         new ModelAdapterKey(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"), anthropic),
                 traceObserver,
-                resolveContinuationProtector(configuration));
+                resolveContinuationProtector(configuration, resolvedEnvironment),
+                resolvedEnvironment);
     }
 
     static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
@@ -258,7 +269,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 output,
                 model,
                 traceObserver,
-                resolveContinuationProtector(configuration));
+                resolveContinuationProtector(configuration, System.getenv()));
     }
 
     static LocalCodingAgent create(
@@ -275,7 +286,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 output,
                 Map.of(new ModelAdapterKey(selected.adapterType(), selected.adapterVersion()), model),
                 traceObserver,
-                continuationProtector);
+                continuationProtector,
+                System.getenv());
     }
 
     private static LocalCodingAgent create(
@@ -284,7 +296,10 @@ final class LocalCodingAgent implements AutoCloseable {
             PrintStream output,
             Map<ModelAdapterKey, AgentChatModel> modelAdapters,
             Consumer<RuntimeTraceEvent> traceObserver,
-            ModelContinuationProtector continuationProtector) {
+            ModelContinuationProtector continuationProtector,
+            Map<String, String> environment) {
+        Map<String, String> resolvedEnvironment =
+                Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
         LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
         workspaceRoot = workspaceIdentity.providerRoot();
         TrustedProjectResourceCatalog resources = new TrustedProjectResourceCatalog(workspaceRoot);
@@ -310,8 +325,10 @@ final class LocalCodingAgent implements AutoCloseable {
                     .toList();
             var skillPlatform = ProjectSkillPlatform.baseAndUserDirectorySkills(
                     tenant, principal, Optional.empty(), false, skillDirectories);
+            validateAllowedSkills(configuration.skills(), skillPlatform);
             CliMcpPlatform mcpPlatform = CliMcpPlatform.connect(configuration.mcpServers(), principal);
-            CliWebPlatform webPlatform = CliWebPlatform.create(configuration.web(), principal);
+            CliWebPlatform webPlatform =
+                    CliWebPlatform.create(configuration.web(), principal, resolvedEnvironment::get);
             var projects = new InMemoryProjectStore();
             var workspaces = new InMemoryWorkspaceStore();
             var bindings = new InMemoryWorkspaceBindingStore();
@@ -412,7 +429,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             policy,
                             workspaceId,
                             workspaceRoot,
-                            output)
+                            output,
+                            resolvedEnvironment)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
             var provider = new ProjectToolExecutor(
@@ -784,6 +802,26 @@ final class LocalCodingAgent implements AutoCloseable {
         }
     }
 
+    private static void validateAllowedSkills(
+            CliConfiguration.Skills configuredSkills, ProjectSkillPlatform skillPlatform) {
+        List<String> unavailable = configuredSkills.allowedAliases().stream()
+                .filter(alias -> skillPlatform
+                        .catalog()
+                        .findByAlias(new SkillAlias(alias))
+                        .isEmpty())
+                .sorted()
+                .toList();
+        if (unavailable.isEmpty()) return;
+        String diagnosticCodes = skillPlatform.catalog().snapshot().diagnostics().stream()
+                .map(io.haifa.agent.skill.api.SkillDiagnostic::code)
+                .distinct()
+                .sorted()
+                .collect(java.util.stream.Collectors.joining(","));
+        String diagnostics = diagnosticCodes.isEmpty() ? "" : "; diagnostics=" + diagnosticCodes;
+        throw new IllegalArgumentException(
+                "configured allowed Skills are unavailable: " + String.join(",", unavailable) + diagnostics);
+    }
+
     private static String safeApprovalText(String value) {
         String withoutAnsi = value.replaceAll("\\u001B\\[[;?0-9]*[ -/]*[@-~]", "");
         StringBuilder safe = new StringBuilder(withoutAnsi.length());
@@ -842,7 +880,8 @@ final class LocalCodingAgent implements AutoCloseable {
         return null;
     }
 
-    private static ModelContinuationProtector resolveContinuationProtector(CliConfiguration configuration) {
+    private static ModelContinuationProtector resolveContinuationProtector(
+            CliConfiguration configuration, Map<String, String> environment) {
         if (configuration.persistence().mode() == ProjectPersistenceMode.MEMORY
                 || configuration.persistence().protection() == ProjectPersistenceProtection.NONE) {
             return null;
@@ -852,7 +891,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 .protectorReference()
                 .orElseThrow(() -> new IllegalArgumentException("durable continuation protector is not configured"));
         String environmentName = reference.substring("env://".length());
-        String encoded = System.getenv(environmentName);
+        String encoded = environment.get(environmentName);
         if (encoded == null || encoded.isBlank()) {
             throw new IllegalArgumentException("durable continuation protector secret is unavailable");
         }
@@ -912,19 +951,12 @@ final class LocalCodingAgent implements AutoCloseable {
                 List.of(new AliyunBailianProviderFactory.ModelProfile(
                         new ModelDefinitionId(model.id()),
                         "cli-v1",
-                        model.displayName(),
                         model.modelId(),
-                        EnumSet.of(
-                                ModelCapability.TEXT_CHAT,
-                                ModelCapability.TOOL_CALLING,
-                                ModelCapability.STRUCTURED_OUTPUT),
+                        model.displayName(),
+                        model.capabilities(),
                         model.contextWindow(),
                         model.maxOutputTokens(),
-                        Map.of(
-                                "thinking_profile", "none",
-                                "thinking_enabled", false,
-                                "supports_tool_stream", false,
-                                "tool_stream", false))));
+                        OpenAiCompatibleDialects.configuredInvocationOptions(model.dialect(), model.reasoningMode()))));
         var definition = provider.models().getFirst();
         Map<String, Object> providerOptions = new java.util.LinkedHashMap<>(provider.options());
         return ResolvedModelSnapshot.create(

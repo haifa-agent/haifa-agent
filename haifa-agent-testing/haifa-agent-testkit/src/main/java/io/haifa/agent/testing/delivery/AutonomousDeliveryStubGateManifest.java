@@ -16,6 +16,11 @@ public record AutonomousDeliveryStubGateManifest(
         List<String> requiredChecks) {
     static final Set<String> REQUIRED_CHECKS = Set.of(
             "CONPTY",
+            "SHADED_JAR",
+            "ARGUMENTS",
+            "YAML",
+            "STDIO",
+            "EXIT_CODE",
             "APPROVAL",
             "SHELL",
             "SQLITE",

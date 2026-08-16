@@ -22,7 +22,8 @@ public final class PythonJsonAcceptanceGrader {
             Path acceptanceScript,
             Path candidateWorkspace,
             Path pythonExecutable,
-            Duration timeout)
+            Duration timeout,
+            String toolchainPath)
             throws IOException, InterruptedException {
         Path acceptance = requireFile(acceptanceScript, "acceptance script");
         Path workspace = requireDirectory(candidateWorkspace, "candidate workspace");
@@ -34,11 +35,12 @@ public final class PythonJsonAcceptanceGrader {
         Path error = Files.createTempFile("haifa-acceptance-", ".stderr");
         Instant started = Instant.now();
         try {
-            Process process = new ProcessBuilder(python.toString(), "-I", acceptance.toString(), workspace.toString())
+            ProcessBuilder builder = new ProcessBuilder(oracleCommand(python, acceptance, workspace))
                     .directory(acceptance.getParent().toFile())
                     .redirectOutput(output.toFile())
-                    .redirectError(error.toFile())
-                    .start();
+                    .redirectError(error.toFile());
+            configureOracleEnvironment(builder.environment(), toolchainPath);
+            Process process = builder.start();
             boolean completed = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!completed) {
                 process.destroy();
@@ -60,6 +62,17 @@ public final class PythonJsonAcceptanceGrader {
             Files.deleteIfExists(output);
             Files.deleteIfExists(error);
         }
+    }
+
+    static void configureOracleEnvironment(Map<String, String> environment, String toolchainPath) {
+        if (toolchainPath == null || toolchainPath.isBlank()) {
+            throw new IllegalArgumentException("toolchain path must not be blank");
+        }
+        environment.put("PATH", toolchainPath);
+    }
+
+    static List<String> oracleCommand(Path python, Path acceptance, Path workspace) {
+        return List.of(python.toString(), "-X", "utf8", "-I", acceptance.toString(), workspace.toString());
     }
 
     AutonomousDeliveryAcceptanceGrade parse(

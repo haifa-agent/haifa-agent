@@ -1,4 +1,4 @@
-package io.haifa.agent.application.coding.terminal.session;
+package io.haifa.agent.application.project.product.coding.client;
 
 import io.haifa.agent.application.project.product.ProjectProductException;
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
@@ -36,7 +36,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Supplier;
 
-/** Local adapter; terminal code still sees only the product facade and stable Runtime API. */
+/** Local product adapter backed by Coding Session services and the stable Runtime API. */
 public final class LocalCodingSessionClient implements CodingSessionClient {
     private final ProjectId projectId;
     private final CodingSessionService sessions;
@@ -171,6 +171,12 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public CodingSessionView reconcile(AgentSessionId sessionId) {
         requireScoped(sessionId);
         return scoped(sessions.reconcileSession(sessionId));
+    }
+
+    @Override
+    public java.util.Optional<io.haifa.agent.runtime.api.AgentRunSnapshot> findRun(AgentRunId runId) {
+        requireRunScoped(runId);
+        return runtime.find(runId);
     }
 
     @Override

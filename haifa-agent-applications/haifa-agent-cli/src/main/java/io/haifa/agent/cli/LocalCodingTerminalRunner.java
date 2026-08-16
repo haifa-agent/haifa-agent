@@ -2,7 +2,6 @@ package io.haifa.agent.cli;
 
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalApplication;
 import io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup;
-import io.haifa.agent.application.coding.terminal.session.LocalCodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
@@ -19,7 +18,7 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
     private final Supplier<Tui4jTerminalIo> terminalIoFactory;
 
     LocalCodingTerminalRunner() {
-        this(LocalCodingAgent::createWithTrace, Tui4jTerminalIo::system);
+        this(StandaloneCodingAgents::open, Tui4jTerminalIo::system);
     }
 
     LocalCodingTerminalRunner(AgentFactory agentFactory, Supplier<Tui4jTerminalIo> terminalIoFactory) {
@@ -39,22 +38,11 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
         // The tui4j event loop is the only terminal renderer. Execution output is projected
         // through safe product results instead of being written concurrently to the alt screen.
         try (PrintStream executionSink = new PrintStream(OutputStream.nullOutputStream());
-                LocalCodingAgent agent = agentFactory.create(workspace, configuration, executionSink, traceObserver)) {
-            var client = new LocalCodingSessionClient(
-                    agent.projectId(),
-                    agent.codingSessions(),
-                    agent.sessionHistory(),
-                    agent.runtime(),
-                    agent.identifiers(),
-                    agent.time(),
-                    new LocalWorkspacePathCatalog(workspace)::list,
-                    agent::loadedResources,
-                    agent::reloadResources,
-                    agent.shell(),
-                    agent.exporter());
+                StandaloneCodingAgent agent =
+                        agentFactory.create(workspace, configuration, executionSink, traceObserver)) {
             new CodingTerminalApplication(
                             agent.projectId(),
-                            client,
+                            agent.client(),
                             startup,
                             terminalIo,
                             new TerminalWorkspaceContext(
@@ -66,7 +54,7 @@ final class LocalCodingTerminalRunner implements CliTerminalRunner {
 
     @FunctionalInterface
     interface AgentFactory {
-        LocalCodingAgent create(
+        StandaloneCodingAgent create(
                 Path workspace,
                 CliConfiguration configuration,
                 PrintStream output,

@@ -28,8 +28,7 @@ class AutonomousDeliveryMatrixManifestLoaderTest {
 
         AutonomousDeliveryMatrixManifest manifest =
                 new AutonomousDeliveryMatrixManifestLoader().load(temporaryDirectory, "autonomous-delivery-v1");
-        AutonomousDeliveryMatrixManifest.Combination combination =
-                manifest.requireCombination("windows-deepseek-host-trusted");
+        AutonomousDeliveryMatrixManifest.Combination combination = manifest.requireCombination("windows-host-trusted");
 
         assertEquals(
                 "windows-host-trusted-v1", combination.requireHost("Windows 11").id());
@@ -52,8 +51,7 @@ class AutonomousDeliveryMatrixManifestLoaderTest {
 
         AutonomousDeliveryMatrixManifest manifest =
                 new AutonomousDeliveryMatrixManifestLoader().load(temporaryDirectory, "autonomous-delivery-v1");
-        AutonomousDeliveryMatrixManifest.Combination combination =
-                manifest.requireCombination("linux-deepseek-host-default");
+        AutonomousDeliveryMatrixManifest.Combination combination = manifest.requireCombination("linux-host-default");
 
         assertEquals("trusted-host-default-v1", combination.requireHost("Linux").id());
         assertThrows(IllegalArgumentException.class, () -> combination.requireHost("Windows 11"));
@@ -85,18 +83,14 @@ class AutonomousDeliveryMatrixManifestLoaderTest {
             String shell,
             String isolationAssurance,
             String hostProfile) {
-        String combinationId =
-                platform.equals("windows") ? "windows-deepseek-host-trusted" : platform + "-deepseek-host-default";
+        String combinationId = platform.equals("windows") ? "windows-host-trusted" : platform + "-host-default";
         return """
-                schemaVersion: 1
+                schemaVersion: 2
                 matrixId: autonomous-delivery-v1
-                compatibleAgentBaselineCommit: cc9ddb902b0db0e8e85b81bb7418eff9fd66f6ed
                 strategy: explicit
                 combinations:
                   - id: %s
                     platform: %s
-                    modelProvider: deepseek
-                    modelId: deepseek-chat
                     terminalBackend: %s
                     sandboxProfile: %s
                     networkPolicy: %s

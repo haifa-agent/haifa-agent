@@ -25,15 +25,16 @@ jobs:
             matrix:
                 include:
                     - os: ubuntu-latest
-                      combination: linux-deepseek
+                      combination: linux-release
                     - os: macos-latest
-                      combination: macos-deepseek
+                      combination: macos-release
                     - os: windows-latest
-                      combination: windows-deepseek
+                      combination: windows-release
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         env:
             HAIFA_TEST_MATRIX_COMBINATION: ${{ matrix.combination }}
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
         steps:
             - uses: actions/checkout@v4
             - name: Require private test-config deploy key
@@ -90,7 +91,7 @@ jobs:
                   java-version: "21"
                   cache: maven
             - name: Fast release verification
-              run: sh ./mvnw --batch-mode --no-transfer-progress -T 4 -Pci-fast clean verify
+              run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pci-fast clean verify
 
     release-integration:
         name: Release integration gate
@@ -106,7 +107,7 @@ jobs:
                   java-version: "21"
                   cache: maven
             - name: Integration verification without unit rerun
-              run: sh ./mvnw --batch-mode --no-transfer-progress -T 4 -Pci-integration-only verify
+              run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pci-integration-only verify
 
     release-artifacts:
         name: Release artifact gate
@@ -126,7 +127,7 @@ jobs:
                   gradle-version: "8.14"
             - name: Build SDK and CLI release artifacts without test rerun
               run: |
-                  sh ./mvnw --batch-mode --no-transfer-progress -T 4 \
+                  sh ./mvnw --batch-mode --no-transfer-progress -T 2 \
                     -pl ':haifa-agent-bom,:haifa-agent-spring-bom,:haifa-agent-sdk,:haifa-agent-sdk-starter,:haifa-agent-spring-boot-autoconfigure,:haifa-agent-spring-boot-starter,:haifa-agent-cli' \
                     -am -Prelease-artifacts install
             - name: External Maven, Gradle, and Spring consumer smoke

@@ -163,7 +163,11 @@ def memory_snapshot() -> dict[str, int | None]:
 
 
 def default_threads(layer: str) -> int:
-    return 4 if layer in {"L2", "L3"} else 1
+    if layer == "L2":
+        return 4
+    if layer == "L3":
+        return 2
+    return 1
 
 
 def has_thread_argument(arguments: list[str]) -> bool:

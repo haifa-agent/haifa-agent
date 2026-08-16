@@ -1,5 +1,8 @@
 # Changelog
 
+- Coding Agent 将 `CodingSessionClient` 提升为产品模块公共 API，并由最高层 CLI 应用提供
+  `StandaloneCodingAgents` 标准装配入口；Critical Path 与 Autonomous Delivery Capability Gate
+  改为注入产品客户端，CLI shaded JAR/参数/YAML/stdio/退出码由独立 Platform Gate 验证。
 - Personal Assistant 模型选择改为 Provider → 模型 → 设置的后端 Profile 驱动体验；DeepSeek V4 Flash/Pro
   的 Chat 与 Anthropic Binding 支持推荐/快速/深度和 high/max，Responses 作为高级连接方式保持推理只读；
   首轮 Conversation 原子保存精确 Binding 与偏好，raw reasoning 只在受保护 Tool continuation/恢复链内流转。

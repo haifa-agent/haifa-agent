@@ -1,4 +1,4 @@
-package io.haifa.agent.application.coding.terminal.session;
+package io.haifa.agent.application.project.product.coding.client;
 
 import io.haifa.agent.application.project.product.coding.CodingCompactionResult;
 import io.haifa.agent.application.project.product.coding.CodingModelOption;
@@ -16,6 +16,7 @@ import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEventListener;
 import io.haifa.agent.runtime.api.AgentRunOutputListener;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.InteractionResponseReceipt;
 import io.haifa.agent.runtime.api.InteractionView;
@@ -27,7 +28,7 @@ import io.haifa.agent.runtime.api.RunOutputSubscription;
 import java.util.List;
 import java.util.Optional;
 
-/** Stable product/API boundary consumed by the terminal application. */
+/** Stable Coding Agent product API consumed by local hosts and user interfaces. */
 public interface CodingSessionClient {
     CodingSessionView create(ProjectId projectId, String firstTurn, String idempotencyKey);
 
@@ -40,6 +41,9 @@ public interface CodingSessionClient {
     CodingSessionView open(AgentSessionId sessionId);
 
     CodingSessionView reconcile(AgentSessionId sessionId);
+
+    /** Finds an authoritative Run snapshot, including terminal Runs, within this product client's project scope. */
+    Optional<AgentRunSnapshot> findRun(AgentRunId runId);
 
     default CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
         return CodingSessionHistoryPage.empty(sessionId);

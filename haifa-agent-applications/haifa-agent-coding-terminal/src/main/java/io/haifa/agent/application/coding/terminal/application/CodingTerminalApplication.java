@@ -1,12 +1,12 @@
 package io.haifa.agent.application.coding.terminal.application;
 
 import io.haifa.agent.application.coding.terminal.event.TerminalEventPump;
-import io.haifa.agent.application.coding.terminal.session.CodingSessionClient;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiState;
 import io.haifa.agent.application.coding.terminal.state.TerminalWorkspaceContext;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jCodingTerminal;
 import io.haifa.agent.application.coding.terminal.tui4j.Tui4jTerminalIo;
+import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
 import java.util.Objects;

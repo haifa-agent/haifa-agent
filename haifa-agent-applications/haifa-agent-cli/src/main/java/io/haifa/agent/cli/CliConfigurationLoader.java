@@ -9,6 +9,7 @@ import io.haifa.agent.application.project.persistence.ProjectPersistenceProtecti
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
 import java.io.IOException;
@@ -153,13 +154,17 @@ final class CliConfigurationLoader {
                         style,
                         binding.dialect(),
                         nativeStreaming,
-                        nullableText(provider, "workspaceId"),
-                        nullableText(provider, "region"),
+                        expandedNullable(provider, "workspaceId"),
+                        expandedNullable(provider, "region"),
                         text(model, "id", ""),
                         text(model, "displayName", text(model, "id", "")),
                         capabilities(model),
                         Math.toIntExact(number(model, "contextWindow", -1)),
-                        Math.toIntExact(number(model, "maxOutputTokens", -1))));
+                        Math.toIntExact(number(model, "maxOutputTokens", -1)),
+                        enumValue(
+                                ModelReasoningMode.class,
+                                text(model, "reasoningMode", ModelReasoningMode.DISABLED.name()),
+                                "model reasoning mode")));
             }
         }
         return List.copyOf(result);
@@ -228,9 +233,14 @@ final class CliConfigurationLoader {
                 });
     }
 
+    private String expandedNullable(Map<String, Object> source, String key) {
+        String value = nullableText(source, key);
+        return value == null ? null : expandEnvironment(value);
+    }
+
     private record Binding(String dialect, String endpoint) {}
 
-    private static ProjectPersistenceConfiguration persistence(Map<String, Object> source) {
+    private ProjectPersistenceConfiguration persistence(Map<String, Object> source) {
         String configuredMode = environment("HAIFA_PERSISTENCE_MODE").orElseGet(() -> text(source, "mode", "MEMORY"));
         ProjectPersistenceMode mode = ProjectPersistenceMode.parse(configuredMode);
         String database =
@@ -262,7 +272,7 @@ final class CliConfigurationLoader {
         return value == null ? Optional.empty() : Optional.of(Path.of(value));
     }
 
-    private static CliConfiguration.Skills skills(Map<String, Object> source, CliConfiguration.Skills defaults) {
+    private CliConfiguration.Skills skills(Map<String, Object> source, CliConfiguration.Skills defaults) {
         Set<String> allowed =
                 stringSet(source.get("allowed"), defaults.allowedAliases(), "configuration skills.allowed");
         Object configured = source.get("localDirectories");
@@ -278,7 +288,8 @@ final class CliConfigurationLoader {
             Map<String, Object> directory = new LinkedHashMap<>();
             raw.forEach((key, value) -> directory.put(String.valueOf(key), value));
             String id = requiredText(directory, "id", "configuration skill local directory id");
-            String root = requiredText(directory, "root", "configuration skill local directory root");
+            String root =
+                    expandEnvironment(requiredText(directory, "root", "configuration skill local directory root"));
             SkillParserMode parserMode = enumValue(
                     SkillParserMode.class,
                     text(directory, "parserMode", SkillParserMode.STRICT.name()),
@@ -389,7 +400,7 @@ final class CliConfigurationLoader {
         return List.copyOf(result);
     }
 
-    private static List<CliConfiguration.McpServer> mcpServers(Map<String, Object> mcp) {
+    private List<CliConfiguration.McpServer> mcpServers(Map<String, Object> mcp) {
         Object configured = mcp.get("servers");
         if (configured == null) return List.of();
         if (!(configured instanceof List<?> servers)) {
@@ -404,7 +415,7 @@ final class CliConfigurationLoader {
             raw.forEach((key, value) -> server.put(String.valueOf(key), value));
             String id = requiredText(server, "id", "configuration mcp server id");
             String displayName = text(server, "displayName", id);
-            String endpoint = requiredText(server, "endpoint", "configuration mcp server endpoint");
+            String endpoint = expandEnvironment(requiredText(server, "endpoint", "configuration mcp server endpoint"));
             result.add(new CliConfiguration.McpServer(
                     id,
                     displayName,
@@ -538,7 +549,9 @@ final class CliConfigurationLoader {
         }
     }
 
-    private static Optional<String> environment(String key) {
-        return Optional.ofNullable(System.getenv(key)).map(String::trim).filter(value -> !value.isEmpty());
+    private Optional<String> environment(String key) {
+        return Optional.ofNullable(modelEnvironment.apply(key))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty());
     }
 }

@@ -33,7 +33,7 @@ class AutonomousDeliveryResultProjectionTest {
         assertEquals("NONE", batch.results().get(0).failureCategory());
         assertEquals(TestResultProjection.Status.FAIL, batch.results().get(1).status());
         assertEquals("GATE_FAILED", batch.results().get(1).nativeStatus());
-        assertEquals("DRIVER_CONTRACT", batch.results().get(1).failureCategory());
+        assertEquals("CODING_CLIENT_CONTRACT", batch.results().get(1).failureCategory());
         assertEquals("2.4.0", batch.results().get(1).caseVersion());
         assertEquals("case-01/repeat-02", batch.results().get(1).evidenceRef());
         assertEquals(3L, batch.results().get(1).providerUsage().get("modelCalls"));
@@ -117,8 +117,6 @@ class AutonomousDeliveryResultProjectionTest {
         return new AutonomousDeliveryMatrixManifest.Combination(
                 "windows-primary",
                 "windows",
-                "deepseek",
-                "deepseek-v4-pro",
                 "conpty",
                 "host-guarded",
                 "allow",
@@ -140,7 +138,7 @@ class AutonomousDeliveryResultProjectionTest {
         result.put("repetition", gatePassed ? 1 : 2);
         result.put("gatePassed", gatePassed);
         result.put("nativeStatus", gatePassed ? "GATE_PASSED" : "GATE_FAILED");
-        result.put("driverContractPassed", driverPassed);
+        result.put("clientContractPassed", driverPassed);
         result.put("boundedConvergence", bounded);
         result.put("acceptancePassed", acceptancePassed);
         result.put("verificationPassed", verificationPassed);

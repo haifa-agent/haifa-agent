@@ -5,12 +5,12 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-/** Versioned host/provider combinations selected explicitly by an outer CI or local invocation. */
+/** Versioned host combinations selected by an outer CI or local invocation. */
 public record MatrixManifest(int schemaVersion, String matrixId, String strategy, List<Combination> combinations) {
     private static final Set<String> PLATFORMS = Set.of("linux", "macos", "windows");
 
     public MatrixManifest {
-        if (schemaVersion != 1) throw new IllegalArgumentException("matrix schemaVersion must be 1");
+        if (schemaVersion != 2) throw new IllegalArgumentException("matrix schemaVersion must be 2");
         matrixId = require(matrixId, "matrixId");
         requireIdentifier(matrixId, "matrixId");
         strategy = require(strategy, "strategy");
@@ -33,8 +33,7 @@ public record MatrixManifest(int schemaVersion, String matrixId, String strategy
                         "matrix combination is unavailable in " + matrixId + ": " + requested));
     }
 
-    public record Combination(
-            String id, String platform, String modelProvider, String modelId, String webProvider, String mcpTarget) {
+    public record Combination(String id, String platform) {
         public Combination {
             id = require(id, "combination.id");
             requireIdentifier(id, "combination.id");
@@ -42,10 +41,6 @@ public record MatrixManifest(int schemaVersion, String matrixId, String strategy
             if (!PLATFORMS.contains(platform)) {
                 throw new IllegalArgumentException("unsupported matrix platform: " + platform);
             }
-            modelProvider = require(modelProvider, "combination.modelProvider");
-            modelId = require(modelId, "combination.modelId");
-            webProvider = require(webProvider, "combination.webProvider");
-            mcpTarget = require(mcpTarget, "combination.mcpTarget");
         }
     }
 
