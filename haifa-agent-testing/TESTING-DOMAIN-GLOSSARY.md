@@ -9,7 +9,8 @@
 | 模块 | 推荐中文 | 简单说明 |
 | --- | --- | --- |
 | `haifa-agent-testing` | 测试基础设施聚合层 | 位于 Maven Reactor 末端，统一组织测试模块，不承载生产业务代码 |
-| `haifa-agent-testkit` | 测试工具包 | 提供配置解析、执行编排、预算门禁、证据收集等公共测试能力 |
+| `haifa-agent-testkit` | 测试工具包 | 提供无产品装配依赖的确定性 Fake、断言和摘要能力 |
+| `haifa-agent-test-harness` | 测试执行台 | 提供配置解析、执行编排、预算门禁、证据收集等可执行测试能力 |
 | `haifa-agent-test-fixtures` | 共享测试固件 | 保存小型、确定性、安全且可复用的测试输入 |
 | `haifa-agent-transport-tck` | 传输层技术兼容性测试套件 | 验证不同 Transport 实现是否遵守同一公共契约 |
 | `haifa-agent-integration-tests` | 集成测试模块 | 验证多个真实模块组合后的行为，默认不访问公网 |

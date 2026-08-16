@@ -6,6 +6,7 @@ Kernel、Capability、Integration 或 Application 的依赖方向。
 ## 分层模型
 
 - `haifa-agent-testkit`：后续承载跨模块共享的确定性 Fake、Assertion 和安全测试辅助能力；
+- `haifa-agent-test-harness`：承载 Suite、Agent Profile、运行模式、预算、执行和证据生命周期；
 - `haifa-agent-test-fixtures`：保存多个测试模块共同使用、可安全进入源码仓库的小型 Fixture。
 - `haifa-agent-transport-tck`：不可部署的 HTTP/SSE Contract Test Kit，验证认证授权、协议映射、
   Cursor 重连、背压、SQLite 重启恢复和 Coding/Document/Enterprise 公共语义。
@@ -26,7 +27,8 @@ Integration 与 E2E 之间的层级：
 
 ## 当前子模块
 
-- `haifa-agent-testkit`：稳定 Case Catalog、Suite Runner、断言和跨模块测试辅助能力；
+- `haifa-agent-testkit`：无产品装配依赖的确定性摘要、Fake 和断言辅助能力；
+- `haifa-agent-test-harness`：稳定 Case Catalog、Suite Runner、Campaign、授权和证据控制面；
 - `haifa-agent-test-fixtures`：多个测试模块共享、可安全进入源码仓库的小型 Fixture；
 - `haifa-agent-integration-tests`：确定性的跨模块和测试编排契约验证；
 - `haifa-agent-e2e-tests`：通过标准 Coding Agent 产品客户端验证完整 AgentRun 语义，包含 Simulated 与
@@ -38,16 +40,10 @@ Integration 与 E2E 之间的层级：
 真实外部 Provider 的窄 Adapter Probe 与对应集成模块相邻保存；CP-01～CP-11 的正式产品语义统一在
 E2E 模块通过注入的 `CodingSessionClient` 验证，不把任一 Provider Adapter 当作产品客户端。
 
-自主交付泛化能力资产由 `haifa-agent-test-fixtures` 保存稳定输入和 Schema，
-`haifa-agent-testkit` 保存 Catalog 校验、Suite 解析、Campaign 隔离与 Harness 编排。真实运行
-产物始终写到主仓、`docs/` 和 `test-config/` 之外。Phase 前置的只读 Analyze 与 Trace Replay
-使用同一 Deterministic Probe Executor；平台入口和私有 Suite 不复制 Maven 命令、超时、Secret
-隔离或证据解析逻辑。
-
-Windows CLI 发行链路另有独立 `PLATFORM_STUB/STUB` Platform Gate：通过生产 shaded JAR、真实
-ConPTY 和进程内 loopback Model Stub 验证参数、YAML、stdio、退出码、Approval、Shell、SQLite、Secret Scan、只读 Evidence、
-进程树与清理，不执行或评分 Coding Case，也不产生外部 Provider 调用和费用。其隔离结论始终为
-`TRUSTED_HOST_ONLY`。
+自主交付泛化能力资产由 `haifa-agent-test-fixtures` 保存自包含 Fixture Package，
+`haifa-agent-test-harness` 保存 Catalog 校验、计划、隔离与执行编排。真实运行产物始终写到主仓、
+`docs/` 和 `test-config/` 之外。CLI shaded JAR、参数、YAML、stdio、退出码和 PTY/ConPTY 由独立
+E2E/CLI Smoke 验证，不执行或评分 Coding Case，也不计入产品能力通过率。
 
 Coding Live E2E 与 Autonomous Delivery 的三端默认 Profile 统一为
 `host-guarded + allow + shell auto + TRUSTED_HOST_ONLY`。macOS/Linux 的 Local Native 隔离 Gate 与
@@ -74,14 +70,9 @@ Critical Path v1 使用稳定 `CP-01`～`CP-11`：
 Suite、Matrix、Environment、Secret 引用和预算。Runner 通过 `HAIFA_TEST_CONFIG_ROOT` 读取独立配置
 仓，不建立 Maven 依赖，也不把私有内容打进制品。
 
-首版 Runner 一次执行当前主机上的一个 Suite/环境。Matrix 由 CI 或发布编排层展开为独立 Job，并在
-每个 Job 中显式选择一个 Combination；Runner 校验 Combination 存在且与 Host OS 一致，不在单个
-  JVM 内跨平台或自动遍历 Provider。模型 Provider 和模型 ID 只存在于 Agent Profile 引用的标准
-  产品配置，Suite/Case/Matrix 都不绑定 Provider。Execute 要求独立注入
-`HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD`，Suite 的费用估算上限不得超过获批额度；报告记录两者，
-实际费用核算仍由 Provider Usage 汇总和 CI 门禁负责。Runner 还为 Suite、预算、选中 Combination、
-Case 和解析后的公共 Selector 生成稳定计划 SHA-256；Execute 必须与外部批准的
-`HAIFA_TEST_APPROVED_PLAN_SHA256` 一致，避免配置仓或 Catalog 漂移被静默执行。
+公共 Runner 一次执行当前主机上的一个 Suite/Profile/Platform，只公开 `plan` 和 `run`。`plan` 冻结
+预算、Case、标准客户端装配摘要和两仓 Revision；`run` 消费该文件并独立接收预算批准。Matrix 仅作为
+`test-config` 内部批量组合机制，模型与凭据只存在于 Agent Profile 引用的最高层产品配置。
 
 `Dev Integration` 的手动 `workflow_dispatch` 是远端治理 Plan 入口，按其冻结的 Suite/Matrix
 Combination 调用私有 `test-config` wrapper 的默认 Plan
@@ -92,17 +83,13 @@ workflow 中的 Fast/Integration/Local Native Job。私有配置仓通过仅登�
 私有仓 checkout 共同证明该 Key 在 Actions 中可用，Deploy Key 的 `read_only` 状态仍需从目标仓库
 设置或 API 审计，不能从掩码日志推断。
 
-Critical Path 与 Autonomous Delivery 的原生报告和 Budget 继续独立；两者额外生成版本 1
-`result-projection-v1.json`，用于跨 Suite 汇总 Case、平台、版本、共同状态、原生状态、Usage 摘要、
-失败分类和相对证据引用。Projection 不是新的 Gate 事实源，不得覆盖 Maven 状态或
-Autonomous Delivery `gatePassed`。
+Critical Path 与 Autonomous Delivery 保留各自原生状态和 Budget，但都只生成一个权威
+`run-result.json`；较大证据使用带大小和 SHA-256 的相对附件。不存在可独立漂移的第二套结果 Projection。
 
 `testing-assets-v2.json` 是当前公共测试资产台账。主仓只对 Autonomous Delivery Fixture、Coding
 E2E Fixture 和 Testkit Schema 镜像等机器资产目录启用 Coverage Root，不机械枚举整个 Testing
 源码树。目录资产默认只登记自身生命周期；只有显式 `SUBTREE` 的完整 Case/Fixture 包可以覆盖后代。
-Critical Path Runner 与 Autonomous Delivery Harness 都在加载 Suite/Matrix 前要求主仓与
-`test-config` 的 v2 台账，任一 Coverage Root 下新增未登记文件都会 fail closed。v1 台账仅保留旧
-检出的迁移兼容，不是当前正式入口的事实源。
+Release 模式校验两仓完整 v2 台账；Live 只校验本次引用闭包，Dev 不执行全库资产扫描。
 
 边界约束：
 

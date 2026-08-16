@@ -13,7 +13,7 @@
 - 自主交付的真实 Java 任务、补丁验收和测试质量检查也有可复用资源；
 - 目前没有一个 Java 原生框架能够同时提供 Plan SHA、费用授权、PTY、Sandbox、Secret Scan、
   Campaign、只读 Evidence 和跨平台进程树治理；
-- `haifa-agent-testkit` 应继续作为控制与编排层，第三方工具作为底层执行能力或外部 Case 来源，不应
+- `haifa-agent-test-harness` 应继续作为控制与编排层，第三方工具作为底层执行能力或外部 Case 来源，不应
   直接替换现有 Harness。
 
 ## 2. 工具能力对照
