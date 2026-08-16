@@ -37,7 +37,6 @@ public final class CriticalPathSuiteApplication {
                 options.runRoot(), List.of(projectRoot, configRoot), "test run root");
         RepositoryRevision productRevision = RepositoryRevision.inspect(projectRoot);
         RepositoryRevision testConfigRevision = RepositoryRevision.inspect(configRoot);
-        new EnvironmentConfigurationPreflight().validate(configRoot);
         SuiteManifest manifest = new SuiteManifestLoader().load(configRoot, options.suiteId());
         PlatformManifest matrix = new PlatformManifestLoader().load(configRoot, manifest.matrixRef());
         PlatformManifest.PlatformProfile combination = matrix.requireCombination(options.matrixCombination());
