@@ -322,21 +322,20 @@ $env:HAIFA_PERSONAL_MCP_DISPLAY_NAME='Haifa Utility MCP'
 外部 endpoint 只接受 `http` loopback 地址和 `20002+` 端口。发现失败、Tool 缺失或本地审查失败都会
 使 Server 启动失败；不会回退到 embedded echo。
 
-Web Search 与 Fetch 默认关闭并独立配置。默认 Provider 组合为 Aliyun IQS Search 与 Browserless Fetch；
+Web Search 与 Fetch 默认关闭并独立配置。两项默认 Provider 均为 Tavily；
 启用后分别装配 `web_search -> web.search` 和 `web_fetch -> web.fetch`：
 
 ```powershell
 $env:HAIFA_PERSONAL_WEB_SEARCH_ENABLED='true'
-$env:HAIFA_PERSONAL_WEB_SEARCH_PROVIDER='aliyun'
-$env:HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT='https://cloud-iqs.aliyuncs.com/search/unified'
-$env:HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL='env://ALIYUN_IQS_API_KEY'
-$env:ALIYUN_IQS_API_KEY='<aliyun-iqs-key>'
+$env:HAIFA_PERSONAL_WEB_SEARCH_PROVIDER='tavily'
+$env:HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT='https://api.tavily.com/search'
+$env:HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL='env://TAVILY_API_KEY'
 
 $env:HAIFA_PERSONAL_WEB_FETCH_ENABLED='true'
-$env:HAIFA_PERSONAL_WEB_FETCH_PROVIDER='browserless'
-$env:HAIFA_PERSONAL_WEB_FETCH_ENDPOINT='https://production-sfo.browserless.io/content'
-$env:HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL='env://BROWSERLESS_TOKEN'
-$env:BROWSERLESS_TOKEN='<browserless-token>'
+$env:HAIFA_PERSONAL_WEB_FETCH_PROVIDER='tavily'
+$env:HAIFA_PERSONAL_WEB_FETCH_ENDPOINT='https://api.tavily.com/extract'
+$env:HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL='env://TAVILY_API_KEY'
+$env:TAVILY_API_KEY='<tavily-api-key>'
 ```
 
 Search 可选 `aliyun`、`brave`、`tavily`；Fetch 可选 `aliyun`、`browserless`、`tavily`。选择 Tavily 时

@@ -41,6 +41,23 @@ class RealEnvironmentTest(unittest.TestCase):
             maven_wrapper=root / "mvnw",
         )
 
+        defaults = real_environment.backend_environment(
+            "deepseek-secret",
+            "deepseek-chat-flash",
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            tavily_key="tavily-secret",
+        )
+
+        self.assertEqual("tavily", defaults["HAIFA_PERSONAL_WEB_SEARCH_PROVIDER"])
+        self.assertEqual("tavily", defaults["HAIFA_PERSONAL_WEB_FETCH_PROVIDER"])
+        self.assertEqual("https://api.tavily.com/search", defaults["HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT"])
+        self.assertEqual("https://api.tavily.com/extract", defaults["HAIFA_PERSONAL_WEB_FETCH_ENDPOINT"])
+
         mixed = real_environment.backend_environment(
             "deepseek-secret",
             "deepseek-chat-flash",
@@ -119,6 +136,7 @@ class RealEnvironmentTest(unittest.TestCase):
             paths,
             root / "skills",
             None,
+            tavily_key="tavily-secret",
         )
 
         self.assertEqual("deepseek-responses-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
@@ -193,6 +211,7 @@ class RealEnvironmentTest(unittest.TestCase):
             paths,
             root / "skills",
             None,
+            tavily_key="tavily-secret",
         )
 
         self.assertEqual("deepseek", environment["HAIFA_PERSONAL_MODELPROVIDERS_0_ID"])
@@ -223,6 +242,7 @@ class RealEnvironmentTest(unittest.TestCase):
             root / "skills",
             None,
             ("bailian-secret", "workspace-123", "cn-beijing"),
+            tavily_key="tavily-secret",
         )
 
         self.assertEqual("aliyun-bailian", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ID"])
@@ -281,6 +301,7 @@ class RealEnvironmentTest(unittest.TestCase):
             None,
             kimi_key="kimi-secret",
             bigmodel_key="bigmodel-secret",
+            tavily_key="tavily-secret",
         )
 
         self.assertEqual("kimi", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ID"])
@@ -332,6 +353,15 @@ class RealEnvironmentTest(unittest.TestCase):
 
         self.assertIsNone(default_arguments.default_model_id)
         self.assertEqual("deepseek-chat-flash", chat_arguments.default_model_id)
+
+    def test_default_web_providers_are_tavily(self) -> None:
+        with mock.patch.dict(real_environment.os.environ):
+            real_environment.os.environ.pop("HAIFA_PERSONAL_WEB_SEARCH_PROVIDER", None)
+            real_environment.os.environ.pop("HAIFA_PERSONAL_WEB_FETCH_PROVIDER", None)
+            arguments = real_environment.parser().parse_args([])
+
+        self.assertEqual("tavily", arguments.web_search_provider)
+        self.assertEqual("tavily", arguments.web_fetch_provider)
 
     def test_optional_bailian_configuration_does_not_replace_the_verified_default(self) -> None:
         bailian = ("bailian-secret", "workspace-123", "cn-beijing")

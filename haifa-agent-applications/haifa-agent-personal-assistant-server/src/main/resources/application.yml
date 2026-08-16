@@ -112,16 +112,16 @@ haifa:
     web:
       search:
         enabled: ${HAIFA_PERSONAL_WEB_SEARCH_ENABLED:${HAIFA_PERSONAL_WEB_ENABLED:false}}
-        provider-id: ${HAIFA_PERSONAL_WEB_SEARCH_PROVIDER:aliyun}
-        endpoint: ${HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT:https://cloud-iqs.aliyuncs.com/search/unified}
-        credential-reference: ${HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL:${HAIFA_PERSONAL_WEB_CREDENTIAL:env://ALIYUN_IQS_API_KEY}}
+        provider-id: ${HAIFA_PERSONAL_WEB_SEARCH_PROVIDER:tavily}
+        endpoint: ${HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT:https://api.tavily.com/search}
+        credential-reference: ${HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL:${HAIFA_PERSONAL_WEB_CREDENTIAL:env://TAVILY_API_KEY}}
         timeout-millis: ${HAIFA_PERSONAL_WEB_SEARCH_TIMEOUT_MILLIS:${HAIFA_PERSONAL_WEB_TIMEOUT_MILLIS:30000}}
         maximum-response-bytes: ${HAIFA_PERSONAL_WEB_SEARCH_MAXIMUM_RESPONSE_BYTES:2097152}
       fetch:
         enabled: ${HAIFA_PERSONAL_WEB_FETCH_ENABLED:${HAIFA_PERSONAL_WEB_ENABLED:false}}
-        provider-id: ${HAIFA_PERSONAL_WEB_FETCH_PROVIDER:browserless}
-        endpoint: ${HAIFA_PERSONAL_WEB_FETCH_ENDPOINT:https://production-sfo.browserless.io/content}
-        credential-reference: ${HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL:env://BROWSERLESS_TOKEN}
+        provider-id: ${HAIFA_PERSONAL_WEB_FETCH_PROVIDER:tavily}
+        endpoint: ${HAIFA_PERSONAL_WEB_FETCH_ENDPOINT:https://api.tavily.com/extract}
+        credential-reference: ${HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL:env://TAVILY_API_KEY}
         timeout-millis: ${HAIFA_PERSONAL_WEB_FETCH_TIMEOUT_MILLIS:${HAIFA_PERSONAL_WEB_TIMEOUT_MILLIS:30000}}
         maximum-response-bytes: ${HAIFA_PERSONAL_WEB_FETCH_MAXIMUM_RESPONSE_BYTES:262144}
     mission:

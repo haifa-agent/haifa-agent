@@ -172,12 +172,12 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--web-search-provider",
         choices=("aliyun", "tavily"),
-        default=os.getenv("HAIFA_PERSONAL_WEB_SEARCH_PROVIDER", "aliyun"),
+        default=os.getenv("HAIFA_PERSONAL_WEB_SEARCH_PROVIDER", "tavily"),
     )
     result.add_argument(
         "--web-fetch-provider",
         choices=("aliyun", "browserless", "tavily"),
-        default=os.getenv("HAIFA_PERSONAL_WEB_FETCH_PROVIDER", "browserless"),
+        default=os.getenv("HAIFA_PERSONAL_WEB_FETCH_PROVIDER", "tavily"),
     )
     result.add_argument(
         "--continuation-key-file",
@@ -704,8 +704,8 @@ def backend_environment(
     bigmodel_key: str | None = None,
     browserless_token: str | None = None,
     tavily_key: str | None = None,
-    web_search_provider: str = "aliyun",
-    web_fetch_provider: str = "aliyun",
+    web_search_provider: str = "tavily",
+    web_fetch_provider: str = "tavily",
 ) -> dict[str, str]:
     environment = {
         "DEEPSEEK_API_KEY": deepseek_key,
