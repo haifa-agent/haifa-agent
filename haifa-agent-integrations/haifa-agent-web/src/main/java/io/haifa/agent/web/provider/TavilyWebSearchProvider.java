@@ -20,6 +20,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -29,6 +30,21 @@ public final class TavilyWebSearchProvider implements WebSearchProvider {
     public static final URI DEFAULT_ENDPOINT = URI.create("https://api.tavily.com/search");
     public static final CredentialRequirement CREDENTIAL =
             WebHttpSupport.credential("web-search-tavily", "Tavily web search", "web.search");
+    private static final Map<String, String> COUNTRY_OVERRIDES = Map.ofEntries(
+            Map.entry("bo", "bolivia"),
+            Map.entry("bn", "brunei"),
+            Map.entry("cv", "cape verde"),
+            Map.entry("cg", "congo"),
+            Map.entry("cz", "czech republic"),
+            Map.entry("ir", "iran"),
+            Map.entry("kr", "south korea"),
+            Map.entry("md", "moldova"),
+            Map.entry("ru", "russia"),
+            Map.entry("sy", "syria"),
+            Map.entry("tw", "taiwan"),
+            Map.entry("tz", "tanzania"),
+            Map.entry("ve", "venezuela"),
+            Map.entry("vn", "vietnam"));
     private final HttpClient client;
     private final ObjectMapper mapper;
     private final Clock clock;
@@ -94,7 +110,7 @@ public final class TavilyWebSearchProvider implements WebSearchProvider {
             body.put("include_raw_content", false);
             body.put("include_images", false);
             body.put("auto_parameters", false);
-            request.country().ifPresent(value -> body.put("country", value));
+            request.country().ifPresent(value -> body.put("country", tavilyCountry(value)));
             request.freshness().ifPresent(value -> body.put("time_range", freshness(value)));
             if (!request.includeDomains().isEmpty()) body.put("include_domains", request.includeDomains());
             if (!request.excludeDomains().isEmpty()) body.put("exclude_domains", request.excludeDomains());
@@ -155,6 +171,17 @@ public final class TavilyWebSearchProvider implements WebSearchProvider {
             case MONTH -> "month";
             case YEAR -> "year";
         };
+    }
+
+    private static String tavilyCountry(String alpha2) {
+        String normalized = alpha2.toLowerCase(Locale.ROOT);
+        String override = COUNTRY_OVERRIDES.get(normalized);
+        if (override != null) return override;
+        return new Locale.Builder()
+                .setRegion(normalized.toUpperCase(Locale.ROOT))
+                .build()
+                .getDisplayCountry(Locale.ENGLISH)
+                .toLowerCase(Locale.ROOT);
     }
 
     private static void requireEndpoint(URI endpoint) {

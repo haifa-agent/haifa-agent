@@ -222,6 +222,7 @@ class WebHttpProvidersTest {
         assertThat(result.results()).hasSize(1);
         assertThat(captured.get().query())
                 .contains("q=agent%20runtime")
+                .contains("country=US")
                 .contains("freshness=pw")
                 .contains("safesearch=strict");
         assertThat(captured.get().subscriptionToken()).isEqualTo("test-key");
@@ -241,7 +242,7 @@ class WebHttpProvidersTest {
                 "agent",
                 3,
                 Optional.empty(),
-                Optional.of("china"),
+                Optional.of("cn"),
                 Optional.of(WebFreshness.MONTH),
                 List.of("example.com"),
                 List.of("excluded.example"),
@@ -256,6 +257,7 @@ class WebHttpProvidersTest {
         assertThat(body.path("include_raw_content").asBoolean()).isFalse();
         assertThat(body.path("include_images").asBoolean()).isFalse();
         assertThat(body.path("auto_parameters").asBoolean()).isFalse();
+        assertThat(body.path("country").asText()).isEqualTo("china");
     }
 
     @Test

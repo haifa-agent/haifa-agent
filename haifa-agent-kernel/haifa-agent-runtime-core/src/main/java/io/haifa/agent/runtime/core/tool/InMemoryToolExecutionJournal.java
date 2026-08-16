@@ -3,6 +3,7 @@ package io.haifa.agent.runtime.core.tool;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.tool.api.ToolIdempotency;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -28,6 +29,12 @@ public final class InMemoryToolExecutionJournal implements ToolExecutionJournal 
 
     @Override
     public synchronized void recordIntent(AgentRunId runId, RuntimeIdempotencyKey key) {
+        recordIntent(runId, key, ToolIdempotency.UNKNOWN);
+    }
+
+    @Override
+    public synchronized void recordIntent(
+            AgentRunId runId, RuntimeIdempotencyKey key, ToolIdempotency toolIdempotency) {
         String id = id(runId, key);
         if (!intents.add(id)) throw new IllegalStateException("duplicate active tool intent: " + key);
         states.put(id, ToolJournalState.INTENT_RECORDED);

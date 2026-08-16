@@ -11,6 +11,8 @@ import java.util.Optional;
 import java.util.Set;
 
 final class WebValues {
+    private static final Set<String> ISO_ALPHA_2_COUNTRIES = Set.of(Locale.getISOCountries());
+
     private WebValues() {}
 
     static String text(String value, String field, int maxLength) {
@@ -24,6 +26,19 @@ final class WebValues {
     static Optional<String> optionalText(Optional<String> value, String field, int maxLength) {
         Objects.requireNonNull(value, field + " must not be null");
         return value.map(item -> text(item, field, maxLength));
+    }
+
+    static Optional<String> isoCountry(Optional<String> value) {
+        Objects.requireNonNull(value, "country must not be null");
+        return value.map(item -> {
+            String normalized = Objects.requireNonNull(item, "country must not be null")
+                    .trim()
+                    .toUpperCase(Locale.ROOT);
+            if (normalized.length() != 2 || !ISO_ALPHA_2_COUNTRIES.contains(normalized)) {
+                throw new IllegalArgumentException("country must be an ISO 3166-1 alpha-2 code");
+            }
+            return normalized.toLowerCase(Locale.ROOT);
+        });
     }
 
     static List<String> domains(List<String> values, String field) {

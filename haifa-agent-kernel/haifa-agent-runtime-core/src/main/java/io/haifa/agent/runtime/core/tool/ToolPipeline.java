@@ -251,7 +251,7 @@ public final class ToolPipeline {
             }
             effectiveDecision = approvedDecision;
         }
-        journal.recordIntent(run.id(), request.idempotencyKey());
+        journal.recordIntent(run.id(), request.idempotencyKey(), definition.idempotency());
         call.start(time.now());
         state.appendToolCall(call);
         appendToolEvent(run, call, "tool.started", "STARTED", "NONE", "");

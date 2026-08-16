@@ -11,6 +11,7 @@ import io.haifa.agent.store.sqlite.mybatis.RuntimeStoreMapper;
 import io.haifa.agent.store.sqlite.mybatis.ToolJournalRow;
 import io.haifa.agent.store.sqlite.payload.SqliteRuntimePayloadTypes;
 import io.haifa.agent.store.sqlite.payload.ToolResultPayload;
+import io.haifa.agent.tool.api.ToolIdempotency;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.EnumSet;
@@ -42,6 +43,12 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
 
     @Override
     public void recordIntent(AgentRunId runId, RuntimeIdempotencyKey key) {
+        recordIntent(runId, key, ToolIdempotency.UNKNOWN);
+    }
+
+    @Override
+    public void recordIntent(AgentRunId runId, RuntimeIdempotencyKey key, ToolIdempotency toolIdempotency) {
+        Objects.requireNonNull(toolIdempotency, "toolIdempotency must not be null");
         execute(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             ToolJournalRow existing = mapper.findToolJournal(runId.value(), key.value());
@@ -54,7 +61,7 @@ public final class SqliteToolExecutionJournal implements ToolExecutionJournal {
                     runId.value(),
                     key.value(),
                     ToolJournalState.INTENT_RECORDED.name(),
-                    "UNKNOWN",
+                    toolIdempotency.name(),
                     null,
                     null,
                     null,

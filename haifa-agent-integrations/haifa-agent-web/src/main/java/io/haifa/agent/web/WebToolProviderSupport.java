@@ -33,15 +33,19 @@ final class WebToolProviderSupport {
     }
 
     static WebSearchRequest searchRequest(Map<String, Object> values) {
-        return new WebSearchRequest(
-                text(values, "query"),
-                integer(values, "maxResults", 5),
-                optionalText(values, "language"),
-                optionalText(values, "country"),
-                optionalEnum(values, "freshness", io.haifa.agent.web.WebFreshness.class),
-                strings(values, "includeDomains"),
-                strings(values, "excludeDomains"),
-                optionalEnum(values, "safeSearch", io.haifa.agent.web.WebSafeSearch.class));
+        try {
+            return new WebSearchRequest(
+                    text(values, "query"),
+                    integer(values, "maxResults", 5),
+                    optionalText(values, "language"),
+                    optionalText(values, "country"),
+                    optionalEnum(values, "freshness", io.haifa.agent.web.WebFreshness.class),
+                    strings(values, "includeDomains"),
+                    strings(values, "excludeDomains"),
+                    optionalEnum(values, "safeSearch", io.haifa.agent.web.WebSafeSearch.class));
+        } catch (IllegalArgumentException exception) {
+            throw invalid("web search arguments are invalid");
+        }
     }
 
     static void requireSupported(WebSearchRequest request, Set<WebSearchOption> supported) {
@@ -113,7 +117,7 @@ final class WebToolProviderSupport {
 
     static boolean isRecoverableSearchFailure(WebFailureCode code, WebDispatchState state) {
         return switch (code) {
-            case WEB_PROVIDER_RESPONSE_INVALID, WEB_TIMEOUT, WEB_PROVIDER_FAILED -> true;
+            case WEB_INVALID_REQUEST, WEB_PROVIDER_RESPONSE_INVALID, WEB_TIMEOUT, WEB_PROVIDER_FAILED -> true;
             default -> false;
         };
     }

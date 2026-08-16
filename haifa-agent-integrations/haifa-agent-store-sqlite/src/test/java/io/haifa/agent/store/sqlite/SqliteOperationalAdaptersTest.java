@@ -34,6 +34,8 @@ import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RunStartIdempotencyBinding;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
+import io.haifa.agent.tool.api.ToolIdempotency;
+import java.sql.DriverManager;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -111,14 +113,25 @@ class SqliteOperationalAdaptersTest {
     }
 
     @Test
-    void journalEnforcesTransitionsAndPersistsResults(@TempDir java.nio.file.Path directory) {
+    void journalEnforcesTransitionsAndPersistsResults(@TempDir java.nio.file.Path directory) throws Exception {
         SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory);
         var run = SqliteAggregateTestData.prepareRun(foundation);
         var key = new RuntimeIdempotencyKey("tool-key");
         var result = new ToolResult(true, "done", Map.of("value", 1), List.of(), List.of(), false);
         var journal = foundation.toolJournal();
 
-        journal.recordIntent(run.id(), key);
+        journal.recordIntent(run.id(), key, ToolIdempotency.IDEMPOTENT);
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:"
+                        + SqliteTestSupport.configuration(directory).databasePath());
+                var statement = connection.prepareStatement(
+                        "SELECT tool_idempotency FROM tool_journal WHERE run_id = ? AND idempotency_key = ?")) {
+            statement.setString(1, run.id().value());
+            statement.setString(2, key.value());
+            try (var rows = statement.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getString(1)).isEqualTo("IDEMPOTENT");
+            }
+        }
         journal.recordDispatched(run.id(), key);
         journal.recordAcknowledged(run.id(), key);
         journal.recordDispatched(run.id(), key);
