@@ -19,14 +19,6 @@ import java.util.concurrent.TimeUnit;
 final class AutonomousDeliveryDeterministicProbeExecutor {
     private static final Duration TIMEOUT = Duration.ofMinutes(10);
     private static final Duration TERMINATION_GRACE = Duration.ofSeconds(10);
-    private static final List<String> PROVIDER_ENVIRONMENT_NAMES = List.of(
-            "DEEPSEEK_API_KEY",
-            "ALIYUN_IQS_API_KEY",
-            "HAIFA_CONTINUATION_KEY",
-            "HAIFA_DEEPSEEK_LIVE_TEST",
-            "HAIFA_CLI_LIVE_E2E_TEST",
-            "HAIFA_CLI_LIVE_E2E_PROVIDER");
-
     private final ObjectMapper json = new ObjectMapper();
 
     Map<String, Object> execute(Path gate, Path projectRoot, DeliveryHostProfile hostProfile, ProbeDefinition probe)
@@ -87,7 +79,8 @@ final class AutonomousDeliveryDeterministicProbeExecutor {
     }
 
     static void isolateFromProviderSecrets(Map<String, String> environment) {
-        PROVIDER_ENVIRONMENT_NAMES.forEach(environment::remove);
+        ExternalAccessEnvironment.isolate(environment);
+        environment.remove("HAIFA_CLI_LIVE_E2E_PROVIDER");
     }
 
     static LinkedHashMap<String, Object> deterministicTestEvidence(Path reports, boolean finished, int exitStatus) {

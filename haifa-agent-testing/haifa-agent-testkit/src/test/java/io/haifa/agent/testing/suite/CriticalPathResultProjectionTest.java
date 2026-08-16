@@ -41,6 +41,21 @@ class CriticalPathResultProjectionTest {
         assertNull(batch.results().get(1).startedAt());
     }
 
+    @Test
+    void preservesExplicitNotRunStatusAndItsBatchEvidenceReference() {
+        Map<String, Object> notRun = result("CP-09", MavenTestEvidence.Status.NOT_RUN);
+        notRun.put("evidenceRef", "reports/projection-v1-result.json");
+
+        TestResultProjection projection = CriticalPathResultProjection.batch(
+                        suite(), combination(), PRODUCT, CONFIG, Instant.parse("2026-07-31T08:00:00Z"), List.of(notRun))
+                .results()
+                .getFirst();
+
+        assertEquals(TestResultProjection.Status.NOT_RUN, projection.status());
+        assertEquals("NOT_RUN", projection.nativeStatus());
+        assertEquals("reports/projection-v1-result.json", projection.evidenceRef());
+    }
+
     private static SuiteManifest suite() {
         return new SuiteManifest(
                 1,
@@ -53,8 +68,7 @@ class CriticalPathResultProjectionTest {
     }
 
     private static MatrixManifest.Combination combination() {
-        return new MatrixManifest.Combination(
-                "windows-primary", "windows", "deepseek", "deepseek-v4-pro", "aliyun-iqs", "utility-mcp");
+        return new MatrixManifest.Combination("windows-primary", "windows");
     }
 
     private static Map<String, Object> result(String caseId, MavenTestEvidence.Status status) {

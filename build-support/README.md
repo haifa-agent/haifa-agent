@@ -12,7 +12,7 @@
 | L0 | 1 | 静态预检、格式或编译边界 | 否 |
 | L1 | 1 | 精确测试类及必要消费者编译 | 否 |
 | L2 | 4 | 受影响产品完整测试 | 否 |
-| L3 | 4 | 同一 Git SHA 的最终门禁 | 仅显式指定 |
+| L3 | 2 | 同一 Git SHA 的最终门禁 | 仅显式指定 |
 
 常用命令按工作量选择层级，不要把所有 `test` 都当作 L1：
 
@@ -22,7 +22,7 @@
 | 一个模块及 `-am` 的完整测试 | L2 | 固定 T4，适合模块闭环 |
 | 全仓增量 `test` | L2 | 固定 T4，避免裸 Wrapper 单线程串行 55 个项目 |
 | Spotless | L0 | 串行且记录指标；格式任务不需要模块并发 |
-| `ci-fast clean verify` | L3 | 最终同 SHA 门禁，固定 T4 |
+| `ci-fast clean verify` | L3 | 最终同 SHA 门禁，固定 T2 |
 
 Windows 下 Surefire/Failsafe 的 fork JVM 显式允许 manifest-only JAR 引用不同盘符上的绝对
 classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktree 分盘时并行 fork 丢失 Reactor 类。

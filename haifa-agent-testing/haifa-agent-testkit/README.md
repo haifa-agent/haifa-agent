@@ -8,23 +8,27 @@ POM，禁止生产模块直接依赖所有 `haifa-agent-testing` 制品。
 
 Runner 默认只生成计划。附加的 `runner` JAR 由私有 `test-config/scripts/` 调用；只有显式传入
 `--execute`、安全的仓库外运行根和所需 Secret 后，才会串行执行 Catalog 中的 Maven selector。
+Agent Profile 会分别冻结所有无默认值的必填环境变量与 `env://` 凭据引用：前者全部前置校验，
+只有后者的值进入证据 Secret Scan，避免把可持久化 Endpoint 或 Workspace ID 误判为密钥泄漏。
+每个 Live Case 使用 `ci-integration-only` 和精确 Failsafe selector；依赖模块 Surefire、重复的
+Enforcer 和 JaCoCo 报告在 Case 进程中跳过；CLI shaded JAR 仍由当前 Reactor 生命周期产生。
+上述门禁由同一 SHA 的独立 L3 执行一次，
+不在每个付费 Case 前重复。
 `assets.TestingAssetPreflight` 是 Critical Path Suite Runner 与 Autonomous Delivery Harness
 共同的首个治理前置步骤；它在加载 Suite/Matrix 或创建任何运行产物前校验主仓和 `test-config`
 Schema 2 资产台账的生命周期、覆盖范围及引用，避免两个正式入口产生不同的 Orphan 判定。Schema 2
 的目录资产默认使用 `EXACT`，不再隐式覆盖后代；只有显式 `SUBTREE` 且具有引用的可用目录才能作为
 受控子树。迁移窗口已经关闭；Validator 与正式 Preflight 均只接受两仓固定位置的 v2 台账。
-每次 Plan/Execute 还必须通过 `--matrix-combination` 或 `HAIFA_TEST_MATRIX_COMBINATION` 选择 Suite
-所引用 Matrix 中的一个组合；Runner 校验组合存在且平台与当前 Host OS 一致，并把完整组合写入
-版本 3 报告。公共 `RepositoryRevision` 要求主仓和 `test-config` 是独立 Git 根；Plan 显示两仓
-Commit/dirty 状态，Execute 拒绝 tracked/untracked change，并在结束后复核两仓版本未变化。
-Autonomous Delivery Matrix 中的 `compatibleAgentBaselineCommit` 表示最低兼容基线：当前主仓
-HEAD 必须等于该 Commit 或以其为祖先。显式 `--build-commit`、Campaign 和 Evidence 仍绑定本次
-实际精确 Commit，Execute 的仓库干净与运行前后 Revision 不变门禁不变。
+每次 Plan/Execute 还必须选择 Matrix Combination 和 Agent Profile。Matrix 只描述平台、Web/MCP
+目标或 Host 执行约束，不绑定模型 Provider；Profile 引用一份通过摘要校验的标准 Coding Agent YAML，
+并提供最低兼容产品 Commit。公共 `RepositoryRevision` 继续绑定两仓精确版本，Execute 拒绝 dirty
+仓库并在结束后复核版本未变化。
 Execute 还要求外部注入 `HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD`，Suite 声明的费用估算上限
 不得超过该独立批准额度；报告同时记录 Suite Budget 和批准额度。该门禁不等于实际计费，真实费用
 仍必须根据 Provider Usage 另行汇总。
 Plan 会计算版本化 `SuiteExecutionPlanFingerprint`，覆盖 Suite、预算、所选 Matrix Combination、
-Case 选择及解析后的公共 Selector。Execute 要求 `HAIFA_TEST_APPROVED_PLAN_SHA256` 与该摘要完全
+Agent Profile/Assembly Digest、Case 选择及解析后的公共 Selector。Execute 要求
+`HAIFA_TEST_APPROVED_PLAN_SHA256` 与该摘要完全
 一致；任一配置或 Selector 漂移都会在创建运行目录和外部调用前失败。两个仓库 Commit 仍由独立
 `RepositoryRevision` 字段绑定，不混入计划摘要。
 Execute 结果不能只依赖 Maven 退出码：Runner 把每个 Case 的 Failsafe XML 写入独立
@@ -35,16 +39,17 @@ Execute 结果不能只依赖 Maven 退出码：Runner 把每个 Case 的 Failsa
 报告目录通过项目属性 `haifa.failsafe.reportsDirectory` 显式绑定到 Failsafe `reportsDirectory` 参数；
 Runner 不使用未被插件声明为用户属性的 `failsafe.reportsDirectory`，避免真实 IT 已执行但 Evidence
 目录仍为空而被错误归类为 `NOT_RUN`。
-Critical Path 和 Autonomous Delivery 现在共用 `process.ProcessTreeCleanup`。Tracker 从子进程启动
-时持续记录后代，即使父进程先退出也能在预算结束后收敛已观察到的 Java/CLI/Tool 子进程；需要清理
-介入的“成功”Maven 运行会降级为 `ERROR`，只有自然退出且最终无存活后代才能 PASS。
+Critical Path 的 Maven/Failsafe 子进程和独立 CLI Platform Gate 复用
+`process.ProcessTreeCleanup`；Capability Case 本身通过进程内标准客户端执行，不再启动 CLI/PTY
+Driver。需要清理介入的“成功”Maven 运行仍会降级为 `ERROR`。
 两套体系也共用 `evidence` 包中的 SHA-256、Manifest 和跨平台只读终结能力。每次 Critical Path
 Execute 在外层运行根下创建唯一 `suite-<suite>-<epoch>-<uuid>` 证据根，Case、归一化报告和
 `manifest.sha256` 全部位于其中；原始 Maven XML 删除后，整个本次证据根转为只读。外层运行根保持
 可写，以便后续批次创建新的独立证据根。
 `evidence.EvidenceSecretScanner` 以有界缓冲区流式扫描证据文件，能识别跨缓冲区边界的 Secret，
 拒绝符号链接和非普通文件。Critical Path 在创建运行根和启动 Maven 前一次性收齐所选 Suite 的全部
-Secret；执行后只把命中文件的相对路径写入 `secret-scan.json` 和 Schema 3 报告。扫描失败会使批次
+Secret 要求由 Agent Profile 引用配置中的 `env://NAME` 和无 fallback 的 `${NAME}` 自动派生；执行后
+只把命中文件的相对路径写入 `secret-scan.json` 和报告。扫描失败会使批次
 失败，但不会把 Secret 值写入结果、日志或 Manifest。
 `authorization.SecretPreflight` 是两套执行链共同的环境凭据预检：一次聚合全部缺失变量名，返回值
 对象的诊断输出只显示已解析名称，不显示值。Autonomous Delivery 在 Gate 建目录前解析一次，并把
@@ -56,15 +61,17 @@ Campaign Parent 必须已经存在；Critical Path 外层运行根可以是待�
 `delivery` 包提供自主交付控制面的稳定 Case Catalog、Digest 校验、Python JSON Oracle Grader、
 私有 Suite Loader 与参数化 Harness。Harness 默认只打印计划；Campaign 初始化和 Gate 是显式
 子命令，运行根必须位于主仓、`docs/` 和 `test-config/` 之外，已有目录一律拒绝覆盖。
-Autonomous Delivery Harness 同样强制显式 Matrix Combination，并从 Matrix 派生 Host Profile；
-Campaign、Phase Summary 和 Run Manifest 使用版本 3 Schema 冻结完整组合和两仓
-`RepositoryRevision`，后续 Gate 不能切换组合或 Commit。
+Autonomous Delivery Harness 同样强制显式 Matrix Combination 与 Agent Profile，并从 Matrix 派生
+Host Profile；Campaign、Execution Plan 和 Run Manifest 冻结 Agent Assembly Digest、完整组合和
+两仓 `RepositoryRevision`，后续 Gate 不能切换装配、组合或 Commit。旧历史 Campaign 索引与格式比较
+已删除，不提供双执行器或旧结果兼容层。
 `trusted-host-default-v1` 是 macOS、Linux、Windows 对齐的默认交付 Profile，固定
 `host-guarded + allow + shell auto + TRUSTED_HOST_ONLY`；`posix-local-native-v1` 继续作为
 macOS/Linux 显式严格 Profile，`windows-host-trusted-v1` 只服务既有 Windows 专用 PowerShell Gate。
-`delivery.AutonomousDeliveryStubGate` 是独立于 Phase 1～3 的 Windows 平台 Gate。它读取私有
-`PLATFORM_STUB/STUB` Suite，要求零外部调用/费用，使用生产 CLI、真实 ConPTY 与 loopback Stub，
-并生成 Schema 3 Summary。Gate 复用共享 Driver Result Contract、SQLite 有界 Evidence Reader、
+`delivery.AutonomousDeliveryPlatformGate` 是独立于 Phase 1～3 Capability Gate 的 Windows CLI
+Smoke。它读取私有 `PLATFORM_STUB/STUB` Suite，要求零外部调用/费用，使用生产 shaded JAR、真实
+ConPTY 与 loopback Stub，显式验证参数解析、YAML、stdio 和退出码。Gate 复用 Driver Result
+Contract、SQLite 有界 Evidence Reader、
 Secret Scanner、Process Tree Cleanup 和只读 Evidence Finalizer；临时 SQLite/Workspace 在形成关联
 证据后删除。Stub PASS 只证明 Harness 与 Windows Host Trusted 平台链路，不证明 Coding 能力。
 `delivery.AutonomousDeliveryGateResultAggregator` 已从 Phase Gate 单体中抽出，集中生成 Schema 3
@@ -82,13 +89,12 @@ Failsafe XML 状态解析和原始 XML 清除。确定性 Probe 不继承真实 
 Side Effect Evidence 和 Capability Matrix；Acceptance Checks 为空时 fail closed，高风险 Case 的
 原子性绑定 Acceptance 与 Process/Scratch Cleanup。所有风险等级都要求 Process/Scratch Evidence
 完整，缺失或清理失败时 Verification 与 Capability Matrix 均保留原生失败状态。
-`delivery.AutonomousDeliveryRepeatEvidenceCollector` 已接管每个 Repeat 的 Acceptance、Driver、
-Usage、Failure/Progress/Completion、Process、Secret Scan、`result.json`、Summary 和只读终结。
-执行侧只传入已计算的 Policy 结论；Collector 再叠加 Process Cleanup 与 Secret Scan，二者任一失败
-都不能成为 `gatePassed=true`。
+`delivery.AutonomousDeliveryRepeatEvidenceCollector` 接管每个 Repeat 的 Acceptance、标准客户端
+Contract、Usage、Failure/Progress/Completion、Secret Scan、`result.json`、Summary 和只读终结。
+客户端装配、终态、预算、关闭或 Secret Scan 任一失败都不能成为 `gatePassed=true`。
 顶层 `delivery.AutonomousDeliveryGateCoordinator` 只负责 Host/Secret 前置、Policy、Probe、
-Case/Repeat 循环、Result Aggregation、Baseline Comparison 和 Evidence Finalization；单次
-Fixture/Workspace/Driver/Runtime/Acceptance 执行由 `delivery.AutonomousDeliveryRepeatExecutor`
+Case/Repeat 循环、Result Aggregation 和 Evidence Finalization；单次
+Fixture/Workspace/Client/Runtime/Acceptance 执行由 `delivery.AutonomousDeliveryRepeatExecutor`
 承担。隐藏 Acceptance 是所有 Case 的强制 Gate 条件；Case 10 的 bounded-convergence 指标只作为
 诊断证据，不能覆盖失败的隐藏验收。旧 `AutonomousDeliveryPhaseOneGate` 已移除，避免类名继续误导其
 Phase 1～3 实际范围。
@@ -108,14 +114,17 @@ Driver 对首屏 `IDLE` 和提交后的 `RUNNING` 转换各设置 120 秒上限�
 完整 Case 墙钟预算，避免 PTY 启动故障占满长任务预算。Driver 在生成 Result Evidence 前失败且 SQLite
 尚无 Run 时，Repeat 以 `NOT_STARTED` 的零用量证据 fail closed，而不是让 `IOException` 中断整个批次。
 
-`phase-1-gate --execute` 串行驱动生产 Coding Terminal，为每个 Case/Repeat 创建独立 Workspace、
-SQLite、JSONL Transcript、Trace 与会话录像，并在 Workspace 外执行固定 Acceptance。Harness 从
+`phase-1-gate --execute` 串行驱动公开 `StandaloneCodingAgents` 装配和 `CodingSessionClient`，为每个
+Case/Repeat 创建独立 Workspace、SQLite 与 JSONL Transcript，并在 Workspace 外执行固定 Acceptance。Harness 从
 SQLite 权威存储读取有界的安全 Runtime Event、Run Usage 和 Tool Call 事实；JSONL 只作为客户端安全
 投影，不承担内部 Gate 取证。Harness 生成 Failure Cluster、Meaningful Progress、Scratch、Completion、
 Secret Scan 和 Process Cleanup 证据；超时、预算越界、同类失败超过 4 次、已实际执行的命令缺少
 Scratch、Scratch 清理失败或 Secret 命中均失败。每个 Repeat 和 Gate 生成 SHA-256 Manifest 后整体
 设为只读。Manifest 只排除可被 Finder 异步改写、且不承载交付事实的 `.DS_Store`；Workspace、
 Runtime 与其余 Gate 证据文件全部纳入摘要。
+Python Acceptance 子进程通过 `-X utf8 -I` 固定使用 UTF-8 I/O 语义，并把 Harness 已验证的 Java、Python、Node、
+Go、Git 和 Shell 所在目录作为最小 `PATH`；Oracle 不再依赖启动 Codex 的宿主 `PATH` 或 Windows 本地
+代码页，因此含非 ASCII JSON 和跨语言工具调用在三端使用同一解析契约。
 
 真实 Gate 还要求 Revision 绑定的 `execution-plan.json` 与显式批准的最小费用单位。Suite 可冻结整批
 时长、币种、价格和每 Repeat Token 上界；Harness 在读取 Secret 前用缓存未命中价格计算保守费用

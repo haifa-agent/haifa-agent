@@ -61,12 +61,12 @@ class AutonomousDeliveryDeterministicProbeExecutorTest {
     void removesCredentialsAndLiveOptInsButPreservesUnrelatedEnvironment() {
         Map<String, String> environment = new LinkedHashMap<>();
         environment.put("PATH", "toolchain");
-        environment.put("DEEPSEEK_API_KEY", "secret");
-        environment.put("ALIYUN_IQS_API_KEY", "secret");
+        environment.put("MODEL_API_KEY", "secret");
+        environment.put("SEARCH_API_KEY", "secret");
         environment.put("HAIFA_CONTINUATION_KEY", "secret");
-        environment.put("HAIFA_DEEPSEEK_LIVE_TEST", "true");
+        environment.put("HAIFA_MODEL_LIVE_TEST", "true");
         environment.put("HAIFA_CLI_LIVE_E2E_TEST", "true");
-        environment.put("HAIFA_CLI_LIVE_E2E_PROVIDER", "deepseek");
+        environment.put("HAIFA_CLI_LIVE_E2E_PROVIDER", "configured-provider");
 
         AutonomousDeliveryDeterministicProbeExecutor.isolateFromProviderSecrets(environment);
 

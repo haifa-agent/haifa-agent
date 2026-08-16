@@ -40,20 +40,25 @@ jobs:
             - name: Plan Nightly Suite without external calls
               env:
                   HAIFA_TEST_RUN_ROOT: ${{ runner.temp }}/haifa-test-runs
-                  HAIFA_TEST_MATRIX_COMBINATION: linux-deepseek-primary
+                  HAIFA_TEST_MATRIX_COMBINATION: linux-primary
+                  HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
               run: bash test-config/scripts/run-suite.sh nightly-v1
 
-    deepseek-live-smoke:
-        name: DeepSeek live smoke suite
+    configured-provider-live-smoke:
+        name: Configured provider live smoke suite
         needs: suite-governance-plan
         runs-on: ubuntu-latest
         timeout-minutes: 30
         environment: ai-live-test
         env:
-            DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+            DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+            ALIYUN_IQS_API_KEY: ${{ secrets.ALIYUN_IQS_API_KEY }}
+            BAILIAN_WORKSPACE_ID: ${{ secrets.BAILIAN_WORKSPACE_ID }}
+            BAILIAN_ENDPOINT: ${{ secrets.BAILIAN_ENDPOINT }}
             HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD: "3.0"
-            HAIFA_TEST_APPROVED_PLAN_SHA256: 4d13640977fdb973d0f21815788e716776de59df09d0db9f4a3535f7fe114761
-            HAIFA_TEST_MATRIX_COMBINATION: linux-deepseek-primary
+            HAIFA_TEST_APPROVED_PLAN_SHA256: ${{ vars.HAIFA_NIGHTLY_PROVIDER_SMOKE_PLAN_SHA256 }}
+            HAIFA_TEST_MATRIX_COMBINATION: linux-primary
+            HAIFA_TEST_AGENT_PROFILE: coding-bailian-qwen37-max
             HAIFA_TEST_RUN_ROOT: ${{ runner.temp }}/haifa-test-runs
         steps:
             - uses: actions/checkout@v4
@@ -73,8 +78,8 @@ jobs:
                   distribution: temurin
                   java-version: "21"
                   cache: maven
-            - name: Require DeepSeek test key
-              run: test -n "$DEEPSEEK_API_KEY"
+            - name: Require configured service credentials
+              run: test -n "$DASHSCOPE_API_KEY" && test -n "$ALIYUN_IQS_API_KEY" && test -n "$BAILIAN_WORKSPACE_ID" && test -n "$BAILIAN_ENDPOINT"
             - name: Prepare external run root
               run: mkdir -p "$HAIFA_TEST_RUN_ROOT"
             - name: Execute reviewed provider smoke suite

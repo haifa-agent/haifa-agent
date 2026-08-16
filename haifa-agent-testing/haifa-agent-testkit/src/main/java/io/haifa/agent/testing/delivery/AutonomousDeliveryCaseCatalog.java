@@ -12,7 +12,7 @@ import java.util.Objects;
 /** Loads and verifies the versioned public catalog and all immutable fixture digests. */
 public final class AutonomousDeliveryCaseCatalog {
     public static final String EXPECTED_CATALOG_ID = "generalized-coding-v1";
-    public static final String EXPECTED_PROTOCOL_VERSION = "1.3.0";
+    public static final String EXPECTED_PROTOCOL_VERSION = "2.0.0";
 
     private final String catalogId;
     private final String catalogVersion;

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -14,6 +15,30 @@ import org.junit.jupiter.api.io.TempDir;
 class SuiteRunnerMainTest {
     @TempDir
     Path temporaryDirectory;
+
+    @Test
+    void recordsEveryRemainingRepetitionAsNotRunAfterABlockingFailure() {
+        SuiteManifest suite = new SuiteManifest(
+                1,
+                "blocking-v1",
+                "primary-v1",
+                new SuiteManifest.Budget(30, 3, 1),
+                java.util.List.of(
+                        new SuiteManifest.CaseSelection("CP-01", 2, true),
+                        new SuiteManifest.CaseSelection("CP-02", 1, true),
+                        new SuiteManifest.CaseSelection("CP-03", 1, true)));
+
+        var results = SuiteRunnerMain.notRunResultsAfter(suite, "CP-01", 1);
+
+        assertEquals(3, results.size());
+        assertEquals("CP-01", results.get(0).get("caseId"));
+        assertEquals(2, results.get(0).get("repetition"));
+        assertEquals(MavenTestEvidence.Status.NOT_RUN, results.get(0).get("status"));
+        assertEquals("CP-03", results.get(2).get("caseId"));
+        assertEquals("BLOCKING_CASE_FAILED", results.get(2).get("notRunReason"));
+        assertEquals("CP-01", results.get(2).get("blockedByCaseId"));
+        assertEquals("reports/blocking-v1-result.json", results.get(2).get("evidenceRef"));
+    }
 
     @Test
     void routesFailsafeReportsIntoTheCaseEvidenceDirectory() throws Exception {
@@ -26,6 +51,24 @@ class SuiteRunnerMainTest {
 
         assertTrue(command.contains("-Dhaifa.failsafe.reportsDirectory=" + reportsRoot));
         assertTrue(command.stream().noneMatch(value -> value.startsWith("-Dfailsafe.reportsDirectory=")));
+        assertTrue(command.contains("-DskipUnitTests=true"));
+        assertTrue(command.contains("-Denforcer.skip=true"));
+        assertTrue(command.contains("-Djacoco.skip=true"));
+        assertTrue(command.stream().noneMatch("-Dshade.skip=true"::equals));
+    }
+
+    @Test
+    void configuresDurablePersistenceForPersistenceCases() throws Exception {
+        Path caseRoot = Files.createDirectory(temporaryDirectory.resolve("cp-10"));
+        Map<String, String> environment = new HashMap<>();
+
+        SuiteRunnerMain.configureCaseEnvironment(environment, CriticalPathCatalog.require("CP-10"), caseRoot);
+
+        assertEquals("SQLITE_WITH_JSONL", environment.get("HAIFA_PERSISTENCE_MODE"));
+        assertEquals(
+                caseRoot.resolve("persistence/runtime.db").toString(), environment.get("HAIFA_SQLITE_DATABASE_PATH"));
+        assertEquals(caseRoot.resolve("persistence/transcripts").toString(), environment.get("HAIFA_TRANSCRIPT_ROOT"));
+        assertTrue(Files.isDirectory(caseRoot.resolve("persistence/transcripts")));
     }
 
     @Test
@@ -86,6 +129,7 @@ class SuiteRunnerMainTest {
                                 runRoot,
                                 "missing-suite",
                                 currentPlatform() + "-primary",
+                                "coding-primary",
                                 false),
                         Map.of()));
         assertTrue(exception.getMessage().contains("not inventoried"));
@@ -120,11 +164,19 @@ class SuiteRunnerMainTest {
                 """);
         commitRepository(configRoot);
         commitRepository(projectRoot);
+        writeAgentProfile(configRoot, projectRoot);
+        commitRepository(configRoot);
 
         int exitCode = new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", false),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                false),
                         Map.of());
 
         assertEquals(0, exitCode);
@@ -168,7 +220,13 @@ class SuiteRunnerMainTest {
         assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", false),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                false),
                         Map.of()));
     }
 
@@ -197,13 +255,20 @@ class SuiteRunnerMainTest {
                     blocking: true
                 """);
         commitRepository(projectRoot);
+        writeAgentProfile(configRoot, projectRoot);
         commitRepository(configRoot);
         Files.writeString(configRoot.resolve("untracked-override.yaml"), "unsafe: true");
 
         assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", true),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                true),
                         Map.of()));
         assertEquals(false, Files.exists(runRoot));
     }
@@ -233,14 +298,21 @@ class SuiteRunnerMainTest {
                     blocking: true
                 """);
         commitRepository(projectRoot);
+        writeAgentProfile(configRoot, projectRoot);
         commitRepository(configRoot);
 
         assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", true),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                true),
                         Map.of(
-                                "DEEPSEEK_API_KEY",
+                                "MODEL_API_KEY",
                                 "test-only-placeholder",
                                 "HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD",
                                 "2.99")));
@@ -272,14 +344,21 @@ class SuiteRunnerMainTest {
                     blocking: true
                 """);
         commitRepository(projectRoot);
+        writeAgentProfile(configRoot, projectRoot);
         commitRepository(configRoot);
 
         assertThrows(IllegalArgumentException.class, () -> new SuiteRunnerMain()
                 .run(
                         new SuiteRunnerMain.Options(
-                                projectRoot, configRoot, runRoot, "pr-real-v1", currentPlatform() + "-primary", true),
+                                projectRoot,
+                                configRoot,
+                                runRoot,
+                                "pr-real-v1",
+                                currentPlatform() + "-primary",
+                                "coding-primary",
+                                true),
                         Map.of(
-                                "DEEPSEEK_API_KEY",
+                                "MODEL_API_KEY",
                                 "test-only-placeholder",
                                 "HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD",
                                 "3.0",
@@ -297,6 +376,30 @@ class SuiteRunnerMainTest {
                 configRoot.resolve("assets/testing-assets-v2.json"),
                 "haifa-agent-test-config",
                 "assets/testing-assets-v2.json");
+    }
+
+    private static void writeAgentProfile(Path configRoot, Path projectRoot) throws Exception {
+        Path configuration = configRoot.resolve("environments/coding-primary.yaml");
+        Files.createDirectories(configuration.getParent());
+        Files.writeString(
+                configuration,
+                """
+                provider:
+                  credentialRef: env://MODEL_API_KEY
+                """);
+        String configurationSha256 = io.haifa.agent.testing.evidence.Sha256Digests.file(configuration);
+        Path profile = configRoot.resolve("agent-profiles/coding-primary.yaml");
+        Files.createDirectories(profile.getParent());
+        Files.writeString(
+                profile,
+                """
+                schemaVersion: 1
+                profileId: coding-primary
+                compatibleAgentBaselineCommit: %s
+                configurationRef: environments/coding-primary.yaml
+                configurationSha256: %s
+                """
+                        .formatted(gitOutput(projectRoot, "rev-parse", "HEAD"), configurationSha256));
     }
 
     private static void writeInventory(Path inventory, String repositoryId, String inventoryPath) throws Exception {
@@ -328,28 +431,16 @@ class SuiteRunnerMainTest {
 
     private static String matrix() {
         return """
-                schemaVersion: 1
+                schemaVersion: 2
                 matrixId: primary-v1
                 strategy: explicit
                 combinations:
                   - id: linux-primary
                     platform: linux
-                    modelProvider: deepseek
-                    modelId: deepseek-v4-pro
-                    webProvider: aliyun
-                    mcpTarget: utility
                   - id: macos-primary
                     platform: macos
-                    modelProvider: deepseek
-                    modelId: deepseek-v4-pro
-                    webProvider: aliyun
-                    mcpTarget: utility
                   - id: windows-primary
                     platform: windows
-                    modelProvider: deepseek
-                    modelId: deepseek-v4-pro
-                    webProvider: aliyun
-                    mcpTarget: utility
                 """;
     }
 
@@ -381,5 +472,20 @@ class SuiteRunnerMainTest {
             throw new IOException(
                     "git test setup failed: " + new String(output, java.nio.charset.StandardCharsets.UTF_8));
         }
+    }
+
+    private static String gitOutput(Path repository, String... arguments) throws Exception {
+        java.util.ArrayList<String> command = new java.util.ArrayList<>();
+        command.add("git");
+        command.add("-C");
+        command.add(repository.toString());
+        command.addAll(java.util.List.of(arguments));
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        byte[] output = process.getInputStream().readAllBytes();
+        if (process.waitFor() != 0) {
+            throw new IOException(
+                    "git test setup failed: " + new String(output, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return new String(output, java.nio.charset.StandardCharsets.UTF_8).trim();
     }
 }

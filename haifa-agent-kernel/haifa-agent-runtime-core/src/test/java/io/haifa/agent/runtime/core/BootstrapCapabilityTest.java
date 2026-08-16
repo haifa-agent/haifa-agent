@@ -390,6 +390,9 @@ class BootstrapCapabilityTest {
         assertThatThrownBy(() -> service.readResource(activationRequest, "references/missing.txt"))
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("frozen index");
+        assertThatThrownBy(() -> service.readResource(activationRequest, "SKILL.md"))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("auxiliary readable text resource");
         for (String path : List.of(
                 "references/a.txt", "references/b.txt", "references/c.txt", "references/a.txt", "references/b.txt")) {
             assertThat(service.readResource(activationRequest, path).content()).hasSize(400 * 1024);

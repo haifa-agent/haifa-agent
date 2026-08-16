@@ -29,13 +29,14 @@ Integration 与 E2E 之间的层级：
 - `haifa-agent-testkit`：稳定 Case Catalog、Suite Runner、断言和跨模块测试辅助能力；
 - `haifa-agent-test-fixtures`：多个测试模块共享、可安全进入源码仓库的小型 Fixture；
 - `haifa-agent-integration-tests`：确定性的跨模块和测试编排契约验证；
-- `haifa-agent-e2e-tests`：完整 CLI/AgentRun 路径，包含 Simulated 与显式 opt-in Live E2E。
+- `haifa-agent-e2e-tests`：通过标准 Coding Agent 产品客户端验证完整 AgentRun 语义，包含 Simulated 与
+  显式 opt-in Live E2E。
 
 主仓绑定的手工 Terminal 测试驱动位于 [`scripts/`](scripts/README.md)。它们保留公共测试选择器、
 产品级断言与证据生成逻辑；独立 `test-config` 只负责 Suite、环境和预算编排。
 
-真实外部 Provider 的窄 Probe 与对应 Adapter 相邻保存，例如 CP-01 的 `DeepSeekLiveIT`；需要完整
-产品入口的 Live 场景进入 E2E 模块。可执行 Runtime 示例已迁入 Applications，不再作为测试模块。
+真实外部 Provider 的窄 Adapter Probe 与对应集成模块相邻保存；CP-01～CP-11 的正式产品语义统一在
+E2E 模块通过注入的 `CodingSessionClient` 验证，不把任一 Provider Adapter 当作产品客户端。
 
 自主交付泛化能力资产由 `haifa-agent-test-fixtures` 保存稳定输入和 Schema，
 `haifa-agent-testkit` 保存 Catalog 校验、Suite 解析、Campaign 隔离与 Harness 编排。真实运行
@@ -43,8 +44,8 @@ Integration 与 E2E 之间的层级：
 使用同一 Deterministic Probe Executor；平台入口和私有 Suite 不复制 Maven 命令、超时、Secret
 隔离或证据解析逻辑。
 
-Windows Autonomous Delivery 平台链路另有独立 `PLATFORM_STUB/STUB` Gate：通过生产 CLI、真实
-ConPTY 和进程内 loopback Model Stub 验证 Approval、Shell、SQLite、Secret Scan、只读 Evidence、
+Windows CLI 发行链路另有独立 `PLATFORM_STUB/STUB` Platform Gate：通过生产 shaded JAR、真实
+ConPTY 和进程内 loopback Model Stub 验证参数、YAML、stdio、退出码、Approval、Shell、SQLite、Secret Scan、只读 Evidence、
 进程树与清理，不执行或评分 Coding Case，也不产生外部 Provider 调用和费用。其隔离结论始终为
 `TRUSTED_HOST_ONLY`。
 
@@ -57,16 +58,16 @@ Critical Path v1 使用稳定 `CP-01`～`CP-11`：
 
 | Case | 路径 | 当前实现 |
 | --- | --- | --- |
-| `CP-01` | 真实模型连通与响应 | `DeepSeekLiveIT`（OpenAI-compatible 适配器相邻测试） |
+| `CP-01` | 真实模型连通与响应 | `CriticalPathClientLiveE2E#completesAgentBaselineTurn` |
 | `CP-02` | 单文件缺陷修复 | 复用 `CodingAgentLiveE2E#repairsSingleFileBoundaryDefect` |
 | `CP-03` | 多文件功能实现 | 复用 `CodingAgentLiveE2E#implementsMultiFileDiscountFeature` |
 | `CP-04` | 首次执行失败后诊断恢复 | 复用 `CodingAgentLiveE2E#diagnosesFailedExecutionAndRecovers` |
 | `CP-05` | 保留用户已有脏文件 | 复用 `CodingAgentLiveE2E#preservesUnrelatedDirtyWorkspaceContent` |
 | `CP-06` | 审批拒绝且无副作用 | 复用 `CodingAgentLiveE2E#rejectedApprovalProducesNoSideEffect` |
-| `CP-07` | Skill 发现、冻结与激活 | `CriticalPathLiveE2E#activatesReviewedSkill` |
-| `CP-08` | Web Search 后 Fetch | `CriticalPathLiveE2E#searchesAndFetchesPublicWebContent` |
-| `CP-09` | MCP 协议协商、发现与调用 | 复用 `UtilityMcpCompatibilityLiveIT` |
-| `CP-10` | SQLite 权威状态与 JSONL 投影 | `CriticalPathLiveE2E#persistsRunToSqliteAndJsonl` |
+| `CP-07` | Skill 发现、冻结与激活 | `CriticalPathClientLiveE2E#activatesReviewedSkill` |
+| `CP-08` | Web Search 后 Fetch | `CriticalPathClientLiveE2E#searchesAndFetchesPublicWebContent` |
+| `CP-09` | MCP 协议协商、发现与调用 | `CriticalPathClientLiveE2E#discoversAndCallsUtilityMcp` |
+| `CP-10` | SQLite 权威状态与 JSONL 投影 | `CriticalPathClientLiveE2E#persistsRunToSqliteAndJsonl` |
 | `CP-11` | Interaction、Event Journal 与 HITL 纵向闭环 | `InteractionEventHitlLiveE2E#completesInteractionEventAndHitlRoundTrip` |
 
 公共 Case Catalog 与 Maven selector 属于本仓库事实；私有 `test-config` 只通过 `caseId` 选择用例并提供
@@ -75,7 +76,8 @@ Suite、Matrix、Environment、Secret 引用和预算。Runner 通过 `HAIFA_TES
 
 首版 Runner 一次执行当前主机上的一个 Suite/环境。Matrix 由 CI 或发布编排层展开为独立 Job，并在
 每个 Job 中显式选择一个 Combination；Runner 校验 Combination 存在且与 Host OS 一致，不在单个
-JVM 内跨平台或自动遍历 Provider。Execute 要求独立注入
+  JVM 内跨平台或自动遍历 Provider。模型 Provider 和模型 ID 只存在于 Agent Profile 引用的标准
+  产品配置，Suite/Case/Matrix 都不绑定 Provider。Execute 要求独立注入
 `HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD`，Suite 的费用估算上限不得超过获批额度；报告记录两者，
 实际费用核算仍由 Provider Usage 汇总和 CI 门禁负责。Runner 还为 Suite、预算、选中 Combination、
 Case 和解析后的公共 Selector 生成稳定计划 SHA-256；Execute 必须与外部批准的
@@ -106,6 +108,8 @@ Critical Path Runner 与 Autonomous Delivery Harness 都在加载 Suite/Matrix �
 
 - 产品模块不得依赖本目录中的模块；
 - 测试模块可以按用例需要单向依赖产品模块；
+- Testkit 主代码、产品语义 Suite、E2E 用例和共享 Fixture 的文件名、类型名、协议字段及测试数据都
+  必须保持供应商中立；具体供应商只能由 Agent Profile 引用的最高层产品配置注入；
 - 模块私有 Fixture 优先留在相邻模块的 `src/test/resources`；
 - API Key、Token、生产数据、真实 Host Path、原始 Prompt/Provider 响应和运行生成的数据库、Trace、
   Transcript、Workspace 不得进入本目录；

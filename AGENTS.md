@@ -184,7 +184,7 @@ Unit/Integration，只验证打包、Source、Javadoc 和制品 smoke，不能�
 
 本地 Maven 开发优先使用 `build-support/scripts/invoke-haifa-maven.ps1`（Windows）或对应的 `.sh`
 入口。精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。L0/L1 默认串行，
-L2/L3 默认 `-T 4`；不要按本机 CPU 数直接使用 `-T 1C`。入口把脱敏指标
+L2 默认 `-T 4`，L3 默认 `-T 2`；不要按本机 CPU 数直接使用 `-T 1C`。入口把脱敏指标
 写入 `local-tmp/maven-build-metrics/`，并原样返回 Maven 退出码。精确语法和分层矩阵见
 [`build-support/README.md`](build-support/README.md)。
 

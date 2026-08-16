@@ -1,9 +1,14 @@
 package io.haifa.agent.testing.delivery;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class PythonJsonAcceptanceGraderTest {
@@ -29,5 +34,22 @@ class PythonJsonAcceptanceGraderTest {
                         "not-json".getBytes(StandardCharsets.UTF_8),
                         1,
                         25));
+    }
+
+    @Test
+    void freezesResolvedToolchainPathForOracleProcess() {
+        Map<String, String> environment = new HashMap<>(Map.of("PATH", "untrusted"));
+
+        PythonJsonAcceptanceGrader.configureOracleEnvironment(environment, "resolved-toolchain-path");
+
+        assertEquals("resolved-toolchain-path", environment.get("PATH"));
+    }
+
+    @Test
+    void enablesUtf8BeforeIsolatedPythonMode() {
+        assertEquals(
+                List.of("python", "-X", "utf8", "-I", "acceptance.py", "workspace"),
+                PythonJsonAcceptanceGrader.oracleCommand(
+                        Path.of("python"), Path.of("acceptance.py"), Path.of("workspace")));
     }
 }

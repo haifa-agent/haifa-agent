@@ -39,14 +39,14 @@ class EnvironmentConfigurationPreflightTest {
                 environment,
                 """
                 models:
-                  default: deepseek-chat
+                  default: primary-model
                   providers:
-                    - id: deepseek
-                      endpoint: https://api.deepseek.com
-                      credentialRef: env://DEEPSEEK_API_KEY
+                    - id: configured-provider
+                      endpoint: https://model.example.test
+                      credentialRef: env://MODEL_API_KEY
                       models:
-                        - id: deepseek-chat
-                          providerModelId: deepseek-chat
+                        - id: primary-model
+                          providerModelId: external-model
                 """);
 
         assertDoesNotThrow(() -> new EnvironmentConfigurationPreflight().validate(temporaryDirectory));
@@ -60,8 +60,8 @@ class EnvironmentConfigurationPreflightTest {
                 environment,
                 """
                 model:
-                  providerId: deepseek
-                  modelId: deepseek-chat
+                  providerId: configured-provider
+                  modelId: primary-model
                 """);
 
         IllegalArgumentException exception =

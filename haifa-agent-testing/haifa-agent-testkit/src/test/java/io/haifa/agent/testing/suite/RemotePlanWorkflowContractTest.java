@@ -31,17 +31,17 @@ class RemotePlanWorkflowContractTest {
                 remotePlan.path("if").asText());
         assertEquals(
                 Set.of(
-                        "nightly-v1|ubuntu-latest|linux-deepseek-primary",
-                        "nightly-v1|windows-latest|windows-deepseek-primary",
-                        "release-v1|ubuntu-latest|linux-deepseek",
-                        "release-v1|windows-latest|windows-deepseek"),
+                        "nightly-v1|ubuntu-latest|linux-primary",
+                        "nightly-v1|windows-latest|windows-primary",
+                        "release-v1|ubuntu-latest|linux-release",
+                        "release-v1|windows-latest|windows-release"),
                 matrixEntries(remotePlan));
 
         String remotePlanDefinition = remotePlan.toString();
         assertTrue(remotePlanDefinition.contains("HAIFA_TEST_CONFIG_SSH_KEY"));
         assertFalse(remotePlanDefinition.contains("HAIFA_TEST_CONFIG_TOKEN"));
         assertFalse(remotePlanDefinition.contains("--execute"));
-        assertFalse(remotePlanDefinition.contains("DEEPSEEK_API_KEY"));
+        assertFalse(remotePlanDefinition.contains("MODEL_API_KEY"));
         assertFalse(remotePlanDefinition.contains("HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD"));
         assertFalse(remotePlanDefinition.contains("HAIFA_TEST_APPROVED_PLAN_SHA256"));
 

@@ -1,10 +1,17 @@
 package io.haifa.agent.testing.delivery;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
+import io.haifa.agent.cli.StandaloneCodingAgent;
+import io.haifa.agent.cli.StandaloneCodingAgents;
+import io.haifa.agent.runtime.api.AgentRunEvent;
+import io.haifa.agent.runtime.api.AgentRunSnapshot;
+import io.haifa.agent.runtime.api.InteractionAction;
+import io.haifa.agent.runtime.api.RunEventCursor;
+import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.testing.evidence.Sha256Digests;
-import io.haifa.agent.testing.process.ProcessTreeCleanup;
 import io.haifa.agent.testing.repository.RepositoryRevision;
+import io.haifa.agent.testing.suite.ResolvedAgentProfile;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -17,21 +24,22 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
-/** Executes one isolated Autonomous Delivery case repetition and hands its facts to evidence collectors. */
+/** Executes one isolated Autonomous Delivery capability case through the standard product client. */
 final class AutonomousDeliveryRepeatExecutor {
-    private static final Pattern ITERATION = Pattern.compile("(?:^| )iteration=([0-9]+)(?: |$)");
+    private static final String EMPTY_DIGEST = "0".repeat(64);
 
     private final ObjectMapper json;
     private final Clock clock;
     private final AutonomousDeliveryPhaseThreeVerificationCollector phaseThreeVerificationCollector;
+    private final PythonJsonAcceptanceGrader acceptanceGrader = new PythonJsonAcceptanceGrader();
 
     AutonomousDeliveryRepeatExecutor(ObjectMapper json, Clock clock) {
         this.json = Objects.requireNonNull(json, "json must not be null");
@@ -45,15 +53,13 @@ final class AutonomousDeliveryRepeatExecutor {
             AutonomousDeliverySuiteManifest suite,
             AutonomousDeliveryCase testCase,
             int repetition,
-            Path cliJar,
+            ResolvedAgentProfile agentProfile,
             DeliveryToolchainSet toolchains,
             DeliveryHostProfile hostProfile,
             AutonomousDeliveryMatrixManifest.Combination matrixCombination,
             RepositoryRevision productRevision,
             RepositoryRevision testConfigRevision,
             String executionPlanSha256,
-            Path driver,
-            boolean nodeDriver,
             AutonomousDeliveryPhasePolicy phasePolicy,
             Collection<String> selectedSecrets)
             throws Exception {
@@ -67,21 +73,14 @@ final class AutonomousDeliveryRepeatExecutor {
         initializeGit(workspace, toolchains);
         Files.writeString(repeat.resolve("workspace-before.sha256"), before + "\n", StandardOpenOption.CREATE_NEW);
         Path transcripts = Files.createDirectory(repeat.resolve("transcripts"));
-        Path configuration = repeat.resolve("terminal.yaml");
-        Files.writeString(
-                configuration,
-                DeliveryCliConfigurationFactory.render(suite, toolchains, hostProfile, matrixCombination),
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE_NEW);
-        Path driverResult = repeat.resolve("driver-result.json");
-        Path recording = repeat.resolve("session.cast");
+        Path database = repeat.resolve("runtime.db");
         writeRunManifest(
                 repeat,
                 buildCommit,
                 suite,
                 testCase,
                 repetition,
-                cliJar,
+                agentProfile,
                 toolchains,
                 hostProfile,
                 matrixCombination,
@@ -90,67 +89,43 @@ final class AutonomousDeliveryRepeatExecutor {
                 executionPlanSha256);
 
         long startedNanos = System.nanoTime();
-        List<String> driverCommand = new ArrayList<>();
-        driverCommand.add((nodeDriver ? toolchains.nodeExecutable() : toolchains.pythonExecutable()).toString());
-        driverCommand.add(driver.toString());
-        if (nodeDriver) {
-            driverCommand.add(toolchains.javaExecutable().toString());
-            driverCommand.add(toolchains.pythonExecutable().toString());
-        }
-        driverCommand.addAll(List.of(
-                cliJar.toString(),
-                workspace.toString(),
-                configuration.toString(),
-                repeat.resolve("trace-detail.jsonl").toString(),
-                immutableCase.resolve("prompt.txt").toString(),
-                immutableCase.resolve("acceptance.py").toString(),
-                recording.toString(),
-                driverResult.toString(),
-                Long.toString(TimeUnit.MILLISECONDS.toSeconds(suite.budget().maxWallTimeMillis()))));
-        ProcessBuilder builder = new ProcessBuilder(driverCommand);
-        builder.redirectErrorStream(true);
-        builder.redirectOutput(repeat.resolve("driver.log").toFile());
-        Map<String, String> environment = builder.environment();
-        environment.put("JAVA_HOME", toolchains.javaHome().toString());
-        environment.put("PATH", toolchains.minimalPath());
-        environment.put("HAIFA_PERSISTENCE_MODE", "SQLITE_WITH_JSONL");
-        environment.put(
-                "HAIFA_SQLITE_DATABASE_PATH", repeat.resolve("runtime.db").toString());
-        environment.put("HAIFA_TRANSCRIPT_ROOT", transcripts.toString());
-        environment.put("TERM", "xterm-256color");
-        configurePythonUtf8(environment);
-        Process process = builder.start();
-        ProcessTreeCleanup.Tracker processTracker = ProcessTreeCleanup.track(process);
-        boolean finished = process.waitFor(suite.budget().maxWallTimeMillis() + 120_000, TimeUnit.MILLISECONDS);
-        ProcessTreeCleanup.Result processCleanup = processTracker.converge(finished, Duration.ofSeconds(10));
-        int driverExit = finished && !process.isAlive() ? process.exitValue() : 124;
-        double wallSeconds = (System.nanoTime() - startedNanos) / 1_000_000_000.0;
-        JsonNode driverEvidence = Files.isRegularFile(driverResult) ? json.readTree(driverResult.toFile()) : null;
-        TerminalDriverResultContract.Validation driverContract =
-                TerminalDriverResultContract.validate(driverEvidence, hostProfile.terminalBackend(), recording);
+        ClientOutcome client = runClient(
+                workspace,
+                Files.readString(immutableCase.resolve("prompt.txt"), StandardCharsets.UTF_8),
+                agentProfile,
+                database,
+                transcripts,
+                suite.budget().maxWallTimeMillis());
+        long wallTimeMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos);
 
         String after = workspaceDigest(workspace);
         Files.writeString(repeat.resolve("workspace-after.sha256"), after + "\n", StandardOpenOption.CREATE_NEW);
         runGit(toolchains, workspace, repeat.resolve("workspace.diff"), "diff", "--binary", "--no-ext-diff");
         AutonomousDeliveryRuntimeEvidenceReader.Evidence authoritative = new AutonomousDeliveryRuntimeEvidenceReader(
                         json)
-                .readOrUnavailable(repeat.resolve("runtime.db"), driverExit != 0 && driverEvidence == null);
-        long wallTimeMillis = Math.round(wallSeconds * 1000.0);
-        int iterations = maximumIteration(repeat.resolve("trace-detail.jsonl"));
+                .readOrUnavailable(database, !client.contract().runStarted());
+        int iterations = maximumIteration(client.events());
         boolean withinBudget = authoritative.modelCalls() <= suite.budget().maxModelCalls()
                 && authoritative.toolCalls() <= suite.budget().maxToolCalls()
                 && iterations <= suite.budget().maxIterations()
                 && wallTimeMillis <= suite.budget().maxWallTimeMillis();
-        Acceptance acceptance = acceptance(driverEvidence, testCase);
-        boolean acceptancePassed = acceptance.passed();
-        boolean bounded = finished
-                && wallSeconds < TimeUnit.MILLISECONDS.toSeconds(suite.budget().maxWallTimeMillis())
+
+        AutonomousDeliveryAcceptanceGrade grade = grade(
+                testCase,
+                immutableCase.resolve("acceptance.py"),
+                workspace,
+                toolchains.pythonExecutable(),
+                remainingGraderBudget(suite, wallTimeMillis),
+                toolchains.minimalPath());
+        Map<String, Object> acceptanceArtifact = acceptanceArtifact(testCase, grade);
+        boolean bounded = client.contract().completedWithinBudget()
+                && client.contract().assemblyClosed()
                 && withinBudget
                 && authoritative.maximumClusterAttempts() <= 4;
-        boolean caseTenConverged = testCase.caseId().equals("10") && bounded && wallSeconds < 900;
+        boolean caseTenConverged = testCase.caseId().equals("10") && bounded && wallTimeMillis < 900_000;
         boolean preliminaryGatePassed = gateEligible(
-                acceptancePassed,
-                driverContract.passed(),
+                grade.passed(),
+                client.contract().passed(),
                 authoritative.scratchSatisfied(),
                 authoritative.terminalStateObserved(),
                 bounded);
@@ -159,33 +134,32 @@ final class AutonomousDeliveryRepeatExecutor {
                         repeat,
                         new AutonomousDeliveryPhaseThreeVerificationCollector.Input(
                                 AutonomousDeliveryRepeatEvidenceCollector.CaseMetadata.from(testCase),
-                                acceptance.passed(),
-                                acceptance.checks(),
-                                acceptance.failures(),
+                                grade.passed(),
+                                grade.checks(),
+                                grade.failures(),
                                 before,
                                 after,
                                 authoritative.scratchSatisfied(),
-                                processCleanup.passed()))
+                                client.contract().assemblyClosed()))
                 : AutonomousDeliveryPhaseThreeVerificationCollector.notRequired();
         preliminaryGatePassed &= phaseThree.passed();
 
+        writeJson(repeat.resolve("public-client-evidence.json"), publicEvidence(client.events()));
         AutonomousDeliveryRepeatEvidenceCollector.Result collected = new AutonomousDeliveryRepeatEvidenceCollector(json)
                 .collect(
                         repeat,
                         new AutonomousDeliveryRepeatEvidenceCollector.Input(
                                 AutonomousDeliveryRepeatEvidenceCollector.CaseMetadata.from(testCase),
                                 repetition,
-                                driverExit,
-                                driverContract,
-                                wallSeconds,
+                                client.contract(),
+                                wallTimeMillis / 1000.0,
                                 wallTimeMillis,
-                                acceptancePassed,
-                                acceptance.artifact(),
+                                grade.passed(),
+                                acceptanceArtifact,
                                 bounded,
                                 caseTenConverged,
                                 preliminaryGatePassed,
                                 authoritative,
-                                processCleanup,
                                 iterations,
                                 withinBudget,
                                 !before.equals(after),
@@ -195,76 +169,192 @@ final class AutonomousDeliveryRepeatExecutor {
         return collected.summary();
     }
 
-    static void configurePythonUtf8(Map<String, String> environment) {
-        environment.put("PYTHONUTF8", "1");
-        environment.put("PYTHONIOENCODING", "utf-8");
-    }
-
     static boolean gateEligible(
             boolean acceptancePassed,
-            boolean driverContractPassed,
+            boolean clientContractPassed,
             boolean scratchSatisfied,
             boolean terminalStateObserved,
             boolean bounded) {
-        return acceptancePassed && driverContractPassed && scratchSatisfied && terminalStateObserved && bounded;
+        return acceptancePassed && clientContractPassed && scratchSatisfied && terminalStateObserved && bounded;
     }
 
-    private int maximumIteration(Path trace) throws IOException {
-        int iterations = 0;
-        if (Files.isRegularFile(trace)) {
-            for (String line : Files.readAllLines(trace, StandardCharsets.UTF_8)) {
-                Matcher matcher = ITERATION.matcher(line);
-                while (matcher.find()) iterations = Math.max(iterations, Integer.parseInt(matcher.group(1)));
-            }
-        }
-        return iterations;
-    }
-
-    private Acceptance acceptance(JsonNode driverEvidence, AutonomousDeliveryCase testCase) {
-        LinkedHashMap<String, Boolean> checks = new LinkedHashMap<>();
+    private ClientOutcome runClient(
+            Path workspace,
+            String prompt,
+            ResolvedAgentProfile profile,
+            Path database,
+            Path transcripts,
+            long maxWallTimeMillis) {
+        Map<String, String> environment = new HashMap<>(System.getenv());
+        environment.put("HAIFA_PERSISTENCE_MODE", "SQLITE_WITH_JSONL");
+        environment.put("HAIFA_SQLITE_DATABASE_PATH", database.toString());
+        environment.put("HAIFA_TRANSCRIPT_ROOT", transcripts.toString());
+        boolean assemblyOpened = false;
+        boolean runStarted = false;
+        boolean terminalObserved = false;
+        boolean completedWithinBudget = false;
+        boolean assemblyClosed = false;
+        String terminalStatus = "NOT_STARTED";
+        String productAssemblyDigest = EMPTY_DIGEST;
+        List<AgentRunEvent> events = List.of();
         List<String> failures = new ArrayList<>();
-        boolean passed = false;
-        if (driverEvidence != null) {
-            try {
-                JsonNode grader =
-                        json.readTree(driverEvidence.path("acceptanceStdout").asText(""));
-                JsonNode graderChecks = grader.path("checks");
-                if (graderChecks.isObject()) {
-                    graderChecks.fields().forEachRemaining(entry -> {
-                        if (entry.getValue().isBoolean()) {
-                            checks.put(entry.getKey(), entry.getValue().asBoolean());
-                        }
-                    });
+        StandaloneCodingAgent agent = null;
+        try {
+            agent = StandaloneCodingAgents.open(workspace, profile.configurationPath(), environment);
+            assemblyOpened = true;
+            productAssemblyDigest = agent.metadata().assemblyDigest();
+            CodingSessionClient client = agent.client();
+            var created = client.create(agent.projectId(), prompt, "autonomous-delivery-" + UUID.randomUUID());
+            var sessionId = created.summary().sessionId();
+            AgentRunSnapshot snapshot = created.activeRun().orElseThrow();
+            runStarted = true;
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(maxWallTimeMillis);
+            while (!snapshot.status().isTerminal() && System.nanoTime() < deadline) {
+                var pending = client.pendingInteraction(snapshot.runId());
+                if (pending.isPresent()) {
+                    client.respond(
+                            pending.orElseThrow(),
+                            InteractionAction.APPROVE,
+                            "autonomous-delivery-approve-" + UUID.randomUUID());
                 }
-                JsonNode graderFailures = grader.path("failures");
-                if (graderFailures.isArray()) {
-                    graderFailures.forEach(value -> {
-                        String text = value.asText("");
-                        if (!text.isBlank() && text.length() <= 512 && failures.size() < 128) {
-                            failures.add(text);
-                        }
-                    });
+                Thread.sleep(25);
+                snapshot = client.findRun(snapshot.runId()).orElseThrow();
+            }
+            completedWithinBudget = snapshot.status().isTerminal();
+            if (!completedWithinBudget) {
+                client.cancel(sessionId, "autonomous-delivery-timeout-" + UUID.randomUUID());
+                failures.add("CLIENT_TIMEOUT");
+            }
+            terminalObserved = snapshot.status().isTerminal();
+            terminalStatus = snapshot.status().name();
+            events = readAllEvents(client, snapshot);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            failures.add("CLIENT_INTERRUPTED");
+        } catch (RuntimeException exception) {
+            failures.add(assemblyOpened ? "CLIENT_EXECUTION_FAILED" : "CLIENT_ASSEMBLY_FAILED");
+        } finally {
+            if (agent != null) {
+                try {
+                    agent.close();
+                    assemblyClosed = true;
+                } catch (RuntimeException exception) {
+                    failures.add("CLIENT_CLOSE_FAILED");
                 }
-                passed = driverEvidence.path("acceptanceExitStatus").asInt(-1) == 0
-                        && grader.path("passed").asBoolean(false);
-            } catch (IOException ignored) {
-                // Converted into bounded, non-sensitive evidence below.
             }
         }
-        if (checks.isEmpty()) {
-            checks.put("graderOutputValid", false);
-            failures.clear();
-            failures.add("GRADER_OUTPUT_INVALID");
-            passed = false;
+        CodingClientExecutionContract contract = new CodingClientExecutionContract(
+                assemblyOpened,
+                runStarted,
+                terminalObserved,
+                completedWithinBudget,
+                assemblyClosed,
+                terminalStatus,
+                events.size(),
+                profile.agentAssemblyDigest(),
+                productAssemblyDigest,
+                List.copyOf(failures));
+        return new ClientOutcome(contract, events);
+    }
+
+    private static List<AgentRunEvent> readAllEvents(CodingSessionClient client, AgentRunSnapshot snapshot) {
+        ArrayList<AgentRunEvent> events = new ArrayList<>();
+        RunEventCursor cursor = RunEventCursor.beforeFirst(snapshot.runId());
+        boolean more;
+        do {
+            var page = client.events(snapshot.runId(), cursor, 100);
+            events.addAll(page.items());
+            cursor = page.nextCursor();
+            more = page.hasMore();
+        } while (more);
+        return List.copyOf(events);
+    }
+
+    private static int maximumIteration(List<AgentRunEvent> events) {
+        return events.stream()
+                .map(AgentRunEvent::payload)
+                .filter(RunEventPayloads.ModelLifecycle.class::isInstance)
+                .map(RunEventPayloads.ModelLifecycle.class::cast)
+                .mapToInt(RunEventPayloads.ModelLifecycle::iteration)
+                .max()
+                .orElse(0);
+    }
+
+    private AutonomousDeliveryAcceptanceGrade grade(
+            AutonomousDeliveryCase testCase,
+            Path acceptance,
+            Path workspace,
+            Path python,
+            Duration timeout,
+            String toolchainPath) {
+        try {
+            return acceptanceGrader.grade(testCase, acceptance, workspace, python, timeout, toolchainPath);
+        } catch (IOException exception) {
+            return new AutonomousDeliveryAcceptanceGrade(
+                    testCase.graderId(),
+                    testCase.caseId(),
+                    false,
+                    -1,
+                    Map.of("graderOutputValid", false),
+                    List.of("GRADER_OUTPUT_INVALID"),
+                    0);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return new AutonomousDeliveryAcceptanceGrade(
+                    testCase.graderId(),
+                    testCase.caseId(),
+                    false,
+                    -1,
+                    Map.of("graderCompleted", false),
+                    List.of("GRADER_INTERRUPTED"),
+                    0);
         }
+    }
+
+    private static Duration remainingGraderBudget(AutonomousDeliverySuiteManifest suite, long elapsedMillis) {
+        long remaining = Math.max(1_000, suite.budget().maxWallTimeMillis() - elapsedMillis);
+        return Duration.ofMillis(Math.min(remaining, Duration.ofMinutes(15).toMillis()));
+    }
+
+    private static Map<String, Object> acceptanceArtifact(
+            AutonomousDeliveryCase testCase, AutonomousDeliveryAcceptanceGrade grade) {
         LinkedHashMap<String, Object> artifact = new LinkedHashMap<>();
-        artifact.put("schemaVersion", 1);
+        artifact.put("schemaVersion", 2);
         artifact.put("caseId", testCase.caseId());
         artifact.put("caseVersion", testCase.caseVersion());
-        artifact.put("passed", passed);
-        artifact.put("checks", Map.copyOf(checks));
-        artifact.put("failures", List.copyOf(failures));
-        return new Acceptance(passed, Map.copyOf(artifact), Map.copyOf(checks), List.copyOf(failures));
+        artifact.put("graderId", grade.graderId());
+        artifact.put("passed", grade.passed());
+        artifact.put("exitCode", grade.exitCode());
+        artifact.put("checks", grade.checks());
+        artifact.put("failures", grade.failures());
+        artifact.put("durationMillis", grade.durationMillis());
+        return Map.copyOf(artifact);
+    }
+
+    private static Map<String, Object> publicEvidence(List<AgentRunEvent> events) {
+        long modelCalls = events.stream()
+                .map(AgentRunEvent::payload)
+                .filter(RunEventPayloads.ModelLifecycle.class::isInstance)
+                .map(RunEventPayloads.ModelLifecycle.class::cast)
+                .filter(event -> event.status().equals("SUCCEEDED"))
+                .count();
+        long toolCalls = events.stream()
+                .map(AgentRunEvent::payload)
+                .filter(RunEventPayloads.ToolLifecycle.class::isInstance)
+                .map(RunEventPayloads.ToolLifecycle.class::cast)
+                .filter(event -> event.status().equals("SUCCEEDED"))
+                .count();
+        return Map.of(
+                "schemaVersion",
+                1,
+                "eventCount",
+                events.size(),
+                "maximumIteration",
+                maximumIteration(events),
+                "succeededModelCalls",
+                modelCalls,
+                "succeededToolCalls",
+                toolCalls);
     }
 
     private void writeRunManifest(
@@ -273,7 +363,7 @@ final class AutonomousDeliveryRepeatExecutor {
             AutonomousDeliverySuiteManifest suite,
             AutonomousDeliveryCase testCase,
             int repetition,
-            Path cliJar,
+            ResolvedAgentProfile agentProfile,
             DeliveryToolchainSet toolchains,
             DeliveryHostProfile hostProfile,
             AutonomousDeliveryMatrixManifest.Combination matrixCombination,
@@ -282,11 +372,13 @@ final class AutonomousDeliveryRepeatExecutor {
             String executionPlanSha256)
             throws IOException {
         LinkedHashMap<String, Object> manifest = new LinkedHashMap<>();
-        manifest.put("schemaVersion", 3);
+        manifest.put("schemaVersion", 4);
         manifest.put("phase", suite.phase());
         manifest.put("suiteId", suite.suiteId());
         manifest.put("matrixRef", suite.matrixRef());
         manifest.put("matrixCombination", matrixCombination);
+        manifest.put("agentProfile", agentProfile.manifest());
+        manifest.put("agentAssemblyDigest", agentProfile.agentAssemblyDigest());
         manifest.put("buildCommit", buildCommit);
         manifest.put("productRevision", productRevision);
         manifest.put("testConfigRevision", testConfigRevision);
@@ -295,15 +387,11 @@ final class AutonomousDeliveryRepeatExecutor {
         manifest.put("caseVersion", testCase.caseVersion());
         manifest.put("repetition", repetition);
         manifest.put("startedAt", now().toString());
-        manifest.put("modelProvider", matrixCombination.modelProvider());
-        manifest.put("modelId", matrixCombination.modelId());
         manifest.put("platform", hostProfile.platform());
-        manifest.put("terminalBackend", hostProfile.terminalBackend());
         manifest.put("sandboxProfile", hostProfile.executionProvider());
         manifest.put("networkPolicy", hostProfile.networkPolicy());
         manifest.put("shell", hostProfile.shell());
         manifest.put("isolationAssurance", hostProfile.isolationAssurance());
-        manifest.put("cliJarSha256", Sha256Digests.file(cliJar));
         LinkedHashMap<String, String> toolchainDigests = new LinkedHashMap<>();
         toolchains
                 .executablePaths()
@@ -337,11 +425,8 @@ final class AutonomousDeliveryRepeatExecutor {
         command.add(toolchains.gitExecutable().toString());
         command.addAll(List.of(arguments));
         ProcessBuilder builder = new ProcessBuilder(command).directory(directory.toFile());
-        if (output != null) {
-            builder.redirectOutput(output.toFile());
-        } else {
-            builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-        }
+        builder.redirectOutput(
+                output == null ? ProcessBuilder.Redirect.DISCARD : ProcessBuilder.Redirect.to(output.toFile()));
         builder.redirectError(ProcessBuilder.Redirect.DISCARD);
         Process process = builder.start();
         if (!process.waitFor(60, TimeUnit.SECONDS) || process.exitValue() != 0) {
@@ -354,19 +439,12 @@ final class AutonomousDeliveryRepeatExecutor {
         Files.createDirectory(destination);
         try (var paths = Files.walk(source)) {
             for (Path path : paths.sorted().toList()) {
-                if (path.equals(source)) {
-                    continue;
-                }
+                if (path.equals(source)) continue;
                 Path target =
                         destination.resolve(source.relativize(path).toString()).normalize();
-                if (!target.startsWith(destination)) {
-                    throw new IOException("workspace copy escaped destination");
-                }
-                if (Files.isDirectory(path)) {
-                    Files.createDirectory(target);
-                } else {
-                    Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES);
-                }
+                if (!target.startsWith(destination)) throw new IOException("workspace copy escaped destination");
+                if (Files.isDirectory(path)) Files.createDirectory(target);
+                else Files.copy(path, target, StandardCopyOption.COPY_ATTRIBUTES);
             }
         }
     }
@@ -397,6 +475,10 @@ final class AutonomousDeliveryRepeatExecutor {
         json.writerWithDefaultPrettyPrinter().writeValue(path.toFile(), value);
     }
 
-    private record Acceptance(
-            boolean passed, Map<String, Object> artifact, Map<String, Boolean> checks, List<String> failures) {}
+    private record ClientOutcome(CodingClientExecutionContract contract, List<AgentRunEvent> events) {
+        private ClientOutcome {
+            Objects.requireNonNull(contract, "contract must not be null");
+            events = List.copyOf(events);
+        }
+    }
 }

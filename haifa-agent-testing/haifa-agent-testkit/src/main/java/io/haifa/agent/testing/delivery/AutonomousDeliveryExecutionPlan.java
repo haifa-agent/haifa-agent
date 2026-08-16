@@ -3,6 +3,7 @@ package io.haifa.agent.testing.delivery;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.testing.evidence.Sha256Digests;
 import io.haifa.agent.testing.repository.RepositoryRevision;
+import io.haifa.agent.testing.suite.ResolvedAgentProfile;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -19,14 +20,16 @@ final class AutonomousDeliveryExecutionPlan {
             AutonomousDeliverySuiteManifest suite,
             AutonomousDeliveryMatrixManifest matrix,
             AutonomousDeliveryMatrixManifest.Combination combination,
+            ResolvedAgentProfile agentProfile,
             RepositoryRevision productRevision,
             RepositoryRevision testConfigRevision) {
         Objects.requireNonNull(catalog, "catalog must not be null");
         Objects.requireNonNull(suite, "suite must not be null");
         Objects.requireNonNull(matrix, "matrix must not be null");
         Objects.requireNonNull(combination, "combination must not be null");
+        Objects.requireNonNull(agentProfile, "agentProfile must not be null");
         LinkedHashMap<String, Object> plan = new LinkedHashMap<>();
-        plan.put("schemaVersion", 1);
+        plan.put("schemaVersion", 2);
         plan.put("catalogId", catalog.catalogId());
         plan.put("catalogVersion", catalog.catalogVersion());
         plan.put("catalogSha256", catalog.catalogSha256());
@@ -39,8 +42,9 @@ final class AutonomousDeliveryExecutionPlan {
                         .map(selection -> caseEntry(catalog, selection))
                         .toList());
         plan.put("matrixId", matrix.matrixId());
-        plan.put("matrixCompatibleAgentBaselineCommit", matrix.compatibleAgentBaselineCommit());
         plan.put("matrixCombination", combination);
+        plan.put("agentProfile", agentProfile.manifest());
+        plan.put("agentAssemblyDigest", agentProfile.agentAssemblyDigest());
         plan.put("productCommit", productRevision.commit());
         plan.put("testConfigCommit", testConfigRevision.commit());
         try {

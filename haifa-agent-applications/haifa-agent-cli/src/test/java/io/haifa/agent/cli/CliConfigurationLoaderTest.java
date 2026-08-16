@@ -7,6 +7,7 @@ import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
+import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -357,6 +358,7 @@ class CliConfigurationLoaderTest {
                 .hasToString("https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1");
         assertThat(snapshot.providerId().value()).isEqualTo("aliyun-bailian");
         assertThat(snapshot.dialect()).isEqualTo(OpenAiCompatibleDialects.ALIYUN_BAILIAN);
+        assertThat(snapshot.providerModelId()).isEqualTo("qwen-plus");
         assertThat(snapshot.providerOptions())
                 .containsEntry("workspace_id", "workspace-123")
                 .containsEntry("region", "cn-beijing");
@@ -364,6 +366,49 @@ class CliConfigurationLoaderTest {
                 .containsEntry("thinking_profile", "none")
                 .containsEntry("thinking_enabled", false);
         assertThat(snapshot.capabilities()).doesNotContain(ModelCapability.REASONING);
+    }
+
+    @Test
+    void loadsProviderNeutralReasoningModeForBailianThinkingModel() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-reasoning-model", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                models:
+                  default: reasoning-model
+                  providers:
+                    - id: aliyun-bailian
+                      displayName: Alibaba Cloud Bailian
+                      nativeStreaming: true
+                      endpoint: https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+                      workspaceId: workspace-123
+                      region: cn-beijing
+                      credentialRef: env://DASHSCOPE_API_KEY
+                      apiBindings:
+                        - style: openai-chat-completions
+                          dialect: aliyun-bailian-openai-chat
+                      models:
+                        - id: reasoning-model
+                          displayName: Reasoning Model
+                          providerModelId: reasoning-model
+                          style: openai-chat-completions
+                          capabilities: [TEXT_CHAT, TOOL_CALLING, REASONING]
+                          contextWindow: 131072
+                          maxOutputTokens: 8192
+                          reasoningMode: enabled
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+        var snapshot = LocalCodingAgent.modelSnapshot(result);
+
+        assertThat(result.model().reasoningMode()).isEqualTo(ModelReasoningMode.ENABLED);
+        assertThat(snapshot.capabilities()).contains(ModelCapability.REASONING);
+        assertThat(snapshot.invocationOptions())
+                .containsEntry("thinking_profile", "always")
+                .containsEntry("thinking_enabled", true)
+                .containsEntry("preserve_thinking", true)
+                .containsEntry("requires_reasoning_continuation", true);
     }
 
     @Test
@@ -598,6 +643,36 @@ class CliConfigurationLoaderTest {
             assertThat(directory.parserMode()).isEqualTo(SkillParserMode.COMPATIBLE);
             assertThat(directory.origin()).isEqualTo(SkillOrigin.IMPORTED);
         });
+    }
+
+    @Test
+    void expandsEnvironmentPlaceholderForLocalSkillDirectory() throws Exception {
+        Path skillRoot =
+                Files.createTempDirectory("haifa-cli-environment-skills").toAbsolutePath();
+        Path configuration = Files.createTempFile("haifa-cli-environment-skills", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                skills:
+                  allowed: [local-test]
+                  localDirectories:
+                    - id: reviewed-test-skills
+                      root: ${HAIFA_TEST_SKILL_ROOT}
+                      priority: 100
+                      parserMode: strict
+                      origin: imported
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader(
+                        name -> name.equals("HAIFA_TEST_SKILL_ROOT") ? skillRoot.toString() : null)
+                .load(
+                        CliArguments.parse(new String[] {"-m", "skills", "--config", configuration.toString()}),
+                        Path.of("."));
+
+        assertThat(result.skills().localDirectories())
+                .singleElement()
+                .extracting(CliConfiguration.LocalSkillDirectory::root)
+                .isEqualTo(skillRoot.normalize());
     }
 
     @Test

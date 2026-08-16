@@ -16,6 +16,11 @@ Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSession
 Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-terminal` 只负责 UI，不是第二个
 可执行胖 JAR。
 
+非 CLI 宿主和产品语义测试使用公开装配入口 `StandaloneCodingAgents.open(workspace, configuration)`；
+返回的 `StandaloneCodingAgent` 暴露 `CodingSessionClient`、`ProjectId` 和安全的装配元数据，并通过
+`close()` 统一释放资源。需要为每次隔离运行注入不同 SQLite/Transcript 路径时，可使用接收显式环境
+Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case。
+
 生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
 字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
 Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。
@@ -491,7 +496,8 @@ CLI Coding Profile 显式允许 `task-planning` 与 `result-verification` 两个
 Skill 包中的脚本。
 
 `skills.localDirectories` 是 CLI 可信控制面配置，不接受模型或 Run 参数提供目录。每个 `root` 必须是
-已存在、可读、非符号链接的绝对目录。Source 会有界递归穿过分类目录，并把首个包含 `SKILL.md`
+已存在、可读、非符号链接的绝对目录，也可以用完整的 `${ENV_NAME}` 占位符从进程环境注入该绝对路径。
+Source 会有界递归穿过分类目录，并把首个包含 `SKILL.md`
 的目录视为包根，不再进入该包的资源子目录；例如可发现
 `D:\haifa-agent-config\skills\creative\ascii-art\SKILL.md`。当前 CLI 把这些来源绑定为本地用户的
 `USER` Scope；`origin` 只允许 `created` 或 `imported`，`parserMode` 只允许 `strict` 或

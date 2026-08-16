@@ -1,17 +1,10 @@
 package io.haifa.agent.testing.suite;
 
-import java.util.List;
 import java.util.Objects;
 
 /** Stable public mapping from a critical-path case id to its executable Maven test selector. */
 public record CriticalPathCase(
-        String caseId,
-        String title,
-        TestScope scope,
-        String module,
-        String testSelector,
-        boolean live,
-        List<String> requiredSecrets) {
+        String caseId, String title, TestScope scope, String module, String testSelector, boolean live) {
     public CriticalPathCase {
         caseId = require(caseId, "caseId");
         if (!caseId.matches("CP-[0-9]{2}")) {
@@ -24,8 +17,6 @@ public record CriticalPathCase(
             throw new IllegalArgumentException("module must be an internal artifact selector");
         }
         testSelector = require(testSelector, "testSelector");
-        requiredSecrets = List.copyOf(Objects.requireNonNull(requiredSecrets, "requiredSecrets must not be null"));
-        requiredSecrets.forEach(value -> require(value, "requiredSecret"));
     }
 
     private static String require(String value, String field) {

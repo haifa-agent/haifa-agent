@@ -50,6 +50,11 @@ class AutonomousDeliveryStubGateManifestLoaderTest {
                   maxEstimatedCostUsd: %s
                 requiredChecks:
                   - CONPTY
+                  - SHADED_JAR
+                  - ARGUMENTS
+                  - YAML
+                  - STDIO
+                  - EXIT_CODE
                   - APPROVAL
                   - SHELL
                   - SQLITE
