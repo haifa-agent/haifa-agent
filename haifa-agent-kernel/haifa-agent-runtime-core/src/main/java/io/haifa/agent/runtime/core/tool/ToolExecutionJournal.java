@@ -3,6 +3,7 @@ package io.haifa.agent.runtime.core.tool;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.tool.api.ToolIdempotency;
 import java.util.Optional;
 
 public interface ToolExecutionJournal {
@@ -11,6 +12,10 @@ public interface ToolExecutionJournal {
     Optional<ToolResult> pendingResult(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
 
     void recordIntent(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
+
+    default void recordIntent(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey, ToolIdempotency toolIdempotency) {
+        recordIntent(runId, idempotencyKey);
+    }
 
     void recordDispatched(AgentRunId runId, RuntimeIdempotencyKey idempotencyKey);
 

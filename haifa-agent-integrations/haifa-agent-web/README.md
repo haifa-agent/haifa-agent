@@ -34,6 +34,11 @@ Tavily Fetch 调用 `/extract`，按 Tool 的格式偏好请求 Markdown 或纯�
 绑定到同一个 `env://TAVILY_API_KEY`；默认 Endpoint 分别为 `https://api.tavily.com/search` 和
 `https://api.tavily.com/extract`。
 
+`web.search.country` 使用小写 ISO 3166-1 alpha-2 国家码（例如 `cn`）。各 Provider Adapter 负责转换为
+供应商协议；Tavily 会把 `cn` 转换为其要求的英文枚举值 `china`。远端明确返回的 400/422 参数错误会以
+`WEB_INVALID_REQUEST` 结构化负结果交给 Agent 修正，不会被误报为结果未知；真实传输中断仍保持
+`TOOL_OUTCOME_UNKNOWN` 防重放语义。
+
 验证：
 
 ```bash

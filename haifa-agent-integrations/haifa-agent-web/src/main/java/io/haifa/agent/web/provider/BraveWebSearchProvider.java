@@ -82,7 +82,7 @@ public final class BraveWebSearchProvider implements WebSearchProvider {
             Map<String, String> parameters = WebHttpSupport.parameters();
             parameters.put("q", request.query());
             parameters.put("count", Integer.toString(request.maxResults()));
-            request.country().ifPresent(value -> parameters.put("country", value));
+            request.country().ifPresent(value -> parameters.put("country", value.toUpperCase(java.util.Locale.ROOT)));
             request.language().ifPresent(value -> parameters.put("search_lang", value));
             request.freshness().ifPresent(value -> parameters.put("freshness", freshness(value)));
             request.safeSearch().ifPresent(value -> parameters.put("safesearch", safeSearch(value)));

@@ -145,7 +145,18 @@ public final class WebToolCatalog {
             if (!supportedOptions.contains(option)) continue;
             switch (option) {
                 case LANGUAGE -> properties.put("language", Map.of("type", "string", "minLength", 1, "maxLength", 32));
-                case COUNTRY -> properties.put("country", Map.of("type", "string", "minLength", 1, "maxLength", 64));
+                case COUNTRY ->
+                    properties.put(
+                            "country",
+                            Map.of(
+                                    "type",
+                                    "string",
+                                    "minLength",
+                                    2,
+                                    "maxLength",
+                                    2,
+                                    "description",
+                                    "ISO 3166-1 alpha-2 country code"));
                 case FRESHNESS ->
                     properties.put(
                             "freshness", Map.of("type", "string", "enum", List.of("day", "week", "month", "year")));

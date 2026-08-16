@@ -111,6 +111,36 @@ class WebToolTest {
                 .containsOnlyKeys("query", "maxResults", "language", "country", "freshness", "safeSearch");
         assertThat(inputProperties(tavily))
                 .containsOnlyKeys("query", "maxResults", "country", "freshness", "includeDomains", "excludeDomains");
+        Map<?, ?> countrySchema = (Map<?, ?>) inputProperties(tavily).get("country");
+        assertThat(countrySchema.get("minLength")).isEqualTo(2);
+        assertThat(countrySchema.get("maxLength")).isEqualTo(2);
+        assertThat(countrySchema.get("description")).isEqualTo("ISO 3166-1 alpha-2 country code");
+    }
+
+    @Test
+    void searchCountryUsesLowercaseIsoAlpha2Codes() {
+        var request = new WebSearchRequest(
+                "agent",
+                3,
+                Optional.empty(),
+                Optional.of("CN"),
+                Optional.empty(),
+                List.of(),
+                List.of(),
+                Optional.empty());
+
+        assertThat(request.country()).contains("cn");
+        assertThatThrownBy(() -> new WebSearchRequest(
+                        "agent",
+                        3,
+                        Optional.empty(),
+                        Optional.of("china"),
+                        Optional.empty(),
+                        List.of(),
+                        List.of(),
+                        Optional.empty()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ISO 3166-1 alpha-2");
     }
 
     @Test
@@ -345,6 +375,37 @@ class WebToolTest {
         assertThat(result.successful()).isTrue();
         assertThat(result.structuredData())
                 .containsEntry("failureCode", "WEB_PROVIDER_RESPONSE_INVALID")
+                .containsEntry("retryWithRefinedQuery", true);
+        assertThat(new JsonSchema202012Validator()
+                        .validate(invocation.contribution().definition().outputSchema(), result.structuredData())
+                        .valid())
+                .isTrue();
+    }
+
+    @Test
+    void providerRejectedSearchRequestReturnsASuccessfulNegativeResult() {
+        WebSearchProvider unavailable = new WebSearchProvider() {
+            @Override
+            public WebProviderDescriptor descriptor() {
+                return WebToolTest.descriptor("tavily", true);
+            }
+
+            @Override
+            public WebSearchResponse search(WebSearchRequest request, WebProviderInvocationContext context) {
+                context.observer().dispatched();
+                context.observer().acknowledged();
+                throw new WebProviderException(
+                        WebFailureCode.WEB_INVALID_REQUEST, WebDispatchState.ACKNOWLEDGED, "provider rejected request");
+            }
+        };
+        var invocation = searchInvocation(new WebToolCatalog().search(unavailable), "hangzhou news");
+
+        ToolResult result = invocation.contribution().provider().invoke(invocation.request());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("failureCode", "WEB_INVALID_REQUEST")
+                .containsEntry("searchResultsAvailable", false)
                 .containsEntry("retryWithRefinedQuery", true);
         assertThat(new JsonSchema202012Validator()
                         .validate(invocation.contribution().definition().outputSchema(), result.structuredData())

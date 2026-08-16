@@ -19,7 +19,7 @@ public record WebSearchRequest(
             throw new IllegalArgumentException("maxResults must be between 1 and 20");
         }
         language = WebValues.optionalText(language, "language", 32);
-        country = WebValues.optionalText(country, "country", 64);
+        country = WebValues.isoCountry(country);
         freshness = Objects.requireNonNull(freshness, "freshness");
         includeDomains = WebValues.domains(includeDomains, "includeDomains");
         excludeDomains = WebValues.domains(excludeDomains, "excludeDomains");
