@@ -19,6 +19,10 @@ class HaifaBuildMetricsTest(unittest.TestCase):
         self.assertEqual(1, threads)
         self.assertEqual(["--batch-mode", "--no-transfer-progress", "-T", "1", "test"], arguments)
 
+        arguments, threads = MODULE.effective_arguments("L3", 0, ["verify"])
+        self.assertEqual(2, threads)
+        self.assertEqual(["--batch-mode", "--no-transfer-progress", "-T", "2", "verify"], arguments)
+
         arguments, threads = MODULE.effective_arguments("L3", 0, ["-T", "2", "verify"])
         self.assertEqual(0, threads)
         self.assertIn("2", arguments)
