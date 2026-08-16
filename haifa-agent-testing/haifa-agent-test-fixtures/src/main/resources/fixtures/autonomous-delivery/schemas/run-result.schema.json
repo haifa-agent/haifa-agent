@@ -1,63 +1,38 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://haifa.io/testing/autonomous-delivery/run-result.schema.json",
-  "title": "Autonomous Delivery Run Result",
+  "$id": "https://haifa.agent/schemas/testing/run-result-v1.schema.json",
+  "title": "Haifa Test Harness Run Result",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schemaVersion",
-    "caseId",
-    "caseVersion",
-    "repeat",
-    "termination",
-    "successful",
-    "hiddenAcceptance",
-    "usage",
-    "evidence"
-  ],
+  "required": ["schemaVersion", "status", "nativeStatus", "failureClassification", "attachments"],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "caseId": { "type": "string", "pattern": "^(0[1-9]|10)$" },
-    "caseVersion": { "type": "string", "pattern": "^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$" },
-    "repeat": { "type": "integer", "minimum": 1 },
-    "termination": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "successful": { "type": "boolean" },
-    "hiddenAcceptance": { "enum": ["PASS", "FAIL", "BLOCKED", "NOT_RUN"] },
-    "usage": { "$ref": "#/$defs/usage" },
-    "evidence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["workspaceChanged", "validationAttempted", "diffInspected"],
-      "properties": {
-        "workspaceChanged": { "type": "boolean" },
-        "validationAttempted": { "type": "boolean" },
-        "diffInspected": { "type": "boolean" },
-        "failureAtomicity": { "enum": ["PASS", "FAIL", "NOT_APPLICABLE", "NOT_RUN"] }
-      }
-    }
-  },
-  "$defs": {
-    "usage": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "modelCalls",
-        "toolCalls",
-        "toolFailures",
-        "inputTokens",
-        "outputTokens",
-        "wallTimeMillis",
-        "costKnown"
-      ],
-      "properties": {
-        "modelCalls": { "type": "integer", "minimum": 0 },
-        "toolCalls": { "type": "integer", "minimum": 0 },
-        "toolFailures": { "type": "integer", "minimum": 0 },
-        "inputTokens": { "type": "integer", "minimum": 0 },
-        "outputTokens": { "type": "integer", "minimum": 0 },
-        "wallTimeMillis": { "type": "integer", "minimum": 0 },
-        "costKnown": { "type": "boolean" },
-        "costUsd": { "type": "number", "minimum": 0 }
+    "status": { "enum": ["PASSED", "FAILED", "ERROR", "TIMEOUT", "SKIPPED", "NOT_RUN"] },
+    "nativeStatus": { "type": "string", "minLength": 1 },
+    "failureClassification": {
+      "enum": [
+        "NONE",
+        "CONFIGURATION_REJECTED",
+        "AUTHORIZATION_REJECTED",
+        "PROVISION_FAILED",
+        "NOT_STARTED",
+        "EXECUTION_FAILED",
+        "ACCEPTANCE_FAILED",
+        "EVIDENCE_FAILED",
+        "CLEANUP_FAILED",
+        "TIMEOUT"
+      ]
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "relativePath", "size", "sha256"],
+        "properties": {
+          "type": { "type": "string", "minLength": 1 },
+          "relativePath": { "type": "string", "pattern": "^attachments/" },
+          "size": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
       }
     }
   }

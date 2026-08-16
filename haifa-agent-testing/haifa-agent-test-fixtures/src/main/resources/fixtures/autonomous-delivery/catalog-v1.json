@@ -5,7 +5,7 @@
   "harnessProtocol": {
     "version": "2.0.0",
     "resource": "fixtures/autonomous-delivery/harness-protocol-v1.json",
-    "sha256": "b7a1aef7e48c7fc88b6d964402eea63f3c27232508139a4d9bc3a10ae83ec1d7"
+    "sha256": "516004b5857eb7b76ae6112480858a0a55b2297f8e0306dc928581cc85fae63f"
   },
   "cases": [
     {

@@ -58,23 +58,9 @@
     "reserveDiffAndMinimalValidationForChangeTasks": true
   },
   "requiredRepeatArtifacts": [
-    "run-manifest.json",
-    "result.json",
-    "acceptance-result.json",
-    "usage.json",
-    "failure-clusters.json",
-    "progress-evidence.json",
-    "completion-evidence.json",
-    "workspace-before.sha256",
-    "workspace-after.sha256",
-    "workspace.diff",
-    "runtime.db",
-    "trace-detail.jsonl",
-    "transcripts",
-    "session.cast",
-    "driver.log",
+    "run-result.json",
+    "attachments",
     "secret-scan.json",
-    "process-cleanup.json",
     "manifest.sha256"
   ],
   "comparisonDimensions": [
