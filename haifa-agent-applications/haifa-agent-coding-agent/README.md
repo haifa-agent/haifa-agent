@@ -7,6 +7,8 @@ API；`LocalCodingSessionClient` 是当前进程内实现。Terminal、其他 UI
 Terminal 模块反向取得产品能力，也不直接访问 Runtime Store。独立产品的具体 Runtime、模型、Tool、
 Persistence 装配仍由最高层应用模块负责。`CodingSessionView.activeRun` 只表示当前活动 Run；需要等待或
 核验终态的客户端必须保存 `runId`，并通过 `CodingSessionClient.findRun` 查询作用域内的权威 Snapshot。
+同一产品 API 包中的 `CodingAgentClient`、`CodingAgentClientFactory` 和 `CodingAgentClientMetadata`
+定义标准客户端与公开装配契约，不包含 Provider 分支；具体工厂实现继续位于最高层独立产品装配模块。
 
 ## Shared model profile readiness
 

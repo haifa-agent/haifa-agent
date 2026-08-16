@@ -1,12 +1,13 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.project.product.coding.client.CodingAgentClient;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.project.domain.ProjectId;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Closeable handle for one fully assembled standalone Coding Agent product instance. */
-public final class StandaloneCodingAgent implements AutoCloseable {
+public final class StandaloneCodingAgent implements CodingAgentClient {
     private final LocalCodingAgent localAgent;
     private final CodingSessionClient client;
     private final StandaloneCodingAgentMetadata metadata;
