@@ -334,10 +334,12 @@ final class CliConfigurationLoader {
 
     private static java.net.URI defaultWebEndpoint(String operation, String providerId) {
         if (operation.equals("fetch")) {
-            if (!providerId.equals("aliyun")) {
-                throw new IllegalArgumentException("web.fetch.provider must be aliyun");
-            }
-            return io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT;
+            return switch (providerId) {
+                case "aliyun" -> io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT;
+                case "browserless" -> io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT;
+                case "tavily" -> io.haifa.agent.web.provider.TavilyFetchProvider.DEFAULT_ENDPOINT;
+                default -> throw new IllegalArgumentException("web.fetch.provider is unsupported");
+            };
         }
         return switch (providerId) {
             case "aliyun" -> io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT;
@@ -352,6 +354,7 @@ final class CliConfigurationLoader {
             case "aliyun" -> "env://ALIYUN_IQS_API_KEY";
             case "brave" -> "env://BRAVE_SEARCH_API_KEY";
             case "tavily" -> "env://TAVILY_API_KEY";
+            case "browserless" -> "env://BROWSERLESS_TOKEN";
             default -> throw new IllegalArgumentException("web providerId is unsupported");
         };
     }

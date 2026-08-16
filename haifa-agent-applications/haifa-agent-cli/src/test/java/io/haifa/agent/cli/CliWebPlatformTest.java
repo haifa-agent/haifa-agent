@@ -24,7 +24,7 @@ class CliWebPlatformTest {
         CliConfiguration.Web configuration = enabledWeb();
         var platform = CliWebPlatform.create(configuration, principal, name -> switch (name) {
             case "BRAVE_SEARCH_API_KEY" -> "brave-secret";
-            case "ALIYUN_IQS_API_KEY" -> "aliyun-secret";
+            case "BROWSERLESS_TOKEN" -> "browserless-secret";
             default -> null;
         });
 
@@ -34,7 +34,7 @@ class CliWebPlatformTest {
         assertThat(platform.contributions())
                 .extracting(
                         contribution -> contribution.definition().providerId().value())
-                .containsExactly("web-search.brave", "web-fetch.aliyun");
+                .containsExactly("web-search.brave", "web-fetch.browserless");
 
         for (var contribution : platform.contributions()) {
             var definition = contribution.definition();
@@ -71,6 +71,33 @@ class CliWebPlatformTest {
                 .hasMessageContaining("environment variable is unavailable");
     }
 
+    @Test
+    void assemblesTavilyForSearchAndFetchWithSeparateBindings() {
+        var configuration = new CliConfiguration.Web(
+                new CliConfiguration.WebProvider(
+                        true,
+                        "tavily",
+                        io.haifa.agent.web.provider.TavilyWebSearchProvider.DEFAULT_ENDPOINT,
+                        "env://TAVILY_API_KEY",
+                        java.time.Duration.ofSeconds(20),
+                        1024 * 1024),
+                new CliConfiguration.WebProvider(
+                        true,
+                        "tavily",
+                        io.haifa.agent.web.provider.TavilyFetchProvider.DEFAULT_ENDPOINT,
+                        "env://TAVILY_API_KEY",
+                        java.time.Duration.ofSeconds(20),
+                        2 * 1024 * 1024));
+
+        var platform = CliWebPlatform.create(
+                configuration, new PrincipalRef("local-user", "user"), ignored -> "tavily-secret");
+
+        assertThat(platform.contributions())
+                .extracting(
+                        contribution -> contribution.definition().providerId().value())
+                .containsExactly("web-search.tavily", "web-fetch.tavily");
+    }
+
     private static CliConfiguration.Web enabledWeb() {
         return new CliConfiguration.Web(
                 new CliConfiguration.WebProvider(
@@ -82,9 +109,9 @@ class CliWebPlatformTest {
                         1024 * 1024),
                 new CliConfiguration.WebProvider(
                         true,
-                        "aliyun",
-                        io.haifa.agent.web.provider.AliyunFetchProvider.DEFAULT_ENDPOINT,
-                        "env://ALIYUN_IQS_API_KEY",
+                        "browserless",
+                        io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT,
+                        "env://BROWSERLESS_TOKEN",
                         java.time.Duration.ofSeconds(20),
                         2 * 1024 * 1024));
     }

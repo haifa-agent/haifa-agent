@@ -25,7 +25,9 @@ loopback `20000` 的 Origin，方案中没有反向代理。
   `API_KEY`、`WORKSPACE_ID` 和可选 `REGION`；region 缺省为 `cn-beijing`；
 - 可选 Kimi Key 文件：`D:\workspace\ss-kimi.txt`，文件中只放 Key 本身；
 - 可选智谱 Key 文件：`D:\workspace\ss-bigmodel.txt`，文件中只放 Key 本身；
-- Aliyun IQS Key 文件：`D:\workspace\ss-aliyun-iqs.txt`，文件中只放 Key 本身；
+- Tavily Key 文件：`D:\workspace\ss-tavily.txt`，文件中只放 Key 本身；默认 Search 与 Fetch 均读取此文件；
+- 可选 Aliyun IQS Key 文件：`D:\workspace\ss-aliyun-iqs.txt`，仅在 Search 或 Fetch 选择 Aliyun 时读取；
+- 可选 Browserless Token 文件：`D:\workspace\ss-browserless.txt`，仅在 Fetch 选择 Browserless 时读取；
 - Personal Skill 根目录：`D:\agents\hermes-agent\optional-skills\finance`，其直接子目录分别包含
   `SKILL.md`。
 
@@ -56,13 +58,13 @@ Set-Location D:\workspace\haifa-agent
 
 脚本会依次完成：
 
-1. 校验本机工具、DeepSeek/IQS Key、finance Skill 根目录和 Utility MCP 目录；
+1. 校验本机工具、DeepSeek、所选 Web Provider Key、finance Skill 根目录和 Utility MCP 目录；
 2. 首次运行时生成随机 32 字节 Continuation Key，并持久化到
    `D:\workspace\ss-haifa-personal-continuation.txt`；
 3. 只在后端 JAR 不存在时构建后端；
 4. 只在 `node_modules` 不存在时执行 `npm ci`，只在 `dist` 不存在时构建前端；
 5. 启动或复用健康的 20002 Utility MCP；
-6. 以真实 `deepseek-v4-flash`、Aliyun IQS Web Tool、finance Skills 和外部 MCP 模式启动
+6. 以真实 `deepseek-v4-flash`、Aliyun Search、Browserless Fetch、finance Skills 和外部 MCP 模式启动
    20001 后端；
 7. 用 Node.js `serve` 启动 20000 前端；
 8. 等待三个 HTTP 健康检查成功，并输出 PID、各组件工作目录、数据/日志目录、访问
@@ -150,8 +152,14 @@ HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_0_PROVIDERMODELID=deepseek-v4-pro
 HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_ID=deepseek-v4-flash
 HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_DISPLAYNAME=DeepSeek V4 Flash
 HAIFA_PERSONAL_MODELPROVIDERS_0_MODELS_1_PROVIDERMODELID=deepseek-v4-flash
-HAIFA_PERSONAL_WEB_ENABLED=true
-HAIFA_PERSONAL_WEB_CREDENTIAL=env://ALIYUN_IQS_API_KEY
+HAIFA_PERSONAL_WEB_SEARCH_ENABLED=true
+HAIFA_PERSONAL_WEB_SEARCH_PROVIDER=tavily
+HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT=https://api.tavily.com/search
+HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL=env://TAVILY_API_KEY
+HAIFA_PERSONAL_WEB_FETCH_ENABLED=true
+HAIFA_PERSONAL_WEB_FETCH_PROVIDER=tavily
+HAIFA_PERSONAL_WEB_FETCH_ENDPOINT=https://api.tavily.com/extract
+HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL=env://TAVILY_API_KEY
 HAIFA_PERSONAL_SKILL_ROOT=D:\agents\hermes-agent\optional-skills\finance
 HAIFA_PERSONAL_MCP_MODE=external
 HAIFA_PERSONAL_MCP_ENDPOINT=http://127.0.0.1:20002/mcp
@@ -211,10 +219,12 @@ Get-NetTCPConnection -State Listen |
 
 ## 6. Web Tool 与 finance Skills
 
-脚本读取 `D:\workspace\ss-aliyun-iqs.txt`，只向后端子进程注入
-`ALIYUN_IQS_API_KEY`。Personal Profile 同时允许 `web_search` 和 `web_fetch`，两者分别精确绑定
-公共模块中的 `web.search` 与 `web.fetch`，并继续经过 Runtime Tool Pipeline、Policy、Approval 和
-Credential lease；没有隐式 Provider fallback。
+脚本默认只读取 `D:\workspace\ss-tavily.txt`，向后端子进程注入 `TAVILY_API_KEY`，默认组合为
+`web.search=tavily`、`web.fetch=tavily`。可通过 `--web-search-provider aliyun`，或通过
+`--web-fetch-provider aliyun|browserless` 单独覆盖；脚本只读取所选 Provider 的 Key 文件，选择
+Aliyun Fetch 时继续复用 IQS Key。
+两个 Tool 分别精确绑定公共模块中的 `web.search` 与 `web.fetch`，并继续经过 Runtime Tool Pipeline、
+Policy、Approval 和 Credential lease；没有隐式 Provider fallback，也不会把一个 Provider 的秘密交给另一个。
 
 `D:\agents\hermes-agent\optional-skills\finance` 是 Skill Source 根目录，不是一个 Skill 包。启动时会
 发现它下面直接包含 `SKILL.md` 的子目录（当前包括 `3-statement-model`、`comps-analysis`、
@@ -235,17 +245,20 @@ macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚�
 - 停止前核对 `last-start.json`、监听 PID、进程名和命令行身份标识。
 
 要求 macOS 已安装 Java 21、Maven、Node.js 22.x、npm 10.x，以及系统命令
-`curl`、`lsof`、`openssl`。默认读取：
+`curl`、`lsof`、`openssl`。脚本按已选择的 Provider 从以下默认路径读取所需文件：
 
 ```text
 ~/workspace/ss-deepseek.txt
 ~/workspace/ss-aliyun-iqs.txt
+~/workspace/ss-browserless.txt
+~/workspace/ss-tavily.txt
 ~/workspace/ss-haifa-personal-continuation.txt
 ~/workspace/haifa/haifa-ai/haifa-ai-utility-mcp-server
 ~/agents/hermes-agent/optional-skills/finance
 ```
 
-前三个分别是 DeepSeek Key、Aliyun IQS Key 和持久 Continuation Key。Continuation Key 不存在时，
+前四个分别是 DeepSeek Key、可选 Aliyun IQS Key、可选 Browserless Token 和默认 Tavily Key；随后是持久
+Continuation Key。Continuation Key 不存在时，
 脚本会生成随机 32 字节 Key，并把文件权限设为 `0600`。
 
 从主仓根目录启动：

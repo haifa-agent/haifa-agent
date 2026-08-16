@@ -27,6 +27,92 @@ class RealEnvironmentTest(unittest.TestCase):
         )
         self.assertEqual(repository / "haifa-agent-applications/haifa-agent-personal-assistant-web", paths.web)
 
+    def test_web_environment_freezes_separate_search_and_fetch_providers(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=root / "runtime",
+            data=root / "runtime/data",
+            logs=root / "runtime/logs",
+            state=root / "runtime/last-start.json",
+            stop_state=root / "runtime/last-stop.json",
+            maven_wrapper=root / "mvnw",
+        )
+
+        defaults = real_environment.backend_environment(
+            "deepseek-secret",
+            "deepseek-chat-flash",
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            tavily_key="tavily-secret",
+        )
+
+        self.assertEqual("tavily", defaults["HAIFA_PERSONAL_WEB_SEARCH_PROVIDER"])
+        self.assertEqual("tavily", defaults["HAIFA_PERSONAL_WEB_FETCH_PROVIDER"])
+        self.assertEqual("https://api.tavily.com/search", defaults["HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT"])
+        self.assertEqual("https://api.tavily.com/extract", defaults["HAIFA_PERSONAL_WEB_FETCH_ENDPOINT"])
+
+        mixed = real_environment.backend_environment(
+            "deepseek-secret",
+            "deepseek-chat-flash",
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            browserless_token="browserless-secret",
+            tavily_key="tavily-secret",
+            web_search_provider="tavily",
+            web_fetch_provider="browserless",
+        )
+
+        self.assertEqual("tavily", mixed["HAIFA_PERSONAL_WEB_SEARCH_PROVIDER"])
+        self.assertEqual("https://api.tavily.com/search", mixed["HAIFA_PERSONAL_WEB_SEARCH_ENDPOINT"])
+        self.assertEqual("env://TAVILY_API_KEY", mixed["HAIFA_PERSONAL_WEB_SEARCH_CREDENTIAL"])
+        self.assertEqual("browserless", mixed["HAIFA_PERSONAL_WEB_FETCH_PROVIDER"])
+        self.assertEqual(
+            "https://production-sfo.browserless.io/content",
+            mixed["HAIFA_PERSONAL_WEB_FETCH_ENDPOINT"],
+        )
+        self.assertEqual("env://BROWSERLESS_TOKEN", mixed["HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL"])
+
+        tavily = real_environment.backend_environment(
+            "deepseek-secret",
+            "deepseek-chat-flash",
+            None,
+            "aliyun-secret",
+            "continuation-secret",
+            paths,
+            root / "skills",
+            None,
+            tavily_key="tavily-secret",
+            web_search_provider="aliyun",
+            web_fetch_provider="tavily",
+        )
+        self.assertEqual("https://api.tavily.com/extract", tavily["HAIFA_PERSONAL_WEB_FETCH_ENDPOINT"])
+        self.assertEqual("env://TAVILY_API_KEY", tavily["HAIFA_PERSONAL_WEB_FETCH_CREDENTIAL"])
+
+        with self.assertRaisesRegex(ValueError, "browserless credential is required"):
+            real_environment.backend_environment(
+                "deepseek-secret",
+                "deepseek-chat-flash",
+                None,
+                "aliyun-secret",
+                "continuation-secret",
+                paths,
+                root / "skills",
+                None,
+                web_search_provider="aliyun",
+                web_fetch_provider="browserless",
+            )
+
     def test_responses_style_configuration_uses_shared_provider_connection_fields(self) -> None:
         root = Path("repository")
         paths = real_environment.Paths(
@@ -50,6 +136,7 @@ class RealEnvironmentTest(unittest.TestCase):
             paths,
             root / "skills",
             None,
+            tavily_key="tavily-secret",
         )
 
         self.assertEqual("deepseek-responses-flash", environment["HAIFA_PERSONAL_DEFAULT_MODEL_ID"])
@@ -124,6 +211,7 @@ class RealEnvironmentTest(unittest.TestCase):
             paths,
             root / "skills",
             None,
+            tavily_key="tavily-secret",
         )
 
         self.assertEqual("deepseek", environment["HAIFA_PERSONAL_MODELPROVIDERS_0_ID"])
@@ -154,6 +242,7 @@ class RealEnvironmentTest(unittest.TestCase):
             root / "skills",
             None,
             ("bailian-secret", "workspace-123", "cn-beijing"),
+            tavily_key="tavily-secret",
         )
 
         self.assertEqual("aliyun-bailian", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ID"])
@@ -212,6 +301,7 @@ class RealEnvironmentTest(unittest.TestCase):
             None,
             kimi_key="kimi-secret",
             bigmodel_key="bigmodel-secret",
+            tavily_key="tavily-secret",
         )
 
         self.assertEqual("kimi", environment["HAIFA_PERSONAL_MODELPROVIDERS_1_ID"])
@@ -263,6 +353,15 @@ class RealEnvironmentTest(unittest.TestCase):
 
         self.assertIsNone(default_arguments.default_model_id)
         self.assertEqual("deepseek-chat-flash", chat_arguments.default_model_id)
+
+    def test_default_web_providers_are_tavily(self) -> None:
+        with mock.patch.dict(real_environment.os.environ):
+            real_environment.os.environ.pop("HAIFA_PERSONAL_WEB_SEARCH_PROVIDER", None)
+            real_environment.os.environ.pop("HAIFA_PERSONAL_WEB_FETCH_PROVIDER", None)
+            arguments = real_environment.parser().parse_args([])
+
+        self.assertEqual("tavily", arguments.web_search_provider)
+        self.assertEqual("tavily", arguments.web_fetch_provider)
 
     def test_optional_bailian_configuration_does_not_replace_the_verified_default(self) -> None:
         bailian = ("bailian-secret", "workspace-123", "cn-beijing")

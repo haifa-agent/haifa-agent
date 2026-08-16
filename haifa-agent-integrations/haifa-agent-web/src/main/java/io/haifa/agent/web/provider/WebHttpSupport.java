@@ -1,6 +1,5 @@
 package io.haifa.agent.web.provider;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.credential.api.CredentialDefinitionId;
@@ -16,6 +15,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
@@ -67,22 +67,36 @@ final class WebHttpSupport {
             int maxResponseBytes,
             WebProviderInvocationContext context,
             Clock clock) {
-        byte[] payload;
-        try {
-            payload = mapper.writeValueAsBytes(body);
-        } catch (JsonProcessingException exception) {
-            throw failure(
-                    WebFailureCode.WEB_INVALID_REQUEST,
-                    WebDispatchState.NOT_DISPATCHED,
-                    "web provider request could not be encoded");
-        }
+        byte[] payload = encodeJson(mapper, body);
         HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint)
                 .timeout(effectiveTimeout(configuredTimeout, context, clock))
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(payload));
         headers.forEach(builder::header);
-        return sendJson(client, mapper, builder.build(), maxResponseBytes, context);
+        return parseJson(
+                mapper, send(client, builder.build(), maxResponseBytes, context).body());
+    }
+
+    static WebHttpResponse postContent(
+            HttpClient client,
+            ObjectMapper mapper,
+            URI endpoint,
+            Map<String, Object> body,
+            Map<String, String> headers,
+            String accept,
+            Duration configuredTimeout,
+            int maxResponseBytes,
+            WebProviderInvocationContext context,
+            Clock clock) {
+        byte[] payload = encodeJson(mapper, body);
+        HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint)
+                .timeout(effectiveTimeout(configuredTimeout, context, clock))
+                .header("Accept", accept)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(payload));
+        headers.forEach(builder::header);
+        return send(client, builder.build(), maxResponseBytes, context);
     }
 
     static JsonNode getJson(
@@ -99,7 +113,8 @@ final class WebHttpSupport {
                 .header("Accept", "application/json")
                 .GET();
         headers.forEach(builder::header);
-        return sendJson(client, mapper, builder.build(), maxResponseBytes, context);
+        return parseJson(
+                mapper, send(client, builder.build(), maxResponseBytes, context).body());
     }
 
     static URI withQuery(URI endpoint, Map<String, String> parameters) {
@@ -164,12 +179,31 @@ final class WebHttpSupport {
                 "web provider returned an application error" + (code.isBlank() ? "" : " (" + bounded(code, 64) + ")"));
     }
 
-    private static JsonNode sendJson(
-            HttpClient client,
-            ObjectMapper mapper,
-            HttpRequest request,
-            int maxResponseBytes,
-            WebProviderInvocationContext context) {
+    private static byte[] encodeJson(ObjectMapper mapper, Map<String, Object> body) {
+        try {
+            return mapper.writeValueAsBytes(body);
+        } catch (IOException exception) {
+            throw failure(
+                    WebFailureCode.WEB_INVALID_REQUEST,
+                    WebDispatchState.NOT_DISPATCHED,
+                    "web provider request could not be encoded");
+        }
+    }
+
+    private static JsonNode parseJson(ObjectMapper mapper, byte[] bytes) {
+        try {
+            return mapper.readTree(bytes);
+        } catch (IOException exception) {
+            throw new WebProviderException(
+                    WebFailureCode.WEB_PROVIDER_RESPONSE_INVALID,
+                    WebDispatchState.ACKNOWLEDGED,
+                    "web provider returned invalid JSON",
+                    exception);
+        }
+    }
+
+    private static WebHttpResponse send(
+            HttpClient client, HttpRequest request, int maxResponseBytes, WebProviderInvocationContext context) {
         if (context.cancellation().isCancellationRequested()) {
             throw failure(
                     WebFailureCode.WEB_CANCELLED,
@@ -220,15 +254,7 @@ final class WebHttpSupport {
                         WebDispatchState.ACKNOWLEDGED,
                         "web provider returned an empty response");
             }
-            try {
-                return mapper.readTree(bytes);
-            } catch (JsonProcessingException exception) {
-                throw new WebProviderException(
-                        WebFailureCode.WEB_PROVIDER_RESPONSE_INVALID,
-                        WebDispatchState.ACKNOWLEDGED,
-                        "web provider returned invalid JSON",
-                        exception);
-            }
+            return new WebHttpResponse(bytes, response.headers());
         } catch (IOException exception) {
             throw new WebProviderException(
                     WebFailureCode.WEB_PROVIDER_FAILED,
@@ -264,4 +290,6 @@ final class WebHttpSupport {
     private static String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
+
+    record WebHttpResponse(byte[] body, HttpHeaders headers) {}
 }

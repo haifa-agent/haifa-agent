@@ -105,11 +105,8 @@ public class PersonalAssistantConfiguration {
                     : PersonalWebPlatform.create(
                             tenant,
                             principal,
-                            properties.web().enabled(),
-                            resolveCredential(properties.web()),
-                            Duration.ofMillis(properties.web().timeoutMillis()),
-                            properties.web().searchMaximumResponseBytes(),
-                            properties.web().fetchMaximumResponseBytes(),
+                            providerConfiguration(properties.web().search()),
+                            providerConfiguration(properties.web().fetch()),
                             mapper,
                             personalClock);
             var models = PersonalModelFactory.createPlatform(
@@ -260,9 +257,20 @@ public class PersonalAssistantConfiguration {
                 properties.mission().dispatcherShutdownTimeoutMillis());
     }
 
-    private static String resolveCredential(PersonalAssistantProperties.Web web) {
-        if (!web.enabled()) return "";
-        String variable = web.credentialReference().substring("env://".length());
+    private static PersonalWebPlatform.ProviderConfiguration providerConfiguration(
+            PersonalAssistantProperties.WebProvider provider) {
+        return new PersonalWebPlatform.ProviderConfiguration(
+                provider.enabled(),
+                provider.providerId(),
+                provider.endpoint(),
+                resolveCredential(provider),
+                Duration.ofMillis(provider.timeoutMillis()),
+                provider.maximumResponseBytes());
+    }
+
+    private static String resolveCredential(PersonalAssistantProperties.WebProvider provider) {
+        if (!provider.enabled()) return "";
+        String variable = provider.credentialReference().substring("env://".length());
         String value = System.getenv(variable);
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(

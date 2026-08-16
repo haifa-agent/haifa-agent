@@ -42,6 +42,9 @@ class WebHttpProvidersTest {
     private final AtomicReference<CapturedRequest> captured = new AtomicReference<>();
     private final AtomicInteger status = new AtomicInteger(200);
     private final AtomicReference<String> response = new AtomicReference<>("{}");
+    private final AtomicReference<String> responseContentType = new AtomicReference<>("application/json");
+    private final AtomicReference<String> targetStatus = new AtomicReference<>();
+    private final AtomicReference<String> finalUrl = new AtomicReference<>();
 
     @BeforeEach
     void startServer() throws IOException {
@@ -125,6 +128,76 @@ class WebHttpProvidersTest {
     }
 
     @Test
+    void browserlessFetchUsesHeaderCredentialAndMapsRenderedHtml() {
+        responseContentType.set("text/html; charset=utf-8");
+        targetStatus.set("200");
+        finalUrl.set("https://example.com/final");
+        response.set("<html><head><title>Rendered Page</title></head><body>JavaScript result</body></html>");
+        var provider = new BrowserlessFetchProvider(
+                client(), mapper, baseUri.resolve("/content"), Duration.ofSeconds(5), 64 * 1024);
+
+        var result = provider.fetch(
+                new WebFetchRequest(URI.create("https://example.com/page"), WebContentFormat.MARKDOWN, 10_000),
+                context());
+
+        assertThat(result.content()).contains("JavaScript result");
+        assertThat(result.format()).isEqualTo(WebContentFormat.HTML);
+        assertThat(result.mediaType()).isEqualTo("text/html");
+        assertThat(result.title()).contains("Rendered Page");
+        assertThat(result.finalUrl()).hasToString("https://example.com/final");
+        assertThat(captured.get().path()).isEqualTo("/content");
+        assertThat(captured.get().query()).isNull();
+        assertThat(captured.get().authorization()).isEqualTo("Bearer test-key");
+        assertThat(captured.get().body().path("url").asText()).isEqualTo("https://example.com/page");
+        assertThat(captured.get().body().has("token")).isFalse();
+    }
+
+    @Test
+    void browserlessRejectsRenderedTargetFailures() {
+        responseContentType.set("text/html");
+        targetStatus.set("403");
+        response.set("<html><body>Access denied</body></html>");
+        var provider = new BrowserlessFetchProvider(
+                client(), mapper, baseUri.resolve("/content"), Duration.ofSeconds(5), 64 * 1024);
+
+        assertThatThrownBy(() -> provider.fetch(
+                        new WebFetchRequest(URI.create("https://example.com/private"), WebContentFormat.TEXT, 10_000),
+                        context()))
+                .isInstanceOfSatisfying(WebProviderException.class, exception -> {
+                    assertThat(exception.failureCode())
+                            .isEqualTo(io.haifa.agent.web.WebFailureCode.WEB_PROVIDER_FAILED);
+                    assertThat(exception.dispatchState()).isEqualTo(WebDispatchState.ACKNOWLEDGED);
+                    assertThat(exception.getMessage()).doesNotContain("Access denied");
+                });
+    }
+
+    @Test
+    void browserlessRejectsUnexpectedMediaAndCredentialBearingEndpoints() {
+        responseContentType.set("application/json");
+        response.set("{\"error\":\"must-not-escape\"}");
+        var provider = new BrowserlessFetchProvider(
+                client(), mapper, baseUri.resolve("/content"), Duration.ofSeconds(5), 64 * 1024);
+
+        assertThatThrownBy(() -> provider.fetch(
+                        new WebFetchRequest(URI.create("https://example.com/page"), WebContentFormat.TEXT, 10_000),
+                        context()))
+                .isInstanceOfSatisfying(WebProviderException.class, exception -> {
+                    assertThat(exception.failureCode())
+                            .isEqualTo(io.haifa.agent.web.WebFailureCode.WEB_UNSUPPORTED_MEDIA_TYPE);
+                    assertThat(exception.getMessage()).doesNotContain("must-not-escape");
+                });
+
+        assertThatThrownBy(() -> new BrowserlessFetchProvider(
+                        client(),
+                        mapper,
+                        URI.create("https://production-sfo.browserless.io/content?token=secret"),
+                        Duration.ofSeconds(5),
+                        64 * 1024))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not contain");
+    }
+
+    @Test
     void braveMapsQueryOptionsAndHeader() {
         response.set(
                 """
@@ -183,6 +256,58 @@ class WebHttpProvidersTest {
         assertThat(body.path("include_raw_content").asBoolean()).isFalse();
         assertThat(body.path("include_images").asBoolean()).isFalse();
         assertThat(body.path("auto_parameters").asBoolean()).isFalse();
+    }
+
+    @Test
+    void tavilyFetchUsesExtractAndMapsCleanedMarkdown() {
+        response.set(
+                """
+                {"request_id":"tv-extract-1","results":[
+                  {"url":"https://example.com/final","raw_content":"# Extracted page\\n\\nUseful content"}
+                ],"failed_results":[]}
+                """);
+        var provider = new TavilyFetchProvider(
+                client(), mapper, baseUri.resolve("/extract"), Duration.ofSeconds(5), 64 * 1024);
+
+        var result = provider.fetch(
+                new WebFetchRequest(URI.create("https://example.com/page"), WebContentFormat.MARKDOWN, 10_000),
+                context());
+
+        JsonNode body = captured.get().body();
+        assertThat(result.content()).contains("Useful content");
+        assertThat(result.format()).isEqualTo(WebContentFormat.MARKDOWN);
+        assertThat(result.mediaType()).isEqualTo("text/markdown");
+        assertThat(result.finalUrl()).hasToString("https://example.com/final");
+        assertThat(captured.get().path()).isEqualTo("/extract");
+        assertThat(captured.get().authorization()).isEqualTo("Bearer test-key");
+        assertThat(body.path("urls").get(0).asText()).isEqualTo("https://example.com/page");
+        assertThat(body.path("extract_depth").asText()).isEqualTo("basic");
+        assertThat(body.path("format").asText()).isEqualTo("markdown");
+        assertThat(body.path("include_images").asBoolean()).isFalse();
+        assertThat(body.path("include_favicon").asBoolean()).isFalse();
+        assertThat(body.path("include_usage").asBoolean()).isFalse();
+    }
+
+    @Test
+    void tavilyFetchReportsUnavailableExtractionWithoutLeakingProviderDetails() {
+        response.set(
+                """
+                {"results":[],"failed_results":[
+                  {"url":"https://example.com/private","error":"provider-private-detail"}
+                ]}
+                """);
+        var provider = new TavilyFetchProvider(
+                client(), mapper, baseUri.resolve("/extract"), Duration.ofSeconds(5), 64 * 1024);
+
+        assertThatThrownBy(() -> provider.fetch(
+                        new WebFetchRequest(URI.create("https://example.com/private"), WebContentFormat.TEXT, 10_000),
+                        context()))
+                .isInstanceOfSatisfying(WebProviderException.class, exception -> {
+                    assertThat(exception.failureCode())
+                            .isEqualTo(io.haifa.agent.web.WebFailureCode.WEB_PROVIDER_FAILED);
+                    assertThat(exception.dispatchState()).isEqualTo(WebDispatchState.ACKNOWLEDGED);
+                    assertThat(exception.getMessage()).doesNotContain("provider-private-detail");
+                });
     }
 
     @Test
@@ -323,7 +448,9 @@ class WebHttpProvidersTest {
                 exchange.getRequestHeaders().getFirst("X-Subscription-Token"),
                 body));
         byte[] bytes = response.get().getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.getResponseHeaders().set("Content-Type", responseContentType.get());
+        if (targetStatus.get() != null) exchange.getResponseHeaders().set("X-Response-Code", targetStatus.get());
+        if (finalUrl.get() != null) exchange.getResponseHeaders().set("X-Response-URL", finalUrl.get());
         exchange.sendResponseHeaders(status.get(), bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();

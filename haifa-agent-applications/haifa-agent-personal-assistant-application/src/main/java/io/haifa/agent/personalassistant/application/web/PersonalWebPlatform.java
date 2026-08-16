@@ -25,6 +25,7 @@ import io.haifa.agent.tool.core.ToolDefinitionCanonicalizer;
 import io.haifa.agent.web.DefaultWebUrlPolicy;
 import io.haifa.agent.web.WebContentFormat;
 import io.haifa.agent.web.WebFetchProvider;
+import io.haifa.agent.web.WebFetchProviderRegistry;
 import io.haifa.agent.web.WebFetchRequest;
 import io.haifa.agent.web.WebFetchResponse;
 import io.haifa.agent.web.WebProviderCapabilities;
@@ -32,6 +33,7 @@ import io.haifa.agent.web.WebProviderDescriptor;
 import io.haifa.agent.web.WebProviderId;
 import io.haifa.agent.web.WebProviderInvocationContext;
 import io.haifa.agent.web.WebSearchProvider;
+import io.haifa.agent.web.WebSearchProviderRegistry;
 import io.haifa.agent.web.WebSearchRequest;
 import io.haifa.agent.web.WebSearchResponse;
 import io.haifa.agent.web.WebSearchResult;
@@ -41,6 +43,10 @@ import io.haifa.agent.web.WebUrlDecision;
 import io.haifa.agent.web.WebUrlPolicy;
 import io.haifa.agent.web.provider.AliyunFetchProvider;
 import io.haifa.agent.web.provider.AliyunSearchProvider;
+import io.haifa.agent.web.provider.BraveWebSearchProvider;
+import io.haifa.agent.web.provider.BrowserlessFetchProvider;
+import io.haifa.agent.web.provider.TavilyFetchProvider;
+import io.haifa.agent.web.provider.TavilyWebSearchProvider;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
@@ -57,7 +63,7 @@ import java.util.Optional;
 import java.util.Set;
 import javax.crypto.KeyGenerator;
 
-/** Product-level Aliyun IQS Web Tool selection and in-memory credential binding. */
+/** Product-level Web provider selection and in-memory credential binding. */
 public record PersonalWebPlatform(
         List<WebToolCatalogContribution> contributions, CredentialPlatformContribution credential) {
     public static final ProductContributionCoordinate CREDENTIAL_COORDINATE =
@@ -71,42 +77,38 @@ public record PersonalWebPlatform(
     public static PersonalWebPlatform create(
             TenantRef tenant,
             PrincipalRef principal,
-            boolean enabled,
-            String apiKey,
-            Duration timeout,
-            int searchMaxResponseBytes,
-            int fetchMaxResponseBytes,
+            ProviderConfiguration search,
+            ProviderConfiguration fetch,
             ObjectMapper mapper,
             Clock clock) {
         java.util.Objects.requireNonNull(tenant);
         java.util.Objects.requireNonNull(principal);
-        java.util.Objects.requireNonNull(timeout);
+        java.util.Objects.requireNonNull(search);
+        java.util.Objects.requireNonNull(fetch);
         java.util.Objects.requireNonNull(mapper);
         java.util.Objects.requireNonNull(clock);
-        if (!enabled) {
+        if (!search.enabled() && !fetch.enabled()) {
             return platform(List.of(), emptyBroker());
-        }
-        if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalArgumentException("Aliyun IQS credential is required when Personal Web Tools are enabled");
         }
 
         var client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         var catalog = new WebToolCatalog();
-        List<WebToolCatalogContribution> contributions = List.of(
-                catalog.search(new AliyunSearchProvider(
-                        client, mapper, AliyunSearchProvider.DEFAULT_ENDPOINT, timeout, searchMaxResponseBytes, clock)),
-                catalog.fetch(
-                        new AliyunFetchProvider(
-                                client,
-                                mapper,
-                                AliyunFetchProvider.DEFAULT_ENDPOINT,
-                                timeout,
-                                fetchMaxResponseBytes,
-                                clock),
-                        new DefaultWebUrlPolicy()));
-        return platform(contributions, credentialBroker(tenant, principal, contributions, apiKey));
+        List<WebToolCatalogContribution> contributions = new ArrayList<>();
+        if (search.enabled()) {
+            WebSearchProvider provider = new WebSearchProviderRegistry(
+                            List.of(searchProvider(search, client, mapper, clock)))
+                    .require(new WebProviderId(search.providerId()));
+            contributions.add(catalog.search(provider));
+        }
+        if (fetch.enabled()) {
+            WebFetchProvider provider = new WebFetchProviderRegistry(
+                            List.of(fetchProvider(fetch, client, mapper, clock)))
+                    .require(new WebProviderId(fetch.providerId()));
+            contributions.add(catalog.fetch(provider, new DefaultWebUrlPolicy()));
+        }
+        return platform(contributions, credentialBroker(tenant, principal, contributions, search, fetch));
     }
 
     /** Deterministic, offline corpus for explicitly configured acceptance environments. */
@@ -240,7 +242,11 @@ public record PersonalWebPlatform(
     }
 
     private static DefaultCredentialBroker credentialBroker(
-            TenantRef tenant, PrincipalRef principal, List<WebToolCatalogContribution> contributions, String apiKey) {
+            TenantRef tenant,
+            PrincipalRef principal,
+            List<WebToolCatalogContribution> contributions,
+            ProviderConfiguration search,
+            ProviderConfiguration fetch) {
         var store = encryptedStore();
         List<CredentialDefinition> definitions = new ArrayList<>();
         List<CredentialBinding> bindings = new ArrayList<>();
@@ -249,9 +255,10 @@ public record PersonalWebPlatform(
                     .findFirst()
                     .orElseThrow(() -> new IllegalStateException("Web provider credential requirement is missing"));
             String operation = contribution.definition().name().value();
-            String suffix = operation.substring("web.".length()) + "-aliyun";
+            ProviderConfiguration configuration = operation.equals("web.search") ? search : fetch;
+            String suffix = operation.substring("web.".length()) + "-" + configuration.providerId();
             var reference = new CredentialReference("personal-web-" + suffix);
-            byte[] secretBytes = apiKey.getBytes(StandardCharsets.UTF_8);
+            byte[] secretBytes = configuration.credential().getBytes(StandardCharsets.UTF_8);
             try {
                 store.store(reference, tenant, requirement.definitionId(), secretBytes);
             } finally {
@@ -259,7 +266,7 @@ public record PersonalWebPlatform(
             }
             definitions.add(new CredentialDefinition(
                     requirement.definitionId(),
-                    "aliyun",
+                    configuration.providerId(),
                     CredentialType.API_KEY,
                     requirement.scopes(),
                     Set.of(CredentialExposureMode.HTTP_HEADER),
@@ -286,6 +293,68 @@ public record PersonalWebPlatform(
         return new DefaultCredentialBroker(definitions, bindings, new DefaultCredentialResolver(), store);
     }
 
+    private static WebSearchProvider searchProvider(
+            ProviderConfiguration configuration, HttpClient client, ObjectMapper mapper, Clock clock) {
+        return switch (configuration.providerId()) {
+            case "aliyun" ->
+                new AliyunSearchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            case "brave" ->
+                new BraveWebSearchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            case "tavily" ->
+                new TavilyWebSearchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            default -> throw new IllegalArgumentException("unsupported Personal Web Search provider");
+        };
+    }
+
+    private static WebFetchProvider fetchProvider(
+            ProviderConfiguration configuration, HttpClient client, ObjectMapper mapper, Clock clock) {
+        return switch (configuration.providerId()) {
+            case "aliyun" ->
+                new AliyunFetchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            case "browserless" ->
+                new BrowserlessFetchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            case "tavily" ->
+                new TavilyFetchProvider(
+                        client,
+                        mapper,
+                        configuration.endpoint(),
+                        configuration.timeout(),
+                        configuration.maxResponseBytes(),
+                        clock);
+            default -> throw new IllegalArgumentException("unsupported Personal Web Fetch provider");
+        };
+    }
+
     private static DefaultCredentialBroker emptyBroker() {
         return new DefaultCredentialBroker(List.of(), List.of(), new DefaultCredentialResolver(), encryptedStore());
     }
@@ -309,6 +378,38 @@ public record PersonalWebPlatform(
                             .digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (java.security.NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is required", exception);
+        }
+    }
+
+    public record ProviderConfiguration(
+            boolean enabled,
+            String providerId,
+            URI endpoint,
+            String credential,
+            Duration timeout,
+            int maxResponseBytes) {
+        public ProviderConfiguration {
+            providerId = java.util.Objects.requireNonNull(providerId, "providerId")
+                    .trim()
+                    .toLowerCase(java.util.Locale.ROOT);
+            endpoint = java.util.Objects.requireNonNull(endpoint, "endpoint");
+            timeout = java.util.Objects.requireNonNull(timeout, "timeout");
+            credential = credential == null ? "" : credential.trim();
+            if (providerId.isBlank()) throw new IllegalArgumentException("providerId must not be blank");
+            if (!endpoint.isAbsolute()
+                    || endpoint.getHost() == null
+                    || !endpoint.getScheme().equalsIgnoreCase("https")) {
+                throw new IllegalArgumentException("endpoint must be an absolute HTTPS URI");
+            }
+            if (enabled && credential.isBlank()) {
+                throw new IllegalArgumentException("credential is required when a Personal Web provider is enabled");
+            }
+            if (timeout.isZero() || timeout.isNegative()) {
+                throw new IllegalArgumentException("timeout must be positive");
+            }
+            if (maxResponseBytes < 1024) {
+                throw new IllegalArgumentException("maxResponseBytes must be at least 1024");
+            }
         }
     }
 }

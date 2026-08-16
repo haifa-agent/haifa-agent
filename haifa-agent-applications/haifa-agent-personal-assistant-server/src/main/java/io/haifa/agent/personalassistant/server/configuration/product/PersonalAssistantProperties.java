@@ -147,13 +147,39 @@ public record PersonalAssistantProperties(
         }
     }
 
-    public record Web(
+    public record Web(WebProvider search, WebProvider fetch) {
+        public Web {
+            if (search == null || fetch == null) {
+                throw new IllegalArgumentException("web.search and web.fetch configuration are required");
+            }
+            if (!Set.of("aliyun", "brave", "tavily").contains(search.providerId())) {
+                throw new IllegalArgumentException("web.search.providerId must be aliyun, brave, or tavily");
+            }
+            if (!Set.of("aliyun", "browserless", "tavily").contains(fetch.providerId())) {
+                throw new IllegalArgumentException("web.fetch.providerId must be aliyun, browserless, or tavily");
+            }
+        }
+
+        public boolean enabled() {
+            return search.enabled() || fetch.enabled();
+        }
+    }
+
+    public record WebProvider(
             boolean enabled,
+            String providerId,
+            URI endpoint,
             String credentialReference,
             long timeoutMillis,
-            int searchMaximumResponseBytes,
-            int fetchMaximumResponseBytes) {
-        public Web {
+            int maximumResponseBytes) {
+        public WebProvider {
+            providerId = identifier(providerId, "web.providerId");
+            if (endpoint == null
+                    || !endpoint.isAbsolute()
+                    || endpoint.getHost() == null
+                    || !endpoint.getScheme().equalsIgnoreCase("https")) {
+                throw new IllegalArgumentException("web.endpoint must be an absolute HTTPS URI");
+            }
             credentialReference = text(credentialReference, "web.credentialReference");
             if (!credentialReference.startsWith("env://") || credentialReference.length() == "env://".length()) {
                 throw new IllegalArgumentException("web.credentialReference must use env://");
@@ -161,11 +187,8 @@ public record PersonalAssistantProperties(
             if (timeoutMillis < 1000 || timeoutMillis > 120_000) {
                 throw new IllegalArgumentException("web.timeoutMillis must be between 1000 and 120000");
             }
-            if (searchMaximumResponseBytes < 1024 || searchMaximumResponseBytes > 16 * 1024 * 1024) {
-                throw new IllegalArgumentException("web.searchMaximumResponseBytes is out of range");
-            }
-            if (fetchMaximumResponseBytes < 1024 || fetchMaximumResponseBytes > 16 * 1024 * 1024) {
-                throw new IllegalArgumentException("web.fetchMaximumResponseBytes is out of range");
+            if (maximumResponseBytes < 1024 || maximumResponseBytes > 16 * 1024 * 1024) {
+                throw new IllegalArgumentException("web.maximumResponseBytes is out of range");
             }
         }
     }

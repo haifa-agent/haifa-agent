@@ -59,11 +59,20 @@ haifa:
             context-window: 16384
             max-output-tokens: 1024
     web:
-      enabled: false
-      credential-reference: env://UNUSED
-      timeout-millis: 30000
-      search-maximum-response-bytes: 2097152
-      fetch-maximum-response-bytes: 4194304
+      search:
+        enabled: false
+        provider-id: aliyun
+        endpoint: https://cloud-iqs.aliyuncs.com/search/unified
+        credential-reference: env://UNUSED_ALIYUN
+        timeout-millis: 30000
+        maximum-response-bytes: 2097152
+      fetch:
+        enabled: false
+        provider-id: browserless
+        endpoint: https://production-sfo.browserless.io/content
+        credential-reference: env://UNUSED_BROWSERLESS
+        timeout-millis: 30000
+        maximum-response-bytes: 4194304
     mission:
       planner-mode: deterministic-stub
       max-tasks: 8

@@ -51,6 +51,7 @@ public final class TavilyWebSearchProvider implements WebSearchProvider {
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
+        requireEndpoint(endpoint);
         if (maxResponseBytes < 1024) throw new IllegalArgumentException("maxResponseBytes must be at least 1024");
         this.maxResponseBytes = maxResponseBytes;
         this.descriptor = new WebProviderDescriptor(
@@ -154,6 +155,19 @@ public final class TavilyWebSearchProvider implements WebSearchProvider {
             case MONTH -> "month";
             case YEAR -> "year";
         };
+    }
+
+    private static void requireEndpoint(URI endpoint) {
+        Objects.requireNonNull(endpoint, "endpoint");
+        if (!endpoint.isAbsolute()
+                || endpoint.getHost() == null
+                || !(endpoint.getScheme().equalsIgnoreCase("https")
+                        || endpoint.getScheme().equalsIgnoreCase("http"))) {
+            throw new IllegalArgumentException("Tavily endpoint must be an absolute HTTP(S) URI");
+        }
+        if (endpoint.getRawUserInfo() != null || endpoint.getRawQuery() != null || endpoint.getRawFragment() != null) {
+            throw new IllegalArgumentException("Tavily endpoint must not contain user info, query, or fragment");
+        }
     }
 
     private static HttpClient defaultClient() {

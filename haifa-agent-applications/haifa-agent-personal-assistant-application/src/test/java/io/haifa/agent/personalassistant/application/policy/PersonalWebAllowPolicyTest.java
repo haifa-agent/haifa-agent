@@ -112,11 +112,20 @@ class PersonalWebAllowPolicyTest {
         PersonalWebPlatform web = PersonalWebPlatform.create(
                 TENANT,
                 PRINCIPAL,
-                true,
-                "test-secret",
-                Duration.ofSeconds(5),
-                1024 * 1024,
-                2 * 1024 * 1024,
+                new PersonalWebPlatform.ProviderConfiguration(
+                        true,
+                        "aliyun",
+                        io.haifa.agent.web.provider.AliyunSearchProvider.DEFAULT_ENDPOINT,
+                        "test-secret",
+                        Duration.ofSeconds(5),
+                        1024 * 1024),
+                new PersonalWebPlatform.ProviderConfiguration(
+                        true,
+                        "browserless",
+                        io.haifa.agent.web.provider.BrowserlessFetchProvider.DEFAULT_ENDPOINT,
+                        "test-secret",
+                        Duration.ofSeconds(5),
+                        2 * 1024 * 1024),
                 new ObjectMapper(),
                 CLOCK);
         var builder = new ToolCatalogBuilder();
