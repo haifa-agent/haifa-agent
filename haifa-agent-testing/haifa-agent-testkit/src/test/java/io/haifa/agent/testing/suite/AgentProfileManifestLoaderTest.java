@@ -24,6 +24,7 @@ class AgentProfileManifestLoaderTest {
 
         assertEquals("coding-primary", profile.profileId());
         assertEquals(configuration.toAbsolutePath().normalize(), profile.configurationPath());
+        assertEquals(List.of("MODEL_API_KEY", "MODEL_ENDPOINT", "WEB_API_KEY"), profile.requiredEnvironmentNames());
         assertEquals(List.of("MODEL_API_KEY", "WEB_API_KEY"), profile.credentialEnvironmentNames());
         assertFalse(profile.agentAssemblyDigest().isBlank());
     }
@@ -45,6 +46,8 @@ class AgentProfileManifestLoaderTest {
                 configuration,
                 """
                 provider:
+                  endpoint: ${MODEL_ENDPOINT}
+                  region: ${MODEL_REGION:default-region}
                   credentialRef: env://MODEL_API_KEY
                 web:
                   credentialRef: env://WEB_API_KEY

@@ -66,11 +66,8 @@ class SuiteRunnerMainTest {
 
         assertEquals("SQLITE_WITH_JSONL", environment.get("HAIFA_PERSISTENCE_MODE"));
         assertEquals(
-                caseRoot.resolve("persistence/runtime.db").toString(),
-                environment.get("HAIFA_SQLITE_DATABASE_PATH"));
-        assertEquals(
-                caseRoot.resolve("persistence/transcripts").toString(),
-                environment.get("HAIFA_TRANSCRIPT_ROOT"));
+                caseRoot.resolve("persistence/runtime.db").toString(), environment.get("HAIFA_SQLITE_DATABASE_PATH"));
+        assertEquals(caseRoot.resolve("persistence/transcripts").toString(), environment.get("HAIFA_TRANSCRIPT_ROOT"));
         assertTrue(Files.isDirectory(caseRoot.resolve("persistence/transcripts")));
     }
 

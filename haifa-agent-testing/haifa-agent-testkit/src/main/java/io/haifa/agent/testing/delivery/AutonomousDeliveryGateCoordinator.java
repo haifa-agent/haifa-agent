@@ -55,8 +55,11 @@ final class AutonomousDeliveryGateCoordinator {
         validateHostProfile(hostProfile, matrixCombination);
         AutonomousDeliveryLiveBudget.Authorization liveBudget =
                 AutonomousDeliveryLiveBudget.authorize(suite, approvedMaxCostMinorUnits);
-        SecretPreflight.ResolvedSecrets selectedSecrets =
-                SecretPreflight.require(System.getenv(), agentProfile.credentialEnvironmentNames());
+        SecretPreflight.ResolvedSecrets requiredEnvironment =
+                SecretPreflight.require(System.getenv(), agentProfile.requiredEnvironmentNames());
+        List<String> selectedSecrets = agentProfile.credentialEnvironmentNames().stream()
+                .map(requiredEnvironment::value)
+                .toList();
 
         Path gate = campaign.resolve("phase-" + phaseNumber)
                 .resolve("build-" + buildCommit)
@@ -101,7 +104,7 @@ final class AutonomousDeliveryGateCoordinator {
                         testConfigRevision,
                         executionPlan.sha256(),
                         phasePolicy,
-                        selectedSecrets.values());
+                        selectedSecrets);
                 results.add(result);
                 if (selection.blocking() && !Boolean.TRUE.equals(result.get("gatePassed"))) {
                     successful = false;

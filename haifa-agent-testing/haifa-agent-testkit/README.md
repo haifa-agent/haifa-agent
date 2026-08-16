@@ -8,6 +8,8 @@ POM，禁止生产模块直接依赖所有 `haifa-agent-testing` 制品。
 
 Runner 默认只生成计划。附加的 `runner` JAR 由私有 `test-config/scripts/` 调用；只有显式传入
 `--execute`、安全的仓库外运行根和所需 Secret 后，才会串行执行 Catalog 中的 Maven selector。
+Agent Profile 会分别冻结所有无默认值的必填环境变量与 `env://` 凭据引用：前者全部前置校验，
+只有后者的值进入证据 Secret Scan，避免把可持久化 Endpoint 或 Workspace ID 误判为密钥泄漏。
 每个 Live Case 使用 `ci-integration-only` 和精确 Failsafe selector；依赖模块 Surefire、重复的
 Enforcer 和 JaCoCo 报告在 Case 进程中跳过；CLI shaded JAR 仍由当前 Reactor 生命周期产生。
 上述门禁由同一 SHA 的独立 L3 执行一次，
@@ -120,6 +122,9 @@ Secret Scan 和 Process Cleanup 证据；超时、预算越界、同类失败超
 Scratch、Scratch 清理失败或 Secret 命中均失败。每个 Repeat 和 Gate 生成 SHA-256 Manifest 后整体
 设为只读。Manifest 只排除可被 Finder 异步改写、且不承载交付事实的 `.DS_Store`；Workspace、
 Runtime 与其余 Gate 证据文件全部纳入摘要。
+Python Acceptance 子进程通过 `-X utf8 -I` 固定使用 UTF-8 I/O 语义，并把 Harness 已验证的 Java、Python、Node、
+Go、Git 和 Shell 所在目录作为最小 `PATH`；Oracle 不再依赖启动 Codex 的宿主 `PATH` 或 Windows 本地
+代码页，因此含非 ASCII JSON 和跨语言工具调用在三端使用同一解析契约。
 
 真实 Gate 还要求 Revision 绑定的 `execution-plan.json` 与显式批准的最小费用单位。Suite 可冻结整批
 时长、币种、价格和每 Repeat Token 上界；Harness 在读取 Secret 前用缓存未命中价格计算保守费用

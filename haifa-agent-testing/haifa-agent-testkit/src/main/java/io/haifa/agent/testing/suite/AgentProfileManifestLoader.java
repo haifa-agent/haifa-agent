@@ -17,7 +17,7 @@ import java.util.Objects;
 
 /** Strict loader that derives credential requirements from the referenced standard YAML. */
 public final class AgentProfileManifestLoader {
-    private static final String DOMAIN = "haifa-agent-profile-assembly-v1";
+    private static final String DOMAIN = "haifa-agent-profile-assembly-v2";
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
 
     public ResolvedAgentProfile load(Path configRoot, String profileId) {
@@ -47,8 +47,11 @@ public final class AgentProfileManifestLoader {
                 throw new IllegalArgumentException("agent profile configuration digest does not match: " + profileId);
             }
             JsonNode configurationTree = yaml.readTree(configuration.toFile());
+            List<String> requiredEnvironmentNames = new ArrayList<>();
             List<String> credentialNames = new ArrayList<>();
-            collectCredentialNames(configurationTree, credentialNames);
+            collectEnvironmentNames(configurationTree, requiredEnvironmentNames, credentialNames);
+            List<String> uniqueRequiredEnvironmentNames =
+                    requiredEnvironmentNames.stream().distinct().sorted().toList();
             List<String> uniqueCredentialNames =
                     credentialNames.stream().distinct().sorted().toList();
             String assemblyDigest = sha256(String.join(
@@ -58,14 +61,17 @@ public final class AgentProfileManifestLoader {
                     manifest.compatibleAgentBaselineCommit(),
                     manifest.configurationRef(),
                     configurationSha256,
+                    String.join(",", uniqueRequiredEnvironmentNames),
                     String.join(",", uniqueCredentialNames)));
-            return new ResolvedAgentProfile(manifest, configuration, assemblyDigest, uniqueCredentialNames);
+            return new ResolvedAgentProfile(
+                    manifest, configuration, assemblyDigest, uniqueRequiredEnvironmentNames, uniqueCredentialNames);
         } catch (IOException exception) {
             throw new IllegalArgumentException("agent profile cannot be parsed: " + profileId, exception);
         }
     }
 
-    private static void collectCredentialNames(JsonNode node, List<String> names) {
+    private static void collectEnvironmentNames(
+            JsonNode node, List<String> requiredNames, List<String> credentialNames) {
         if (node == null) return;
         if (node.isTextual()) {
             String value = node.asText();
@@ -74,7 +80,8 @@ public final class AgentProfileManifestLoader {
                 if (!name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
                     throw new IllegalArgumentException("standard configuration contains an invalid env reference");
                 }
-                names.add(name);
+                requiredNames.add(name);
+                credentialNames.add(name);
             } else if (value.startsWith("${") && value.endsWith("}")) {
                 String expression = value.substring(2, value.length() - 1);
                 int separator = expression.indexOf(':');
@@ -83,12 +90,15 @@ public final class AgentProfileManifestLoader {
                     throw new IllegalArgumentException(
                             "standard configuration contains an invalid environment placeholder");
                 }
-                if (separator < 0) names.add(name);
+                if (separator < 0) requiredNames.add(name);
             }
             return;
         }
-        if (node.isArray()) node.forEach(child -> collectCredentialNames(child, names));
-        else if (node.isObject()) node.elements().forEachRemaining(child -> collectCredentialNames(child, names));
+        if (node.isArray()) {
+            node.forEach(child -> collectEnvironmentNames(child, requiredNames, credentialNames));
+        } else if (node.isObject()) {
+            node.elements().forEachRemaining(child -> collectEnvironmentNames(child, requiredNames, credentialNames));
+        }
     }
 
     private static String sha256(String value) {

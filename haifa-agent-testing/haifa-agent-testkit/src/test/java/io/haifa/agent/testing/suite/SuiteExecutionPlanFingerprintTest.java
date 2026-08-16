@@ -26,7 +26,7 @@ class SuiteExecutionPlanFingerprintTest {
     @Test
     void keepsTheReviewedLinuxNightlySmokeDigestStable() {
         assertEquals(
-                "f794530d557335969e9d3c11f31767389173ddb02f607a0810cca6a25418b5ba",
+                "f531606237aefa70b7646228b161ecbad1753086053e6bb631b112033cfc36a3",
                 SuiteExecutionPlanFingerprint.create(manifest(3.0, 1), combination("linux"), PROFILE, PRODUCT, CONFIG)
                         .sha256());
     }
@@ -89,6 +89,7 @@ class SuiteExecutionPlanFingerprintTest {
                         String.valueOf(digest).repeat(64)),
                 Path.of("coding-primary.yaml"),
                 String.valueOf(digest).repeat(64),
+                List.of("MODEL_API_KEY"),
                 List.of("MODEL_API_KEY"));
     }
 

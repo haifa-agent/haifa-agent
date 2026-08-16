@@ -114,8 +114,11 @@ public final class SuiteRunnerMain {
         testConfigRevision.requireClean("test-config repository");
         double approvedMaxEstimatedCostUsd = requireApprovedMaxEstimatedCost(manifest, environment);
         String approvedExecutionPlanSha256 = requireApprovedExecutionPlan(executionPlan, environment);
-        SecretPreflight.ResolvedSecrets selectedSecrets =
-                SecretPreflight.require(environment, agentProfile.credentialEnvironmentNames());
+        SecretPreflight.ResolvedSecrets requiredEnvironment =
+                SecretPreflight.require(environment, agentProfile.requiredEnvironmentNames());
+        List<String> selectedSecrets = agentProfile.credentialEnvironmentNames().stream()
+                .map(requiredEnvironment::value)
+                .toList();
         Instant startedAt = Instant.now();
         Path executionRoot = createExecutionRoot(runRoot, manifest.suiteId(), startedAt);
         System.out.println("Execution evidence id=" + executionRoot.getFileName());
@@ -151,7 +154,7 @@ public final class SuiteRunnerMain {
                             executionPlan,
                             startedAt,
                             results,
-                            selectedSecrets.values());
+                            selectedSecrets);
                     return 1;
                 }
             }
@@ -170,7 +173,7 @@ public final class SuiteRunnerMain {
                 executionPlan,
                 startedAt,
                 results,
-                selectedSecrets.values());
+                selectedSecrets);
         return evidenceSafe && results.stream().allMatch(value -> Boolean.TRUE.equals(value.get("successful"))) ? 0 : 1;
     }
 
@@ -317,12 +320,14 @@ public final class SuiteRunnerMain {
                 "verify");
     }
 
-    static void configureCaseEnvironment(
-            Map<String, String> childEnvironment, CriticalPathCase testCase, Path caseRoot) throws IOException {
+    static void configureCaseEnvironment(Map<String, String> childEnvironment, CriticalPathCase testCase, Path caseRoot)
+            throws IOException {
         if (!testCase.caseId().equals("CP-10") && !testCase.caseId().equals("CP-11")) return;
         Path persistenceRoot = Files.createDirectory(caseRoot.resolve("persistence"));
         childEnvironment.put("HAIFA_PERSISTENCE_MODE", "SQLITE_WITH_JSONL");
-        childEnvironment.put("HAIFA_SQLITE_DATABASE_PATH", persistenceRoot.resolve("runtime.db").toString());
+        childEnvironment.put(
+                "HAIFA_SQLITE_DATABASE_PATH",
+                persistenceRoot.resolve("runtime.db").toString());
         childEnvironment.put(
                 "HAIFA_TRANSCRIPT_ROOT",
                 Files.createDirectory(persistenceRoot.resolve("transcripts")).toString());

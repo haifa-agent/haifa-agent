@@ -115,7 +115,8 @@ final class AutonomousDeliveryRepeatExecutor {
                 immutableCase.resolve("acceptance.py"),
                 workspace,
                 toolchains.pythonExecutable(),
-                remainingGraderBudget(suite, wallTimeMillis));
+                remainingGraderBudget(suite, wallTimeMillis),
+                toolchains.minimalPath());
         Map<String, Object> acceptanceArtifact = acceptanceArtifact(testCase, grade);
         boolean bounded = client.contract().completedWithinBudget()
                 && client.contract().assemblyClosed()
@@ -280,9 +281,14 @@ final class AutonomousDeliveryRepeatExecutor {
     }
 
     private AutonomousDeliveryAcceptanceGrade grade(
-            AutonomousDeliveryCase testCase, Path acceptance, Path workspace, Path python, Duration timeout) {
+            AutonomousDeliveryCase testCase,
+            Path acceptance,
+            Path workspace,
+            Path python,
+            Duration timeout,
+            String toolchainPath) {
         try {
-            return acceptanceGrader.grade(testCase, acceptance, workspace, python, timeout);
+            return acceptanceGrader.grade(testCase, acceptance, workspace, python, timeout, toolchainPath);
         } catch (IOException exception) {
             return new AutonomousDeliveryAcceptanceGrade(
                     testCase.graderId(),

@@ -93,6 +93,7 @@ class AutonomousDeliveryExecutionPlanTest {
                         1, "standard-client", PRODUCT.commit(), "agents/standard.yaml", "a".repeat(64)),
                 Path.of("agents/standard.yaml"),
                 "b".repeat(64),
+                List.of("TEST_API_KEY"),
                 List.of("TEST_API_KEY"));
     }
 }

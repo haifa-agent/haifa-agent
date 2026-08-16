@@ -50,6 +50,8 @@ public record SuiteExecutionPlanFingerprint(int schemaVersion, String sha256) {
         add(digest, agentProfile.manifest().configurationRef());
         add(digest, agentProfile.manifest().configurationSha256());
         add(digest, agentProfile.agentAssemblyDigest());
+        add(digest, agentProfile.requiredEnvironmentNames().size());
+        agentProfile.requiredEnvironmentNames().forEach(value -> add(digest, value));
         add(digest, agentProfile.credentialEnvironmentNames().size());
         agentProfile.credentialEnvironmentNames().forEach(value -> add(digest, value));
         add(digest, manifest.cases().size());
