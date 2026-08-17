@@ -109,6 +109,44 @@ class DefaultToolPolicyTest {
                 .isEqualTo(PolicyDigest.sha256Fields(List.of("echo ok", ".")));
     }
 
+    @Test
+    void permissionRequestDigestBindsThePriorFailureAndExactRequestedIntent() {
+        var request = new ToolRequest(
+                new ToolCallId("permission-call"),
+                new ProviderToolCallCorrelationId("provider-permission-call"),
+                new RuntimeIdempotencyKey("permission-key"),
+                "request_permissions",
+                "1.0.0",
+                new ToolArguments(
+                        "permission.input",
+                        "1.0.0",
+                        Map.of(
+                                "command",
+                                "git ls-remote origin",
+                                "workdir",
+                                ".",
+                                "priorToolCallId",
+                                "failed-call",
+                                "requestedPermission",
+                                "HOST_NETWORK_ACCESS",
+                                "justification",
+                                "Read the configured remote",
+                                "operationFamily",
+                                "inspect",
+                                "timeoutMillis",
+                                5000)));
+
+        assertThat(DefaultToolPolicyRequestAdapter.resourceDigest("execution.request_permissions", request))
+                .isEqualTo(PolicyDigest.sha256Fields(List.of(
+                        "git ls-remote origin",
+                        ".",
+                        "failed-call",
+                        "HOST_NETWORK_ACCESS",
+                        "Read the configured remote",
+                        "INSPECT",
+                        "5000")));
+    }
+
     private ToolPolicyDecision evaluate(
             ToolRisk risk,
             Set<ToolSideEffect> sideEffects,

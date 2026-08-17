@@ -9,7 +9,10 @@ CLI 的 `ask / auto / deny` 继续保持 Coding Agent 级的简单权限体验�
 `ask/auto/deny` 由产品 Policy Snapshot 表达，默认仍为 `ask`。`auto` 只自动满足允许自动化的
 Capability Confirmation；Critical/Never 冲突、无目标网络、Credential 重认证和
 Broker/Workspace/Sandbox 硬边界仍 fail closed。`execution.run` 的 Tool Decision 沿调用链传给
-Broker 复核，不产生第二个控制台审批；`deny` 仍在 Catalog freeze 前移除该 Tool。
+Broker 复核，不产生第二个控制台审批；`deny` 仍在 Catalog freeze 前移除该 Tool 及其
+`execution.request_permissions` 配套入口。权限申请采用独立 Critical / Always Approval Decision；
+`ask` 必须由操作者批准，`auto` 仅代表操作者预先选择的宿主策略，不是 Agent 自我授权。该入口只在
+普通执行使用与 Host 不同的隔离 Provider 时披露；默认 `host-guarded` 已经是受信 Host 路径，不重复披露。
 
 `haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
 Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 tui4j
@@ -452,7 +455,7 @@ binding digest 和内容 digest 的明文格式写入 SQLite，只适用于可�
 `HAIFA_CONTINUATION_PROTECTOR_REF`。
 
 `tools.enabled` 使用内部点号名称；CLI 向模型披露时会映射为 `file_list`、`file_read`、`file_patch`、
-`execution_run` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作
+`execution_run`、`request_permissions` 等 Provider-safe function name。`execution.run` 接收完整命令文本、Workspace 相对工作
 目录和 timeout；任何本机已安装且可由配置 Shell 解析的非交互 CLI 都走同一生产路径，文档中的具体
 命令仅是非穷举示例。Coding Agent 默认使用该通用 OS CLI 路径完成仓库级文件发现、内容搜索、源码
 检查、构建和测试：文件发现优先 `rg --files`，内容搜索优先 `rg`，命令不存在时由模型按当前 Shell
@@ -546,7 +549,7 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-写文件、删除文件、移动文件和 Shell 命令默认要求控制台确认。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。`--approval auto` 仅适用于用户明确信任的本地工作区，仍经过 Broker、Workspace capability、Profile、环境和审计；`--approval deny` 会在 Catalog freeze 前移除 `execution.run`，模型不可见，底层授权仍 fail closed。
+写文件、删除文件、移动文件和 Shell 命令默认要求控制台确认。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。网络或系统 `git` / `gh` 登录环境被 Sandbox 隔离时，模型只能用失败结果中的 `toolCallId` 请求对同一条直接、非破坏性的系统 `git` / `gh` 命令做一次 `HOST_NETWORK_ACCESS` 重试；不能修改命令意图、生成权限或批准自己的请求。`--approval auto` 仅适用于用户明确信任的本地工作区，仍经过 Broker、Workspace capability、Profile、环境和审计；`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `execution.request_permissions`，模型不可见，底层授权仍 fail closed。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 

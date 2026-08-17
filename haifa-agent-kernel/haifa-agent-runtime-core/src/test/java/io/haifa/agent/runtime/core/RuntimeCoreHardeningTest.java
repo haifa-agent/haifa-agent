@@ -547,6 +547,10 @@ class RuntimeCoreHardeningTest {
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
                 .contains("loop.stall-detected", "tool.recovery-strategy-required", "run.structured-termination");
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("tool.failed"))
+                .allSatisfy(
+                        event -> assertThat(event.data()).containsEntry("reasonCode", "TOOLCHAIN_TEMP_UNAVAILABLE"));
     }
 
     @Test

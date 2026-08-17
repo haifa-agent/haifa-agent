@@ -40,7 +40,7 @@ class Tui4jTerminalIoTest {
     }
 
     @Test
-    void productionProgramEnablesWheelEventsAndRestoresMouseModesOnExit() throws Exception {
+    void productionProgramLeavesMouseReportingDisabledForNativeTextSelection() throws Exception {
         var output = new ByteArrayOutputStream();
         try (var inputWriter = new PipedOutputStream();
                 var input = new PipedInputStream(inputWriter)) {
@@ -55,8 +55,7 @@ class Tui4jTerminalIoTest {
         }
 
         assertThat(output.toString(Charset.defaultCharset()))
-                .contains("\u001B[?1002h", "\u001B[?1006h")
-                .contains("\u001B[?1002l", "\u001B[?1006l");
+                .doesNotContain("\u001B[?1000h", "\u001B[?1002h", "\u001B[?1003h", "\u001B[?1006h");
     }
 
     private Tui4jTerminalIo io(String environment) {

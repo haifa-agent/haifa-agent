@@ -225,6 +225,27 @@ class TerminalUiReducerTest {
     }
 
     @Test
+    void rendersStableToolFailureCodeWithAnActionableRecoveryHint() {
+        TerminalUiState failed = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(event(
+                        1,
+                        "event-1",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1",
+                                "execution.run",
+                                "FAILED",
+                                "COMMAND_CLASSIFICATION_REJECTED",
+                                "git status; git log -1",
+                                ""))));
+
+        assertThat(failed.transcript()).singleElement().satisfies(item -> assertThat(item.body())
+                .contains(
+                        "Reason: COMMAND_CLASSIFICATION_REJECTED",
+                        "Next: Split compound or wrapped shell text into one simple command per tool call."));
+    }
+
+    @Test
     void doesNotRepeatTheToolNameWhenItsSafeTargetSummaryMatches() {
         TerminalUiState state = reducer.reduce(
                 TerminalUiState.initial(120, 40),

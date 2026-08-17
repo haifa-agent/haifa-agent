@@ -615,6 +615,35 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void projectsUnknownStableProviderFailureCodeWithoutReplacingItWithTheGenericRunCode() {
+        ToolRequest request =
+                toolRequest("sandbox-provision", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(request))),
+                builder -> TestToolPlatform.install(builder, "write", "1.0.0", "write.input", true, invocation -> {
+                    throw new io.haifa.agent.tool.api.ToolInvocationException(
+                            "SANDBOX_PROVISION_FAILED",
+                            io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED,
+                            "sandbox provisioning failed before execution");
+                }));
+
+        var failed = fixture.runtime.start(request("sandbox-provision"));
+        fixture.scheduler.runAll();
+
+        assertThat(fixture.runtime
+                        .find(failed.runId())
+                        .orElseThrow()
+                        .error()
+                        .orElseThrow()
+                        .code())
+                .isEqualTo(AgentErrorCode.TOOL_INVOCATION_FAILED);
+        assertThat(fixture.store.eventsFor(failed.runId()))
+                .filteredOn(event -> event.type().equals("tool.failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("reasonCode", "SANDBOX_PROVISION_FAILED"));
+    }
+
+    @Test
     void rejectsDuplicateToolCalls() {
         ToolRequest duplicate =
                 toolRequest("same-key", "echo", "1.0.0", new ToolArguments("echo.input", "1.0", Map.of()));

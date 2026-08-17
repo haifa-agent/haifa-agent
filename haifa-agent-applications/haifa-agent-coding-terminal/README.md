@@ -161,8 +161,8 @@ tick 重试，不会终止渲染轮询或截断后续回复。
 正常退出或异常关闭时退出 alternate screen，并恢复主屏内容、Attributes、Signal Handler、回显、
 keypad 和光标。
 
-alternate screen 不提供可靠的终端原生历史回滚，因此生产配置启用 mouse cell-motion，将滚轮事件路由到
-Transcript viewport；`PageUp/PageDown` 提供键盘回看，`Shift+拖拽` 保留终端原生文字选择与复制。
+alternate screen 不提供可靠的终端原生历史回滚。生产配置不启用鼠标事件上报，普通拖拽由宿主终端
+原生选择和复制文字；Transcript 使用 `PageUp/PageDown` 回看，PageDown 到底部后恢复自动跟随。
 
 Phase C 的 Textarea 适配层以 grapheme boundary 保存权威光标：CJK、surrogate pair、emoji ZWJ
 序列和 combining mark 的左右移动、退格与删除不会拆分可见字符；多行上下移动按终端 cell width

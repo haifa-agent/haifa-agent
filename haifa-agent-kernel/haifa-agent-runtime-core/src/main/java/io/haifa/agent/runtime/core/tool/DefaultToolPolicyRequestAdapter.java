@@ -34,7 +34,9 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
         var definition = binding.definition();
         String invocationDigest = resourceDigest(definition.name().value(), request);
         String resourceDigest;
-        if (definition.name().value().equals("execution.run")) {
+        boolean execution = definition.name().value().equals("execution.run")
+                || definition.name().value().equals("execution.request_permissions");
+        if (execution) {
             String scratchSpecDigest =
                     executionScratchSpecDigest(definition.inputSchema().document());
             invocationDigest = PolicyDigest.sha256Fields(List.of(invocationDigest, scratchSpecDigest));
@@ -57,7 +59,7 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
                         approvalMode,
                         Optional.empty(),
                         Optional.empty()),
-                new PolicyAction(definition.name().value(), "invoke"),
+                new PolicyAction(execution ? "execution.run" : definition.name().value(), "invoke"),
                 new PolicyResource(
                         "tool", binding.coordinate().externalForm(), Optional.of(resourceDigest), definition.title()),
                 new PolicyRisk(
@@ -76,6 +78,31 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
             Object workdir = request.arguments().values().getOrDefault("workdir", ".");
             if (command instanceof String commandText && workdir instanceof String workdirText) {
                 return PolicyDigest.sha256Fields(List.of(commandText, workdirText));
+            }
+        }
+        if ("execution.request_permissions".equals(capability)) {
+            Map<String, Object> values = request.arguments().values();
+            Object command = values.get("command");
+            Object workdir = values.getOrDefault("workdir", ".");
+            Object prior = values.get("priorToolCallId");
+            Object permission = values.get("requestedPermission");
+            Object justification = values.get("justification");
+            Object operationFamily = values.get("operationFamily");
+            Object timeout = values.getOrDefault("timeoutMillis", "DEFAULT");
+            if (command instanceof String commandText
+                    && workdir instanceof String workdirText
+                    && prior instanceof String priorText
+                    && permission instanceof String permissionText
+                    && justification instanceof String justificationText
+                    && operationFamily instanceof String familyText) {
+                return PolicyDigest.sha256Fields(List.of(
+                        commandText,
+                        workdirText,
+                        priorText,
+                        permissionText,
+                        justificationText,
+                        familyText.trim().toUpperCase(java.util.Locale.ROOT),
+                        String.valueOf(timeout)));
             }
         }
         return ToolPipeline.argumentsDigest(request);

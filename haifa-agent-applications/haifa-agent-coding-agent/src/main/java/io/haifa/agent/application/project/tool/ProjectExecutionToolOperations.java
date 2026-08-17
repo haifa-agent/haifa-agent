@@ -170,19 +170,19 @@ public final class ProjectExecutionToolOperations {
         String operationFamily = operationFamily(arguments.get("operationFamily"));
         var commandClassification = SystemGitCliCommandClassifier.classify(command);
         if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
-            return rejectedCommandClassification(operationFamily, commandClassification);
+            return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
         }
         if ((operationFamily.equals("INSPECT") || operationFamily.equals("DIFF"))
                 && commandClassification.target() != SystemGitCliCommandClassifier.Target.OTHER
                 && !commandClassification.readOnly()) {
-            return rejectedCommandClassification(operationFamily, commandClassification);
+            return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
         }
         if (hasLeadingAbsoluteDirectoryChange(command)) {
-            return rejectedAbsoluteDirectoryChange(operationFamily);
+            return withToolCallId(invocation, rejectedAbsoluteDirectoryChange(operationFamily));
         }
         String workdir = optionalText(arguments, "workdir", ".");
         if (isAbsoluteDirectoryPath(workdir)) {
-            return rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN");
+            return withToolCallId(invocation, rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN"));
         }
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
@@ -197,7 +197,7 @@ public final class ProjectExecutionToolOperations {
             workingDirectory = new WorkspacePath(
                     access.workspaceId(), workdir.equals(".") ? ProjectPath.root() : ProjectPath.of(workdir));
         } catch (IllegalArgumentException exception) {
-            return rejectedWorkdir(operationFamily, "WORKDIR_INVALID");
+            return withToolCallId(invocation, rejectedWorkdir(operationFamily, "WORKDIR_INVALID"));
         }
         ExecutionRequest request = new ExecutionRequest(
                 executionId,
@@ -221,10 +221,28 @@ public final class ProjectExecutionToolOperations {
                 executionLimits(timeout, operationFamily),
                 sandboxProfileRef,
                 ExecutionInput.none(),
-                ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
+                invocationDigest(invocation, command, workdir, scratchSpace),
                 scratchSpace);
-        return executeRequest(
-                request, invocation.cancellation(), invocation.observer(), operationFamily, commandClassification);
+        return withToolCallId(
+                invocation,
+                executeRequest(
+                        request,
+                        invocation.cancellation(),
+                        invocation.observer(),
+                        operationFamily,
+                        commandClassification));
+    }
+
+    private static ToolResult withToolCallId(ToolInvocationRequest invocation, ToolResult result) {
+        var data = new LinkedHashMap<String, Object>(result.structuredData());
+        data.put("toolCallId", invocation.toolCallId().value());
+        return new ToolResult(
+                result.successful(),
+                result.summary(),
+                Map.copyOf(data),
+                result.assets(),
+                result.artifacts(),
+                result.truncated());
     }
 
     private ExecutionLimits executionLimits(Duration timeout, String operationFamily) {
@@ -238,6 +256,25 @@ public final class ProjectExecutionToolOperations {
                 boundedInspection
                         ? io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
                         : io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL);
+    }
+
+    private static String invocationDigest(
+            ToolInvocationRequest invocation, String command, String workdir, ExecutionScratchSpaceSpec scratchSpace) {
+        List<String> fields;
+        if (invocation.binding().definition().name().value().equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
+            Map<String, Object> arguments = invocation.arguments().values();
+            fields = List.of(
+                    command,
+                    workdir,
+                    requiredText(arguments, "priorToolCallId"),
+                    requiredText(arguments, "requestedPermission"),
+                    requiredText(arguments, "justification"),
+                    operationFamily(arguments.get("operationFamily")),
+                    String.valueOf(arguments.getOrDefault("timeoutMillis", "DEFAULT")));
+        } else {
+            fields = List.of(command, workdir);
+        }
+        return ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(fields), scratchSpace);
     }
 
     /**
@@ -326,6 +363,18 @@ public final class ProjectExecutionToolOperations {
         } catch (ExecutionPreflightException exception) {
             throw new ToolInvocationException(
                     exception.code(), ToolDispatchState.NOT_DISPATCHED, exception.getMessage(), exception);
+        } catch (io.haifa.agent.execution.core.ExecutionRejectedException exception) {
+            throw new ToolInvocationException(
+                    exception.code(),
+                    merged.dispatched() ? ToolDispatchState.DISPATCHED : ToolDispatchState.NOT_DISPATCHED,
+                    exception.getMessage(),
+                    exception);
+        } catch (io.haifa.agent.sandbox.api.SandboxException exception) {
+            throw new ToolInvocationException(
+                    exception.code(),
+                    merged.dispatched() ? ToolDispatchState.DISPATCHED : ToolDispatchState.NOT_DISPATCHED,
+                    exception.getMessage(),
+                    exception);
         } finally {
             complete.set(true);
             cancellation.interrupt();
@@ -607,6 +656,10 @@ public final class ProjectExecutionToolOperations {
         private synchronized boolean truncated() {
             String retained = sanitize(new String(output.bytes(), StandardCharsets.UTF_8));
             return upstreamTruncated || output.truncated() || lineCount(retained) > maximumLines;
+        }
+
+        private boolean dispatched() {
+            return started.get();
         }
 
         private static String keepHeadAndTailLines(String value, int maximumLines) {

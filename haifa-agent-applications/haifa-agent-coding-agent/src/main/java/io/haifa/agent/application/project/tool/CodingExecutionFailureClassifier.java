@@ -27,8 +27,19 @@ final class CodingExecutionFailureClassifier {
         String output = boundedOutput.toLowerCase(Locale.ROOT);
         if (providerCode.contains("NETWORK")
                 || output.contains("network is unreachable")
-                || output.contains("temporary failure in name resolution")) {
+                || output.contains("temporary failure in name resolution")
+                || output.contains("could not resolve host")
+                || output.contains("name or service not known")
+                || output.contains("failed to connect")
+                || output.contains("couldn't connect to server")) {
             return new Classification("NETWORK_DENIED", "NETWORK_UNAVAILABLE", "NETWORK");
+        }
+        if (output.contains("permission denied (publickey)")
+                || output.contains("could not read username")
+                || output.contains("authentication failed")
+                || output.contains("not logged into any github hosts")) {
+            return new Classification(
+                    "AUTHENTICATION_UNAVAILABLE", "HOST_AUTHENTICATION_UNAVAILABLE", "AUTHENTICATION");
         }
         if (output.contains("operation not permitted")
                 || output.contains("permission denied")

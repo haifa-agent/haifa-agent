@@ -110,9 +110,23 @@ class LocalCodingAgentTest {
                 defaults.timeout(),
                 defaults.maxIterations(),
                 defaults.maxToolCalls());
+        var isolated = new CliConfiguration(
+                defaults.model(),
+                defaults.enabledTools(),
+                defaults.mcpServers(),
+                localNativeExecution(defaults.execution()),
+                ApprovalMode.ASK,
+                defaults.timeout(),
+                defaults.maxIterations(),
+                defaults.maxToolCalls());
 
-        assertThat(LocalCodingAgent.effectiveBuiltInTools(denied)).doesNotContain("execution.run");
-        assertThat(LocalCodingAgent.effectiveBuiltInTools(defaults)).contains("execution.run");
+        assertThat(LocalCodingAgent.effectiveBuiltInTools(denied))
+                .doesNotContain("execution.run", "execution.request_permissions");
+        assertThat(LocalCodingAgent.effectiveBuiltInTools(defaults))
+                .contains("execution.run")
+                .doesNotContain("execution.request_permissions");
+        assertThat(LocalCodingAgent.effectiveBuiltInTools(isolated))
+                .contains("execution.run", "execution.request_permissions");
     }
 
     @Test
@@ -125,6 +139,7 @@ class LocalCodingAgentTest {
                         "rg --files for file discovery",
                         "rg for text search",
                         "dedicated search wrapper",
+                        "request_permissions is not a general sandbox bypass",
                         "Keep command output bounded");
         assertThat(LocalCodingAgent.executionEnvironmentPrompt("zsh", "Mac OS X", "15.6.1", "aarch64", "21.0.3"))
                 .contains("Host OS: Mac OS X 15.6.1 (aarch64); Java 21.0.3.", "execution_run uses zsh");

@@ -124,8 +124,9 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 实现：偏好保存内部 Model ID 和独立 revision，只允许在无活动 Run/dispatch 时切换，下一新 Run
 冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
-`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch` 与 `execution.run`
-共 11 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或 `github.*` Tool；Git/GitHub 操作由
+`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`execution.run` 与
+`execution.request_permissions` 共 12 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或
+`github.*` Tool；Git/GitHub 操作由
 `execution.run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
 幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
 Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻结该能力；大型仓库的文件发现和内容
@@ -143,6 +144,16 @@ Provider、网络或受信配置变化会改变 Definition/Binding 的安全身�
 未知 wrapper/alias 不能降级为只读，认证环境覆盖和仓库路径逃逸在执行前拒绝。模型自报的操作族仅用于
 语义失败归类和交付意图，不能覆盖可信分类。
 
+`execution.request_permissions -> request_permissions` 不是通用 Sandbox 绕过入口，也不授予可复用权限。
+它只允许引用同一 Run 中一次以 `NETWORK_UNAVAILABLE` 或 `HOST_AUTHENTICATION_UNAVAILABLE` 失败的
+`execution.run`，并要求逐字段复用该结果
+返回的 `toolCallId`、完整 command、逻辑 workdir、operationFamily 和 timeout。Runtime 仍按 Critical /
+Always Approval 创建独立 Policy Decision 与审批 Checkpoint；批准后只用受信 Host 配置及其系统
+`git` / `gh` 登录环境的
+`host-guarded + network allow` Profile 执行这一次调用。只有直接、非破坏性的系统 `git` / `gh` 命令
+可申请；未知、复合、包装、凭据覆盖、路径逃逸、破坏性或结果未知的命令不可升级；Agent 不能创建
+Profile、改变 Policy Decision 或批准自己的申请。
+
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
 `task-planning`、`result-verification`、共享 `git`/`github` 与 Coding `git-delivery` Classpath Skill，
 并允许上层 Application 显式加入
@@ -156,7 +167,8 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 进入冻结 binding；Provider 不读取环境变量、不保存 Credential、不执行 fallback。
 
 配置、权限和精确 Tool 身份继续使用点号命名；模型披露使用 Provider-safe Alias，例如
-`file.read -> file_read` 和 `execution.run -> execution_run`。Alias 只影响模型协议，不改变 Provider
+`file.read -> file_read`、`execution.run -> execution_run` 和
+`execution.request_permissions -> request_permissions`。Alias 只影响模型协议，不改变 Provider
 执行时收到的精确 Tool 名称。历史 frozen Run 中旧 `git.*` identity 仅用于读取持久化交付证据，不能进入
 新 Run 的 Tool Catalog。
 
@@ -167,7 +179,8 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
 目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
-退出码、有界合并首尾、明确省略标记、Output Ref、耗时、安全失败类别、Scratch 状态和 FileChangeSet
+退出码、有界合并首尾、明确省略标记、Output Ref、耗时、安全失败类别、稳定错误码、本次
+`toolCallId`、Scratch 状态和 FileChangeSet
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。

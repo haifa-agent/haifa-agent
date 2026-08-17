@@ -677,9 +677,31 @@ public final class TerminalUiReducer {
         lines.add("Target: " + payload.targetSummary());
         if (!payload.reasonCode().isBlank() && !"NONE".equals(payload.reasonCode())) {
             lines.add("Reason: " + payload.reasonCode());
+            String nextAction = nextAction(payload.reasonCode());
+            if (!nextAction.isBlank()) lines.add("Next: " + nextAction);
         }
         if (!payload.resultRef().isBlank()) lines.add("Result: " + payload.resultRef());
         return String.join("\n", lines);
+    }
+
+    private static String nextAction(String reasonCode) {
+        return switch (reasonCode) {
+            case "COMMAND_CLASSIFICATION_REJECTED" ->
+                "Split compound or wrapped shell text into one simple command per tool call.";
+            case "ABSOLUTE_WORKDIR_FORBIDDEN", "WORKDIR_INVALID", "CWD_DENIED" ->
+                "Use the workspace-relative workdir field; do not prefix the command with an absolute cd.";
+            case "NETWORK_UNAVAILABLE" ->
+                "If the frozen profile denied network access, request permission for this exact failed command.";
+            case "HOST_AUTHENTICATION_UNAVAILABLE" ->
+                "If system git or gh is already signed in, request permission to retry this exact command on the trusted host.";
+            case "PERMISSION_REQUEST_NOT_ELIGIBLE" ->
+                "Rewrite the command or stay within the configured workspace and sandbox boundary.";
+            case "PERMISSION_REQUEST_ALREADY_USED" ->
+                "Inspect the prior attempt; do not request the same permission again.";
+            case "OUTCOME_UNKNOWN", "TOOL_OUTCOME_UNKNOWN" ->
+                "Inspect authoritative local or remote state before deciding whether another command is safe.";
+            default -> "";
+        };
     }
 
     private static String toolTitle(RunEventPayloads.ToolLifecycle payload) {

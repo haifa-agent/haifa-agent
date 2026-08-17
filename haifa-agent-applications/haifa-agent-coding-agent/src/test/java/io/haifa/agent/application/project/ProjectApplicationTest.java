@@ -192,7 +192,7 @@ class ProjectApplicationTest {
     }
 
     @Test
-    void publishesElevenProjectToolsWithCompleteFrozenDefinitions() {
+    void publishesProjectToolsIncludingControlledPermissionRequests() {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
                 catalog.names(),
@@ -202,7 +202,7 @@ class ProjectApplicationTest {
                 executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(11)
+                .hasSize(12)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -215,7 +215,8 @@ class ProjectApplicationTest {
                         "file_read",
                         "file_search",
                         "file_stat",
-                        "file_write");
+                        "file_write",
+                        "request_permissions");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
@@ -224,6 +225,20 @@ class ProjectApplicationTest {
                     .isNotEmpty();
             assertThat(binding.coordinate().definitionHash().value()).matches("[0-9a-f]{64}");
         });
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("request_permissions"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().approvalRequirement())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
+                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.CRITICAL);
+                    assertThat(binding.definition()
+                                    .inputSchema()
+                                    .document()
+                                    .get("required")
+                                    .toString())
+                            .contains("priorToolCallId", "requestedPermission", "justification");
+                });
     }
 
     @Test
