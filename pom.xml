@@ -60,6 +60,8 @@
 
         <skipITs>true</skipITs>
         <skipUnitTests>false</skipUnitTests>
+        <haifa.surefire.groups></haifa.surefire.groups>
+        <haifa.surefire.excludedGroups>slow</haifa.surefire.excludedGroups>
         <haifa.surefire.reportsDirectory>${project.build.directory}/surefire-reports</haifa.surefire.reportsDirectory>
         <haifa.failsafe.reportsDirectory>${project.build.directory}/failsafe-reports</haifa.failsafe.reportsDirectory>
     </properties>
@@ -288,7 +290,7 @@
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
-                <artifactId>haifa-agent-testkit</artifactId>
+                <artifactId>haifa-agent-test-harness</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -380,6 +382,8 @@
                         <useModulePath>false</useModulePath>
                         <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
                         <skipTests>${skipUnitTests}</skipTests>
+                        <groups>${haifa.surefire.groups}</groups>
+                        <excludedGroups>${haifa.surefire.excludedGroups}</excludedGroups>
                         <reportsDirectory>${haifa.surefire.reportsDirectory}</reportsDirectory>
                         <includes>
                             <include>**/*Test.java</include>
@@ -528,6 +532,15 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>slow-tests</id>
+            <properties>
+                <skipITs>true</skipITs>
+                <skipUnitTests>false</skipUnitTests>
+                <haifa.surefire.groups>slow</haifa.surefire.groups>
+                <haifa.surefire.excludedGroups></haifa.surefire.excludedGroups>
+            </properties>
+        </profile>
         <profile>
             <id>ci-fast</id>
             <properties>

@@ -1,0 +1,7 @@
+schemaVersion: 1
+id: autonomous-delivery-v1
+version: 1
+workspace: cases
+acceptance: cases
+license: repository-owned
+contentSha256: edcddcad6cf7e62bf63de631e21ad3eaae58925fdc70b7816cf177af2d1d0321

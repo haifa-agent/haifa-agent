@@ -278,7 +278,7 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - 可恢复的 Coding Session、tui4j Terminal 和唯一可执行 CLI；
 - Personal Assistant 的纯 Java Application、本机 loopback-only Spring Boot WebFlux Server、
   React Web、只读诊断 Admin、持久 Mission 与精简 Deep Research Product Skill；
-- Reactor 末端的 Testkit、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
+- Reactor 末端的 Test Harness、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
 
 ## 架构
 
@@ -311,7 +311,7 @@ Core、Runtime 或 Capability API。Spring Framework 从适配边界开始引入
 | `haifa-agent-sdk/`、`haifa-agent-sdk-starter/` | 高层纯 Java Facade 与安全默认 Quickstart。 |
 | `haifa-agent-spring/` | Spring Boot 自动装配与依赖 Starter。 |
 | `haifa-agent-applications/` | Coding Agent、CLI、Personal Assistant、SDK 示例与 Runtime Demo。 |
-| `haifa-agent-testing/` | Reactor 末端的 Testkit、Fixture、TCK、Integration 与 E2E。 |
+| `haifa-agent-testing/` | Reactor 末端的 Harness、Fixture、TCK、Integration 与 E2E。 |
 | `examples/haifa-agent-example/` | 不加入 Reactor 的独立消费者构建。 |
 
 详细模块、依赖方向和稳定边界以
@@ -350,6 +350,9 @@ macOS / Linux：
 
 # 本地最终门禁，L3 固定 -T 2
 ./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
+
+# 显式执行默认排除的慢速 Surefire 测试
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- -Pslow-tests test
 ```
 
 Windows PowerShell：
@@ -365,7 +368,12 @@ Windows PowerShell：
 .\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' test
 
 .\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 '--' -Pci-fast clean verify
+
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' -Pslow-tests test
 ```
+
+普通 Surefire、L2 和 L3 `ci-fast` 默认排除类级 `@Tag("slow")`；当前慢测集合及精确运行方式见
+[`build-support/README.md`](build-support/README.md)。测试代码仍由 `slow-tests` Profile 显式执行。
 
 同一 SHA 已通过 `ci-fast` 后，可使用 `-Pci-integration-only verify` 只运行 Failsafe Integration。
 Release 验证必须通过 `-pl` 指定受影响模块；完整分层矩阵见

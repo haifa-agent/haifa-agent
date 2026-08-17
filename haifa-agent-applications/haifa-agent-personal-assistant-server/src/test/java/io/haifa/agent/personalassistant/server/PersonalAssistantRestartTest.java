@@ -29,10 +29,12 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 
+@Tag("slow")
 class PersonalAssistantRestartTest {
     private static final ObjectMapper JSON = new ObjectMapper();
 

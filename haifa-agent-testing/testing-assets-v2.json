@@ -3,8 +3,7 @@
   "repositoryId": "haifa-agent",
   "coverageRoots": [
     "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery",
-    "haifa-agent-testing/haifa-agent-e2e-tests/src/test/resources/coding-e2e",
-    "haifa-agent-testing/haifa-agent-testkit/src/test/resources/io/haifa/agent/testing/result"
+    "haifa-agent-testing/haifa-agent-e2e-tests/src/test/resources/coding-e2e"
   ],
   "assets": [
     {
@@ -80,63 +79,27 @@
       "coverageMode": "EXACT"
     },
     {
-      "assetId": "testing-domain-glossary",
-      "path": "haifa-agent-testing/TESTING-DOMAIN-GLOSSARY.md",
-      "kind": "README",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/README.md"],
-      "replacement": "",
-      "rationale": "Canonical Chinese translations and concise explanations for testing-domain terminology.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "java-critical-path-autonomous-delivery-tooling",
-      "path": "haifa-agent-testing/JAVA-CRITICAL-PATH-AND-AUTONOMOUS-DELIVERY-TOOLING.md",
-      "kind": "README",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/README.md"],
-      "replacement": "",
-      "rationale": "Reviewed Java tooling and benchmark adoption guidance for Critical Path and Autonomous Delivery testing.",
-      "coverageMode": "EXACT"
-    },
-    {
       "assetId": "testing-asset-inventory-v2",
       "path": "haifa-agent-testing/testing-assets-v2.json",
       "kind": "MANIFEST",
       "lifecycle": "ACTIVE",
       "disposition": "KEEP",
       "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/main/java/io/haifa/agent/testing/assets/TestingAssetPreflight.java"],
+      "referencedBy": ["haifa-agent-testing/haifa-agent-test-harness/src/main/java/io/haifa/agent/testing/assets/TestingAssetPreflight.java"],
       "replacement": "",
       "rationale": "Fine-grained lifecycle, ownership, reference, and orphan inventory for public testing assets.",
       "coverageMode": "EXACT"
     },
     {
-      "assetId": "coding-case-coverage",
-      "path": "haifa-agent-testing/coding-case-coverage-v1.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/test/java/io/haifa/agent/testing/assets/CodingCaseCoverageManifestTest.java"],
-      "replacement": "",
-      "rationale": "Crosswalk prevents capability-title similarity from being treated as equivalent coverage.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "testkit-module",
-      "path": "haifa-agent-testing/haifa-agent-testkit",
+      "assetId": "test-harness-module",
+      "path": "haifa-agent-testing/haifa-agent-test-harness",
       "kind": "MODULE",
       "lifecycle": "ACTIVE",
       "disposition": "KEEP",
       "owner": "testing-platform",
       "referencedBy": ["haifa-agent-testing/pom.xml"],
       "replacement": "",
-      "rationale": "Shared suite, campaign, evidence, and safety infrastructure; module registration does not cover descendants.",
+      "rationale": "Executable suite, campaign, authorization, evidence, and product-client test control plane.",
       "coverageMode": "EXACT"
     },
     {
@@ -195,8 +158,8 @@
       "disposition": "DELETE",
       "owner": "testing-platform",
       "referencedBy": [],
-      "replacement": "haifa-agent-testing/haifa-agent-testkit/src/test/java/io/haifa/agent/testing/suite/SuiteRunnerMainTest.java",
-      "rationale": "Temporary-YAML plan coverage belongs in Testkit runner tests.",
+      "replacement": "haifa-agent-testing/haifa-agent-test-harness/src/test/java/io/haifa/agent/testing/suite/CriticalPathPlanResolverTest.java",
+      "rationale": "Temporary-YAML plan coverage belongs in Test Harness runner tests.",
       "coverageMode": "EXACT"
     },
     {
@@ -236,279 +199,18 @@
       "coverageMode": "EXACT"
     },
     {
-      "assetId": "autonomous-delivery-catalog",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/main/java/io/haifa/agent/testing/delivery/AutonomousDeliveryCaseCatalog.java"],
-      "replacement": "",
-      "rationale": "Stable catalog and digest source for all Autonomous Delivery cases.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "autonomous-delivery-harness-protocol",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/harness-protocol-v1.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/main/java/io/haifa/agent/testing/delivery/AutonomousDeliveryCaseCatalog.java"],
-      "replacement": "",
-      "rationale": "Versioned Harness contract and artifact field source.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "autonomous-delivery-fixture-readme",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/README.md",
-      "kind": "README",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/README.md"],
-      "replacement": "",
-      "rationale": "Fixture package ownership, safety, and versioning rules.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "autonomous-delivery-acceptance-schema",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/schemas/acceptance-result.schema.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/main/java/io/haifa/agent/testing/delivery/AutonomousDeliveryCaseCatalog.java"],
-      "replacement": "",
-      "rationale": "Acceptance result contract.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "autonomous-delivery-comparison-schema",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/schemas/comparison.schema.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/main/java/io/haifa/agent/testing/delivery/AutonomousDeliveryCaseCatalog.java"],
-      "replacement": "",
-      "rationale": "Historical comparison result contract.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "autonomous-delivery-run-result-schema",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/schemas/run-result.schema.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/main/java/io/haifa/agent/testing/delivery/AutonomousDeliveryCaseCatalog.java"],
-      "replacement": "",
-      "rationale": "Per-repeat run result contract.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "autonomous-delivery-case-01",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/01",
+      "assetId": "autonomous-delivery-fixture-package",
+      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery",
       "kind": "FIXTURE",
       "lifecycle": "ACTIVE",
       "disposition": "KEEP",
       "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
+      "referencedBy": [
+        "haifa-agent-testing/haifa-agent-test-harness/src/main/java/io/haifa/agent/testing/fixtures/FixturePackageCatalog.java",
+        "haifa-agent-testing/haifa-agent-test-harness/src/main/java/io/haifa/agent/testing/delivery/AutonomousDeliveryCaseCatalog.java"
+      ],
       "replacement": "",
-      "rationale": "Reviewed immutable Case 01 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-02",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/02",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 02 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-03",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/03",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 03 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-04",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/04",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 04 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-05",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/05",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 05 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-06",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/06",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 06 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-07",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/07",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 07 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-08",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/08",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 08 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-09",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/09",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 09 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-10",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/10",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 10 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-11",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/11",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 11 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-12",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/12",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 12 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-13",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/13",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 13 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-14",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/14",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 14 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-15",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/15",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 15 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-16",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/16",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 16 package.",
-      "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "autonomous-delivery-case-17",
-      "path": "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/cases/17",
-      "kind": "FIXTURE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/autonomous-delivery/catalog-v1.json"],
-      "replacement": "",
-      "rationale": "Reviewed immutable Case 17 package.",
+      "rationale": "One self-contained package covers the catalog, protocol, schemas, and all case files with a normalized digest.",
       "coverageMode": "SUBTREE"
     },
     {
@@ -642,30 +344,6 @@
       "replacement": "",
       "rationale": "Reviewed single-file bugfix fixture package.",
       "coverageMode": "SUBTREE"
-    },
-    {
-      "assetId": "functional-result-schema-mirror",
-      "path": "haifa-agent-testing/haifa-agent-testkit/src/test/resources/io/haifa/agent/testing/result/test-result.schema.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/test/java/io/haifa/agent/testing/result/TestResultProjectionSchemaTest.java"],
-      "replacement": "",
-      "rationale": "Classpath mirror used by repository-independent schema contract tests.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "result-projection-schema-mirror",
-      "path": "haifa-agent-testing/haifa-agent-testkit/src/test/resources/io/haifa/agent/testing/result/test-result-projection.schema.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-testkit/src/test/java/io/haifa/agent/testing/result/TestResultProjectionSchemaTest.java"],
-      "replacement": "",
-      "rationale": "Classpath mirror used by repository-independent projection contract tests.",
-      "coverageMode": "EXACT"
     }
   ]
 }

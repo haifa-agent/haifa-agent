@@ -16,7 +16,8 @@ Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSession
 Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-terminal` 只负责 UI，不是第二个
 可执行胖 JAR。
 
-非 CLI 宿主和产品语义测试使用公开装配入口 `StandaloneCodingAgents.open(workspace, configuration)`；
+非 CLI 宿主和产品语义测试使用公开装配入口 `StandaloneCodingAgents.factory()`，按公共
+`CodingAgentClientFactory` 契约创建标准客户端；
 返回的 `StandaloneCodingAgent` 暴露 `CodingSessionClient`、`ProjectId` 和安全的装配元数据，并通过
 `close()` 统一释放资源。需要为每次隔离运行注入不同 SQLite/Transcript 路径时，可使用接收显式环境
 Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case。

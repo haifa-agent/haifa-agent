@@ -331,39 +331,34 @@ class LocalCodingProductAssemblyTest {
 
     private static io.haifa.agent.runtime.api.RunEventPage awaitEvents(
             LocalCodingSessionClient client, AgentRunId runId) throws InterruptedException {
-        Instant deadline = Instant.now().plusSeconds(10);
+        awaitCondition(
+                () -> !client.events(runId, RunEventCursor.beforeFirst(runId), 200)
+                        .items()
+                        .isEmpty(),
+                "events for run " + runId);
         var page = client.events(runId, RunEventCursor.beforeFirst(runId), 200);
-        while (page.items().isEmpty() && Instant.now().isBefore(deadline)) {
-            Thread.sleep(20);
-            page = client.events(runId, RunEventCursor.beforeFirst(runId), 200);
-        }
         assertThat(page.items()).isNotEmpty();
         return page;
     }
 
     private static void awaitTerminal(LocalCodingAgent agent, AgentRunId runId) throws InterruptedException {
-        Instant deadline = Instant.now().plusSeconds(10);
         LocalCodingSessionClient client = client(agent);
+        awaitCondition(() -> client.findRun(runId).orElseThrow().status().isTerminal(), "terminal run " + runId);
         var snapshot = client.findRun(runId).orElseThrow();
-        while (!snapshot.status().isTerminal() && Instant.now().isBefore(deadline)) {
-            Thread.sleep(20);
-            snapshot = client.findRun(runId).orElseThrow();
-        }
         assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
     }
 
     private static void awaitNoActiveRun(LocalCodingAgent agent) throws InterruptedException {
-        Instant deadline = Instant.now().plusSeconds(10);
         LocalCodingSessionClient client = client(agent);
-        while (Instant.now().isBefore(deadline)) {
-            var sessions = client.list(agent.projectId(), 10);
-            if (!sessions.isEmpty()
-                    && client.open(sessions.getFirst().sessionId()).activeRun().isEmpty()) {
-                return;
-            }
-            Thread.sleep(20);
-        }
-        throw new AssertionError("terminal session did not reach an authoritative terminal state");
+        awaitCondition(
+                () -> {
+                    var sessions = client.list(agent.projectId(), 10);
+                    return !sessions.isEmpty()
+                            && client.open(sessions.getFirst().sessionId())
+                                    .activeRun()
+                                    .isEmpty();
+                },
+                "terminal session to reach an authoritative terminal state");
     }
 
     private static void awaitAgent(AtomicReference<LocalCodingAgent> assembled) throws InterruptedException {

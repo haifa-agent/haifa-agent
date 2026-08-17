@@ -2,9 +2,9 @@ package io.haifa.agent.testing.e2e;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.haifa.agent.application.project.product.coding.client.CodingAgentClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAgentClientFactory;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
-import io.haifa.agent.cli.StandaloneCodingAgent;
-import io.haifa.agent.cli.StandaloneCodingAgents;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.api.AgentRunEvent;
@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 
@@ -38,6 +39,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
 @Tag("e2e")
 @Tag("coding-product")
 @Execution(ExecutionMode.SAME_THREAD)
+@ExtendWith(StandardCodingAgentClientExtension.class)
 class InteractionEventHitlLiveE2E {
     private static final Duration RUN_TIMEOUT = Duration.ofMinutes(12);
     private static Path projectRoot;
@@ -59,7 +61,7 @@ class InteractionEventHitlLiveE2E {
     }
 
     @Test
-    void completesInteractionEventAndHitlRoundTrip() throws Exception {
+    void completesInteractionEventAndHitlRoundTrip(CodingAgentClientFactory clients) throws Exception {
         Path caseRoot = newCaseRoot();
         Path workspace = Files.createDirectory(caseRoot.resolve("workspace"));
         Path database = requireAbsolutePath("HAIFA_SQLITE_DATABASE_PATH");
@@ -68,7 +70,7 @@ class InteractionEventHitlLiveE2E {
         Files.createDirectories(transcripts);
 
         Set<String> beforeBaseline = runIds(database);
-        ClientResult baseline = runClient(workspace, "不要调用任何工具。只回答：INTERACTION_MODEL_LIVE_OK。", List.of());
+        ClientResult baseline = runClient(clients, workspace, "不要调用任何工具。只回答：INTERACTION_MODEL_LIVE_OK。", List.of());
         assertCompleted(baseline);
         String baselineRun = onlyNewRun(database, beforeBaseline);
         assertRun(database, baselineRun, 1, 0);
@@ -78,6 +80,7 @@ class InteractionEventHitlLiveE2E {
 
         Set<String> beforeReject = runIds(database);
         ClientResult rejected = runClient(
+                clients,
                 workspace,
                 "只允许调用一次 web_search 搜索今天的 Java Agent Runtime 公开资料，参数只允许 query 和 maxResults=3；"
                         + "如果该调用被拒绝，禁止重试或调用其他工具，只回答 SEARCH_REJECTED_OK。",
@@ -92,6 +95,7 @@ class InteractionEventHitlLiveE2E {
 
         Set<String> beforeApproved = runIds(database);
         ClientResult approved = runClient(
+                clients,
                 workspace,
                 "这是 11 系列 HITL 综合测试。第一步必须调用 web_search 搜索 Alibaba Cloud IQS ReadPageBasic 官方文档，"
                         + "只使用 query 和 maxResults=3；第二步必须从搜索结果选择公开 HTTPS 官方文档 URL，并调用 web_fetch，"
@@ -121,9 +125,10 @@ class InteractionEventHitlLiveE2E {
         assertThat(pendingOutbox(database)).isZero();
     }
 
-    private static ClientResult runClient(Path workspace, String task, List<InteractionAction> actions)
+    private static ClientResult runClient(
+            CodingAgentClientFactory clients, Path workspace, String task, List<InteractionAction> actions)
             throws Exception {
-        try (StandaloneCodingAgent agent = StandaloneCodingAgents.open(workspace, agentConfiguration)) {
+        try (CodingAgentClient agent = clients.open(workspace, agentConfiguration, System.getenv())) {
             return execute(agent.client(), agent.projectId(), task, actions);
         }
     }

@@ -11,6 +11,9 @@
     </parent>
     <artifactId>haifa-agent-cli</artifactId>
     <name>Haifa Agent CLI</name>
+    <properties>
+        <haifa.cli.shade.skip>false</haifa.cli.shade.skip>
+    </properties>
     <dependencies>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-common</artifactId></dependency>
         <dependency><groupId>io.haifa</groupId><artifactId>haifa-agent-core</artifactId></dependency>
@@ -51,6 +54,7 @@
                         <phase>package</phase>
                         <goals><goal>shade</goal></goals>
                         <configuration>
+                            <skip>${haifa.cli.shade.skip}</skip>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">

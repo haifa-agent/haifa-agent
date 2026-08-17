@@ -72,7 +72,7 @@
 | [`examples/haifa-agent-example/`](examples/haifa-agent-example/README.md) | 独立 Pure Java/Spring Boot 消费者应用 | 主仓跟踪但不加入 Reactor；先安装匹配版本制品，再独立构建 |
 | [`haifa-agent-applications/haifa-agent-sdk-example/`](haifa-agent-applications/haifa-agent-sdk-example/README.md) | Basic/Intermediate/Advanced 可运行 SDK 示例与 SQLite 单机持久化参考装配 | 除显式真实 Provider Quickstart 外默认离线；示例模块不发布 |
 | [`haifa-agent-testing/`](haifa-agent-testing/README.md) | Reactor 末端的测试基础设施聚合层 | 生产模块不得依赖测试模块；运行产物不得进入源码仓库 |
-| [`haifa-agent-testing/haifa-agent-testkit/`](haifa-agent-testing/haifa-agent-testkit/README.md) | 跨模块测试辅助能力 | 只提供确定性、无外部副作用的测试支持 |
+| [`haifa-agent-testing/haifa-agent-test-harness/`](haifa-agent-testing/haifa-agent-test-harness/README.md) | 可执行测试控制面 | 位于 Reactor 末端；统一计划、授权、执行和证据生命周期 |
 | [`haifa-agent-testing/haifa-agent-test-fixtures/`](haifa-agent-testing/haifa-agent-test-fixtures/README.md) | 可共享的小型安全 Fixture | 禁止秘密、生产数据、主机路径和运行产物 |
 | [`haifa-agent-testing/haifa-agent-integration-tests/`](haifa-agent-testing/haifa-agent-integration-tests/README.md) | 确定性跨模块验证 | 默认不访问公网，第三方服务使用 Stub/Fake |
 | [`haifa-agent-testing/haifa-agent-e2e-tests/`](haifa-agent-testing/haifa-agent-e2e-tests/README.md) | CLI 到最终结果的完整产品路径 | 运行根必须位于两个 Git 仓库之外 |
@@ -160,6 +160,9 @@ Linux/macOS 的 Maven Wrapper 为 `./mvnw`，Windows PowerShell 为 `.\mvnw.cmd`
 # 全仓 Unit/Contract/Architecture；增量运行、不 clean
 ./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- test
 
+# 显式运行默认排除的慢速 Surefire 测试
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- -Pslow-tests test
+
 # 应用 Spotless 格式化
 ./build-support/scripts/invoke-haifa-maven.sh --layer L0 -- spotless:apply
 
@@ -181,6 +184,10 @@ Linux/macOS 的 Maven Wrapper 为 `./mvnw`，Windows PowerShell 为 `.\mvnw.cmd`
 `ci-fast` 运行 Unit/Contract/Architecture 并跳过 Integration。`ci-integration` 保留为兼容入口，仍会
 重复 Unit；只有同一 SHA 已通过 `ci-fast` 时才能使用 `ci-integration-only`。`release-artifacts` 跳过
 Unit/Integration，只验证打包、Source、Javadoc 和制品 smoke，不能单独作为代码正确性门禁。
+
+普通 Surefire、L1/L2 和 L3 `ci-fast` 默认排除类级 `@Tag("slow")`。当前慢测集合只包含
+`PersonalAssistantRestartTest`、`PersonalAssistantWebFluxTest`、`SqliteRuntimeRecoveryTest` 和
+`LocalCodingAgentTest`；测试代码不得删除，使用 `-Pslow-tests test` 显式执行，并由夜间三平台工作流覆盖。
 
 本地 Maven 开发优先使用 `build-support/scripts/invoke-haifa-maven.ps1`（Windows）或对应的 `.sh`
 入口。精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。L0/L1 默认串行，

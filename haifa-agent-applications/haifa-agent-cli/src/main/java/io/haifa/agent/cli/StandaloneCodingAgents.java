@@ -1,5 +1,6 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.project.product.coding.client.CodingAgentClientFactory;
 import io.haifa.agent.application.project.product.coding.client.LocalCodingSessionClient;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationProtector;
@@ -20,6 +21,11 @@ import java.util.function.Consumer;
 /** Public highest-layer assembly entry for the standalone Coding Agent product. */
 public final class StandaloneCodingAgents {
     private StandaloneCodingAgents() {}
+
+    /** Public highest-level factory for callers that inject the standard product client contract. */
+    public static CodingAgentClientFactory factory() {
+        return StandaloneCodingAgents::open;
+    }
 
     public static StandaloneCodingAgent open(Path workspace) {
         return openResolved(normalizeWorkspace(workspace), Optional.empty());

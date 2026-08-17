@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -34,6 +35,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "spring.config.location=classpath:/application-deterministic-model.yml")
 @AutoConfigureWebTestClient
+@Tag("slow")
 class PersonalAssistantWebFluxTest {
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(15);
     private static final Duration RUN_STATUS_TIMEOUT = Duration.ofSeconds(30);

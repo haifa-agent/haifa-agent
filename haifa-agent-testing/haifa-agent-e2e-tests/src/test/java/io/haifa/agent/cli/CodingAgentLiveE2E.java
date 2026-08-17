@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import io.haifa.agent.application.project.product.coding.client.CodingAgentClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAgentClientFactory;
+import io.haifa.agent.application.project.product.coding.client.CodingAgentClientMetadata;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.project.domain.ProjectId;
@@ -12,6 +15,7 @@ import io.haifa.agent.runtime.api.AgentRunSnapshot;
 import io.haifa.agent.runtime.api.InteractionAction;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPayloads;
+import io.haifa.agent.testing.e2e.StandardCodingAgentClientExtension;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.URLClassLoader;
@@ -41,6 +45,7 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 
@@ -51,6 +56,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode;
 @Tag("p0")
 @Execution(ExecutionMode.SAME_THREAD)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@ExtendWith(StandardCodingAgentClientExtension.class)
 class CodingAgentLiveE2E {
     private static final String LIVE_SWITCH = "HAIFA_CODING_CLIENT_LIVE_TEST";
     private static final String ROOT_SENTINEL = ".haifa-cli-live-e2e-root";
@@ -82,59 +88,59 @@ class CodingAgentLiveE2E {
 
     @Test
     @Order(1)
-    void repairsSingleFileBoundaryDefect() throws Exception {
-        runCase("HF-06-E2E-CLI-001");
+    void repairsSingleFileBoundaryDefect(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-001", clients);
     }
 
     @Test
     @Order(2)
-    void implementsMultiFileDiscountFeature() throws Exception {
-        runCase("HF-06-E2E-CLI-002");
+    void implementsMultiFileDiscountFeature(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-002", clients);
     }
 
     @Test
     @Order(3)
-    void addsRegressionTestAndRepairsValidation() throws Exception {
-        runCase("HF-06-E2E-CLI-003");
+    void addsRegressionTestAndRepairsValidation(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-003", clients);
     }
 
     @Test
     @Order(4)
-    void repairsMavenSourceDirectoryConfiguration() throws Exception {
-        runCase("HF-06-E2E-CLI-004");
+    void repairsMavenSourceDirectoryConfiguration(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-004", clients);
     }
 
     @Test
     @Order(5)
-    void performsBehaviorPreservingRefactor() throws Exception {
-        runCase("HF-06-E2E-CLI-005");
+    void performsBehaviorPreservingRefactor(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-005", clients);
     }
 
     @Test
     @Order(6)
-    void migratesTypeAcrossFileLifecycle() throws Exception {
-        runCase("HF-06-E2E-CLI-006");
+    void migratesTypeAcrossFileLifecycle(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-006", clients);
     }
 
     @Test
     @Order(7)
-    void preservesUnrelatedDirtyWorkspaceContent() throws Exception {
-        runCase("HF-06-E2E-CLI-007");
+    void preservesUnrelatedDirtyWorkspaceContent(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-007", clients);
     }
 
     @Test
     @Order(8)
-    void diagnosesFailedExecutionAndRecovers() throws Exception {
-        runCase("HF-06-E2E-CLI-008");
+    void diagnosesFailedExecutionAndRecovers(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-008", clients);
     }
 
     @Test
     @Order(9)
-    void rejectedApprovalProducesNoSideEffect() throws Exception {
-        runCase("HF-06-E2E-CLI-009");
+    void rejectedApprovalProducesNoSideEffect(CodingAgentClientFactory clients) throws Exception {
+        runCase("HF-06-E2E-CLI-009", clients);
     }
 
-    private static void runCase(String caseId) throws Exception {
+    private static void runCase(String caseId, CodingAgentClientFactory clients) throws Exception {
         CaseSpec specification = Objects.requireNonNull(CASES.get(caseId), "unknown live case " + caseId);
         Path caseRoot = Files.createDirectory(approvedRoot.resolve(caseId + "-" + java.util.UUID.randomUUID()));
         Path workspace = Files.createDirectory(caseRoot.resolve("workspace"));
@@ -146,8 +152,8 @@ class CodingAgentLiveE2E {
                 .collect(Collectors.toMap(path -> path, path -> digest(workspace.resolve(path))));
         Instant startedAt = now();
         ClientOutcome outcome;
-        StandaloneCodingAgentMetadata metadata;
-        try (StandaloneCodingAgent agent = StandaloneCodingAgents.open(workspace, agentConfiguration)) {
+        CodingAgentClientMetadata metadata;
+        try (CodingAgentClient agent = clients.open(workspace, agentConfiguration, System.getenv())) {
             metadata = agent.metadata();
             outcome = executeCase(specification, agent.client(), agent.projectId(), startedAt);
         }
@@ -399,7 +405,7 @@ class CodingAgentLiveE2E {
         assertThat(executedSideEffects).isZero();
     }
 
-    private static void assertRealModelEvidence(List<AgentRunEvent> events, StandaloneCodingAgentMetadata metadata) {
+    private static void assertRealModelEvidence(List<AgentRunEvent> events, CodingAgentClientMetadata metadata) {
         List<RunEventPayloads.ModelLifecycle> modelCalls = events.stream()
                 .map(AgentRunEvent::payload)
                 .filter(RunEventPayloads.ModelLifecycle.class::isInstance)
@@ -477,7 +483,7 @@ class CodingAgentLiveE2E {
             CaseSpec specification,
             AgentRunSnapshot completed,
             List<AgentRunEvent> events,
-            StandaloneCodingAgentMetadata metadata,
+            CodingAgentClientMetadata metadata,
             String fixtureDigest,
             Duration duration,
             int rejectedApprovals,
