@@ -842,6 +842,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
     }
 
     /** Reclaims a run whose physical executor disappeared after durable checkpointing. */
+    @Override
     public AgentRunSnapshot recover(AgentRunId runId) {
         AgentRun run = requireRun(runId);
         requireCaller(run);

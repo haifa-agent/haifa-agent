@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -206,7 +207,7 @@ class PersonalObservabilityTest {
     }
 
     @Test
-    void recoveredRunObservationUsesTheSdkLimitAndCannotBreakStartup() {
+    void activeRunRecoveryScanUsesTheSdkLimitAndCannotBreakStartup() {
         LogCapture capture = attach(PersonalRunLoggingService.class);
         PersonalAssistantApplication application = mock(PersonalAssistantApplication.class);
         when(application.conversations(Optional.empty(), java.util.Set.of("ACTIVE"), 100))
@@ -214,14 +215,50 @@ class PersonalObservabilityTest {
         PersonalRunLoggingService service = new PersonalRunLoggingService(application);
 
         try {
-            assertThatCode(service::observeRecoveredRuns).doesNotThrowAnyException();
+            assertThatCode(service::recoverAndObserveActiveRuns).doesNotThrowAnyException();
 
             verify(application).conversations(Optional.empty(), java.util.Set.of("ACTIVE"), 100);
             assertThat(formatted(capture))
-                    .contains("event=run.recovery-observation.failed", "failureType=java.lang.IllegalStateException")
+                    .contains("event=run.recovery-scan.failed", "failureType=java.lang.IllegalStateException")
                     .doesNotContain(SECRET_FAILURE);
         } finally {
             detach(capture);
+        }
+    }
+
+    @Test
+    void startupRecoversExecutingRunsButOnlyObservesWaitingRuns() {
+        PersonalAssistantApplication application = mock(PersonalAssistantApplication.class);
+        var executingConversation = mock(PersonalAssistantApplication.ConversationView.class);
+        var waitingConversation = mock(PersonalAssistantApplication.ConversationView.class);
+        var executingRun = mock(PersonalAssistantApplication.RunView.class);
+        var waitingRun = mock(PersonalAssistantApplication.RunView.class);
+        when(executingConversation.id()).thenReturn("conversation-running");
+        when(executingConversation.activeRunId()).thenReturn(Optional.of("run-running"));
+        when(waitingConversation.id()).thenReturn("conversation-waiting");
+        when(waitingConversation.activeRunId()).thenReturn(Optional.of("run-waiting"));
+        when(executingRun.status()).thenReturn("RUNNING");
+        when(waitingRun.status()).thenReturn("WAITING_APPROVAL");
+        when(application.conversations(Optional.empty(), java.util.Set.of("ACTIVE"), 100))
+                .thenReturn(List.of(executingConversation, waitingConversation));
+        when(application.run("run-running")).thenReturn(Optional.of(executingRun));
+        when(application.run("run-waiting")).thenReturn(Optional.of(waitingRun));
+        when(application.recover("run-running")).thenReturn(executingRun);
+        when(application.subscribe(eq("run-running"), any(PersonalAssistantApplication.StreamListener.class)))
+                .thenReturn(() -> {});
+        when(application.subscribe(eq("run-waiting"), any(PersonalAssistantApplication.StreamListener.class)))
+                .thenReturn(() -> {});
+        PersonalRunLoggingService service = new PersonalRunLoggingService(application);
+
+        try {
+            service.recoverAndObserveActiveRuns();
+
+            verify(application).recover("run-running");
+            verify(application, never()).recover("run-waiting");
+            verify(application).subscribe(eq("run-running"), any(PersonalAssistantApplication.StreamListener.class));
+            verify(application).subscribe(eq("run-waiting"), any(PersonalAssistantApplication.StreamListener.class));
+        } finally {
+            service.close();
         }
     }
 

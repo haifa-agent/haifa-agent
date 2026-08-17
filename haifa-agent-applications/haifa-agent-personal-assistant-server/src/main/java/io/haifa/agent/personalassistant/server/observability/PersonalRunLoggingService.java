@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 public final class PersonalRunLoggingService {
     private static final Logger LOGGER = LoggerFactory.getLogger(PersonalRunLoggingService.class);
     private static final Set<String> TERMINAL_RUN_STATUSES = Set.of("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT");
+    private static final Set<String> RECOVERABLE_RUN_STATUSES = Set.of("RUNNING", "SUSPENDING");
 
     private final PersonalAssistantApplication application;
     private final Map<String, PersonalAssistantApplication.StreamSubscription> subscriptions =
@@ -60,17 +61,44 @@ public final class PersonalRunLoggingService {
     }
 
     @EventListener(ApplicationReadyEvent.class)
-    void observeRecoveredRuns() {
+    void recoverAndObserveActiveRuns() {
         try {
             application.conversations(Optional.empty(), Set.of("ACTIVE"), 100).stream()
                     .filter(conversation -> conversation.activeRunId().isPresent())
-                    .forEach(conversation -> observe(
-                            conversation.id(), conversation.activeRunId().orElseThrow(), "application-recovered"));
+                    .forEach(this::recoverAndObserve);
         } catch (RuntimeException failure) {
             LOGGER.warn(
-                    "event=run.recovery-observation.failed failureType={}",
+                    "event=run.recovery-scan.failed failureType={}",
                     failure.getClass().getName());
         }
+    }
+
+    private void recoverAndObserve(PersonalAssistantApplication.ConversationView conversation) {
+        String runId = conversation.activeRunId().orElseThrow();
+        String trigger = "application-active-run";
+        try {
+            Optional<PersonalAssistantApplication.RunView> current = application.run(runId);
+            if (current.isPresent()) {
+                PersonalAssistantApplication.RunView run = current.orElseThrow();
+                if (RECOVERABLE_RUN_STATUSES.contains(run.status())) {
+                    application.recover(runId);
+                    trigger = "application-recovered";
+                    LOGGER.info(
+                            "event=run.recovery.submitted conversationId={} runId={} previousStatus={}",
+                            conversation.id(),
+                            runId,
+                            run.status());
+                }
+            }
+        } catch (RuntimeException failure) {
+            trigger = "application-recovery-failed";
+            LOGGER.warn(
+                    "event=run.recovery.failed conversationId={} runId={} failureType={}",
+                    conversation.id(),
+                    runId,
+                    failure.getClass().getName());
+        }
+        observe(conversation.id(), runId, trigger);
     }
 
     private void log(String conversationId, PersonalAssistantApplication.StreamEvent event) {

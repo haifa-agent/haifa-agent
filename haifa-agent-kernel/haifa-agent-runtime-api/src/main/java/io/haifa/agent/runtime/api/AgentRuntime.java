@@ -10,6 +10,16 @@ public interface AgentRuntime {
 
     AgentRunSnapshot resume(ResumeAgentRunRequest request);
 
+    /**
+     * Reclaims an executing Run whose physical owner belongs to a previous Runtime instance.
+     *
+     * <p>Implementations must preserve frozen configuration and Tool recovery semantics. A Run
+     * that is still owned by the current Runtime must be rejected rather than executed twice.
+     */
+    default AgentRunSnapshot recover(io.haifa.agent.core.run.AgentRunId runId) {
+        throw new UnsupportedOperationException("durable Run recovery is not supported");
+    }
+
     AgentRunSnapshot respond(InteractionResponse response);
 
     default InteractionResponseReceipt respond(InteractionResponseSubmission response) {

@@ -43,6 +43,11 @@ public final class AgentRuns {
         return runtime.find(Objects.requireNonNull(runId, "runId must not be null"));
     }
 
+    /** Reclaims a durable executing Run after its previous physical Runtime disappeared. */
+    public AgentRunSnapshot recover(AgentRunId runId) {
+        return runtime.recover(Objects.requireNonNull(runId, "runId must not be null"));
+    }
+
     public Optional<AgentRunViewSnapshot> view(AgentRunId runId) {
         return runtime.view(Objects.requireNonNull(runId, "runId must not be null"));
     }

@@ -20,6 +20,9 @@ SDK 不替代 Core/Runtime 状态机，不包含 Spring、SQLite、MCP SDK 或�
 扫描 Classpath 自动导入能力。具体实现仍由对应 Integration/Application 模块提供，并在进程启动时
 显式注册。
 
+`AgentRuns.recover(runId)` 将失去旧物理执行者的持久 Run 交回同一 Runtime 恢复协议；SDK 不复制
+Checkpoint、Tool Journal 或幂等重放判断。仍由当前实例拥有的 Run 会被拒绝，防止双重执行。
+
 首次体验可直接使用相邻的 `haifa-agent-sdk-starter`；它提供模型无关的快速入口，并安全地默认装配
 DeepSeek V4 Flash 与进程内 Store。需要持久化、身份、治理或自定义 Provider 时再使用本模块的完整
 装配 API。
