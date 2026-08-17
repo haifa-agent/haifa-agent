@@ -5,7 +5,7 @@
 
 当前模块暂不保存用例：
 
-- Suite Schema、Runner Plan 和 fail-closed 行为属于 Testkit 自身契约，由 Testkit 单元测试覆盖；
+- Suite Schema、Runner Plan 和 fail-closed 行为属于 Harness 自身契约，由 Harness 单元测试覆盖；
 - OpenAI-compatible loopback、认证、thinking 和 usage 映射属于 Adapter 组件契约，由 Adapter
   相邻测试覆盖。
 

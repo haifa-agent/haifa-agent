@@ -20,10 +20,6 @@
     <dependencies>
         <dependency>
             <groupId>io.haifa</groupId>
-            <artifactId>haifa-agent-testkit</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.haifa</groupId>
             <artifactId>haifa-agent-common</artifactId>
         </dependency>
         <dependency>
@@ -77,7 +73,6 @@
                             <artifactSet>
                                 <includes>
                                     <include>io.haifa:haifa-agent-cli</include>
-                                    <include>io.haifa:haifa-agent-testkit</include>
                                     <include>io.haifa:haifa-agent-test-fixtures</include>
                                 </includes>
                             </artifactSet>

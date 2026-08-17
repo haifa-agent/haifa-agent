@@ -72,7 +72,6 @@
 | [`examples/haifa-agent-example/`](examples/haifa-agent-example/README.md) | 独立 Pure Java/Spring Boot 消费者应用 | 主仓跟踪但不加入 Reactor；先安装匹配版本制品，再独立构建 |
 | [`haifa-agent-applications/haifa-agent-sdk-example/`](haifa-agent-applications/haifa-agent-sdk-example/README.md) | Basic/Intermediate/Advanced 可运行 SDK 示例与 SQLite 单机持久化参考装配 | 除显式真实 Provider Quickstart 外默认离线；示例模块不发布 |
 | [`haifa-agent-testing/`](haifa-agent-testing/README.md) | Reactor 末端的测试基础设施聚合层 | 生产模块不得依赖测试模块；运行产物不得进入源码仓库 |
-| [`haifa-agent-testing/haifa-agent-testkit/`](haifa-agent-testing/haifa-agent-testkit/README.md) | 跨模块测试辅助能力 | 只提供确定性、无外部副作用的测试支持 |
 | [`haifa-agent-testing/haifa-agent-test-harness/`](haifa-agent-testing/haifa-agent-test-harness/README.md) | 可执行测试控制面 | 位于 Reactor 末端；统一计划、授权、执行和证据生命周期 |
 | [`haifa-agent-testing/haifa-agent-test-fixtures/`](haifa-agent-testing/haifa-agent-test-fixtures/README.md) | 可共享的小型安全 Fixture | 禁止秘密、生产数据、主机路径和运行产物 |
 | [`haifa-agent-testing/haifa-agent-integration-tests/`](haifa-agent-testing/haifa-agent-integration-tests/README.md) | 确定性跨模块验证 | 默认不访问公网，第三方服务使用 Stub/Fake |

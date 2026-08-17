@@ -28,8 +28,13 @@ class ResolvedTestPlanTest {
     void bindsEveryReviewedInputAndExactApproval() {
         ResolvedTestPlan first = ResolvedTestPlan.freeze(Map.of("suite", "a"));
         ResolvedTestPlan changed = ResolvedTestPlan.freeze(Map.of("suite", "b"));
+        ResolvedTestPlan runnerBound = first.withReviewedInput("runnerArtifact", Map.of("sha256", "a".repeat(64)));
 
         assertNotEquals(first.sha256(), changed.sha256());
+        assertNotEquals(first.sha256(), runnerBound.sha256());
+        assertEquals(
+                first.sha256(),
+                runnerBound.withoutReviewedInput("runnerArtifact").sha256());
         first.requireApproved(first.sha256());
         assertThrows(IllegalArgumentException.class, () -> first.requireApproved(changed.sha256()));
     }

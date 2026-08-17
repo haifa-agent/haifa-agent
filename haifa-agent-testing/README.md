@@ -5,8 +5,7 @@ Kernel、Capability、Integration 或 Application 的依赖方向。
 
 ## 分层模型
 
-- `haifa-agent-testkit`：后续承载跨模块共享的确定性 Fake、Assertion 和安全测试辅助能力；
-- `haifa-agent-test-harness`：承载 Suite、Agent Profile、运行模式、预算、执行和证据生命周期；
+- `haifa-agent-test-harness`：承载确定性测试辅助、Suite、Agent Profile、运行模式、预算、执行和证据生命周期；
 - `haifa-agent-test-fixtures`：保存多个测试模块共同使用、可安全进入源码仓库的小型 Fixture。
 - `haifa-agent-transport-tck`：不可部署的 HTTP/SSE Contract Test Kit，验证认证授权、协议映射、
   Cursor 重连、背压、SQLite 重启恢复和 Coding/Document/Enterprise 公共语义。
@@ -27,8 +26,7 @@ Integration 与 E2E 之间的层级：
 
 ## 当前子模块
 
-- `haifa-agent-testkit`：无产品装配依赖的确定性摘要、Fake 和断言辅助能力；
-- `haifa-agent-test-harness`：稳定 Case Catalog、Suite Runner、Campaign、授权和证据控制面；
+- `haifa-agent-test-harness`：稳定摘要、Case Catalog、Suite Runner、Campaign、授权和证据控制面；
 - `haifa-agent-test-fixtures`：多个测试模块共享、可安全进入源码仓库的小型 Fixture；
 - `haifa-agent-integration-tests`：确定性的跨模块和测试编排契约验证；
 - `haifa-agent-e2e-tests`：通过标准 Coding Agent 产品客户端验证完整 AgentRun 语义，包含 Simulated 与
@@ -83,11 +81,12 @@ workflow 中的 Fast/Integration/Local Native Job。私有配置仓通过仅登�
 私有仓 checkout 共同证明该 Key 在 Actions 中可用，Deploy Key 的 `read_only` 状态仍需从目标仓库
 设置或 API 审计，不能从掩码日志推断。
 
-Critical Path 与 Autonomous Delivery 保留各自原生状态和 Budget，但都只生成一个权威
-`run-result.json`；较大证据使用带大小和 SHA-256 的相对附件。不存在可独立漂移的第二套结果 Projection。
+Critical Path 与 Autonomous Delivery 保留各自原生状态和 Budget，但每个顶层 Run 只生成一个权威
+`run-result.json`；AD Repeat 只生成局部 `repeat-result.json`。公共 Envelope、Secret Scan、Manifest 和
+只读终结由同一个 Writer 完成，不存在可独立漂移的第二套顶层结果 Projection。
 
 `testing-assets-v2.json` 是当前公共测试资产台账。主仓只对 Autonomous Delivery Fixture、Coding
-E2E Fixture 和 Testkit Schema 镜像等机器资产目录启用 Coverage Root，不机械枚举整个 Testing
+E2E Fixture 和 Harness Schema 镜像等机器资产目录启用 Coverage Root，不机械枚举整个 Testing
 源码树。目录资产默认只登记自身生命周期；只有显式 `SUBTREE` 的完整 Case/Fixture 包可以覆盖后代。
 Release 模式校验两仓完整 v2 台账；Live 只校验本次引用闭包，Dev 不执行全库资产扫描。
 
@@ -95,7 +94,7 @@ Release 模式校验两仓完整 v2 台账；Live 只校验本次引用闭包，
 
 - 产品模块不得依赖本目录中的模块；
 - 测试模块可以按用例需要单向依赖产品模块；
-- Testkit 主代码、产品语义 Suite、E2E 用例和共享 Fixture 的文件名、类型名、协议字段及测试数据都
+- Harness 主代码、产品语义 Suite、E2E 用例和共享 Fixture 的文件名、类型名、协议字段及测试数据都
   必须保持供应商中立；具体供应商只能由 Agent Profile 引用的最高层产品配置注入；
 - 模块私有 Fixture 优先留在相邻模块的 `src/test/resources`；
 - API Key、Token、生产数据、真实 Host Path、原始 Prompt/Provider 响应和运行生成的数据库、Trace、

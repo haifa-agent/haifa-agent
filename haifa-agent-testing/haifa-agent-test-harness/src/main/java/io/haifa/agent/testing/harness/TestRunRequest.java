@@ -11,9 +11,7 @@ public record TestRunRequest(
         String suiteRef,
         String agentProfileRef,
         String platformRef,
-        RunMode mode,
-        Double budgetApproval,
-        Path approvedPlan) {
+        RunMode mode) {
     public TestRunRequest {
         Objects.requireNonNull(projectRoot, "projectRoot must not be null");
         Objects.requireNonNull(configRoot, "configRoot must not be null");

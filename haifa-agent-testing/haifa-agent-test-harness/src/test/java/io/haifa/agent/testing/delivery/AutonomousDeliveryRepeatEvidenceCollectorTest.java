@@ -19,7 +19,7 @@ class AutonomousDeliveryRepeatEvidenceCollectorTest {
                 input(true, clientContract(true)), new EvidenceSecretScanner.Result(1, true, List.of()), usage);
 
         assertTrue(result.gatePassed());
-        assertEquals(true, result.resultArtifact().get("successful"));
+        assertEquals(true, result.resultArtifact().get("gatePassed"));
         assertEquals("GATE_PASSED", result.resultArtifact().get("nativeStatus"));
         assertEquals("PASS", result.resultArtifact().get("hiddenAcceptance"));
         assertEquals(usage, result.resultArtifact().get("usage"));
@@ -45,7 +45,7 @@ class AutonomousDeliveryRepeatEvidenceCollectorTest {
 
         assertFalse(clientFailure.gatePassed());
         assertFalse(secretFailure.gatePassed());
-        assertEquals(false, clientFailure.resultArtifact().get("successful"));
+        assertEquals(false, clientFailure.resultArtifact().get("gatePassed"));
         assertEquals(false, secretFailure.summary().get("gatePassed"));
     }
 

@@ -3,12 +3,9 @@ package io.haifa.agent.testing.delivery;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.haifa.agent.application.project.product.coding.client.CodingAgentClientFactory;
 import io.haifa.agent.testing.authorization.SecretPreflight;
-import io.haifa.agent.testing.evidence.EvidenceFinalizer;
-import io.haifa.agent.testing.evidence.EvidenceSecretScanner;
 import io.haifa.agent.testing.harness.PlatformManifest;
-import io.haifa.agent.testing.harness.ResolvedTestPlan;
-import io.haifa.agent.testing.repository.RepositoryRevision;
-import io.haifa.agent.testing.suite.ResolvedAgentProfile;
+import io.haifa.agent.testing.harness.ResolvedRunContext;
+import io.haifa.agent.testing.harness.RunEvidenceWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -36,54 +33,48 @@ final class AutonomousDeliveryGateCoordinator {
         this.repeatExecutor = new AutonomousDeliveryRepeatExecutor(json, clock, clientFactory);
     }
 
-    Path run(
+    RunEvidenceWriter.NativeResult run(
             Path campaign,
-            String buildCommit,
-            AutonomousDeliverySuiteManifest suite,
-            AutonomousDeliveryCaseCatalog catalog,
-            ResolvedAgentProfile agentProfile,
+            ResolvedRunContext.AutonomousDelivery context,
             Map<String, Path> executablePaths,
             DeliveryHostProfile hostProfile,
-            Path projectRoot,
-            Path configRoot,
-            PlatformManifest.PlatformProfile matrixCombination,
-            RepositoryRevision productRevision,
-            RepositoryRevision testConfigRevision,
-            ResolvedTestPlan executionPlan,
             long approvedMaxCostMinorUnits)
             throws Exception {
-        Objects.requireNonNull(executionPlan, "executionPlan must not be null");
+        Objects.requireNonNull(context, "context must not be null");
+        AutonomousDeliverySuiteManifest suite = context.suite();
         AutonomousDeliveryPhasePolicy phasePolicy = AutonomousDeliveryPhasePolicy.resolve(suite);
         int phaseNumber = phasePolicy.phaseNumber();
         DeliveryToolchainSet toolchains = DeliveryToolchainSet.validate(executablePaths);
-        validateHostProfile(hostProfile, matrixCombination);
+        validateHostProfile(hostProfile, context.platform());
         AutonomousDeliveryLiveBudget.Authorization liveBudget =
                 AutonomousDeliveryLiveBudget.authorize(suite, approvedMaxCostMinorUnits);
         SecretPreflight.ResolvedSecrets requiredEnvironment =
-                SecretPreflight.require(System.getenv(), agentProfile.requiredEnvironmentNames());
-        List<String> selectedSecrets = agentProfile.credentialEnvironmentNames().stream()
+                SecretPreflight.require(System.getenv(), context.agentProfile().requiredEnvironmentNames());
+        List<String> selectedSecrets = context.agentProfile().credentialEnvironmentNames().stream()
                 .map(requiredEnvironment::value)
                 .toList();
 
+        Instant startedAt = now();
+        String buildCommit = context.productRevision().commit();
         Path gate = campaign.resolve("phase-" + phaseNumber)
                 .resolve("build-" + buildCommit)
-                .resolve("gate-" + GATE_TIME.format(now()));
+                .resolve("gate-" + GATE_TIME.format(startedAt));
         Files.createDirectories(gate.getParent());
         Files.createDirectory(gate);
-        writeJson(gate.resolve("execution-plan.json"), executionPlan.artifact());
+        writeJson(gate.resolve("execution-plan.json"), context.nativePlan().artifact());
         writeJson(gate.resolve("live-budget-authorization.json"), liveBudget.artifact());
         long batchStartedNanos = System.nanoTime();
         Map<String, Object> deterministicAnalyze = phasePolicy.requiresDeterministicAnalyze()
                 ? deterministicProbeExecutor.execute(
                         gate,
-                        projectRoot,
+                        context.request().projectRoot(),
                         hostProfile,
                         AutonomousDeliveryDeterministicProbeExecutor.ProbeDefinition.READ_ONLY_ANALYZE)
                 : Map.of("required", false);
         Map<String, Object> deterministicReplay = phasePolicy.requiresDeterministicReplay()
                 ? deterministicProbeExecutor.execute(
                         gate,
-                        projectRoot,
+                        context.request().projectRoot(),
                         hostProfile,
                         AutonomousDeliveryDeterministicProbeExecutor.ProbeDefinition.TRACE_REPLAY)
                 : Map.of("required", false);
@@ -91,7 +82,7 @@ final class AutonomousDeliveryGateCoordinator {
         boolean successful = phasePolicy.prerequisiteEvidencePassed(deterministicAnalyze, deterministicReplay);
         List<Map<String, Object>> results = new ArrayList<>();
         for (AutonomousDeliverySuiteManifest.CaseSelection selection : suite.cases()) {
-            AutonomousDeliveryCase testCase = catalog.require(selection.caseId());
+            AutonomousDeliveryCase testCase = context.catalog().require(selection.caseId());
             for (int repetition = 1; repetition <= selection.repetitions(); repetition++) {
                 Path repeat = gate.resolve("case-" + testCase.caseId()).resolve("repeat-%02d".formatted(repetition));
                 Map<String, Object> result = repeatExecutor.execute(
@@ -100,13 +91,13 @@ final class AutonomousDeliveryGateCoordinator {
                         suite,
                         testCase,
                         repetition,
-                        agentProfile,
+                        context.agentProfile(),
                         toolchains,
                         hostProfile,
-                        matrixCombination,
-                        productRevision,
-                        testConfigRevision,
-                        executionPlan.sha256(),
+                        context.platform(),
+                        context.productRevision(),
+                        context.testConfigRevision(),
+                        context.nativePlan().sha256(),
                         phasePolicy,
                         selectedSecrets);
                 results.add(result);
@@ -115,42 +106,30 @@ final class AutonomousDeliveryGateCoordinator {
                 }
             }
         }
-        RepositoryRevision productRevisionAfter = RepositoryRevision.inspect(projectRoot);
-        RepositoryRevision testConfigRevisionAfter = RepositoryRevision.inspect(configRoot);
         long batchElapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStartedNanos);
         AutonomousDeliveryLiveBudget.Evidence liveBudgetEvidence =
                 AutonomousDeliveryLiveBudget.evidence(suite, liveBudget, results, batchElapsedMillis);
-        AutonomousDeliveryGateResultAggregator.Aggregation aggregation =
+        AutonomousDeliveryGateResultAggregator.NativeResult nativeResult =
                 AutonomousDeliveryGateResultAggregator.aggregate(
                         suite,
-                        matrixCombination,
+                        context.platform(),
                         buildCommit,
-                        productRevision,
-                        testConfigRevision,
-                        productRevisionAfter,
-                        testConfigRevisionAfter,
-                        now(),
                         successful,
                         deterministicAnalyze,
                         deterministicReplay,
                         results,
-                        executionPlan,
                         liveBudgetEvidence);
-        Map<String, Object> summary = aggregation.summary();
-        java.util.LinkedHashMap<String, Object> runResult = new java.util.LinkedHashMap<>(summary);
-        runResult.put("schemaVersion", 1);
-        runResult.put("nativeStatus", aggregation.successful() ? "GATE_PASSED" : "GATE_FAILED");
-        runResult.put("status", aggregation.successful() ? "PASSED" : "FAILED");
-        runResult.put("failureClassification", aggregation.successful() ? "NONE" : "ACCEPTANCE_FAILED");
-        runResult.put("liveBudget", liveBudgetEvidence.artifact());
-        runResult.put("attachments", List.of());
-        writeJson(gate.resolve("run-result.json"), runResult);
-        writeJson(gate.resolve("secret-scan.json"), EvidenceSecretScanner.scan(gate, selectedSecrets));
-        EvidenceFinalizer.finalizeEvidence(gate);
-        if (!aggregation.successful()) {
-            throw new IllegalStateException("Phase " + phaseNumber + " gate failed; immutable evidence: " + gate);
-        }
-        return gate;
+        return new RunEvidenceWriter.NativeResult(
+                gate,
+                startedAt,
+                now(),
+                nativeResult.nativeStatus(),
+                nativeResult.failureClassification(),
+                nativeResult.successful(),
+                liveBudgetEvidence.artifact(),
+                List.of(),
+                nativeResult.artifact(),
+                selectedSecrets);
     }
 
     private static void validateHostProfile(

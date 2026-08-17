@@ -5,41 +5,27 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.haifa.agent.testing.harness.PlatformManifest;
-import io.haifa.agent.testing.harness.ResolvedTestPlan;
-import io.haifa.agent.testing.repository.RepositoryRevision;
-import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class AutonomousDeliveryGateResultAggregatorTest {
-    private static final RepositoryRevision PRODUCT =
-            new RepositoryRevision("1111111111111111111111111111111111111111", false);
-    private static final RepositoryRevision CONFIG =
-            new RepositoryRevision("2222222222222222222222222222222222222222", false);
-
     @Test
     void preservesPhaseThreeSummarySchemaAndDerivedMetrics() {
         List<Map<String, Object>> results = List.of(
                 result("Java", "BUG_FIX", true, true, true, 1, 1, 2, 3, 0, 100, 20),
                 result("Python", "FEATURE", false, false, false, 1, 1, 1, 2, 1, 80, 10));
 
-        AutonomousDeliveryGateResultAggregator.Aggregation aggregation =
+        AutonomousDeliveryGateResultAggregator.NativeResult aggregation =
                 AutonomousDeliveryGateResultAggregator.aggregate(
                         suite("PHASE_3"),
                         combination(),
-                        PRODUCT.commit(),
-                        PRODUCT,
-                        CONFIG,
-                        PRODUCT,
-                        CONFIG,
-                        Instant.parse("2026-07-31T08:00:00Z"),
+                        "1".repeat(40),
                         true,
                         Map.of("required", false),
                         Map.of("required", true, "passed", true),
                         results,
-                        executionPlan(),
                         liveBudget(true));
 
         assertTrue(aggregation.successful());
@@ -51,58 +37,43 @@ class AutonomousDeliveryGateResultAggregatorTest {
                         "matrixRef",
                         "matrixCombination",
                         "buildCommit",
-                        "productRevision",
-                        "testConfigRevision",
-                        "productRevisionAfter",
-                        "testConfigRevisionAfter",
-                        "repositoryStateStable",
-                        "finishedAt",
-                        "successful",
+                        "gatePassed",
                         "executionCalls",
                         "scratchProvisionedCount",
                         "scratchExercised",
                         "deterministicReadOnlyAnalyzeStub",
                         "deterministicTraceReplay",
-                        "executionPlanSha256",
-                        "liveBudget",
                         "results",
                         "capabilityMatrix",
                         "metrics"),
-                List.copyOf(aggregation.summary().keySet()));
-        assertEquals(2, aggregation.summary().get("executionCalls"));
-        Map<?, ?> metrics = (Map<?, ?>) aggregation.summary().get("metrics");
+                List.copyOf(aggregation.artifact().keySet()));
+        assertEquals(2, aggregation.artifact().get("executionCalls"));
+        Map<?, ?> metrics = (Map<?, ?>) aggregation.artifact().get("metrics");
         assertEquals(50.0, metrics.get("autonomousCompletionRate"));
         assertEquals(5L, metrics.get("toolCalls"));
-        Map<?, ?> capabilityMatrix = (Map<?, ?>) aggregation.summary().get("capabilityMatrix");
+        Map<?, ?> capabilityMatrix = (Map<?, ?>) aggregation.artifact().get("capabilityMatrix");
         assertEquals(List.of("Java", "Python"), capabilityMatrix.get("languages"));
         assertEquals("GATE_FAILED", capabilityMatrix.get("nativeStatus"));
     }
 
     @Test
-    void failsSummaryWhenScratchOrRepositoryStabilityDoesNotConverge() {
+    void failsNativeResultWhenScratchDoesNotConverge() {
         Map<String, Object> result = result("Java", "BUG_FIX", true, true, true, 2, 1, 1, 1, 0, 1, 1);
 
-        AutonomousDeliveryGateResultAggregator.Aggregation aggregation =
+        AutonomousDeliveryGateResultAggregator.NativeResult aggregation =
                 AutonomousDeliveryGateResultAggregator.aggregate(
                         suite("PHASE_1"),
                         combination(),
-                        PRODUCT.commit(),
-                        PRODUCT,
-                        CONFIG,
-                        new RepositoryRevision("3333333333333333333333333333333333333333", false),
-                        CONFIG,
-                        Instant.parse("2026-07-31T08:00:00Z"),
+                        "1".repeat(40),
                         true,
                         Map.of("required", false),
                         Map.of("required", false),
                         List.of(result),
-                        executionPlan(),
                         liveBudget(true));
 
         assertFalse(aggregation.successful());
-        assertEquals(false, aggregation.summary().get("repositoryStateStable"));
-        assertEquals(false, aggregation.summary().get("scratchExercised"));
-        assertFalse(aggregation.summary().containsKey("metrics"));
+        assertEquals(false, aggregation.artifact().get("scratchExercised"));
+        assertFalse(aggregation.artifact().containsKey("metrics"));
     }
 
     private static AutonomousDeliverySuiteManifest suite(String phase) {
@@ -129,10 +100,6 @@ class AutonomousDeliveryGateResultAggregatorTest {
                 "LOCAL_NATIVE",
                 "posix-local-native-v1",
                 1);
-    }
-
-    private static ResolvedTestPlan executionPlan() {
-        return new ResolvedTestPlan(1, Map.of("schemaVersion", 1), "a".repeat(64));
     }
 
     private static AutonomousDeliveryLiveBudget.Evidence liveBudget(boolean passed) {

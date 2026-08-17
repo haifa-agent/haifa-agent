@@ -18,7 +18,6 @@ class ProviderNeutralTestAssetNamingTest {
     void suiteAndSharedFixtureImplementationRemainProviderNeutral() throws Exception {
         Path repository = findRepositoryRoot();
         List<Path> roots = List.of(
-                repository.resolve("haifa-agent-testing/haifa-agent-testkit/src/main"),
                 repository.resolve("haifa-agent-testing/haifa-agent-test-harness/src/main"),
                 repository.resolve("haifa-agent-testing/haifa-agent-test-fixtures/src/main"),
                 repository.resolve("haifa-agent-testing/haifa-agent-e2e-tests/src/test"));

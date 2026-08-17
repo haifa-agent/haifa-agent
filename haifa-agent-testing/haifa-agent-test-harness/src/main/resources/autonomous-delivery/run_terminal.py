@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Drive one production Coding Terminal session without handling credentials."""
+"""Drive one production Coding Terminal session from the executable test harness."""
 
 import json
 import hashlib

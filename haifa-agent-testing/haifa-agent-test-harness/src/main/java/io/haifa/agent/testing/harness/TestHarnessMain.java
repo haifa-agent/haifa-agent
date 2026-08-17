@@ -24,25 +24,28 @@ public final class TestHarnessMain {
     }
 
     static int execute(HarnessCliOptions options) throws Exception {
+        RunnerArtifact runnerArtifact = RunnerArtifact.current();
         if (options.action().equals("plan")) {
             ExecutionPlanDocument document = new HarnessPlanService()
-                    .resolve(new TestRunRequest(
-                            options.projectRoot(),
-                            options.configRoot(),
-                            options.runRoot(),
-                            options.suite(),
-                            options.profile(),
-                            options.platform(),
-                            options.mode(),
-                            null,
-                            null));
+                    .resolve(
+                            new TestRunRequest(
+                                    options.projectRoot(),
+                                    options.configRoot(),
+                                    options.runRoot(),
+                                    options.suite(),
+                                    options.profile(),
+                                    options.platform(),
+                                    options.mode()),
+                            runnerArtifact);
             Path output = options.output().toAbsolutePath().normalize();
             if (output.getParent() != null) Files.createDirectories(output.getParent());
             JSON.writerWithDefaultPrettyPrinter().writeValue(output.toFile(), document);
-            System.out.printf("Plan sha256=%s file=%s%n", document.plan().sha256(), output);
+            System.out.printf(
+                    "Plan sha256=%s runnerSha256=%s file=%s%n",
+                    document.plan().sha256(), document.runnerArtifact().sha256(), output);
             return 0;
         }
         ExecutionPlanDocument document = JSON.readValue(options.plan().toFile(), ExecutionPlanDocument.class);
-        return new HarnessRunnerService().run(document, options.budgetApproval());
+        return new HarnessRunnerService(runnerArtifact).run(document, options.budgetApproval());
     }
 }

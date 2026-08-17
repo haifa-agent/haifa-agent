@@ -10,7 +10,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 
-/** Stable SHA-256 helpers shared by test fixtures and evidence protocols. */
+/** Stable SHA-256 helpers owned by the executable test harness. */
 public final class Sha256Digests {
     private Sha256Digests() {}
 

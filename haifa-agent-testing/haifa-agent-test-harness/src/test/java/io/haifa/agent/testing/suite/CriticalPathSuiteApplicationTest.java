@@ -4,7 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.haifa.agent.testing.harness.ExecutionPlanDocument;
+import io.haifa.agent.testing.harness.HarnessPlanService;
+import io.haifa.agent.testing.harness.ResolvedRunContext;
+import io.haifa.agent.testing.harness.RunMode;
+import io.haifa.agent.testing.harness.RunnerArtifact;
+import io.haifa.agent.testing.harness.TestRunRequest;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -54,6 +61,7 @@ class CriticalPathSuiteApplicationTest {
         assertTrue(command.contains("-DskipUnitTests=true"));
         assertTrue(command.contains("-Denforcer.skip=true"));
         assertTrue(command.contains("-Djacoco.skip=true"));
+        assertTrue(command.contains("-Dhaifa.cli.shade.skip=true"));
         assertTrue(command.stream().noneMatch("-Dshade.skip=true"::equals));
     }
 
@@ -75,6 +83,7 @@ class CriticalPathSuiteApplicationTest {
     @Test
     void rejectsIncompatibleEnvironmentDuringPlanOnlyPreflight() throws Exception {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("project"));
+        Files.createDirectory(projectRoot.resolve("docs"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("test-config"));
         Path runRoot = temporaryDirectory.resolve("runs");
         writeRequiredAssetInventories(projectRoot, configRoot);
@@ -106,21 +115,14 @@ class CriticalPathSuiteApplicationTest {
         commitRepository(projectRoot);
         commitRepository(configRoot);
 
-        assertThrows(IllegalArgumentException.class, () -> new CriticalPathSuiteApplication()
-                .run(
-                        new CriticalPathSuiteApplication.Options(
-                                projectRoot,
-                                configRoot,
-                                runRoot,
-                                "pr-real-v1",
-                                currentPlatform() + "-primary",
-                                "coding-primary"),
-                        Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> new HarnessPlanService()
+                .resolve(request(projectRoot, configRoot, runRoot), runner()));
     }
 
     @Test
     void rejectsDirtyTestConfigBeforeExecute() throws Exception {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("execute-project"));
+        Files.createDirectory(projectRoot.resolve("docs"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("execute-test-config"));
         Path runRoot = temporaryDirectory.resolve("execute-runs");
         writeRequiredAssetInventories(projectRoot, configRoot);
@@ -147,22 +149,16 @@ class CriticalPathSuiteApplicationTest {
         commitRepository(configRoot);
         Files.writeString(configRoot.resolve("untracked-override.yaml"), "unsafe: true");
 
+        ResolvedRunContext.CriticalPath context = context(projectRoot, configRoot, runRoot);
         assertThrows(IllegalArgumentException.class, () -> new CriticalPathSuiteApplication()
-                .run(
-                        new CriticalPathSuiteApplication.Options(
-                                projectRoot,
-                                configRoot,
-                                runRoot,
-                                "pr-real-v1",
-                                currentPlatform() + "-primary",
-                                "coding-primary"),
-                        Map.of()));
+                .run(context, new BigDecimal("3.0"), Map.of()));
         assertEquals(false, Files.exists(runRoot));
     }
 
     @Test
     void rejectsExecuteWhenSuiteEstimatedCostExceedsIndependentApproval() throws Exception {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("cost-project"));
+        Files.createDirectory(projectRoot.resolve("docs"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("cost-test-config"));
         Path runRoot = temporaryDirectory.resolve("cost-runs");
         writeRequiredAssetInventories(projectRoot, configRoot);
@@ -188,26 +184,16 @@ class CriticalPathSuiteApplicationTest {
         writeAgentProfile(configRoot, projectRoot);
         commitRepository(configRoot);
 
+        ResolvedRunContext.CriticalPath context = context(projectRoot, configRoot, runRoot);
         assertThrows(IllegalArgumentException.class, () -> new CriticalPathSuiteApplication()
-                .run(
-                        new CriticalPathSuiteApplication.Options(
-                                projectRoot,
-                                configRoot,
-                                runRoot,
-                                "pr-real-v1",
-                                currentPlatform() + "-primary",
-                                "coding-primary"),
-                        Map.of(
-                                "MODEL_API_KEY",
-                                "test-only-placeholder",
-                                "HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD",
-                                "2.99")));
+                .run(context, new BigDecimal("2.99"), Map.of("MODEL_API_KEY", "test-only-placeholder")));
         assertEquals(false, Files.exists(runRoot));
     }
 
     @Test
     void rejectsExecuteWhenResolvedPlanDoesNotMatchIndependentApproval() throws Exception {
         Path projectRoot = Files.createDirectory(temporaryDirectory.resolve("plan-project"));
+        Files.createDirectory(projectRoot.resolve("docs"));
         Path configRoot = Files.createDirectory(temporaryDirectory.resolve("plan-test-config"));
         Path runRoot = temporaryDirectory.resolve("plan-runs");
         writeRequiredAssetInventories(projectRoot, configRoot);
@@ -233,23 +219,35 @@ class CriticalPathSuiteApplicationTest {
         writeAgentProfile(configRoot, projectRoot);
         commitRepository(configRoot);
 
-        assertThrows(IllegalArgumentException.class, () -> new CriticalPathSuiteApplication()
-                .run(
-                        new CriticalPathSuiteApplication.Options(
-                                projectRoot,
-                                configRoot,
-                                runRoot,
-                                "pr-real-v1",
-                                currentPlatform() + "-primary",
-                                "coding-primary"),
-                        Map.of(
-                                "MODEL_API_KEY",
-                                "test-only-placeholder",
-                                "HAIFA_TEST_APPROVED_MAX_ESTIMATED_COST_USD",
-                                "3.0",
-                                "HAIFA_TEST_APPROVED_PLAN_SHA256",
-                                "0000000000000000000000000000000000000000000000000000000000000000")));
+        HarnessPlanService plans = new HarnessPlanService();
+        ExecutionPlanDocument approved = plans.resolve(request(projectRoot, configRoot, runRoot), runner());
+        Files.writeString(configRoot.resolve("changed-after-plan.yaml"), "changed: true");
+        commitRepository(configRoot);
+
+        assertThrows(IllegalArgumentException.class, () -> plans.resolveAndVerify(approved, runner()));
         assertEquals(false, Files.exists(runRoot));
+    }
+
+    private static ResolvedRunContext.CriticalPath context(Path projectRoot, Path configRoot, Path runRoot)
+            throws Exception {
+        HarnessPlanService plans = new HarnessPlanService();
+        ExecutionPlanDocument approved = plans.resolve(request(projectRoot, configRoot, runRoot), runner());
+        return (ResolvedRunContext.CriticalPath) plans.resolveAndVerify(approved, runner());
+    }
+
+    private static TestRunRequest request(Path projectRoot, Path configRoot, Path runRoot) {
+        return new TestRunRequest(
+                projectRoot,
+                configRoot,
+                runRoot,
+                "pr-real-v1",
+                "coding-primary",
+                currentPlatform() + "-primary",
+                RunMode.LIVE);
+    }
+
+    private static RunnerArtifact runner() {
+        return new RunnerArtifact(1, "runner.jar", "a".repeat(64), "io.haifa.agent.testing.harness.TestHarnessMain");
     }
 
     private static void writeRequiredAssetInventories(Path projectRoot, Path configRoot) throws Exception {

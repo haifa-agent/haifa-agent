@@ -58,7 +58,7 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
                         input.runtime().terminalStateObserved()));
         authoritative.put("attachments", attachments);
         authoritative.put("secretScanRef", "secret-scan.json");
-        writeJson(repeat.resolve("run-result.json"), authoritative);
+        writeJson(repeat.resolve("repeat-result.json"), authoritative);
         EvidenceFinalizer.finalizeEvidence(repeat);
         return new Result(result.summary(), Map.copyOf(authoritative), result.gatePassed());
     }
@@ -72,15 +72,13 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
         String nativeStatus = gatePassed ? "GATE_PASSED" : "GATE_FAILED";
         CaseMetadata testCase = input.testCase();
         LinkedHashMap<String, Object> resultArtifact = new LinkedHashMap<>();
-        resultArtifact.put("schemaVersion", 1);
+        resultArtifact.put("schemaVersion", 2);
         resultArtifact.put("caseId", testCase.caseId());
         resultArtifact.put("caseVersion", testCase.caseVersion());
         resultArtifact.put("repeat", input.repetition());
         resultArtifact.put("termination", input.runtime().termination());
         resultArtifact.put("nativeStatus", nativeStatus);
-        resultArtifact.put("status", gatePassed ? "PASSED" : "FAILED");
-        resultArtifact.put("failureClassification", gatePassed ? "NONE" : "ACCEPTANCE_FAILED");
-        resultArtifact.put("successful", gatePassed);
+        resultArtifact.put("gatePassed", gatePassed);
         resultArtifact.put("hiddenAcceptance", input.acceptancePassed() ? "PASS" : "FAIL");
         resultArtifact.put("usage", resultUsage);
         resultArtifact.put(
@@ -156,7 +154,7 @@ final class AutonomousDeliveryRepeatEvidenceCollector {
         try (var paths = Files.list(repeat)) {
             children = paths.filter(path -> !path.equals(attachments))
                     .filter(path -> !path.getFileName().toString().equals("secret-scan.json"))
-                    .filter(path -> !path.getFileName().toString().equals("run-result.json"))
+                    .filter(path -> !path.getFileName().toString().equals("repeat-result.json"))
                     .filter(path -> !path.getFileName().toString().equals("manifest.sha256"))
                     .toList();
         }

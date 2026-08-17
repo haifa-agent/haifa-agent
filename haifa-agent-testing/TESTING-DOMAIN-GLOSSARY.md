@@ -9,7 +9,6 @@
 | 模块 | 推荐中文 | 简单说明 |
 | --- | --- | --- |
 | `haifa-agent-testing` | 测试基础设施聚合层 | 位于 Maven Reactor 末端，统一组织测试模块，不承载生产业务代码 |
-| `haifa-agent-testkit` | 测试工具包 | 提供无产品装配依赖的确定性 Fake、断言和摘要能力 |
 | `haifa-agent-test-harness` | 测试执行台 | 提供配置解析、执行编排、预算门禁、证据收集等可执行测试能力 |
 | `haifa-agent-test-fixtures` | 共享测试固件 | 保存小型、确定性、安全且可复用的测试输入 |
 | `haifa-agent-transport-tck` | 传输层技术兼容性测试套件 | 验证不同 Transport 实现是否遵守同一公共契约 |
@@ -97,7 +96,7 @@ Plan SHA 不是 Secret，可以进入日志和测试报告。Suite、Matrix、Ca
 
 | 英文 | 推荐中文 | 简单说明 |
 | --- | --- | --- |
-| Testkit | 测试工具包 | 为多个测试模块提供可复用的基础设施能力 |
+| Testkit | 测试工具包 | 出现至少两个独立消费者时才建立的共享测试辅助模块；当前没有独立制品 |
 | Launcher | 测试启动器 / 启动脚本 | 准备路径、环境变量和参数，然后启动 Runner |
 | Runner | 测试运行器 | 加载 Suite、执行 Case、收集并汇总结果 |
 | Harness | 测试编排框架 | 管理测试计划、Campaign、阶段门禁和证据生命周期 |

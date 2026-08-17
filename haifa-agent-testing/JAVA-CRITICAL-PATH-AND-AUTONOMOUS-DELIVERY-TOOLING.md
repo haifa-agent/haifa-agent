@@ -4,7 +4,7 @@
 > 更新日期：2026-08-01
 
 本文评估 Java 领域可用于关键路径（Critical Path）和自主交付（Autonomous Delivery）测试的工具、
-库、框架与外部任务集，并说明它们与 Haifa Agent 自研 Testkit/Harness 的职责边界。具体版本仍以
+库、框架与外部任务集，并说明它们与 Haifa Agent 自研 Harness 的职责边界。具体版本仍以
 项目 BOM、模块 `pom.xml` 和依赖评审为准。
 
 ## 1. 结论
@@ -177,7 +177,7 @@ Spring AI 提供 `Evaluator` 以及相关性、事实性评估实现，适合对
 ├── Defects4J：Java 真实缺陷来源
 └── SWE-PolyBench：外部 Coding Agent 基准
 
-Haifa Testkit / Harness
+Haifa Test Harness
 ├── Catalog、Suite、Matrix
 ├── Plan 与 Plan SHA
 ├── Campaign、Phase、Gate
@@ -185,11 +185,11 @@ Haifa Testkit / Harness
 ├── Provider 费用预算
 ├── Secret Preflight 与泄漏扫描
 ├── 进程树收敛和清理
-├── Evidence 与 Manifest
-└── Result Projection
+├── Suite Native Result
+└── Common Evidence Envelope 与 Manifest
 ```
 
-第三方框架擅长执行测试、提供依赖或提供任务集；Haifa Testkit/Harness 负责把这些能力组合成安全、
+第三方框架擅长执行测试、提供依赖或提供任务集；Haifa Test Harness 负责把这些能力组合成安全、
 受授权、可审计的 Agent 测试批次。
 
 ## 6. 分阶段采用建议
@@ -198,7 +198,7 @@ Haifa Testkit / Harness
 
 1. 继续使用 JUnit、Surefire/Failsafe 和 ArchUnit 作为 Java 测试执行基础；
 2. 继续使用本地 Stub Server 验证 Provider Adapter；只有出现复杂 HTTP 场景时再评估 WireMock；
-3. 保留当前 Testkit/Harness 的 Suite、Matrix、预算和 Evidence 控制面。
+3. 保留当前 Harness 的 Suite、Matrix、预算和 Evidence 控制面。
 
 ### 后续有明确收益时引入
 

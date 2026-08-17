@@ -24,7 +24,22 @@ import java.util.List;
 public final class HarnessPlanService {
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
 
-    public ExecutionPlanDocument resolve(TestRunRequest request) throws Exception {
+    public ExecutionPlanDocument resolve(TestRunRequest request, RunnerArtifact runnerArtifact) throws Exception {
+        return resolveContext(request, runnerArtifact, null).approvedDocument();
+    }
+
+    public ResolvedRunContext resolveAndVerify(ExecutionPlanDocument approved, RunnerArtifact currentRunner)
+            throws Exception {
+        approved.runnerArtifact().requireCurrent(currentRunner);
+        ResolvedRunContext current = resolveContext(approved.toRunRequest(), currentRunner, approved.suiteType());
+        if (!current.approvedDocument().plan().sha256().equals(approved.plan().sha256())) {
+            throw new IllegalArgumentException("approved plan is stale for the current repositories or configuration");
+        }
+        return current;
+    }
+
+    private ResolvedRunContext resolveContext(
+            TestRunRequest request, RunnerArtifact runnerArtifact, String expectedSuiteType) throws Exception {
         Path projectRoot = directory(request.projectRoot(), "project root");
         Path configRoot = directory(request.configRoot(), "test config root");
         Path runRoot = request.runRoot().toAbsolutePath().normalize();
@@ -44,8 +59,15 @@ public final class HarnessPlanService {
                 && !profile.credentialEnvironmentNames().isEmpty()) {
             throw new IllegalArgumentException("a credential-backed Agent Profile requires live or release mode");
         }
-        String suiteType = suiteType(configRoot, request.suiteRef());
-        ResolvedTestPlan plan;
+        String suiteType = expectedSuiteType == null ? suiteType(configRoot, request.suiteRef()) : expectedSuiteType;
+        TestRunRequest normalizedRequest = new TestRunRequest(
+                projectRoot,
+                configRoot,
+                runRoot,
+                request.suiteRef(),
+                request.agentProfileRef(),
+                request.platformRef(),
+                request.mode());
         if (suiteType.equals("autonomous-delivery")) {
             AutonomousDeliveryCaseCatalog catalog = AutonomousDeliveryCaseCatalog.loadVerified();
             AutonomousDeliverySuiteManifest suite =
@@ -53,7 +75,12 @@ public final class HarnessPlanService {
             PlatformManifest matrix = new PlatformManifestLoader().load(configRoot, suite.matrixRef());
             PlatformManifest.PlatformProfile platform = matrix.requireCombination(request.platformRef());
             platform.requireCurrentHost();
-            plan = AutonomousDeliveryPlanResolver.resolve(
+            FixturePackageCatalog.PackageDescriptor fixturePackage = new FixturePackageCatalog()
+                    .require(
+                            projectRoot.resolve(
+                                    "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures"),
+                            suite.fixture());
+            ResolvedTestPlan plan = AutonomousDeliveryPlanResolver.resolve(
                     catalog,
                     suite,
                     matrix,
@@ -61,37 +88,31 @@ public final class HarnessPlanService {
                     profile,
                     productRevision,
                     testConfigRevision,
-                    new FixturePackageCatalog()
-                            .require(
-                                    projectRoot.resolve(
-                                            "haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures"),
-                                    suite.fixture())
-                            .sha256());
-        } else {
+                    fixturePackage.sha256());
+            ExecutionPlanDocument document = ExecutionPlanDocument.freeze(normalizedRequest, plan, runnerArtifact);
+            return new ResolvedRunContext.AutonomousDelivery(
+                    document,
+                    catalog,
+                    suite,
+                    profile,
+                    matrix,
+                    platform,
+                    fixturePackage,
+                    productRevision,
+                    testConfigRevision);
+        }
+        if (suiteType.equals("critical-path")) {
             SuiteManifest suite = new SuiteManifestLoader().load(configRoot, request.suiteRef());
             PlatformManifest matrix = new PlatformManifestLoader().load(configRoot, suite.matrixRef());
             PlatformManifest.PlatformProfile platform = matrix.requireCombination(request.platformRef());
             platform.requireCurrentHost();
-            plan = CriticalPathPlanResolver.resolve(suite, platform, profile, productRevision, testConfigRevision);
+            ResolvedTestPlan plan =
+                    CriticalPathPlanResolver.resolve(suite, platform, profile, productRevision, testConfigRevision);
+            ExecutionPlanDocument document = ExecutionPlanDocument.freeze(normalizedRequest, plan, runnerArtifact);
+            return new ResolvedRunContext.CriticalPath(
+                    document, suite, profile, platform, productRevision, testConfigRevision);
         }
-        return new ExecutionPlanDocument(
-                1,
-                suiteType,
-                projectRoot.toString(),
-                configRoot.toString(),
-                runRoot.toString(),
-                request.suiteRef(),
-                request.agentProfileRef(),
-                request.platformRef(),
-                request.mode(),
-                plan);
-    }
-
-    public void requireCurrent(ExecutionPlanDocument approved) throws Exception {
-        ExecutionPlanDocument current = resolve(approved.request());
-        if (!current.plan().sha256().equals(approved.plan().sha256())) {
-            throw new IllegalArgumentException("approved plan is stale for the current repositories or configuration");
-        }
+        throw new IllegalArgumentException("unsupported suiteType: " + suiteType);
     }
 
     private String suiteType(Path configRoot, String suiteRef) throws Exception {

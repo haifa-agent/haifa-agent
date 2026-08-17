@@ -1,9 +1,6 @@
 package io.haifa.agent.testing.delivery;
 
 import io.haifa.agent.testing.harness.PlatformManifest;
-import io.haifa.agent.testing.harness.ResolvedTestPlan;
-import io.haifa.agent.testing.repository.RepositoryRevision;
-import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,27 +11,19 @@ import java.util.Objects;
 final class AutonomousDeliveryGateResultAggregator {
     private AutonomousDeliveryGateResultAggregator() {}
 
-    static Aggregation aggregate(
+    static NativeResult aggregate(
             AutonomousDeliverySuiteManifest suite,
             PlatformManifest.PlatformProfile matrixCombination,
             String buildCommit,
-            RepositoryRevision productRevision,
-            RepositoryRevision testConfigRevision,
-            RepositoryRevision productRevisionAfter,
-            RepositoryRevision testConfigRevisionAfter,
-            Instant finishedAt,
             boolean prerequisiteGatesPassed,
             Map<String, Object> deterministicAnalyze,
             Map<String, Object> deterministicReplay,
             List<Map<String, Object>> results,
-            ResolvedTestPlan executionPlan,
             AutonomousDeliveryLiveBudget.Evidence liveBudgetEvidence) {
         Objects.requireNonNull(suite, "suite must not be null");
         Objects.requireNonNull(matrixCombination, "matrixCombination must not be null");
-        Objects.requireNonNull(finishedAt, "finishedAt must not be null");
         Objects.requireNonNull(deterministicAnalyze, "deterministicAnalyze must not be null");
         Objects.requireNonNull(deterministicReplay, "deterministicReplay must not be null");
-        Objects.requireNonNull(executionPlan, "executionPlan must not be null");
         Objects.requireNonNull(liveBudgetEvidence, "liveBudgetEvidence must not be null");
         results = List.copyOf(Objects.requireNonNull(results, "results must not be null"));
 
@@ -45,38 +34,31 @@ final class AutonomousDeliveryGateResultAggregator {
                 .mapToInt(result -> ((Number) result.get("scratchProvisionedCount")).intValue())
                 .sum();
         boolean scratchExercised = executionCalls > 0 && executionCalls == scratchProvisioned;
-        boolean repositoryStateStable =
-                productRevision.equals(productRevisionAfter) && testConfigRevision.equals(testConfigRevisionAfter);
-        boolean successful =
-                prerequisiteGatesPassed && scratchExercised && repositoryStateStable && liveBudgetEvidence.passed();
+        boolean successful = prerequisiteGatesPassed && scratchExercised && liveBudgetEvidence.passed();
 
         LinkedHashMap<String, Object> summary = new LinkedHashMap<>();
-        summary.put("schemaVersion", 3);
+        summary.put("schemaVersion", 4);
         summary.put("phase", suite.phase());
         summary.put("suiteId", suite.suiteId());
         summary.put("matrixRef", suite.matrixRef());
         summary.put("matrixCombination", matrixCombination);
         summary.put("buildCommit", buildCommit);
-        summary.put("productRevision", productRevision);
-        summary.put("testConfigRevision", testConfigRevision);
-        summary.put("productRevisionAfter", productRevisionAfter);
-        summary.put("testConfigRevisionAfter", testConfigRevisionAfter);
-        summary.put("repositoryStateStable", repositoryStateStable);
-        summary.put("finishedAt", finishedAt.toString());
-        summary.put("successful", successful);
+        summary.put("gatePassed", successful);
         summary.put("executionCalls", executionCalls);
         summary.put("scratchProvisionedCount", scratchProvisioned);
         summary.put("scratchExercised", scratchExercised);
         summary.put("deterministicReadOnlyAnalyzeStub", deterministicAnalyze);
         summary.put("deterministicTraceReplay", deterministicReplay);
-        summary.put("executionPlanSha256", executionPlan.sha256());
-        summary.put("liveBudget", liveBudgetEvidence.artifact());
         summary.put("results", results);
         if ("PHASE_3".equals(suite.phase())) {
             summary.put("capabilityMatrix", capabilityMatrix(results));
             summary.put("metrics", phaseThreeMetrics(results));
         }
-        return new Aggregation(summary, successful);
+        return new NativeResult(
+                successful ? "GATE_PASSED" : "GATE_FAILED",
+                successful ? "NONE" : "ACCEPTANCE_FAILED",
+                successful,
+                summary);
     }
 
     private static Map<String, Object> capabilityMatrix(List<Map<String, Object>> results) {
@@ -154,10 +136,13 @@ final class AutonomousDeliveryGateResultAggregator {
         return denominator == 0 ? 0.0 : Math.round(numerator * 10_000.0 / denominator) / 100.0;
     }
 
-    record Aggregation(Map<String, Object> summary, boolean successful) {
-        Aggregation {
-            summary = Collections.unmodifiableMap(
-                    new LinkedHashMap<>(Objects.requireNonNull(summary, "summary must not be null")));
+    record NativeResult(
+            String nativeStatus, String failureClassification, boolean successful, Map<String, Object> artifact) {
+        NativeResult {
+            Objects.requireNonNull(nativeStatus, "nativeStatus must not be null");
+            Objects.requireNonNull(failureClassification, "failureClassification must not be null");
+            artifact = Collections.unmodifiableMap(
+                    new LinkedHashMap<>(Objects.requireNonNull(artifact, "artifact must not be null")));
         }
     }
 }

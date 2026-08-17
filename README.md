@@ -278,7 +278,7 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - 可恢复的 Coding Session、tui4j Terminal 和唯一可执行 CLI；
 - Personal Assistant 的纯 Java Application、本机 loopback-only Spring Boot WebFlux Server、
   React Web、只读诊断 Admin、持久 Mission 与精简 Deep Research Product Skill；
-- Reactor 末端的 Testkit、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
+- Reactor 末端的 Test Harness、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
 
 ## 架构
 
@@ -311,7 +311,7 @@ Core、Runtime 或 Capability API。Spring Framework 从适配边界开始引入
 | `haifa-agent-sdk/`、`haifa-agent-sdk-starter/` | 高层纯 Java Facade 与安全默认 Quickstart。 |
 | `haifa-agent-spring/` | Spring Boot 自动装配与依赖 Starter。 |
 | `haifa-agent-applications/` | Coding Agent、CLI、Personal Assistant、SDK 示例与 Runtime Demo。 |
-| `haifa-agent-testing/` | Reactor 末端的 Testkit、Fixture、TCK、Integration 与 E2E。 |
+| `haifa-agent-testing/` | Reactor 末端的 Harness、Fixture、TCK、Integration 与 E2E。 |
 | `examples/haifa-agent-example/` | 不加入 Reactor 的独立消费者构建。 |
 
 详细模块、依赖方向和稳定边界以

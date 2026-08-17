@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/** Verifies the harness-owned content digest protocol. */
 class Sha256DigestsTest {
     @Test
     void hashesTextBytesFilesAndTreesDeterministically(@TempDir Path temporary) throws Exception {

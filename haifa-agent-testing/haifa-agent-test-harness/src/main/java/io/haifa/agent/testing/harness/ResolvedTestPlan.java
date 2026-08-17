@@ -52,6 +52,28 @@ public record ResolvedTestPlan(int schemaVersion, Map<String, Object> content, S
         }
     }
 
+    public ResolvedTestPlan withReviewedInput(String name, Object value) {
+        if (name == null || name.isBlank() || name.equals("schemaVersion")) {
+            throw new IllegalArgumentException("reviewed input name is invalid");
+        }
+        LinkedHashMap<String, Object> reviewedInputs = new LinkedHashMap<>(content);
+        reviewedInputs.remove("schemaVersion");
+        reviewedInputs.put(name, Objects.requireNonNull(value, "reviewed input value must not be null"));
+        return freeze(reviewedInputs);
+    }
+
+    public ResolvedTestPlan withoutReviewedInput(String name) {
+        if (name == null || name.isBlank() || name.equals("schemaVersion")) {
+            throw new IllegalArgumentException("reviewed input name is invalid");
+        }
+        LinkedHashMap<String, Object> reviewedInputs = new LinkedHashMap<>(content);
+        reviewedInputs.remove("schemaVersion");
+        if (reviewedInputs.remove(name) == null) {
+            throw new IllegalArgumentException("reviewed input is unavailable: " + name);
+        }
+        return freeze(reviewedInputs);
+    }
+
     public Map<String, Object> artifact() {
         LinkedHashMap<String, Object> artifact = new LinkedHashMap<>(content);
         artifact.put("planSha256", sha256);

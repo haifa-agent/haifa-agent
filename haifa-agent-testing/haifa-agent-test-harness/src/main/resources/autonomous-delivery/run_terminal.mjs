@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Harness-owned driver for one production Coding Terminal session.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";

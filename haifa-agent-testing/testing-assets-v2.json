@@ -127,18 +127,6 @@
       "coverageMode": "EXACT"
     },
     {
-      "assetId": "testkit-module",
-      "path": "haifa-agent-testing/haifa-agent-testkit",
-      "kind": "MODULE",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/pom.xml"],
-      "replacement": "",
-      "rationale": "Lightweight deterministic helpers with no product assembly or executable runner dependencies.",
-      "coverageMode": "EXACT"
-    },
-    {
       "assetId": "test-harness-module",
       "path": "haifa-agent-testing/haifa-agent-test-harness",
       "kind": "MODULE",
