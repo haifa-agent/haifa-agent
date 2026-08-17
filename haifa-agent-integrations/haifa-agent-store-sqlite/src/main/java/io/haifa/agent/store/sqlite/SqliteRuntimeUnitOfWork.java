@@ -33,9 +33,29 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         Objects.requireNonNull(work, "work must not be null");
         Context existing = active.get();
         if (existing != null) {
+            if (existing.readOnly()) {
+                throw new SqliteStoreException(
+                        SqliteStoreFailure.TRANSACTION_FAILED,
+                        "A write unit of work cannot start inside a read-only SQLite unit of work");
+            }
             return executeNested(existing, work);
         }
-        return executeOutermost(work);
+        return executeOutermost(work, TransactionMode.WRITE);
+    }
+
+    /**
+     * Executes an adapter-internal read without reserving SQLite's single writer slot.
+     *
+     * <p>A read nested inside an existing write joins that transaction so it can observe the
+     * caller's uncommitted state. Outermost reads use a deferred, query-only transaction.
+     */
+    <T> T executeReadOnly(Supplier<T> work) {
+        Objects.requireNonNull(work, "work must not be null");
+        Context existing = active.get();
+        if (existing != null) {
+            return executeNested(existing, work);
+        }
+        return executeOutermost(work, TransactionMode.READ_ONLY);
     }
 
     public <T> T mapper(Class<T> mapperType) {
@@ -75,7 +95,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         }
     }
 
-    private <T> T executeOutermost(Supplier<T> work) {
+    private <T> T executeOutermost(Supplier<T> work, TransactionMode mode) {
         long started = System.nanoTime();
         long unitOfWorkId = UNIT_OF_WORK_IDS.incrementAndGet();
         T result;
@@ -83,12 +103,12 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         try (Connection connection = connections.openConnection();
                 SqlSession session = myBatis.openSession(connection)) {
             long setupMillis = elapsedMillis(started);
-            Context context = new Context(unitOfWorkId, connection, session);
+            Context context = new Context(unitOfWorkId, connection, session, mode == TransactionMode.READ_ONLY);
             active.set(context);
             boolean transactionStarted = false;
             try {
                 long phaseStarted = System.nanoTime();
-                beginImmediate(connection);
+                begin(connection, mode);
                 long beginMillis = elapsedMillis(phaseStarted);
                 transactionStarted = true;
                 phaseStarted = System.nanoTime();
@@ -109,6 +129,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
                 committedListeners = java.util.List.copyOf(context.afterCommit);
                 logUnitOfWork(
                         unitOfWorkId,
+                        mode,
                         setupMillis,
                         beginMillis,
                         workMillis,
@@ -142,6 +163,7 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
 
     private static void logUnitOfWork(
             long unitOfWorkId,
+            TransactionMode mode,
             long setupMillis,
             long beginMillis,
             long workMillis,
@@ -151,8 +173,9 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
             long totalMillis) {
         if (totalMillis >= SLOW_OPERATION_MILLIS) {
             LOGGER.info(
-                    "event=sqlite.uow uowId={} setupMs={} beginImmediateMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={}",
+                    "event=sqlite.uow uowId={} transactionMode={} setupMs={} beginMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={}",
                     unitOfWorkId,
+                    mode,
                     setupMillis,
                     beginMillis,
                     workMillis,
@@ -162,8 +185,9 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
                     totalMillis);
         } else {
             LOGGER.debug(
-                    "event=sqlite.uow uowId={} setupMs={} beginImmediateMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={}",
+                    "event=sqlite.uow uowId={} transactionMode={} setupMs={} beginMs={} workMs={} flushMs={} commitMs={} afterCommitListeners={} totalMs={}",
                     unitOfWorkId,
+                    mode,
                     setupMillis,
                     beginMillis,
                     workMillis,
@@ -207,6 +231,15 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
                 SqliteStoreFailure.DATABASE_BUSY, "SQLite writer is busy before the unit of work began", busyFailure);
     }
 
+    private static void begin(Connection connection, TransactionMode mode) throws SQLException {
+        if (mode == TransactionMode.WRITE) {
+            beginImmediate(connection);
+            return;
+        }
+        executeControl(connection, "PRAGMA query_only=ON");
+        executeControl(connection, "BEGIN");
+    }
+
     private static boolean isBusy(SQLException exception) {
         return exception.getErrorCode() == 5 || exception.getErrorCode() == 6;
     }
@@ -223,14 +256,16 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         private final long id;
         private final Connection connection;
         private final SqlSession session;
+        private final boolean readOnly;
         private int depth = 1;
         private boolean rollbackOnly;
         private final java.util.List<Runnable> afterCommit = new java.util.ArrayList<>();
 
-        private Context(long id, Connection connection, SqlSession session) {
+        private Context(long id, Connection connection, SqlSession session, boolean readOnly) {
             this.id = id;
             this.connection = connection;
             this.session = session;
+            this.readOnly = readOnly;
         }
 
         private long id() {
@@ -244,5 +279,14 @@ public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
         private SqlSession session() {
             return session;
         }
+
+        private boolean readOnly() {
+            return readOnly;
+        }
+    }
+
+    private enum TransactionMode {
+        READ_ONLY,
+        WRITE
     }
 }

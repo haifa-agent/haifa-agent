@@ -30,6 +30,10 @@ SQLite 中并可跨重启恢复；deterministic acceptance model 不能混入 pr
 Bootstrap 仅在 `web_search` 与 `web_fetch` 均完成受信注册时发布 `web-research` 能力，供 Web 在创建
 Deep Research 计划前做确定性可用性检查；该标记不包含 Provider、Endpoint 或凭据细节。
 
+Server 在应用就绪时扫描 ACTIVE Conversation：旧实例遗留的 `RUNNING/SUSPENDING` Run 通过公共
+`AgentRuns.recover` 接管并继续执行；`WAITING_APPROVAL/WAITING_INTERACTION` 只恢复事件观察，不会
+越过用户门禁。恢复仍服从冻结 Binding、Checkpoint、Tool Journal 和不确定结果 fail-closed 规则。
+
 Provider 是接入实例，持有共享 Endpoint、Credential、`native-streaming` 和运行模式；每个 Provider
 通过 `api-bindings` 声明一个或多个 API Style，再由 Model 的 `style` 精确引用。Binding 省略 dialect
 时使用 `standard`，只有 Style 使用不同 Base URL 时才配置完整 endpoint 覆盖：

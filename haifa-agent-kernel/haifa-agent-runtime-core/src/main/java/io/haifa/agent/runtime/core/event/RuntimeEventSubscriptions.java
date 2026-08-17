@@ -52,13 +52,17 @@ public final class RuntimeEventSubscriptions {
         private void run() {
             try {
                 while (!closed.get()) {
+                    signals.take();
                     try {
                         drain();
                     } catch (RuntimeException ignored) {
                         // The cursor advances only after a complete page. Retrying therefore
                         // replays the unacknowledged page without losing committed events.
+                        // A timed retry is used only after failure; healthy idle subscriptions
+                        // remain entirely wake-up driven and do not poll durable storage.
+                        signals.poll(1, TimeUnit.SECONDS);
+                        if (!closed.get()) signal();
                     }
-                    signals.poll(1, TimeUnit.SECONDS);
                 }
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();

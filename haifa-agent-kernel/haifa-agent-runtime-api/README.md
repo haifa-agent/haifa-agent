@@ -41,6 +41,9 @@ Listener 失败不会中断 AgentLoop。
 - Find、Resume 和 Command 均使用正式的 `AgentRunId`；Resume 可选择指定 Checkpoint。
   Resume 与 Command 可携带 expected Run version，供 HTTP `If-Match` 映射；版本检查仍由
   Runtime 事实执行，Transport 不维护第二份版本。
+- `recover(runId)` 只接管仍处于执行态、但物理 Attempt 已不属于当前 Runtime 实例的 Run；实现必须
+  复用冻结配置、Checkpoint 和 Tool Journal，并拒绝重复接管仍被当前实例拥有的 Attempt。默认方法
+  fail fast，既有第三方 Runtime 保持兼容。
 - 公共命令只有 `PAUSE`、`CANCEL`、`TERMINATE_CHILDREN`；`InteractionResponse` 以 Request/Response ID 关联 Clarification 或 Approval，并从可信 Caller Context 获取操作者。Timeout/Lease Lost 等只属于 Runtime 内部 Control Signal。
 - 新的 `InteractionView`、`InteractionResponseSubmission/Receipt` 使用稳定 Kind/Action/Input、
   revision 和错误码；旧 `InteractionResponse`/Snapshot 返回路径暂时保留为单向兼容层。新增入口使用

@@ -21,6 +21,8 @@ import io.haifa.agent.runtime.api.RuntimeApiErrorCode;
 import io.haifa.agent.runtime.api.RuntimeContractException;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.RuntimeEvent;
+import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
+import io.haifa.agent.runtime.core.storage.RuntimeEventSlice;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +31,7 @@ import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class RuntimeEventFeedTest {
@@ -393,6 +396,29 @@ class RuntimeEventFeedTest {
         subscription.close();
     }
 
+    @Test
+    void healthyIdleSubscriptionReadsOnlyWhenWoken() throws InterruptedException {
+        InMemoryRuntimeStore store = storeWithRun("run");
+        AgentRunId runId = new AgentRunId("run");
+        RuntimeEventWakeupRegistry wakeups = new RuntimeEventWakeupRegistry();
+        CountingRuntimeEventAppender counting = new CountingRuntimeEventAppender(store);
+        NotifyingRuntimeEventAppender journal = new NotifyingRuntimeEventAppender(counting, store, wakeups);
+        RuntimeEventFeed feed = new RuntimeEventFeed(journal, new RuntimeClientEventProjector(store));
+        RuntimeEventSubscriptions subscriptions = new RuntimeEventSubscriptions(feed, wakeups);
+        journal.append(runId, "run.created", Map.of("version", 0L), NOW);
+        CountDownLatch delivered = new CountDownLatch(1);
+
+        var subscription =
+                subscriptions.subscribe(runId, RunEventCursor.beforeFirst(runId), event -> delivered.countDown());
+        assertThat(delivered.await(5, TimeUnit.SECONDS)).isTrue();
+        int readsAfterReplay = counting.reads();
+
+        Thread.sleep(1_200);
+
+        assertThat(counting.reads()).isEqualTo(readsAfterReplay);
+        subscription.close();
+    }
+
     private static InMemoryRuntimeStore storeWithRun(String runValue) {
         InMemoryRuntimeStore store = new InMemoryRuntimeStore();
         store.insert(AgentRun.createRoot(
@@ -419,5 +445,50 @@ class RuntimeEventFeedTest {
         assertThatThrownBy(action::run)
                 .isInstanceOfSatisfying(RuntimeContractException.class, exception -> assertThat(exception.code())
                         .isEqualTo(code));
+    }
+
+    private static final class CountingRuntimeEventAppender implements RuntimeEventAppender {
+        private final RuntimeEventAppender delegate;
+        private final AtomicInteger reads = new AtomicInteger();
+
+        private CountingRuntimeEventAppender(RuntimeEventAppender delegate) {
+            this.delegate = delegate;
+        }
+
+        private int reads() {
+            return reads.get();
+        }
+
+        @Override
+        public RuntimeEvent append(AgentRunId runId, String type, Map<String, Object> data, Instant occurredAt) {
+            return delegate.append(runId, type, data, occurredAt);
+        }
+
+        @Override
+        public List<RuntimeEvent> eventsFor(AgentRunId runId) {
+            return delegate.eventsFor(runId);
+        }
+
+        @Override
+        public RuntimeEventSlice eventsAfter(
+                AgentRunId runId, long exclusiveSequence, OptionalLong observedHead, int limit) {
+            reads.incrementAndGet();
+            return delegate.eventsAfter(runId, exclusiveSequence, observedHead, limit);
+        }
+
+        @Override
+        public OptionalLong earliestSequence(AgentRunId runId) {
+            return delegate.earliestSequence(runId);
+        }
+
+        @Override
+        public OptionalLong headSequence(AgentRunId runId) {
+            return delegate.headSequence(runId);
+        }
+
+        @Override
+        public long deleteBefore(AgentRunId runId, long retainFromSequence, Instant deletedAt) {
+            return delegate.deleteBefore(runId, retainFromSequence, deletedAt);
+        }
     }
 }

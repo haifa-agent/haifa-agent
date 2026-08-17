@@ -333,6 +333,10 @@ public final class PersonalAssistantApplication implements AutoCloseable {
         });
     }
 
+    public RunView recover(String runId) {
+        return run(agent.runs().recover(new AgentRunId(runId)).runId().value()).orElseThrow();
+    }
+
     public RunView cancel(String runId) {
         return run(agent.runs()
                         .handle(new AgentRunId(runId))

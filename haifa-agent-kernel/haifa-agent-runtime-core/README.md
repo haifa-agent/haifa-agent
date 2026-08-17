@@ -72,8 +72,8 @@ canonical digest 和 Attempt/Iteration 外键实现重启后的 exactly-once sta
 
 `RuntimeEventFeed` 从权威 Journal 按排他 sequence 和固定 head 范围读取；`RuntimeClientEventProjector`
 只输出 P0 typed 白名单，未知内部事件只推进 Cursor。`RuntimeEventSubscriptions` 先注册 Run-scoped
-wake-up 再 drain 持久 Journal，通知丢失由有界轮询补偿。Listener 异常与 AgentLoop 隔离，并从未确认的
-持久 Cursor 延迟重试，不会静默永久关闭订阅。
+wake-up 再 drain 持久 Journal；当前单进程 Runtime 由提交后 wake-up 驱动，健康空闲订阅不轮询
+Store。Listener 异常与 AgentLoop 隔离，并从未确认的持久 Cursor 延迟重试，不会静默永久关闭订阅。
 `OpaqueRunEventCursorCodec` 为 Task 03 Adapter 提供带 HMAC 完整性校验的不透明 Cursor。
 
 `RuntimeEventAppender` 同时提供 earliest/head 和受控 retention。模型 Delta 不再进入该 Journal：
