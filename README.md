@@ -350,6 +350,9 @@ macOS / Linux：
 
 # 本地最终门禁，L3 固定 -T 2
 ./build-support/scripts/invoke-haifa-maven.sh --layer L3 -- -Pci-fast clean verify
+
+# 显式执行默认排除的慢速 Surefire 测试
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- -Pslow-tests test
 ```
 
 Windows PowerShell：
@@ -365,7 +368,12 @@ Windows PowerShell：
 .\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' test
 
 .\build-support\scripts\invoke-haifa-maven.ps1 --layer L3 '--' -Pci-fast clean verify
+
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' -Pslow-tests test
 ```
+
+普通 Surefire、L2 和 L3 `ci-fast` 默认排除类级 `@Tag("slow")`；当前慢测集合及精确运行方式见
+[`build-support/README.md`](build-support/README.md)。测试代码仍由 `slow-tests` Profile 显式执行。
 
 同一 SHA 已通过 `ci-fast` 后，可使用 `-Pci-integration-only verify` 只运行 Failsafe Integration。
 Release 验证必须通过 `-pl` 指定受影响模块；完整分层矩阵见

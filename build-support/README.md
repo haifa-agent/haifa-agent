@@ -24,6 +24,23 @@
 | Spotless | L0 | 串行且记录指标；格式任务不需要模块并发 |
 | `ci-fast clean verify` | L3 | 最终同 SHA 门禁，固定 T2 |
 
+普通 Surefire 运行默认排除类级 `@Tag("slow")`。当前慢测集合只包含
+`PersonalAssistantRestartTest`、`PersonalAssistantWebFluxTest`、`SqliteRuntimeRecoveryTest` 和
+`LocalCodingAgentTest`；它们不会进入 L1/L2 的普通测试、L3 `ci-fast` 或调用 `ci-fast` 的 Fast CI。
+测试源码和断言全部保留，使用 `slow-tests` Profile 显式运行：
+
+```powershell
+.\build-support\scripts\invoke-haifa-maven.ps1 --layer L2 '--' `
+  -Pslow-tests test
+```
+
+```bash
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- \
+  -Pslow-tests test
+```
+
+精确运行其中一个类时也必须添加 `-Pslow-tests`；仅使用 `-Dtest=<SlowTestClass>` 仍会被默认标签过滤。
+
 Windows 下 Surefire/Failsafe 的 fork JVM 显式允许 manifest-only JAR 引用不同盘符上的绝对
 classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktree 分盘时并行 fork 丢失 Reactor 类。
 
@@ -31,7 +48,8 @@ classpath。该设置只进入测试 JVM，用于避免系统临时盘与 worktr
 
 | Gate | Profile | 测试范围 | 前置条件 |
 | --- | --- | --- | --- |
-| Unit | `ci-fast` | Unit、Contract、Architecture；Spotless | 无，必须先执行 |
+| Unit | `ci-fast` | 非 slow 的 Unit、Contract、Architecture；Spotless | 无，必须先执行 |
+| Slow Unit | `slow-tests` | 四个类级 `slow` 测试 | 独立慢测入口，不属于日常门禁 |
 | Integration | `ci-integration-only` | Failsafe `*IT`、`*LiveIT`、`*E2E` | 同一 SHA 的 Unit PASS |
 | Artifact | `release-artifacts` | 编译、打包、Source、Javadoc、制品 smoke | 同一 SHA 的 Unit PASS |
 

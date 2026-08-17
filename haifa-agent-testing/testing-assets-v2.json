@@ -91,18 +91,6 @@
       "coverageMode": "EXACT"
     },
     {
-      "assetId": "coding-case-coverage",
-      "path": "haifa-agent-testing/coding-case-coverage-v1.json",
-      "kind": "MANIFEST",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "coding-evaluation",
-      "referencedBy": ["haifa-agent-testing/haifa-agent-test-harness/src/test/java/io/haifa/agent/testing/assets/CodingCaseCoverageManifestTest.java"],
-      "replacement": "",
-      "rationale": "Crosswalk prevents capability-title similarity from being treated as equivalent coverage.",
-      "coverageMode": "EXACT"
-    },
-    {
       "assetId": "test-harness-module",
       "path": "haifa-agent-testing/haifa-agent-test-harness",
       "kind": "MODULE",

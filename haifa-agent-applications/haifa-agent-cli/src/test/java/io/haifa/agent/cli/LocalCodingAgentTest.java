@@ -18,6 +18,7 @@ import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.InteractionResponse;
 import io.haifa.agent.runtime.api.InteractionResponseId;
 import io.haifa.agent.runtime.api.InteractionResponseType;
+import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
 import io.haifa.agent.skill.api.SkillOrigin;
 import io.haifa.agent.skill.api.SkillParserMode;
@@ -39,9 +40,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("slow")
 class LocalCodingAgentTest {
     @TempDir
     Path workspace;
@@ -218,12 +221,7 @@ class LocalCodingAgentTest {
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
             var accepted = agent.start("Persist this run.");
             runId = accepted.runId();
-            Instant deadline = now().plusSeconds(60);
-            var snapshot = agent.runtime().find(runId).orElseThrow();
-            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
-                Thread.sleep(25);
-                snapshot = agent.runtime().find(runId).orElseThrow();
-            }
+            var snapshot = awaitTerminal(agent, runId, Duration.ofSeconds(60));
             assertThat(snapshot.status()).as("final snapshot: %s", snapshot).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(snapshot.output()).contains("persisted");
         }
@@ -241,12 +239,7 @@ class LocalCodingAgentTest {
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
             assertThat(reopened.executionSettled(runId)).isTrue();
             var second = reopened.start("Persist a second run.");
-            Instant deadline = now().plusSeconds(60);
-            var snapshot = reopened.runtime().find(second.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
-                Thread.sleep(25);
-                snapshot = reopened.runtime().find(second.runId()).orElseThrow();
-            }
+            var snapshot = awaitTerminal(reopened, second.runId(), Duration.ofSeconds(60));
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
         }
         assertThat(Files.deleteIfExists(database)).isTrue();
@@ -316,22 +309,16 @@ class LocalCodingAgentTest {
                         new SecretKeySpec(new byte[32], "AES"), new java.security.SecureRandom()))) {
             var accepted = agent.start("Try a write and honor a rejection.");
             runId = accepted.runId();
-            Instant pendingDeadline = now().plusSeconds(60);
-            var pending = agent.interactions().pending(accepted.runId());
-            while (pending.isEmpty() && now().isBefore(pendingDeadline)) {
-                Thread.sleep(25);
-                pending = agent.interactions().pending(accepted.runId());
-            }
-            assertThat(pending).isPresent();
+            var request = awaitPendingInteraction(agent, accepted.runId(), Duration.ofSeconds(60));
             assertThat(agent.runtime().find(accepted.runId()).orElseThrow().status())
                     .isEqualTo(AgentRunStatus.WAITING_APPROVAL);
-            Instant settledDeadline = now().plusSeconds(60);
-            while (!agent.executionSettled(accepted.runId()) && now().isBefore(settledDeadline)) {
-                Thread.sleep(25);
-            }
+            awaitCondition(
+                    () -> agent.executionSettled(accepted.runId()),
+                    Duration.ofSeconds(60),
+                    () -> "execution did not settle: "
+                            + agent.runtime().find(accepted.runId()).orElseThrow());
             assertThat(agent.executionSettled(accepted.runId())).isTrue();
 
-            var request = pending.orElseThrow();
             agent.runtime()
                     .respond(new InteractionResponse(
                             new InteractionResponseId(agent.identifiers().nextValue()),
@@ -342,12 +329,7 @@ class LocalCodingAgentTest {
                             "test-reject-" + request.id().value(),
                             agent.time().now()));
 
-            Instant completionDeadline = now().plusSeconds(60);
-            var completed = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!completed.status().isTerminal() && now().isBefore(completionDeadline)) {
-                Thread.sleep(25);
-                completed = agent.runtime().find(accepted.runId()).orElseThrow();
-            }
+            var completed = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(60));
             assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(completed.output()).contains("rejection respected");
         }
@@ -473,12 +455,7 @@ class LocalCodingAgentTest {
         try (var agent = LocalCodingAgent.create(
                 workspace, automatic, new PrintStream(renderedOutput, true, StandardCharsets.UTF_8), model)) {
             var accepted = agent.start("Write the representative file with the general shell tool.");
-            Instant deadline = now().plusSeconds(10);
-            var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
-                Thread.sleep(25);
-                snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            }
+            var snapshot = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(10));
 
             assertThat(snapshot.status())
                     .withFailMessage("run failed: %s", snapshot.error())
@@ -532,13 +509,7 @@ class LocalCodingAgentTest {
                 model,
                 traces::add)) {
             var accepted = agent.start("Inspect the configured shell after approval.");
-            Instant pendingDeadline = now().plusSeconds(30);
-            var pending = agent.interactions().pending(accepted.runId());
-            while (pending.isEmpty() && now().isBefore(pendingDeadline)) {
-                Thread.sleep(25);
-                pending = agent.interactions().pending(accepted.runId());
-            }
-            var interaction = pending.orElseThrow();
+            var interaction = awaitPendingInteraction(agent, accepted.runId(), Duration.ofSeconds(30));
             agent.runtime()
                     .respond(new InteractionResponse(
                             new InteractionResponseId(agent.identifiers().nextValue()),
@@ -725,12 +696,7 @@ class LocalCodingAgentTest {
                 model,
                 observedTraces::add)) {
             var accepted = agent.start("Plan and complete a dependent task.");
-            Instant deadline = now().plusSeconds(10);
-            var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
-                Thread.sleep(25);
-                snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            }
+            var snapshot = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(10));
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(snapshot.output()).contains("planned");
         }
@@ -809,12 +775,7 @@ class LocalCodingAgentTest {
         try (var agent = LocalCodingAgent.create(
                 workspace, configuration, new PrintStream(new ByteArrayOutputStream()), model)) {
             var accepted = agent.start("Use the configured local procedure.");
-            Instant deadline = now().plusSeconds(10);
-            var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
-                Thread.sleep(25);
-                snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            }
+            var snapshot = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(10));
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(snapshot.output()).contains("local skill complete");
         }
@@ -852,12 +813,7 @@ class LocalCodingAgentTest {
         try (var agent = LocalCodingAgent.create(
                 workspace, configuration, new PrintStream(new ByteArrayOutputStream()), model)) {
             var accepted = agent.start("Complete without skills.");
-            Instant deadline = now().plusSeconds(10);
-            var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
-                Thread.sleep(25);
-                snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            }
+            var snapshot = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(10));
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
         }
         assertThat(calls).hasValue(2);
@@ -932,12 +888,7 @@ class LocalCodingAgentTest {
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                 model)) {
             var accepted = agent.start("List the workspace root.");
-            Instant deadline = now().plusSeconds(10);
-            var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
-                Thread.sleep(25);
-                snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            }
+            var snapshot = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(10));
 
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
         }
@@ -991,12 +942,7 @@ class LocalCodingAgentTest {
                 new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                 model)) {
             var accepted = agent.start("Inspect a missing file and recover.");
-            Instant deadline = now().plusSeconds(10);
-            var snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
-                Thread.sleep(25);
-                snapshot = agent.runtime().find(accepted.runId()).orElseThrow();
-            }
+            var snapshot = awaitTerminal(agent, accepted.runId(), Duration.ofSeconds(10));
 
             assertThat(snapshot.status()).isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(snapshot.output()).contains("recovered");
@@ -1043,13 +989,41 @@ class LocalCodingAgentTest {
 
     private static io.haifa.agent.runtime.api.AgentRunSnapshot awaitTerminal(
             LocalCodingAgent agent, io.haifa.agent.core.run.AgentRunId runId) throws InterruptedException {
-        Instant deadline = now().plusSeconds(30);
-        var snapshot = agent.runtime().find(runId).orElseThrow();
-        while (!snapshot.status().isTerminal() && now().isBefore(deadline)) {
+        return awaitTerminal(agent, runId, Duration.ofSeconds(30));
+    }
+
+    private static io.haifa.agent.runtime.api.AgentRunSnapshot awaitTerminal(
+            LocalCodingAgent agent, io.haifa.agent.core.run.AgentRunId runId, Duration timeout)
+            throws InterruptedException {
+        awaitCondition(
+                () -> agent.runtime().find(runId).orElseThrow().status().isTerminal(),
+                timeout,
+                () -> "run did not become terminal: "
+                        + agent.runtime().find(runId).orElseThrow());
+        return agent.runtime().find(runId).orElseThrow();
+    }
+
+    private static InteractionRequest awaitPendingInteraction(
+            LocalCodingAgent agent, io.haifa.agent.core.run.AgentRunId runId, Duration timeout)
+            throws InterruptedException {
+        awaitCondition(
+                () -> agent.interactions().pending(runId).isPresent(),
+                timeout,
+                () -> "interaction did not become pending: "
+                        + agent.runtime().find(runId).orElseThrow());
+        return agent.interactions().pending(runId).orElseThrow();
+    }
+
+    private static void awaitCondition(
+            java.util.function.BooleanSupplier condition,
+            Duration timeout,
+            java.util.function.Supplier<String> timeoutMessage)
+            throws InterruptedException {
+        Instant deadline = now().plus(timeout);
+        while (!condition.getAsBoolean() && now().isBefore(deadline)) {
             Thread.sleep(25);
-            snapshot = agent.runtime().find(runId).orElseThrow();
         }
-        return snapshot;
+        if (!condition.getAsBoolean()) throw new AssertionError(timeoutMessage.get());
     }
 
     private static CliConfiguration trustedHostConfiguration(CliConfiguration configuration) {

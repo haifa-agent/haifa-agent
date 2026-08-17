@@ -101,9 +101,11 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.crypto.spec.SecretKeySpec;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("slow")
 class SqliteRuntimeRecoveryTest {
     private static final Instant NOW = Instant.parse("2026-07-25T08:00:00Z");
     private static final TimeProvider TIME = () -> NOW;

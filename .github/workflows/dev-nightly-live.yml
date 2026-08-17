@@ -13,6 +13,30 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
+    slow-unit-tests:
+        name: Slow unit tests (${{ matrix.os }})
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest, macos-latest]
+        runs-on: ${{ matrix.os }}
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: dev
+            - uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: "21"
+                  cache: maven
+            - name: Run slow unit tests (Unix)
+              if: runner.os != 'Windows'
+              run: sh ./mvnw --batch-mode --no-transfer-progress -T 2 -Pslow-tests test
+            - name: Run slow unit tests (Windows)
+              if: runner.os == 'Windows'
+              run: .\mvnw.cmd --batch-mode --no-transfer-progress -T 2 -Pslow-tests test
+
     suite-governance-plan:
         name: Nightly Suite plan
         runs-on: ubuntu-latest

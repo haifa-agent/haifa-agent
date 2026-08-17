@@ -160,6 +160,9 @@ Linux/macOS 的 Maven Wrapper 为 `./mvnw`，Windows PowerShell 为 `.\mvnw.cmd`
 # 全仓 Unit/Contract/Architecture；增量运行、不 clean
 ./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- test
 
+# 显式运行默认排除的慢速 Surefire 测试
+./build-support/scripts/invoke-haifa-maven.sh --layer L2 -- -Pslow-tests test
+
 # 应用 Spotless 格式化
 ./build-support/scripts/invoke-haifa-maven.sh --layer L0 -- spotless:apply
 
@@ -181,6 +184,10 @@ Linux/macOS 的 Maven Wrapper 为 `./mvnw`，Windows PowerShell 为 `.\mvnw.cmd`
 `ci-fast` 运行 Unit/Contract/Architecture 并跳过 Integration。`ci-integration` 保留为兼容入口，仍会
 重复 Unit；只有同一 SHA 已通过 `ci-fast` 时才能使用 `ci-integration-only`。`release-artifacts` 跳过
 Unit/Integration，只验证打包、Source、Javadoc 和制品 smoke，不能单独作为代码正确性门禁。
+
+普通 Surefire、L1/L2 和 L3 `ci-fast` 默认排除类级 `@Tag("slow")`。当前慢测集合只包含
+`PersonalAssistantRestartTest`、`PersonalAssistantWebFluxTest`、`SqliteRuntimeRecoveryTest` 和
+`LocalCodingAgentTest`；测试代码不得删除，使用 `-Pslow-tests test` 显式执行，并由夜间三平台工作流覆盖。
 
 本地 Maven 开发优先使用 `build-support/scripts/invoke-haifa-maven.ps1`（Windows）或对应的 `.sh`
 入口。精确测试使用 L1；模块完整测试和全仓增量测试使用 L2；最终门禁使用 L3。L0/L1 默认串行，
