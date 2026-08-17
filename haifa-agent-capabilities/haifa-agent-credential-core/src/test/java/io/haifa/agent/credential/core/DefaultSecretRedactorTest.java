@@ -27,8 +27,9 @@ class DefaultSecretRedactorTest {
         var redactor = new DefaultSecretRedactor();
         redactor.track(lease);
 
-        assertThat(redactor.redact("token=exact-secret Authorization: Bearer other-secret api_key=third-secret"))
-                .doesNotContain("exact-secret", "other-secret", "third-secret")
+        assertThat(redactor.redact("token=exact-secret Authorization: Bearer other-secret api_key=third-secret "
+                        + "https://user:remote-secret@github.example/repo.git"))
+                .doesNotContain("exact-secret", "other-secret", "third-secret", "remote-secret")
                 .contains("[REDACTED]");
     }
 }

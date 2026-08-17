@@ -31,4 +31,26 @@ class BaseSkillsTest {
             assertThat(registration.packageIndex().resources()).hasSize(1);
         });
     }
+
+    @Test
+    void exposesInstructionOnlyGitCliSkillsWithExecutionHint() {
+        var visibility = new SkillVisibilityContext(
+                new TenantRef("tenant-a"),
+                new PrincipalRef("principal-a", "user"),
+                Optional.empty(),
+                false,
+                Set.of(SkillScope.SDK));
+        var result = BaseSkills.gitCliSource().discover(new SkillDiscoveryContext(visibility));
+
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(result.registrations())
+                .extracting(registration -> registration.metadata().name().value())
+                .containsExactly("git", "github");
+        assertThat(result.registrations()).allSatisfy(registration -> {
+            assertThat(registration.metadata().toolHints())
+                    .extracting(alias -> alias.value())
+                    .containsExactly("execution_run");
+            assertThat(registration.packageIndex().resources()).hasSize(1);
+        });
+    }
 }

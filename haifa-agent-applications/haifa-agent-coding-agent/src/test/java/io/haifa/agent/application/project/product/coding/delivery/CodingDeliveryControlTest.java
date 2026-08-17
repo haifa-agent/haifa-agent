@@ -71,7 +71,7 @@ class CodingDeliveryControlTest {
                 .filteredOn(blocker -> blocker.code().equals("DIFF_INSPECTION_MISSING"))
                 .singleElement()
                 .satisfies(blocker -> assertThat(blocker.safeMessage())
-                        .contains("git.diff", "execution.run", "operationFamily=DIFF"));
+                        .contains("execution.run", "operationFamily=DIFF", "git diff"));
 
         tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
         tool(

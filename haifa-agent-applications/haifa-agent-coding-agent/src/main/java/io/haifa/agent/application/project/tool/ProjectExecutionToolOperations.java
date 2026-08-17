@@ -22,6 +22,7 @@ import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
@@ -167,6 +168,15 @@ public final class ProjectExecutionToolOperations {
         Map<String, Object> arguments = invocation.arguments().values();
         String command = requiredText(arguments, "command");
         String operationFamily = operationFamily(arguments.get("operationFamily"));
+        var commandClassification = SystemGitCliCommandClassifier.classify(command);
+        if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
+            return rejectedCommandClassification(operationFamily, commandClassification);
+        }
+        if ((operationFamily.equals("INSPECT") || operationFamily.equals("DIFF"))
+                && commandClassification.target() != SystemGitCliCommandClassifier.Target.OTHER
+                && !commandClassification.readOnly()) {
+            return rejectedCommandClassification(operationFamily, commandClassification);
+        }
         if (hasLeadingAbsoluteDirectoryChange(command)) {
             return rejectedAbsoluteDirectoryChange(operationFamily);
         }
@@ -213,7 +223,8 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
-        return executeRequest(request, invocation.cancellation(), invocation.observer(), operationFamily);
+        return executeRequest(
+                request, invocation.cancellation(), invocation.observer(), operationFamily, commandClassification);
     }
 
     private ExecutionLimits executionLimits(Duration timeout, String operationFamily) {
@@ -253,6 +264,10 @@ public final class ProjectExecutionToolOperations {
         if (timeout.compareTo(maximumTimeout) > 0) {
             throw new IllegalArgumentException("timeout exceeds maximumTimeout");
         }
+        var commandClassification = SystemGitCliCommandClassifier.classify(command);
+        if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
+            throw new SecurityException(commandClassification.reasonCode());
+        }
         ExecutionRequest request = new ExecutionRequest(
                 new ExecutionId(identifiers.nextValue()),
                 Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null"),
@@ -273,14 +288,15 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
-        return executeRequest(request, () -> false, ToolInvocationObserver.noop(), "UNKNOWN");
+        return executeRequest(request, () -> false, ToolInvocationObserver.noop(), "UNKNOWN", commandClassification);
     }
 
     private ToolResult executeRequest(
             ExecutionRequest request,
             ToolCancellation cancellationSignal,
             ToolInvocationObserver invocationObserver,
-            String operationFamily) {
+            String operationFamily,
+            SystemGitCliCommandClassifier.Classification commandClassification) {
         MergedTailObserver merged = new MergedTailObserver(
                 outputObserver, invocationObserver, maximumModelOutputBytes, maximumModelOutputLines);
         AtomicBoolean complete = new AtomicBoolean();
@@ -304,6 +320,7 @@ public final class ProjectExecutionToolOperations {
                     merged,
                     outputSanitizer,
                     operationFamily,
+                    commandClassification,
                     sandboxProfileRef,
                     scratchSpace);
         } catch (ExecutionPreflightException exception) {
@@ -320,6 +337,7 @@ public final class ProjectExecutionToolOperations {
             MergedTailObserver merged,
             UnaryOperator<String> outputSanitizer,
             String operationFamily,
+            SystemGitCliCommandClassifier.Classification commandClassification,
             SandboxProfileRef sandboxProfileRef,
             ExecutionScratchSpaceSpec scratchSpace) {
         String output = merged.text();
@@ -336,6 +354,9 @@ public final class ProjectExecutionToolOperations {
         data.put("truncated", truncated);
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
         data.put("operationFamily", operationFamily);
+        data.put("commandTarget", commandClassification.target().name());
+        data.put("commandRisk", commandClassification.risk().name());
+        data.put("commandClassificationReason", commandClassification.reasonCode());
         data.put(
                 "sandboxProfileDigest",
                 io.haifa.agent.policy.api.PolicyDigest.sha256Fields(
@@ -423,6 +444,34 @@ public final class ProjectExecutionToolOperations {
                         stableFailureCode,
                         "resourceClass",
                         "WORKDIR"),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static ToolResult rejectedCommandClassification(
+            String operationFamily, SystemGitCliCommandClassifier.Classification classification) {
+        return new ToolResult(
+                false,
+                "Command rejected before execution: trusted command classification does not permit the requested "
+                        + "operation family.",
+                Map.of(
+                        "status",
+                        "FAILED",
+                        "operationFamily",
+                        operationFamily,
+                        "commandTarget",
+                        classification.target().name(),
+                        "commandRisk",
+                        classification.risk().name(),
+                        "commandClassificationReason",
+                        classification.reasonCode(),
+                        "failureCategory",
+                        "POLICY",
+                        "stableFailureCode",
+                        "COMMAND_CLASSIFICATION_REJECTED",
+                        "resourceClass",
+                        "COMMAND"),
                 List.of(),
                 List.of(),
                 false);

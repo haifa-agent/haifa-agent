@@ -159,7 +159,7 @@ class ProjectApplicationTest {
         var skills = ProjectSkillPlatform.baseSkills(tenant, principal, Optional.empty(), false);
         assertThat(skills.catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
-                .containsExactly("result-verification", "task-planning");
+                .containsExactly("git", "git-delivery", "github", "result-verification", "task-planning");
 
         SkillActivationService unusedService = new SkillActivationService() {
             @Override
@@ -192,17 +192,17 @@ class ProjectApplicationTest {
     }
 
     @Test
-    void publishesAllFourteenProjectToolsWithCompleteFrozenDefinitions() {
+    void publishesElevenProjectToolsWithCompleteFrozenDefinitions() {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
                 catalog.names(),
-                Set.of("file.read", "file.write", "git.read", "execution.run"),
+                Set.of("file.read", "file.write", "execution.run"),
                 true,
                 providerThatMustNotRun(),
                 executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(14)
+                .hasSize(11)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -215,10 +215,7 @@ class ProjectApplicationTest {
                         "file_read",
                         "file_search",
                         "file_stat",
-                        "file_write",
-                        "git_diff",
-                        "git_inspect",
-                        "git_status");
+                        "file_write");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().outputSchema().document()).containsKey("$schema");

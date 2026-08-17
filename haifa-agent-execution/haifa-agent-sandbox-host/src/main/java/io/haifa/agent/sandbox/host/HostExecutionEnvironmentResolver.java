@@ -99,6 +99,12 @@ public final class HostExecutionEnvironmentResolver {
                 .orElseThrow(() -> new IllegalArgumentException(
                         "HOST_USER_HOME_UNAVAILABLE: no safe host user home is available"));
         putCanonical(resolved, "HOME", home.toString(), os.windows());
+        inherit(resolved, hostEnvironment, "SSH_AUTH_SOCK", os.windows(), false);
+        putCanonical(resolved, "GIT_TERMINAL_PROMPT", "0", os.windows());
+        putCanonical(resolved, "GCM_INTERACTIVE", "Never", os.windows());
+        putCanonical(resolved, "GH_PROMPT_DISABLED", "1", os.windows());
+        putCanonical(resolved, "GIT_PAGER", "cat", os.windows());
+        putCanonical(resolved, "GH_PAGER", "cat", os.windows());
         if (os.windows()) {
             putIfMissing(resolved, "PATHEXT", ".COM;.EXE;.BAT;.CMD", true);
             if (value(resolved, "PATH", true).isEmpty()) {
@@ -262,7 +268,7 @@ public final class HostExecutionEnvironmentResolver {
                 || name.contains("CREDENTIAL")
                 || name.endsWith("_PROXY")
                 || name.equals("NO_PROXY")
-                || name.endsWith("_AUTH_SOCK")
+                || (name.endsWith("_AUTH_SOCK") && !name.equals("SSH_AUTH_SOCK"))
                 || name.equals("DOCKER_HOST")
                 || name.equals("KUBECONFIG");
     }

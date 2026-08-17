@@ -41,3 +41,8 @@ HOME（Windows 按 `HOME`、`USERPROFILE`、`HOMEDRIVE + HOMEPATH`、JVM `user.h
 `PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等变量。Provider-isolated 输入不包含宿主
 HOME、AppData、XDG 或 TMP；Local Native 只使用 Provider 自己建立的隔离 HOME/TMP。环境值不进入 Tool
 Schema、Approval 文案或普通诊断输出。
+
+Host Guarded 还显式继承可信宿主的 `SSH_AUTH_SOCK`，使系统 `git`/`gh` 复用当前 OS 用户已有认证；
+模型不能提供或覆盖环境变量。Resolver 固定注入 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=Never`、
+`GH_PROMPT_DISABLED=1`、`GIT_PAGER=cat` 和 `GH_PAGER=cat`，避免无人值守 Run 进入登录或 pager 交互。
+Token 类环境仍被过滤，系统 CLI 自行访问原生配置和安全存储，Java 不读取或复制凭据。

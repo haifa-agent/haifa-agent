@@ -30,13 +30,17 @@ import java.util.Set;
 /** Builds the project product's model-visible tools through the platform Tool catalog. */
 public final class ProjectToolCatalog {
     private static final Map<String, String> REQUIRED_CAPABILITY = Map.ofEntries(
-            Map.entry("file.list", "file.read"), Map.entry("file.stat", "file.read"),
-            Map.entry("file.read", "file.read"), Map.entry("file.search", "file.read"),
-            Map.entry("file.create", "file.write"), Map.entry("file.write", "file.write"),
-            Map.entry("file.delete", "file.write"), Map.entry("file.move", "file.write"),
-            Map.entry("file.diff", "file.read"), Map.entry("file.patch", "file.write"),
-            Map.entry("git.inspect", "git.read"), Map.entry("git.status", "git.read"),
-            Map.entry("git.diff", "git.read"), Map.entry("execution.run", "execution.run"));
+            Map.entry("file.list", "file.read"),
+            Map.entry("file.stat", "file.read"),
+            Map.entry("file.read", "file.read"),
+            Map.entry("file.search", "file.read"),
+            Map.entry("file.create", "file.write"),
+            Map.entry("file.write", "file.write"),
+            Map.entry("file.delete", "file.write"),
+            Map.entry("file.move", "file.write"),
+            Map.entry("file.diff", "file.read"),
+            Map.entry("file.patch", "file.write"),
+            Map.entry("execution.run", "execution.run"));
     private static final Set<String> WRITES =
             Set.of("file.create", "file.write", "file.delete", "file.move", "file.patch");
 
@@ -273,9 +277,6 @@ public final class ProjectToolCatalog {
             case "file.move" -> "Move workspace path";
             case "file.diff" -> "Preview file diff";
             case "file.patch" -> "Apply workspace patch";
-            case "git.inspect" -> "Inspect Git repository";
-            case "git.status" -> "Read Git status";
-            case "git.diff" -> "Read Git diff";
             case "execution.run" -> "Run a local shell command";
             default -> throw new IllegalArgumentException("unknown project tool " + name);
         };
@@ -286,14 +287,12 @@ public final class ProjectToolCatalog {
             return "Run complete command text through the frozen "
                     + executionProfile.providerId()
                     + " execution profile inside the project workspace. This is the general OS CLI path for scalable "
-                    + "repository discovery, content search, source inspection, builds, tests, and diffs; choose an "
+                    + "repository discovery, content search, source inspection, system git/gh workflows, builds, "
+                    + "tests, and diffs; choose an "
                     + "available CLI and its complete arguments at runtime instead of expecting command-specific "
                     + "wrappers. Keep output bounded, adapt when a command is unavailable, and classify every call "
                     + "with operationFamily, using BUILD or TEST for validation and DIFF only for read-only final "
                     + "diff inspection.";
-        }
-        if (name.equals("git.diff")) {
-            return "Read the final Git diff within the frozen project workspace and capability boundary.";
         }
         if (name.equals("file.read")) {
             return "Read one bounded text window from a workspace file. Continue with nextCursor only when hasMore "
@@ -371,11 +370,6 @@ public final class ProjectToolCatalog {
                                 "description",
                                 "Context patch beginning with *** Begin Patch and ending with *** End Patch."));
                 required.add("patch");
-            }
-            case "git.inspect", "git.status" -> properties.put("includeIgnored", Map.of("type", "boolean"));
-            case "git.diff" -> {
-                properties.put("staged", Map.of("type", "boolean"));
-                properties.put("paths", Map.of("type", "array", "items", Map.of("type", "string"), "maxItems", 100));
             }
             case "execution.run" -> {
                 properties.put(
@@ -477,6 +471,9 @@ public final class ProjectToolCatalog {
                             Map.entry("stableFailureCode", Map.of("type", "string")),
                             Map.entry("resourceClass", Map.of("type", "string")),
                             Map.entry("operationFamily", Map.of("type", "string")),
+                            Map.entry("commandTarget", Map.of("type", "string")),
+                            Map.entry("commandRisk", Map.of("type", "string")),
+                            Map.entry("commandClassificationReason", Map.of("type", "string")),
                             Map.entry("sandboxProfileDigest", Map.of("type", "string")),
                             Map.entry("scratchSpecDigest", Map.of("type", "string")),
                             Map.entry("scratchProvisioned", Map.of("type", "boolean")),

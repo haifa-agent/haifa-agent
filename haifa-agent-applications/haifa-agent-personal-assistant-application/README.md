@@ -169,6 +169,12 @@ Hermes 等外部 `SKILL.md` 的扩展 front matter；未知或嵌套 metadata �
 边界仍限制 128 个文件、8 层目录、2 MiB 包大小、2000 行指令和 20000 估算 Token，脚本资源只索引为
 待审内容，不直接执行。
 
+Personal 默认装配共享 `git`、`github` 和只读产品 Skill `github-project-watch`。它们只提供 CLI 工作流，
+不保存 Token、不注册 Git/GitHub 子命令 Tool，也不能扩大 frozen Tool 集。PA 继续保持
+`ProductCapabilities.PROJECT/WORKSPACE/GIT = NONE`；远程查询使用 `execution_run` 的 `COMMAND` 模式与
+显式 `gh --repo owner/repo ... --json ...`，不要求本地 clone。每次执行仍走现有 exact Approval、网络策略、
+有界 cwd 和 Host Guarded Sandbox。当前阶段未提供 GitHub 外部写入 Skill 或 Webhook Channel。
+
 ## Phase 3 command and script execution
 
 The product prompt treats the latest user message as the current objective. A failed or abandoned execution from an
@@ -191,6 +197,10 @@ Execution Broker、Sandbox 或 Policy。
 调用摘要、Workspace 边界和 Host 风险；拒绝不会进入 STARTED。内置
 `local-script-execution` Skill 只能调用 `execution_run`，不会绕过审批、自动重试副作用执行，或
 宣称当前 Host Guarded Provider 提供强隔离。
+
+本地 Coding 与 loopback-only PA 复用启动进程的 OS 用户 Home、Git Credential Helper、SSH Agent 和
+`gh auth` 登录态；未登录时只返回诊断并提示用户在系统终端运行 `gh auth login`。产品不会读取
+`gh auth token`、私钥或 credential 文件，不建立 PA 私有 Token/OAuth，也不因系统认证可用而扩大 cwd。
 
 本模块不负责 HTTP、Spring 装配、SQLite 初始化、Web 页面，也不创建 Personal 专用
 Contract、Store、Starter、Tools 或 Skills 子工程。

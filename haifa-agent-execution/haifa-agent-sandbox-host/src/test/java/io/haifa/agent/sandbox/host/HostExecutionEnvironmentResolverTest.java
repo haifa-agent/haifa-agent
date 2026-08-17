@@ -77,6 +77,29 @@ class HostExecutionEnvironmentResolverTest {
     }
 
     @Test
+    void hostUserModePreservesSystemCliAuthenticationContextAndForcesNonInteractivePrompts() throws Exception {
+        String sshAgent = root.resolve("ssh-agent.sock").toString();
+        var result = HostExecutionEnvironmentResolver.resolveHostUser(
+                Map.of("HOME", home.toString(), "SSH_AUTH_SOCK", sshAgent),
+                "Linux",
+                home,
+                applicationData,
+                workspace,
+                scratch,
+                Set.of());
+
+        assertThat(result.environment())
+                .containsEntry("HOME", home.toRealPath().toString())
+                .containsEntry("SSH_AUTH_SOCK", sshAgent)
+                .containsEntry("GIT_TERMINAL_PROMPT", "0")
+                .containsEntry("GCM_INTERACTIVE", "Never")
+                .containsEntry("GH_PROMPT_DISABLED", "1")
+                .containsEntry("GIT_PAGER", "cat")
+                .containsEntry("GH_PAGER", "cat")
+                .doesNotContainKeys("GH_TOKEN", "GITHUB_TOKEN");
+    }
+
+    @Test
     void windowsUsesHomeDriveAndHomePathBeforeJvmFallback() throws Exception {
         Path driveHome = Files.createDirectory(root.resolve("drive-home"));
         Path fileSystemRoot = driveHome.getRoot();

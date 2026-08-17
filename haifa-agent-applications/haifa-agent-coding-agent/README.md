@@ -64,7 +64,7 @@ Decision/Approval evidence Store 和本地同主体 Verifier。它不包含组�
 
 组合 Project Index、Context Source、既有 Runtime Tool Pipeline 与 Project-only 产品外观。普通产品请求只携带 ProjectId 和消息；默认 Workspace、Profile、Context Source 与 Tool disclosure 从可信版本化配置解析。
 
-本模块承载 Project 产品的内建 Tool，包括 Workspace 文件/Git/Execution Tool，以及默认关闭的 Web
+本模块承载 Project 产品的内建 Workspace 文件/Execution Tool，以及默认关闭的 Web
 Search/Fetch Tool。Web 的 Provider-neutral Java 接口、Tool adapter、URL Policy 和具体 HTTP Provider
 由公共 `haifa-agent-web` Integration 模块提供；本模块只负责 Coding Agent 的 Provider、Credential
 和 Tool alias 装配。
@@ -124,7 +124,10 @@ Policy/Approval/ExecutionBroker/Sandbox 和 Runtime Message Store。Session Tree
 实现：偏好保存内部 Model ID 和独立 revision，只允许在无活动 Run/dispatch 时切换，下一新 Run
 冻结对应快照；配置中已删除的模型要求重选，不静默回退。
 
-`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch`、`git.inspect/status/diff` 与 `execution.run` 共 14 个能力注册到唯一 Tool Catalog。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
+`ProjectToolCatalog` 将 `file.list/stat/read/search/create/write/delete/move/diff/patch` 与 `execution.run`
+共 11 个能力注册到唯一 Tool Catalog。模型目录不再披露 `git.*` 或 `github.*` Tool；Git/GitHub 操作由
+`execution.run` 直接调用系统 `git` / `gh`。每个定义均包含 Draft 2020-12 输入/输出 Schema、风险、
+幂等性、副作用、资源和审批元数据；普通 Chat、无有效 capability 或模型不支持 Tool 时冻结集合为空。
 Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻结该能力；大型仓库的文件发现和内容
 搜索使用通用 `execution.run`，由模型根据冻结 Shell 与 `PATH` 选择 `rg`、`rg --files` 或平台适配的
 替代命令。应用不增加搜索专用 Executor、不解析搜索意图，也不在 Java 中拼接命令选项。
@@ -136,10 +139,13 @@ Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一�
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
 新 Profile；模型可见 Schema 包含 command、逻辑 workdir、有界 timeout、安全描述和显式
 必填的 `operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，不能可靠识别时使用
-`UNKNOWN`；这些操作族用于语义失败归类和权威交付证据，而不是命令特例。
+`UNKNOWN`。可信 `SystemGitCliCommandClassifier` 独立解析直接 `git`/`gh` 命令并产出风险事实；复合命令、
+未知 wrapper/alias 不能降级为只读，认证环境覆盖和仓库路径逃逸在执行前拒绝。模型自报的操作族仅用于
+语义失败归类和交付意图，不能覆盖可信分类。
 
 `ProjectSkillPlatform` 从受信 Discovery/Visibility Context 组装 Skill Catalog 与精确内容 Loader。它提供
-`task-planning`、`result-verification` 两个 Classpath SDK 基础 Skill，并允许上层 Application 显式加入
+`task-planning`、`result-verification`、共享 `git`/`github` 与 Coding `git-delivery` Classpath Skill，
+并允许上层 Application 显式加入
 绑定当前可信 tenant/principal 的只读 `USER` Scope 本地目录 Source。目录 root 不来自模型或 Run 请求，
 Application 必须在扫描前验证绝对路径、可读性和 symlink 边界。普通旧装配路径不隐式加入 Skill，只有产品
 Profile 显式 allowlist 后，`skill.load` / `skill.resource.read` 才作为
@@ -149,7 +155,10 @@ Profile 显式 allowlist 后，`skill.load` / `skill.resource.read` 才作为
 Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Provider、endpoint、非秘密配置和 Fetch URL Policy
 进入冻结 binding；Provider 不读取环境变量、不保存 Credential、不执行 fallback。
 
-配置、权限和精确 Tool 身份继续使用点号命名；模型披露使用 Provider-safe Alias，例如 `file.read -> file_read`、`git.status -> git_status` 和 `execution.run -> execution_run`。Alias 只影响模型协议，不改变 Provider 执行时收到的精确 Tool 名称。
+配置、权限和精确 Tool 身份继续使用点号命名；模型披露使用 Provider-safe Alias，例如
+`file.read -> file_read` 和 `execution.run -> execution_run`。Alias 只影响模型协议，不改变 Provider
+执行时收到的精确 Tool 名称。历史 frozen Run 中旧 `git.*` identity 仅用于读取持久化交付证据，不能进入
+新 Run 的 Tool Catalog。
 
 经审查启用的 MCP Tool 由 `McpToolCatalogContribution` 写入同一个 `ToolCatalogBuilder`，不会建立 MCP 专用 Registry。每个 MCP server 使用独立 `mcp.<serverId>` Provider；本地 definition hash 与远端 definition digest 分别冻结，Runtime 只通过 `FrozenToolBinding.providerBindingReference` 恢复精确 binding。
 
@@ -160,7 +169,8 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
 退出码、有界合并首尾、明确省略标记、Output Ref、耗时、安全失败类别、Scratch 状态和 FileChangeSet
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
-`OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试，Java 层不解析命令内容。
+`OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
+不包装或解释普通命令语义。
 执行命令已经从受控 Workspace 启动；绝对路径 `cd ...` 或绝对 `workdir` 会在进入 Broker 前以
 `ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝，不会被误记为
 结果未知。调用方应省略 `cd` 或使用逻辑相对 `workdir`，保证 Tool Policy 授权的命令与实际执行

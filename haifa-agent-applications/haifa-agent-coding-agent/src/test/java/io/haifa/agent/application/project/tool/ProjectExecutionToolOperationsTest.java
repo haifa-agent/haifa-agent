@@ -141,6 +141,33 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void rejectsGitWritesMisreportedAsReadOnlyAndAuthenticationEnvironmentOverrides() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new AssertionError("rejected commands must not reach the broker");
+            }
+        };
+        var operations = operations(broker, 4096, 100);
+
+        var writeAsRead = operations.execute(
+                invocation(Map.of("command", "git push origin feature", "operationFamily", "INSPECT"), () -> false),
+                access());
+        var tokenOverride = operations.execute(
+                invocation(
+                        Map.of("command", "env GH_TOKEN=value gh pr list", "operationFamily", "UNKNOWN"), () -> false),
+                access());
+
+        assertThat(writeAsRead.structuredData())
+                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("commandRisk", "EXTERNAL_WRITE")
+                .containsEntry("commandTarget", "GIT");
+        assertThat(tokenOverride.structuredData())
+                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("commandRisk", "DENIED");
+    }
+
+    @Test
     void propagatesToolCancellationToTheBroker() throws Exception {
         AtomicBoolean cancellation = new AtomicBoolean();
         CountDownLatch executing = new CountDownLatch(1);

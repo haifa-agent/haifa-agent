@@ -20,6 +20,21 @@ class PersonalSkillPlatformTest {
     private static final PrincipalRef PRINCIPAL = new PrincipalRef("personal-user", "user");
 
     @Test
+    void bundlesSharedGitCliAndReadOnlyGithubWatchSkills() {
+        var platform = PersonalSkillPlatform.create(TENANT, PRINCIPAL, Optional.empty(), List.of());
+
+        assertThat(platform.aliases()).contains("git", "github", "github-project-watch");
+        assertThat(platform.load("git", TENANT, PRINCIPAL).instructions())
+                .contains("system `git`", "execution_run")
+                .doesNotContain("gh auth token");
+        assertThat(platform.load("github", TENANT, PRINCIPAL).instructions())
+                .contains("system `gh`", "gh auth status", "execution_run");
+        assertThat(platform.load("github-project-watch", TENANT, PRINCIPAL).instructions())
+                .contains("read-only", "COMMAND")
+                .doesNotContain("GH_TOKEN");
+    }
+
+    @Test
     void bundlesTheVersionedDeepResearchPackageWithEveryFrozenResource() {
         var platform = PersonalSkillPlatform.create(TENANT, PRINCIPAL, Optional.empty(), List.of());
         var binding = platform.catalog().snapshot().bindings().stream()

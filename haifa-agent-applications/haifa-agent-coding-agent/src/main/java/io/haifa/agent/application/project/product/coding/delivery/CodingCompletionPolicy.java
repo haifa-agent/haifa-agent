@@ -52,8 +52,8 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
         if (!snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION)) {
             blockers.add(CompletionBlocker.recoverable(
                     "DIFF_INSPECTION_MISSING",
-                    "Inspect the final diff with git.diff, or use execution.run with operationFamily=DIFF for a "
-                            + "read-only diff command, before submitting final output.",
+                    "Inspect the final diff with execution.run using operationFamily=DIFF and a read-only git diff "
+                            + "command before submitting final output.",
                     "DIFF_INSPECTION"));
         }
         if (snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)

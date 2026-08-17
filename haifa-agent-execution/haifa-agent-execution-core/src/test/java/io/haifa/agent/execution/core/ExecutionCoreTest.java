@@ -95,7 +95,8 @@ class ExecutionCoreTest {
                         throw new RuntimeException(exception);
                     }
                 },
-                ("secret-token\n" + "x".repeat(5000)).getBytes(StandardCharsets.UTF_8));
+                ("secret-token\nhttps://user:remote-secret@github.example/repo.git\n" + "x".repeat(5000))
+                        .getBytes(StandardCharsets.UTF_8));
         DefaultExecutionBroker broker = fixture.broker(provider, request -> policyCalls.incrementAndGet());
         ExecutionRequest request = fixture.request("execution-1", "key-1", Set.of("execution.run"), List.of("fake"));
 
@@ -103,12 +104,12 @@ class ExecutionCoreTest {
 
         assertThat(result.status()).isEqualTo(ExecutionStatus.SUCCEEDED);
         assertThat(result.optionalFileChangeSetId()).isPresent();
-        assertThat(result.stdout().summary()).doesNotContain("secret-token");
+        assertThat(result.stdout().summary()).doesNotContain("secret-token", "remote-secret");
         assertThat(result.stdout().optionalAssetRef()).isPresent();
         byte[] stored = fixture.outputs.load(result.stdout().assetRef()).orElseThrow();
         assertThat(new String(stored, StandardCharsets.UTF_8))
-                .doesNotContain("secret-token")
-                .contains("***");
+                .doesNotContain("secret-token", "remote-secret")
+                .contains("***", "https://***@github.example/repo.git");
         assertThat(fixture.changeSets
                         .find(result.fileChangeSetId())
                         .orElseThrow()

@@ -462,7 +462,7 @@ record CliConfiguration(
                     || name.contains("CREDENTIAL")
                     || name.endsWith("_PROXY")
                     || name.equals("NO_PROXY")
-                    || name.endsWith("_AUTH_SOCK")
+                    || (name.endsWith("_AUTH_SOCK") && !name.equals("SSH_AUTH_SOCK"))
                     || name.equals("DOCKER_HOST")
                     || name.equals("KUBECONFIG");
         }
@@ -577,7 +577,8 @@ record CliConfiguration(
         }
 
         static Skills defaults() {
-            return new Skills(Set.of("task-planning", "result-verification"), List.of());
+            return new Skills(
+                    Set.of("task-planning", "result-verification", "git", "github", "git-delivery"), List.of());
         }
     }
 

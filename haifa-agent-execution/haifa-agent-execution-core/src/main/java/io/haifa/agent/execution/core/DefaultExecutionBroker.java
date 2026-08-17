@@ -471,7 +471,13 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                         redacted, secret.getBytes(java.nio.charset.StandardCharsets.UTF_8), new byte[] {'*', '*', '*'});
             }
         }
-        return redacted;
+        return redactUriUserInfo(redacted);
+    }
+
+    private static byte[] redactUriUserInfo(byte[] source) {
+        String value = new String(source, java.nio.charset.StandardCharsets.UTF_8);
+        String redacted = value.replaceAll("(?i)(https?://)[^/@\\s]+@", "$1***@");
+        return redacted.equals(value) ? source : redacted.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static byte[] replace(byte[] source, byte[] target, byte[] replacement) {
