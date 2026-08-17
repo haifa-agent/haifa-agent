@@ -70,7 +70,7 @@ public final class SqliteRuntimeEventAppender implements RuntimeEventAppender {
     @Override
     public List<RuntimeEvent> eventsFor(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
-        return execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).eventsForRun(runId.value()).stream()
+        return read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).eventsForRun(runId.value()).stream()
                 .map(this::fromRow)
                 .toList());
     }
@@ -80,7 +80,7 @@ public final class SqliteRuntimeEventAppender implements RuntimeEventAppender {
             AgentRunId runId, long exclusiveSequence, OptionalLong observedHead, int limit) {
         Objects.requireNonNull(runId, "runId must not be null");
         validateRange(exclusiveSequence, observedHead, limit);
-        return execute(() -> {
+        return read(() -> {
             RuntimeStoreMapper mapper = unitOfWork.mapper(RuntimeStoreMapper.class);
             Long storedHead = mapper.eventHead(runId.value());
             if (storedHead == null) {
@@ -113,14 +113,14 @@ public final class SqliteRuntimeEventAppender implements RuntimeEventAppender {
     @Override
     public OptionalLong earliestSequence(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
-        Long value = execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).eventEarliest(runId.value()));
+        Long value = read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).eventEarliest(runId.value()));
         return value == null ? OptionalLong.empty() : OptionalLong.of(value);
     }
 
     @Override
     public OptionalLong headSequence(AgentRunId runId) {
         Objects.requireNonNull(runId, "runId must not be null");
-        Long value = execute(() -> unitOfWork.mapper(RuntimeStoreMapper.class).eventHead(runId.value()));
+        Long value = read(() -> unitOfWork.mapper(RuntimeStoreMapper.class).eventHead(runId.value()));
         return value == null ? OptionalLong.empty() : OptionalLong.of(value);
     }
 
@@ -176,6 +176,15 @@ public final class SqliteRuntimeEventAppender implements RuntimeEventAppender {
     private <T> T execute(Supplier<T> work) {
         try {
             return unitOfWork.execute(work);
+        } catch (SqliteStoreException exception) {
+            if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
+            throw exception;
+        }
+    }
+
+    private <T> T read(Supplier<T> work) {
+        try {
+            return unitOfWork.executeReadOnly(work);
         } catch (SqliteStoreException exception) {
             if (exception.getCause() instanceof RuntimeException runtimeException) throw runtimeException;
             throw exception;
