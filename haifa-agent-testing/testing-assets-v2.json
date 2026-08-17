@@ -79,30 +79,6 @@
       "coverageMode": "EXACT"
     },
     {
-      "assetId": "testing-domain-glossary",
-      "path": "haifa-agent-testing/TESTING-DOMAIN-GLOSSARY.md",
-      "kind": "README",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/README.md"],
-      "replacement": "",
-      "rationale": "Canonical Chinese translations and concise explanations for testing-domain terminology.",
-      "coverageMode": "EXACT"
-    },
-    {
-      "assetId": "java-critical-path-autonomous-delivery-tooling",
-      "path": "haifa-agent-testing/JAVA-CRITICAL-PATH-AND-AUTONOMOUS-DELIVERY-TOOLING.md",
-      "kind": "README",
-      "lifecycle": "ACTIVE",
-      "disposition": "KEEP",
-      "owner": "testing-platform",
-      "referencedBy": ["haifa-agent-testing/README.md"],
-      "replacement": "",
-      "rationale": "Reviewed Java tooling and benchmark adoption guidance for Critical Path and Autonomous Delivery testing.",
-      "coverageMode": "EXACT"
-    },
-    {
       "assetId": "testing-asset-inventory-v2",
       "path": "haifa-agent-testing/testing-assets-v2.json",
       "kind": "MANIFEST",
