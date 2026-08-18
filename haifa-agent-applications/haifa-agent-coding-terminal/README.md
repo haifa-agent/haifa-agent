@@ -159,7 +159,8 @@ message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
   Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随；用户
   明确提交新消息或 Steer 时也会恢复自动跟随，避免上一轮回翻状态把新一轮输出持续藏在下方。
-- 终端不启用鼠标事件上报，普通拖拽由宿主终端原生选择和复制文字；Transcript 使用
+- 终端不启用鼠标事件上报，并在 Program 启动前和退出清理时显式关闭可能由旧进程遗留的鼠标模式；
+  普通拖拽由宿主终端原生选择和复制文字；Transcript 使用
   PageUp/PageDown 回翻，PageDown 到底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和
   多行光标移动语义。
 

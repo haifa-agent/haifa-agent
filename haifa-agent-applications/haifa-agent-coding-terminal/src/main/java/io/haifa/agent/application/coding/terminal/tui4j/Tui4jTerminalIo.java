@@ -4,8 +4,11 @@ import com.williamcallahan.tui4j.compat.bubbletea.Model;
 import com.williamcallahan.tui4j.compat.bubbletea.Program;
 import com.williamcallahan.tui4j.compat.bubbletea.ProgramOption;
 import com.williamcallahan.tui4j.input.kitty.KittyEnterKeyMappings;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -19,6 +22,8 @@ public record Tui4jTerminalIo(
         List<String> environment,
         boolean withoutSignalHandler,
         boolean interactive) {
+    private static final byte[] RESET_MOUSE_REPORTING =
+            "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l".getBytes(StandardCharsets.US_ASCII);
     private static final Set<String> SAFE_TERMINAL_ENVIRONMENT = Set.of(
             "COLORTERM",
             "NO_COLOR",
@@ -119,5 +124,25 @@ public record Tui4jTerminalIo(
         // Keep mouse reporting disabled. The host terminal must own ordinary drag selection and
         // clipboard copy; transcript navigation remains available through PageUp/PageDown.
         return new Program(model, options.toArray(ProgramOption[]::new)).withAltScreen();
+    }
+
+    void run(Program program) {
+        Objects.requireNonNull(program, "program must not be null");
+        resetMouseReporting();
+        try {
+            program.run();
+        } finally {
+            resetMouseReporting();
+        }
+    }
+
+    private void resetMouseReporting() {
+        OutputStream terminalOutput = output.orElse(System.out);
+        try {
+            terminalOutput.write(RESET_MOUSE_REPORTING);
+            terminalOutput.flush();
+        } catch (IOException failure) {
+            throw new UncheckedIOException("TUI_MOUSE_REPORTING_RESET_FAILED", failure);
+        }
     }
 }

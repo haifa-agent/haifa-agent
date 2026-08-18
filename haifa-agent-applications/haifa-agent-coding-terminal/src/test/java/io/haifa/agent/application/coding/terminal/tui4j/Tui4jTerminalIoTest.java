@@ -40,13 +40,13 @@ class Tui4jTerminalIoTest {
     }
 
     @Test
-    void productionProgramLeavesMouseReportingDisabledForNativeTextSelection() throws Exception {
+    void productionProgramResetsMouseReportingBeforeStartupAndAfterExit() throws Exception {
         var output = new ByteArrayOutputStream();
         try (var inputWriter = new PipedOutputStream();
                 var input = new PipedInputStream(inputWriter)) {
             var terminalIo = Tui4jTerminalIo.streams(input, output, List.of("TERM=xterm-256color"));
             var program = terminalIo.program(new Tui4jTerminalSpikeModel(80, 24));
-            CompletableFuture<Void> run = CompletableFuture.runAsync(program::run)
+            CompletableFuture<Void> run = CompletableFuture.runAsync(() -> terminalIo.run(program))
                     .orTimeout(Duration.ofSeconds(10).toMillis(), TimeUnit.MILLISECONDS);
 
             program.waitForInit();
@@ -54,8 +54,14 @@ class Tui4jTerminalIoTest {
             run.get(10, TimeUnit.SECONDS);
         }
 
-        assertThat(output.toString(Charset.defaultCharset()))
+        String terminalOutput = output.toString(Charset.defaultCharset());
+        String reset = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l";
+        assertThat(terminalOutput)
+                .startsWith(reset)
+                .endsWith(reset)
                 .doesNotContain("\u001B[?1000h", "\u001B[?1002h", "\u001B[?1003h", "\u001B[?1006h");
+        assertThat(terminalOutput.split(java.util.regex.Pattern.quote(reset), -1))
+                .hasSizeGreaterThanOrEqualTo(3);
     }
 
     private Tui4jTerminalIo io(String environment) {
