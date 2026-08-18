@@ -144,6 +144,12 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   原有 editor buffer/cursor 均保持不变；
 - `RunInputLifecycle.ACCEPTED` 将 Steer 放入 Pending，`APPLIED` 后移除；持久 Follow-up 与 Steer
   合并展示且按稳定 ID 去重，Alt+Up 仍从产品队列恢复原文；
+- 活动状态区分 `THINKING`（模型交互与处理工具结果）、`WORKING`（工具执行）和
+  `WAITING FOR APPROVAL`（等待用户审批）。计时是当前活动阶段耗时，不是整轮 Run 总耗时：新 Run、
+  工具开始、工具完成后返回模型、进入/离开审批、应用 Steer、恢复、验证和取消阶段时从 `1s` 重新开始；
+  Assistant Delta、Execution 输出块、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
+  名称，例如 `WORKING (12s) · execution.run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
+  ToolCallId；
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
 
@@ -270,8 +276,10 @@ key，并在所有重启间保持不变。
     后提示消失。先以大窗口渲染、再缩小窗口并用 PageUp 回翻；同时确认鼠标拖拽可由宿主终端选择文字。
 15. 分别粘贴带 bracketed-paste 标记和不带标记的多行文本，确认所有行停留在 Editor，末尾换行也不
     提交；随后单独按 Enter 才提交一次。
-16. PageUp 回翻后直接提交新消息，确认新一轮自动回到底部且不显示陈旧的 `new output below`；活动状态
-    从 `1s` 开始计时，并在 61 秒显示为 `1m 1s`。
+16. PageUp 回翻后直接提交新消息，确认新一轮自动回到底部且不显示陈旧的 `new output below`；模型交互
+    显示 `THINKING (1s)`，工具开始后显示 `WORKING (1s) · tool-name`，工具完成并返回模型后重新显示
+    `THINKING (1s)`。进入审批显示 `WAITING FOR APPROVAL (1s)`；同一阶段在 61 秒显示为 `1m 1s`，
+    Assistant Delta 和工具输出块不能重置计时。
 
 真实模型和 Web Provider 可能产生费用；未经单独授权保持 **NOT RUN**。自动化验证只使用 Stub/Fake：
 

@@ -56,7 +56,8 @@ final class Tui4jCodingTerminalModel implements Model {
     private boolean fullRepaintRequested;
     private int pendingTranscriptScrollRows;
     private AgentRunId timedRunId;
-    private long runStartedNanos;
+    private long timedActivityRevision = -1;
+    private long activityStartedNanos;
     private PreparedMessageSubmission pendingSubmission;
     private long deferredEnterSequence;
     private DeferredEnter pendingEnter;
@@ -163,7 +164,7 @@ final class Tui4jCodingTerminalModel implements Model {
         TerminalUiState state = controller.state();
         int requestedScrollRows = pendingTranscriptScrollRows;
         pendingTranscriptScrollRows = 0;
-        Duration elapsed = workingElapsed(state);
+        Duration elapsed = activityElapsed(state);
         String rendered = view.render(
                 state, transcript, editor, followTranscript, newOutputPending, elapsed, requestedScrollRows);
         if (requestedScrollRows > 0 && transcript.atBottom()) {
@@ -174,18 +175,21 @@ final class Tui4jCodingTerminalModel implements Model {
         return rendered;
     }
 
-    private Duration workingElapsed(TerminalUiState state) {
+    private Duration activityElapsed(TerminalUiState state) {
         if (state.currentRunId().isEmpty()) {
             timedRunId = null;
+            timedActivityRevision = -1;
             return Duration.ZERO;
         }
         AgentRunId runId = state.currentRunId().orElseThrow();
         long now = monotonicNanos.getAsLong();
-        if (!runId.equals(timedRunId)) {
+        if (!runId.equals(timedRunId)
+                || timedActivityRevision != state.activity().revision()) {
             timedRunId = runId;
-            runStartedNanos = now;
+            timedActivityRevision = state.activity().revision();
+            activityStartedNanos = now;
         }
-        return Duration.ofNanos(Math.max(0, now - runStartedNanos));
+        return Duration.ofNanos(Math.max(0, now - activityStartedNanos));
     }
 
     private Command key(KeyPressMessage key) {

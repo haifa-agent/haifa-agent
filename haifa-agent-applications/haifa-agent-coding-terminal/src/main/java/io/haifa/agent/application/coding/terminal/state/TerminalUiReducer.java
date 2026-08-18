@@ -46,7 +46,7 @@ public final class TerminalUiReducer {
                     List.copyOf(loaded.resources()),
                     transcript,
                     sameRun ? state.pending() : List.of(),
-                    active.isPresent() ? "Working" : "Idle",
+                    active.isPresent() ? "THINKING" : "Idle",
                     state.editorBuffer(),
                     state.editorCursor(),
                     selectorAfterSessionLoad(state.selector(), view),
@@ -392,12 +392,14 @@ public final class TerminalUiReducer {
                         && "FAILED".equals(lifecycle.status())
                 ? Optional.of(lifecycle.reasonCode())
                 : Optional.empty();
+        String projectedStatus = status(event, state.status());
+        TerminalActivity projectedActivity = activity(state, event, projectedStatus);
         return copy(
                 state,
                 state.loadedResources(),
                 transcript,
                 pending,
-                status(event, state.status()),
+                projectedStatus,
                 state.editorBuffer(),
                 state.editorCursor(),
                 selectorAfterEvent(state.selector(), event.payload()),
@@ -409,6 +411,7 @@ public final class TerminalUiReducer {
                 Optional.of(event.cursor()),
                 seen,
                 executionFailure,
+                projectedActivity,
                 state.exitRequested());
     }
 
@@ -564,24 +567,31 @@ public final class TerminalUiReducer {
     }
 
     private static String status(AgentRunEvent event, String fallback) {
-        if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle) return lifecycle.status();
+        if (event.payload() instanceof RunEventPayloads.RunLifecycle lifecycle) {
+            return switch (lifecycle.status()) {
+                case "RUNNING" -> "THINKING";
+                case "WAITING_APPROVAL", "WAITING_INTERACTION" -> "WAITING FOR APPROVAL";
+                default -> lifecycle.status();
+            };
+        }
         if (event.payload() instanceof RunEventPayloads.ToolLifecycle lifecycle) {
-            return activityStatus(lifecycle.status(), fallback);
+            return toolActivityStatus(lifecycle.status(), fallback);
         }
         if (event.payload() instanceof RunEventPayloads.ExecutionLifecycle lifecycle) {
-            return activityStatus(lifecycle.status(), fallback);
+            return executionActivityStatus(lifecycle.status(), fallback);
         }
         if (event.payload() instanceof RunEventPayloads.InteractionLifecycle lifecycle) {
             return switch (lifecycle.state()) {
-                case "PENDING", "REQUESTED" -> "Waiting for approval";
-                case "RESPONDED", "APPROVED", "REJECTED", "EXPIRED", "CANCELLED" -> "Working";
+                case "PENDING", "REQUESTED" -> "WAITING FOR APPROVAL";
+                case "RESPONDED", "APPROVED" -> "WORKING";
+                case "REJECTED", "EXPIRED", "CANCELLED" -> "THINKING";
                 default -> fallback;
             };
         }
         if (event.payload() instanceof RunEventPayloads.RunInputLifecycle lifecycle) {
             return switch (lifecycle.state()) {
                 case "ACCEPTED" -> "Applying steer";
-                case "APPLIED" -> "Working";
+                case "APPLIED" -> "THINKING";
                 default -> fallback;
             };
         }
@@ -596,12 +606,45 @@ public final class TerminalUiReducer {
         return fallback;
     }
 
-    private static String activityStatus(String status, String fallback) {
+    private static String toolActivityStatus(String status, String fallback) {
         return switch (status) {
-            case "QUEUED", "REQUESTED", "STARTED", "RUNNING", "WAITING" -> "Working";
-            case "FAILED", "CANCELLED" -> "Attention";
+            case "STARTED", "RUNNING", "WAITING", "APPROVED" -> "WORKING";
+            case "SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT" -> "THINKING";
             default -> fallback;
         };
+    }
+
+    private static String executionActivityStatus(String status, String fallback) {
+        return switch (status) {
+            case "STARTED", "RUNNING", "STREAMING", "WAITING" -> "WORKING";
+            default -> fallback;
+        };
+    }
+
+    private static TerminalActivity activity(TerminalUiState state, AgentRunEvent event, String projectedStatus) {
+        boolean statusChanged = !state.status().equalsIgnoreCase(projectedStatus);
+        boolean toolBoundary = event.payload() instanceof RunEventPayloads.ToolLifecycle lifecycle
+                && ("STARTED".equals(lifecycle.status()) || terminalToolStatus(lifecycle.status()));
+        if (!statusChanged && !toolBoundary) return state.activity();
+
+        String label = "";
+        if (event.payload() instanceof RunEventPayloads.ToolLifecycle lifecycle
+                && ("STARTED".equals(lifecycle.status()) || "RUNNING".equals(lifecycle.status()))) {
+            label = boundedActivityLabel(lifecycle.displayName());
+        } else if (projectedStatus.equalsIgnoreCase("WORKING")) {
+            label = state.activity().label();
+        }
+        return state.activity().advance(label);
+    }
+
+    private static boolean terminalToolStatus(String status) {
+        return Set.of("SUCCEEDED", "COMPLETED", "FAILED", "DENIED", "CANCELLED", "TIMEOUT")
+                .contains(status);
+    }
+
+    private static String boundedActivityLabel(String value) {
+        String label = value == null ? "" : value.strip();
+        return label.length() <= 128 ? label : label.substring(0, 127) + "…";
     }
 
     private static Optional<AgentRunId> currentRunAfter(
@@ -876,6 +919,46 @@ public final class TerminalUiReducer {
             java.util.Set<String> seen,
             Optional<String> error,
             boolean exit) {
+        return copy(
+                state,
+                resources,
+                transcript,
+                pending,
+                status,
+                buffer,
+                cursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                runId,
+                eventCursor,
+                seen,
+                error,
+                state.activity(),
+                exit);
+    }
+
+    private static TerminalUiState copy(
+            TerminalUiState state,
+            List<String> resources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String buffer,
+            int cursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<io.haifa.agent.application.project.product.coding.CodingSessionView> session,
+            Optional<io.haifa.agent.core.run.AgentRunId> runId,
+            Optional<io.haifa.agent.runtime.api.RunEventCursor> eventCursor,
+            java.util.Set<String> seen,
+            Optional<String> error,
+            TerminalActivity activity,
+            boolean exit) {
         return new TerminalUiState(
                 state.header(),
                 resources,
@@ -893,6 +976,7 @@ public final class TerminalUiReducer {
                 eventCursor,
                 seen,
                 error,
+                activity,
                 exit);
     }
 }

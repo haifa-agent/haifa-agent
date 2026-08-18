@@ -40,10 +40,12 @@ import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -309,6 +311,33 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void restartsTheActivityTimerWhenToolsStartAndReturnControlToTheModel() {
+        AtomicLong clock = new AtomicLong();
+        var fixture = fixture(clock::get);
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.view();
+        clock.set(Duration.ofSeconds(9).toNanos());
+        assertThat(fixture.model.view()).contains("THINKING (9s)");
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                2,
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution.run", "STARTED", "NONE", "git status", ""))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("WORKING (1s) · execution.run");
+        clock.set(Duration.ofSeconds(14).toNanos());
+        assertThat(fixture.model.view()).contains("WORKING (5s) · execution.run");
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                3,
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution.run", "SUCCEEDED", "NONE", "git status", ""))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("THINKING (1s)").doesNotContain("WORKING (");
+    }
+
+    @Test
     void routesParsedSgrMouseWheelInputToTheTranscript() {
         var fixture = fixture();
         for (int index = 1; index <= 30; index++) {
@@ -401,6 +430,10 @@ class Tui4jCodingTerminalModelTest {
     }
 
     private Fixture fixture() {
+        return fixture(System::nanoTime);
+    }
+
+    private Fixture fixture(java.util.function.LongSupplier monotonicNanos) {
         var pump = new TerminalEventPump(64);
         var controller = new CodingTerminalController(
                 new ProjectId("project-1"),
@@ -409,7 +442,7 @@ class Tui4jCodingTerminalModelTest {
                 new TerminalUiReducer(),
                 TerminalUiState.initial(80, 24),
                 Runnable::run);
-        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
+        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump, monotonicNanos));
     }
 
     private KeyPressMessage key(KeyType type) {

@@ -221,7 +221,68 @@ class TerminalUiReducerTest {
                                 "2 tests failed",
                                 "Exit: 1",
                                 "Changes: changes:1"));
-        assertThat(execution.status()).isEqualTo("Attention");
+        assertThat(execution.status()).isEqualTo("THINKING");
+    }
+
+    @Test
+    void advancesTheActivityClockAtToolAndModelBoundariesWithoutResettingForOutput() {
+        TerminalUiState thinking = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(
+                        event(1, "event-1", new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        TerminalUiState requested = reducer.reduce(
+                thinking,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution.run", "REQUESTED", "NONE", "git status", ""))));
+        TerminalUiState working = reducer.reduce(
+                requested,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-3",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution.run", "STARTED", "NONE", "git status", ""))));
+        TerminalUiState executionOutput = reducer.reduce(
+                working,
+                new TerminalUiAction.RunEventReceived(event(
+                        4,
+                        "event-4",
+                        new RunEventPayloads.ExecutionLifecycle(
+                                "execution-1",
+                                "tool-1",
+                                "STREAMING",
+                                "git status",
+                                ".",
+                                "STDOUT",
+                                "clean",
+                                null,
+                                false,
+                                ""))));
+        TerminalUiState resumedThinking = reducer.reduce(
+                executionOutput,
+                new TerminalUiAction.RunEventReceived(event(
+                        5,
+                        "event-5",
+                        new RunEventPayloads.ToolLifecycle(
+                                "tool-1", "execution.run", "SUCCEEDED", "NONE", "git status", ""))));
+        TerminalUiState modelOutput = reducer.reduce(
+                resumedThinking,
+                new TerminalUiAction.RunEventReceived(
+                        event(6, "event-6", new RunEventPayloads.AssistantTextDelta("generation-1", "done"))));
+
+        assertThat(thinking.status()).isEqualTo("THINKING");
+        assertThat(requested.activity()).isEqualTo(thinking.activity());
+        assertThat(working.status()).isEqualTo("WORKING");
+        assertThat(working.activity().revision()).isEqualTo(thinking.activity().revision() + 1);
+        assertThat(working.activity().label()).isEqualTo("execution.run");
+        assertThat(executionOutput.activity()).isEqualTo(working.activity());
+        assertThat(resumedThinking.status()).isEqualTo("THINKING");
+        assertThat(resumedThinking.activity().revision())
+                .isEqualTo(working.activity().revision() + 1);
+        assertThat(resumedThinking.activity().label()).isEmpty();
+        assertThat(modelOutput.activity()).isEqualTo(resumedThinking.activity());
     }
 
     @Test
@@ -305,7 +366,7 @@ class TerminalUiReducerTest {
             assertThat(item.approvalDetails()).isPresent();
             assertThat(item.status()).isEqualTo("PENDING");
         });
-        assertThat(updated.status()).isEqualTo("Waiting for approval");
+        assertThat(updated.status()).isEqualTo("WAITING FOR APPROVAL");
     }
 
     @Test
@@ -324,7 +385,33 @@ class TerminalUiReducerTest {
                                 "interaction-1", "APPROVAL", "RESPONDED", "ignored"))));
 
         assertThat(completed.selector()).isEmpty();
-        assertThat(completed.status()).isEqualTo("Working");
+        assertThat(completed.status()).isEqualTo("WORKING");
+    }
+
+    @Test
+    void approvalWaitAndResponseEachStartANewTimedActivity() {
+        TerminalUiState thinking = reducer.reduce(
+                TerminalUiState.initial(120, 40),
+                new TerminalUiAction.RunEventReceived(
+                        event(1, "event-1", new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        TerminalUiState waiting = reducer.reduce(
+                thinking,
+                new TerminalUiAction.RunEventReceived(event(
+                        2,
+                        "event-2",
+                        new RunEventPayloads.InteractionLifecycle("interaction-1", "APPROVAL", "PENDING", "ignored"))));
+        TerminalUiState approved = reducer.reduce(
+                waiting,
+                new TerminalUiAction.RunEventReceived(event(
+                        3,
+                        "event-3",
+                        new RunEventPayloads.InteractionLifecycle(
+                                "interaction-1", "APPROVAL", "APPROVED", "ignored"))));
+
+        assertThat(waiting.status()).isEqualTo("WAITING FOR APPROVAL");
+        assertThat(waiting.activity().revision()).isEqualTo(thinking.activity().revision() + 1);
+        assertThat(approved.status()).isEqualTo("WORKING");
+        assertThat(approved.activity().revision()).isEqualTo(waiting.activity().revision() + 1);
     }
 
     @Test

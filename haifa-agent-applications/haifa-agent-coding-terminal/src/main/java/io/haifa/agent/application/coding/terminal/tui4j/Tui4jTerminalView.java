@@ -35,7 +35,16 @@ final class Tui4jTerminalView {
             "SUCCEEDED",
             "SUCCESS");
     private static final Set<String> PENDING_STATUSES = Set.of(
-            "CANCELLING", "PENDING", "QUEUED", "REQUESTED", "RUNNING", "STARTED", "STREAMING", "WAITING", "WORKING");
+            "CANCELLING",
+            "PENDING",
+            "QUEUED",
+            "REQUESTED",
+            "RUNNING",
+            "STARTED",
+            "STREAMING",
+            "THINKING",
+            "WAITING",
+            "WORKING");
     private static final Set<String> TIMED_RUN_STATUSES = Set.of(
             "APPLYING STEER",
             "CANCELLING",
@@ -47,6 +56,7 @@ final class Tui4jTerminalView {
             "STARTED",
             "STREAMING",
             "SUBMITTING",
+            "THINKING",
             "VERIFYING",
             "WAITING",
             "WAITING FOR APPROVAL",
@@ -89,8 +99,8 @@ final class Tui4jTerminalView {
             Textarea editor,
             boolean followTranscript,
             boolean newOutputPending,
-            Duration workingElapsed) {
-        return render(state, transcript, editor, followTranscript, newOutputPending, workingElapsed, 0);
+            Duration activityElapsed) {
+        return render(state, transcript, editor, followTranscript, newOutputPending, activityElapsed, 0);
     }
 
     String render(
@@ -99,7 +109,7 @@ final class Tui4jTerminalView {
             Textarea editor,
             boolean followTranscript,
             boolean newOutputPending,
-            Duration workingElapsed,
+            Duration activityElapsed,
             int requestedScrollRows) {
         if (state.columns() < MIN_COLUMNS || state.rows() < MIN_ROWS) {
             return String.join(
@@ -114,7 +124,7 @@ final class Tui4jTerminalView {
         boolean compact = state.rows() < 24;
         List<String> before = header(state, compact);
         List<String> after =
-                lowerRegions(state, editor, newOutputPending && !followTranscript, compact, workingElapsed);
+                lowerRegions(state, editor, newOutputPending && !followTranscript, compact, activityElapsed);
         int viewportRows = Math.max(1, state.rows() - visualRows(before) - visualRows(after));
         transcript.setWidth(state.columns());
         transcript.setHeight(viewportRows);
@@ -189,7 +199,7 @@ final class Tui4jTerminalView {
             Textarea editor,
             boolean newOutputPending,
             boolean compact,
-            Duration workingElapsed) {
+            Duration activityElapsed) {
         List<String> lines = new ArrayList<>();
         if (!state.pending().isEmpty()) {
             lines.add(theme.queued("Pending · " + state.pending().size()));
@@ -200,7 +210,7 @@ final class Tui4jTerminalView {
                     .map(theme::queued)
                     .forEach(lines::add);
         }
-        status(state, newOutputPending, workingElapsed).ifPresent(lines::add);
+        status(state, newOutputPending, activityElapsed).ifPresent(lines::add);
         state.recoverableError().ifPresent(value -> {
             TerminalRecovery recovery = TerminalRecovery.fromCode(value);
             java.util.function.Function<String, String> recoveryStyle =
@@ -322,11 +332,11 @@ final class Tui4jTerminalView {
     }
 
     private java.util.Optional<String> status(
-            TerminalUiState state, boolean newOutputPending, Duration workingElapsed) {
+            TerminalUiState state, boolean newOutputPending, Duration activityElapsed) {
         List<String> parts = new ArrayList<>();
         String value = sanitize(state.status().strip());
         if (state.currentRunId().isPresent() && TIMED_RUN_STATUSES.contains(value.toUpperCase(Locale.ROOT))) {
-            value = timedRunStatus(value, workingElapsed);
+            value = timedActivityStatus(value, activityElapsed, state.activity().label());
         }
         if (!value.equalsIgnoreCase("idle")
                 && !(state.recoverableError().isPresent() && value.equalsIgnoreCase("Recovery required"))) {
@@ -341,13 +351,14 @@ final class Tui4jTerminalView {
         return java.util.Optional.of(statusStyle(value, content));
     }
 
-    private String timedRunStatus(String status, Duration elapsed) {
+    private String timedActivityStatus(String status, Duration elapsed, String activityLabel) {
         long seconds = Math.max(1, elapsed.toSeconds());
         String duration = seconds < 60 ? seconds + "s" : "%dm %ds".formatted(seconds / 60, seconds % 60);
-        if (status.equalsIgnoreCase("working")) {
-            return "Working (" + duration + " · esc to interrupt)";
+        String value = status.toUpperCase(Locale.ROOT) + " (" + duration + ")";
+        if (status.equalsIgnoreCase("working") && !activityLabel.isBlank()) {
+            return value + " · " + sanitize(activityLabel);
         }
-        return status + " (" + duration + ")";
+        return value;
     }
 
     private String style(TranscriptItem item, String content) {
