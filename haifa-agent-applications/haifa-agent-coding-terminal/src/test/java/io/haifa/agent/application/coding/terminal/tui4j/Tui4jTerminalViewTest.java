@@ -224,8 +224,36 @@ class Tui4jTerminalViewTest {
                         "enter steer",
                         "alt+enter follow-up",
                         "alt+up restore queued message",
-                        "Working (02m 05s · esc to interrupt)")
+                        "Working (2m 5s · esc to interrupt)")
                 .doesNotContain("enter send");
+    }
+
+    @Test
+    void timesRunningStatusFromOneSecondAndSwitchesToMinutesAfterSixtySeconds() {
+        TerminalUiState initial = TerminalUiState.initial(80, 24);
+        TerminalUiState running = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                "RUNNING",
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                Optional.of(new AgentRunId("run-1")),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        assertThat(view.render(running, transcript(running), editor(80), true, false, Duration.ZERO))
+                .contains("RUNNING (1s)");
+        assertThat(view.render(running, transcript(running), editor(80), true, false, Duration.ofSeconds(61)))
+                .contains("RUNNING (1m 1s)");
     }
 
     @Test

@@ -65,6 +65,12 @@ is unchanged.
 Tool 暴露，稳定名称为 `execution.run`，产品可提供 `execution_run` 等别名。它不是 Personal
 Assistant 专用实现，也没有新增 Maven 模块。
 
+直接调用系统 `git` / `gh` 时，`SystemGitCliCommandClassifier` 在 Policy 和 Provider dispatch 前生成
+可信的目标、风险与 `INSPECT/DIFF/MUTATE/UNKNOWN` 操作事实。模型提交的 `operationFamily` 必须与该事实
+一致，不能把 `git status` 伪报为 `DIFF`，也不能通过路径限定的假 CLI、环境变量前缀、`git -c`、
+Credential 子命令或 `gh auth status --show-token` 绕过系统登录态边界。无法可靠识别的形式保持
+`UNKNOWN` 或直接拒绝；普通非 Git/GitHub 命令仍由既有通用 Execution 路径处理。
+
 冻结输入只包含 `mode`、`content`、`language`、`args`、`purpose`、`timeoutMillis`；只有显式允许
 Workspace 的产品配置才可以增加 `workingDirectory`。操作系统、可执行文件和 Provider 均由可信
 装配解析，模型不能选择。脚本正文通过 stdin 传递，PowerShell、Bash 和 Python 由独立 runtime

@@ -13,13 +13,14 @@ allowed-tools: execution_run
 
 Use `execution_run` to invoke the system `gh` executable. Use system `git` separately for local repository and remote branch operations.
 
-1. Check `gh auth status` before an authenticated workflow. Reuse the current operating system user's `gh` login; never create a product-specific login or token store.
-2. Prefer a purpose-built `gh` command. Use `gh api` only when the CLI has no suitable high-level command, with explicit method, fields, pagination, and bounded output.
-3. When the product exposes `operationFamily`, use `INSPECT` for read-only queries and `MUTATE` for any GitHub write. Keep commands non-interactive.
-4. Inspect repository and branch identity before changing remote state. Verify writes with a follow-up read.
-5. Obtain approval through the normal Tool policy before creating, editing, merging, closing, dispatching, uploading, or deleting GitHub state.
-6. Never run commands that reveal tokens or credential files. Do not print environment variables, `gh auth token`, authorization headers, or raw secret-bearing configuration.
-7. If `gh` is missing, not authenticated, lacks required scopes, or cannot reach GitHub, report the bounded blocker and the user-facing login action; do not ask for a token in chat.
+1. Invoke the bare system `gh` executable discovered from the trusted host `PATH`; do not select another executable path or wrap it with environment assignments.
+2. Check `gh auth status` without token-disclosure options before an authenticated workflow. Reuse the current operating system user's `gh` login; never create a product-specific login or token store.
+3. Prefer a purpose-built `gh` command. Use `gh api` only when the CLI has no suitable high-level command, with explicit method, fields, pagination, and bounded output.
+4. When the product exposes `operationFamily`, use `INSPECT` for read-only queries and `MUTATE` for any GitHub write. Keep commands non-interactive.
+5. Inspect repository and branch identity before changing remote state. Verify writes with a follow-up read.
+6. Obtain approval through the normal Tool policy before creating, editing, merging, closing, dispatching, uploading, or deleting GitHub state.
+7. Never run commands that reveal tokens or credential files. Do not print environment variables, `gh auth token`, `gh auth status --show-token`, authorization headers, or raw secret-bearing configuration.
+8. If `gh` is missing, not authenticated, lacks required scopes, or cannot reach GitHub, report the bounded blocker and the user-facing login action; do not ask for a token in chat.
 
 Use `gh repo view`, `gh pr list/view/checks`, and `gh issue list/view` with `--repo`, `--json`, `--jq`, and explicit bounded fields. For long non-secret bodies, use a controlled temporary file with `--body-file`. Never place a secret in that file.
 

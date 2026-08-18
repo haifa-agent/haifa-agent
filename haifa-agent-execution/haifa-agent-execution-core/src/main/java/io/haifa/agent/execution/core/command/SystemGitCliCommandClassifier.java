@@ -43,35 +43,64 @@ public final class SystemGitCliCommandClassifier {
 
     public static Classification classify(String command) {
         if (command == null || command.isBlank() || command.indexOf('\0') >= 0) {
-            return new Classification(Target.OTHER, Risk.UNKNOWN, "COMMAND_INVALID");
+            return classified(Target.OTHER, Risk.UNKNOWN, Operation.UNKNOWN, "COMMAND_INVALID");
         }
-        if (overridesProtectedEnvironment(command)) {
-            return new Classification(Target.OTHER, Risk.DENIED, "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
+        if (usesProtectedShellEnvironmentSyntax(command)) {
+            return classified(
+                    detectTarget(command), Risk.DENIED, Operation.UNKNOWN, "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
         }
         if (containsShellComposition(command)) {
-            return new Classification(detectTarget(command), Risk.UNKNOWN, "COMPOUND_OR_WRAPPED_COMMAND");
+            return classified(detectTarget(command), Risk.UNKNOWN, Operation.UNKNOWN, "COMPOUND_OR_WRAPPED_COMMAND");
         }
         List<String> argv = tokenize(command);
-        if (argv.isEmpty()) return new Classification(Target.OTHER, Risk.UNKNOWN, "COMMAND_UNPARSEABLE");
+        if (argv.isEmpty()) return classified(Target.OTHER, Risk.UNKNOWN, Operation.UNKNOWN, "COMMAND_UNPARSEABLE");
         int index = 0;
+        boolean environmentWrapped = false;
         if (basename(argv.get(index)).equals("env")) {
+            environmentWrapped = true;
             index++;
             while (index < argv.size() && assignment(argv.get(index))) {
                 if (protectedAssignment(argv.get(index))) {
-                    return new Classification(Target.OTHER, Risk.DENIED, "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
+                    return classified(
+                            detectTarget(command),
+                            Risk.DENIED,
+                            Operation.UNKNOWN,
+                            "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
+                }
+                index++;
+            }
+        } else {
+            while (index < argv.size() && assignment(argv.get(index))) {
+                environmentWrapped = true;
+                if (protectedAssignment(argv.get(index))) {
+                    return classified(
+                            detectTarget(command),
+                            Risk.DENIED,
+                            Operation.UNKNOWN,
+                            "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
                 }
                 index++;
             }
         }
-        if (index >= argv.size()) return new Classification(Target.OTHER, Risk.UNKNOWN, "EXECUTABLE_MISSING");
-        return switch (basename(argv.get(index))) {
+        if (index >= argv.size())
+            return classified(Target.OTHER, Risk.UNKNOWN, Operation.UNKNOWN, "EXECUTABLE_MISSING");
+        String executable = argv.get(index);
+        String executableName = basename(executable);
+        Target target = target(executableName);
+        if (target != Target.OTHER && !bareSystemExecutable(executable, executableName)) {
+            return classified(target, Risk.DENIED, Operation.UNKNOWN, "SYSTEM_CLI_PATH_OVERRIDE");
+        }
+        if (environmentWrapped && target != Target.OTHER) {
+            return classified(target, Risk.UNKNOWN, Operation.UNKNOWN, "COMMAND_ENVIRONMENT_WRAPPER");
+        }
+        return switch (executableName) {
             case "git" -> classifyGit(argv, index + 1);
             case "gh" -> classifyGh(argv, index + 1);
             default -> {
                 Target nested = detectTarget(String.join(" ", argv.subList(index + 1, argv.size())));
                 yield nested == Target.OTHER
-                        ? new Classification(Target.OTHER, Risk.NOT_APPLICABLE, "NON_GIT_COMMAND")
-                        : new Classification(nested, Risk.UNKNOWN, "UNKNOWN_EXECUTABLE_WRAPPER");
+                        ? classified(Target.OTHER, Risk.NOT_APPLICABLE, Operation.UNKNOWN, "NON_GIT_COMMAND")
+                        : classified(nested, Risk.UNKNOWN, Operation.UNKNOWN, "UNKNOWN_EXECUTABLE_WRAPPER");
             }
         };
     }
@@ -98,7 +127,7 @@ public final class SystemGitCliCommandClassifier {
                         || config.startsWith("credentialhelper")) {
                     return git(Risk.DENIED, "GIT_AUTHENTICATION_CONFIG_OVERRIDE");
                 }
-                continue;
+                return git(Risk.UNKNOWN, "GIT_CONFIG_OVERRIDE_UNCLASSIFIED");
             }
             if (rawOption.equals("-C")) {
                 return git(Risk.DENIED, "GIT_REPOSITORY_PATH_OVERRIDE");
@@ -114,7 +143,16 @@ public final class SystemGitCliCommandClassifier {
         if (index >= argv.size()) return git(Risk.UNKNOWN, "GIT_SUBCOMMAND_MISSING");
         String subcommand = argv.get(index).toLowerCase(Locale.ROOT);
         List<String> args = argv.subList(index + 1, argv.size());
-        if (GIT_READ.contains(subcommand)) return git(Risk.LOCAL_READ, "GIT_LOCAL_READ");
+        if (GIT_READ.contains(subcommand)) {
+            if (hasPrefixed(args, "--output", "--ext-diff")) {
+                return git(Risk.DENIED, Operation.UNKNOWN, "GIT_READ_SIDE_EFFECT_OPTION");
+            }
+            Operation operation = subcommand.equals("diff") ? Operation.DIFF : Operation.INSPECT;
+            return git(
+                    Risk.LOCAL_READ,
+                    operation,
+                    "GIT_" + subcommand.toUpperCase(Locale.ROOT).replace('-', '_'));
+        }
         if (subcommand.equals("branch")) {
             return git(
                     hasAny(args, "-d", "-D", "--delete", "-m", "-M", "--move")
@@ -132,7 +170,7 @@ public final class SystemGitCliCommandClassifier {
                     "GIT_REMOTE");
         }
         if (subcommand.equals("ls-remote") || subcommand.equals("fetch")) {
-            return git(Risk.NETWORK_READ, "GIT_NETWORK_READ");
+            return git(Risk.NETWORK_READ, Operation.INSPECT, "GIT_NETWORK_READ");
         }
         if (subcommand.equals("push")) {
             return git(
@@ -143,6 +181,9 @@ public final class SystemGitCliCommandClassifier {
         }
         if (subcommand.equals("reset") || subcommand.equals("clean")) {
             return git(Risk.DESTRUCTIVE, "GIT_DESTRUCTIVE");
+        }
+        if (subcommand.startsWith("credential")) {
+            return git(Risk.DENIED, "GIT_CREDENTIAL_PROTOCOL_DENIED");
         }
         if (subcommand.equals("tag") && hasAny(args, "-d", "--delete", "-f", "--force")) {
             return git(Risk.DESTRUCTIVE, "GIT_TAG_DESTRUCTIVE");
@@ -167,19 +208,25 @@ public final class SystemGitCliCommandClassifier {
         List<String> args = argv.subList(index + 1, argv.size());
         if (group.equals("auth")) {
             if (!args.isEmpty() && args.getFirst().equalsIgnoreCase("status")) {
-                return github(Risk.NETWORK_READ, "GH_AUTH_STATUS");
+                if (hasAnyIgnoreCase(args, "--show-token")) {
+                    return github(Risk.DENIED, "GH_AUTH_TOKEN_DISCLOSURE_DENIED");
+                }
+                return github(Risk.NETWORK_READ, Operation.INSPECT, "GH_AUTH_STATUS");
             }
             return github(Risk.DENIED, "GH_AUTHENTICATION_MUTATION_OR_DISCLOSURE");
         }
         if (group.equals("api")) {
             boolean writes =
                     hasAnyIgnoreCase(args, "--field", "-f", "--raw-field", "-F", "--input") || methodWrites(args);
-            return github(writes ? Risk.EXTERNAL_WRITE : Risk.NETWORK_READ, "GH_API");
+            return github(
+                    writes ? Risk.EXTERNAL_WRITE : Risk.NETWORK_READ,
+                    writes ? Operation.MUTATE : Operation.INSPECT,
+                    "GH_API");
         }
         String action = args.isEmpty() ? "" : args.getFirst().toLowerCase(Locale.ROOT);
         if (Set.of("repo", "pr", "issue", "run", "workflow", "release").contains(group)
                 && Set.of("list", "view", "status", "checks", "diff", "watch").contains(action)) {
-            return github(Risk.NETWORK_READ, "GH_REMOTE_READ");
+            return github(Risk.NETWORK_READ, Operation.INSPECT, "GH_REMOTE_READ");
         }
         if ((group.equals("repo") || group.equals("release")) && action.equals("delete")) {
             return github(Risk.DESTRUCTIVE, "GH_DESTRUCTIVE");
@@ -190,9 +237,10 @@ public final class SystemGitCliCommandClassifier {
         return github(Risk.UNKNOWN, "GH_COMMAND_UNKNOWN");
     }
 
-    private static boolean overridesProtectedEnvironment(String command) {
+    private static boolean usesProtectedShellEnvironmentSyntax(String command) {
         String upper = command.toUpperCase(Locale.ROOT);
-        return PROTECTED_ENVIRONMENT.stream().anyMatch(name -> upper.matches("(?s).*\\b" + name + "\\s*=.*"));
+        return PROTECTED_ENVIRONMENT.stream()
+                .anyMatch(name -> upper.matches("(?s).*(?:\\$ENV:|(?:^|[;&|]\\s*)SET\\s+)" + name + "\\s*=.*"));
     }
 
     private static boolean containsShellComposition(String command) {
@@ -256,6 +304,19 @@ public final class SystemGitCliCommandClassifier {
         return lower.endsWith(".exe") ? lower.substring(0, lower.length() - 4) : lower;
     }
 
+    private static Target target(String executableName) {
+        return switch (executableName) {
+            case "git" -> Target.GIT;
+            case "gh" -> Target.GITHUB;
+            default -> Target.OTHER;
+        };
+    }
+
+    private static boolean bareSystemExecutable(String raw, String executableName) {
+        String lower = raw.toLowerCase(Locale.ROOT);
+        return lower.equals(executableName) || lower.equals(executableName + ".exe");
+    }
+
     private static boolean assignment(String value) {
         int equals = value.indexOf('=');
         return equals > 0 && value.substring(0, equals).matches("[A-Za-z_][A-Za-z0-9_]*");
@@ -278,6 +339,13 @@ public final class SystemGitCliCommandClassifier {
                 .anyMatch(value::equals));
     }
 
+    private static boolean hasPrefixed(List<String> values, String... prefixes) {
+        return values.stream().map(value -> value.toLowerCase(Locale.ROOT)).anyMatch(value -> java.util.Arrays.stream(
+                        prefixes)
+                .map(prefix -> prefix.toLowerCase(Locale.ROOT))
+                .anyMatch(prefix -> value.equals(prefix) || value.startsWith(prefix + "=")));
+    }
+
     private static boolean methodWrites(List<String> values) {
         for (int index = 0; index < values.size(); index++) {
             String value = values.get(index);
@@ -292,11 +360,31 @@ public final class SystemGitCliCommandClassifier {
     }
 
     private static Classification git(Risk risk, String reason) {
-        return new Classification(Target.GIT, risk, reason);
+        return git(risk, riskOperation(risk), reason);
+    }
+
+    private static Classification git(Risk risk, Operation operation, String reason) {
+        return classified(Target.GIT, risk, operation, reason);
     }
 
     private static Classification github(Risk risk, String reason) {
-        return new Classification(Target.GITHUB, risk, reason);
+        return github(risk, riskOperation(risk), reason);
+    }
+
+    private static Classification github(Risk risk, Operation operation, String reason) {
+        return classified(Target.GITHUB, risk, operation, reason);
+    }
+
+    private static Operation riskOperation(Risk risk) {
+        return switch (risk) {
+            case LOCAL_WRITE, EXTERNAL_WRITE, DESTRUCTIVE -> Operation.MUTATE;
+            case LOCAL_READ, NETWORK_READ -> Operation.INSPECT;
+            default -> Operation.UNKNOWN;
+        };
+    }
+
+    private static Classification classified(Target target, Risk risk, Operation operation, String reason) {
+        return new Classification(target, risk, operation, reason);
     }
 
     public enum Target {
@@ -316,7 +404,14 @@ public final class SystemGitCliCommandClassifier {
         DENIED
     }
 
-    public record Classification(Target target, Risk risk, String reasonCode) {
+    public enum Operation {
+        INSPECT,
+        DIFF,
+        MUTATE,
+        UNKNOWN
+    }
+
+    public record Classification(Target target, Risk risk, Operation operation, String reasonCode) {
         public boolean readOnly() {
             return risk == Risk.LOCAL_READ || risk == Risk.NETWORK_READ;
         }

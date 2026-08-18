@@ -526,9 +526,11 @@ public final class ProjectToolCatalog {
             properties.put("failureCategory", Map.of("type", "string"));
             properties.put("stableFailureCode", Map.of("type", "string"));
             properties.put("resourceClass", Map.of("type", "string"));
+            properties.put("failureAction", Map.of("type", "string"));
             properties.put("operationFamily", Map.of("type", "string"));
             properties.put("commandTarget", Map.of("type", "string"));
             properties.put("commandRisk", Map.of("type", "string"));
+            properties.put("commandOperation", Map.of("type", "string"));
             properties.put("commandClassificationReason", Map.of("type", "string"));
             properties.put("sandboxProfileDigest", Map.of("type", "string"));
             properties.put("scratchSpecDigest", Map.of("type", "string"));

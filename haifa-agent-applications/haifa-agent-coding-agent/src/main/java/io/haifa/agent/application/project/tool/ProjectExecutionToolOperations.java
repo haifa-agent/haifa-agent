@@ -172,9 +172,7 @@ public final class ProjectExecutionToolOperations {
         if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
             return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
         }
-        if ((operationFamily.equals("INSPECT") || operationFamily.equals("DIFF"))
-                && commandClassification.target() != SystemGitCliCommandClassifier.Target.OTHER
-                && !commandClassification.readOnly()) {
+        if (!supportsOperationFamily(operationFamily, commandClassification)) {
             return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
         }
         if (hasLeadingAbsoluteDirectoryChange(command)) {
@@ -405,6 +403,7 @@ public final class ProjectExecutionToolOperations {
         data.put("operationFamily", operationFamily);
         data.put("commandTarget", commandClassification.target().name());
         data.put("commandRisk", commandClassification.risk().name());
+        data.put("commandOperation", commandClassification.operation().name());
         data.put("commandClassificationReason", commandClassification.reasonCode());
         data.put(
                 "sandboxProfileDigest",
@@ -419,10 +418,11 @@ public final class ProjectExecutionToolOperations {
             data.put("failureDetail", value.safeDetail());
         });
         if (result.status() != ExecutionStatus.SUCCEEDED) {
-            var classification = CodingExecutionFailureClassifier.classify(result, output);
+            var classification = CodingExecutionFailureClassifier.classify(result, output, commandClassification);
             data.put("failureCategory", classification.category());
             data.put("stableFailureCode", classification.stableFailureCode());
             data.put("resourceClass", classification.resourceClass());
+            data.put("failureAction", classification.action());
         }
         List<AssetRef> assets = new ArrayList<>();
         result.stdout().optionalAssetRef().ifPresent(assets::add);
@@ -472,7 +472,9 @@ public final class ProjectExecutionToolOperations {
                         "stableFailureCode",
                         "ABSOLUTE_WORKDIR_FORBIDDEN",
                         "resourceClass",
-                        "COMMAND"),
+                        "COMMAND",
+                        "failureAction",
+                        "Remove the absolute cd and use the workspace-relative workdir field."),
                 List.of(),
                 List.of(),
                 false);
@@ -492,7 +494,9 @@ public final class ProjectExecutionToolOperations {
                         "stableFailureCode",
                         stableFailureCode,
                         "resourceClass",
-                        "WORKDIR"),
+                        "WORKDIR",
+                        "failureAction",
+                        "Use a normalized path relative to the authorized workspace root."),
                 List.of(),
                 List.of(),
                 false);
@@ -513,6 +517,8 @@ public final class ProjectExecutionToolOperations {
                         classification.target().name(),
                         "commandRisk",
                         classification.risk().name(),
+                        "commandOperation",
+                        classification.operation().name(),
                         "commandClassificationReason",
                         classification.reasonCode(),
                         "failureCategory",
@@ -520,10 +526,25 @@ public final class ProjectExecutionToolOperations {
                         "stableFailureCode",
                         "COMMAND_CLASSIFICATION_REJECTED",
                         "resourceClass",
-                        "COMMAND"),
+                        "COMMAND",
+                        "failureAction",
+                        "Use the bare system git or gh command and report its trusted operation family exactly."),
                 List.of(),
                 List.of(),
                 false);
+    }
+
+    private static boolean supportsOperationFamily(
+            String operationFamily, SystemGitCliCommandClassifier.Classification classification) {
+        if (classification.target() == SystemGitCliCommandClassifier.Target.OTHER) return true;
+        if (operationFamily.equals("DIFF")) {
+            return classification.operation() == SystemGitCliCommandClassifier.Operation.DIFF;
+        }
+        if (operationFamily.equals("INSPECT")) {
+            return classification.operation() == SystemGitCliCommandClassifier.Operation.INSPECT
+                    || classification.operation() == SystemGitCliCommandClassifier.Operation.DIFF;
+        }
+        return true;
     }
 
     private static boolean hasLeadingAbsoluteDirectoryChange(String command) {

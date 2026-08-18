@@ -55,6 +55,11 @@ Windows ConPTY Spike 已证明 `Program / Model / update / view`、viewport、te
 Resize 在三次调整后仍会丢失 Header/Diagnostics/Transcript 区域，已标记
 `SKIPPED_AFTER_3_ATTEMPTS` 并延期。当前没有旧实现回退路径。
 
+Terminal 默认启用 bracketed paste；完整 `PasteMessage` 中的 CRLF 会归一化为换行且不会提交。对于
+没有发送 bracketed-paste 标记、而把剪贴板内容拆成普通按键的宿主，普通 Enter 经过 100ms 输入稳定
+门禁：紧随其后的字符、CR 或 LF 会把该 Enter 归并为编辑器换行，只有独立 Enter 才提交。该门禁只
+覆盖普通 Editor Enter；Shift/Ctrl+Enter、Alt+Enter 和 Selector/Approval Enter 保持各自既有语义。
+
 生产 Model 初始化时主动请求一次真实 Window Size，避免在用户没有手工 Resize 时一直停留在
 `80x24` 启动尺寸。tui4j `0.3.3` 不全局启用 Kitty keyboard protocol；该版本只为修饰 Enter
 提供显式映射，全局启用会让部分 CSI-u 控制键残留字符进入编辑器。`Ctrl+O` 因此保持传统 `SI`
@@ -122,8 +127,9 @@ Editor hint 根据当前事实变化：Idle 显示 `enter send`；活动 Run 显
 事件，不把当前 tui4j 无法可靠接收的 Command 键标成可用快捷键。启动时只采集白名单内的
 `os.name`、`os.version`、`os.arch`、`java.version`、`TERM_PROGRAM` 和 `TERM_PROGRAM_VERSION`，
 用于平台选择与兼容性判断，不收集任意环境变量，也不持久化这些宿主事实。等待模型或其他活动 Run
-场景的状态显示为 `Working (XXm YYs · esc to interrupt)`，使用进程内单调时钟累计，不写入 Session
-或持久化事实。Phase C 会从终端能力白名单中识别 Windows Terminal、
+场景从 `1s` 开始显示进程内计时；不足一分钟使用 `Ns`，达到一分钟后使用 `Nm Ns`。`RUNNING`、
+`Working`、等待审批、恢复、验证和取消等活动状态共享同一 Run 计时，其中 `Working` 继续显示
+`esc to interrupt`。计时使用单调时钟累计，不写入 Session 或持久化事实。Phase C 会从终端能力白名单中识别 Windows Terminal、
 WezTerm、Alacritty、Apple Terminal 和常见受限终端：存在修饰 Enter 冲突时显示可执行 remap 或
 `Ctrl+J` fallback，但不读取秘密、不写入用户终端配置。非交互输入或 `TERM=dumb` 在装配产品 Runtime
 前以稳定 `TUI_UNAVAILABLE` 失败。
@@ -145,7 +151,8 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
 预算超限、模型限流/超时和 Tool Outcome Unknown 使用稳定 code 选择下一步；终端不解析英文
 message，也不显示异常类或堆栈。
 - viewport 只在用户主动 PageUp 后停止自动跟随并在新内容到达时显示 `new output below`；Run 状态引起的
-  Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随。
+  Header、Status 或 Editor 布局高度变化不会误判为用户滚动，PageDown 回到底部后恢复自动跟随；用户
+  明确提交新消息或 Steer 时也会恢复自动跟随，避免上一轮回翻状态把新一轮输出持续藏在下方。
 - 终端不启用鼠标事件上报，普通拖拽由宿主终端原生选择和复制文字；Transcript 使用
   PageUp/PageDown 回翻，PageDown 到底部后恢复自动跟随。方向键 Up/Down 继续保留单行输入历史和
   多行光标移动语义。
@@ -261,6 +268,10 @@ key，并在所有重启间保持不变。
     Alt+Up 恢复且重启后不重复。
 14. PageUp 离开底部后产生新输出，确认 viewport 不跳动且出现 `new output below`；PageDown 回到底部
     后提示消失。先以大窗口渲染、再缩小窗口并用 PageUp 回翻；同时确认鼠标拖拽可由宿主终端选择文字。
+15. 分别粘贴带 bracketed-paste 标记和不带标记的多行文本，确认所有行停留在 Editor，末尾换行也不
+    提交；随后单独按 Enter 才提交一次。
+16. PageUp 回翻后直接提交新消息，确认新一轮自动回到底部且不显示陈旧的 `new output below`；活动状态
+    从 `1s` 开始计时，并在 61 秒显示为 `1m 1s`。
 
 真实模型和 Web Provider 可能产生费用；未经单独授权保持 **NOT RUN**。自动化验证只使用 Stub/Fake：
 

@@ -36,6 +36,21 @@ final class Tui4jTerminalView {
             "SUCCESS");
     private static final Set<String> PENDING_STATUSES = Set.of(
             "CANCELLING", "PENDING", "QUEUED", "REQUESTED", "RUNNING", "STARTED", "STREAMING", "WAITING", "WORKING");
+    private static final Set<String> TIMED_RUN_STATUSES = Set.of(
+            "APPLYING STEER",
+            "CANCELLING",
+            "PENDING",
+            "QUEUED",
+            "RECOVERING",
+            "REQUESTED",
+            "RUNNING",
+            "STARTED",
+            "STREAMING",
+            "SUBMITTING",
+            "VERIFYING",
+            "WAITING",
+            "WAITING FOR APPROVAL",
+            "WORKING");
     private static final Set<String> ERROR_STATUSES = Set.of(
             "ATTENTION",
             "CANCELLED",
@@ -310,8 +325,8 @@ final class Tui4jTerminalView {
             TerminalUiState state, boolean newOutputPending, Duration workingElapsed) {
         List<String> parts = new ArrayList<>();
         String value = sanitize(state.status().strip());
-        if (value.equalsIgnoreCase("working") && state.currentRunId().isPresent()) {
-            value = workingStatus(workingElapsed);
+        if (state.currentRunId().isPresent() && TIMED_RUN_STATUSES.contains(value.toUpperCase(Locale.ROOT))) {
+            value = timedRunStatus(value, workingElapsed);
         }
         if (!value.equalsIgnoreCase("idle")
                 && !(state.recoverableError().isPresent() && value.equalsIgnoreCase("Recovery required"))) {
@@ -326,9 +341,13 @@ final class Tui4jTerminalView {
         return java.util.Optional.of(statusStyle(value, content));
     }
 
-    private String workingStatus(Duration elapsed) {
-        long seconds = Math.max(0, elapsed.toSeconds());
-        return "Working (%02dm %02ds · esc to interrupt)".formatted(seconds / 60, seconds % 60);
+    private String timedRunStatus(String status, Duration elapsed) {
+        long seconds = Math.max(1, elapsed.toSeconds());
+        String duration = seconds < 60 ? seconds + "s" : "%dm %ds".formatted(seconds / 60, seconds % 60);
+        if (status.equalsIgnoreCase("working")) {
+            return "Working (" + duration + " · esc to interrupt)";
+        }
+        return status + " (" + duration + ")";
     }
 
     private String style(TranscriptItem item, String content) {
@@ -342,7 +361,8 @@ final class Tui4jTerminalView {
     private String statusStyle(String status, String content) {
         String normalized = status.strip().toUpperCase(Locale.ROOT);
         if (SUCCESS_STATUSES.contains(normalized)) return theme.success(content);
-        if (PENDING_STATUSES.contains(normalized) || normalized.startsWith("WORKING (")) {
+        if (PENDING_STATUSES.contains(normalized)
+                || TIMED_RUN_STATUSES.stream().anyMatch(candidate -> normalized.startsWith(candidate + " ("))) {
             return theme.pending(content);
         }
         if (ERROR_STATUSES.contains(normalized)) return theme.error(content);

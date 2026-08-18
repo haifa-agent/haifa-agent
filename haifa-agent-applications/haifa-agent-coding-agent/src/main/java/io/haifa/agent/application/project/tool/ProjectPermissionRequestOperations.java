@@ -19,8 +19,11 @@ public final class ProjectPermissionRequestOperations {
     public static final String TOOL_NAME = "execution.request_permissions";
     public static final String MODEL_ALIAS = "request_permissions";
     public static final String HOST_NETWORK_ACCESS = "HOST_NETWORK_ACCESS";
-    private static final Set<String> ELIGIBLE_FAILURE_CODES =
-            Set.of("NETWORK_UNAVAILABLE", "HOST_AUTHENTICATION_UNAVAILABLE");
+    private static final Set<String> ELIGIBLE_FAILURE_CODES = Set.of(
+            "NETWORK_UNAVAILABLE",
+            "HOST_AUTHENTICATION_UNAVAILABLE",
+            "GIT_AUTHENTICATION_UNAVAILABLE",
+            "GH_AUTHENTICATION_UNAVAILABLE");
     private static final Set<SystemGitCliCommandClassifier.Risk> ELIGIBLE_RISKS = Set.of(
             SystemGitCliCommandClassifier.Risk.LOCAL_READ,
             SystemGitCliCommandClassifier.Risk.LOCAL_WRITE,

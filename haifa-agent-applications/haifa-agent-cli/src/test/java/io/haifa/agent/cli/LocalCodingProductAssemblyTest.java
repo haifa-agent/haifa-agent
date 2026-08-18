@@ -15,7 +15,6 @@ import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.core.model.continuation.AesGcmModelContinuationProtector;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PipedInputStream;
@@ -73,9 +72,10 @@ class LocalCodingProductAssemblyTest {
             return call == 1 ? readWorkspace("terminal-read") : response("terminal-answer");
         };
         AtomicReference<LocalCodingAgent> assembled = new AtomicReference<>();
+        AtomicReference<Throwable> runnerFailure = new AtomicReference<>();
         ByteArrayOutputStream terminalOutput = new ByteArrayOutputStream();
-        var terminalInput = new ByteArrayInputStream(
-                "inspect the fixture\r/quit\r".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        PipedInputStream terminalInput = new PipedInputStream();
+        PipedOutputStream writer = new PipedOutputStream(terminalInput);
         var runner = new LocalCodingTerminalRunner(
                 (selectedWorkspace, selectedConfiguration, output, traceObserver) -> {
                     StandaloneCodingAgent standalone = StandaloneCodingAgents.open(
@@ -86,14 +86,36 @@ class LocalCodingProductAssemblyTest {
                 },
                 () -> Tui4jTerminalIo.streams(terminalInput, terminalOutput, List.of("TERM=xterm-256color")));
 
-        runner.run(
-                workspace,
-                configuration,
-                io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup.empty(),
-                new PrintStream(new ByteArrayOutputStream()),
-                ignored -> {});
-        awaitNoActiveRun(assembled.get());
+        Thread runnerThread = Thread.ofPlatform().name("terminal-entry-smoke").start(() -> {
+            try {
+                runner.run(
+                        workspace,
+                        configuration,
+                        io.haifa.agent.application.coding.terminal.application.CodingTerminalStartup.empty(),
+                        new PrintStream(new ByteArrayOutputStream()),
+                        ignored -> {});
+            } catch (Throwable throwable) {
+                runnerFailure.set(throwable);
+            }
+        });
 
+        try {
+            awaitTerminalText(terminalOutput, "Haifa Coding Agent");
+            typeLine(writer, "inspect the fixture");
+            awaitAgent(assembled);
+            awaitNoActiveRun(assembled.get());
+            typeLine(writer, "/quit");
+            runnerThread.join(10_000);
+        } finally {
+            if (runnerThread.isAlive()) {
+                typeLine(writer, "/quit");
+                runnerThread.join(2_000);
+            }
+            writer.close();
+        }
+
+        assertThat(runnerThread.isAlive()).isFalse();
+        assertThat(runnerFailure.get()).isNull();
         assertThat(modelCalls).hasValue(2);
         assertThat(terminalOutput.toString(java.nio.charset.StandardCharsets.UTF_8))
                 .contains("Haifa Coding Agent");

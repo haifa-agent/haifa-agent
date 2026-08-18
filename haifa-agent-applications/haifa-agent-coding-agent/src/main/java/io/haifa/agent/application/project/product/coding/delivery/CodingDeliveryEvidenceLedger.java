@@ -99,10 +99,15 @@ public final class CodingDeliveryEvidenceLedger {
         if (data.containsKey("fileChangeSetId")) {
             facts.add(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
         }
-        if (("INSPECT".equals(family) || "DIFF".equals(family)) && trustedReadOnly) {
+        if (("INSPECT".equals(family) || "DIFF".equals(family))
+                && trustedReadOnly
+                && trustedOperationFamily(data, family)) {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
         }
-        if ("DIFF".equals(family) && "SUCCEEDED".equals(status) && trustedReadOnly) {
+        if ("DIFF".equals(family)
+                && "SUCCEEDED".equals(status)
+                && trustedReadOnly
+                && trustedOperationFamily(data, family)) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         }
         if ("BUILD".equals(family) || "TEST".equals(family)) {
@@ -133,6 +138,18 @@ public final class CodingDeliveryEvidenceLedger {
         return ("OTHER".equals(target) && "NOT_APPLICABLE".equals(risk))
                 || "LOCAL_READ".equals(risk)
                 || "NETWORK_READ".equals(risk);
+    }
+
+    private static boolean trustedOperationFamily(Map<String, Object> data, String family) {
+        if (!data.containsKey("commandOperation")) {
+            return true; // Frozen legacy results predate trusted operation classification.
+        }
+        String operation = String.valueOf(data.getOrDefault("commandOperation", "UNKNOWN"));
+        return switch (family) {
+            case "DIFF" -> "DIFF".equals(operation);
+            case "INSPECT" -> "INSPECT".equals(operation) || "DIFF".equals(operation);
+            default -> false;
+        };
     }
 
     public record Snapshot(Set<CodingDeliveryEvidenceKind> kinds) {

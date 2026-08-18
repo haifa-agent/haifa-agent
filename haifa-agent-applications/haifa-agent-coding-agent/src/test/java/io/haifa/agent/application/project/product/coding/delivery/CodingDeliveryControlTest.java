@@ -92,6 +92,63 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void newExecutionEvidenceRequiresTrustedDiffOperationClassification() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of("operationFamily", "TEST", "status", "SUCCEEDED", "exitCode", 0));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "DIFF",
+                        "status",
+                        "SUCCEEDED",
+                        "commandTarget",
+                        "GIT",
+                        "commandRisk",
+                        "LOCAL_READ",
+                        "commandOperation",
+                        "INSPECT",
+                        "commandClassificationReason",
+                        "GIT_STATUS"));
+
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("DIFF_INSPECTION_MISSING");
+
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "DIFF",
+                        "status",
+                        "SUCCEEDED",
+                        "commandTarget",
+                        "GIT",
+                        "commandRisk",
+                        "LOCAL_READ",
+                        "commandOperation",
+                        "DIFF",
+                        "commandClassificationReason",
+                        "GIT_DIFF"));
+
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .allowed())
+                .isTrue();
+    }
+
+    @Test
     void validationFailureRequiresPassUnlessProfileAllowsConfirmedBlocker() {
         Fixture fixture = fixture("change the implementation", trusted("CHANGE"));
         tool(fixture, "file.write", Map.of("path", "README.md"), Map.of("changeSetId", "change-1"));

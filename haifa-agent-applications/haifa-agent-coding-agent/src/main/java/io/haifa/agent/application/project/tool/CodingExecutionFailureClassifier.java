@@ -2,24 +2,36 @@ package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
+import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
 import java.util.Locale;
 
 /** Small product-owned mapping from stable execution outcomes to safe semantic failure fields. */
 final class CodingExecutionFailureClassifier {
     private CodingExecutionFailureClassifier() {}
 
-    static Classification classify(ExecutionResult result, String boundedOutput) {
+    static Classification classify(
+            ExecutionResult result,
+            String boundedOutput,
+            SystemGitCliCommandClassifier.Classification commandClassification) {
         if (result.status() == ExecutionStatus.TIMED_OUT) {
-            return new Classification("TIMEOUT", "TIMEOUT", "PROCESS");
+            return new Classification("TIMEOUT", "TIMEOUT", "PROCESS", "Verify state before retrying the command.");
         }
         if (result.status() == ExecutionStatus.CANCELLED) {
-            return new Classification("CANCELLED", "CANCELLED", "PROCESS");
+            return new Classification("CANCELLED", "CANCELLED", "PROCESS", "Retry only if the task still requires it.");
         }
         if (result.status() == ExecutionStatus.OUTPUT_LIMIT_EXCEEDED) {
-            return new Classification("OUTPUT_LIMIT", "OUTPUT_LIMIT_EXCEEDED", "OUTPUT");
+            return new Classification(
+                    "OUTPUT_LIMIT",
+                    "OUTPUT_LIMIT_EXCEEDED",
+                    "OUTPUT",
+                    "Use a machine-readable command with narrower fields or a smaller result limit.");
         }
         if (result.status() == ExecutionStatus.UNKNOWN) {
-            return new Classification("OUTCOME_UNKNOWN", "OUTCOME_UNKNOWN", "PROCESS");
+            return new Classification(
+                    "OUTCOME_UNKNOWN",
+                    "OUTCOME_UNKNOWN",
+                    "PROCESS",
+                    "Query the smallest read-only local or remote fact before considering a retry.");
         }
         String providerCode = result.optionalFailure()
                 .map(value -> value.code().toUpperCase(Locale.ROOT))
@@ -32,14 +44,26 @@ final class CodingExecutionFailureClassifier {
                 || output.contains("name or service not known")
                 || output.contains("failed to connect")
                 || output.contains("couldn't connect to server")) {
-            return new Classification("NETWORK_DENIED", "NETWORK_UNAVAILABLE", "NETWORK");
+            return new Classification(
+                    "NETWORK_DENIED",
+                    "NETWORK_UNAVAILABLE",
+                    "NETWORK",
+                    "Check the trusted host network and proxy configuration, then retry if authorized.");
         }
         if (output.contains("permission denied (publickey)")
                 || output.contains("could not read username")
                 || output.contains("authentication failed")
                 || output.contains("not logged into any github hosts")) {
-            return new Classification(
-                    "AUTHENTICATION_UNAVAILABLE", "HOST_AUTHENTICATION_UNAVAILABLE", "AUTHENTICATION");
+            String code =
+                    switch (commandClassification.target()) {
+                        case GIT -> "GIT_AUTHENTICATION_UNAVAILABLE";
+                        case GITHUB -> "GH_AUTHENTICATION_UNAVAILABLE";
+                        case OTHER -> "HOST_AUTHENTICATION_UNAVAILABLE";
+                    };
+            String action = commandClassification.target() == SystemGitCliCommandClassifier.Target.GITHUB
+                    ? "Run gh auth login in your system terminal, then retry the command."
+                    : "Verify the current OS user's Git credential helper or SSH agent, then retry the command.";
+            return new Classification("AUTHENTICATION_UNAVAILABLE", code, "AUTHENTICATION", action);
         }
         if (output.contains("operation not permitted")
                 || output.contains("permission denied")
@@ -50,7 +74,11 @@ final class CodingExecutionFailureClassifier {
                             || output.contains("gocache")
                     ? "TEMPORARY_DIRECTORY"
                     : "FILESYSTEM";
-            return new Classification("FILESYSTEM_DENIED", "FILESYSTEM_ACCESS_DENIED", resource);
+            return new Classification(
+                    "FILESYSTEM_DENIED",
+                    "FILESYSTEM_ACCESS_DENIED",
+                    resource,
+                    "Use an authorized workspace path or request the required permission from the user.");
         }
         if (output.contains("command not found")
                 || output.contains("commandnotfoundexception")
@@ -59,13 +87,30 @@ final class CodingExecutionFailureClassifier {
                 || output.contains("no such file or directory")
                 || output.contains("module not found")
                 || output.contains("cannot find package")) {
-            return new Classification("DEPENDENCY_UNAVAILABLE", "DEPENDENCY_UNAVAILABLE", "TOOLCHAIN");
+            String code =
+                    switch (commandClassification.target()) {
+                        case GIT -> "GIT_CLI_UNAVAILABLE";
+                        case GITHUB -> "GH_CLI_UNAVAILABLE";
+                        case OTHER -> "DEPENDENCY_UNAVAILABLE";
+                    };
+            String action =
+                    switch (commandClassification.target()) {
+                        case GIT -> "Install Git and make git available on the trusted host PATH.";
+                        case GITHUB -> "Install GitHub CLI and make gh available on the trusted host PATH.";
+                        case OTHER -> "Install the missing dependency or choose an available equivalent command.";
+                    };
+            return new Classification("DEPENDENCY_UNAVAILABLE", code, "TOOLCHAIN", action);
         }
         if (output.contains("invalid argument") || output.contains("unknown option")) {
-            return new Classification("INVALID_INPUT", "COMMAND_INVALID_INPUT", "COMMAND");
+            return new Classification(
+                    "INVALID_INPUT", "COMMAND_INVALID_INPUT", "COMMAND", "Correct the command arguments and retry.");
         }
-        return new Classification("COMMAND_FAILED", providerCode.isBlank() ? "NON_ZERO_EXIT" : providerCode, "COMMAND");
+        return new Classification(
+                "COMMAND_FAILED",
+                providerCode.isBlank() ? "NON_ZERO_EXIT" : providerCode,
+                "COMMAND",
+                "Review the bounded command output and choose the smallest corrective action.");
     }
 
-    record Classification(String category, String stableFailureCode, String resourceClass) {}
+    record Classification(String category, String stableFailureCode, String resourceClass, String action) {}
 }

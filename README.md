@@ -246,6 +246,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - 固定协议 `2025-11-25` 的 MCP Client，支持 Streamable HTTP 与由 `ExecutionBroker` 托管的 stdio；
 - 兼容 `SKILL.md` 的 Skill API/Core/Base，支持分层发现、内容寻址冻结、摘要披露、Run 级激活和
   资源按需读取；
+- 共享 `git` / `github` CLI Skill，以及 Coding `git-delivery` 和 Personal Assistant
+  `github-project-watch` Product Skill；Skill 只提供流程，不授予执行、网络或 Credential 权限；
 - `web.search` 支持 Aliyun IQS、Brave、Tavily；`web.fetch` 支持 Aliyun IQS、Browserless、Tavily；
 - MCP Tool 和 Skill 激活不会绕过 Runtime Tool Pipeline，也不能扩大 Run 已冻结的 Tool 集。
 
@@ -265,7 +267,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
 - 显式 Artifact Export、内容寻址 payload、provenance、完整性校验与 SQLite 单机持久化；
 - `ExecutionBroker`、Sandbox SPI、受控 Host Provider，以及 macOS Seatbelt / Linux bubblewrap
   Local Native Provider；
-- 只读 Git `inspect/status/diff`，不会执行 fetch、commit、push、reset、clean 或自动 merge；
+- 模型通过受控 `execution.run` 直接调用系统 `git` / `gh`；Java Git Integration 只保留不向模型披露的
+  Worktree、Patch 合并和最小 Revision Probe，不再注册 `git.*` / `github.*` 子命令 Tool；
 - 请求绑定的 Policy Decision、`DENY > ASK > ALLOW`、Approval Grant、Project Trust、AES-GCM
   本地 Credential Store 与短生命周期 Lease。
 

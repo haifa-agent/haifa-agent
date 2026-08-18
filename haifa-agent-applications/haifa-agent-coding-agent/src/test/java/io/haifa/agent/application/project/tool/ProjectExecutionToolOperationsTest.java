@@ -169,12 +169,49 @@ class ProjectExecutionToolOperationsTest {
 
         assertThat(result.structuredData())
                 .containsEntry("failureCategory", "AUTHENTICATION_UNAVAILABLE")
-                .containsEntry("stableFailureCode", "HOST_AUTHENTICATION_UNAVAILABLE")
-                .containsEntry("resourceClass", "AUTHENTICATION");
+                .containsEntry("stableFailureCode", "GIT_AUTHENTICATION_UNAVAILABLE")
+                .containsEntry("resourceClass", "AUTHENTICATION")
+                .containsEntry(
+                        "failureAction",
+                        "Verify the current OS user's Git credential helper or SSH agent, then retry the command.");
     }
 
     @Test
-    void rejectsGitWritesMisreportedAsReadOnlyAndAuthenticationEnvironmentOverrides() {
+    void reportsStableGithubCliAvailabilityAndLoginActions() {
+        AtomicInteger invocation = new AtomicInteger();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                if (invocation.getAndIncrement() == 0) {
+                    observer.onOutput(chunk("gh: command not found\n"));
+                } else {
+                    observer.onOutput(chunk("You are not logged into any GitHub hosts.\n"));
+                }
+                return result(request.id(), ExecutionStatus.FAILED, 1);
+            }
+        };
+
+        var missing = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of("command", "gh pr list --repo owner/repo", "operationFamily", "INSPECT"),
+                                () -> false),
+                        access());
+        var loggedOut = operations(broker, 4096, 100)
+                .execute(
+                        invocation(Map.of("command", "gh auth status", "operationFamily", "INSPECT"), () -> false),
+                        access());
+
+        assertThat(missing.structuredData())
+                .containsEntry("stableFailureCode", "GH_CLI_UNAVAILABLE")
+                .containsEntry("failureAction", "Install GitHub CLI and make gh available on the trusted host PATH.");
+        assertThat(loggedOut.structuredData())
+                .containsEntry("stableFailureCode", "GH_AUTHENTICATION_UNAVAILABLE")
+                .containsEntry("failureAction", "Run gh auth login in your system terminal, then retry the command.");
+    }
+
+    @Test
+    void rejectsGitWritesAndNonDiffCommandsMisreportedAsReadOnly() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -190,6 +227,8 @@ class ProjectExecutionToolOperationsTest {
                 invocation(
                         Map.of("command", "env GH_TOKEN=value gh pr list", "operationFamily", "UNKNOWN"), () -> false),
                 access());
+        var statusAsDiff = operations.execute(
+                invocation(Map.of("command", "git status --short", "operationFamily", "DIFF"), () -> false), access());
 
         assertThat(writeAsRead.structuredData())
                 .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
@@ -198,6 +237,13 @@ class ProjectExecutionToolOperationsTest {
         assertThat(tokenOverride.structuredData())
                 .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
                 .containsEntry("commandRisk", "DENIED");
+        assertThat(statusAsDiff.structuredData())
+                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("commandOperation", "INSPECT")
+                .containsEntry("commandClassificationReason", "GIT_STATUS")
+                .containsEntry(
+                        "failureAction",
+                        "Use the bare system git or gh command and report its trusted operation family exactly.");
     }
 
     @Test
@@ -258,7 +304,8 @@ class ProjectExecutionToolOperationsTest {
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
                 .containsEntry("failureCategory", "INVALID_INPUT")
-                .containsEntry("stableFailureCode", "WORKDIR_INVALID");
+                .containsEntry("stableFailureCode", "WORKDIR_INVALID")
+                .containsEntry("failureAction", "Use a normalized path relative to the authorized workspace root.");
         assertThat(invoked).isFalse();
     }
 
@@ -473,7 +520,7 @@ class ProjectExecutionToolOperationsTest {
                         "command", "git ls-remote origin",
                         "workdir", ".",
                         "operationFamily", "INSPECT"),
-                "HOST_AUTHENTICATION_UNAVAILABLE"));
+                "GIT_AUTHENTICATION_UNAVAILABLE"));
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
             @Override

@@ -140,7 +140,12 @@ class Tui4jCodingTerminalModelTest {
         var fixture = fixture();
         fixture.model.update(new PasteMessage("inspect the repository"));
 
-        var updated = fixture.model.update(key(KeyType.keyCR));
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+
+        assertThat(Command.isNone(guarded.command())).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("inspect the repository");
+
+        var updated = fixture.model.update(guarded.command().execute());
 
         assertThat(Command.isNone(updated.command())).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
@@ -149,6 +154,33 @@ class Tui4jCodingTerminalModelTest {
             assertThat(item.title()).isEqualTo("You");
             assertThat(item.body()).isEqualTo("inspect the repository");
         });
+    }
+
+    @Test
+    void keepsUnbracketedCrAndCrLfMultilinePasteInTheEditorUntilASeparateEnter() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("first line"));
+
+        var firstCr = fixture.model.update(key(KeyType.keyCR));
+        "second line".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(key(KeyType.keyLF));
+        "third line".chars().forEach(value -> fixture.model.update(runes((char) value)));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
+        assertThat(fixture.controller.state().status()).isEqualTo("Idle");
+
+        fixture.model.update(firstCr.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
+        assertThat(fixture.controller.state().transcript()).isEmpty();
+
+        var explicitEnter = fixture.model.update(key(KeyType.keyCR));
+        var submitted = fixture.model.update(explicitEnter.command().execute());
+
+        assertThat(Command.isNone(submitted.command())).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().status()).isEqualTo("Submitting");
     }
 
     @Test
@@ -255,6 +287,28 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void resumesFollowingWhenTheUserSubmitsANewMessageAfterReviewingHistory() {
+        var fixture = fixture();
+        fixture.model.init();
+        for (int index = 1; index <= 30; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.update(key(KeyType.KeyPgUp));
+
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "HIDDEN_BEFORE_SUBMIT", "SUCCEEDED"));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("new output below");
+
+        fixture.model.update(new PasteMessage("start a new turn"));
+        commitPlainEnter(fixture);
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "VISIBLE_AFTER_SUBMIT", "SUCCEEDED"));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+
+        assertThat(fixture.model.view()).contains("VISIBLE_AFTER_SUBMIT").doesNotContain("new output below");
+    }
+
+    @Test
     void routesParsedSgrMouseWheelInputToTheTranscript() {
         var fixture = fixture();
         for (int index = 1; index <= 30; index++) {
@@ -274,9 +328,9 @@ class Tui4jCodingTerminalModelTest {
         var fixture = fixture();
 
         fixture.model.update(new PasteMessage("/unknown-one"));
-        fixture.model.update(key(KeyType.keyCR));
+        commitPlainEnter(fixture);
         fixture.model.update(new PasteMessage("/unknown-two"));
-        fixture.model.update(key(KeyType.keyCR));
+        commitPlainEnter(fixture);
         fixture.model.update(new PasteMessage("current draft"));
 
         fixture.model.update(key(KeyType.KeyUp));
@@ -360,6 +414,11 @@ class Tui4jCodingTerminalModelTest {
 
     private KeyPressMessage key(KeyType type) {
         return new KeyPressMessage(new Key(type));
+    }
+
+    private void commitPlainEnter(Fixture fixture) {
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
     }
 
     private KeyPressMessage runes(char value) {

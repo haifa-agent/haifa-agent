@@ -145,8 +145,8 @@ Provider、网络或受信配置变化会改变 Definition/Binding 的安全身�
 语义失败归类和交付意图，不能覆盖可信分类。
 
 `execution.request_permissions -> request_permissions` 不是通用 Sandbox 绕过入口，也不授予可复用权限。
-它只允许引用同一 Run 中一次以 `NETWORK_UNAVAILABLE` 或 `HOST_AUTHENTICATION_UNAVAILABLE` 失败的
-`execution.run`，并要求逐字段复用该结果
+它只允许引用同一 Run 中一次以 `NETWORK_UNAVAILABLE`、`HOST_AUTHENTICATION_UNAVAILABLE`、
+`GIT_AUTHENTICATION_UNAVAILABLE` 或 `GH_AUTHENTICATION_UNAVAILABLE` 失败的 `execution.run`，并要求逐字段复用该结果
 返回的 `toolCallId`、完整 command、逻辑 workdir、operationFamily 和 timeout。Runtime 仍按 Critical /
 Always Approval 创建独立 Policy Decision 与审批 Checkpoint；批准后只用受信 Host 配置及其系统
 `git` / `gh` 登录环境的
@@ -179,8 +179,8 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
 目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
-退出码、有界合并首尾、明确省略标记、Output Ref、耗时、安全失败类别、稳定错误码、本次
-`toolCallId`、Scratch 状态和 FileChangeSet
+退出码、有界合并首尾、明确省略标记、Output Ref、耗时、安全失败类别、稳定错误码、
+`failureAction`、可信 `commandOperation`、本次 `toolCallId`、Scratch 状态和 FileChangeSet
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
