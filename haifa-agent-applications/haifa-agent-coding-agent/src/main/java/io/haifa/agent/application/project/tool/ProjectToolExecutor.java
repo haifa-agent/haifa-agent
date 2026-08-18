@@ -54,12 +54,12 @@ public final class ProjectToolExecutor implements ToolProvider {
             if (executionOperations == null) {
                 throw new IllegalStateException("execution.run is not configured for this application");
             }
-            result = executionOperations.execute(request, binding);
+            return executionOperations.execute(request, binding);
         } else if (toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
             if (permissionRequestOperations == null) {
                 throw new IllegalStateException("request_permissions is not configured for this application");
             }
-            result = permissionRequestOperations.execute(request, binding);
+            return permissionRequestOperations.execute(request, binding);
         } else {
             request.observer().dispatched();
             String policyDecisionRef = request.policyDecisionRef()
@@ -71,8 +71,8 @@ public final class ProjectToolExecutor implements ToolProvider {
                     request.runId().value(),
                     policyDecisionRef,
                     request.arguments());
+            request.observer().acknowledged();
+            return result;
         }
-        request.observer().acknowledged();
-        return result;
     }
 }

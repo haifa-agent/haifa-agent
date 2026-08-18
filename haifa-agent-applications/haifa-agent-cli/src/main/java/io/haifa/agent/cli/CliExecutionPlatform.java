@@ -214,7 +214,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 configuration.maxProcesses(),
                 observer,
                 java.util.function.UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace());
+                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                workspaceWorkdirNormalizer(workspaceRoot));
         var permissionOperations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -228,7 +229,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 configuration.maxProcesses(),
                 observer,
                 java.util.function.UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace());
+                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                workspaceWorkdirNormalizer(workspaceRoot));
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(
@@ -243,6 +245,26 @@ final class CliExecutionPlatform implements AutoCloseable {
 
     ProjectExecutionToolOperations operations() {
         return operations;
+    }
+
+    static java.util.function.UnaryOperator<String> workspaceWorkdirNormalizer(Path workspaceRoot) {
+        Path root = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null")
+                .toAbsolutePath()
+                .normalize();
+        return requested -> {
+            Objects.requireNonNull(requested, "requested workdir must not be null");
+            final Path candidate;
+            try {
+                candidate = Path.of(requested);
+            } catch (java.nio.file.InvalidPathException ignored) {
+                return requested;
+            }
+            if (!candidate.isAbsolute()) return requested;
+            Path normalized = candidate.normalize();
+            if (!normalized.startsWith(root)) return requested;
+            Path relative = root.relativize(normalized);
+            return relative.toString().isEmpty() ? "." : relative.toString().replace('\\', '/');
+        };
     }
 
     ProjectExecutionToolOperations permissionOperations() {

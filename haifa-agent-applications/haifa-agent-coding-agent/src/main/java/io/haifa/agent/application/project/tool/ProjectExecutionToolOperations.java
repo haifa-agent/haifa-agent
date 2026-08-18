@@ -60,6 +60,7 @@ public final class ProjectExecutionToolOperations {
     private final ExecutionOutputObserver outputObserver;
     private final UnaryOperator<String> outputSanitizer;
     private final ExecutionScratchSpaceSpec scratchSpace;
+    private final UnaryOperator<String> workdirNormalizer;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -86,7 +87,8 @@ public final class ProjectExecutionToolOperations {
                 maximumProcesses,
                 outputObserver,
                 UnaryOperator.identity(),
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.genericRequired(),
+                UnaryOperator.identity());
     }
 
     public ProjectExecutionToolOperations(
@@ -115,7 +117,8 @@ public final class ProjectExecutionToolOperations {
                 maximumProcesses,
                 outputObserver,
                 outputSanitizer,
-                ExecutionScratchSpaceSpec.genericRequired());
+                ExecutionScratchSpaceSpec.genericRequired(),
+                UnaryOperator.identity());
     }
 
     public ProjectExecutionToolOperations(
@@ -132,6 +135,38 @@ public final class ProjectExecutionToolOperations {
             ExecutionOutputObserver outputObserver,
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                outputSanitizer,
+                scratchSpace,
+                UnaryOperator.identity());
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace,
+            UnaryOperator<String> workdirNormalizer) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -160,6 +195,7 @@ public final class ProjectExecutionToolOperations {
         this.outputObserver = Objects.requireNonNull(outputObserver, "outputObserver must not be null");
         this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
+        this.workdirNormalizer = Objects.requireNonNull(workdirNormalizer, "workdirNormalizer must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -178,7 +214,9 @@ public final class ProjectExecutionToolOperations {
         if (hasLeadingAbsoluteDirectoryChange(command)) {
             return withToolCallId(invocation, rejectedAbsoluteDirectoryChange(operationFamily));
         }
-        String workdir = optionalText(arguments, "workdir", ".");
+        String requestedWorkdir = optionalText(arguments, "workdir", ".");
+        String workdir = Objects.requireNonNull(
+                workdirNormalizer.apply(requestedWorkdir), "workdirNormalizer must not return null");
         if (isAbsoluteDirectoryPath(workdir)) {
             return withToolCallId(invocation, rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN"));
         }
@@ -350,8 +388,10 @@ public final class ProjectExecutionToolOperations {
                     }
                 });
         try {
+            ExecutionResult result = broker.execute(request, merged);
+            if (merged.dispatched()) invocationObserver.acknowledged();
             return toToolResult(
-                    broker.execute(request, merged),
+                    result,
                     merged,
                     outputSanitizer,
                     operationFamily,

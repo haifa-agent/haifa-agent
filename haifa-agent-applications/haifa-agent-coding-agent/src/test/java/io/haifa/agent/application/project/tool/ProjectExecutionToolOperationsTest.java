@@ -359,6 +359,37 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void providerAdapterDoesNotAcknowledgeKnownRejectionBeforeDispatch() {
+        AtomicInteger dispatches = new AtomicInteger();
+        AtomicInteger acknowledgements = new AtomicInteger();
+        var executor = new ProjectToolExecutor(
+                (runId, principal) -> access(),
+                (toolName, workspaceId, principal, runRef, policyDecisionRef, arguments) -> {
+                    throw new AssertionError("file operations must not run");
+                },
+                operations(new StubBroker() {}, 1024, 2000));
+        var result = executor.invoke(invocation(
+                Map.of("command", "git status --short", "workdir", "C:\\outside", "operationFamily", "INSPECT"),
+                () -> false,
+                new ToolInvocationObserver() {
+                    @Override
+                    public void dispatched() {
+                        dispatches.incrementAndGet();
+                    }
+
+                    @Override
+                    public void acknowledged() {
+                        acknowledgements.incrementAndGet();
+                    }
+                }));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN");
+        assertThat(dispatches).hasValue(0);
+        assertThat(acknowledgements).hasValue(0);
+    }
+
+    @Test
     void userInitiatedCommandUsesTheSameBrokerAndPolicyReference() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
@@ -445,12 +476,15 @@ class ProjectExecutionToolOperationsTest {
     @Test
     void marksDispatchOnlyAfterTheBrokerReportsProcessStart() {
         AtomicInteger dispatches = new AtomicInteger();
+        AtomicInteger acknowledgements = new AtomicInteger();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 assertThat(dispatches).hasValue(0);
+                assertThat(acknowledgements).hasValue(0);
                 observer.onStarted();
                 assertThat(dispatches).hasValue(1);
+                assertThat(acknowledgements).hasValue(0);
                 return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
             }
         };
@@ -465,11 +499,14 @@ class ProjectExecutionToolOperationsTest {
                                     }
 
                                     @Override
-                                    public void acknowledged() {}
+                                    public void acknowledged() {
+                                        acknowledgements.incrementAndGet();
+                                    }
                                 }),
                         access());
 
         assertThat(dispatches).hasValue(1);
+        assertThat(acknowledgements).hasValue(1);
     }
 
     @Test

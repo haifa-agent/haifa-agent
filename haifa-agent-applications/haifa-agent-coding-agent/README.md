@@ -184,9 +184,9 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
-执行命令已经从受控 Workspace 启动；绝对路径 `cd ...` 或绝对 `workdir` 会在进入 Broker 前以
-`ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝，不会被误记为
-结果未知。调用方应省略 `cd` 或使用逻辑相对 `workdir`，保证 Tool Policy 授权的命令与实际执行
-命令完全一致。
+执行命令已经从受控 Workspace 启动。最高层受信本地装配可将等于当前 Workspace 或位于其下的绝对
+`workdir` 规范化为逻辑相对路径；Workspace 外绝对目录、绝对路径 `cd ...` 仍在进入 Broker 前以
+`ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝。dispatch 前的确定性
+拒绝直接保存失败 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 
 Workspace Checkpoint Adapter 将 Project Snapshot 作为通用 Runtime Capability Checkpoint Participant 接入，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。
