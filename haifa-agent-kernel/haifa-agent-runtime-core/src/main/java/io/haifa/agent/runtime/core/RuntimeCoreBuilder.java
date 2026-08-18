@@ -3,6 +3,7 @@ package io.haifa.agent.runtime.core;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.id.UuidV7IdentifierGenerator;
 import io.haifa.agent.common.time.SystemTimeProvider;
+import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.context.budget.HeuristicTokenEstimator;
 import io.haifa.agent.context.compression.CompressionPolicy;
@@ -263,7 +264,8 @@ public final class RuntimeCoreBuilder {
     }
 
     public RuntimeCoreBuilder timeProvider(TimeProvider value) {
-        time = value;
+        TimeProvider source = Objects.requireNonNull(value, "time provider must not be null");
+        time = () -> TimePrecision.toMilliseconds(source.now());
         return this;
     }
 

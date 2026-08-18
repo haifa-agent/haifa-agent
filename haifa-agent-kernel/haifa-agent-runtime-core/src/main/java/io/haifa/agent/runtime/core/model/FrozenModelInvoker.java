@@ -16,6 +16,7 @@ import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeConfigurationSnapshot;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeControlOptions;
+import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -178,6 +179,7 @@ public final class FrozenModelInvoker {
                     "NONE");
             return invocation;
         } catch (RuntimeException exception) {
+            boolean cancelled = controls.signal(run.id()) == RunControlSignal.CANCEL;
             output.failed(run.id(), callId.value(), attempt, iteration);
             appendLifecycle(
                     binding,
@@ -186,13 +188,16 @@ public final class FrozenModelInvoker {
                     iteration,
                     attempt,
                     "model.call.failed",
-                    "FAILED",
+                    cancelled ? "CANCELLED" : "FAILED",
                     0,
                     0,
                     "",
-                    exception instanceof ModelInvocationException modelFailure
-                            ? modelFailure.category().name()
-                            : "MODEL_CALL_FAILED");
+                    cancelled
+                            ? "CANCELLED"
+                            : exception instanceof ModelInvocationException modelFailure
+                                    ? modelFailure.category().name()
+                                    : "MODEL_CALL_FAILED");
+            if (cancelled) throw new CancellationObservedException();
             throw exception;
         }
     }

@@ -145,6 +145,7 @@ Model、Tool、预算和完成门禁在拥有语义的边界映射到稳定 `Age
 Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOOL_OUTCOME_UNKNOWN` 并禁止盲目重放。
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
 - `start` 在 Run 持久化并提交执行后返回 `PENDING/QUEUED` 快照；等待完成由 `AgentRunHandle` 显式提供。
+- 本地执行调度器按 Run 跟踪活动任务；取消 `RUNNING/SUSPENDING` Run 时会同时写入控制信号并尽力中断阻塞中的执行线程。模型边界把由该信号触发的中断收敛为 `CANCELLED`，不会误记为模型失败或 Run 失败。
 - 每次 Start、Resume 或崩溃恢复都创建新的 `AgentRunExecutionAttempt`；它记录 Worker、Heartbeat、错误和恢复 Checkpoint，同一逻辑 Run 同时最多一个活动 Attempt。`ExecutionOwnershipPort` 为未来分布式 Lease 保留真实校验边界。
 - AgentLoop 固定执行控制检查、状态协调、预算/循环 Guard、Context IR 构建、冻结模型调用、响应归一化、Decision 校验/执行、持久化和 Checkpoint；全部 Middleware 阶段及失败策略显式可测。模型、工具、交互、委派、Trace 和持久化均通过最小 Port 注入。
 - Runtime 只接受带 `adapterType + adapterVersion` 的 `AgentChatModel` 注册。`FrozenModelInvoker` 按 Run 快照精确绑定 Adapter；缺失版本时确定性失败，不回退到当前版本，也不重新读取模型目录。

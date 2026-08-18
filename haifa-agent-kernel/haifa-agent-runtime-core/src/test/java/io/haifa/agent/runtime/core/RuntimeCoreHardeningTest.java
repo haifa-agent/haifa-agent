@@ -47,6 +47,7 @@ import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.decision.ToolRequest;
+import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
 import io.haifa.agent.runtime.core.execution.ManualExecutionScheduler;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
@@ -68,7 +69,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -771,6 +774,57 @@ class RuntimeCoreHardeningTest {
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.CANCELLED);
         assertThat(fixture.store.output(accepted.runId())).isEmpty();
+    }
+
+    @Test
+    void cancelInterruptsABlockedLocalModelInvocationAndConvergesTheRun() throws Exception {
+        CountDownLatch modelStarted = new CountDownLatch(1);
+        CountDownLatch neverReleased = new CountDownLatch(1);
+        AgentChatModel blockedModel = request -> {
+            modelStarted.countDown();
+            try {
+                neverReleased.await();
+                throw new AssertionError("blocked model should be interrupted by cancellation");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("model invocation interrupted", interrupted);
+            }
+        };
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        AtomicInteger sequence = new AtomicInteger();
+        try (LocalExecutionScheduler scheduler = new LocalExecutionScheduler()) {
+            DefaultAgentRuntime runtime = new RuntimeCoreBuilder()
+                    .registerChatModel("openai-compatible", "1.0.0", blockedModel)
+                    .scheduler(scheduler)
+                    .persistence(RuntimePersistencePorts.inMemory(store))
+                    .identifierGenerator(() -> "cancel-blocked-id-" + sequence.incrementAndGet())
+                    .timeProvider(() -> NOW)
+                    .build();
+
+            AgentRunId runId = runtime.start(request("cancel-blocked-model")).runId();
+            assertThat(modelStarted.await(2, TimeUnit.SECONDS))
+                    .as(
+                            "model invocation did not start; run=%s events=%s attempts=%s",
+                            runtime.find(runId).orElseThrow(), store.eventsFor(runId), store.attemptsFor(runId))
+                    .isTrue();
+
+            runtime.command(command(runId, "cancel-blocked-model"));
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (runtime.find(runId).orElseThrow().status() != AgentRunStatus.CANCELLED
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(runtime.find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.CANCELLED);
+            assertThat(store.eventsFor(runId).stream()
+                            .filter(event -> event.type().equals("model.call.failed"))
+                            .map(event -> event.data().get("status")))
+                    .containsExactly("CANCELLED");
+            assertThat(store.steps(runId)).allMatch(step -> switch (step.status()) {
+                case COMPLETED, FAILED, CANCELLED, SKIPPED -> true;
+                case PENDING, RUNNING, WAITING -> false;
+            });
+        }
     }
 
     @Test

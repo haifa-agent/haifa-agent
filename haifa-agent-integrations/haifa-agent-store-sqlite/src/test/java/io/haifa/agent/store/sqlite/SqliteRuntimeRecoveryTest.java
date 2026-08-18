@@ -118,6 +118,25 @@ class SqliteRuntimeRecoveryTest {
     Path directory;
 
     @Test
+    void persistsIdempotentCancelResultForATerminalRun() {
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            RuntimeInstance instance = runtime(
+                    foundation,
+                    finalModel("completed-before-cancel"),
+                    "process-a",
+                    new TestIds("terminal-cancel"),
+                    builder -> builder.timeProvider(() -> NOW.plusNanos(123_456)));
+            AgentRunId runId =
+                    instance.runtime().start(request("terminal-cancel")).runId();
+            instance.scheduler().runAll();
+            assertThat(instance.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+
+            assertThat(instance.runtime().handle(runId).cancel().snapshot().status())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
+        }
+    }
+
+    @Test
     void streamsDeltasInProcessButPersistsOnlyOneCompleteAssistantMessage() throws Exception {
         AgentChatModel streaming = new AgentChatModel() {
             @Override

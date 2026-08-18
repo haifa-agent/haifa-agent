@@ -23,6 +23,7 @@ import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
+import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.control.SafePoint;
@@ -481,6 +482,14 @@ public final class DefaultAgentLoop implements AgentLoop {
                 middleware.apply(RuntimePhase.AFTER_MODEL_CALL, middlewareContextRef[0]);
                 decision = response.decision();
                 validator.validate(run, decision);
+            } catch (CancellationObservedException cancelled) {
+                AgentStep cancelledModelStep = modelStepRef[0];
+                if (cancelledModelStep != null
+                        && cancelledModelStep.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING) {
+                    cancelledModelStep.cancel(time.now());
+                    state.appendStep(cancelledModelStep);
+                }
+                throw cancelled;
             } catch (RuntimeException error) {
                 RuntimeException terminal = isContextTooLong(error) && progress.forcedContextRebuildAttempts() > 0
                         ? new ContextRebuildExhaustedException(
