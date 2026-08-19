@@ -41,7 +41,8 @@ Unit of Work 中持久化一条用户可见的部分完成总结和 Run output�
 
 有效进展只来自 Workspace/Artifact 变化、Todo 状态推进、成功的 Build/Test 验证、Blocker 移除、
 Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进展。最近 32 条安全摘要组成
-有界 Ledger。通用无进展窗口在首次权威有效进展后才开始计数；初始只读侦察仍受完全重复 Decision、
+有界 Ledger。单文件 Mutation 的 `changeSetId`、执行观察的 `fileChangeSetId` 以及多文件 Patch 的
+`changeSetIds` 都作为权威 Workspace 进展，重复引用不会重复计数。通用无进展窗口在首次权威有效进展后才开始计数；初始只读侦察仍受完全重复 Decision、
 A-B Loop、失败簇和硬预算约束，不会被误当成已停滞的交付。恢复时从权威 ToolCall、Plan、Child Run、
 Interaction 与 Usage 重建控制状态；旧
 Checkpoint 无需 Schema 升级。精确剩余模型、工具、迭代、时间和 Token 预算只写入安全 Trace，不再逐轮
@@ -143,6 +144,8 @@ Model、Tool、预算和完成门禁在拥有语义的边界映射到稳定 `Age
 `RUNTIME_EXECUTION_FAILED` 只处理无法更精确分类的软件故障。可选 `FailureDiagnosticSink`
 接收所有终止 Attempt 的原始 Throwable 与已分类安全上下文，由实现负责有界脱敏存储；Trace 或诊断 Sink 失败属于观测投影失败，不会改变已经确定的
 Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOOL_OUTCOME_UNKNOWN` 并禁止盲目重放。
+重复 Decision、A-B Decision 或已发生有效进展后的无进展窗口统一映射为稳定
+`AGENT_LOOP_DETECTED`；安全详情只包含枚举化 `loopReason`，不投影 Decision fingerprint、Tool 参数或 Prompt。
 - Runtime 只调用 Core `AgentRun` 的受控行为，不复制生命周期合法性表。
 - `start` 在 Run 持久化并提交执行后返回 `PENDING/QUEUED` 快照；等待完成由 `AgentRunHandle` 显式提供。
 - 本地执行调度器按 Run 跟踪活动任务；取消 `RUNNING/SUSPENDING` Run 时会同时写入控制信号并尽力中断阻塞中的执行线程。模型边界把由该信号触发的中断收敛为 `CANCELLED`，不会误记为模型失败或 Run 失败。
@@ -168,8 +171,12 @@ Run/Attempt 事实。具有副作用且结果不确定的 Tool 仍映射为 `TOO
 - Tool Journal 区分 intent、dispatched、acknowledged、pending-result、completed、failed 与 outcome-unknown；非幂等或未知副作用在 dispatch 后失联不会自动重放。
 - 模型调用与工具调用使用独立 Retry Policy；仅非副作用 Tool 允许有界自动重试，副作用 Tool 失败后进入不确定性处置而不自动重放。
 - Completion Guard 校验输出契约、Artifact、Todo、Pending Tool/Child/Interaction、Policy 和 Budget，并强制 `RUNNING -> COMPLETING -> COMPLETED`。
-- Runtime 硬预算在模型、工具或迭代执行期间耗尽时，Run、Attempt 与相关失败 Step 使用稳定的
-  `RUN_BUDGET_EXCEEDED` 安全错误，不再降级为通用 `RUNTIME_EXECUTION_FAILED`。
+- Runtime 在普通文本 Run 的模型、工具、子 Run、迭代或累计 Token/Cost 预算阻止继续工作时，不再把
+  预期的资源停止伪装成软件故障：新的动作不会 dispatch，已完成结果和有界安全总结通过既有原子完成
+  路径保存，Run 以 `COMPLETED + PARTIAL_SUCCESS` 收敛，并在 Result warning 与最终消息 metadata 中记录
+  `BUDGET_LIMITED` 和具体资源。已经取得的最终模型回答即使使累计用量越过上限，也作为部分结果保留。
+  要求结构化输出的 Run 继续 fail closed 为稳定 `RUN_BUDGET_EXCEEDED`，避免生成未经冻结 Schema 校验的
+  伪结果；意外越界和无法受控收敛的内部路径同样保留该安全错误。
 - `RunTransitionCoordinator` 在 Unit of Work 内提交 Run、Runtime Event 和 Outbox；线程安全内存实现提供乐观锁、Run 内事件序号、稳定命令幂等结果、Outbox 发布/消费幂等和单活动 Attempt 约束。Listener 在提交后通知，异常不影响已提交状态。
 - `RuntimePersistencePorts` 显式组合 Session、Run、Attempt、Checkpoint、Runtime State、Event、Outbox、
   Idempotency、Unit of Work、Tool Journal、Interaction、Run Input、Summary、Tool Result Asset 与消息脱敏监听注册边界；

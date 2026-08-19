@@ -10,6 +10,7 @@ import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.attempt.ExecutionAttemptStatus;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
+import io.haifa.agent.runtime.core.guard.LoopDetectedException;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.lifecycle.RunTransitionCoordinator;
 import io.haifa.agent.runtime.core.loop.AgentLoop;
@@ -120,8 +121,11 @@ public final class AttemptExecutor {
         if (error instanceof AgentExecutionFailureException classified) return classified.error();
         RuntimeLimitExceededException budgetExceeded = findFailure(error, RuntimeLimitExceededException.class);
         ContextBuildException contextBuild = findFailure(error, ContextBuildException.class);
+        LoopDetectedException loopDetected = findFailure(error, LoopDetectedException.class);
         Map<String, Object> details;
-        if (budgetExceeded != null) {
+        if (loopDetected != null) {
+            details = Map.of("loopReason", loopDetected.reason().name());
+        } else if (budgetExceeded != null) {
             details = Map.of(
                     "resource", budgetExceeded.resource(),
                     "limit", budgetExceeded.limit(),
@@ -131,11 +135,20 @@ public final class AttemptExecutor {
         } else {
             details = Map.of();
         }
-        return new AgentError(classifiedErrorCode(budgetExceeded, contextBuild), details, ids.nextValue(), time.now());
+        return new AgentError(
+                classifiedErrorCode(budgetExceeded, contextBuild, loopDetected), details, ids.nextValue(), time.now());
     }
 
     static AgentErrorCode classifiedErrorCode(
             RuntimeLimitExceededException budgetExceeded, ContextBuildException contextBuild) {
+        return classifiedErrorCode(budgetExceeded, contextBuild, null);
+    }
+
+    static AgentErrorCode classifiedErrorCode(
+            RuntimeLimitExceededException budgetExceeded,
+            ContextBuildException contextBuild,
+            LoopDetectedException loopDetected) {
+        if (loopDetected != null) return AgentErrorCode.AGENT_LOOP_DETECTED;
         if (budgetExceeded != null) return AgentErrorCode.RUN_BUDGET_EXCEEDED;
         if (contextBuild == null) return AgentErrorCode.RUNTIME_EXECUTION_FAILED;
         return switch (contextBuild.failure()) {

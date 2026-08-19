@@ -14,6 +14,7 @@ import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunOutcome;
 import io.haifa.agent.core.run.AgentRunStatus;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
+import io.haifa.agent.core.run.StructuredOutputRequirement;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
@@ -642,53 +643,136 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
-    void modelUsageBudgetOverrunUsesStableRunBudgetError() {
-        List<RuntimeTraceEvent> traces = new ArrayList<>();
-        Fixture fixture = fixture(
-                request -> new AgentChatResponse(
-                        "over-budget-response",
-                        "deepseek-v4-pro",
-                        "must not complete",
-                        List.of(),
-                        ModelFinishReason.STOP,
-                        ModelUsage.unpriced(1_000_001, 1),
-                        "",
-                        Map.of()),
-                builder -> builder.trace(traces::add));
+    void modelUsageBudgetOverrunCompletesWithRetainedPartialResult() {
+        Fixture fixture = fixture(request -> new AgentChatResponse(
+                "over-budget-response",
+                "deepseek-v4-pro",
+                "retained final response",
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(1_000_001, 1),
+                "",
+                Map.of()));
 
         var accepted = fixture.runtime.start(request("model-usage-budget"));
         fixture.scheduler.runAll();
 
+        var completed = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(completed.error()).isEmpty();
+        assertThat(completed.result()).hasValueSatisfying(result -> {
+            assertThat(result.outcome()).isEqualTo(AgentRunOutcome.PARTIAL_SUCCESS);
+            assertThat(result.summary()).isEqualTo("retained final response");
+            assertThat(result.warnings()).containsExactly("BUDGET_LIMITED:INPUT_TOKENS");
+        });
+        assertThat(fixture.store.output(accepted.runId())).contains("retained final response");
+        assertThat(fixture.store.steps(accepted.runId()))
+                .singleElement()
+                .satisfies(step -> assertThat(step.status().name()).isEqualTo("COMPLETED"));
+        assertThat(fixture.store.attemptsFor(accepted.runId())).singleElement().satisfies(attempt -> {
+            assertThat(attempt.status().name()).isEqualTo("SUCCEEDED");
+            assertThat(attempt.error()).isEmpty();
+        });
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("run.completed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("status", "COMPLETED"));
+        assertThat(fixture.store.messages(accepted.runId()))
+                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("partial")))
+                .singleElement()
+                .satisfies(message -> assertThat(message.metadata())
+                        .containsEntry("completionReason", "BUDGET_LIMITED")
+                        .containsEntry("limitingResource", "INPUT_TOKENS"));
+    }
+
+    @Test
+    void exhaustedToolBudgetStopsBeforeDispatchAndCompletesPartially() {
+        AtomicInteger executions = new AtomicInteger();
+        ToolRequest tool = toolRequest(
+                "budgeted-tool", "read", "1.0.0", new ToolArguments("read.input", "1", Map.of("purpose", "读取剩余文件")));
+        Fixture fixture = fixture(
+                model(new ToolCallDecision(List.of(tool))),
+                builder -> TestToolPlatform.install(builder, "read", "1.0.0", "read.input", false, request -> {
+                    executions.incrementAndGet();
+                    return new ToolResult(true, "ok", Map.of(), List.of(), List.of(), false);
+                }));
+
+        var accepted = fixture.runtime.start(request("tool-budget-limited"));
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        long expected = run.version();
+        run.recordUsage(new AgentRunUsageDelta(0, 0, 0, 0, 32, 0, 0, 0));
+        fixture.store.save(run, expected);
+        fixture.scheduler.runAll();
+
+        var completed = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(completed.result()).hasValueSatisfying(result -> {
+            assertThat(result.outcome()).isEqualTo(AgentRunOutcome.PARTIAL_SUCCESS);
+            assertThat(result.warnings()).containsExactly("BUDGET_LIMITED:TOOL_CALLS");
+            assertThat(result.summary()).contains("TOOL_CALLS", "33 / 32");
+        });
+        assertThat(executions).hasValue(0);
+        assertThat(fixture.store.toolCalls(accepted.runId())).isEmpty();
+    }
+
+    @Test
+    void exhaustedModelCallBudgetCompletesWithoutAnotherModelRequest() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        Fixture fixture = fixture(request -> {
+            modelCalls.incrementAndGet();
+            return response(finalDecision("must not be requested"));
+        });
+
+        var accepted = fixture.runtime.start(request("model-call-budget-limited"));
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        long expected = run.version();
+        run.recordUsage(new AgentRunUsageDelta(0, 0, 0, run.budget().maxModelCalls(), 0, 0, 0, 0));
+        fixture.store.save(run, expected);
+        fixture.scheduler.runAll();
+
+        var completed = fixture.store.find(accepted.runId()).orElseThrow();
+        assertThat(completed.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(completed.result()).hasValueSatisfying(result -> {
+            assertThat(result.outcome()).isEqualTo(AgentRunOutcome.PARTIAL_SUCCESS);
+            assertThat(result.warnings()).containsExactly("BUDGET_LIMITED:MODEL_CALLS");
+            assertThat(result.summary()).contains("MODEL_CALLS", "64 / 64");
+        });
+        assertThat(modelCalls).hasValue(0);
+    }
+
+    @Test
+    void structuredOutputRunStillFailsClosedWhenModelBudgetIsExhausted() {
+        AtomicInteger modelCalls = new AtomicInteger();
+        Fixture fixture = fixture(request -> {
+            modelCalls.incrementAndGet();
+            return response(finalDecision("must not be requested"));
+        });
+        AgentRunRequest structured = new AgentRunRequest(
+                "structured-budget-limited",
+                new AgentDefinitionId("test-agent"),
+                Optional.empty(),
+                "test-profile",
+                new AgentSessionId("session-1"),
+                Optional.empty(),
+                "objective",
+                List.of(),
+                RuntimeOverrides.NONE,
+                Optional.of(new StructuredOutputRequirement(
+                        "test.structured", "1", "TestStructured", Map.of("type", "object"))));
+
+        var accepted = fixture.runtime.start(structured);
+        var run = fixture.store.find(accepted.runId()).orElseThrow();
+        long expected = run.version();
+        run.recordUsage(new AgentRunUsageDelta(0, 0, 0, run.budget().maxModelCalls(), 0, 0, 0, 0));
+        fixture.store.save(run, expected);
+        fixture.scheduler.runAll();
+
         var failed = fixture.store.find(accepted.runId()).orElseThrow();
         assertThat(failed.status()).isEqualTo(AgentRunStatus.FAILED);
-        var runError = failed.error().orElseThrow();
-        assertThat(runError.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
-        assertThat(runError.category().name()).isEqualTo("RESOURCE_LIMIT");
-        assertThat(runError.retryability().name()).isEqualTo("NOT_RETRYABLE");
-        assertThat(runError.message()).isEqualTo("Run budget exceeded");
-        assertThat(fixture.store.steps(accepted.runId())).singleElement().satisfies(step -> {
-            var stepError = step.error().orElseThrow().error();
-            assertThat(stepError.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
-            assertThat(stepError.diagnosticId()).isEqualTo(runError.diagnosticId());
-        });
-        assertThat(fixture.store.attemptsFor(accepted.runId()))
-                .singleElement()
-                .satisfies(attempt -> assertThat(attempt.error()).hasValueSatisfying(error -> {
-                    assertThat(error.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED);
-                    assertThat(error.diagnosticId()).isEqualTo(runError.diagnosticId());
-                }));
-        assertThat(fixture.store.eventsFor(accepted.runId()))
-                .filteredOn(event -> event.type().equals("run.failed"))
-                .singleElement()
-                .satisfies(event -> assertThat(event.data())
-                        .containsEntry("errorCode", "RUN_BUDGET_EXCEEDED")
-                        .containsEntry("diagnosticId", runError.diagnosticId()));
-        assertThat(traces)
-                .filteredOn(trace -> trace.operation().equals("runtime.error"))
-                .singleElement()
-                .satisfies(trace -> assertThat(trace.safeAttributes())
-                        .containsEntry("errorCode", "RUN_BUDGET_EXCEEDED")
-                        .containsEntry("diagnosticId", runError.diagnosticId()));
+        assertThat(failed.error())
+                .hasValueSatisfying(error -> assertThat(error.code()).isEqualTo(AgentErrorCode.RUN_BUDGET_EXCEEDED));
+        assertThat(failed.result()).isEmpty();
+        assertThat(modelCalls).hasValue(0);
     }
 
     @Test

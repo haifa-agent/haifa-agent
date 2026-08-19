@@ -58,6 +58,8 @@ Listener 失败不会中断 AgentLoop。
   不能与 `RunOutputCursor`、Outbox offset 或数据库 rowid 混用。
 - `AgentRunEvent` 只携带 `RunEventPayloads` 的有界 typed payload。未知内部 Journal Event 不外发，
   但 Feed Cursor 会继续推进；`model.output.*` 不属于 durable Run Event Feed。
+- `DeliveryLifecycle` 的预算阈值投影除稳定 reason code 和剩余百分比外，还携带枚举化限制资源、当前用量
+  与冻结上限；旧六参数构造入口继续投影 `NONE/0/0`，调用方不需要从一个聚合百分比猜测是哪项资源。
 - `AgentRunViewSnapshot` 组合可信 Session ID 与 Run Snapshot，供 Adapter 显式投影外部
   `RunView`；它不改变 Core Run 状态机。
 

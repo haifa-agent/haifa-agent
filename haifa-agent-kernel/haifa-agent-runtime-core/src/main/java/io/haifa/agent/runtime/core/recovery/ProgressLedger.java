@@ -12,6 +12,7 @@ import java.util.Optional;
 /** Last 32 meaningful evidence summaries. Messages and failed-call counts are intentionally absent. */
 public final class ProgressLedger {
     static final int MAXIMUM_EVIDENCE = 32;
+    private static final int MAXIMUM_REFERENCES_PER_RESULT = 256;
     private final Deque<ProgressEvidence> evidence = new ArrayDeque<>();
     private String planDigest;
     private long childResults;
@@ -23,6 +24,7 @@ public final class ProgressLedger {
             Map<String, Object> data = result.structuredData();
             changed |= addReference(
                     ProgressEvidence.Type.WORKSPACE_CHANGE, firstText(data, "changeSetId", "fileChangeSetId"));
+            changed |= addReferences(ProgressEvidence.Type.WORKSPACE_CHANGE, data.get("changeSetIds"));
             for (var artifact : result.artifacts()) {
                 changed |= add(ProgressEvidence.Type.ARTIFACT_CHANGE, artifact.artifactId());
             }
@@ -92,6 +94,19 @@ public final class ProgressLedger {
 
     private boolean addReference(ProgressEvidence.Type type, Optional<String> reference) {
         return reference.map(value -> add(type, value)).orElse(false);
+    }
+
+    private boolean addReferences(ProgressEvidence.Type type, Object references) {
+        if (!(references instanceof List<?> values)) return false;
+        boolean changed = false;
+        int observed = 0;
+        for (Object value : values) {
+            if (++observed > MAXIMUM_REFERENCES_PER_RESULT) break;
+            if (value instanceof String text && !text.isBlank() && text.length() <= 256) {
+                changed |= add(type, text);
+            }
+        }
+        return changed;
     }
 
     private boolean add(ProgressEvidence.Type type, String stableReference) {

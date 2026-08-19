@@ -170,8 +170,21 @@ public final class RunEventPayloads {
             String reasonCode,
             List<String> missingEvidence,
             int remainingPercent,
-            int attempt)
+            int attempt,
+            String limitingResource,
+            long limitingUsed,
+            long limitingLimit)
             implements AgentRunEvent.Payload {
+        public DeliveryLifecycle(
+                String phase,
+                String status,
+                String reasonCode,
+                List<String> missingEvidence,
+                int remainingPercent,
+                int attempt) {
+            this(phase, status, reasonCode, missingEvidence, remainingPercent, attempt, "NONE", 0, 0);
+        }
+
         public DeliveryLifecycle {
             phase = text(phase, "phase", 64);
             status = text(status, "status", 64);
@@ -189,6 +202,13 @@ public final class RunEventPayloads {
                 throw new IllegalArgumentException("remainingPercent must be between zero and one hundred");
             }
             if (attempt < 0) throw new IllegalArgumentException("attempt must not be negative");
+            limitingResource = text(limitingResource, "limitingResource", 64);
+            if (!limitingResource.matches("[A-Z][A-Z0-9_]*")) {
+                throw new IllegalArgumentException("limitingResource must be an upper-snake token");
+            }
+            if (limitingUsed < 0 || limitingLimit < 0) {
+                throw new IllegalArgumentException("limiting usage values must not be negative");
+            }
         }
     }
 

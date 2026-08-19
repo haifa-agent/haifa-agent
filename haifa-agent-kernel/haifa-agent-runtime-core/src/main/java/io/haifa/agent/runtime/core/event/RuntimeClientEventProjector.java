@@ -244,15 +244,18 @@ public final class RuntimeClientEventProjector {
     private static Projection budgetThreshold(RuntimeEvent event) {
         List<String> thresholds = texts(event.data(), "newThresholds");
         if (thresholds.isEmpty()) return null;
-        return delivery(
+        return new Projection(
                 "budget.threshold-reached",
-                event,
-                "BUDGET",
-                "BUDGET_THRESHOLD_REACHED",
-                "REMAINING_" + thresholds.getFirst() + "_PERCENT",
-                List.of(),
-                integer(event.data(), "remainingPercent", 0),
-                0);
+                new RunEventPayloads.DeliveryLifecycle(
+                        "BUDGET",
+                        "BUDGET_THRESHOLD_REACHED",
+                        "REMAINING_" + thresholds.getFirst() + "_PERCENT",
+                        List.of(),
+                        integer(event.data(), "remainingPercent", 0),
+                        0,
+                        text(event.data(), "limitingResource", "UNKNOWN"),
+                        longValue(event.data(), "limitingUsed", 0),
+                        longValue(event.data(), "limitingLimit", 0)));
     }
 
     private static Projection delivery(
@@ -322,6 +325,11 @@ public final class RuntimeClientEventProjector {
     private static int integer(Map<String, Object> data, String key, int fallback) {
         Integer value = integer(data, key);
         return value == null ? fallback : value;
+    }
+
+    private static long longValue(Map<String, Object> data, String key, long fallback) {
+        Object value = data.get(key);
+        return value instanceof Number number ? Math.max(0, number.longValue()) : fallback;
     }
 
     private static List<String> texts(Map<String, Object> data, String key) {

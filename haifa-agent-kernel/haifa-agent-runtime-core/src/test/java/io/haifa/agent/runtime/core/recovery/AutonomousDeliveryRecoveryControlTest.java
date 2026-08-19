@@ -24,6 +24,7 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolExecutionError;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.runtime.core.guard.LoopDetectedException;
 import io.haifa.agent.runtime.core.guard.LoopDetectionGuard;
 import io.haifa.agent.runtime.core.loop.AgentLoopContext;
 import java.time.Instant;
@@ -200,6 +201,41 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     @Test
+    void pluralPatchChangeSetsAdvanceProgressWithoutRewardingRepeatedReferences() {
+        var ledger = new ProgressLedger();
+
+        assertThat(ledger.observe(completedChangeSets("patch-1", List.of("change-1", "change-2"))))
+                .isTrue();
+        assertThat(ledger.observe(completedChangeSets("patch-2", List.of("change-1", "change-2"))))
+                .isFalse();
+        assertThat(ledger.observe(completedChangeSets("patch-3", List.of("change-2", "change-3"))))
+                .isTrue();
+
+        assertThat(ledger.evidence())
+                .extracting(ProgressEvidence::type)
+                .containsExactly(
+                        ProgressEvidence.Type.WORKSPACE_CHANGE,
+                        ProgressEvidence.Type.WORKSPACE_CHANGE,
+                        ProgressEvidence.Type.WORKSPACE_CHANGE);
+    }
+
+    @Test
+    void successfulPluralPatchBreaksTheNoProgressWindow() {
+        var context = new AgentLoopContext(1, List.of("inspect-a", "inspect-b", "patch-a"));
+        assertThat(context.observeInteractions(List.of("interaction-1"))).isPresent();
+        String stalled = context.progressSignatures().getLast();
+        context.recordProgress(stalled);
+        context.recordProgress(stalled);
+
+        AgentLoopContext.ControlObservation patchProgress = context.observeAuthoritativeState(
+                List.of(completedChangeSets("patch-progress", List.of("change-new"))), Optional.empty(), 0);
+        assertThat(patchProgress.progressObserved()).isTrue();
+        context.recordProgress(patchProgress.progressDigest());
+
+        assertThatCode(() -> new LoopDetectionGuard(3).check(null, context)).doesNotThrowAnyException();
+    }
+
+    @Test
     void outcomeUnknownCancellationAndPolicyDenialKeepTheirSafetyDirectives() {
         var classifier = new ToolOutcomeClassifier();
 
@@ -234,7 +270,7 @@ class AutonomousDeliveryRecoveryControlTest {
     @Test
     void restoreKeepsFailureClusterAndSuppressesAlreadyCrossedBudgetThresholds() {
         var restored = new AgentLoopContext(3, List.of());
-        var snapshot = new RunBudgetSnapshot(4, 4, 4, 4_000, 4, 4, 2, 0, 25);
+        var snapshot = new RunBudgetSnapshot(4, 4, 4, 4_000, 4, 4, 2, 0, "TOOL_CALLS", 3, 4, 25);
         restored.rebuildControlState(
                 List.of(
                         failed("call-restore-1", "bounded-a", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE"),
@@ -255,7 +291,7 @@ class AutonomousDeliveryRecoveryControlTest {
                 .doesNotContain("bounded-a", "bounded-b");
         assertThat(restored.updateBudgetSnapshot(snapshot)).isEmpty();
 
-        var tenPercent = new RunBudgetSnapshot(1, 1, 1, 1_000, 1, 1, 2, 0, 10);
+        var tenPercent = new RunBudgetSnapshot(1, 1, 1, 1_000, 1, 1, 2, 0, "MODEL_CALLS", 9, 10, 10);
         assertThat(restored.updateBudgetSnapshot(tenPercent)).containsExactly(10);
         assertThat(restored.updateBudgetSnapshot(tenPercent)).isEmpty();
         assertThat(restored.observeInteractions(List.of("response-after-restore")))
@@ -286,7 +322,7 @@ class AutonomousDeliveryRecoveryControlTest {
     void alternatingDecisionLoopRemainsDetected() {
         var context = new AgentLoopContext(1, List.of("A", "B", "A", "B"));
         assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, context))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(LoopDetectedException.class)
                 .hasMessageContaining("alternating");
     }
 
@@ -312,12 +348,12 @@ class AutonomousDeliveryRecoveryControlTest {
         afterDelivery.recordProgress(stableDeliveryState);
 
         assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, afterDelivery))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(LoopDetectedException.class)
                 .hasMessageContaining("no observable progress");
     }
 
     private static RunBudgetSnapshot budgetAt(int remainingPercent) {
-        return new RunBudgetSnapshot(1, 1, 1, 1_000, 1, 1, 0, 0, remainingPercent);
+        return new RunBudgetSnapshot(1, 1, 1, 1_000, 1, 1, 0, 0, "MODEL_CALLS", 1, 2, remainingPercent);
     }
 
     private static ToolCall failed(
@@ -376,6 +412,18 @@ class AutonomousDeliveryRecoveryControlTest {
                         List.of(),
                         List.of(),
                         false),
+                NOW.plusSeconds(2));
+        return call;
+    }
+
+    private static ToolCall completedChangeSets(String id, List<String> changeSetIds) {
+        ToolCall call = requested(id);
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW.plusSeconds(1));
+        call.complete(
+                new ToolResult(
+                        true, "patch applied", Map.of("changeSetIds", changeSetIds), List.of(), List.of(), false),
                 NOW.plusSeconds(2));
         return call;
     }
