@@ -285,11 +285,9 @@ public final class ProjectExecutionToolOperations {
             Duration timeout,
             String declaredOperationFamily,
             SystemGitCliCommandClassifier.Classification classification) {
-        String budgetFamily = classification.target() == SystemGitCliCommandClassifier.Target.OTHER
-                ? declaredOperationFamily
-                : effectiveOperationFamily(classification);
+        String budgetFamily = outputBudgetFamily(declaredOperationFamily, classification);
         boolean boundedInspection = "INSPECT".equals(budgetFamily);
-        int channelBudget = boundedInspection ? maximumModelOutputBytes : FULL_OUTPUT_BYTES_PER_CHANNEL;
+        int channelBudget = outputChannelBudget(budgetFamily);
         return new ExecutionLimits(
                 timeout,
                 channelBudget,
@@ -298,6 +296,17 @@ public final class ProjectExecutionToolOperations {
                 boundedInspection
                         ? io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE
                         : io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.RETAIN_HEAD_TAIL);
+    }
+
+    private int outputChannelBudget(String budgetFamily) {
+        int multiplier =
+                switch (budgetFamily) {
+                    case "INSPECT" -> 1;
+                    case "DIFF" -> 4;
+                    case "TEST", "BUILD", "MUTATE", "UNKNOWN" -> 8;
+                    default -> 8;
+                };
+        return Math.min(FULL_OUTPUT_BYTES_PER_CHANNEL, maximumModelOutputBytes * multiplier);
     }
 
     private static String invocationDigest(
@@ -427,7 +436,7 @@ public final class ProjectExecutionToolOperations {
         }
     }
 
-    private static ToolResult toToolResult(
+    private ToolResult toToolResult(
             ExecutionResult result,
             MergedTailObserver merged,
             UnaryOperator<String> outputSanitizer,
@@ -472,6 +481,11 @@ public final class ProjectExecutionToolOperations {
         data.put("riskResolutionCode", riskResolutionCode(commandClassification));
         data.put("riskAction", riskAction(commandClassification));
         data.put("operationHintCode", operationHintCode(operationFamily, commandClassification));
+        String outputBudgetFamily = outputBudgetFamily(operationFamily, commandClassification);
+        data.put("outputBudgetFamily", outputBudgetFamily);
+        data.put("outputBudgetBytesPerChannel", outputChannelBudget(outputBudgetFamily));
+        data.put("modelOutputBudgetBytes", maximumModelOutputBytes);
+        data.put("modelOutputBudgetLines", maximumModelOutputLines);
         data.put(
                 "sandboxProfileDigest",
                 io.haifa.agent.policy.api.PolicyDigest.sha256Fields(
@@ -499,6 +513,19 @@ public final class ProjectExecutionToolOperations {
             data.put("outputRef", assets.getFirst().assetId());
             data.put("outputRefs", assets.stream().map(AssetRef::assetId).toList());
         }
+        if (outputBudgetFamily.equals("DIFF")) {
+            long files = output.lines()
+                    .filter(line -> line.startsWith("diff --git "))
+                    .count();
+            long hunks = output.lines().filter(line -> line.startsWith("@@")).count();
+            data.put("diffFileCount", files);
+            data.put("diffHunkCount", hunks);
+            data.put("diffCountsComplete", !truncated);
+            data.put(
+                    "diffSummary",
+                    "observedFiles=" + files + ", observedHunks=" + hunks + ", countsComplete=" + !truncated);
+            if (!assets.isEmpty()) data.put("diffArtifactRef", assets.getFirst().assetId());
+        }
         String headline =
                 switch (semantic.outcome()) {
                     case SUCCEEDED -> "Command succeeded";
@@ -515,13 +542,19 @@ public final class ProjectExecutionToolOperations {
                         };
                 };
         if (result.exitCode() != null) headline += " (exit " + result.exitCode() + ")";
-        String summaryOutput = output.length() <= SUMMARY_OUTPUT_CHARS
-                ? output
-                : "<output summary truncated; full bounded head/tail is in result data>\n"
-                        + output.substring(0, SUMMARY_OUTPUT_CHARS / 2)
-                        + "\n... summary omitted ...\n"
-                        + output.substring(output.length() - SUMMARY_OUTPUT_CHARS / 2);
-        String summary = summaryOutput.isBlank() ? headline : headline + "\n" + summaryOutput;
+        String summary;
+        if (outputBudgetFamily.equals("DIFF")) {
+            summary = headline + "\n" + data.get("diffSummary");
+            if (data.containsKey("diffArtifactRef")) summary += ", artifactRef=" + data.get("diffArtifactRef");
+        } else {
+            String summaryOutput = output.length() <= SUMMARY_OUTPUT_CHARS
+                    ? output
+                    : "<output summary truncated; full bounded head/tail is in result data>\n"
+                            + output.substring(0, SUMMARY_OUTPUT_CHARS / 2)
+                            + "\n... summary omitted ...\n"
+                            + output.substring(output.length() - SUMMARY_OUTPUT_CHARS / 2);
+            summary = summaryOutput.isBlank() ? headline : headline + "\n" + summaryOutput;
+        }
         return new ToolResult(
                 semantic.successfulToolResult(), summary, Map.copyOf(data), List.copyOf(assets), List.of(), truncated);
     }
@@ -603,6 +636,13 @@ public final class ProjectExecutionToolOperations {
 
     private static String effectiveOperationFamily(SystemGitCliCommandClassifier.Classification classification) {
         return classification.operation().name();
+    }
+
+    private static String outputBudgetFamily(
+            String declaredOperationFamily, SystemGitCliCommandClassifier.Classification classification) {
+        return classification.target() == SystemGitCliCommandClassifier.Target.OTHER
+                ? declaredOperationFamily
+                : effectiveOperationFamily(classification);
     }
 
     private static String riskResolutionCode(SystemGitCliCommandClassifier.Classification classification) {

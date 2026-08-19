@@ -181,6 +181,25 @@ public final class FrozenModelInvoker {
         } catch (RuntimeException exception) {
             boolean cancelled = controls.signal(run.id()) == RunControlSignal.CANCEL;
             output.failed(run.id(), callId.value(), attempt, iteration);
+            if (exception instanceof ModelInvocationException modelFailure
+                    && modelFailure.providerCode().equals("empty_response")) {
+                events.append(
+                        run.id(),
+                        "model.empty-response",
+                        Map.of(
+                                "modelCallId", callId.value(),
+                                "providerId",
+                                        binding.configuration()
+                                                .model()
+                                                .providerId()
+                                                .value(),
+                                "modelId", binding.configuration().model().providerModelId(),
+                                "attempt", attempt,
+                                "category", modelFailure.category().name(),
+                                "providerCode", modelFailure.providerCode(),
+                                "retryable", modelFailure.retryable()),
+                        time.now());
+            }
             appendLifecycle(
                     binding,
                     run,

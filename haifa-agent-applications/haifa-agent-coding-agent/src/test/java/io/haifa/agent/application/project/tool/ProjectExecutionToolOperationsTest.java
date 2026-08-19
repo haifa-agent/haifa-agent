@@ -121,9 +121,13 @@ class ProjectExecutionToolOperationsTest {
 
     @Test
     void treatsDocumentedGitNonzeroVariantsAsSuccessfulToolResults() {
+        AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                if (calls.getAndIncrement() == 0) {
+                    observer.onOutput(chunk("diff --git a/src/A.java b/src/A.java\n@@ -1 +1 @@\n"));
+                }
                 return result(request.id(), ExecutionStatus.FAILED, 1);
             }
         };
@@ -138,13 +142,23 @@ class ProjectExecutionToolOperationsTest {
                         access());
 
         assertThat(differences.successful()).isTrue();
-        assertThat(differences.summary()).contains("expected result variant", "exit 1");
+        assertThat(differences.summary())
+                .contains("expected result variant", "exit 1", "observedFiles=1", "observedHunks=1")
+                .doesNotContain("diff --git", "@@ -1 +1 @@");
         assertThat(differences.structuredData())
                 .containsEntry("status", "FAILED")
                 .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
                 .containsEntry("semanticReasonCode", "DIFFERENCES_FOUND")
                 .containsEntry("semanticInterpreterVersion", "1")
                 .containsEntry("commandOutcomeCode", "COMMAND_EXIT_EXPECTED_VARIANT")
+                .containsEntry("outputBudgetFamily", "DIFF")
+                .containsEntry("outputBudgetBytesPerChannel", 16_384)
+                .containsEntry("modelOutputBudgetBytes", 4096)
+                .containsEntry("modelOutputBudgetLines", 100)
+                .containsEntry("diffFileCount", 1L)
+                .containsEntry("diffHunkCount", 1L)
+                .containsEntry("diffCountsComplete", true)
+                .containsEntry("diffSummary", "observedFiles=1, observedHunks=1, countsComplete=true")
                 .doesNotContainKeys("failureCategory", "stableFailureCode", "failureCode");
         assertThat(noMatches.successful()).isTrue();
         assertThat(noMatches.structuredData())
@@ -346,9 +360,11 @@ class ProjectExecutionToolOperationsTest {
 
     @Test
     void acceptsMissingOperationFamilyAsAnUnknownDeclaredHint() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
                 return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
             }
         };
@@ -360,6 +376,31 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("declaredOperationFamily", "UNKNOWN")
                 .containsEntry("effectiveOperationFamily", "INSPECT")
                 .containsEntry("operationFamily", "UNKNOWN");
+        assertThat(captured.get().limits().maxStdoutBytes()).isEqualTo(4096);
+        assertThat(captured.get().limits().maxStderrBytes()).isEqualTo(4096);
+    }
+
+    @Test
+    void unknownGenericCommandsRemainInsideTheBroadOutputBudget() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        var result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(Map.of("command", "custom-tool --all", "operationFamily", "UNKNOWN"), () -> false),
+                        access());
+
+        assertThat(result.structuredData())
+                .containsEntry("outputBudgetFamily", "UNKNOWN")
+                .containsEntry("outputBudgetBytesPerChannel", 32_768);
+        assertThat(captured.get().limits().maxStdoutBytes()).isEqualTo(32_768);
+        assertThat(captured.get().limits().maxStderrBytes()).isEqualTo(32_768);
     }
 
     @Test

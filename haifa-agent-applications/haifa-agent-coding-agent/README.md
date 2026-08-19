@@ -31,6 +31,18 @@ Coding Agent 的基础工作方法由产品拥有的版本化资源
 Agent-visible、用户不可见的 Session 消息追加；旧请求因此保持为新请求的完整历史前缀。追加消息不包含
 Case/Fixture 信息、宿主路径、原始 Tool 输出或模型自报的语义覆盖。
 
+`CodingWorkProjectionService` 从既有 ToolCall、Plan、Interaction、Usage、ChangeSet 和交付证据确定性
+重建 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DELIVER/BLOCKED` 派生阶段；它不是新的 Core Run 状态或事实源。
+投影只保留有界摘要、稳定错误簇和路径/版本/变更/产物的 SHA-256 引用；Middleware 仅在阶段、缺失证据
+或交付预留变化时追加 Agent-visible 控制消息和安全 Client Event，保持模型请求历史前缀只追加不改写。
+ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
+不会隐式产生 commit、push 或 PR 意图。旧 Checkpoint 不增加 Codec 或 Migration，Resume 直接从权威
+记录重建投影。
+
+`execution.run` 1.4 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
+可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
+
 ## 自主交付模式与完成证据
 
 Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持

@@ -30,9 +30,8 @@ public record AgentChatResponse(
         structuredOutput = structuredOutput == null
                 ? java.util.Optional.empty()
                 : structuredOutput.map(value -> ModelValues.map(value, "structuredOutput"));
-        if (content.isBlank() && toolCalls.isEmpty()) {
-            throw new IllegalArgumentException("response must contain content or tool calls");
-        }
+        // A provider may successfully terminate without usable output. Preserve that transport fact so the
+        // Runtime can classify and retry it under the frozen model binding instead of losing retry semantics here.
     }
 
     public AgentChatResponse(

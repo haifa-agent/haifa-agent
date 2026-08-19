@@ -99,6 +99,16 @@ public final class RuntimeClientEventProjector {
                                 List.of(),
                                 0,
                                 integer(event.data(), "attempts", 0));
+                    case "coding.work-phase" ->
+                        delivery(
+                                "coding.work-phase",
+                                event,
+                                requiredText(event.data(), "phase"),
+                                text(event.data(), "status", "ACTIVE"),
+                                text(event.data(), "reasonCode", "AUTHORITATIVE_EVIDENCE_PROJECTION"),
+                                texts(event.data(), "missingEvidence"),
+                                integer(event.data(), "remainingPercent", 0),
+                                integer(event.data(), "attempt", 0));
                     case "loop.budget-snapshot" -> budgetThreshold(event);
                     default -> outputOrLifecycle(event);
                 };
@@ -141,6 +151,7 @@ public final class RuntimeClientEventProjector {
                         .contains(event.type())
                 || event.type().equals("completion.deferred")
                 || event.type().equals("tool.recovery-strategy-required")
+                || event.type().equals("coding.work-phase")
                 || event.type().equals("loop.budget-snapshot")
                 || event.type().equals("run.created")
                 || event.type().equals("approval.requested")

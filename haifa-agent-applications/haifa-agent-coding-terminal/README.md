@@ -151,6 +151,9 @@ Phase B 的工作流反馈只投影稳定产品 DTO 和 Runtime 事件：
   Assistant Delta、Execution 输出块、轮询、重复事件和 viewport 操作不重置。`WORKING` 只追加短 Tool
   名称，例如 `WORKING (12s) · execution.run`；内部仅以单调递增 revision 区分阶段，不展示 RunId 或
   ToolCallId；
+- `coding.work-phase` 只投影派生的 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DELIVER/BLOCKED`，终端显示
+  `Work phase: <PHASE>`；同一阶段与缺失证据集合不变时不重复发事件，UI 不读取 Prompt、Host Path、
+  命令或内部摘要来猜测阶段；
 - 错误按 Retryable、User action required、Interrupted、Terminal capability、Terminal failure
   五类给出稳定错误码和下一步操作；失败和 Selector 都不清空草稿；
 

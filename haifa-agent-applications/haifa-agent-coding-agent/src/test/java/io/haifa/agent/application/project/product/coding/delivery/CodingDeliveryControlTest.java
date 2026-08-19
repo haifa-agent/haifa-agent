@@ -28,7 +28,10 @@ import io.haifa.agent.core.tool.ToolArguments;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
+import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
+import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
+import io.haifa.agent.runtime.core.middleware.RuntimePhase;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import java.time.Instant;
@@ -304,6 +307,136 @@ class CodingDeliveryControlTest {
         assertThat(result.evidenceCodes()).contains("NO_CHANGE_JUSTIFICATION", "VALIDATION_PASSED", "DIFF_INSPECTION");
     }
 
+    @Test
+    void workProjectionAdvancesFromAuthoritativeEvidenceAndKeepsOnlySafeBoundedRefs() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        CodingWorkProjectionService projections = projection(fixture.store());
+
+        assertThat(projections.project(fixture.run()).phase()).isEqualTo(CodingWorkPhase.ORIENT);
+
+        tool(
+                fixture,
+                "file.read",
+                Map.of("path", "private/source/Main.java"),
+                Map.of("path", "private/source/Main.java", "contentVersion", "version-1"));
+        CodingWorkProjection changed = projections.project(fixture.run());
+        assertThat(changed.phase()).isEqualTo(CodingWorkPhase.CHANGE);
+        assertThat(changed.readFileRefs()).singleElement().satisfies(value -> assertThat(value)
+                .matches("read:[0-9a-f]{64}"));
+        assertThat(changed.contextText()).doesNotContain("private/source/Main.java", "version-1");
+
+        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        assertThat(projections.project(fixture.run()).phase()).isEqualTo(CodingWorkPhase.VERIFY);
+
+        tool(
+                fixture,
+                "execution.run",
+                Map.of("command", "test-command"),
+                Map.of("operationFamily", "TEST", "status", "SUCCEEDED", "exitCode", 0));
+        assertThat(projections.project(fixture.run()).phase()).isEqualTo(CodingWorkPhase.REVIEW);
+
+        tool(
+                fixture,
+                "execution.run",
+                Map.of("command", "diff-command"),
+                Map.of("operationFamily", "DIFF", "status", "SUCCEEDED", "exitCode", 0));
+        CodingWorkProjection delivered = projections.project(fixture.run());
+        assertThat(delivered.phase()).isEqualTo(CodingWorkPhase.DELIVER);
+        assertThat(delivered.missingEvidence()).isEmpty();
+        assertThat(delivered.deliveryIntent()).isEqualTo("WORKSPACE_CHANGE_ONLY");
+        assertThat(delivered.contextText()).doesNotContain("test-command", "diff-command", "change-1");
+    }
+
+    @Test
+    void workProjectionDoesNotForceReadOnlyTasksIntoChangeAndReportsStructuredBlockers() {
+        Fixture review = fixture("review only", trusted("REVIEW"));
+        tool(review, "file.read", Map.of("path", "README.md"), Map.of("path", "README.md"));
+        assertThat(projection(review.store()).project(review.run()).phase()).isEqualTo(CodingWorkPhase.REVIEW);
+
+        Fixture blocked = fixture("fix the implementation", trusted("CHANGE"));
+        tool(blocked, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        tool(
+                blocked,
+                "execution.run",
+                Map.of("command", "test-secret-path"),
+                Map.of(
+                        "operationFamily",
+                        "TEST",
+                        "status",
+                        "FAILED",
+                        "failureCategory",
+                        "DEPENDENCY_UNAVAILABLE",
+                        "stableFailureCode",
+                        "TOOLCHAIN_UNAVAILABLE",
+                        "resourceClass",
+                        "TOOLCHAIN"));
+        CodingWorkProjection projection = projection(blocked.store()).project(blocked.run());
+        assertThat(projection.phase()).isEqualTo(CodingWorkPhase.BLOCKED);
+        assertThat(projection.failureClusterSummaries()).containsExactly("TOOLCHAIN_UNAVAILABLE:TOOLCHAIN:1");
+        assertThat(projection.contextText()).doesNotContain("test-secret-path");
+    }
+
+    @Test
+    void workProjectionMiddlewareAppendsSafeControlMessagesOnlyForMaterialPhaseChanges() {
+        Fixture eventFixture = fixture("fix the implementation", trusted("CHANGE"));
+        CodingWorkProjectionService projections = projection(eventFixture.store());
+        RuntimeMiddlewareContext eventContext = new RuntimeMiddlewareContext(eventFixture.run(), eventFixture.store());
+        var beforeRun = CodingWorkProjectionMiddleware.events(
+                projections, RuntimePhase.BEFORE_RUN, eventFixture.store(), () -> NOW.plusSeconds(20));
+        beforeRun.apply(eventContext);
+        beforeRun.apply(eventContext);
+        assertThat(eventFixture.store().eventsFor(eventFixture.run().id()))
+                .filteredOn(event -> event.type().equals("coding.work-phase"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data()).containsEntry("phase", "ORIENT"));
+        assertThat(eventFixture.store().messages(eventFixture.run().id()))
+                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("codingWorkProjection")))
+                .singleElement()
+                .satisfies(message -> {
+                    assertThat(message.role()).isEqualTo(MessageRole.RUNTIME);
+                    assertThat(message.visibility()).isEqualTo(MessageVisibility.AGENT_VISIBLE);
+                    assertThat(message.contents().toString())
+                            .contains("phase=ORIENT")
+                            .doesNotContain("fix the implementation");
+                });
+
+        tool(eventFixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        CodingWorkProjectionMiddleware.events(
+                        projections,
+                        RuntimePhase.AFTER_DECISION_EXECUTION,
+                        eventFixture.store(),
+                        () -> NOW.plusSeconds(30))
+                .apply(eventContext);
+
+        assertThat(eventFixture.store().eventsFor(eventFixture.run().id()))
+                .filteredOn(event -> event.type().equals("coding.work-phase"))
+                .extracting(event -> event.data().get("phase"))
+                .containsExactly("ORIENT", "VERIFY");
+        assertThat(eventFixture.store().messages(eventFixture.run().id()))
+                .filteredOn(message -> Boolean.TRUE.equals(message.metadata().get("codingWorkProjection")))
+                .extracting(message -> message.metadata().get("phase"))
+                .containsExactly("ORIENT", "VERIFY");
+    }
+
+    @Test
+    void workProjectionKeepsTheMostRecentBoundedReferencesDeterministically() {
+        Fixture fixture = fixture("review the repository", trusted("REVIEW"));
+        for (int index = 1; index <= 17; index++) {
+            tool(
+                    fixture,
+                    "file.read",
+                    Map.of("path", "src/File" + index + ".java"),
+                    Map.of("path", "src/File" + index + ".java", "contentVersion", "version-" + index));
+        }
+
+        CodingWorkProjection projection = projection(fixture.store()).project(fixture.run());
+
+        assertThat(projection.readFileRefs())
+                .hasSize(CodingWorkProjection.MAXIMUM_REFERENCES_PER_KIND)
+                .doesNotContain("read:" + PolicyDigest.sha256Fields(List.of("src/File1.java", "version-1")))
+                .contains("read:" + PolicyDigest.sha256Fields(List.of("src/File17.java", "version-17")));
+    }
+
     private static Map<String, Object> trusted(String intent) {
         return Map.of("codingTaskIntentTrusted", true, "codingTaskIntent", intent);
     }
@@ -313,6 +446,13 @@ class CodingDeliveryControlTest {
                 new CodingTaskModeResolver(store),
                 new CodingDeliveryEvidenceLedger(store),
                 CodingDeliveryProfile.safeDefault());
+    }
+
+    private static CodingWorkProjectionService projection(InMemoryRuntimeStore store) {
+        var taskModes = new CodingTaskModeResolver(store);
+        var evidence = new CodingDeliveryEvidenceLedger(store);
+        return new CodingWorkProjectionService(
+                store, taskModes, evidence, CodingDeliveryProfile.safeDefault(), () -> NOW.plusSeconds(10));
     }
 
     private static void tool(

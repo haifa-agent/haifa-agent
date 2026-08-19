@@ -16,6 +16,8 @@ import io.haifa.agent.application.project.product.coding.delivery.CodingCompleti
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
+import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionMiddleware;
+import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionService;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
@@ -478,6 +480,8 @@ final class LocalCodingAgent implements AutoCloseable {
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
+            var workProjection = new CodingWorkProjectionService(
+                    persistence.ports().state(), taskModes, deliveryEvidence, deliveryProfile, time);
             var runtimeBuilder = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -488,6 +492,16 @@ final class LocalCodingAgent implements AutoCloseable {
                     })
                     .failureDiagnostics(CliFailureDiagnosticSink.forPersistence(configuration.persistence()))
                     .completionPolicy(new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile))
+                    .middleware(CodingWorkProjectionMiddleware.events(
+                            workProjection,
+                            io.haifa.agent.runtime.core.middleware.RuntimePhase.BEFORE_RUN,
+                            persistence.ports().events(),
+                            time))
+                    .middleware(CodingWorkProjectionMiddleware.events(
+                            workProjection,
+                            io.haifa.agent.runtime.core.middleware.RuntimePhase.AFTER_DECISION_EXECUTION,
+                            persistence.ports().events(),
+                            time))
                     .repairRetry(new RepairRetryPolicy(2));
             modelAdapters.forEach((key, adapter) ->
                     runtimeBuilder.registerChatModel(key.adapterType(), key.adapterVersion(), adapter));

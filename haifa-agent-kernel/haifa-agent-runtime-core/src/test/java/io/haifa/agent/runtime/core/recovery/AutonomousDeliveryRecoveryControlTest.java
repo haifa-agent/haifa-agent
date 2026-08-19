@@ -293,25 +293,24 @@ class AutonomousDeliveryRecoveryControlTest {
     void restoreKeepsFailureClusterAndSuppressesAlreadyCrossedBudgetThresholds() {
         var restored = new AgentLoopContext(3, List.of());
         var snapshot = new RunBudgetSnapshot(4, 4, 4, 4_000, 4, 4, 2, 0, "TOOL_CALLS", 3, 4, 25);
-        restored.rebuildControlState(
-                List.of(
-                        failed("call-restore-1", "bounded-a", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE"),
-                        failed(
-                                "call-restore-2",
-                                "bounded-b",
-                                PROFILE_A,
-                                "DEPENDENCY_UNAVAILABLE",
-                                "CACHE_UNAVAILABLE")),
-                Optional.empty(),
-                0,
-                true,
-                snapshot);
+        ToolCall first =
+                failed("call-restore-1", "bounded-a", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE");
+        ToolCall second =
+                failed("call-restore-2", "bounded-b", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE");
+        restored.rebuildControlState(List.of(first, second), Optional.empty(), 0, true, snapshot);
 
         assertThat(restored.failureClusterAttempts()).isEqualTo(2);
         assertThat(restored.controlPrompt())
                 .contains("attempts=2", RecoveryDirective.REQUIRE_STRATEGY_CHANGE.name())
                 .doesNotContain("bounded-a", "bounded-b");
         assertThat(restored.updateBudgetSnapshot(snapshot)).isEmpty();
+
+        ToolCall third =
+                failed("call-restore-3", "bounded-c", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE");
+        AgentLoopContext.ControlObservation terminal =
+                restored.observeAuthoritativeState(List.of(first, second, third), Optional.empty(), 0);
+        assertThat(terminal.recoveryUpdates()).singleElement().satisfies(update -> assertThat(update.directive())
+                .isEqualTo(RecoveryDirective.TERMINATE_REPEATED_FAILURE));
 
         var tenPercent = new RunBudgetSnapshot(1, 1, 1, 1_000, 1, 1, 2, 0, "MODEL_CALLS", 9, 10, 10);
         assertThat(restored.updateBudgetSnapshot(tenPercent)).containsExactly(10);

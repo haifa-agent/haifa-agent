@@ -270,7 +270,7 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> "1.3.0";
+                    case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> "1.4.0";
                     case "file.read" -> "1.2.0";
                     case "file.create", "file.write", "file.patch" -> "1.1.0";
                     default -> "1.0.0";
@@ -338,7 +338,8 @@ public final class ProjectToolCatalog {
                     + "repository discovery, content search, source inspection, system git/gh workflows, builds, "
                     + "tests, and diffs; choose an "
                     + "available CLI and its complete arguments at runtime instead of expecting command-specific "
-                    + "wrappers. Keep output bounded and adapt when a command is unavailable. operationFamily is an "
+                    + "wrappers. Output is always bounded by operation family; use paging or returned artifact refs "
+                    + "instead of repeating broad commands, and adapt when a command is unavailable. operationFamily is an "
                     + "optional declared hint: use BUILD or TEST for validation intent and DIFF only for read-only "
                     + "final diff inspection; trusted risk and authorization never depend on the hint.";
         }
@@ -562,6 +563,15 @@ public final class ProjectToolCatalog {
             properties.put("riskResolutionCode", Map.of("type", "string"));
             properties.put("riskAction", Map.of("type", "string"));
             properties.put("operationHintCode", Map.of("type", "string"));
+            properties.put("outputBudgetFamily", Map.of("type", "string"));
+            properties.put("outputBudgetBytesPerChannel", Map.of("type", "integer", "minimum", 1));
+            properties.put("modelOutputBudgetBytes", Map.of("type", "integer", "minimum", 1));
+            properties.put("modelOutputBudgetLines", Map.of("type", "integer", "minimum", 1));
+            properties.put("diffFileCount", Map.of("type", "integer", "minimum", 0));
+            properties.put("diffHunkCount", Map.of("type", "integer", "minimum", 0));
+            properties.put("diffCountsComplete", Map.of("type", "boolean"));
+            properties.put("diffSummary", Map.of("type", "string"));
+            properties.put("diffArtifactRef", Map.of("type", "string"));
             properties.put("sandboxProfileDigest", Map.of("type", "string"));
             properties.put("scratchSpecDigest", Map.of("type", "string"));
             properties.put("scratchProvisioned", Map.of("type", "boolean"));

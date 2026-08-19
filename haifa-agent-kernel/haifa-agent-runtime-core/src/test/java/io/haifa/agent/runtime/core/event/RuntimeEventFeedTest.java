@@ -340,6 +340,43 @@ class RuntimeEventFeedTest {
     }
 
     @Test
+    void projectsCodingWorkPhaseWithoutExposingInternalProjectionInputs() {
+        InMemoryRuntimeStore store = storeWithRun("run-coding-phase");
+        AgentRunId runId = new AgentRunId("run-coding-phase");
+        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
+
+        var projected = projector
+                .project(new RuntimeEvent(
+                        "coding-phase",
+                        runId,
+                        1,
+                        "coding.work-phase",
+                        "1",
+                        Map.ofEntries(
+                                Map.entry("phase", "VERIFY"),
+                                Map.entry("status", "ACTIVE"),
+                                Map.entry("reasonCode", "AUTHORITATIVE_EVIDENCE_PROJECTION"),
+                                Map.entry("missingEvidence", List.of("VALIDATION_ATTEMPT", "DIFF_INSPECTION")),
+                                Map.entry("remainingPercent", 42),
+                                Map.entry("attempt", 0),
+                                Map.entry("projectionDigest", "a".repeat(64)),
+                                Map.entry("taskContractDigest", "b".repeat(64)),
+                                Map.entry("rawPath", "must-not-project")),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+
+        assertThat(projected.eventType()).isEqualTo("coding.work-phase");
+        assertThat(projected.payload()).isInstanceOfSatisfying(RunEventPayloads.DeliveryLifecycle.class, payload -> {
+            assertThat(payload.phase()).isEqualTo("VERIFY");
+            assertThat(payload.missingEvidence()).containsExactly("VALIDATION_ATTEMPT", "DIFF_INSPECTION");
+            assertThat(payload.remainingPercent()).isEqualTo(42);
+            assertThat(payload.toString()).doesNotContain("must-not-project", "rawPath");
+        });
+    }
+
+    @Test
     void subscriptionReplaysThenTailsAndCloseIsIdempotentWithoutDependingOnWakeupPayloads()
             throws InterruptedException {
         InMemoryRuntimeStore store = storeWithRun("run");

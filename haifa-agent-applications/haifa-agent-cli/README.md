@@ -30,6 +30,11 @@ Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case
 字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
 Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。
 
+长任务期间，Coding 产品从权威记录重建派生工作阶段并向模型注入有界脱敏投影；Terminal 只消费安全
+阶段事件。`execution.run` 对 INSPECT、DIFF、TEST/BUILD 和其他命令分别应用输出预算，超大 Diff 返回
+观察统计、截断标记和可选 Artifact Ref。模型返回空终态时，Runtime 只在同一冻结 Binding 上默认重试
+两次，不切换 Provider/Model，也不会从空响应调度 Tool。
+
 ## 构建与运行
 
 ### 本地发行目录（macOS / Linux）

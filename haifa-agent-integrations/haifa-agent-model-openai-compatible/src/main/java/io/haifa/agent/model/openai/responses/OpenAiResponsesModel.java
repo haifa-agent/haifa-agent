@@ -455,7 +455,9 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                 ? ModelFinishReason.TOOL_CALLS
                 : "incomplete".equals(status) ? incompleteReason(root) : ModelFinishReason.STOP;
         ModelUsage usage = usage(request, root.path("usage"));
-        if (content.isEmpty() && calls.isEmpty()) throw malformed(request, "provider response contains no output");
+        if (content.isEmpty() && calls.isEmpty()) {
+            throw emptyResponse(request, "provider response contains no output");
+        }
         boolean retainReasoning = !reasoning.isEmpty()
                 && !calls.isEmpty()
                 && OpenAiResponsesDialects.DEEPSEEK.equals(request.model().dialect());
@@ -844,6 +846,10 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
         return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 0, "malformed_response", message, null);
+    }
+
+    private static ModelInvocationException emptyResponse(AgentChatRequest request, String message) {
+        return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, true, 200, "empty_response", message, null);
     }
 
     private static ModelInvocationException failure(

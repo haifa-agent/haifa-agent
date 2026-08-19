@@ -545,7 +545,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 throw malformed(request, "provider output exceeds the configured size limit");
             }
         }
-        if (text.isEmpty() && calls.isEmpty()) throw malformed(request, "provider response contains no usable output");
+        if (text.isEmpty() && calls.isEmpty()) {
+            throw emptyResponse(request, "provider response contains no usable output");
+        }
         return new ParsedContent(text.toString(), List.copyOf(calls), List.copyOf(reasoning), reasoningCharacters);
     }
 
@@ -886,7 +888,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 }
             }
             if (visible.isEmpty() && calls.isEmpty()) {
-                throw malformed(request, "Anthropic stream contains no usable output");
+                throw emptyResponse(request, "Anthropic stream contains no usable output");
             }
             ParsedContent parsed = new ParsedContent(
                     visible.toString(), List.copyOf(calls), List.copyOf(reasoning), reasoningCharacters);
@@ -1078,6 +1080,10 @@ public final class AnthropicMessagesModel implements AgentChatModel {
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
         return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 0, "malformed_response", message, null);
+    }
+
+    private static ModelInvocationException emptyResponse(AgentChatRequest request, String message) {
+        return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, true, 200, "empty_response", message, null);
     }
 
     private static ModelInvocationException failure(

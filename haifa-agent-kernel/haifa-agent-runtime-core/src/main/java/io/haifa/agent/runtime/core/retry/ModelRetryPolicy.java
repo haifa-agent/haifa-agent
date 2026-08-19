@@ -15,12 +15,20 @@ public record ModelRetryPolicy(RetryPolicy policy) {
     @Override
     public RetryPolicy policy() {
         return new RetryPolicy(
-                policy.maxAttempts(),
-                error -> !(error instanceof io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException)
-                        && !(error instanceof io.haifa.agent.model.api.ModelInvocationException modelError
-                                && modelError.category()
-                                        == io.haifa.agent.model.api.ModelErrorCategory.CONTEXT_TOO_LONG)
-                        && policy.retryable().test(error),
+                Math.max(2, policy.maxAttempts()),
+                error -> isRetryableEmptyResponse(error)
+                        || (!(error instanceof io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException)
+                                && !(error instanceof io.haifa.agent.model.api.ModelInvocationException modelError
+                                        && modelError.category()
+                                                == io.haifa.agent.model.api.ModelErrorCategory.CONTEXT_TOO_LONG)
+                                && policy.retryable().test(error)),
                 policy.backoff());
+    }
+
+    private static boolean isRetryableEmptyResponse(RuntimeException error) {
+        return error instanceof io.haifa.agent.model.api.ModelInvocationException modelError
+                && modelError.retryable()
+                && modelError.category() == io.haifa.agent.model.api.ModelErrorCategory.MALFORMED_RESPONSE
+                && modelError.providerCode().equals("empty_response");
     }
 }

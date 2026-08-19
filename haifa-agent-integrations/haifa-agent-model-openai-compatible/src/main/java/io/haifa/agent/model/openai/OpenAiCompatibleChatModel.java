@@ -722,9 +722,9 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
             throw failure(
                     request,
                     ModelErrorCategory.MALFORMED_RESPONSE,
-                    false,
+                    true,
                     200,
-                    "empty_message",
+                    "empty_response",
                     "provider response message is empty",
                     null);
         }
@@ -1025,7 +1025,14 @@ public final class OpenAiCompatibleChatModel implements AgentChatModel {
                     .map(StreamToolCall::finish)
                     .toList();
             if (content.toString().isBlank() && calls.isEmpty()) {
-                malformed("empty_message", "provider response message is empty");
+                throw failure(
+                        request,
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        true,
+                        200,
+                        "empty_response",
+                        "provider response message is empty",
+                        null);
             }
             return new AgentChatResponse(
                     responseId,

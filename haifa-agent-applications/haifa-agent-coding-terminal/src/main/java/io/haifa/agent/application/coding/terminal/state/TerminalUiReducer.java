@@ -600,6 +600,8 @@ public final class TerminalUiReducer {
                 case "RECOVERING" -> "Recovering";
                 case "VERIFYING" -> "Verifying";
                 case "BUDGET" -> "Budget threshold";
+                case "ORIENT", "PLAN", "CHANGE", "VERIFY", "REVIEW", "DELIVER", "BLOCKED" ->
+                    "Work phase: " + lifecycle.phase();
                 default -> "Completion deferred";
             };
         }
@@ -781,6 +783,8 @@ public final class TerminalUiReducer {
             case "RECOVERING" -> "Recovering";
             case "VERIFYING" -> "Verifying";
             case "BUDGET" -> "Budget threshold";
+            case "ORIENT", "PLAN", "CHANGE", "VERIFY", "REVIEW", "DELIVER", "BLOCKED" ->
+                "Work phase · " + payload.phase();
             default -> "Completion deferred";
         };
     }

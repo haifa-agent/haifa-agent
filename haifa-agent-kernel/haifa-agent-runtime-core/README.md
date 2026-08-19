@@ -8,6 +8,11 @@ event. `RuntimeClientEventProjector` exposes only the bounded provider-neutral
 `ModelLifecycle` fields; model text and provider payloads remain outside the durable
 client feed.
 
+An HTTP-success response with no content, Tool Call, or structured output is normalized as retryable
+`MALFORMED_RESPONSE/empty_response`. Runtime retries the exact frozen binding at most twice by default, never changes
+provider/model and never dispatches a Tool from the empty response. Each occurrence adds only a safe
+`model.empty-response` event; exhaustion terminates through the existing stable model failure path.
+
 ## 结构化完成纠偏
 
 `CompletionPolicy` 返回 Provider-neutral 的 `CompletionPolicyResult`：包括稳定
@@ -49,6 +54,8 @@ Interaction 与 Usage 重建控制状态；旧
 Checkpoint 无需 Schema 升级。精确剩余模型、工具、迭代、时间和 Token 预算只写入安全 Trace，不再逐轮
 改变模型请求；模型仅在失败恢复或 50%、25%、10% 阈值首次跨越时收到控制指导。动态指导作为新的
 Agent-visible Session Message 追加，不替换或插入既有消息，因此正常请求可复用稳定 Prompt 与完整历史前缀。
+失败簇和有效进展在 Resume 时继续从权威 ToolCall、Plan、Child Run、Interaction 与 Usage 重建；恢复后
+观察到同一第三次无进展失败仍会结构化终止，不会因进程重启重置重试窗口。
 
 ## Safe Tool argument repair
 

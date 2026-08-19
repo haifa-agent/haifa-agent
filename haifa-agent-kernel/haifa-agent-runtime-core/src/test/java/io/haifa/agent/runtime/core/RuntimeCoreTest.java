@@ -535,6 +535,61 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void retriesOneEmptyNonStreamingResponseOnTheSameFrozenBinding() {
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel model = request -> calls.incrementAndGet() == 1
+                ? emptyResponse("empty-non-streaming")
+                : response(finalDecision("recovered from empty response"));
+        Fixture fixture = fixture(model);
+
+        var accepted = fixture.runtime.start(request("empty-non-streaming-retry"));
+        fixture.scheduler.runAll();
+
+        assertThat(calls).hasValue(2);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.empty-response"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("attempt", 1)
+                        .containsEntry("providerCode", "empty_response")
+                        .doesNotContainKeys("response", "content"));
+    }
+
+    @Test
+    void terminatesAfterTwoEmptyStreamingResponsesWithoutDispatchingTools() {
+        AtomicInteger calls = new AtomicInteger();
+        AgentChatModel model = new AgentChatModel() {
+            @Override
+            public AgentChatResponse invoke(AgentChatRequest request) {
+                throw new AssertionError("streaming path expected");
+            }
+
+            @Override
+            public AgentChatResponse invokeStreaming(
+                    AgentChatRequest request, io.haifa.agent.model.api.ModelStreamSink sink) {
+                calls.incrementAndGet();
+                return emptyResponse("empty-streaming-" + calls.get());
+            }
+        };
+        Fixture fixture = fixture(model);
+
+        var accepted = fixture.runtime.start(request("empty-streaming-terminal"));
+        fixture.scheduler.runAll();
+
+        assertThat(calls).hasValue(2);
+        var run = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_RESPONSE_INVALID);
+        assertThat(fixture.store.toolCalls(accepted.runId())).isEmpty();
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.empty-response"))
+                .extracting(event -> event.data().get("attempt"))
+                .containsExactly(1, 2);
+    }
+
+    @Test
     void failedDispatchedToolStillCompletesProtocolForTheNextRun() {
         ToolRequest request =
                 toolRequest("uncertain", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
@@ -1128,6 +1183,18 @@ class RuntimeCoreTest {
                     Map.of());
         }
         throw new IllegalArgumentException("decision is not representable by the Model API response contract");
+    }
+
+    private static AgentChatResponse emptyResponse(String responseId) {
+        return new AgentChatResponse(
+                responseId,
+                "deepseek-v4-pro",
+                "",
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(1, 0),
+                "",
+                Map.of());
     }
 
     private static ToolRequest toolRequest(String key, String name, String version, ToolArguments arguments) {
