@@ -62,16 +62,21 @@ Set-Location D:\workspace\haifa-agent
 2. 首次运行时生成随机 32 字节 Continuation Key，并持久化到
    `D:\workspace\ss-haifa-personal-continuation.txt`；
 3. 只在后端 JAR 不存在时构建后端；
-4. 只在 `node_modules` 不存在时执行 `npm ci`，只在 `dist` 不存在时构建前端；
-5. 启动或复用健康的 20002 Utility MCP；
-6. 以真实 `deepseek-v4-flash`、Aliyun Search、Browserless Fetch、finance Skills 和外部 MCP 模式启动
+4. 按内容摘要把后端 JAR 复制到 `local-tmp/personal-assistant-real/backend/`，从运行副本启动，避免
+   Java 进程锁定 Maven `target/` 下的构建产物；复制前校验 Spring Boot Manifest 和 `BOOT-INF`，
+   遇到未完成 `repackage` 的普通 JAR 时自动重新执行 `package`，二次校验失败则拒绝启动；
+5. 只在 `node_modules` 不存在时执行 `npm ci`，只在 `dist` 不存在时构建前端；
+6. 启动或复用健康的 20002 Utility MCP；
+7. 以真实 `deepseek-v4-flash`、Aliyun Search、Browserless Fetch、finance Skills 和外部 MCP 模式启动
    20001 后端；
-7. 用 Node.js `serve` 启动 20000 前端；
-8. 等待三个 HTTP 健康检查成功，并输出 PID、各组件工作目录、数据/日志目录、访问
+8. 用 Node.js `serve` 启动 20000 前端；
+9. 等待三个 HTTP 健康检查成功，并输出 PID、各组件工作目录、数据/日志目录、访问
    地址和状态文件位置。
 
-因此日常再次启动不会重复执行 npm 构建。脚本不会杀掉端口上的未知进程；如果端口被
-非目标服务占用，它会直接失败并保留现场。
+因此日常再次启动不会重复执行 npm 构建；运行 PA 时也可以执行 Maven `clean`、`package` 和全仓验证。
+脚本不会杀掉端口上的未知进程；如果端口被非目标服务占用，它会直接失败并保留现场。
+升级脚本前已经直接从 `target/` 启动的后端需要完成一次“`--stop` 后重新启动”，才会迁移到运行副本；
+停止流程继续识别旧命令行路径，不需要使用 `--force`。
 
 如果 PowerShell 的脚本执行策略阻止本次运行，可仅对当前进程临时放开：
 
@@ -113,8 +118,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 & .\scripts\start-real-environment.ps1 --rebuild
 ```
 
-`--rebuild` 会重新构建后端和前端。为了避免 Windows 上正在运行的 JAR 文件锁和
-旧页面产物混用，只要三个端口中任意一个仍被占用，重建就会拒绝执行。
+`--rebuild` 会重新构建后端和前端。后端已使用独立运行副本，不再锁定 Maven 构建产物；但为了保证
+三个服务来自同一次受控重建、避免旧页面产物混用，只要三个端口中任意一个仍被占用，重建仍会拒绝执行。
 
 需要使用非默认 Key 或 MCP 路径时：
 
@@ -195,6 +200,7 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:20000/
 
 ```text
 D:\workspace\haifa-agent\local-tmp\personal-assistant-real\last-start.json
+D:\workspace\haifa-agent\local-tmp\personal-assistant-real\backend\
 D:\workspace\haifa-agent\local-tmp\personal-assistant-real\logs\
 ```
 
@@ -237,7 +243,7 @@ Policy、Approval 和 Credential lease；没有隐式 Provider fallback，也不
 
 macOS 使用同目录的 `start-real-environment.sh`，功能与 PowerShell 脚本对齐：
 
-- 构建或复用 Personal Server JAR 和 Personal Web `dist`；
+- 构建或复用 Personal Server JAR 和 Personal Web `dist`，并从仓库 `target/` 之外的 JAR 副本启动；
 - 启动或复用 Utility MCP、Personal Server 和 Personal Web；
 - 固定使用 `127.0.0.1:20002/20001/20000` 并等待 HTTP 健康检查；
 - 密钥只注入后端子进程，不写入状态文件或日志；

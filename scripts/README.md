@@ -10,6 +10,14 @@
 状态文件写入。运行方法和安全边界见
 [`haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md`](../haifa-agent-applications/haifa-agent-personal-assistant-server/REAL_ENVIRONMENT.md)。
 
+后端构建完成后，脚本会按 JAR 内容摘要复制到
+`local-tmp/personal-assistant-real/backend/`，并从该运行副本启动。运行中的 PA 因而不会锁定 Maven
+`target/` 下的构建产物，日常 `clean`、`package` 和全仓验证无需先停止 PA。仅在后端未运行时清理旧副本；
+停止流程同时兼容此前直接从 `target/` 启动的进程。
+升级前已经运行的旧进程需要完成一次 `--stop` 后重新启动，才会切换到新的运行副本。
+复制前会校验 Spring Boot `Main-Class`、应用 `Start-Class`、`BOOT-INF/classes` 和 `BOOT-INF/lib`；
+缺失或不完整的 Maven 产物会触发一次 `package`，构建后仍不完整则明确失败且不会启动后端。
+
 真实环境可从 `--bailian-key-file` 指定的 `KEY:VALUE` 文件可选装配阿里云百炼；region 默认
 `cn-beijing`，可用 `--bailian-region` 修改。只有 API Key、Workspace ID 与 region 完整时才启用，
 配置中只写 `env://DASHSCOPE_API_KEY`，启动脚本不会发起模型调用。

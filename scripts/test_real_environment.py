@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -15,6 +16,20 @@ import real_environment
 
 
 class RealEnvironmentTest(unittest.TestCase):
+    @staticmethod
+    def write_server_jar(path: Path, payload: bytes = b"application") -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        manifest = (
+            "Manifest-Version: 1.0\r\n"
+            "Main-Class: org.springframework.boot.loader.launch.JarLauncher\r\n"
+            f"Start-Class: {real_environment.EXPECTED_SERVER_START_CLASS}\r\n"
+            "\r\n"
+        )
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("META-INF/MANIFEST.MF", manifest)
+            archive.writestr("BOOT-INF/classes/application.bin", payload)
+            archive.writestr("BOOT-INF/lib/dependency.jar", b"dependency")
+
     def test_root_scripts_location_resolves_repository_paths(self) -> None:
         repository = Path(__file__).resolve().parents[1]
 
@@ -408,6 +423,131 @@ class RealEnvironmentTest(unittest.TestCase):
             real_environment.backend_build_arguments(True),
         )
         self.assertNotIn("-DskipTests", real_environment.backend_build_arguments(False))
+
+    def test_backend_runtime_jar_is_content_addressed_and_outside_maven_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = real_environment.Paths(
+                repository=root,
+                server=root / "server",
+                web=root / "web",
+                runtime=root / "runtime",
+                data=root / "runtime/data",
+                logs=root / "runtime/logs",
+                state=root / "runtime/last-start.json",
+                stop_state=root / "runtime/last-stop.json",
+                maven_wrapper=root / "mvnw",
+            )
+            source = paths.server / "target/haifa-agent-personal-assistant-server-0.1.0-SNAPSHOT.jar"
+            self.write_server_jar(source, b"first build")
+
+            first = real_environment.stage_server_jar(source, paths)
+            reused = real_environment.stage_server_jar(source, paths)
+            self.write_server_jar(source, b"second build")
+            second = real_environment.stage_server_jar(source, paths)
+
+            self.assertEqual(first, reused)
+            self.assertNotEqual(first, second)
+            self.assertEqual(paths.runtime / "backend", second.parent)
+            with zipfile.ZipFile(second) as archive:
+                self.assertEqual(b"second build", archive.read("BOOT-INF/classes/application.bin"))
+            self.assertFalse(first.exists())
+
+    def test_non_executable_server_jar_is_rejected_before_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = real_environment.Paths(
+                repository=root,
+                server=root / "server",
+                web=root / "web",
+                runtime=root / "runtime",
+                data=root / "runtime/data",
+                logs=root / "runtime/logs",
+                state=root / "runtime/last-start.json",
+                stop_state=root / "runtime/last-stop.json",
+                maven_wrapper=root / "mvnw",
+            )
+            source = paths.server / "target/haifa-agent-personal-assistant-server-test.jar"
+            source.parent.mkdir(parents=True)
+            with zipfile.ZipFile(source, "w") as archive:
+                archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n\r\n")
+
+            self.assertIn("Main-Class", real_environment.server_jar_validation_error(source) or "")
+            with self.assertRaisesRegex(RuntimeError, "Refusing to stage a non-executable"):
+                real_environment.stage_server_jar(source, paths)
+
+    def test_invalid_existing_server_jar_triggers_package_and_post_build_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = real_environment.Paths(
+                repository=root,
+                server=root / "server",
+                web=root / "web",
+                runtime=root / "runtime",
+                data=root / "runtime/data",
+                logs=root / "runtime/logs",
+                state=root / "runtime/last-start.json",
+                stop_state=root / "runtime/last-stop.json",
+                maven_wrapper=root / "mvnw",
+            )
+            source = paths.server / "target/haifa-agent-personal-assistant-server-test.jar"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"incomplete Maven output")
+
+            def complete_repackage(*_args: object, **_kwargs: object) -> None:
+                self.write_server_jar(source)
+
+            with mock.patch.object(
+                real_environment,
+                "run_checked",
+                side_effect=complete_repackage,
+            ) as build:
+                resolved = real_environment.ensure_executable_server_jar(paths, False)
+
+            self.assertEqual(source, resolved)
+            self.assertIsNone(real_environment.server_jar_validation_error(resolved))
+            build.assert_called_once_with(
+                paths.maven_wrapper,
+                *real_environment.backend_build_arguments(False),
+                cwd=paths.repository,
+            )
+
+    def test_backend_stop_validation_accepts_runtime_and_legacy_target_locations(self) -> None:
+        root = Path("repository")
+        paths = real_environment.Paths(
+            repository=root,
+            server=root / "server",
+            web=root / "web",
+            runtime=root / "runtime",
+            data=root / "runtime/data",
+            logs=root / "runtime/logs",
+            state=root / "runtime/last-start.json",
+            stop_state=root / "runtime/last-stop.json",
+            maven_wrapper=root / "mvnw",
+        )
+
+        backend = next(
+            definition
+            for definition in real_environment.definitions(paths)
+            if definition.role == "personal-backend"
+        )
+
+        self.assertEqual(
+            (str(paths.runtime / "backend"), str(paths.server)),
+            backend.command_tokens,
+        )
+        with mock.patch.object(
+            real_environment,
+            "process_information",
+            return_value=(backend.process_name, f"java -jar {paths.runtime / 'backend' / 'server.jar'}"),
+        ):
+            real_environment.validate_process(backend, 42)
+        with mock.patch.object(
+            real_environment,
+            "process_information",
+            return_value=(backend.process_name, f"java -jar {paths.server / 'target' / 'server.jar'}"),
+        ):
+            real_environment.validate_process(backend, 43)
 
     def test_state_is_written_atomically_as_utf8_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
