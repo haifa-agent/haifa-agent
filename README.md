@@ -283,13 +283,15 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   React Web、只读诊断 Admin、持久 Mission 与精简 Deep Research Product Skill；
 - Reactor 末端的 Test Harness、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
 
-### Incubating Workflow/Graph M1
+### Incubating Workflow/Graph M1/M2
 
 - 纯 Java `haifa-agent-orchestration-api` 提供冻结 Definition、State Schema、Workflow Run、Wait、
   Checkpoint、Event、恢复与取消契约；
 - `haifa-agent-orchestration-core` 提供内容寻址编译、fail-closed 能力校验、确定状态合并和进程内参考执行器；
-- M1 只支持顺序、条件、有限循环、固定 `ALL_OF` 和中断/恢复；完全拒绝子图、动态 fan-out 和 `ANY_OF`；
-- 该 API 标记为 Incubating，尚无第三方 Graph Adapter、SQLite 持久恢复或产品接入。现有 Coding、
+- `haifa-agent-graph-langgraph4j` 以精确固定的 LangGraph4j Core `1.8.24` 提供可选 M2 Adapter，并用同一
+  Contract Fixture 验证顺序、条件、有限循环、固定 `ALL_OF`、中断/恢复、取消和事件投影；
+- M1/M2 完全拒绝子图、动态 fan-out 和 `ANY_OF`；Provider State/MemorySaver 不是公共状态或持久事实源；
+- 该 API 标记为 Incubating，尚无 SQLite 持久恢复或产品接入。现有 Coding、
   Personal Assistant、SDK `chat()`/`start()` 均不主动或被动触发 Workflow，默认 Product Profile 的
   Graph Requirement 为 `NONE`。
 
@@ -323,7 +325,7 @@ Core、Runtime 或 Capability API。Spring Framework 从适配边界开始引入
 | `haifa-agent-capabilities/` | Model、Tool、Skill、Credential、Memory 与 Policy API/Core。 |
 | `haifa-agent-execution/` | Execution、Sandbox SPI 与本地 Provider。 |
 | `haifa-agent-orchestration/` | Incubating Workflow Definition、Run 契约与进程内参考执行。 |
-| `haifa-agent-integrations/` | 模型、Web、MCP、Git、SQLite、JSONL 与 HTTP Adapter。 |
+| `haifa-agent-integrations/` | 模型、Web、MCP、Git、SQLite、JSONL、HTTP 与可选 LangGraph4j Adapter。 |
 | `haifa-agent-sdk/`、`haifa-agent-sdk-starter/` | 高层纯 Java Facade 与安全默认 Quickstart。 |
 | `haifa-agent-spring/` | Spring Boot 自动装配与依赖 Starter。 |
 | `haifa-agent-applications/` | Coding Agent、CLI、Personal Assistant、SDK 示例与 Runtime Demo。 |
@@ -401,7 +403,7 @@ Release 验证必须通过 `-pl` 指定受影响模块；完整分层矩阵见
 
 - Enterprise SDK、通用生产级 HTTP Server、Worker、Scheduler、Control Plane 和企业 Admin Server；
 - 分布式 Store/Lease、生产 KMS/Vault、对象存储和跨机器恢复；
-- Knowledge/RAG、生产级持久 Graph/Workflow、Graph Provider Adapter、产品 Workflow 与多 Agent 调度；
+- Knowledge/RAG、生产级持久 Graph/Workflow、产品 Workflow、SAA Graph Adapter 与多 Agent 调度；
 - Skill Hub、Skill 创作/安装/企业管理面和动态插件平台；
 - 完整的 Project Trust/Approval 产品体验与企业审批流程；
 - Windows Local Native Adapter、容器、gVisor、microVM 或 Kubernetes Sandbox；

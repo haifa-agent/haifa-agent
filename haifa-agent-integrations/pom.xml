@@ -19,5 +19,6 @@
         <module>haifa-agent-store-sqlite</module>
         <module>haifa-agent-store-jsonl</module>
         <module>haifa-agent-transport-http</module>
+        <module>haifa-agent-graph-langgraph4j</module>
     </modules>
 </project>
