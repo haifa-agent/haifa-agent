@@ -1,12 +1,17 @@
 # Haifa Agent Orchestration Core
 
-Pure Java M1 implementation of the Incubating Orchestration API:
+Pure Java M1/M3 implementation of the Incubating Orchestration API:
 
 - canonical SHA-256 definition compilation and capability validation;
 - deterministic immutable State Delta merge;
 - in-memory start/resume/cancel idempotency and monotonic events;
 - sequence, condition, bounded loop, fixed `ALL_OF`, wait/resume, and Agent Run gateway fixtures;
 - explicit fail-closed rejection of subgraph, dynamic fan-out, and `ANY_OF`.
+- provider-neutral `DurableWorkflowRuntime`, Store/UoW ports, frozen adapter/codec binding, two-phase node result
+  commit, persisted fixed-branch cursor, restart reconciliation, idempotent commands, and outcome-unknown handling.
 
-The in-memory runtime is a development and contract implementation, not durable production persistence. Agent nodes
-use a narrow gateway returning the authoritative `AgentRunId`; the module does not copy the Agent Run state machine.
+The in-memory runtime remains a development and contract implementation. The durable runtime requires an explicit Store
+and does not select one automatically. Agent nodes use a narrow gateway returning or recovering the authoritative
+`AgentRunId`; durable Agent nodes require `DurableWorkflowAgentGateway`, whose split start/await boundary commits Agent
+Run creation and Attempt association in the shared UoW before waiting for terminal work. The module does not copy the
+Agent Run state machine.

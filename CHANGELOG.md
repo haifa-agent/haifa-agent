@@ -1,5 +1,8 @@
 # Changelog
 
+- Incubating Workflow/Graph M3 新增 SQLite V8 单机持久恢复：冻结 Definition/Adapter/Codec，使用共享
+  Runtime/Workflow UoW、两阶段 Node Attempt、原子 Agent Run 关联、Wait/Resume、固定 `ALL_OF` 游标、
+  幂等命令及 Event/Outbox；未知副作用结果不重放，现有产品仍不自动或被动触发 Graph。
 - Personal Assistant 真实环境脚本改从按内容摘要生成的 Maven `target/` 外运行副本启动后端 JAR，避免运行中的
   Java 进程锁定 Maven `target/` 产物；复制前校验 Spring Boot Manifest 与 `BOOT-INF`，残缺产物自动
   重新 `package` 并二次校验；停止时兼容新运行目录和旧 `target/` 命令行身份。

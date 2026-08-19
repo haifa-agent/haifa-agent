@@ -8,4 +8,5 @@ and explicit `WorkflowRuntime.start(...)` routing.
 - `WorkflowStartRequest` accepts no tenant, principal, credential, Provider configuration, or assembly snapshot.
 - SDK `chat()` and Runtime `start()` remain direct Agent Run entry points; this API is a separate trusted host entry.
 - M1 supports sequence, condition, bounded loops, fixed `ALL_OF`, and wait/resume.
+- M3 adds the explicit `RecoverableWorkflowRuntime.recover(...)` contract; it does not change SDK/Runtime routing.
 - Subgraph, dynamic fan-out, `ANY_OF`, and arbitrary Provider node actions fail at definition compilation.

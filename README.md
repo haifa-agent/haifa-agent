@@ -257,8 +257,8 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   不返回 Prompt、用户消息、Memory 或 Tool 正文；
 - Run、Session、User Scope 的 Memory API/Core，以及 SQLite 中全人工确认的 Candidate、正式 Memory
   和最小 Audit；
-- SQLite V1～V7 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、
-  Conversation、Policy/Approval/Trust 与 Artifact 单机存储；
+- SQLite V1～V8 Migration、版本化 Codec、线程绑定 UoW、完整 Runtime Persistence Port、
+  Conversation、Policy/Approval/Trust、Artifact 与显式 Workflow 单机持久恢复；
 - JSONL 是可删除、可重建的安全 Transcript Outbox 投影，不是恢复事实源。
 
 ### Project、Execution 与安全
@@ -283,15 +283,17 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   React Web、只读诊断 Admin、持久 Mission 与精简 Deep Research Product Skill；
 - Reactor 末端的 Test Harness、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
 
-### Incubating Workflow/Graph M1/M2
+### Incubating Workflow/Graph M1/M2/M3
 
 - 纯 Java `haifa-agent-orchestration-api` 提供冻结 Definition、State Schema、Workflow Run、Wait、
   Checkpoint、Event、恢复与取消契约；
 - `haifa-agent-orchestration-core` 提供内容寻址编译、fail-closed 能力校验、确定状态合并和进程内参考执行器；
 - `haifa-agent-graph-langgraph4j` 以精确固定的 LangGraph4j Core `1.8.24` 提供可选 M2 Adapter，并用同一
   Contract Fixture 验证顺序、条件、有限循环、固定 `ALL_OF`、中断/恢复、取消和事件投影；
+- M3 的 `DurableWorkflowRuntime`、`WorkflowStore` Port 与 SQLite V8 Store 提供 Definition/Adapter/Codec
+  冻结校验、节点两阶段提交、固定分支游标、Wait/Resume、幂等命令、单调事件和 Outbox 的跨进程恢复；
 - M1/M2 完全拒绝子图、动态 fan-out 和 `ANY_OF`；Provider State/MemorySaver 不是公共状态或持久事实源；
-- 该 API 标记为 Incubating，尚无 SQLite 持久恢复或产品接入。现有 Coding、
+- 该 API 仍标记为 Incubating，尚无产品接入。现有 Coding、
   Personal Assistant、SDK `chat()`/`start()` 均不主动或被动触发 Workflow，默认 Product Profile 的
   Graph Requirement 为 `NONE`。
 
@@ -403,7 +405,7 @@ Release 验证必须通过 `-pl` 指定受影响模块；完整分层矩阵见
 
 - Enterprise SDK、通用生产级 HTTP Server、Worker、Scheduler、Control Plane 和企业 Admin Server；
 - 分布式 Store/Lease、生产 KMS/Vault、对象存储和跨机器恢复；
-- Knowledge/RAG、生产级持久 Graph/Workflow、产品 Workflow、SAA Graph Adapter 与多 Agent 调度；
+- Knowledge/RAG、分布式 Graph/Workflow、产品 Workflow、SAA Graph Adapter 与多 Agent 调度；
 - Skill Hub、Skill 创作/安装/企业管理面和动态插件平台；
 - 完整的 Project Trust/Approval 产品体验与企业审批流程；
 - Windows Local Native Adapter、容器、gVisor、microVM 或 Kubernetes Sandbox；
