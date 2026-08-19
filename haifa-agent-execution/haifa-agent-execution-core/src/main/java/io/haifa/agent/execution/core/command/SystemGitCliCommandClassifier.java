@@ -383,7 +383,7 @@ public final class SystemGitCliCommandClassifier {
     private static String basename(String value) {
         String name;
         try {
-            Path fileName = Path.of(value).getFileName();
+            Path fileName = Path.of(value.replace('\\', '/')).getFileName();
             name = fileName == null ? value : fileName.toString();
         } catch (RuntimeException ignored) {
             name = value;

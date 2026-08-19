@@ -44,6 +44,8 @@
 
 - Core 对象不是 JPA Entity，公共 API 不暴露框架、Provider SDK 或 Runtime Core 类型。Spring Framework
   从 Adapter/Integration 边界引入，Spring Boot 只进入 Starter 和最高层 Application。
+- Workflow Orchestration API/Core 保持 Incubating 和纯 Java；API 不暴露 Provider、框架、Runtime Core、
+  Store 或产品类型，Core 不复制 AgentRun 状态机，也不承载 Provider、Store 或产品流程。
 - `AgentRun` 生命周期只由 Core 的命名行为决定；Runtime 不维护第二份状态转换表，也不绕过聚合行为。
 - ID 和时间由可注入边界生成。持久化、事件、协议和对外输出统一使用 UTC epoch milliseconds；禁止在
   领域对象直接调用随机生成器或 `Instant.now()`，也不得将微秒/纳秒写入稳定载荷。
