@@ -114,6 +114,10 @@ class ProjectApplicationTest {
                 .containsEntry("required", List.of("command"))
                 .containsEntry("additionalProperties", false);
         assertThat(execution.definition().outputSchema().document()).containsEntry("additionalProperties", false);
+        @SuppressWarnings("unchecked")
+        var outputProperties = (java.util.Map<String, Object>)
+                execution.definition().outputSchema().document().get("properties");
+        assertThat(outputProperties).containsKey("deliveryRepositoryScopeDigest");
         assertThat(execution.definition().resources().executionProfiles())
                 .singleElement()
                 .asString()

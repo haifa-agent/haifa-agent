@@ -570,6 +570,7 @@ public final class ProjectToolCatalog {
             properties.put("operationHintCode", Map.of("type", "string"));
             properties.put("deliveryAction", Map.of("type", "string"));
             properties.put("deliveryVerification", Map.of("type", "string"));
+            properties.put("deliveryRepositoryScopeDigest", Map.of("type", "string"));
             properties.put("deliveryEvidenceCode", Map.of("type", "string"));
             properties.put("deliveryEvidenceRef", Map.of("type", "string"));
             properties.put("outputBudgetFamily", Map.of("type", "string"));

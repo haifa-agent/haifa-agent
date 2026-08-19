@@ -171,7 +171,7 @@ public final class CodingDeliveryEvidenceLedger {
         }
         String target = String.valueOf(data.getOrDefault("commandTarget", "OTHER"));
         String risk = String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN"));
-        return ("OTHER".equals(target) && "NOT_APPLICABLE".equals(risk))
+        return ("OTHER".equals(target) && ("NOT_APPLICABLE".equals(risk) || "UNKNOWN".equals(risk)))
                 || "LOCAL_READ".equals(risk)
                 || "NETWORK_READ".equals(risk);
     }
@@ -181,7 +181,8 @@ public final class CodingDeliveryEvidenceLedger {
             return true; // Frozen legacy results predate trusted operation classification.
         }
         if ("OTHER".equals(String.valueOf(data.getOrDefault("commandTarget", "OTHER")))
-                && "NOT_APPLICABLE".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN")))) {
+                && ("NOT_APPLICABLE".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN")))
+                        || "UNKNOWN".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN"))))) {
             return true; // Generic commands retain the declared delivery intent, never authorization or risk.
         }
         String operation = String.valueOf(data.getOrDefault("commandOperation", "UNKNOWN"));

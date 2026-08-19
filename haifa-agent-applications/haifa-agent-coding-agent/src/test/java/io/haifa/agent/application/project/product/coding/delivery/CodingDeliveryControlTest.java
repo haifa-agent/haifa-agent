@@ -172,7 +172,7 @@ class CodingDeliveryControlTest {
                         Map.entry("effectiveOperationFamily", "UNKNOWN"),
                         Map.entry("status", "SUCCEEDED"),
                         Map.entry("commandTarget", "OTHER"),
-                        Map.entry("commandRisk", "NOT_APPLICABLE"),
+                        Map.entry("commandRisk", "UNKNOWN"),
                         Map.entry("commandOperation", "UNKNOWN")));
 
         assertThat(policy(fixture.store())

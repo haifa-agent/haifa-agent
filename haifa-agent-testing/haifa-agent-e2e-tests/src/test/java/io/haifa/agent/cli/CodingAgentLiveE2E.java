@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import javax.tools.DiagnosticCollector;
 import javax.tools.JavaCompiler;
@@ -145,6 +146,7 @@ class CodingAgentLiveE2E {
         Path caseRoot = Files.createDirectory(approvedRoot.resolve(caseId + "-" + java.util.UUID.randomUUID()));
         Path workspace = Files.createDirectory(caseRoot.resolve("workspace"));
         copyFixture(specification.fixture(), workspace);
+        initializeGitBaseline(workspace);
         Map<String, String> before = fileDigests(workspace);
         String fixtureDigest = aggregateDigest(before);
         String sentinelBefore = sha256(approvedRoot.resolve(ROOT_SENTINEL));
@@ -537,7 +539,7 @@ class CodingAgentLiveE2E {
         try (var paths = Files.walk(root)) {
             for (Path path : paths.filter(Files::isRegularFile).sorted().toList()) {
                 String relative = root.relativize(path).toString().replace(java.io.File.separatorChar, '/');
-                if (relative.startsWith(".verify-out/")) continue;
+                if (relative.startsWith(".git/") || relative.startsWith(".verify-out/")) continue;
                 result.put(relative, sha256(path));
             }
         }
@@ -598,6 +600,34 @@ class CodingAgentLiveE2E {
                     CodingAgentLiveE2E.class.getResource("/coding-e2e/support/verify_java.py"),
                     "missing shared Coding E2E verifier");
             Files.copy(Path.of(verifier.toURI()), workspace.resolve("verify.py"), StandardCopyOption.COPY_ATTRIBUTES);
+        }
+    }
+
+    private static void initializeGitBaseline(Path workspace) throws Exception {
+        runGit(workspace, "init", "--template=");
+        runGit(workspace, "config", "user.name", "Haifa Coding E2E");
+        runGit(workspace, "config", "user.email", "coding-e2e@invalid.example");
+        runGit(workspace, "add", "--all");
+        runGit(workspace, "commit", "--no-gpg-sign", "--no-verify", "-m", "test: establish fixture baseline");
+    }
+
+    private static void runGit(Path workspace, String... arguments) throws Exception {
+        java.util.ArrayList<String> command = new java.util.ArrayList<>();
+        command.add("git");
+        command.add("-C");
+        command.add(workspace.toString());
+        command.addAll(List.of(arguments));
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        boolean completed = process.waitFor(30, TimeUnit.SECONDS);
+        if (!completed) {
+            process.destroyForcibly();
+            process.waitFor(5, TimeUnit.SECONDS);
+            throw new IllegalStateException("git fixture setup timed out");
+        }
+        byte[] output = process.getInputStream().readNBytes(8192);
+        if (process.exitValue() != 0) {
+            throw new IllegalStateException("git fixture setup failed with exit " + process.exitValue() + ": "
+                    + new String(output, StandardCharsets.UTF_8));
         }
     }
 
