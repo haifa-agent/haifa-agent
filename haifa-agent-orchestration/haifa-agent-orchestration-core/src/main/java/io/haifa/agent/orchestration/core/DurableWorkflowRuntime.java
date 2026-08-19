@@ -21,6 +21,7 @@ import io.haifa.agent.orchestration.api.WorkflowNodeAttemptStatus;
 import io.haifa.agent.orchestration.api.WorkflowNodeDefinition;
 import io.haifa.agent.orchestration.api.WorkflowNodeId;
 import io.haifa.agent.orchestration.api.WorkflowNodeType;
+import io.haifa.agent.orchestration.api.WorkflowParentLink;
 import io.haifa.agent.orchestration.api.WorkflowResumeRequest;
 import io.haifa.agent.orchestration.api.WorkflowRunId;
 import io.haifa.agent.orchestration.api.WorkflowRunSnapshot;
@@ -28,6 +29,9 @@ import io.haifa.agent.orchestration.api.WorkflowStartRequest;
 import io.haifa.agent.orchestration.api.WorkflowState;
 import io.haifa.agent.orchestration.api.WorkflowStateDelta;
 import io.haifa.agent.orchestration.api.WorkflowStatus;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphBinding;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphLink;
+import io.haifa.agent.orchestration.api.WorkflowTimeoutRequest;
 import io.haifa.agent.orchestration.api.WorkflowWait;
 import io.haifa.agent.orchestration.api.WorkflowWaitId;
 import io.haifa.agent.orchestration.core.DeterministicStateMerger.BranchDelta;
@@ -115,9 +119,7 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         Objects.requireNonNull(definitions, "definitions must not be null");
         this.definitions = new LinkedHashMap<>();
         definitions.forEach(definition -> {
-            if (this.definitions.put(definition.reference(), definition) != null) {
-                throw new IllegalArgumentException("duplicate compiled workflow definition");
-            }
+            register(definition);
         });
         this.actions = Objects.requireNonNull(actions, "actions must not be null");
         this.agents = Objects.requireNonNull(agents, "agents must not be null");
@@ -128,13 +130,26 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         this.unitOfWork = Objects.requireNonNull(unitOfWork, "unitOfWork must not be null");
         this.binding = Objects.requireNonNull(binding, "binding must not be null");
         this.failures = Objects.requireNonNull(failures, "failures must not be null");
-        boolean hasAgentNodes = definitions.stream()
+        boolean hasAgentNodes = this.definitions.values().stream()
                 .flatMap(definition -> definition.definition().nodes().stream())
                 .anyMatch(node -> node.type() == WorkflowNodeType.AGENT_RUN);
         if (hasAgentNodes && !(agents instanceof DurableWorkflowAgentGateway)) {
             throw new IllegalArgumentException(
                     "durable Agent nodes require DurableWorkflowAgentGateway for atomic Run association");
         }
+    }
+
+    private void register(CompiledWorkflowDefinition definition) {
+        CompiledWorkflowDefinition prior = definitions.putIfAbsent(definition.reference(), definition);
+        if (prior != null && !prior.definition().equals(definition.definition())) {
+            throw new IllegalArgumentException("duplicate compiled workflow definition");
+        }
+        definition
+                .subgraphDefinitions()
+                .forEach((reference, child) -> definitions.putIfAbsent(
+                        reference,
+                        new CompiledWorkflowDefinition(
+                                reference, child, child.requiredCapabilities(), definition.subgraphDefinitions())));
     }
 
     @Override
@@ -195,6 +210,11 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
                 || run.consumedSignals.contains(request.signalId().value())) {
             throw error(WorkflowErrorCode.INVALID_RESUME, "resume", "wait, revision, or signal is stale");
         }
+        if (run.activeSubgraph.isPresent()) {
+            resumeSubgraph(run, request, keyDigest, requestDigest);
+            save(run, List.of(), Optional.of(command("resume", scope, keyDigest, requestDigest, run)));
+            return run.snapshot();
+        }
         run.consumedSignals.add(request.signalId().value());
         run.state = run.state.apply(request.delta());
         run.status = WorkflowStatus.RUNNING;
@@ -220,16 +240,49 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         if (existing.isPresent()) return existing(existing.get(), requestDigest, "cancel");
 
         MutableRun run = requireRun(request.runId());
+        run.activeSubgraph.ifPresent(link -> cancelChild(link.runId()));
+        run.activeSubgraph = Optional.empty();
         Optional<AgentRunId> linked = run.activeAttempt().flatMap(WorkflowNodeAttempt::agentRunId);
         List<WorkflowEvent> newEvents = List.of();
         if (!run.status.terminal()) {
+            terminateActiveAttempt(run, WorkflowErrorCode.TERMINAL_RUN);
             run.status = WorkflowStatus.CANCELLED;
+            run.wait = Optional.empty();
+            run.checkpoint = Optional.empty();
             run.revision++;
             run.pendingAgentCancellation = linked;
             newEvents = List.of(event(run, WorkflowEventType.CANCELLED, Optional.of(run.currentNode), Map.of()));
         }
         save(run, newEvents, Optional.of(command("cancel", scope, keyDigest, requestDigest, run)));
         failures.afterCommit(WorkflowFailurePoint.AFTER_CANCEL_COMMITTED);
+        propagateCancellation(run);
+        return run.snapshot();
+    }
+
+    @Override
+    public WorkflowRunSnapshot timeout(WorkflowTimeoutRequest request) {
+        Objects.requireNonNull(request, "request must not be null");
+        String scope = request.runId().value();
+        String keyDigest = digest(request.idempotencyKey());
+        String requestDigest = digest(scope);
+        Optional<StoredWorkflowCommand> existing = store.findCommand("timeout", scope, keyDigest);
+        if (existing.isPresent()) return existing(existing.get(), requestDigest, "timeout");
+
+        MutableRun run = requireRun(request.runId());
+        run.activeSubgraph.ifPresent(link -> timeoutChild(link.runId()));
+        run.activeSubgraph = Optional.empty();
+        Optional<AgentRunId> linked = run.activeAttempt().flatMap(WorkflowNodeAttempt::agentRunId);
+        List<WorkflowEvent> newEvents = List.of();
+        if (!run.status.terminal()) {
+            terminateActiveAttempt(run, WorkflowErrorCode.TIMED_OUT);
+            run.status = WorkflowStatus.TIMED_OUT;
+            run.wait = Optional.empty();
+            run.checkpoint = Optional.empty();
+            run.revision++;
+            run.pendingAgentCancellation = linked;
+            newEvents = List.of(event(run, WorkflowEventType.TIMED_OUT, Optional.of(run.currentNode), Map.of()));
+        }
+        save(run, newEvents, Optional.of(command("timeout", scope, keyDigest, requestDigest, run)));
         propagateCancellation(run);
         return run.snapshot();
     }
@@ -252,6 +305,11 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         } else if (run.activeAttempt().isPresent()) {
             WorkflowNodeAttempt attempt = run.activeAttempt().orElseThrow();
             WorkflowNodeDefinition node = node(run, attempt.nodeId());
+            if (node.type() == WorkflowNodeType.SUBGRAPH) {
+                recoverSubgraph(run, node, attempt);
+                if (run.status == WorkflowStatus.RUNNING) drive(run);
+                return run.snapshot();
+            }
             Optional<WorkflowAgentGateway.AgentExecution> recovered = attempt.agentRunId()
                     .filter(ignored -> node.type() == WorkflowNodeType.AGENT_RUN)
                     .flatMap(agentRunId -> agents.recover(run.id, node, run.state, agentRunId));
@@ -300,6 +358,10 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
 
     private void executeScheduledNode(MutableRun run, WorkflowNodeDefinition node) {
         if (!scheduleNode(run, node)) return;
+        if (node.type() == WorkflowNodeType.SUBGRAPH) {
+            executeSubgraph(run, node);
+            return;
+        }
         if (node.type() == WorkflowNodeType.AGENT_RUN) {
             executeAgentNode(run, node);
             return;
@@ -316,6 +378,237 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         }
         storeNodeResult(run, delta, Optional.empty());
         completeScheduledNode(run);
+    }
+
+    private void executeSubgraph(MutableRun parent, WorkflowNodeDefinition node) {
+        WorkflowNodeAttempt attempt = parent.activeAttempt().orElseThrow();
+        WorkflowSubgraphBinding subgraph = node.subgraphBinding().orElseThrow();
+        CompiledWorkflowDefinition childDefinition = requireDefinition(subgraph.definition(), "subgraph");
+        WorkflowRunId childId = new WorkflowRunId(identifiers.nextValue());
+        MutableRun child = MutableRun.create(
+                childId, childDefinition, binding, mapInputs(parent.state, childDefinition, subgraph), now());
+        child.parent = Optional.of(new WorkflowParentLink(parent.id, node.id(), attempt.attempt()));
+        String keyDigest = subgraphKey(parent.id, node.id(), attempt.attempt());
+        String requestDigest = digest(subgraph.definition() + "|" + canonical(child.state.values()));
+        WorkflowEvent childStarted =
+                event(child, WorkflowEventType.RUN_STARTED, Optional.empty(), Map.of("parentRunId", parent.id.value()));
+        unitOfWork.execute(() -> {
+            store.create(
+                    child.stored(),
+                    command("subgraph-start", parent.id.value(), keyDigest, requestDigest, child),
+                    List.of(childStarted));
+            return null;
+        });
+        failures.afterCommit(WorkflowFailurePoint.AFTER_SUBGRAPH_CREATED);
+        parent.activeSubgraph =
+                Optional.of(new WorkflowSubgraphLink(child.id, subgraph.definition(), node.id(), attempt.attempt()));
+        save(
+                parent,
+                List.of(event(
+                        parent,
+                        WorkflowEventType.SUBGRAPH_STARTED,
+                        Optional.of(node.id()),
+                        Map.of(
+                                "childRunId",
+                                child.id.value(),
+                                "definitionDigest",
+                                subgraph.definition().digest().value()))),
+                Optional.empty());
+        failures.afterCommit(WorkflowFailurePoint.AFTER_SUBGRAPH_LINKED);
+        drive(child);
+        if (child.status == WorkflowStatus.COMPLETED) {
+            failures.afterCommit(WorkflowFailurePoint.AFTER_SUBGRAPH_CHILD_COMPLETED);
+        }
+        synchronizeSubgraph(parent, child, node, subgraph);
+    }
+
+    private void recoverSubgraph(MutableRun parent, WorkflowNodeDefinition node, WorkflowNodeAttempt attempt) {
+        WorkflowSubgraphBinding binding = node.subgraphBinding().orElseThrow();
+        MutableRun child;
+        if (parent.activeSubgraph.isPresent()) {
+            child = requireRun(parent.activeSubgraph.orElseThrow().runId());
+        } else {
+            String key = subgraphKey(parent.id, node.id(), attempt.attempt());
+            StoredWorkflowCommand receipt = store.findCommand("subgraph-start", parent.id.value(), key)
+                    .orElseThrow(() -> error(
+                            WorkflowErrorCode.OUTCOME_UNKNOWN,
+                            "recover-subgraph",
+                            "subgraph start outcome is unknown"));
+            child = requireRun(receipt.runId());
+            parent.activeSubgraph =
+                    Optional.of(new WorkflowSubgraphLink(child.id, binding.definition(), node.id(), attempt.attempt()));
+            save(parent, List.of(), Optional.empty());
+        }
+        if (child.status == WorkflowStatus.RUNNING) {
+            recover(child.id);
+            child = requireRun(child.id);
+        }
+        synchronizeSubgraph(parent, child, node, binding);
+    }
+
+    private void resumeSubgraph(
+            MutableRun parent, WorkflowResumeRequest request, String keyDigest, String requestDigest) {
+        WorkflowSubgraphLink link = parent.activeSubgraph.orElseThrow();
+        MutableRun child = requireRun(link.runId());
+        WorkflowWait childWait = child.wait.orElseThrow(
+                () -> error(WorkflowErrorCode.INVALID_RESUME, "resume-subgraph", "child workflow is not waiting"));
+        child.consumedSignals.add(request.signalId().value());
+        child.state = child.state.apply(request.delta());
+        child.status = WorkflowStatus.RUNNING;
+        child.wait = Optional.empty();
+        child.checkpoint = Optional.empty();
+        child.currentNode = onlySuccessor(child, childWait.nodeId()).target();
+        child.revision++;
+        parent.consumedSignals.add(request.signalId().value());
+        parent.status = WorkflowStatus.RUNNING;
+        parent.wait = Optional.empty();
+        parent.checkpoint = Optional.empty();
+        parent.revision++;
+        WorkflowEvent childResumed = event(child, WorkflowEventType.RESUMED, Optional.of(childWait.nodeId()), Map.of());
+        WorkflowEvent parentResumed = event(
+                parent,
+                WorkflowEventType.RESUMED,
+                Optional.of(link.parentNodeId()),
+                Map.of("childRunId", child.id.value()));
+        unitOfWork.execute(() -> {
+            save(child, List.of(childResumed), Optional.empty());
+            save(
+                    parent,
+                    List.of(parentResumed),
+                    Optional.of(command("resume", parent.id.value(), keyDigest, requestDigest, parent)));
+            return null;
+        });
+        failures.afterCommit(WorkflowFailurePoint.AFTER_RESUME_CONSUMED);
+        drive(child);
+        WorkflowNodeDefinition node = node(parent, link.parentNodeId());
+        synchronizeSubgraph(parent, child, node, node.subgraphBinding().orElseThrow());
+        if (parent.status == WorkflowStatus.RUNNING) drive(parent);
+    }
+
+    private void synchronizeSubgraph(
+            MutableRun parent, MutableRun child, WorkflowNodeDefinition node, WorkflowSubgraphBinding binding) {
+        if (child.status == WorkflowStatus.WAITING) {
+            WorkflowWait childWait = child.wait.orElseThrow();
+            Instant at = now();
+            parent.status = WorkflowStatus.WAITING;
+            parent.revision++;
+            parent.wait = Optional.of(
+                    new WorkflowWait(new WorkflowWaitId(identifiers.nextValue()), node.id(), parent.revision, at));
+            parent.checkpoint = Optional.of(new WorkflowCheckpoint(
+                    new WorkflowCheckpointId(identifiers.nextValue()),
+                    parent.id,
+                    parent.revision,
+                    node.id(),
+                    parent.state,
+                    at));
+            save(
+                    parent,
+                    List.of(event(
+                            parent,
+                            WorkflowEventType.WAITING,
+                            Optional.of(node.id()),
+                            Map.of(
+                                    "childRunId",
+                                    child.id.value(),
+                                    "childNodeId",
+                                    childWait.nodeId().value()))),
+                    Optional.empty());
+            failures.afterCommit(WorkflowFailurePoint.AFTER_CHECKPOINT_STORED);
+            return;
+        }
+        if (child.status == WorkflowStatus.COMPLETED) {
+            storeNodeResult(parent, mapOutputs(child.state, binding), Optional.empty());
+            completeScheduledNode(parent);
+            parent.activeSubgraph = Optional.empty();
+            save(
+                    parent,
+                    List.of(event(
+                            parent,
+                            WorkflowEventType.SUBGRAPH_COMPLETED,
+                            Optional.of(node.id()),
+                            Map.of("childRunId", child.id.value()))),
+                    Optional.empty());
+            return;
+        }
+        WorkflowErrorCode code =
+                child.failure.map(WorkflowFailure::code).orElse(WorkflowErrorCode.NODE_EXECUTION_FAILED);
+        parent.activeSubgraph = Optional.empty();
+        failActive(parent, code, "subgraph");
+    }
+
+    private void cancelChild(WorkflowRunId childId) {
+        MutableRun child = requireRun(childId);
+        child.activeSubgraph.ifPresent(link -> cancelChild(link.runId()));
+        child.activeSubgraph = Optional.empty();
+        if (!child.status.terminal()) {
+            terminateActiveAttempt(child, WorkflowErrorCode.TERMINAL_RUN);
+            child.status = WorkflowStatus.CANCELLED;
+            child.wait = Optional.empty();
+            child.checkpoint = Optional.empty();
+            child.revision++;
+            save(
+                    child,
+                    List.of(event(child, WorkflowEventType.CANCELLED, Optional.of(child.currentNode), Map.of())),
+                    Optional.empty());
+            propagateCancellation(child);
+        }
+    }
+
+    private void timeoutChild(WorkflowRunId childId) {
+        MutableRun child = requireRun(childId);
+        child.activeSubgraph.ifPresent(link -> timeoutChild(link.runId()));
+        child.activeSubgraph = Optional.empty();
+        if (!child.status.terminal()) {
+            terminateActiveAttempt(child, WorkflowErrorCode.TIMED_OUT);
+            child.status = WorkflowStatus.TIMED_OUT;
+            child.wait = Optional.empty();
+            child.checkpoint = Optional.empty();
+            child.revision++;
+            save(
+                    child,
+                    List.of(event(child, WorkflowEventType.TIMED_OUT, Optional.of(child.currentNode), Map.of())),
+                    Optional.empty());
+            propagateCancellation(child);
+        }
+    }
+
+    private static WorkflowState mapInputs(
+            WorkflowState parent, CompiledWorkflowDefinition child, WorkflowSubgraphBinding binding) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        binding.stateMapping().inputs().forEach((parentKey, childKey) -> {
+            if (parent.values().containsKey(parentKey))
+                values.put(childKey, parent.values().get(parentKey));
+        });
+        return new WorkflowState(child.definition().stateSchema(), values);
+    }
+
+    private void terminateActiveAttempt(MutableRun run, WorkflowErrorCode code) {
+        run.activeAttempt().ifPresent(active -> {
+            replaceLastAttempt(
+                    run,
+                    new WorkflowNodeAttempt(
+                            active.nodeId(),
+                            active.attempt(),
+                            WorkflowNodeAttemptStatus.FAILED,
+                            active.agentRunId(),
+                            Optional.of(code),
+                            active.startedAt(),
+                            Optional.of(now())));
+            run.pendingDelta = Optional.empty();
+        });
+    }
+
+    private static WorkflowStateDelta mapOutputs(WorkflowState child, WorkflowSubgraphBinding binding) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        binding.stateMapping().outputs().forEach((childKey, parentKey) -> {
+            if (child.values().containsKey(childKey))
+                values.put(parentKey, child.values().get(childKey));
+        });
+        return new WorkflowStateDelta(values);
+    }
+
+    private static String subgraphKey(WorkflowRunId parent, WorkflowNodeId node, int attempt) {
+        return digest(parent.value() + '|' + node.value() + '|' + attempt);
     }
 
     private void executeAgentNode(MutableRun run, WorkflowNodeDefinition node) {
@@ -451,7 +744,9 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         WorkflowForkState fork = run.forkState.orElseThrow();
         WorkflowNodeDefinition cursor = node(run, fork.cursor());
         if (cursor.type() != WorkflowNodeType.JOIN_ALL) {
-            if (cursor.type() != WorkflowNodeType.ACTION && cursor.type() != WorkflowNodeType.AGENT_RUN) {
+            if (cursor.type() != WorkflowNodeType.ACTION
+                    && cursor.type() != WorkflowNodeType.AGENT_RUN
+                    && cursor.type() != WorkflowNodeType.SUBGRAPH) {
                 fail(run, WorkflowErrorCode.INVALID_DEFINITION, "fork");
                 return;
             }
@@ -734,6 +1029,8 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         private Optional<WorkflowStateDelta> pendingDelta;
         private Optional<WorkflowForkState> forkState;
         private Optional<AgentRunId> pendingAgentCancellation;
+        private Optional<WorkflowParentLink> parent;
+        private Optional<WorkflowSubgraphLink> activeSubgraph;
         private Instant updatedAt;
 
         private static MutableRun create(
@@ -772,6 +1069,8 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
             this.pendingDelta = Optional.empty();
             this.forkState = Optional.empty();
             this.pendingAgentCancellation = Optional.empty();
+            this.parent = Optional.empty();
+            this.activeSubgraph = Optional.empty();
         }
 
         private MutableRun(StoredWorkflowRun stored, CompiledWorkflowDefinition compiled) {
@@ -798,6 +1097,8 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
             this.pendingDelta = stored.pendingDelta();
             this.forkState = stored.forkState();
             this.pendingAgentCancellation = stored.pendingAgentCancellation();
+            this.parent = snapshot.parent();
+            this.activeSubgraph = snapshot.activeSubgraph();
         }
 
         private Optional<WorkflowNodeAttempt> activeAttempt() {
@@ -818,6 +1119,8 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
                     checkpoint,
                     failure,
                     attempts,
+                    parent,
+                    activeSubgraph,
                     createdAt,
                     updatedAt);
         }

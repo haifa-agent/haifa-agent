@@ -25,6 +25,14 @@ Runtime Migration V8 adds the provider-neutral `workflow_run`, `workflow_node_at
 - `SqliteStoreFoundation.workflows()` is an explicit contribution. No existing Coding, Personal Assistant, SDK, or
   Runtime path enables Graph because this module is present.
 
+## V9 restricted subgraph relation
+
+Runtime Migration V9 adds `workflow_subgraph_instance` without changing V8 payload schemas. It freezes the child
+Workflow Run, parent Workflow Run, parent node ID and parent node attempt, and tracks whether the relation is still the
+parent's active subgraph. The indexed relation reconstructs an active child even if the child creation transaction
+committed before the parent snapshot was linked. Child Wait/Checkpoint remain child Run facts; parent Wait/Checkpoint
+remain parent Run facts. Parent cancel/timeout is propagated and persisted before the parent reaches its terminal state.
+
 ## V5 SDK Conversation
 
 Runtime Migration V5 新增产品中立的 `sdk_conversation` 与 `sdk_conversation_command`：
@@ -79,7 +87,7 @@ Runtime Migration V3 追加 `policy_snapshot`、`policy_decision`、`approval_re
 
 `SqliteStoreFoundation` 暴露与 Policy API 对齐的 Store。Project Application 和 CLI 在 SQLite 模式下把同一组实例同时注入 Policy、Runtime Tool 与 Execution，避免进程内 Store 和 SQLite 各持一份授权事实。
 
-本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V8 Migration、
+本模块提供纯 Java 的 SQLite/MyBatis Runtime Store。当前已完成受控数据库配置、V1～V9 Migration、
 版本化 Codec、线程绑定 UoW，以及 `RuntimePersistencePorts` 所需的全部 SQLite 业务适配器。
 
 V6 只新增 `memory_candidate`、`memory_record` 和 `memory_audit_event`。Candidate/Memory 正文以
@@ -112,7 +120,7 @@ worker ID 驱动。
 ## 初始化与所有权
 
 调用方通过 `SqliteStoreFoundation.initialize(configuration, clock)` 完成纯 Runtime 初始化；拥有额外
-Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V8 原文的完整 Migration 集合，
+Schema 的 Application 使用扩展重载，在一次校验中传入包含 Runtime V1～V9 原文的完整 Migration 集合，
 并可传入由 Application 自己拥有的静态 `MapperXml`。附加 Mapper 与内建 Mapper 使用相同的
 namespace/statement 唯一性、`${}` 禁止和启动期解析校验：
 
@@ -159,7 +167,8 @@ Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校
 
 V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
 revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
-V5～V7 分别提供 SDK Conversation、Memory 与 Artifact；V8 提供 Workflow 单机持久恢复。
+V5～V7 分别提供 SDK Conversation、Memory 与 Artifact；V8 提供 Workflow 单机持久恢复，V9 提供受限
+子图父子 Run 关系。
 
 ## Port—表—Codec 对照
 

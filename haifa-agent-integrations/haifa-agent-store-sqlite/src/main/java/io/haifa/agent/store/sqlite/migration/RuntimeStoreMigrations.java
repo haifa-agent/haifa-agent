@@ -17,6 +17,7 @@ public final class RuntimeStoreMigrations {
     private static final String V6_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V6__memory_foundation.sql";
     private static final String V7_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V7__artifact_foundation.sql";
     private static final String V8_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V8__workflow_recovery.sql";
+    private static final String V9_RESOURCE = "/io/haifa/agent/store/sqlite/migration/V9__workflow_subgraph.sql";
 
     private RuntimeStoreMigrations() {}
 
@@ -30,7 +31,8 @@ public final class RuntimeStoreMigrations {
                     read(5, "sdk_conversation", V5_RESOURCE),
                     read(6, "memory_foundation", V6_RESOURCE),
                     read(7, "artifact_foundation", V7_RESOURCE),
-                    read(8, "workflow_recovery", V8_RESOURCE));
+                    read(8, "workflow_recovery", V8_RESOURCE),
+                    read(9, "workflow_subgraph", V9_RESOURCE));
         } catch (IOException exception) {
             throw new SqliteStoreException(
                     SqliteStoreFailure.MIGRATION_FAILED, "Unable to read bundled SQLite migration", exception);

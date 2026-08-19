@@ -4,9 +4,12 @@ public enum WorkflowEventType {
     RUN_STARTED,
     NODE_STARTED,
     NODE_COMPLETED,
+    SUBGRAPH_STARTED,
+    SUBGRAPH_COMPLETED,
     WAITING,
     RESUMED,
     COMPLETED,
     FAILED,
-    CANCELLED
+    CANCELLED,
+    TIMED_OUT
 }

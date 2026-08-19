@@ -12,6 +12,7 @@ import io.haifa.agent.orchestration.api.WorkflowException;
 import io.haifa.agent.orchestration.api.WorkflowNodeDefinition;
 import io.haifa.agent.orchestration.api.WorkflowNodeId;
 import io.haifa.agent.orchestration.api.WorkflowNodeType;
+import io.haifa.agent.orchestration.api.WorkflowStateMapping;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -33,17 +34,181 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
             WorkflowCapability.CONDITION,
             WorkflowCapability.BOUNDED_LOOP,
             WorkflowCapability.FIXED_ALL_OF,
-            WorkflowCapability.INTERRUPTION));
+            WorkflowCapability.INTERRUPTION,
+            WorkflowCapability.SUBGRAPH));
 
     @Override
     public CompiledWorkflowDefinition compile(WorkflowDefinition definition) {
         Objects.requireNonNull(definition, "definition must not be null");
         validate(definition);
-        WorkflowDefinitionDigest digest = new WorkflowDefinitionDigest(sha256(canonical(definition)));
+        rejectUnresolvedSubgraphs(definition);
+        WorkflowDefinitionDigest digest = digest(definition);
         return new CompiledWorkflowDefinition(
                 new WorkflowDefinitionRef(definition.id(), definition.version(), digest),
                 definition,
                 definition.requiredCapabilities());
+    }
+
+    /** Compiles one root and its complete, statically frozen subgraph definition set. */
+    public CompiledWorkflowDefinition compile(WorkflowDefinition root, List<WorkflowDefinition> subgraphDefinitions) {
+        Objects.requireNonNull(root, "root must not be null");
+        Objects.requireNonNull(subgraphDefinitions, "subgraphDefinitions must not be null");
+        Map<WorkflowDefinitionRef, WorkflowDefinition> catalog = new HashMap<>();
+        for (WorkflowDefinition definition : subgraphDefinitions) {
+            Objects.requireNonNull(definition, "subgraph definition must not be null");
+            WorkflowDefinitionRef reference = reference(definition);
+            if (catalog.put(reference, definition) != null) {
+                throw failure(WorkflowErrorCode.INVALID_DEFINITION, "duplicate subgraph definition reference");
+            }
+        }
+        validate(root);
+        validateSubgraphs(
+                root,
+                catalog,
+                new ArrayDeque<>(),
+                0,
+                new int[] {root.nodes().size(), branchCount(root)},
+                root.limits());
+        return new CompiledWorkflowDefinition(
+                reference(root), root, root.requiredCapabilities(), reachableSubgraphs(root, catalog));
+    }
+
+    private static Map<WorkflowDefinitionRef, WorkflowDefinition> reachableSubgraphs(
+            WorkflowDefinition root, Map<WorkflowDefinitionRef, WorkflowDefinition> catalog) {
+        Map<WorkflowDefinitionRef, WorkflowDefinition> reachable = new HashMap<>();
+        ArrayDeque<WorkflowDefinition> pending = new ArrayDeque<>();
+        pending.add(root);
+        while (!pending.isEmpty()) {
+            WorkflowDefinition current = pending.remove();
+            current.nodes().stream()
+                    .filter(node -> node.type() == WorkflowNodeType.SUBGRAPH)
+                    .map(node -> node.subgraphBinding().orElseThrow().definition())
+                    .forEach(reference -> {
+                        WorkflowDefinition child = catalog.get(reference);
+                        if (child != null && reachable.putIfAbsent(reference, child) == null) {
+                            pending.add(child);
+                        }
+                    });
+        }
+        return Map.copyOf(reachable);
+    }
+
+    private static void validateSubgraphs(
+            WorkflowDefinition definition,
+            Map<WorkflowDefinitionRef, WorkflowDefinition> catalog,
+            ArrayDeque<WorkflowDefinitionRef> path,
+            int depth,
+            int[] expandedNodes,
+            io.haifa.agent.orchestration.api.WorkflowLimits rootLimits) {
+        WorkflowDefinitionRef current = reference(definition);
+        if (path.contains(current)) {
+            throw failure(WorkflowErrorCode.INVALID_DEFINITION, "recursive subgraph reference is not allowed");
+        }
+        path.addLast(current);
+        for (WorkflowNodeDefinition node : definition.nodes()) {
+            if (node.type() != WorkflowNodeType.SUBGRAPH) continue;
+            if (!definition.requiredCapabilities().contains(WorkflowCapability.SUBGRAPH)) {
+                throw failure(WorkflowErrorCode.INVALID_DEFINITION, "SUBGRAPH node requires SUBGRAPH capability");
+            }
+            var binding = node.subgraphBinding().orElseThrow();
+            WorkflowDefinition child = catalog.get(binding.definition());
+            if (child == null) {
+                throw failure(WorkflowErrorCode.DEFINITION_NOT_FOUND, "subgraph definition was not registered");
+            }
+            validate(child);
+            validateMapping(definition, child, binding.stateMapping());
+            if (isFixedBranchNode(definition, node.id()) && mayInterrupt(child, catalog, new HashSet<>())) {
+                throw failure(
+                        WorkflowErrorCode.UNSUPPORTED_CAPABILITY,
+                        "interrupting subgraph inside fixed parallel branch is not supported");
+            }
+            int childDepth = depth + 1;
+            if (childDepth > rootLimits.maximumSubgraphDepth()) {
+                throw failure(WorkflowErrorCode.INVALID_DEFINITION, "maximum subgraph depth exceeded");
+            }
+            expandedNodes[0] = Math.addExact(expandedNodes[0], child.nodes().size());
+            if (expandedNodes[0] > rootLimits.maximumExpandedNodes()) {
+                throw failure(WorkflowErrorCode.INVALID_DEFINITION, "maximum expanded node count exceeded");
+            }
+            expandedNodes[1] = Math.addExact(expandedNodes[1], branchCount(child));
+            if (expandedNodes[1] > rootLimits.maximumExpandedBranches()) {
+                throw failure(WorkflowErrorCode.INVALID_DEFINITION, "maximum expanded branch count exceeded");
+            }
+            validateSubgraphs(child, catalog, path, childDepth, expandedNodes, rootLimits);
+        }
+        path.removeLast();
+    }
+
+    private static boolean mayInterrupt(
+            WorkflowDefinition definition,
+            Map<WorkflowDefinitionRef, WorkflowDefinition> catalog,
+            Set<WorkflowDefinitionRef> visited) {
+        WorkflowDefinitionRef reference = reference(definition);
+        if (!visited.add(reference)) return false;
+        if (definition.nodes().stream().anyMatch(node -> node.type() == WorkflowNodeType.WAIT)) return true;
+        return definition.nodes().stream()
+                .filter(node -> node.type() == WorkflowNodeType.SUBGRAPH)
+                .map(node -> catalog.get(node.subgraphBinding().orElseThrow().definition()))
+                .filter(Objects::nonNull)
+                .anyMatch(child -> mayInterrupt(child, catalog, visited));
+    }
+
+    private static int branchCount(WorkflowDefinition definition) {
+        Set<WorkflowNodeId> forks = definition.nodes().stream()
+                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL)
+                .map(WorkflowNodeDefinition::id)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        return Math.toIntExact(definition.edges().stream()
+                .filter(edge -> forks.contains(edge.source()))
+                .count());
+    }
+
+    private static boolean isFixedBranchNode(WorkflowDefinition definition, WorkflowNodeId target) {
+        Map<WorkflowNodeId, WorkflowNodeDefinition> nodes = new HashMap<>();
+        definition.nodes().forEach(node -> nodes.put(node.id(), node));
+        Map<WorkflowNodeId, List<WorkflowEdge>> outgoing = new HashMap<>();
+        definition.edges().forEach(edge -> outgoing.computeIfAbsent(edge.source(), ignored -> new ArrayList<>())
+                .add(edge));
+        return definition.nodes().stream()
+                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL)
+                .flatMap(fork -> outgoing.getOrDefault(fork.id(), List.of()).stream())
+                .anyMatch(edge -> branchContains(edge.target(), target, nodes, outgoing, new HashSet<>()));
+    }
+
+    private static boolean branchContains(
+            WorkflowNodeId current,
+            WorkflowNodeId target,
+            Map<WorkflowNodeId, WorkflowNodeDefinition> nodes,
+            Map<WorkflowNodeId, List<WorkflowEdge>> outgoing,
+            Set<WorkflowNodeId> visited) {
+        if (current.equals(target)) return true;
+        if (!visited.add(current) || nodes.get(current).type() == WorkflowNodeType.JOIN_ALL) return false;
+        return outgoing.getOrDefault(current, List.of()).stream()
+                .anyMatch(edge -> branchContains(edge.target(), target, nodes, outgoing, visited));
+    }
+
+    private static void validateMapping(
+            WorkflowDefinition parent, WorkflowDefinition child, WorkflowStateMapping mapping) {
+        if (!parent.stateSchema().allowedKeys().containsAll(mapping.inputs().keySet())
+                || !child.stateSchema()
+                        .allowedKeys()
+                        .containsAll(mapping.inputs().values())
+                || !child.stateSchema()
+                        .allowedKeys()
+                        .containsAll(mapping.outputs().keySet())
+                || !parent.stateSchema()
+                        .allowedKeys()
+                        .containsAll(mapping.outputs().values())) {
+            throw failure(WorkflowErrorCode.INVALID_DEFINITION, "subgraph state mapping is incompatible with schema");
+        }
+    }
+
+    private static void rejectUnresolvedSubgraphs(WorkflowDefinition definition) {
+        if (definition.nodes().stream().anyMatch(node -> node.type() == WorkflowNodeType.SUBGRAPH)) {
+            throw failure(
+                    WorkflowErrorCode.DEFINITION_NOT_FOUND,
+                    "subgraph compilation requires the complete frozen definition set");
+        }
     }
 
     private static void validate(WorkflowDefinition definition) {
@@ -124,10 +289,12 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
         if (node.type() == WorkflowNodeType.JOIN_ALL) {
             return current;
         }
-        if (node.type() != WorkflowNodeType.ACTION && node.type() != WorkflowNodeType.AGENT_RUN) {
+        if (node.type() != WorkflowNodeType.ACTION
+                && node.type() != WorkflowNodeType.AGENT_RUN
+                && node.type() != WorkflowNodeType.SUBGRAPH) {
             throw failure(
                     WorkflowErrorCode.INVALID_DEFINITION,
-                    "fixed branch may only contain action or agent nodes before JOIN_ALL");
+                    "fixed branch may only contain action, agent, or subgraph nodes before JOIN_ALL");
         }
         List<WorkflowEdge> edges = outgoing.getOrDefault(current, List.of());
         if (edges.size() != 1 || edges.getFirst().conditionId().isPresent()) {
@@ -176,6 +343,10 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
             if (node.type() == WorkflowNodeType.WAIT
                     && !definition.requiredCapabilities().contains(WorkflowCapability.INTERRUPTION)) {
                 throw failure(WorkflowErrorCode.INVALID_DEFINITION, "WAIT requires INTERRUPTION capability");
+            }
+            if (node.type() == WorkflowNodeType.SUBGRAPH
+                    && !definition.requiredCapabilities().contains(WorkflowCapability.SUBGRAPH)) {
+                throw failure(WorkflowErrorCode.INVALID_DEFINITION, "SUBGRAPH requires SUBGRAPH capability");
             }
             if (node.type() == WorkflowNodeType.JOIN_ALL
                     && edges.size() != 1
@@ -246,6 +417,9 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
         append(value, definition.limits().maximumIterationsPerNode());
         append(value, definition.limits().maximumNodes());
         append(value, definition.limits().maximumParallelBranches());
+        append(value, definition.limits().maximumSubgraphDepth());
+        append(value, definition.limits().maximumExpandedNodes());
+        append(value, definition.limits().maximumExpandedBranches());
         append(value, "schema-keys");
         append(value, definition.stateSchema().allowedKeys().size());
         definition.stateSchema().allowedKeys().stream().sorted().forEach(key -> append(value, key));
@@ -260,6 +434,39 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
                     append(value, node.id().value());
                     append(value, node.type().name());
                     append(value, node.targetReference().orElse(""));
+                    node.subgraphBinding()
+                            .ifPresentOrElse(
+                                    binding -> {
+                                        append(value, binding.definition().id().value());
+                                        append(
+                                                value,
+                                                binding.definition().version().value());
+                                        append(
+                                                value,
+                                                binding.definition().digest().value());
+                                        append(value, binding.failurePolicy().name());
+                                        append(value, "subgraph-inputs");
+                                        append(
+                                                value,
+                                                binding.stateMapping().inputs().size());
+                                        binding.stateMapping().inputs().entrySet().stream()
+                                                .sorted(Map.Entry.comparingByKey())
+                                                .forEach(entry -> {
+                                                    append(value, entry.getKey());
+                                                    append(value, entry.getValue());
+                                                });
+                                        append(value, "subgraph-outputs");
+                                        append(
+                                                value,
+                                                binding.stateMapping().outputs().size());
+                                        binding.stateMapping().outputs().entrySet().stream()
+                                                .sorted(Map.Entry.comparingByKey())
+                                                .forEach(entry -> {
+                                                    append(value, entry.getKey());
+                                                    append(value, entry.getValue());
+                                                });
+                                    },
+                                    () -> append(value, "no-subgraph"));
                 });
         append(value, "edges");
         append(value, definition.edges().size());
@@ -289,6 +496,14 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 is unavailable", exception);
         }
+    }
+
+    private static WorkflowDefinitionDigest digest(WorkflowDefinition definition) {
+        return new WorkflowDefinitionDigest(sha256(canonical(definition)));
+    }
+
+    private static WorkflowDefinitionRef reference(WorkflowDefinition definition) {
+        return new WorkflowDefinitionRef(definition.id(), definition.version(), digest(definition));
     }
 
     private static WorkflowException failure(WorkflowErrorCode code, String message) {

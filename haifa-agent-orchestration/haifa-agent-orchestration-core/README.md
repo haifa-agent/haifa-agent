@@ -1,12 +1,15 @@
 # Haifa Agent Orchestration Core
 
-Pure Java M1/M3 implementation of the Incubating Orchestration API:
+Pure Java M1/M3/M5 implementation of the Incubating Orchestration API:
 
 - canonical SHA-256 definition compilation and capability validation;
 - deterministic immutable State Delta merge;
 - in-memory start/resume/cancel idempotency and monotonic events;
 - sequence, condition, bounded loop, fixed `ALL_OF`, wait/resume, and Agent Run gateway fixtures;
-- explicit fail-closed rejection of subgraph, dynamic fan-out, and `ANY_OF`.
+- static subgraph Definition-set compilation, explicit State mapping, linked child Workflow Runs, nested wait/resume,
+  cancellation/timeout propagation, and deterministic fixed-branch merge;
+- explicit fail-closed rejection of dynamic fan-out, `ANY_OF`, runtime graph discovery, recursive/missing references,
+  excessive expansion, and interrupting subgraphs inside fixed parallel branches;
 - provider-neutral `DurableWorkflowRuntime`, Store/UoW ports, frozen adapter/codec binding, two-phase node result
   commit, persisted fixed-branch cursor, restart reconciliation, idempotent commands, and outcome-unknown handling.
 

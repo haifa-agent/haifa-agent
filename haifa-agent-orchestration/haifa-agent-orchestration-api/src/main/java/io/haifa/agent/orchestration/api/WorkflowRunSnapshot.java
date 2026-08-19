@@ -16,8 +16,40 @@ public record WorkflowRunSnapshot(
         Optional<WorkflowCheckpoint> checkpoint,
         Optional<WorkflowFailure> failure,
         List<WorkflowNodeAttempt> attempts,
+        Optional<WorkflowParentLink> parent,
+        Optional<WorkflowSubgraphLink> activeSubgraph,
         Instant createdAt,
         Instant updatedAt) {
+    public WorkflowRunSnapshot(
+            WorkflowRunId id,
+            WorkflowDefinitionRef definition,
+            WorkflowStatus status,
+            long revision,
+            WorkflowState state,
+            Optional<WorkflowNodeId> currentNode,
+            Optional<WorkflowWait> activeWait,
+            Optional<WorkflowCheckpoint> checkpoint,
+            Optional<WorkflowFailure> failure,
+            List<WorkflowNodeAttempt> attempts,
+            Instant createdAt,
+            Instant updatedAt) {
+        this(
+                id,
+                definition,
+                status,
+                revision,
+                state,
+                currentNode,
+                activeWait,
+                checkpoint,
+                failure,
+                attempts,
+                Optional.empty(),
+                Optional.empty(),
+                createdAt,
+                updatedAt);
+    }
+
     public WorkflowRunSnapshot {
         Objects.requireNonNull(id, "id must not be null");
         Objects.requireNonNull(definition, "definition must not be null");
@@ -31,6 +63,8 @@ public record WorkflowRunSnapshot(
         checkpoint = Objects.requireNonNull(checkpoint, "checkpoint must not be null");
         failure = Objects.requireNonNull(failure, "failure must not be null");
         attempts = List.copyOf(Objects.requireNonNull(attempts, "attempts must not be null"));
+        parent = Objects.requireNonNull(parent, "parent must not be null");
+        activeSubgraph = Objects.requireNonNull(activeSubgraph, "activeSubgraph must not be null");
         Objects.requireNonNull(createdAt, "createdAt must not be null");
         Objects.requireNonNull(updatedAt, "updatedAt must not be null");
     }

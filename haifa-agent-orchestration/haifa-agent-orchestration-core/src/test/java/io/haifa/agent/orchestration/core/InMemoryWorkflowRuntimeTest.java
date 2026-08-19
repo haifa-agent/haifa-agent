@@ -27,8 +27,10 @@ import io.haifa.agent.orchestration.api.WorkflowSignalId;
 import io.haifa.agent.orchestration.api.WorkflowStartRequest;
 import io.haifa.agent.orchestration.api.WorkflowState;
 import io.haifa.agent.orchestration.api.WorkflowStateDelta;
+import io.haifa.agent.orchestration.api.WorkflowStateMapping;
 import io.haifa.agent.orchestration.api.WorkflowStateSchema;
 import io.haifa.agent.orchestration.api.WorkflowStatus;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphBinding;
 import io.haifa.agent.orchestration.core.spi.WorkflowActionGateway;
 import io.haifa.agent.orchestration.core.spi.WorkflowAgentGateway;
 import io.haifa.agent.orchestration.core.spi.WorkflowConditionEvaluator;
@@ -298,6 +300,54 @@ class InMemoryWorkflowRuntimeTest {
         });
     }
 
+    @Test
+    void executesAndMapsStaticSubgraphAsLinkedChildRun() {
+        WorkflowDefinition child = definition(
+                "child",
+                "child-action",
+                List.of(WorkflowNodeDefinition.action("child-action", "increment"), terminal()),
+                List.of(WorkflowEdge.unconditional("child-action", "end")),
+                Set.of(WorkflowCapability.SEQUENCE),
+                WorkflowLimits.defaults());
+        DefaultWorkflowDefinitionCompiler compiler = new DefaultWorkflowDefinitionCompiler();
+        var childRef = compiler.compile(child).reference();
+        WorkflowDefinition parent = definition(
+                "parent",
+                "sub",
+                List.of(
+                        WorkflowNodeDefinition.subgraph(
+                                "sub",
+                                new WorkflowSubgraphBinding(
+                                        childRef,
+                                        new WorkflowStateMapping(Map.of("count", "count"), Map.of("count", "count")))),
+                        terminal()),
+                List.of(WorkflowEdge.unconditional("sub", "end")),
+                Set.of(WorkflowCapability.SUBGRAPH),
+                WorkflowLimits.defaults());
+        CompiledWorkflowDefinition compiled = compiler.compile(parent, List.of(child));
+        WorkflowActionGateway actions = (runId, node, state) ->
+                new WorkflowStateDelta(Map.of("count", ((Integer) state.values().get("count")) + 1));
+        InMemoryWorkflowRuntime runtime = runtime(compiled, actions, NO_AGENT, NO_CONDITION);
+
+        WorkflowRunSnapshot result = runtime.start(start(compiled, Map.of("count", 4), "subgraph-start"));
+
+        assertThat(result.status()).isEqualTo(WorkflowStatus.COMPLETED);
+        assertThat(result.state().values()).containsEntry("count", 5);
+        assertThat(result.attempts()).singleElement().satisfies(attempt -> {
+            assertThat(attempt.nodeId().value()).isEqualTo("sub");
+            assertThat(attempt.status()).isEqualTo(WorkflowNodeAttemptStatus.COMPLETED);
+        });
+        var started = runtime.events(result.id(), 0, 100).stream()
+                .filter(event -> event.type() == WorkflowEventType.SUBGRAPH_STARTED)
+                .findFirst()
+                .orElseThrow();
+        var childSnapshot = runtime.find(new io.haifa.agent.orchestration.api.WorkflowRunId(
+                        started.attributes().get("childRunId")))
+                .orElseThrow();
+        assertThat(childSnapshot.parent()).isPresent();
+        assertThat(childSnapshot.parent().orElseThrow().runId()).isEqualTo(result.id());
+    }
+
     private static InMemoryWorkflowRuntime runtime(
             CompiledWorkflowDefinition definition,
             WorkflowActionGateway actions,
@@ -317,15 +367,25 @@ class InMemoryWorkflowRuntimeTest {
             Set<WorkflowCapability> capabilities,
             WorkflowLimits limits) {
         return new DefaultWorkflowDefinitionCompiler()
-                .compile(new WorkflowDefinition(
-                        new WorkflowDefinitionId(id),
-                        new WorkflowDefinitionVersion(1),
-                        SCHEMA,
-                        new WorkflowNodeId(entry),
-                        nodes,
-                        edges,
-                        limits,
-                        capabilities));
+                .compile(definition(id, entry, nodes, edges, capabilities, limits));
+    }
+
+    private static WorkflowDefinition definition(
+            String id,
+            String entry,
+            List<WorkflowNodeDefinition> nodes,
+            List<WorkflowEdge> edges,
+            Set<WorkflowCapability> capabilities,
+            WorkflowLimits limits) {
+        return new WorkflowDefinition(
+                new WorkflowDefinitionId(id),
+                new WorkflowDefinitionVersion(1),
+                SCHEMA,
+                new WorkflowNodeId(entry),
+                nodes,
+                edges,
+                limits,
+                capabilities);
     }
 
     private static WorkflowStartRequest start(

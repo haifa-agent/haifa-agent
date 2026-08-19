@@ -15,5 +15,6 @@ public enum WorkflowErrorCode {
     PERSISTENCE_CONFLICT,
     BINDING_MISMATCH,
     CODEC_MISMATCH,
+    TIMED_OUT,
     TERMINAL_RUN
 }

@@ -23,8 +23,10 @@ import io.haifa.agent.orchestration.api.WorkflowSignalId;
 import io.haifa.agent.orchestration.api.WorkflowStartRequest;
 import io.haifa.agent.orchestration.api.WorkflowState;
 import io.haifa.agent.orchestration.api.WorkflowStateDelta;
+import io.haifa.agent.orchestration.api.WorkflowStateMapping;
 import io.haifa.agent.orchestration.api.WorkflowStateSchema;
 import io.haifa.agent.orchestration.api.WorkflowStatus;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphBinding;
 import io.haifa.agent.orchestration.core.DefaultWorkflowDefinitionCompiler;
 import io.haifa.agent.orchestration.core.InMemoryWorkflowRuntime;
 import io.haifa.agent.orchestration.core.spi.WorkflowActionGateway;
@@ -199,6 +201,90 @@ class WorkflowRuntimeContractTest {
         assertSnapshotsAndEventsEqual(pair, reference, provider);
     }
 
+    @Test
+    void staticSubgraphHasEquivalentStateAttemptsAndEvents() {
+        WorkflowDefinition child = definition(
+                "child",
+                "child-action",
+                List.of(WorkflowNodeDefinition.action("child-action", "increment"), terminal()),
+                List.of(WorkflowEdge.unconditional("child-action", "end")),
+                Set.of(WorkflowCapability.SEQUENCE),
+                WorkflowLimits.defaults());
+        DefaultWorkflowDefinitionCompiler compiler = new DefaultWorkflowDefinitionCompiler();
+        var childRef = compiler.compile(child).reference();
+        WorkflowDefinition parent = definition(
+                "parent",
+                "sub",
+                List.of(
+                        WorkflowNodeDefinition.subgraph(
+                                "sub",
+                                new WorkflowSubgraphBinding(
+                                        childRef,
+                                        new WorkflowStateMapping(Map.of("count", "count"), Map.of("count", "count")))),
+                        terminal()),
+                List.of(WorkflowEdge.unconditional("sub", "end")),
+                Set.of(WorkflowCapability.SUBGRAPH),
+                WorkflowLimits.defaults());
+        CompiledWorkflowDefinition compiled = compiler.compile(parent, List.of(child));
+        WorkflowActionGateway increment = (runId, node, state) ->
+                new WorkflowStateDelta(Map.of("count", ((Integer) state.values().get("count")) + 1));
+
+        assertEquivalent(compiled, increment, NO_AGENT, NO_CONDITION, Map.of("count", 4), "subgraph-start");
+    }
+
+    @Test
+    void staticSubgraphsInFixedBranchesMergeDeterministically() {
+        WorkflowDefinition child = definition(
+                "branch-child",
+                "child-action",
+                List.of(WorkflowNodeDefinition.action("child-action", "increment"), terminal()),
+                List.of(WorkflowEdge.unconditional("child-action", "end")),
+                Set.of(WorkflowCapability.SEQUENCE),
+                WorkflowLimits.defaults());
+        DefaultWorkflowDefinitionCompiler compiler = new DefaultWorkflowDefinitionCompiler();
+        var childRef = compiler.compile(child).reference();
+        WorkflowDefinition parent = definition(
+                "branch-parent",
+                "fork",
+                List.of(
+                        WorkflowNodeDefinition.control("fork", WorkflowNodeType.FORK_ALL),
+                        WorkflowNodeDefinition.subgraph(
+                                "left-sub",
+                                new WorkflowSubgraphBinding(
+                                        childRef,
+                                        new WorkflowStateMapping(Map.of("left", "count"), Map.of("count", "left")))),
+                        WorkflowNodeDefinition.subgraph(
+                                "right-sub",
+                                new WorkflowSubgraphBinding(
+                                        childRef,
+                                        new WorkflowStateMapping(Map.of("right", "count"), Map.of("count", "right")))),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ALL),
+                        terminal()),
+                List.of(
+                        WorkflowEdge.branch("fork", "right-sub", 2),
+                        WorkflowEdge.branch("fork", "left-sub", 1),
+                        WorkflowEdge.unconditional("left-sub", "join"),
+                        WorkflowEdge.unconditional("right-sub", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                Set.of(WorkflowCapability.FIXED_ALL_OF, WorkflowCapability.SUBGRAPH),
+                WorkflowLimits.defaults());
+        CompiledWorkflowDefinition compiled = compiler.compile(parent, List.of(child));
+        WorkflowActionGateway increment = (runId, node, state) ->
+                new WorkflowStateDelta(Map.of("count", ((Integer) state.values().get("count")) + 1));
+        RuntimePair pair = pair(compiled, increment, NO_AGENT, NO_CONDITION);
+
+        WorkflowRunSnapshot reference =
+                pair.reference().start(start(compiled, Map.of("left", 1, "right", 5), "branch-subgraphs"));
+        WorkflowRunSnapshot provider =
+                pair.provider().start(start(compiled, Map.of("left", 1, "right", 5), "branch-subgraphs"));
+
+        assertThat(reference.state()).isEqualTo(provider.state());
+        assertThat(provider.state().values()).containsEntry("left", 2).containsEntry("right", 6);
+        assertThat(provider.attempts())
+                .extracting(attempt -> attempt.nodeId().value())
+                .containsExactly("left-sub", "right-sub");
+    }
+
     private static void assertEquivalent(
             CompiledWorkflowDefinition compiled,
             WorkflowActionGateway actions,
@@ -253,15 +339,25 @@ class WorkflowRuntimeContractTest {
             Set<WorkflowCapability> capabilities,
             WorkflowLimits limits) {
         return new DefaultWorkflowDefinitionCompiler()
-                .compile(new WorkflowDefinition(
-                        new WorkflowDefinitionId(id),
-                        new WorkflowDefinitionVersion(1),
-                        SCHEMA,
-                        new WorkflowNodeId(entry),
-                        nodes,
-                        edges,
-                        limits,
-                        capabilities));
+                .compile(definition(id, entry, nodes, edges, capabilities, limits));
+    }
+
+    private static WorkflowDefinition definition(
+            String id,
+            String entry,
+            List<WorkflowNodeDefinition> nodes,
+            List<WorkflowEdge> edges,
+            Set<WorkflowCapability> capabilities,
+            WorkflowLimits limits) {
+        return new WorkflowDefinition(
+                new WorkflowDefinitionId(id),
+                new WorkflowDefinitionVersion(1),
+                SCHEMA,
+                new WorkflowNodeId(entry),
+                nodes,
+                edges,
+                limits,
+                capabilities);
     }
 
     private static WorkflowStartRequest start(

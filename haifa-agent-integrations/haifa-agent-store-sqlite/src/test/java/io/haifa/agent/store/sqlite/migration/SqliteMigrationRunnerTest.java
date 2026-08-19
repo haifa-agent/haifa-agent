@@ -29,14 +29,14 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(8);
+                    .isEqualTo(9);
             assertThat(queryLong(connection, "SELECT applied_at FROM schema_migration WHERE version = 1"))
                     .isEqualTo(SqliteTestSupport.NOW.toEpochMilli());
         }
     }
 
     @Test
-    void upgradesAnExistingV3DatabaseToV8WithoutReapplyingHistory() throws Exception {
+    void upgradesAnExistingV3DatabaseToV9WithoutReapplyingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -46,7 +46,7 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(8);
+                    .isEqualTo(9);
             assertThat(queryLong(
                             connection,
                             "SELECT COUNT(*) FROM sqlite_master "
@@ -79,7 +79,7 @@ class SqliteMigrationRunnerTest {
     }
 
     @Test
-    void upgradesAnExistingV7DatabaseToV8WithoutChangingHistory() throws Exception {
+    void upgradesAnExistingV7DatabaseToV9WithoutChangingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -88,8 +88,10 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(8);
+                    .isEqualTo(9);
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM workflow_run"))
+                    .isZero();
+            assertThat(queryLong(connection, "SELECT COUNT(*) FROM workflow_subgraph_instance"))
                     .isZero();
         }
     }
