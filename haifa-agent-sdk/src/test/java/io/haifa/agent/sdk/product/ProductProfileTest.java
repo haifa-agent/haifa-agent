@@ -88,6 +88,7 @@ class ProductProfileTest {
         assertThat(enterprise.requirement(ProductCapabilities.EXECUTION).mode()).isEqualTo(ProductCapabilityMode.NONE);
         assertThat(enterprise.requirement(ProductCapabilities.SHELL).mode()).isEqualTo(ProductCapabilityMode.NONE);
         assertThat(enterprise.requirement(terminal).mode()).isEqualTo(ProductCapabilityMode.NONE);
+        assertThat(enterprise.requirement(ProductCapabilities.GRAPH).mode()).isEqualTo(ProductCapabilityMode.NONE);
         assertThat(enterprise.allowedTools()).doesNotContain("execution.run", "execution_run", "shell", "terminal");
     }
 

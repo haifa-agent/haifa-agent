@@ -64,6 +64,8 @@
 | [`haifa-agent-kernel/haifa-agent-core/`](haifa-agent-kernel/haifa-agent-core/README.md) | 稳定 Agent 领域模型与 Run 状态机 | 纯 Java；状态变化必须经过命名领域行为 |
 | [`haifa-agent-kernel/haifa-agent-runtime-api/`](haifa-agent-kernel/haifa-agent-runtime-api/README.md) | Runtime 启动、查询、恢复、命令与交互契约 | 同步提交、异步执行；不依赖具体实现或 Provider |
 | [`haifa-agent-kernel/haifa-agent-runtime-core/`](haifa-agent-kernel/haifa-agent-runtime-core/README.md) | AgentLoop、Attempt、工具/完成管线、Checkpoint 与内存存储 | 只协调 Core 行为，不复制或绕过状态机 |
+| [`haifa-agent-orchestration/haifa-agent-orchestration-api/`](haifa-agent-orchestration/haifa-agent-orchestration-api/README.md) | Incubating Workflow Definition、Run、State、Wait/Resume 与事件契约 | 纯 Java；不暴露 Provider、框架、Runtime Core、Store 或产品类型 |
+| [`haifa-agent-orchestration/haifa-agent-orchestration-core/`](haifa-agent-orchestration/haifa-agent-orchestration-core/README.md) | Definition 编译、确定状态合并与进程内参考执行 | 不复制 AgentRun 状态机；不承载 Provider、Store 或产品流程 |
 | [`haifa-agent-capabilities/haifa-agent-model-api/`](haifa-agent-capabilities/haifa-agent-model-api/README.md) | Provider-neutral 模型契约 | 不依赖 Jackson、HTTP、Spring 或具体 Provider SDK |
 | [`haifa-agent-capabilities/haifa-agent-model-core/`](haifa-agent-capabilities/haifa-agent-model-core/README.md) | 模型目录、选择、访问策略与健康状态 | 选择必须确定；首版无隐式 fallback/轮询 |
 | [`haifa-agent-integrations/haifa-agent-model-openai-compatible/`](haifa-agent-integrations/haifa-agent-model-openai-compatible/README.md) | OpenAI Chat Completions 兼容适配及 DeepSeek 默认配置 | Provider 细节留在适配层；首版强制关闭 thinking |
@@ -81,6 +83,7 @@
 
 ```text
 common <- core <- runtime-api <- runtime-core -> model-api
+          └── orchestration-api <- orchestration-core -> runtime-api
                   model-api <- model-core
                   model-api <- model-openai-compatible
    ^

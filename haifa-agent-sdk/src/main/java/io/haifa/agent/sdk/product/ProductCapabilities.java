@@ -18,6 +18,8 @@ public final class ProductCapabilities {
     public static final ProductCapabilityId GIT = new ProductCapabilityId("git");
     public static final ProductCapabilityId SHELL = new ProductCapabilityId("shell");
     public static final ProductCapabilityId EXECUTION = new ProductCapabilityId("execution");
+    /** Optional workflow graph orchestration; existing product profiles do not require it. */
+    public static final ProductCapabilityId GRAPH = new ProductCapabilityId("graph");
 
     private ProductCapabilities() {}
 }
