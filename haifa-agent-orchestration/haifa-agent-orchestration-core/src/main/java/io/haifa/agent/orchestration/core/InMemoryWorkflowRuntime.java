@@ -20,6 +20,7 @@ import io.haifa.agent.orchestration.api.WorkflowNodeAttemptStatus;
 import io.haifa.agent.orchestration.api.WorkflowNodeDefinition;
 import io.haifa.agent.orchestration.api.WorkflowNodeId;
 import io.haifa.agent.orchestration.api.WorkflowNodeType;
+import io.haifa.agent.orchestration.api.WorkflowParentLink;
 import io.haifa.agent.orchestration.api.WorkflowResumeRequest;
 import io.haifa.agent.orchestration.api.WorkflowRunId;
 import io.haifa.agent.orchestration.api.WorkflowRunSnapshot;
@@ -28,6 +29,9 @@ import io.haifa.agent.orchestration.api.WorkflowStartRequest;
 import io.haifa.agent.orchestration.api.WorkflowState;
 import io.haifa.agent.orchestration.api.WorkflowStateDelta;
 import io.haifa.agent.orchestration.api.WorkflowStatus;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphBinding;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphLink;
+import io.haifa.agent.orchestration.api.WorkflowTimeoutRequest;
 import io.haifa.agent.orchestration.api.WorkflowWait;
 import io.haifa.agent.orchestration.api.WorkflowWaitId;
 import io.haifa.agent.orchestration.core.DeterministicStateMerger.BranchDelta;
@@ -70,15 +74,26 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
         Objects.requireNonNull(definitions, "definitions must not be null");
         this.definitions = new HashMap<>();
         definitions.forEach(definition -> {
-            if (this.definitions.put(definition.reference(), definition) != null) {
-                throw new IllegalArgumentException("duplicate compiled workflow definition");
-            }
+            register(definition);
         });
         this.actions = Objects.requireNonNull(actions, "actions must not be null");
         this.agents = Objects.requireNonNull(agents, "agents must not be null");
         this.conditions = Objects.requireNonNull(conditions, "conditions must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.timeProvider = Objects.requireNonNull(timeProvider, "timeProvider must not be null");
+    }
+
+    private void register(CompiledWorkflowDefinition definition) {
+        CompiledWorkflowDefinition prior = definitions.putIfAbsent(definition.reference(), definition);
+        if (prior != null && !prior.definition().equals(definition.definition())) {
+            throw new IllegalArgumentException("duplicate compiled workflow definition");
+        }
+        definition
+                .subgraphDefinitions()
+                .forEach((reference, child) -> definitions.putIfAbsent(
+                        reference,
+                        new CompiledWorkflowDefinition(
+                                reference, child, child.requiredCapabilities(), definition.subgraphDefinitions())));
     }
 
     @Override
@@ -155,6 +170,12 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
                     "resume",
                     "wait, revision, or signal does not match the active interruption");
         }
+        if (run.activeSubgraph.isPresent()) {
+            resumeSubgraph(run, request);
+            WorkflowRunSnapshot result = snapshot(run);
+            commandResults.put(commandKey, new CommandRecord(fingerprint, result));
+            return result;
+        }
         run.consumedSignals.put(request.signalId().value(), request.idempotencyKey());
         run.state = run.state.apply(request.delta());
         run.status = WorkflowStatus.RUNNING;
@@ -179,10 +200,28 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
         }
         MutableRun run = requireRun(request.runId());
         if (!run.status.terminal()) {
+            run.activeSubgraph.map(link -> runs.get(link.runId())).ifPresent(this::cancelTree);
+            run.activeSubgraph = Optional.empty();
+            terminateActiveAttempt(run, WorkflowErrorCode.TERMINAL_RUN);
             run.status = WorkflowStatus.CANCELLED;
+            run.wait = Optional.empty();
+            run.checkpoint = Optional.empty();
             run.revision++;
             event(run, WorkflowEventType.CANCELLED, Optional.of(run.currentNode), Map.of());
         }
+        WorkflowRunSnapshot result = snapshot(run);
+        commandResults.put(commandKey, new CommandRecord(request.runId().value(), result));
+        return result;
+    }
+
+    @Override
+    public synchronized WorkflowRunSnapshot timeout(WorkflowTimeoutRequest request) {
+        Objects.requireNonNull(request, "request must not be null");
+        String commandKey = "timeout|" + request.runId().value() + '|' + request.idempotencyKey();
+        CommandRecord prior = commandResults.get(commandKey);
+        if (prior != null) return prior.result();
+        MutableRun run = requireRun(request.runId());
+        timeoutTree(run);
         WorkflowRunSnapshot result = snapshot(run);
         commandResults.put(commandKey, new CommandRecord(request.runId().value(), result));
         return result;
@@ -228,14 +267,220 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
                     run.currentNode = onlySuccessor(run, node.id()).target();
                     continue;
                 }
+                if (node.type() == WorkflowNodeType.SUBGRAPH) {
+                    executeSubgraph(run, node);
+                    continue;
+                }
                 executeNode(run, node);
                 run.currentNode = selectSuccessor(run, node.id()).target();
             }
         } catch (WorkflowException exception) {
-            fail(run, exception.code(), exception.operation());
+            if (!run.status.terminal()) fail(run, exception.code(), exception.operation());
         } catch (RuntimeException exception) {
-            fail(run, WorkflowErrorCode.NODE_EXECUTION_FAILED, "execute");
+            if (!run.status.terminal()) fail(run, WorkflowErrorCode.NODE_EXECUTION_FAILED, "execute");
         }
+    }
+
+    private void executeSubgraph(MutableRun parent, WorkflowNodeDefinition node) {
+        Instant started = now();
+        parent.attempts.add(new WorkflowNodeAttempt(
+                node.id(),
+                parent.visits.get(node.id()),
+                WorkflowNodeAttemptStatus.RUNNING,
+                Optional.empty(),
+                Optional.empty(),
+                started,
+                Optional.empty()));
+        WorkflowSubgraphBinding binding = node.subgraphBinding().orElseThrow();
+        CompiledWorkflowDefinition childDefinition = definitions.get(binding.definition());
+        if (childDefinition == null) {
+            throw error(WorkflowErrorCode.DEFINITION_NOT_FOUND, "subgraph", "child definition was not registered");
+        }
+        WorkflowRunId childId = new WorkflowRunId(identifiers.nextValue());
+        WorkflowState childState = mapInputs(parent.state, childDefinition, binding);
+        MutableRun child = new MutableRun(
+                childId,
+                childDefinition,
+                childState,
+                childDefinition.definition().entryNode(),
+                started);
+        child.parent = Optional.of(new WorkflowParentLink(parent.id, node.id(), parent.visits.get(node.id())));
+        WorkflowSubgraphLink link =
+                new WorkflowSubgraphLink(childId, binding.definition(), node.id(), parent.visits.get(node.id()));
+        parent.activeSubgraph = Optional.of(link);
+        runs.put(childId, child);
+        event(
+                parent,
+                WorkflowEventType.SUBGRAPH_STARTED,
+                Optional.of(node.id()),
+                Map.of(
+                        "childRunId",
+                        childId.value(),
+                        "definitionDigest",
+                        binding.definition().digest().value()));
+        event(child, WorkflowEventType.RUN_STARTED, Optional.empty(), Map.of("parentRunId", parent.id.value()));
+        executeUntilBoundary(child);
+        synchronizeSubgraph(parent, child, node, binding);
+    }
+
+    private void resumeSubgraph(MutableRun parent, WorkflowResumeRequest request) {
+        WorkflowSubgraphLink link = parent.activeSubgraph.orElseThrow();
+        MutableRun child = requireRun(link.runId());
+        WorkflowWait childWait = child.wait.orElseThrow(
+                () -> error(WorkflowErrorCode.INVALID_RESUME, "resume", "child workflow run is not waiting"));
+        parent.consumedSignals.put(request.signalId().value(), request.idempotencyKey());
+        child.consumedSignals.put(request.signalId().value(), request.idempotencyKey());
+        child.state = child.state.apply(request.delta());
+        child.status = WorkflowStatus.RUNNING;
+        child.wait = Optional.empty();
+        child.checkpoint = Optional.empty();
+        child.currentNode = onlySuccessor(child, childWait.nodeId()).target();
+        child.revision++;
+        event(child, WorkflowEventType.RESUMED, Optional.of(childWait.nodeId()), Map.of());
+        parent.status = WorkflowStatus.RUNNING;
+        parent.wait = Optional.empty();
+        parent.checkpoint = Optional.empty();
+        parent.revision++;
+        event(
+                parent,
+                WorkflowEventType.RESUMED,
+                Optional.of(link.parentNodeId()),
+                Map.of("childRunId", child.id.value()));
+        executeUntilBoundary(child);
+        WorkflowNodeDefinition node = node(parent, link.parentNodeId());
+        synchronizeSubgraph(parent, child, node, node.subgraphBinding().orElseThrow());
+        if (parent.status == WorkflowStatus.RUNNING) {
+            executeUntilBoundary(parent);
+        }
+    }
+
+    private void synchronizeSubgraph(
+            MutableRun parent, MutableRun child, WorkflowNodeDefinition node, WorkflowSubgraphBinding binding) {
+        if (child.status == WorkflowStatus.WAITING) {
+            WorkflowWait childWait = child.wait.orElseThrow();
+            Instant at = now();
+            parent.status = WorkflowStatus.WAITING;
+            parent.revision++;
+            parent.wait = Optional.of(
+                    new WorkflowWait(new WorkflowWaitId(identifiers.nextValue()), node.id(), parent.revision, at));
+            parent.checkpoint = Optional.of(new WorkflowCheckpoint(
+                    new WorkflowCheckpointId(identifiers.nextValue()),
+                    parent.id,
+                    parent.revision,
+                    node.id(),
+                    parent.state,
+                    at));
+            event(
+                    parent,
+                    WorkflowEventType.WAITING,
+                    Optional.of(node.id()),
+                    Map.of(
+                            "childRunId",
+                            child.id.value(),
+                            "childNodeId",
+                            childWait.nodeId().value()));
+            return;
+        }
+        WorkflowNodeAttempt active = parent.attempts.getLast();
+        if (child.status == WorkflowStatus.COMPLETED) {
+            parent.state = parent.state.apply(mapOutputs(child.state, binding));
+            parent.attempts.set(
+                    parent.attempts.size() - 1,
+                    new WorkflowNodeAttempt(
+                            active.nodeId(),
+                            active.attempt(),
+                            WorkflowNodeAttemptStatus.COMPLETED,
+                            Optional.empty(),
+                            Optional.empty(),
+                            active.startedAt(),
+                            Optional.of(now())));
+            parent.activeSubgraph = Optional.empty();
+            parent.currentNode = selectSuccessor(parent, node.id()).target();
+            parent.revision++;
+            event(
+                    parent,
+                    WorkflowEventType.SUBGRAPH_COMPLETED,
+                    Optional.of(node.id()),
+                    Map.of("childRunId", child.id.value()));
+            return;
+        }
+        WorkflowErrorCode code =
+                child.failure.map(WorkflowFailure::code).orElse(WorkflowErrorCode.NODE_EXECUTION_FAILED);
+        parent.attempts.set(
+                parent.attempts.size() - 1,
+                new WorkflowNodeAttempt(
+                        active.nodeId(),
+                        active.attempt(),
+                        WorkflowNodeAttemptStatus.FAILED,
+                        Optional.empty(),
+                        Optional.of(code),
+                        active.startedAt(),
+                        Optional.of(now())));
+        parent.activeSubgraph = Optional.empty();
+        fail(parent, code, "subgraph");
+    }
+
+    private static WorkflowState mapInputs(
+            WorkflowState parent, CompiledWorkflowDefinition child, WorkflowSubgraphBinding binding) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        binding.stateMapping().inputs().forEach((parentKey, childKey) -> {
+            if (parent.values().containsKey(parentKey)) {
+                values.put(childKey, parent.values().get(parentKey));
+            }
+        });
+        return new WorkflowState(child.definition().stateSchema(), values);
+    }
+
+    private static WorkflowStateDelta mapOutputs(WorkflowState child, WorkflowSubgraphBinding binding) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        binding.stateMapping().outputs().forEach((childKey, parentKey) -> {
+            if (child.values().containsKey(childKey)) {
+                values.put(parentKey, child.values().get(childKey));
+            }
+        });
+        return new WorkflowStateDelta(values);
+    }
+
+    private void cancelTree(MutableRun run) {
+        run.activeSubgraph.map(link -> runs.get(link.runId())).ifPresent(this::cancelTree);
+        run.activeSubgraph = Optional.empty();
+        if (!run.status.terminal()) {
+            terminateActiveAttempt(run, WorkflowErrorCode.TERMINAL_RUN);
+            run.status = WorkflowStatus.CANCELLED;
+            run.wait = Optional.empty();
+            run.checkpoint = Optional.empty();
+            run.revision++;
+            event(run, WorkflowEventType.CANCELLED, Optional.of(run.currentNode), Map.of());
+        }
+    }
+
+    private void timeoutTree(MutableRun run) {
+        run.activeSubgraph.map(link -> runs.get(link.runId())).ifPresent(this::timeoutTree);
+        run.activeSubgraph = Optional.empty();
+        if (!run.status.terminal()) {
+            terminateActiveAttempt(run, WorkflowErrorCode.TIMED_OUT);
+            run.status = WorkflowStatus.TIMED_OUT;
+            run.wait = Optional.empty();
+            run.checkpoint = Optional.empty();
+            run.revision++;
+            event(run, WorkflowEventType.TIMED_OUT, Optional.of(run.currentNode), Map.of());
+        }
+    }
+
+    private void terminateActiveAttempt(MutableRun run, WorkflowErrorCode code) {
+        if (run.attempts.isEmpty()) return;
+        WorkflowNodeAttempt active = run.attempts.getLast();
+        if (active.status() != WorkflowNodeAttemptStatus.RUNNING) return;
+        run.attempts.set(
+                run.attempts.size() - 1,
+                new WorkflowNodeAttempt(
+                        active.nodeId(),
+                        active.attempt(),
+                        WorkflowNodeAttemptStatus.FAILED,
+                        active.agentRunId(),
+                        Optional.of(code),
+                        active.startedAt(),
+                        Optional.of(now())));
     }
 
     private void executeNode(MutableRun run, WorkflowNodeDefinition node) {
@@ -295,11 +540,12 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
                 while (node(run, cursor).type() != WorkflowNodeType.JOIN_ALL) {
                     WorkflowNodeDefinition branchNode = node(run, cursor);
                     if (branchNode.type() != WorkflowNodeType.ACTION
-                            && branchNode.type() != WorkflowNodeType.AGENT_RUN) {
+                            && branchNode.type() != WorkflowNodeType.AGENT_RUN
+                            && branchNode.type() != WorkflowNodeType.SUBGRAPH) {
                         throw error(
                                 WorkflowErrorCode.INVALID_DEFINITION,
                                 "execute",
-                                "fixed branch may only contain action or agent nodes before JOIN_ALL");
+                                "fixed branch may only contain action, agent, or subgraph nodes before JOIN_ALL");
                     }
                     int visit = run.visits.merge(branchNode.id(), 1, Integer::sum);
                     if (visit > run.compiled.definition().limits().maximumIterationsPerNode()) {
@@ -308,8 +554,23 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
                                 "execute",
                                 "maximum branch node iteration count exceeded");
                     }
-                    executeNode(run, branchNode);
-                    cursor = onlySuccessor(run, cursor).target();
+                    if (branchNode.type() == WorkflowNodeType.SUBGRAPH) {
+                        executeSubgraph(run, branchNode);
+                        if (run.status == WorkflowStatus.WAITING) {
+                            throw error(
+                                    WorkflowErrorCode.UNSUPPORTED_CAPABILITY,
+                                    "execute",
+                                    "interrupting subgraph inside fixed parallel branch is not supported");
+                        }
+                        if (run.status == WorkflowStatus.FAILED) {
+                            WorkflowFailure failure = run.failure.orElseThrow();
+                            throw error(failure.code(), failure.operation(), "parallel subgraph failed");
+                        }
+                        cursor = run.currentNode;
+                    } else {
+                        executeNode(run, branchNode);
+                        cursor = onlySuccessor(run, cursor).target();
+                    }
                 }
                 if (commonJoin != null && !commonJoin.equals(cursor)) {
                     throw error(
@@ -420,6 +681,8 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
                 run.checkpoint,
                 run.failure,
                 run.attempts,
+                run.parent,
+                run.activeSubgraph,
                 run.createdAt,
                 run.updatedAt);
     }
@@ -460,6 +723,8 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
         private Optional<WorkflowWait> wait = Optional.empty();
         private Optional<WorkflowCheckpoint> checkpoint = Optional.empty();
         private Optional<WorkflowFailure> failure = Optional.empty();
+        private Optional<WorkflowParentLink> parent = Optional.empty();
+        private Optional<WorkflowSubgraphLink> activeSubgraph = Optional.empty();
         private Instant updatedAt;
 
         private MutableRun(

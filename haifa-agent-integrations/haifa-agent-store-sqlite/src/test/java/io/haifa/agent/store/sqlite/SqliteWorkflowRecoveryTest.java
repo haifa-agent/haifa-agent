@@ -26,8 +26,11 @@ import io.haifa.agent.orchestration.api.WorkflowSignalId;
 import io.haifa.agent.orchestration.api.WorkflowStartRequest;
 import io.haifa.agent.orchestration.api.WorkflowState;
 import io.haifa.agent.orchestration.api.WorkflowStateDelta;
+import io.haifa.agent.orchestration.api.WorkflowStateMapping;
 import io.haifa.agent.orchestration.api.WorkflowStateSchema;
 import io.haifa.agent.orchestration.api.WorkflowStatus;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphBinding;
+import io.haifa.agent.orchestration.api.WorkflowTimeoutRequest;
 import io.haifa.agent.orchestration.core.DefaultWorkflowDefinitionCompiler;
 import io.haifa.agent.orchestration.core.DurableWorkflowRuntime;
 import io.haifa.agent.orchestration.core.spi.DurableWorkflowAgentGateway;
@@ -311,6 +314,24 @@ class SqliteWorkflowRecoveryTest {
     }
 
     @Test
+    void persistsAndMergesStaticSubgraphsInsideFixedBranches() {
+        CompiledWorkflowDefinition definition = subgraphForkDefinition();
+        WorkflowActionGateway increment = (runId, node, state) ->
+                new WorkflowStateDelta(Map.of("count", ((Integer) state.values().get("count")) + 1));
+        try (SqliteStoreFoundation foundation = SqliteTestSupport.foundation(directory)) {
+            WorkflowRunSnapshot result = runtime(
+                            foundation, definition, increment, WorkflowFailureInjector.NONE, "parallel-subgraph")
+                    .start(start(definition, Map.of("left", 1, "right", 5), "parallel-subgraphs"));
+
+            assertThat(result.status()).isEqualTo(WorkflowStatus.COMPLETED);
+            assertThat(result.state().values()).containsEntry("left", 2).containsEntry("right", 6);
+            assertThat(result.attempts())
+                    .extracting(attempt -> attempt.nodeId().value())
+                    .containsExactly("left-sub", "right-sub");
+        }
+    }
+
+    @Test
     void preservesCheckpointAndConsumesResumeExactlyOnceAcrossCrashes() {
         CompiledWorkflowDefinition definition = waitDefinition();
         WorkflowRunSnapshot waiting;
@@ -493,6 +514,173 @@ class SqliteWorkflowRecoveryTest {
         }
     }
 
+    @Test
+    void recoversChildCreatedBeforeParentLinkWithoutReplayingTheChild() {
+        CompiledWorkflowDefinition definition = subgraphDefinition(false);
+        AtomicInteger calls = new AtomicInteger();
+        WorkflowActionGateway action = (runId, node, state) -> {
+            calls.incrementAndGet();
+            return new WorkflowStateDelta(Map.of("count", 6));
+        };
+        WorkflowRunSnapshot parent;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            assertThatThrownBy(() -> runtime(
+                                    first,
+                                    definition,
+                                    action,
+                                    once(WorkflowFailurePoint.AFTER_SUBGRAPH_CREATED),
+                                    "first")
+                            .start(start(definition, Map.of("count", 1), "subgraph-crash")))
+                    .isInstanceOf(SimulatedCrash.class);
+            parent = first.workflows().recoverable().stream()
+                    .map(run -> run.snapshot())
+                    .filter(snapshot -> snapshot.parent().isEmpty())
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(parent.activeSubgraph()).isPresent();
+            assertThat(calls).hasValue(0);
+        }
+
+        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+            WorkflowRunSnapshot recovered = runtime(second, definition, action, WorkflowFailureInjector.NONE, "second")
+                    .recover(parent.id());
+            assertThat(recovered.status()).isEqualTo(WorkflowStatus.COMPLETED);
+            assertThat(recovered.state().values()).containsEntry("count", 6);
+            assertThat(calls).hasValue(1);
+        }
+    }
+
+    @Test
+    void recoversCompletedChildBeforeParentStateMergeWithoutReplay() {
+        CompiledWorkflowDefinition definition = subgraphDefinition(false);
+        AtomicInteger calls = new AtomicInteger();
+        WorkflowActionGateway action = (runId, node, state) -> {
+            calls.incrementAndGet();
+            return new WorkflowStateDelta(Map.of("count", 8));
+        };
+        WorkflowRunSnapshot parent;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            assertThatThrownBy(() -> runtime(
+                                    first,
+                                    definition,
+                                    action,
+                                    once(WorkflowFailurePoint.AFTER_SUBGRAPH_CHILD_COMPLETED),
+                                    "first")
+                            .start(start(definition, Map.of("count", 1), "subgraph-child-completed")))
+                    .isInstanceOf(SimulatedCrash.class);
+            parent = first.workflows().recoverable().stream()
+                    .map(run -> run.snapshot())
+                    .filter(snapshot -> snapshot.parent().isEmpty())
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(calls).hasValue(1);
+        }
+        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+            WorkflowRunSnapshot recovered = runtime(second, definition, action, WorkflowFailureInjector.NONE, "second")
+                    .recover(parent.id());
+            assertThat(recovered.status()).isEqualTo(WorkflowStatus.COMPLETED);
+            assertThat(recovered.state().values()).containsEntry("count", 8);
+            assertThat(calls).hasValue(1);
+        }
+    }
+
+    @Test
+    void resumesChildWaitAcrossRestartAndPropagatesParentCancellation() {
+        CompiledWorkflowDefinition definition = subgraphDefinition(true);
+        WorkflowRunSnapshot waiting;
+        io.haifa.agent.orchestration.api.WorkflowRunId childId;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            waiting = runtime(first, definition, noAction(), WorkflowFailureInjector.NONE, "first")
+                    .start(start(definition, Map.of("count", 1), "subgraph-wait"));
+            assertThat(waiting.status()).isEqualTo(WorkflowStatus.WAITING);
+            childId = waiting.activeSubgraph().orElseThrow().runId();
+            assertThat(first.workflows().find(childId).orElseThrow().snapshot().parent())
+                    .isPresent();
+        }
+
+        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+            DurableWorkflowRuntime runtime =
+                    runtime(second, definition, noAction(), WorkflowFailureInjector.NONE, "second");
+            WorkflowRunSnapshot completed = runtime.resume(new WorkflowResumeRequest(
+                    waiting.id(),
+                    waiting.activeWait().orElseThrow().id(),
+                    waiting.revision(),
+                    new WorkflowSignalId("child-signal"),
+                    "child-resume",
+                    new WorkflowStateDelta(Map.of("choice", true))));
+            assertThat(completed.status()).isEqualTo(WorkflowStatus.COMPLETED);
+            assertThat(runtime.find(childId).orElseThrow().status()).isEqualTo(WorkflowStatus.COMPLETED);
+        }
+
+        Path cancelDirectory = directory.resolve("cancel");
+        try {
+            java.nio.file.Files.createDirectory(cancelDirectory);
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+        try (SqliteStoreFoundation third = SqliteTestSupport.foundation(cancelDirectory)) {
+            DurableWorkflowRuntime runtime =
+                    runtime(third, definition, noAction(), WorkflowFailureInjector.NONE, "third");
+            WorkflowRunSnapshot parent = runtime.start(start(definition, Map.of("count", 1), "cancel-parent"));
+            var child = parent.activeSubgraph().orElseThrow().runId();
+            runtime.cancel(new io.haifa.agent.orchestration.api.WorkflowCancelRequest(parent.id(), "cancel-subgraph"));
+            assertThat(runtime.find(child).orElseThrow().status()).isEqualTo(WorkflowStatus.CANCELLED);
+        }
+
+        Path timeoutDirectory = directory.resolve("timeout");
+        try {
+            java.nio.file.Files.createDirectory(timeoutDirectory);
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+        try (SqliteStoreFoundation fourth = SqliteTestSupport.foundation(timeoutDirectory)) {
+            DurableWorkflowRuntime runtime =
+                    runtime(fourth, definition, noAction(), WorkflowFailureInjector.NONE, "fourth");
+            WorkflowRunSnapshot parent = runtime.start(start(definition, Map.of("count", 1), "timeout-parent"));
+            var child = parent.activeSubgraph().orElseThrow().runId();
+            WorkflowRunSnapshot timedOut = runtime.timeout(new WorkflowTimeoutRequest(parent.id(), "timeout-subgraph"));
+            assertThat(timedOut.status()).isEqualTo(WorkflowStatus.TIMED_OUT);
+            assertThat(runtime.timeout(new WorkflowTimeoutRequest(parent.id(), "timeout-subgraph")))
+                    .isEqualTo(timedOut);
+            assertThat(runtime.find(child).orElseThrow().status()).isEqualTo(WorkflowStatus.TIMED_OUT);
+        }
+
+        Path resumeCrashDirectory = directory.resolve("resume-crash");
+        try {
+            java.nio.file.Files.createDirectory(resumeCrashDirectory);
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+        WorkflowRunSnapshot crashWaiting;
+        WorkflowResumeRequest crashResume;
+        try (SqliteStoreFoundation fifth = SqliteTestSupport.foundation(resumeCrashDirectory)) {
+            crashWaiting = runtime(fifth, definition, noAction(), WorkflowFailureInjector.NONE, "fifth")
+                    .start(start(definition, Map.of("count", 1), "resume-crash-parent"));
+            crashResume = new WorkflowResumeRequest(
+                    crashWaiting.id(),
+                    crashWaiting.activeWait().orElseThrow().id(),
+                    crashWaiting.revision(),
+                    new WorkflowSignalId("resume-crash-child-signal"),
+                    "resume-crash-child",
+                    WorkflowStateDelta.empty());
+            assertThatThrownBy(() -> runtime(
+                                    fifth,
+                                    definition,
+                                    noAction(),
+                                    once(WorkflowFailurePoint.AFTER_RESUME_CONSUMED),
+                                    "fifth-resume")
+                            .resume(crashResume))
+                    .isInstanceOf(SimulatedCrash.class);
+        }
+        try (SqliteStoreFoundation sixth = SqliteTestSupport.foundation(resumeCrashDirectory)) {
+            DurableWorkflowRuntime runtime =
+                    runtime(sixth, definition, noAction(), WorkflowFailureInjector.NONE, "sixth");
+            WorkflowRunSnapshot recovered = runtime.recover(crashWaiting.id());
+            assertThat(recovered.status()).isEqualTo(WorkflowStatus.COMPLETED);
+            assertThat(runtime.resume(crashResume)).isEqualTo(recovered);
+        }
+    }
+
     private DurableWorkflowRuntime runtime(
             SqliteStoreFoundation foundation,
             CompiledWorkflowDefinition definition,
@@ -626,6 +814,86 @@ class SqliteWorkflowRecoveryTest {
                         WorkflowEdge.unconditional("left", "join"),
                         WorkflowEdge.unconditional("join", "end")),
                 Set.of(WorkflowCapability.FIXED_ALL_OF));
+    }
+
+    private static CompiledWorkflowDefinition subgraphDefinition(boolean waiting) {
+        WorkflowDefinition child = new WorkflowDefinition(
+                new WorkflowDefinitionId(waiting ? "durable-child-wait" : "durable-child"),
+                new WorkflowDefinitionVersion(1),
+                SCHEMA,
+                new WorkflowNodeId(waiting ? "wait" : "action"),
+                waiting
+                        ? List.of(
+                                WorkflowNodeDefinition.control("wait", WorkflowNodeType.WAIT),
+                                WorkflowNodeDefinition.action("after", "after"),
+                                terminal())
+                        : List.of(WorkflowNodeDefinition.action("action", "child-action"), terminal()),
+                waiting
+                        ? List.of(
+                                WorkflowEdge.unconditional("wait", "after"), WorkflowEdge.unconditional("after", "end"))
+                        : List.of(WorkflowEdge.unconditional("action", "end")),
+                WorkflowLimits.defaults(),
+                waiting ? Set.of(WorkflowCapability.INTERRUPTION) : Set.of(WorkflowCapability.SEQUENCE));
+        DefaultWorkflowDefinitionCompiler compiler = new DefaultWorkflowDefinitionCompiler();
+        var childRef = compiler.compile(child).reference();
+        WorkflowDefinition parent = new WorkflowDefinition(
+                new WorkflowDefinitionId(waiting ? "durable-parent-wait" : "durable-parent"),
+                new WorkflowDefinitionVersion(1),
+                SCHEMA,
+                new WorkflowNodeId("sub"),
+                List.of(
+                        WorkflowNodeDefinition.subgraph(
+                                "sub",
+                                new WorkflowSubgraphBinding(
+                                        childRef,
+                                        new WorkflowStateMapping(Map.of("count", "count"), Map.of("count", "count")))),
+                        terminal()),
+                List.of(WorkflowEdge.unconditional("sub", "end")),
+                WorkflowLimits.defaults(),
+                Set.of(WorkflowCapability.SUBGRAPH));
+        return compiler.compile(parent, List.of(child));
+    }
+
+    private static CompiledWorkflowDefinition subgraphForkDefinition() {
+        WorkflowDefinition child = new WorkflowDefinition(
+                new WorkflowDefinitionId("durable-branch-child"),
+                new WorkflowDefinitionVersion(1),
+                SCHEMA,
+                new WorkflowNodeId("action"),
+                List.of(WorkflowNodeDefinition.action("action", "increment"), terminal()),
+                List.of(WorkflowEdge.unconditional("action", "end")),
+                WorkflowLimits.defaults(),
+                Set.of(WorkflowCapability.SEQUENCE));
+        DefaultWorkflowDefinitionCompiler compiler = new DefaultWorkflowDefinitionCompiler();
+        var childRef = compiler.compile(child).reference();
+        WorkflowDefinition parent = new WorkflowDefinition(
+                new WorkflowDefinitionId("durable-branch-parent"),
+                new WorkflowDefinitionVersion(1),
+                SCHEMA,
+                new WorkflowNodeId("fork"),
+                List.of(
+                        WorkflowNodeDefinition.control("fork", WorkflowNodeType.FORK_ALL),
+                        WorkflowNodeDefinition.subgraph(
+                                "left-sub",
+                                new WorkflowSubgraphBinding(
+                                        childRef,
+                                        new WorkflowStateMapping(Map.of("left", "count"), Map.of("count", "left")))),
+                        WorkflowNodeDefinition.subgraph(
+                                "right-sub",
+                                new WorkflowSubgraphBinding(
+                                        childRef,
+                                        new WorkflowStateMapping(Map.of("right", "count"), Map.of("count", "right")))),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ALL),
+                        terminal()),
+                List.of(
+                        WorkflowEdge.branch("fork", "right-sub", 2),
+                        WorkflowEdge.branch("fork", "left-sub", 1),
+                        WorkflowEdge.unconditional("left-sub", "join"),
+                        WorkflowEdge.unconditional("right-sub", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                WorkflowLimits.defaults(),
+                Set.of(WorkflowCapability.FIXED_ALL_OF, WorkflowCapability.SUBGRAPH));
+        return compiler.compile(parent, List.of(child));
     }
 
     private static CompiledWorkflowDefinition compile(

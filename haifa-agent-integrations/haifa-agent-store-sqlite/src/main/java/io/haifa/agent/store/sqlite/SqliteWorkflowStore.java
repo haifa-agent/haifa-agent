@@ -15,10 +15,12 @@ import io.haifa.agent.orchestration.api.WorkflowFailure;
 import io.haifa.agent.orchestration.api.WorkflowNodeAttempt;
 import io.haifa.agent.orchestration.api.WorkflowNodeAttemptStatus;
 import io.haifa.agent.orchestration.api.WorkflowNodeId;
+import io.haifa.agent.orchestration.api.WorkflowParentLink;
 import io.haifa.agent.orchestration.api.WorkflowRunId;
 import io.haifa.agent.orchestration.api.WorkflowRunSnapshot;
 import io.haifa.agent.orchestration.api.WorkflowStateDelta;
 import io.haifa.agent.orchestration.api.WorkflowStatus;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphLink;
 import io.haifa.agent.orchestration.api.WorkflowWait;
 import io.haifa.agent.orchestration.api.WorkflowWaitId;
 import io.haifa.agent.orchestration.core.spi.StoredWorkflowCommand;
@@ -36,7 +38,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-/** SQLite V8 authoritative Workflow store. No Graph-provider object is serialized. */
+/** SQLite V8/V9 authoritative Workflow store. No Graph-provider object is serialized. */
 public final class SqliteWorkflowStore implements WorkflowStore {
     private final SqliteRuntimeUnitOfWork unitOfWork;
     private final SqliteWorkflowCodec codec;
@@ -102,6 +104,7 @@ public final class SqliteWorkflowStore implements WorkflowStore {
     public void create(StoredWorkflowRun run, StoredWorkflowCommand startCommand, List<WorkflowEvent> events) {
         write(() -> {
             insertRun(run);
+            synchronizeSubgraphRelation(run.snapshot());
             replaceChildren(run);
             appendEvents(events);
             upsertCommand(startCommand);
@@ -117,6 +120,7 @@ public final class SqliteWorkflowStore implements WorkflowStore {
             Optional<StoredWorkflowCommand> command) {
         write(() -> {
             updateRun(expectedStorageVersion, run);
+            synchronizeSubgraphRelation(run.snapshot());
             replaceChildren(run);
             appendEvents(events);
             command.ifPresent(this::upsertCommand);
@@ -220,6 +224,8 @@ public final class SqliteWorkflowStore implements WorkflowStore {
                         checkpoint,
                         failure,
                         attempts,
+                        readParentLink(runId),
+                        readActiveSubgraph(runId),
                         Instant.ofEpochMilli(row.getLong("created_at")),
                         Instant.ofEpochMilli(row.getLong("updated_at")));
                 WorkflowPersistenceBinding binding = new WorkflowPersistenceBinding(
@@ -240,6 +246,93 @@ public final class SqliteWorkflowStore implements WorkflowStore {
             }
         } catch (SQLException exception) {
             throw failure("Unable to read Workflow run", exception);
+        }
+    }
+
+    private Optional<WorkflowParentLink> readParentLink(WorkflowRunId childRunId) throws SQLException {
+        try (PreparedStatement statement = connection()
+                .prepareStatement("SELECT parent_workflow_run_id,parent_node_id,parent_node_attempt "
+                        + "FROM workflow_subgraph_instance WHERE child_workflow_run_id=?")) {
+            statement.setString(1, childRunId.value());
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return Optional.empty();
+                return Optional.of(new WorkflowParentLink(
+                        new WorkflowRunId(row.getString("parent_workflow_run_id")),
+                        new WorkflowNodeId(row.getString("parent_node_id")),
+                        row.getInt("parent_node_attempt")));
+            }
+        }
+    }
+
+    private Optional<WorkflowSubgraphLink> readActiveSubgraph(WorkflowRunId parentRunId) throws SQLException {
+        try (PreparedStatement statement = connection()
+                .prepareStatement("SELECT s.child_workflow_run_id,s.parent_node_id,s.parent_node_attempt,"
+                        + "r.definition_id,r.definition_version,r.definition_digest "
+                        + "FROM workflow_subgraph_instance s JOIN workflow_run r "
+                        + "ON r.workflow_run_id=s.child_workflow_run_id "
+                        + "WHERE s.parent_workflow_run_id=? AND s.active=1")) {
+            statement.setString(1, parentRunId.value());
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return Optional.empty();
+                WorkflowSubgraphLink link = new WorkflowSubgraphLink(
+                        new WorkflowRunId(row.getString("child_workflow_run_id")),
+                        new WorkflowDefinitionRef(
+                                new WorkflowDefinitionId(row.getString("definition_id")),
+                                new WorkflowDefinitionVersion(row.getLong("definition_version")),
+                                new WorkflowDefinitionDigest(row.getString("definition_digest"))),
+                        new WorkflowNodeId(row.getString("parent_node_id")),
+                        row.getInt("parent_node_attempt"));
+                if (row.next()) throw conflict("workflow run has multiple active subgraphs");
+                return Optional.of(link);
+            }
+        }
+    }
+
+    private void synchronizeSubgraphRelation(WorkflowRunSnapshot snapshot) {
+        snapshot.parent().ifPresent(parent -> {
+            try (PreparedStatement statement = connection()
+                    .prepareStatement("INSERT INTO workflow_subgraph_instance(child_workflow_run_id,"
+                            + "parent_workflow_run_id,parent_node_id,parent_node_attempt,active) VALUES(?,?,?,?,1) "
+                            + "ON CONFLICT(child_workflow_run_id) DO UPDATE SET active=workflow_subgraph_instance.active "
+                            + "WHERE parent_workflow_run_id=excluded.parent_workflow_run_id "
+                            + "AND parent_node_id=excluded.parent_node_id "
+                            + "AND parent_node_attempt=excluded.parent_node_attempt")) {
+                statement.setString(1, snapshot.id().value());
+                statement.setString(2, parent.runId().value());
+                statement.setString(3, parent.nodeId().value());
+                statement.setInt(4, parent.nodeAttempt());
+                if (statement.executeUpdate() != 1) {
+                    throw conflict("Workflow subgraph parent relation is immutable");
+                }
+            } catch (SQLException exception) {
+                throw failure("Unable to persist Workflow subgraph parent relation", exception);
+            }
+        });
+
+        boolean keepActive =
+                !snapshot.status().terminal() && snapshot.activeSubgraph().isPresent();
+        try (PreparedStatement clear = connection()
+                .prepareStatement("UPDATE workflow_subgraph_instance SET active=0 WHERE parent_workflow_run_id=?")) {
+            clear.setString(1, snapshot.id().value());
+            clear.executeUpdate();
+        } catch (SQLException exception) {
+            throw failure("Unable to clear Workflow subgraph activity", exception);
+        }
+        if (!keepActive) return;
+        WorkflowSubgraphLink active = snapshot.activeSubgraph().orElseThrow();
+        try (PreparedStatement statement = connection()
+                .prepareStatement("UPDATE workflow_subgraph_instance SET active=1 "
+                        + "WHERE child_workflow_run_id=? AND parent_workflow_run_id=? "
+                        + "AND parent_node_id=? AND parent_node_attempt=?")) {
+            statement.setString(1, active.runId().value());
+            statement.setString(2, snapshot.id().value());
+            statement.setString(3, active.parentNodeId().value());
+            statement.setInt(4, active.parentNodeAttempt());
+            if (statement.executeUpdate() != 1) {
+                throw conflict("active Workflow subgraph relation does not exist");
+            }
+        } catch (SQLException exception) {
+            throw failure("Unable to persist active Workflow subgraph relation", exception);
         }
     }
 

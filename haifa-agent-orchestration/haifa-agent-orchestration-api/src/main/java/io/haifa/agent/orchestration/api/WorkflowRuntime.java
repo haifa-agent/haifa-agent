@@ -12,5 +12,7 @@ public interface WorkflowRuntime {
 
     WorkflowRunSnapshot cancel(WorkflowCancelRequest request);
 
+    WorkflowRunSnapshot timeout(WorkflowTimeoutRequest request);
+
     List<WorkflowEvent> events(WorkflowRunId runId, long afterSequence, int limit);
 }

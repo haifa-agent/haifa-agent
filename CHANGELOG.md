@@ -1,5 +1,8 @@
 # Changelog
 
+- Incubating Workflow/Graph M5 新增固定 Definition、显式 State 映射和独立 child Workflow Run 的受限
+  子图；支持嵌套 Wait/Resume、父取消/超时传播、固定并行分支确定合并，并以 SQLite V9 保存可恢复的父子
+  attempt 关系。动态 fan-out、`ANY_OF`、并行分支内可中断子图和现有产品默认路由继续拒绝。
 - Incubating Workflow/Graph M3 新增 SQLite V8 单机持久恢复：冻结 Definition/Adapter/Codec，使用共享
   Runtime/Workflow UoW、两阶段 Node Attempt、原子 Agent Run 关联、Wait/Resume、固定 `ALL_OF` 游标、
   幂等命令及 Event/Outbox；未知副作用结果不重放，现有产品仍不自动或被动触发 Graph。

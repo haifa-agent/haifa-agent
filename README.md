@@ -298,16 +298,19 @@ Spring Boot Starter 默认创建单例 `HaifaAgent`，自动收集 `JavaTool` Be
   React Web、只读诊断 Admin、持久 Mission 与精简 Deep Research Product Skill；
 - Reactor 末端的 Test Harness、共享 Fixture、Transport TCK、Integration、Live 与 E2E 测试模块。
 
-### Incubating Workflow/Graph M1/M2/M3
+### Incubating Workflow/Graph M1/M2/M3/M5
 
 - 纯 Java `haifa-agent-orchestration-api` 提供冻结 Definition、State Schema、Workflow Run、Wait、
-  Checkpoint、Event、恢复与取消契约；
+  Checkpoint、Event、恢复、取消与超时契约；M5 增加固定子 Definition、显式 State 键映射和父子 Run 关联；
 - `haifa-agent-orchestration-core` 提供内容寻址编译、fail-closed 能力校验、确定状态合并和进程内参考执行器；
 - `haifa-agent-graph-langgraph4j` 以精确固定的 LangGraph4j Core `1.8.24` 提供可选 M2 Adapter，并用同一
   Contract Fixture 验证顺序、条件、有限循环、固定 `ALL_OF`、中断/恢复、取消和事件投影；
 - M3 的 `DurableWorkflowRuntime`、`WorkflowStore` Port 与 SQLite V8 Store 提供 Definition/Adapter/Codec
   冻结校验、节点两阶段提交、固定分支游标、Wait/Resume、幂等命令、单调事件和 Outbox 的跨进程恢复；
-- M1/M2 完全拒绝子图、动态 fan-out 和 `ANY_OF`；Provider State/MemorySaver 不是公共状态或持久事实源；
+- M5 通过 SQLite V9 保存父 Run、父节点 attempt 与 child Workflow Run 的稳定关系，支持静态受限子图、
+  子图内 Wait/Resume、父取消/超时传播、固定并行分支合并和 child-start 崩溃恢复；
+- 动态 fan-out、`ANY_OF`、运行时 Definition 发现和并行分支内可中断子图仍 fail closed；Provider
+  State/MemorySaver 不是公共状态或持久事实源；
 - 该 API 仍标记为 Incubating，尚无产品接入。现有 Coding、
   Personal Assistant、SDK `chat()`/`start()` 均不主动或被动触发 Workflow，默认 Product Profile 的
   Graph Requirement 为 `NONE`。

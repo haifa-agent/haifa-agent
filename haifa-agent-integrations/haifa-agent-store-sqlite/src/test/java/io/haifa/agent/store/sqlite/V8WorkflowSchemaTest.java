@@ -28,14 +28,16 @@ class V8WorkflowSchemaTest {
                             "workflow_checkpoint",
                             "workflow_event",
                             "workflow_outbox",
-                            "workflow_command");
+                            "workflow_command",
+                            "workflow_subgraph_instance");
             assertThat(names(
                             connection, "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE '%workflow%'"))
                     .contains(
                             "idx_workflow_run_recovery",
                             "uq_workflow_active_attempt",
                             "idx_workflow_attempt_agent_run",
-                            "idx_workflow_outbox_pending");
+                            "idx_workflow_outbox_pending",
+                            "idx_workflow_subgraph_parent");
             assertThat(foreignKeys(connection, "workflow_node_attempt"))
                     .contains("agent_run_id->run.run_id", "workflow_run_id->workflow_run.workflow_run_id");
             assertThat(columns(connection, "workflow_run"))

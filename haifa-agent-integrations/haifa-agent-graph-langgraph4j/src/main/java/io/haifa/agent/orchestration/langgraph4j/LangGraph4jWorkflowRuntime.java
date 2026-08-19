@@ -25,6 +25,7 @@ import io.haifa.agent.orchestration.api.WorkflowNodeAttemptStatus;
 import io.haifa.agent.orchestration.api.WorkflowNodeDefinition;
 import io.haifa.agent.orchestration.api.WorkflowNodeId;
 import io.haifa.agent.orchestration.api.WorkflowNodeType;
+import io.haifa.agent.orchestration.api.WorkflowParentLink;
 import io.haifa.agent.orchestration.api.WorkflowResumeRequest;
 import io.haifa.agent.orchestration.api.WorkflowRunId;
 import io.haifa.agent.orchestration.api.WorkflowRunSnapshot;
@@ -33,6 +34,9 @@ import io.haifa.agent.orchestration.api.WorkflowStartRequest;
 import io.haifa.agent.orchestration.api.WorkflowState;
 import io.haifa.agent.orchestration.api.WorkflowStateDelta;
 import io.haifa.agent.orchestration.api.WorkflowStatus;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphBinding;
+import io.haifa.agent.orchestration.api.WorkflowSubgraphLink;
+import io.haifa.agent.orchestration.api.WorkflowTimeoutRequest;
 import io.haifa.agent.orchestration.api.WorkflowWait;
 import io.haifa.agent.orchestration.api.WorkflowWaitId;
 import io.haifa.agent.orchestration.core.DefaultWorkflowDefinitionCompiler;
@@ -111,12 +115,28 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.timeProvider = Objects.requireNonNull(timeProvider, "timeProvider must not be null");
         this.parallelExecutor = Objects.requireNonNull(parallelExecutor, "parallelExecutor must not be null");
-        definitions.forEach(definition -> {
+        Map<WorkflowDefinitionRef, CompiledWorkflowDefinition> compiledCatalog = new LinkedHashMap<>();
+        definitions.forEach(definition -> registerCompiled(compiledCatalog, definition));
+        compiledCatalog.values().forEach(definition -> {
             ProviderDefinition providerDefinition = translate(definition);
             if (this.definitions.put(definition.reference(), providerDefinition) != null) {
                 throw new IllegalArgumentException("duplicate compiled workflow definition");
             }
         });
+    }
+
+    private static void registerCompiled(
+            Map<WorkflowDefinitionRef, CompiledWorkflowDefinition> catalog, CompiledWorkflowDefinition definition) {
+        CompiledWorkflowDefinition prior = catalog.putIfAbsent(definition.reference(), definition);
+        if (prior != null && !prior.definition().equals(definition.definition())) {
+            throw new IllegalArgumentException("duplicate compiled workflow definition");
+        }
+        definition
+                .subgraphDefinitions()
+                .forEach((reference, child) -> catalog.putIfAbsent(
+                        reference,
+                        new CompiledWorkflowDefinition(
+                                reference, child, child.requiredCapabilities(), definition.subgraphDefinitions())));
     }
 
     @Override
@@ -198,6 +218,12 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
                     "resume",
                     "wait, revision, or signal does not match the active interruption");
         }
+        if (run.activeSubgraph.isPresent()) {
+            resumeSubgraph(run, request);
+            WorkflowRunSnapshot result = snapshot(run);
+            commandResults.put(commandKey, new CommandRecord(fingerprint, result));
+            return result;
+        }
         run.consumedSignals.put(request.signalId().value(), request.idempotencyKey());
         RunContext context = requireContext(run.id);
         context.applyResume(request.delta());
@@ -222,11 +248,29 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
         }
         MutableRun run = requireRun(request.runId());
         if (!run.status.terminal()) {
+            run.activeSubgraph.map(link -> runs.get(link.runId())).ifPresent(this::cancelTree);
+            run.activeSubgraph = Optional.empty();
+            terminateActiveAttempt(run, WorkflowErrorCode.TERMINAL_RUN);
             run.status = WorkflowStatus.CANCELLED;
+            run.wait = Optional.empty();
+            run.checkpoint = Optional.empty();
             run.revision++;
             event(run, WorkflowEventType.CANCELLED, Optional.of(run.currentNode), Map.of());
             releaseProviderState(run);
         }
+        WorkflowRunSnapshot result = snapshot(run);
+        commandResults.put(commandKey, new CommandRecord(request.runId().value(), result));
+        return result;
+    }
+
+    @Override
+    public synchronized WorkflowRunSnapshot timeout(WorkflowTimeoutRequest request) {
+        Objects.requireNonNull(request, "request must not be null");
+        String commandKey = "timeout|" + request.runId().value() + '|' + request.idempotencyKey();
+        CommandRecord prior = commandResults.get(commandKey);
+        if (prior != null) return prior.result();
+        MutableRun run = requireRun(request.runId());
+        timeoutTree(run);
         WorkflowRunSnapshot result = snapshot(run);
         commandResults.put(commandKey, new CommandRecord(request.runId().value(), result));
         return result;
@@ -254,6 +298,22 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
                     "unsupported workflow capabilities: " + unsupported);
         }
         BranchTopology topology = BranchTopology.from(compiled);
+        topology.forks().stream()
+                .flatMap(fork -> fork.branches().stream())
+                .flatMap(branch -> branch.nodes().stream())
+                .filter(node -> node.type() == WorkflowNodeType.SUBGRAPH)
+                .forEach(node -> {
+                    WorkflowSubgraphBinding binding = node.subgraphBinding().orElseThrow();
+                    var child = compiled.subgraphDefinitions().get(binding.definition());
+                    if (child == null
+                            || child.nodes().stream()
+                                    .anyMatch(candidate -> candidate.type() == WorkflowNodeType.WAIT)) {
+                        throw error(
+                                WorkflowErrorCode.UNSUPPORTED_CAPABILITY,
+                                "compile",
+                                "interrupting subgraph inside fixed parallel branch is not supported");
+                    }
+                });
         MemorySaver saver = new MemorySaver();
         try {
             StateGraph<ProviderWorkflowState> graph = new StateGraph<>(ProviderWorkflowState::new);
@@ -317,9 +377,15 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
                     .filter(node -> node.type() == WorkflowNodeType.WAIT)
                     .map(node -> node.id().value())
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
+            Set<String> subgraphs = compiled.definition().nodes().stream()
+                    .filter(node -> node.type() == WorkflowNodeType.SUBGRAPH)
+                    .filter(node -> !topology.branchNodeIds().contains(node.id()))
+                    .map(node -> node.id().value())
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
             CompiledGraph<ProviderWorkflowState> graphInstance = graph.compile(CompileConfig.builder()
                     .checkpointSaver(saver)
                     .interruptsBefore(waits)
+                    .interruptsAfter(subgraphs)
                     .recursionLimit(recursionLimit)
                     .releaseThread(false)
                     .build());
@@ -339,6 +405,7 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
         RunContext context = requireContext(config);
         switch (node.type()) {
             case ACTION, AGENT_RUN -> context.executeNode(node, Optional.empty());
+            case SUBGRAPH -> context.executeSubgraph(node);
             case FORK_ALL -> context.beginFork(node.id());
             case JOIN_ALL -> context.completeJoin(node.id());
             case WAIT, TERMINAL -> context.touch(node.id());
@@ -362,6 +429,24 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
                 event(run, WorkflowEventType.COMPLETED, Optional.of(run.currentNode), Map.of());
                 releaseProviderState(run);
             } else {
+                WorkflowNodeDefinition current = node(run.provider.compiled(), run.currentNode);
+                if (current.type() == WorkflowNodeType.SUBGRAPH) {
+                    MutableRun child = run.activeSubgraph
+                            .map(link -> runs.get(link.runId()))
+                            .orElse(null);
+                    if (child == null || child.status == WorkflowStatus.COMPLETED) {
+                        invoke(run, context, GraphInput.resume());
+                        return;
+                    }
+                    if (child.status == WorkflowStatus.WAITING) {
+                        interruptSubgraph(run, current, child);
+                        return;
+                    }
+                    throw error(
+                            WorkflowErrorCode.NODE_EXECUTION_FAILED,
+                            "subgraph",
+                            "child workflow did not reach a resumable boundary");
+                }
                 String nextNode = run.provider
                         .saver()
                         .get(config)
@@ -382,12 +467,141 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
         }
     }
 
+    private void interruptSubgraph(MutableRun parent, WorkflowNodeDefinition node, MutableRun child) {
+        WorkflowWait childWait = child.wait.orElseThrow();
+        Instant at = now();
+        parent.status = WorkflowStatus.WAITING;
+        parent.revision++;
+        parent.wait = Optional.of(
+                new WorkflowWait(new WorkflowWaitId(identifiers.nextValue()), node.id(), parent.revision, at));
+        parent.checkpoint = Optional.of(new WorkflowCheckpoint(
+                new WorkflowCheckpointId(identifiers.nextValue()),
+                parent.id,
+                parent.revision,
+                node.id(),
+                parent.state,
+                at));
+        event(
+                parent,
+                WorkflowEventType.WAITING,
+                Optional.of(node.id()),
+                Map.of(
+                        "childRunId",
+                        child.id.value(),
+                        "childNodeId",
+                        childWait.nodeId().value()));
+    }
+
     private RunnableConfig runnableConfig(MutableRun run) {
         RunnableConfig.Builder builder = RunnableConfig.builder().threadId(run.id.value());
         for (ForkPlan fork : run.provider.topology().forks()) {
             builder.addParallelNodeExecutor(fork.forkNode().value(), parallelExecutor);
         }
         return builder.build();
+    }
+
+    private void resumeSubgraph(MutableRun parent, WorkflowResumeRequest request) {
+        WorkflowSubgraphLink link = parent.activeSubgraph.orElseThrow();
+        MutableRun child = requireRun(link.runId());
+        WorkflowWait childWait = child.wait.orElseThrow(
+                () -> error(WorkflowErrorCode.INVALID_RESUME, "resume-subgraph", "child workflow is not waiting"));
+        child.consumedSignals.put(request.signalId().value(), request.idempotencyKey());
+        RunContext childContext = requireContext(child.id);
+        childContext.applyResume(request.delta());
+        child.status = WorkflowStatus.RUNNING;
+        child.wait = Optional.empty();
+        child.checkpoint = Optional.empty();
+        child.revision++;
+        event(child, WorkflowEventType.RESUMED, Optional.of(childWait.nodeId()), Map.of());
+        invoke(child, childContext, GraphInput.resume());
+
+        parent.consumedSignals.put(request.signalId().value(), request.idempotencyKey());
+        parent.status = WorkflowStatus.RUNNING;
+        parent.wait = Optional.empty();
+        parent.checkpoint = Optional.empty();
+        parent.revision++;
+        event(
+                parent,
+                WorkflowEventType.RESUMED,
+                Optional.of(link.parentNodeId()),
+                Map.of("childRunId", child.id.value()));
+        if (child.status == WorkflowStatus.WAITING) {
+            interruptSubgraph(parent, node(parent.provider.compiled(), link.parentNodeId()), child);
+            return;
+        }
+        if (child.status != WorkflowStatus.COMPLETED) {
+            WorkflowErrorCode code =
+                    child.failure.map(WorkflowFailure::code).orElse(WorkflowErrorCode.NODE_EXECUTION_FAILED);
+            parent.activeSubgraph = Optional.empty();
+            fail(parent, code, "subgraph", Optional.of(link.parentNodeId()));
+            return;
+        }
+        RunContext parentContext = requireContext(parent.id);
+        parentContext.completeSubgraph(node(parent.provider.compiled(), link.parentNodeId()), child);
+        invoke(parent, parentContext, GraphInput.resume());
+    }
+
+    private void cancelTree(MutableRun run) {
+        run.activeSubgraph.map(link -> runs.get(link.runId())).ifPresent(this::cancelTree);
+        run.activeSubgraph = Optional.empty();
+        if (!run.status.terminal()) {
+            terminateActiveAttempt(run, WorkflowErrorCode.TERMINAL_RUN);
+            run.status = WorkflowStatus.CANCELLED;
+            run.wait = Optional.empty();
+            run.checkpoint = Optional.empty();
+            run.revision++;
+            event(run, WorkflowEventType.CANCELLED, Optional.of(run.currentNode), Map.of());
+            releaseProviderState(run);
+        }
+    }
+
+    private void timeoutTree(MutableRun run) {
+        run.activeSubgraph.map(link -> runs.get(link.runId())).ifPresent(this::timeoutTree);
+        run.activeSubgraph = Optional.empty();
+        if (!run.status.terminal()) {
+            terminateActiveAttempt(run, WorkflowErrorCode.TIMED_OUT);
+            run.status = WorkflowStatus.TIMED_OUT;
+            run.wait = Optional.empty();
+            run.checkpoint = Optional.empty();
+            run.revision++;
+            event(run, WorkflowEventType.TIMED_OUT, Optional.of(run.currentNode), Map.of());
+            releaseProviderState(run);
+        }
+    }
+
+    private void terminateActiveAttempt(MutableRun run, WorkflowErrorCode code) {
+        if (run.attempts.isEmpty()) return;
+        WorkflowNodeAttempt active = run.attempts.getLast();
+        if (active.status() != WorkflowNodeAttemptStatus.RUNNING) return;
+        run.attempts.set(
+                run.attempts.size() - 1,
+                new WorkflowNodeAttempt(
+                        active.nodeId(),
+                        active.attempt(),
+                        WorkflowNodeAttemptStatus.FAILED,
+                        active.agentRunId(),
+                        Optional.of(code),
+                        active.startedAt(),
+                        Optional.of(now())));
+    }
+
+    private static WorkflowState mapInputs(
+            WorkflowState parent, ProviderDefinition child, WorkflowSubgraphBinding binding) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        binding.stateMapping().inputs().forEach((parentKey, childKey) -> {
+            if (parent.values().containsKey(parentKey))
+                values.put(childKey, parent.values().get(parentKey));
+        });
+        return new WorkflowState(child.compiled().definition().stateSchema(), values);
+    }
+
+    private static WorkflowStateDelta mapOutputs(WorkflowState child, WorkflowSubgraphBinding binding) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        binding.stateMapping().outputs().forEach((childKey, parentKey) -> {
+            if (child.values().containsKey(childKey))
+                values.put(parentKey, child.values().get(childKey));
+        });
+        return new WorkflowStateDelta(values);
     }
 
     private void interrupt(MutableRun run, WorkflowNodeDefinition node) {
@@ -470,6 +684,8 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
                 run.checkpoint,
                 run.failure,
                 run.attempts,
+                run.parent,
+                run.activeSubgraph,
                 run.createdAt,
                 run.updatedAt);
     }
@@ -647,6 +863,98 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
             }
         }
 
+        private void executeSubgraph(WorkflowNodeDefinition node) {
+            int attempt = visit(node.id());
+            Instant started = now();
+            WorkflowSubgraphBinding binding = node.subgraphBinding().orElseThrow();
+            ProviderDefinition childProvider = definitions.get(binding.definition());
+            if (childProvider == null) {
+                throw error(WorkflowErrorCode.DEFINITION_NOT_FOUND, "subgraph", "child definition is unavailable");
+            }
+            WorkflowRunId childId = new WorkflowRunId(identifiers.nextValue());
+            MutableRun child = new MutableRun(
+                    childId,
+                    childProvider,
+                    mapInputs(run.state, childProvider, binding),
+                    childProvider.compiled().definition().entryNode(),
+                    now());
+            child.parent = Optional.of(new WorkflowParentLink(run.id, node.id(), attempt));
+            synchronized (this) {
+                run.currentNode = node.id();
+                run.attempts.add(new WorkflowNodeAttempt(
+                        node.id(),
+                        attempt,
+                        WorkflowNodeAttemptStatus.RUNNING,
+                        Optional.empty(),
+                        Optional.empty(),
+                        started,
+                        Optional.empty()));
+                run.activeSubgraph =
+                        Optional.of(new WorkflowSubgraphLink(childId, binding.definition(), node.id(), attempt));
+                event(
+                        run,
+                        WorkflowEventType.SUBGRAPH_STARTED,
+                        Optional.of(node.id()),
+                        Map.of(
+                                "childRunId",
+                                childId.value(),
+                                "definitionDigest",
+                                binding.definition().digest().value()));
+            }
+            RunContext childContext = new RunContext(child);
+            runs.put(childId, child);
+            contexts.put(childId.value(), childContext);
+            event(child, WorkflowEventType.RUN_STARTED, Optional.empty(), Map.of("parentRunId", run.id.value()));
+            invoke(child, childContext, GraphInput.args(Map.of(PROVIDER_RUN_ID, childId.value())));
+            if (child.status == WorkflowStatus.COMPLETED) {
+                completeSubgraph(node, child);
+            } else if (child.status != WorkflowStatus.WAITING) {
+                WorkflowErrorCode code =
+                        child.failure.map(WorkflowFailure::code).orElse(WorkflowErrorCode.NODE_EXECUTION_FAILED);
+                WorkflowNodeAttempt active = run.attempts.getLast();
+                run.attempts.set(
+                        run.attempts.size() - 1,
+                        new WorkflowNodeAttempt(
+                                active.nodeId(),
+                                active.attempt(),
+                                WorkflowNodeAttemptStatus.FAILED,
+                                Optional.empty(),
+                                Optional.of(code),
+                                active.startedAt(),
+                                Optional.of(now())));
+                run.activeSubgraph = Optional.empty();
+                failedNode = Optional.of(node.id());
+                throw error(code, "subgraph", "child workflow failed");
+            }
+        }
+
+        private synchronized void completeSubgraph(WorkflowNodeDefinition node, MutableRun child) {
+            WorkflowNodeAttempt active = run.attempts.getLast();
+            if (active.status() != WorkflowNodeAttemptStatus.RUNNING
+                    || !active.nodeId().equals(node.id())) {
+                throw error(WorkflowErrorCode.INVALID_STATE, "subgraph", "parent subgraph attempt is not active");
+            }
+            run.state = run.state.apply(
+                    mapOutputs(child.state, node.subgraphBinding().orElseThrow()));
+            run.attempts.set(
+                    run.attempts.size() - 1,
+                    new WorkflowNodeAttempt(
+                            active.nodeId(),
+                            active.attempt(),
+                            WorkflowNodeAttemptStatus.COMPLETED,
+                            Optional.empty(),
+                            Optional.empty(),
+                            active.startedAt(),
+                            Optional.of(now())));
+            run.activeSubgraph = Optional.empty();
+            run.revision++;
+            event(
+                    run,
+                    WorkflowEventType.SUBGRAPH_COMPLETED,
+                    Optional.of(node.id()),
+                    Map.of("childRunId", child.id.value()));
+        }
+
         private int visit(WorkflowNodeId nodeId) {
             synchronized (this) {
                 int visit = visits.merge(nodeId, 1, Integer::sum);
@@ -677,9 +985,76 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
             }
             BranchExecution branch = fork.branch(plan);
             for (WorkflowNodeDefinition node : plan.nodes()) {
-                executeNode(node, Optional.of(branch));
+                if (node.type() == WorkflowNodeType.SUBGRAPH) executeBranchSubgraph(node, branch);
+                else executeNode(node, Optional.of(branch));
             }
             return Map.of("haifa.branch." + plan.providerNodeId(), marker());
+        }
+
+        private void executeBranchSubgraph(WorkflowNodeDefinition node, BranchExecution branch) {
+            int attempt = visit(node.id());
+            Instant started = now();
+            WorkflowSubgraphBinding binding = node.subgraphBinding().orElseThrow();
+            ProviderDefinition childProvider = definitions.get(binding.definition());
+            if (childProvider == null) {
+                throw error(WorkflowErrorCode.DEFINITION_NOT_FOUND, "subgraph", "child definition is unavailable");
+            }
+            WorkflowRunId childId = new WorkflowRunId(identifiers.nextValue());
+            MutableRun child = new MutableRun(
+                    childId,
+                    childProvider,
+                    mapInputs(branch.state(), childProvider, binding),
+                    childProvider.compiled().definition().entryNode(),
+                    now());
+            child.parent = Optional.of(new WorkflowParentLink(run.id, node.id(), attempt));
+            synchronized (this) {
+                event(
+                        run,
+                        WorkflowEventType.SUBGRAPH_STARTED,
+                        Optional.of(node.id()),
+                        Map.of(
+                                "childRunId",
+                                childId.value(),
+                                "definitionDigest",
+                                binding.definition().digest().value()));
+            }
+            RunContext childContext = new RunContext(child);
+            runs.put(childId, child);
+            contexts.put(childId.value(), childContext);
+            event(child, WorkflowEventType.RUN_STARTED, Optional.empty(), Map.of("parentRunId", run.id.value()));
+            invoke(child, childContext, GraphInput.args(Map.of(PROVIDER_RUN_ID, childId.value())));
+            if (child.status != WorkflowStatus.COMPLETED) {
+                WorkflowErrorCode code = child.status == WorkflowStatus.WAITING
+                        ? WorkflowErrorCode.UNSUPPORTED_CAPABILITY
+                        : child.failure.map(WorkflowFailure::code).orElse(WorkflowErrorCode.NODE_EXECUTION_FAILED);
+                branch.fail(new WorkflowNodeAttempt(
+                        node.id(),
+                        attempt,
+                        WorkflowNodeAttemptStatus.FAILED,
+                        Optional.empty(),
+                        Optional.of(code),
+                        started,
+                        Optional.of(now())));
+                throw error(code, "subgraph", "parallel subgraph must complete without interruption");
+            }
+            WorkflowState updated = branch.state().apply(mapOutputs(child.state, binding));
+            synchronized (this) {
+                event(
+                        run,
+                        WorkflowEventType.SUBGRAPH_COMPLETED,
+                        Optional.of(node.id()),
+                        Map.of("childRunId", childId.value()));
+            }
+            branch.complete(
+                    updated,
+                    new WorkflowNodeAttempt(
+                            node.id(),
+                            attempt,
+                            WorkflowNodeAttemptStatus.COMPLETED,
+                            Optional.empty(),
+                            Optional.empty(),
+                            started,
+                            Optional.of(now())));
         }
 
         private synchronized void completeJoin(WorkflowNodeId joinNode) {
@@ -924,6 +1299,8 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
         private Optional<WorkflowWait> wait = Optional.empty();
         private Optional<WorkflowCheckpoint> checkpoint = Optional.empty();
         private Optional<WorkflowFailure> failure = Optional.empty();
+        private Optional<WorkflowParentLink> parent = Optional.empty();
+        private Optional<WorkflowSubgraphLink> activeSubgraph = Optional.empty();
         private Instant updatedAt;
 
         private MutableRun(
