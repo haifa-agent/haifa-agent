@@ -140,9 +140,11 @@ Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一�
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
 新 Profile；模型可见 Schema 包含 command、逻辑 workdir、有界 timeout、安全描述和显式
 必填的 `operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，不能可靠识别时使用
-`UNKNOWN`。可信 `SystemGitCliCommandClassifier` 独立解析直接 `git`/`gh` 命令并产出风险事实；复合命令、
-未知 wrapper/alias 不能降级为只读，认证环境覆盖和仓库路径逃逸在执行前拒绝。模型自报的操作族仅用于
-语义失败归类和交付意图，不能覆盖可信分类。
+`UNKNOWN`。可信 `SystemGitCliCommandClassifier` 独立解析直接 `git`/`gh` 命令并产出风险事实；Coding
+`ToolPolicyRequestAdapter` 在 Policy 决策前把本地读、写、网络读、外部写和未知形式映射为调用级风险及副作用，
+并把 Resolver 结果冻结进安全配置摘要。复合命令、未知 wrapper/alias 至少为 HIGH，但继续交给系统 Shell；
+认证环境覆盖、Credential 命令/配置和仓库路径逃逸在 Policy 与执行边界硬拒绝。模型自报的操作族不能覆盖
+可信分类；当前兼容期仍校验可精确识别的直接 Git/GH 操作，UNKNOWN 复合形式不因 Hint 不匹配被拒绝。
 
 `execution.request_permissions -> request_permissions` 不是通用 Sandbox 绕过入口，也不授予可复用权限。
 它只允许引用同一 Run 中一次以 `NETWORK_UNAVAILABLE`、`HOST_AUTHENTICATION_UNAVAILABLE`、

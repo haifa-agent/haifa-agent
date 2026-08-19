@@ -45,6 +45,14 @@ class CodingAgentPolicyAssemblyTest {
         assertThat(credential.effect()).isEqualTo(PolicyEffect.ASK);
         assertThat(credential.challenge()).contains(PolicyChallenge.REAUTHENTICATE);
         assertThat(decide(ApprovalMode.ASK, Set.of(), false).effect()).isEqualTo(PolicyEffect.ALLOW);
+        assertThat(decide(
+                                ApprovalMode.AUTO,
+                                "execution",
+                                PolicyRiskLevel.CRITICAL,
+                                Set.of(PolicySideEffect.PROCESS_EXECUTION),
+                                false)
+                        .effect())
+                .isEqualTo(PolicyEffect.DENY);
     }
 
     private static io.haifa.agent.policy.api.PolicyDecision decide(
@@ -54,6 +62,15 @@ class CodingAgentPolicyAssemblyTest {
 
     private static io.haifa.agent.policy.api.PolicyDecision decide(
             ApprovalMode mode, String resourceType, Set<PolicySideEffect> sideEffects, boolean credentialUse) {
+        return decide(mode, resourceType, PolicyRiskLevel.LOW, sideEffects, credentialUse);
+    }
+
+    private static io.haifa.agent.policy.api.PolicyDecision decide(
+            ApprovalMode mode,
+            String resourceType,
+            PolicyRiskLevel riskLevel,
+            Set<PolicySideEffect> sideEffects,
+            boolean credentialUse) {
         AtomicInteger sequence = new AtomicInteger();
         var assembly = CodingAgentPolicyAssembly.create(mode, CLOCK, () -> "decision-" + sequence.incrementAndGet());
         return assembly.decisions()
@@ -66,7 +83,7 @@ class CodingAgentPolicyAssemblyTest {
                                 PolicyContext.run("run", mode),
                                 new PolicyAction("test.tool", "invoke"),
                                 new PolicyResource(resourceType, "test.tool", Optional.of("0".repeat(64)), "Test tool"),
-                                new PolicyRisk(PolicyRiskLevel.LOW, sideEffects, credentialUse, Optional.empty())),
+                                new PolicyRisk(riskLevel, sideEffects, credentialUse, Optional.empty())),
                         assembly.snapshot());
     }
 }

@@ -247,6 +247,37 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void sendsCompoundGitCommandsToTheBrokerAsHighRiskInsteadOfRejectingShellComposition() {
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        var result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of(
+                                        "command", "git status --short && git diff --stat",
+                                        "operationFamily", "INSPECT"),
+                                () -> false),
+                        access());
+
+        assertThat(captured.get().command().shellCommand()).contains("&&");
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("commandTarget", "GIT")
+                .containsEntry("commandRisk", "UNKNOWN")
+                .containsEntry("effectiveRisk", "HIGH")
+                .containsEntry("commandOperation", "UNKNOWN")
+                .containsEntry("commandClassificationReason", "COMPOUND_OR_WRAPPED_COMMAND")
+                .containsEntry("riskResolverVersion", "1");
+    }
+
+    @Test
     void propagatesToolCancellationToTheBroker() throws Exception {
         AtomicBoolean cancellation = new AtomicBoolean();
         CountDownLatch executing = new CountDownLatch(1);

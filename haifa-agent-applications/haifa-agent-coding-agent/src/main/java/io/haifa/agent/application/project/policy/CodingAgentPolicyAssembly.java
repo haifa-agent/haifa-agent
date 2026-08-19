@@ -103,6 +103,21 @@ public final class CodingAgentPolicyAssembly {
 
     private static PolicySnapshot snapshot(ApprovalMode mode, Clock clock) {
         List<PolicyRule> rules = new ArrayList<>();
+        rules.add(rule(
+                "coding-critical-risk",
+                new PolicyRuleMatcher(
+                        Optional.empty(),
+                        Optional.of("haifa-coding-agent"),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.empty(),
+                        Optional.of(PolicyRiskLevel.CRITICAL),
+                        Set.of()),
+                PolicyEffect.DENY,
+                Optional.empty(),
+                "CODING_CRITICAL_RISK_DENY"));
         PolicyEffect sideEffect =
                 switch (mode) {
                     case ASK -> PolicyEffect.ASK;
@@ -169,13 +184,13 @@ public final class CodingAgentPolicyAssembly {
                 PolicyEffect.ALLOW,
                 Optional.empty(),
                 "CODING_LOW_RISK_ALLOW");
-        String digest = PolicyDigest.sha256Fields(List.of("haifa-coding-agent", mode.name(), "v1"));
+        String digest = PolicyDigest.sha256Fields(List.of("haifa-coding-agent", mode.name(), "v2"));
         return new PolicySnapshot(
-                new PolicySnapshotRef("coding-" + mode.name().toLowerCase(java.util.Locale.ROOT) + "-v1"),
+                new PolicySnapshotRef("coding-" + mode.name().toLowerCase(java.util.Locale.ROOT) + "-v2"),
                 rules,
                 Optional.of(defaultRule),
                 mode,
-                "coding-default-v1",
+                "coding-default-v2",
                 Optional.empty(),
                 digest,
                 Instant.ofEpochMilli(clock.millis()));

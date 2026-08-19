@@ -65,19 +65,21 @@ is unchanged.
 Tool 暴露，稳定名称为 `execution.run`，产品可提供 `execution_run` 等别名。它不是 Personal
 Assistant 专用实现，也没有新增 Maven 模块。
 
-直接调用系统 `git` / `gh` 时，`SystemGitCliCommandClassifier` 在 Policy 和 Provider dispatch 前生成
-可信的目标、风险与 `INSPECT/DIFF/MUTATE/UNKNOWN` 操作事实。模型提交的 `operationFamily` 必须与该事实
-一致，不能把 `git status` 伪报为 `DIFF`，也不能通过路径限定的假 CLI、环境变量前缀、`git -c`、
-Credential 子命令或 `gh auth status --show-token` 绕过系统登录态边界。无法可靠识别的形式保持
-`UNKNOWN` 或直接拒绝；普通非 Git/GitHub 命令仍由既有通用 Execution 路径处理。
+直接调用系统 `git` / `gh` 时，`SystemGitCliCommandClassifier` 生成可信的目标、风险与
+`INSPECT/DIFF/MUTATE/UNKNOWN` 操作事实；Coding 产品通过自己的 `ToolPolicyRequestAdapter` 在 Policy 前解析同一
+事实，Provider dispatch 时再次执行硬边界校验。复合、Wrapper、管道、重定向和逻辑运算形式整体为
+`UNKNOWN`/HIGH，不会因为分类器不理解 Shell 语法而被拒绝。路径限定的假 CLI、受保护环境变量赋值、
+Git Credential 配置/子命令和 GH Token 披露继续硬拒绝；为了覆盖 Wrapper 内的边界，这些检查对命令文本
+采取保守匹配，疑似的受保护赋值不会降级成普通 HIGH。普通非 Git/GitHub 命令仍走既有通用 Execution 路径。
 
 冻结输入只包含 `mode`、`content`、`language`、`args`、`purpose`、`timeoutMillis`；只有显式允许
 Workspace 的产品配置才可以增加 `workingDirectory`。操作系统、可执行文件和 Provider 均由可信
 装配解析，模型不能选择。脚本正文通过 stdin 传递，PowerShell、Bash 和 Python 由独立 runtime
 adapter 按当前 OS fail closed 解析。
 
-所有调用均为 HIGH / NON_IDEMPOTENT / ALWAYS approval。审批绑定统一使用
-`ToolArgumentsDigest` 的 canonical digest，并额外冻结 execution configuration identity。相同
+平台定义仍以 HIGH / NON_IDEMPOTENT 作为无法解析时的保守回退。产品可以在 Policy 前通过可信适配器提高或
+降低单次调用的有效风险，但模型声明不能降低风险。审批绑定统一使用 `ToolArgumentsDigest` 的 canonical
+digest，并额外冻结 execution configuration identity。相同
 idempotency key 若正文、参数、环境、Profile 或配置发生漂移，将返回冲突而不是复用旧授权。
 模型只收到有界、脱敏的结构化摘要；完整输出继续留在 Execution Result / Output Store 边界。
 

@@ -1,5 +1,6 @@
 package io.haifa.agent.application.project.tool;
 
+import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.AssetRef;
@@ -24,6 +25,7 @@ import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
 import io.haifa.agent.policy.api.PolicyDigest;
+import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.tool.api.ToolCancellation;
@@ -443,8 +445,14 @@ public final class ProjectExecutionToolOperations {
         data.put("operationFamily", operationFamily);
         data.put("commandTarget", commandClassification.target().name());
         data.put("commandRisk", commandClassification.risk().name());
+        data.put(
+                "effectiveRisk",
+                CodingExecutionRiskResolver.assess(commandClassification, PolicyRiskLevel.HIGH)
+                        .effectiveRisk()
+                        .name());
         data.put("commandOperation", commandClassification.operation().name());
         data.put("commandClassificationReason", commandClassification.reasonCode());
+        data.put("riskResolverVersion", CodingExecutionRiskResolver.VERSION);
         data.put(
                 "sandboxProfileDigest",
                 io.haifa.agent.policy.api.PolicyDigest.sha256Fields(
@@ -577,6 +585,7 @@ public final class ProjectExecutionToolOperations {
     private static boolean supportsOperationFamily(
             String operationFamily, SystemGitCliCommandClassifier.Classification classification) {
         if (classification.target() == SystemGitCliCommandClassifier.Target.OTHER) return true;
+        if (classification.operation() == SystemGitCliCommandClassifier.Operation.UNKNOWN) return true;
         if (operationFamily.equals("DIFF")) {
             return classification.operation() == SystemGitCliCommandClassifier.Operation.DIFF;
         }

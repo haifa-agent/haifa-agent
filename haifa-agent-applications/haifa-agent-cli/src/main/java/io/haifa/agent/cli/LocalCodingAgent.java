@@ -98,7 +98,6 @@ import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
-import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.skill.api.SkillAlias;
@@ -532,8 +531,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     .policyStores(policy.decisionsStore(), policy.evidence())
                     .approvalVerification(policy.approvalVerification())
                     .publicToolPolicy(new DefaultPublicToolPolicy(
-                            new DefaultToolPolicyRequestAdapter(
-                                    "haifa-coding-agent", policyMode(configuration.approval())),
+                            new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
+                                    policyMode(configuration.approval())),
                             policy.decisions(),
                             policy.decisionsStore(),
                             policy.snapshot(),

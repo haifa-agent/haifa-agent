@@ -32,6 +32,17 @@ class SystemGitCliCommandClassifierTest {
     @Test
     void failsClosedForCompositionWrappersPathEscapesAndAuthenticationOverrides() {
         assertThat(classify("git status && git push")).isEqualTo(UNKNOWN);
+        assertThat(classify("git -C nested status && echo done")).isEqualTo(DENIED);
+        assertThat(classify("GH_TOKEN=value gh pr list && echo done")).isEqualTo(DENIED);
+        assertThat(classify("env LANG=C GH_TOKEN=value gh pr list && echo done"))
+                .isEqualTo(DENIED);
+        assertThat(classify("C:\\tools\\gh.exe pr list && echo done")).isEqualTo(DENIED);
+        assertThat(classify("\"C:\\tools\\gh.exe\" pr list && echo done")).isEqualTo(DENIED);
+        assertThat(classify("git -c credential.helper=other status && echo done"))
+                .isEqualTo(DENIED);
+        assertThat(classify("git credential fill && echo done")).isEqualTo(DENIED);
+        assertThat(classify("gh auth token && echo done")).isEqualTo(DENIED);
+        assertThat(classify("gh auth status --show-token && echo done")).isEqualTo(DENIED);
         assertThat(classify("powershell -Command git status")).isEqualTo(UNKNOWN);
         assertThat(classify("git -C ../other status")).isEqualTo(DENIED);
         assertThat(classify("git -C nested status")).isEqualTo(DENIED);
@@ -46,6 +57,7 @@ class SystemGitCliCommandClassifierTest {
         assertThat(classify("gh auth token")).isEqualTo(DENIED);
         assertThat(classify("gh auth status --show-token")).isEqualTo(DENIED);
         assertThat(classify("git credential fill")).isEqualTo(DENIED);
+        assertThat(classify("echo 'GH_TOKEN=value' && git status")).isEqualTo(DENIED);
     }
 
     private static SystemGitCliCommandClassifier.Risk classify(String command) {

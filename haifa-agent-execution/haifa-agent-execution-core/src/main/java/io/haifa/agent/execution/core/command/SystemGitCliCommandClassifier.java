@@ -49,6 +49,18 @@ public final class SystemGitCliCommandClassifier {
             return classified(
                     detectTarget(command), Risk.DENIED, Operation.UNKNOWN, "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
         }
+        if (usesAuthenticationCommandSyntax(command)) {
+            return classified(detectTarget(command), Risk.DENIED, Operation.UNKNOWN, "AUTHENTICATION_COMMAND_DENIED");
+        }
+        if (usesGitAuthenticationConfigSyntax(command)) {
+            return classified(Target.GIT, Risk.DENIED, Operation.UNKNOWN, "GIT_AUTHENTICATION_CONFIG_OVERRIDE");
+        }
+        if (usesSystemCliPathOverrideSyntax(command)) {
+            return classified(detectTarget(command), Risk.DENIED, Operation.UNKNOWN, "SYSTEM_CLI_PATH_OVERRIDE");
+        }
+        if (usesGitExecutionBoundarySyntax(command)) {
+            return classified(Target.GIT, Risk.DENIED, Operation.UNKNOWN, "GIT_EXECUTION_BOUNDARY_OVERRIDE");
+        }
         if (containsShellComposition(command)) {
             return classified(detectTarget(command), Risk.UNKNOWN, Operation.UNKNOWN, "COMPOUND_OR_WRAPPED_COMMAND");
         }
@@ -239,8 +251,50 @@ public final class SystemGitCliCommandClassifier {
 
     private static boolean usesProtectedShellEnvironmentSyntax(String command) {
         String upper = command.toUpperCase(Locale.ROOT);
-        return PROTECTED_ENVIRONMENT.stream()
-                .anyMatch(name -> upper.matches("(?s).*(?:\\$ENV:|(?:^|[;&|]\\s*)SET\\s+)" + name + "\\s*=.*"));
+        return PROTECTED_ENVIRONMENT.stream().anyMatch(name -> containsAssignment(upper, name));
+    }
+
+    private static boolean containsAssignment(String command, String name) {
+        int fromIndex = 0;
+        while (true) {
+            int index = command.indexOf(name, fromIndex);
+            if (index < 0) return false;
+            int end = index + name.length();
+            boolean leftBoundary = index == 0 || !isEnvironmentNameCharacter(command.charAt(index - 1));
+            int equals = end;
+            while (equals < command.length() && Character.isWhitespace(command.charAt(equals))) equals++;
+            if (leftBoundary && equals < command.length() && command.charAt(equals) == '=') return true;
+            fromIndex = end;
+        }
+    }
+
+    private static boolean isEnvironmentNameCharacter(char value) {
+        return Character.isLetterOrDigit(value) || value == '_';
+    }
+
+    private static boolean usesSystemCliPathOverrideSyntax(String command) {
+        return command.matches(
+                "(?is).*(?:^|[\\s;&|()\"'])[^\\s;&|()\"']*[\\\\/](?:git|gh)(?:\\.exe)?" + "(?:[\"']|$|\\s|[;&|()]).*");
+    }
+
+    private static boolean usesGitExecutionBoundarySyntax(String command) {
+        return command.matches("(?s).*\\b(?i:git(?:\\.exe)?)\\s+"
+                + "(?:(?i:--no-pager|--no-optional-locks|--literal-pathspecs)\\s+)*"
+                + "(?:[\"']?-C[\"']?(?:\\s|=)"
+                + "|[\"']?(?i:--(?:git-dir|work-tree|config-env|exec-path))[\"']?(?:\\s|=)).*");
+    }
+
+    private static boolean usesGitAuthenticationConfigSyntax(String command) {
+        return command.matches("(?is).*\\bgit(?:\\.exe)?\\s+.*(?:-c\\s+)[\"']?"
+                + "(?:credential\\.|http\\.[^\\s;&|]*extraheader|core\\.sshcommand|credentialhelper).*");
+    }
+
+    private static boolean usesAuthenticationCommandSyntax(String command) {
+        if (command.matches("(?is).*\\bgit(?:\\.exe)?\\s+credential(?:-[^\\s;&|]+|\\s).*")
+                || command.matches("(?is).*\\bgh(?:\\.exe)?\\s+auth\\s+status\\b.*--show-token.*")) {
+            return true;
+        }
+        return command.matches("(?is).*\\bgh(?:\\.exe)?\\s+auth\\s+(?!status(?:\\s|$)).*");
     }
 
     private static boolean containsShellComposition(String command) {
