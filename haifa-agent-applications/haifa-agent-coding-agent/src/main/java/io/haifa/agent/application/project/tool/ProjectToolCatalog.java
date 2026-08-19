@@ -268,12 +268,9 @@ public final class ProjectToolCatalog {
                         ? Set.of("unrestricted-network")
                         : Set.of(),
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
-        String version = name.equals("file.read")
-                        || name.equals("file.patch")
-                        || name.equals("execution.run")
-                        || name.equals(ProjectPermissionRequestOperations.TOOL_NAME)
-                ? "1.1.0"
-                : "1.0.0";
+        String version = name.equals("execution.run") || name.equals(ProjectPermissionRequestOperations.TOOL_NAME)
+                ? "1.2.0"
+                : name.equals("file.read") || name.equals("file.patch") ? "1.1.0" : "1.0.0";
         return new ToolDefinition(
                 new ToolName(name),
                 new SemanticVersion(version),
@@ -523,6 +520,9 @@ public final class ProjectToolCatalog {
             properties.put("executionId", Map.of("type", "string"));
             properties.put("status", Map.of("type", "string"));
             properties.put("exitCode", Map.of("type", "integer"));
+            properties.put("semanticOutcome", Map.of("type", "string"));
+            properties.put("semanticReasonCode", Map.of("type", "string"));
+            properties.put("semanticInterpreterVersion", Map.of("type", "string"));
             properties.put("output", Map.of("type", "string"));
             properties.put("truncated", Map.of("type", "boolean"));
             properties.put("outputRef", Map.of("type", "string"));

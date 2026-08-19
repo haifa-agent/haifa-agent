@@ -120,6 +120,63 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void treatsDocumentedGitNonzeroVariantsAsSuccessfulToolResults() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return result(request.id(), ExecutionStatus.FAILED, 1);
+            }
+        };
+
+        var differences = operations(broker, 4096, 100)
+                .execute(
+                        invocation(Map.of("command", "git diff --exit-code", "operationFamily", "DIFF"), () -> false),
+                        access());
+        var noMatches = operations(broker, 4096, 100)
+                .execute(
+                        invocation(Map.of("command", "git grep missing", "operationFamily", "INSPECT"), () -> false),
+                        access());
+
+        assertThat(differences.successful()).isTrue();
+        assertThat(differences.summary()).contains("expected result variant", "exit 1");
+        assertThat(differences.structuredData())
+                .containsEntry("status", "FAILED")
+                .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
+                .containsEntry("semanticReasonCode", "DIFFERENCES_FOUND")
+                .containsEntry("semanticInterpreterVersion", "1")
+                .doesNotContainKeys("failureCategory", "stableFailureCode", "failureCode");
+        assertThat(noMatches.successful()).isTrue();
+        assertThat(noMatches.structuredData())
+                .containsEntry("semanticOutcome", "EMPTY_RESULT")
+                .containsEntry("semanticReasonCode", "NO_MATCHES");
+    }
+
+    @Test
+    void keepsMissingGitRevisionsAsActionableCommandFailures() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                observer.onOutput(chunk("fatal: bad revision 'missing-ref'\n"));
+                return result(request.id(), ExecutionStatus.FAILED, 128);
+            }
+        };
+
+        var result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of("command", "git show missing-ref", "operationFamily", "INSPECT"), () -> false),
+                        access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("semanticOutcome", "COMMAND_FAILED")
+                .containsEntry("stableFailureCode", "GIT_REVISION_NOT_FOUND")
+                .containsEntry("resourceClass", "REPOSITORY_REF");
+        assertThat(result.structuredData().get("failureAction").toString())
+                .contains("authoritative repository refs", "retrying once");
+    }
+
+    @Test
     void classifiesCrossShellMissingCommandsAsRecoverableToolchainFailures() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
@@ -293,7 +350,7 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("effectiveRisk", "HIGH")
                 .containsEntry("commandOperation", "UNKNOWN")
                 .containsEntry("commandClassificationReason", "COMPOUND_OR_WRAPPED_COMMAND")
-                .containsEntry("riskResolverVersion", "1");
+                .containsEntry("riskResolverVersion", "2");
     }
 
     @Test

@@ -151,6 +151,10 @@ Coding 审批使用 `LOW/MEDIUM/HIGH/NEVER` 阈值；风险事实先由可信解
 `NEVER` 自动执行所有非硬拒绝的 LOW/MEDIUM/HIGH 普通命令；可信分类硬拒绝仍 DENY，Credential 重认证
 和一次性 Host 权限升级仍是托管 ASK，不受普通风险阈值自动批准。
 
+Git/GH 只保留基础分级：`status/diff/log/show/grep/ls-files/rev-parse` 等本地读取为 LOW；本地写入及
+`fetch/pull`、GH 远端读取为 MEDIUM；Push、远端写入、破坏性操作、`gh api`、未知子命令和任意复合/
+Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；产品不维护完整 Git/GH 参数 DSL。
+
 `execution.request_permissions -> request_permissions` 不是通用 Sandbox 绕过入口，也不授予可复用权限。
 它只允许引用同一 Run 中一次以 `NETWORK_UNAVAILABLE`、`HOST_AUTHENTICATION_UNAVAILABLE`、
 `GIT_AUTHENTICATION_UNAVAILABLE` 或 `GH_AUTHENTICATION_UNAVAILABLE` 失败的 `execution.run`，并要求逐字段复用该结果
@@ -191,6 +195,9 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
+Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本：Git Diff 的退出 1 可作为
+`EXPECTED_VARIANT/DIFFERENCES_FOUND` 形成 Diff 证据，Git Grep 的退出 1 是 `EMPTY_RESULT/NO_MATCHES`；
+无效 revision 的 128 和 Build/Test 非零退出仍是失败，Timeout/Cancel/未知终止不得自动重放。
 执行命令已经从受控 Workspace 启动。最高层受信本地装配可将等于当前 Workspace 或位于其下的绝对
 `workdir` 规范化为逻辑相对路径；Workspace 外绝对目录、绝对路径 `cd ...` 仍在进入 Broker 前以
 `ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝。dispatch 前的确定性

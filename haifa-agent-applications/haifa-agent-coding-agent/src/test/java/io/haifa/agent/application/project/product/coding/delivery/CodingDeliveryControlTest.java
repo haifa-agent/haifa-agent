@@ -176,6 +176,46 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void expectedDiffVariantCountsAsDiffInspectionWithoutPassingValidation() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "TEST",
+                        "status",
+                        "FAILED",
+                        "semanticOutcome",
+                        "COMMAND_FAILED",
+                        "exitCode",
+                        1));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.ofEntries(
+                        Map.entry("declaredOperationFamily", "DIFF"),
+                        Map.entry("effectiveOperationFamily", "DIFF"),
+                        Map.entry("status", "FAILED"),
+                        Map.entry("semanticOutcome", "EXPECTED_VARIANT"),
+                        Map.entry("semanticReasonCode", "DIFFERENCES_FOUND"),
+                        Map.entry("commandTarget", "GIT"),
+                        Map.entry("commandRisk", "LOCAL_READ"),
+                        Map.entry("commandOperation", "DIFF"),
+                        Map.entry("exitCode", 1)));
+
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("VALIDATION_NOT_PASSED")
+                .doesNotContain("DIFF_INSPECTION_MISSING");
+    }
+
+    @Test
     void validationFailureRequiresPassUnlessProfileAllowsConfirmedBlocker() {
         Fixture fixture = fixture("change the implementation", trusted("CHANGE"));
         tool(fixture, "file.write", Map.of("path", "README.md"), Map.of("changeSetId", "change-1"));

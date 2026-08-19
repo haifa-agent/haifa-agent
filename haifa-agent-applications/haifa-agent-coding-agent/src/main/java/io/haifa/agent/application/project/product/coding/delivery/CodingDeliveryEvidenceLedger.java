@@ -100,6 +100,7 @@ public final class CodingDeliveryEvidenceLedger {
                 data.containsKey("commandOperation") ? data.get("commandOperation") : declaredFamily));
         String evidenceFamily = "UNKNOWN".equals(effectiveFamily) ? declaredFamily : effectiveFamily;
         String status = String.valueOf(data.getOrDefault("status", "UNKNOWN"));
+        String semanticOutcome = String.valueOf(data.getOrDefault("semanticOutcome", "UNKNOWN"));
         boolean trustedReadOnly = trustedReadOnlyClassification(data);
         if (data.containsKey("fileChangeSetId")) {
             facts.add(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
@@ -110,7 +111,7 @@ public final class CodingDeliveryEvidenceLedger {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
         }
         if ("DIFF".equals(evidenceFamily)
-                && "SUCCEEDED".equals(status)
+                && ("SUCCEEDED".equals(status) || "EXPECTED_VARIANT".equals(semanticOutcome))
                 && trustedReadOnly
                 && trustedOperationFamily(data, evidenceFamily)) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);

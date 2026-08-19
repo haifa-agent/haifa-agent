@@ -71,6 +71,14 @@ Assistant 专用实现，也没有新增 Maven 模块。
 `UNKNOWN`/HIGH，不会因为分类器不理解 Shell 语法而被拒绝。路径限定的假 CLI、受保护环境变量赋值、
 Git Credential 配置/子命令和 GH Token 披露继续硬拒绝；为了覆盖 Wrapper 内的边界，这些检查对命令文本
 采取保守匹配，疑似的受保护赋值不会降级成普通 HIGH。普通非 Git/GitHub 命令仍走既有通用 Execution 路径。
+分类器只维护少量稳定类别：本地只读 LOW，本地写入或远端读取 MEDIUM，外部写入、破坏性、`gh api`、
+未知和复合形式 HIGH；它不尝试实现完整 Git/GH 参数治理或 Shell Grammar。
+
+`CommandSemanticOutcomeInterpreter` 在保留原始 `ExecutionStatus` 和 Exit Code 的同时提供稳定语义：普通退出
+0 为 `SUCCEEDED`，`git diff --exit-code` / `git diff --no-index` 的退出 1 为
+`EXPECTED_VARIANT/DIFFERENCES_FOUND`，`git grep` 的退出 1 为 `EMPTY_RESULT/NO_MATCHES`；其他非零退出仍为
+`COMMAND_FAILED`，超时、取消、输出截断终止或缺失退出码为 `OUTCOME_UNKNOWN`。该解释器不把 Build/Test
+失败改写成成功，也不推断复合命令内部各 Segment 的状态。
 
 冻结输入只包含 `mode`、`content`、`language`、`args`、`purpose`、`timeoutMillis`；只有显式允许
 Workspace 的产品配置才可以增加 `workingDirectory`。操作系统、可执行文件和 Provider 均由可信

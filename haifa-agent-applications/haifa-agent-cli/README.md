@@ -554,6 +554,10 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。CLI 接受指向当前 Workspace 本身或其子目录的绝对 `workdir`，并在受信装配边界将其规范化为逻辑相对路径；Workspace 外绝对路径仍拒绝。网络或系统 `git` / `gh` 登录环境被 Sandbox 隔离时，模型只能用失败结果中的 `toolCallId` 请求对同一条直接、非破坏性的系统 `git` / `gh` 命令做一次 `HOST_NETWORK_ACCESS` 重试；不能修改命令意图、生成权限或批准自己的请求。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、一次性 Host 权限升级和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `execution.request_permissions`，模型不可见，底层授权仍 fail closed。
 
+系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
+`git diff --exit-code` / `--no-index` 的退出 1 是 `EXPECTED_VARIANT/DIFFERENCES_FOUND`，`git grep` 的退出 1
+是 `EMPTY_RESULT/NO_MATCHES`；无效 revision、构建或测试的非零退出仍是失败。
+
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
 CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模型指令，要求 `execution_run` 只生成该

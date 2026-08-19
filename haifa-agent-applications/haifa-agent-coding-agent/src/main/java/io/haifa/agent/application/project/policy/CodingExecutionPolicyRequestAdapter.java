@@ -89,6 +89,10 @@ public final class CodingExecutionPolicyRequestAdapter implements ToolPolicyRequ
                 // Preserve the static execution side effect and its configured baseline.
             }
         }
+        if (classification.reasonCode().equals("GIT_FETCH")
+                || classification.reasonCode().equals("GIT_PULL")) {
+            sideEffects.add(PolicySideEffect.NETWORK_ACCESS);
+        }
         return new PolicyRisk(
                 assessment.effectiveRisk(),
                 sideEffects,

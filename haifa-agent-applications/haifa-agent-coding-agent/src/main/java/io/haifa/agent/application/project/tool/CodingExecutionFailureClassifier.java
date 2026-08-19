@@ -105,6 +105,18 @@ final class CodingExecutionFailureClassifier {
             return new Classification(
                     "INVALID_INPUT", "COMMAND_INVALID_INPUT", "COMMAND", "Correct the command arguments and retry.");
         }
+        if (commandClassification.target() == SystemGitCliCommandClassifier.Target.GIT
+                && (output.contains("bad revision")
+                        || output.contains("unknown revision")
+                        || output.contains("ambiguous argument")
+                        || output.contains("not a valid object name")
+                        || output.contains("invalid object name"))) {
+            return new Classification(
+                    "INVALID_INPUT",
+                    "GIT_REVISION_NOT_FOUND",
+                    "REPOSITORY_REF",
+                    "Read the authoritative repository refs with git status, branch, or rev-parse before retrying once.");
+        }
         return new Classification(
                 "COMMAND_FAILED",
                 providerCode.isBlank() ? "NON_ZERO_EXIT" : providerCode,

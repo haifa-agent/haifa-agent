@@ -23,8 +23,8 @@ public final class SystemGitCliCommandClassifier {
             "GIT_SSH_COMMAND",
             "GIT_ASKPASS",
             "SSH_ASKPASS");
-    private static final Set<String> GIT_READ =
-            Set.of("status", "diff", "log", "show", "blame", "rev-parse", "symbolic-ref", "describe");
+    private static final Set<String> GIT_READ = Set.of(
+            "status", "diff", "log", "show", "blame", "grep", "ls-files", "rev-parse", "symbolic-ref", "describe");
     private static final Set<String> GIT_WRITE = Set.of(
             "add",
             "commit",
@@ -36,8 +36,7 @@ public final class SystemGitCliCommandClassifier {
             "rebase",
             "cherry-pick",
             "revert",
-            "worktree",
-            "pull");
+            "worktree");
 
     private SystemGitCliCommandClassifier() {}
 
@@ -181,8 +180,14 @@ public final class SystemGitCliCommandClassifier {
                             : hasAny(args, "show") ? Risk.NETWORK_READ : Risk.LOCAL_WRITE,
                     "GIT_REMOTE");
         }
-        if (subcommand.equals("ls-remote") || subcommand.equals("fetch")) {
+        if (subcommand.equals("ls-remote")) {
             return git(Risk.NETWORK_READ, Operation.INSPECT, "GIT_NETWORK_READ");
+        }
+        if (subcommand.equals("fetch")) {
+            return git(Risk.LOCAL_WRITE, Operation.MUTATE, "GIT_FETCH");
+        }
+        if (subcommand.equals("pull")) {
+            return git(Risk.LOCAL_WRITE, Operation.MUTATE, "GIT_PULL");
         }
         if (subcommand.equals("push")) {
             return git(
@@ -228,12 +233,7 @@ public final class SystemGitCliCommandClassifier {
             return github(Risk.DENIED, "GH_AUTHENTICATION_MUTATION_OR_DISCLOSURE");
         }
         if (group.equals("api")) {
-            boolean writes =
-                    hasAnyIgnoreCase(args, "--field", "-f", "--raw-field", "-F", "--input") || methodWrites(args);
-            return github(
-                    writes ? Risk.EXTERNAL_WRITE : Risk.NETWORK_READ,
-                    writes ? Operation.MUTATE : Operation.INSPECT,
-                    "GH_API");
+            return github(Risk.UNKNOWN, Operation.UNKNOWN, "GH_API_HIGH_RISK");
         }
         String action = args.isEmpty() ? "" : args.getFirst().toLowerCase(Locale.ROOT);
         if (Set.of("repo", "pr", "issue", "run", "workflow", "release").contains(group)
@@ -398,19 +398,6 @@ public final class SystemGitCliCommandClassifier {
                         prefixes)
                 .map(prefix -> prefix.toLowerCase(Locale.ROOT))
                 .anyMatch(prefix -> value.equals(prefix) || value.startsWith(prefix + "=")));
-    }
-
-    private static boolean methodWrites(List<String> values) {
-        for (int index = 0; index < values.size(); index++) {
-            String value = values.get(index);
-            if (value.equalsIgnoreCase("--method") || value.equalsIgnoreCase("-X")) {
-                return index + 1 >= values.size() || !values.get(index + 1).equalsIgnoreCase("GET");
-            }
-            if (value.regionMatches(true, 0, "--method=", 0, 9)) {
-                return !value.substring(9).equalsIgnoreCase("GET");
-            }
-        }
-        return false;
     }
 
     private static Classification git(Risk risk, String reason) {

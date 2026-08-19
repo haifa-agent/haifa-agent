@@ -19,10 +19,10 @@ import io.haifa.agent.execution.api.ExecutionPreflightException;
 import io.haifa.agent.execution.api.ExecutionRequest;
 import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionScratchSpaceSpec;
-import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
+import io.haifa.agent.execution.core.command.CommandSemanticOutcomeInterpreter;
 import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
 import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.policy.api.PolicyRiskLevel;
@@ -264,6 +264,7 @@ public final class ProjectExecutionToolOperations {
                         request,
                         invocation.cancellation(),
                         invocation.observer(),
+                        command,
                         operationFamily,
                         commandClassification));
     }
@@ -365,13 +366,15 @@ public final class ProjectExecutionToolOperations {
                 ExecutionInput.none(),
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
-        return executeRequest(request, () -> false, ToolInvocationObserver.noop(), "UNKNOWN", commandClassification);
+        return executeRequest(
+                request, () -> false, ToolInvocationObserver.noop(), command, "UNKNOWN", commandClassification);
     }
 
     private ToolResult executeRequest(
             ExecutionRequest request,
             ToolCancellation cancellationSignal,
             ToolInvocationObserver invocationObserver,
+            String command,
             String operationFamily,
             SystemGitCliCommandClassifier.Classification commandClassification) {
         MergedTailObserver merged = new MergedTailObserver(
@@ -398,6 +401,7 @@ public final class ProjectExecutionToolOperations {
                     result,
                     merged,
                     outputSanitizer,
+                    command,
                     operationFamily,
                     commandClassification,
                     sandboxProfileRef,
@@ -427,12 +431,16 @@ public final class ProjectExecutionToolOperations {
             ExecutionResult result,
             MergedTailObserver merged,
             UnaryOperator<String> outputSanitizer,
+            String command,
             String operationFamily,
             SystemGitCliCommandClassifier.Classification commandClassification,
             SandboxProfileRef sandboxProfileRef,
             ExecutionScratchSpaceSpec scratchSpace) {
+        var semantic = CommandSemanticOutcomeInterpreter.interpret(command, result.status(), result.exitCode());
         String output = merged.text();
-        if (output.isBlank()) output = MergedTailObserver.sanitize(fallbackOutput(result));
+        if (output.isBlank() && !semantic.successfulToolResult()) {
+            output = MergedTailObserver.sanitize(fallbackOutput(result));
+        }
         output = Objects.requireNonNull(outputSanitizer.apply(output), "outputSanitizer must not return null");
         boolean truncated = merged.truncated()
                 || result.stdout().truncated()
@@ -441,6 +449,9 @@ public final class ProjectExecutionToolOperations {
         data.put("executionId", result.id().value());
         data.put("status", result.status().name());
         result.optionalExitCode().ifPresent(value -> data.put("exitCode", value));
+        data.put("semanticOutcome", semantic.outcome().name());
+        data.put("semanticReasonCode", semantic.reasonCode());
+        data.put("semanticInterpreterVersion", CommandSemanticOutcomeInterpreter.VERSION);
         data.put("output", output);
         data.put("truncated", truncated);
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
@@ -465,11 +476,11 @@ public final class ProjectExecutionToolOperations {
         data.put("scratchProvisioned", result.scratchProvisioned());
         data.put("scratchCleanupFailed", result.scratchCleanupFailed());
         result.optionalFileChangeSetId().ifPresent(value -> data.put("fileChangeSetId", value.value()));
-        result.optionalFailure().ifPresent(value -> {
-            data.put("failureCode", value.code());
-            data.put("failureDetail", value.safeDetail());
-        });
-        if (result.status() != ExecutionStatus.SUCCEEDED) {
+        if (!semantic.successfulToolResult()) {
+            result.optionalFailure().ifPresent(value -> {
+                data.put("failureCode", value.code());
+                data.put("failureDetail", value.safeDetail());
+            });
             var classification = CodingExecutionFailureClassifier.classify(result, output, commandClassification);
             data.put("failureCategory", classification.category());
             data.put("stableFailureCode", classification.stableFailureCode());
@@ -484,13 +495,19 @@ public final class ProjectExecutionToolOperations {
             data.put("outputRefs", assets.stream().map(AssetRef::assetId).toList());
         }
         String headline =
-                switch (result.status()) {
+                switch (semantic.outcome()) {
                     case SUCCEEDED -> "Command succeeded";
-                    case FAILED -> "Command failed";
-                    case OUTPUT_LIMIT_EXCEEDED -> "Command stopped after reaching its output budget";
-                    case TIMED_OUT -> "Command timed out";
-                    case CANCELLED -> "Command was cancelled";
-                    case UNKNOWN -> "Command outcome is unknown";
+                    case EXPECTED_VARIANT -> "Command completed with an expected result variant";
+                    case EMPTY_RESULT -> "Command completed with an empty result";
+                    case COMMAND_FAILED -> "Command failed";
+                    case OUTCOME_UNKNOWN ->
+                        switch (result.status()) {
+                            case OUTPUT_LIMIT_EXCEEDED ->
+                                "Command stopped after reaching its output budget; outcome is unknown";
+                            case TIMED_OUT -> "Command timed out; outcome is unknown";
+                            case CANCELLED -> "Command was cancelled; outcome is unknown";
+                            default -> "Command outcome is unknown";
+                        };
                 };
         if (result.exitCode() != null) headline += " (exit " + result.exitCode() + ")";
         String summaryOutput = output.length() <= SUMMARY_OUTPUT_CHARS
@@ -501,12 +518,7 @@ public final class ProjectExecutionToolOperations {
                         + output.substring(output.length() - SUMMARY_OUTPUT_CHARS / 2);
         String summary = summaryOutput.isBlank() ? headline : headline + "\n" + summaryOutput;
         return new ToolResult(
-                result.status() == ExecutionStatus.SUCCEEDED,
-                summary,
-                Map.copyOf(data),
-                List.copyOf(assets),
-                List.of(),
-                truncated);
+                semantic.successfulToolResult(), summary, Map.copyOf(data), List.copyOf(assets), List.of(), truncated);
     }
 
     private static ToolResult rejectedAbsoluteDirectoryChange(String operationFamily) {

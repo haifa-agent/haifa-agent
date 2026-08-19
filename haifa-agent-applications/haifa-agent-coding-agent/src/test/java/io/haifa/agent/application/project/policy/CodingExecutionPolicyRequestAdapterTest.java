@@ -29,6 +29,8 @@ class CodingExecutionPolicyRequestAdapterTest {
         PolicyRequest localRead = adapt("git status --short");
         PolicyRequest localWrite = adapt("git add src/Main.java");
         PolicyRequest networkRead = adapt("gh pr list --repo owner/repo");
+        PolicyRequest fetch = adapt("git fetch origin");
+        PolicyRequest ghApi = adapt("gh api repos/owner/repo");
         PolicyRequest externalWrite = adapt("git push origin feature");
 
         assertThat(localRead.risk().level()).isEqualTo(PolicyRiskLevel.LOW);
@@ -38,6 +40,9 @@ class CodingExecutionPolicyRequestAdapterTest {
                 .contains(PolicySideEffect.PROCESS_EXECUTION, PolicySideEffect.FILE_WRITE);
         assertThat(networkRead.risk().level()).isEqualTo(PolicyRiskLevel.MEDIUM);
         assertThat(networkRead.risk().sideEffects()).contains(PolicySideEffect.NETWORK_ACCESS);
+        assertThat(fetch.risk().level()).isEqualTo(PolicyRiskLevel.MEDIUM);
+        assertThat(fetch.risk().sideEffects()).contains(PolicySideEffect.FILE_WRITE, PolicySideEffect.NETWORK_ACCESS);
+        assertThat(ghApi.risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
         assertThat(externalWrite.risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
         assertThat(externalWrite.risk().sideEffects())
                 .contains(PolicySideEffect.NETWORK_ACCESS, PolicySideEffect.EXTERNAL_SYSTEM_MUTATION);
@@ -55,6 +60,23 @@ class CodingExecutionPolicyRequestAdapterTest {
                         PolicySideEffect.NETWORK_ACCESS,
                         PolicySideEffect.EXTERNAL_SYSTEM_MUTATION);
         assertThat(protectedOverride.risk().level()).isEqualTo(PolicyRiskLevel.CRITICAL);
+    }
+
+    @Test
+    void sendsShellCompositionWrappersAndUnknownGitToHighRiskPolicy() {
+        for (String command : Set.of(
+                "git status; git log -1",
+                "git status && git log -1",
+                "git status || git log -1",
+                "git status | Out-String",
+                "git status > status.txt",
+                "git status\ngit log -1",
+                "$(git status)",
+                "powershell -Command \"git status\"",
+                "git frobnicate")) {
+            assertThat(adapt(command).risk().level()).as(command).isEqualTo(PolicyRiskLevel.HIGH);
+        }
+        assertThat(adapt("git push --force origin feature").risk().level()).isEqualTo(PolicyRiskLevel.HIGH);
     }
 
     @Test

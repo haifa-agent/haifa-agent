@@ -16,12 +16,16 @@ class SystemGitCliCommandClassifierTest {
     void classifiesDirectGitAndGithubCommandsByMinimumRisk() {
         assertThat(classify("git --no-pager status --short")).isEqualTo(LOCAL_READ);
         assertThat(classify("git --no-pager diff --no-color")).isEqualTo(LOCAL_READ);
+        assertThat(classify("git grep needle")).isEqualTo(LOCAL_READ);
+        assertThat(classify("git ls-files")).isEqualTo(LOCAL_READ);
         assertThat(classify("git add src/Main.java")).isEqualTo(LOCAL_WRITE);
-        assertThat(classify("git fetch origin")).isEqualTo(NETWORK_READ);
+        assertThat(classify("git fetch origin")).isEqualTo(LOCAL_WRITE);
+        assertThat(classify("git ls-remote origin")).isEqualTo(NETWORK_READ);
         assertThat(classify("git push origin feature")).isEqualTo(EXTERNAL_WRITE);
         assertThat(classify("git push --force origin feature")).isEqualTo(DESTRUCTIVE);
         assertThat(classify("gh pr checks 42 --repo owner/repo")).isEqualTo(NETWORK_READ);
         assertThat(classify("gh issue comment 42 --body ok")).isEqualTo(EXTERNAL_WRITE);
+        assertThat(classify("gh api repos/owner/repo")).isEqualTo(UNKNOWN);
         assertThat(classify("gh repo delete owner/repo")).isEqualTo(DESTRUCTIVE);
         assertThat(SystemGitCliCommandClassifier.classify("git diff --no-color").operation())
                 .isEqualTo(SystemGitCliCommandClassifier.Operation.DIFF);
