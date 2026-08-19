@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "1.0.0",
+  "source": "SYNTHETIC_FROM_AGGREGATE_SHAPES",
+  "privacy": {
+    "containsCredentials": false,
+    "containsHostPaths": false,
+    "containsPrompts": false,
+    "containsProviderResponses": false,
+    "containsRealRepositoryData": false
+  },
+  "baseline": {
+    "sessions": 1,
+    "runs": 15,
+    "toolCalls": 130,
+    "failedToolCalls": 24,
+    "classificationOrPolicyFailures": 9,
+    "expectedDiffExitFalseFailures": 2
+  },
+  "cases": [
+    {
+      "caseId": "operation-hint-mismatch",
+      "syntheticCommand": "git status",
+      "observation": {"declaredOperationFamily": "DIFF", "trustedOperation": "INSPECT"},
+      "expected": {"effectiveRisk": "LOW", "toolFailure": false, "hintAuthoritative": false}
+    },
+    {
+      "caseId": "git-ls-files-read",
+      "syntheticCommand": "git ls-files",
+      "observation": {"trustedOperation": "UNKNOWN"},
+      "expected": {"effectiveRisk": "LOW", "toolFailure": false}
+    },
+    {
+      "caseId": "composite-shell-expression",
+      "syntheticCommand": "git status && git diff || echo fallback | more",
+      "observation": {"stableFailureCode": "COMMAND_CLASSIFICATION_REJECTED"},
+      "expected": {"effectiveRisk": "HIGH", "toolFailure": false, "shellDispatch": true}
+    },
+    {
+      "caseId": "diff-expected-exit",
+      "syntheticCommand": "git diff --no-index left.txt right.txt",
+      "observation": {"exitCode": 1, "stableFailureCode": "NON_ZERO_EXIT"},
+      "expected": {"semanticOutcome": "EXPECTED_VARIANT", "toolFailure": false}
+    },
+    {
+      "caseId": "missing-revision",
+      "syntheticCommand": "git show missing-revision",
+      "observation": {"exitCode": 128, "stableFailureCode": "NON_ZERO_EXIT"},
+      "expected": {"semanticOutcome": "COMMAND_FAILED", "recoveryAction": "REFRESH_AUTHORITATIVE_REF"}
+    },
+    {
+      "caseId": "sensitive-path-write",
+      "observation": {"toolName": "file_patch", "stableFailureCode": "SENSITIVE_PATH"},
+      "expected": {"toolFailure": true, "recoveryAction": "USER_ACTION_REQUIRED"}
+    },
+    {
+      "caseId": "stale-file-cursor",
+      "observation": {"toolName": "file_read", "stableFailureCode": "FILE_CURSOR_STALE"},
+      "expected": {"toolFailure": true, "recoveryAction": "RESTART_READ_FROM_CURRENT_VERSION", "maximumRetries": 1}
+    },
+    {
+      "caseId": "write-missing-target",
+      "observation": {"toolName": "file_write", "stableFailureCode": "TARGET_MISSING"},
+      "expected": {"toolFailure": true, "recoveryAction": "USE_FILE_CREATE"}
+    },
+    {
+      "caseId": "empty-model-output",
+      "observation": {"runFailureCode": "MODEL_RESPONSE_INVALID", "sideEffectDispatched": false},
+      "expected": {"boundedRetry": true, "maximumRetries": 2}
+    },
+    {
+      "caseId": "context-preflight",
+      "observation": {"runFailureCode": "MODEL_CONTEXT_TOO_LONG"},
+      "expected": {"preflightCompaction": true, "reserveDeliveryContext": true}
+    },
+    {
+      "caseId": "plural-change-sets",
+      "observation": {"changeSetIds": ["change-a", "change-b"], "repeatedDecision": true},
+      "expected": {"meaningfulProgress": true, "uniqueChangeSetEvidence": 2}
+    },
+    {
+      "caseId": "push-outcome-unknown",
+      "syntheticCommand": "git push origin feature",
+      "observation": {"dispatchStarted": true, "semanticOutcome": "OUTCOME_UNKNOWN"},
+      "expected": {"automaticReplay": false, "recoveryAction": "VERIFY_REMOTE_FACTS"}
+    }
+  ]
+}

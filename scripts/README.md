@@ -2,6 +2,38 @@
 
 后续可复用的构建、迁移、运行验证和发布脚本统一放置在此目录。当前构建入口为根目录 Maven Reactor。
 
+## Coding Runtime 可靠性分析
+
+`analyze-coding-runtime.ps1`（Windows）和 `analyze-coding-runtime.sh`（macOS/Linux）只读打开 Coding
+Agent 的 `runtime.db`，以最新 `runtime_event.occurred_at` 为窗口终点，输出脱敏的 Run/Tool/失败分类、
+Git/GH 目标、Operation Family 和恢复指标。公共逻辑位于 `analyze_coding_runtime.py`。
+
+报告不会包含 Prompt、完整命令、命令输出、Credential、Provider 原始响应、Run/Tool 原始 ID 或主机绝对
+路径；Command 和 Identifier 只输出 SHA-256 摘要。输出必须位于数据目录、源码仓库和独立 docs 仓库
+之外，且脚本拒绝覆盖已有报告。
+
+```powershell
+.\scripts\analyze-coding-runtime.ps1 `
+  --data-root C:\Users\example\.haifa-agent\coding\data `
+  --latest-hours 4 `
+  --output D:\haifa-agent-test-runs\coding-runtime-report.json
+```
+
+```bash
+./scripts/analyze-coding-runtime.sh \
+  --data-root /srv/haifa/coding/data \
+  --latest-hours 4 \
+  --output /tmp/haifa-coding-runtime-report.json
+```
+
+脱敏 Replay Contract 位于
+`haifa-agent-testing/haifa-agent-test-fixtures/src/main/resources/fixtures/coding-runtime-reliability/`。
+分析器和 Fixture 的离线测试入口：
+
+```bash
+python3 scripts/test_analyze_coding_runtime.py
+```
+
 ## Personal Assistant 真实环境
 
 `start-real-environment.ps1`（Windows PowerShell）和 `start-real-environment.sh`
