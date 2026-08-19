@@ -144,7 +144,9 @@ Provider、网络或受信配置变化会改变 Definition/Binding 的安全身�
 `ToolPolicyRequestAdapter` 在 Policy 决策前把本地读、写、网络读、外部写和未知形式映射为调用级风险及副作用，
 并把 Resolver 结果冻结进安全配置摘要。复合命令、未知 wrapper/alias 至少为 HIGH，但继续交给系统 Shell；
 认证环境覆盖、Credential 命令/配置和仓库路径逃逸在 Policy 与执行边界硬拒绝。模型自报的操作族不能覆盖
-可信分类、风险、审批或输出预算；直接 Git/GH 和复合形式都不因 Hint 缺失或不匹配被拒绝。
+可信分类、风险、审批或输出预算；直接 Git/GH 和复合形式都不因 Hint 缺失或不匹配被拒绝。结果通过
+稳定的 `riskResolutionCode`、`operationHintCode`、`failureActionCode` 和 `commandOutcomeCode` 区分
+风险提升、Hint 被忽略、可恢复失败和预期非零退出，恢复逻辑不解析 stderr 或依赖自然语言描述。
 
 Coding 审批使用 `LOW/MEDIUM/HIGH/NEVER` 阈值；风险事实先由可信解析器写入调用级 Policy Request，
 再由用户配置的阈值决定是否 ASK。兼容 `ask` 映射 LOW，`auto` 映射 NEVER，`deny` 移除通用执行能力。
@@ -156,7 +158,8 @@ Git/GH 只保留基础分级：`status/diff/log/show/grep/ls-files/rev-parse` �
 Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；产品不维护完整 Git/GH 参数 DSL。
 
 `execution.request_permissions -> request_permissions` 不是通用 Sandbox 绕过入口，也不授予可复用权限。
-它只允许引用同一 Run 中一次以 `NETWORK_UNAVAILABLE`、`HOST_AUTHENTICATION_UNAVAILABLE`、
+它只允许引用同一 Run 中一次以 `NETWORK_PERMISSION_REQUIRED`（兼容读取旧
+`NETWORK_UNAVAILABLE`）、`HOST_AUTHENTICATION_UNAVAILABLE`、
 `GIT_AUTHENTICATION_UNAVAILABLE` 或 `GH_AUTHENTICATION_UNAVAILABLE` 失败的 `execution.run`，并要求逐字段复用该结果
 返回的 `toolCallId`、完整 command、逻辑 workdir 和 timeout；operationFamily 仅是可选诊断 Hint，不参与
 精确授权绑定。Runtime 为该托管权限升级创建独立 Policy Decision 与审批 Checkpoint；批准后只用受信 Host 配置及其系统

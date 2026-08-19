@@ -144,6 +144,7 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("semanticOutcome", "EXPECTED_VARIANT")
                 .containsEntry("semanticReasonCode", "DIFFERENCES_FOUND")
                 .containsEntry("semanticInterpreterVersion", "1")
+                .containsEntry("commandOutcomeCode", "COMMAND_EXIT_EXPECTED_VARIANT")
                 .doesNotContainKeys("failureCategory", "stableFailureCode", "failureCode");
         assertThat(noMatches.successful()).isTrue();
         assertThat(noMatches.structuredData())
@@ -292,16 +293,55 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("commandRisk", "EXTERNAL_WRITE")
                 .containsEntry("commandTarget", "GIT")
                 .containsEntry("declaredOperationFamily", "INSPECT")
-                .containsEntry("effectiveOperationFamily", "MUTATE");
+                .containsEntry("effectiveOperationFamily", "MUTATE")
+                .containsEntry("operationHintCode", "OPERATION_HINT_IGNORED");
         assertThat(tokenOverride.structuredData())
-                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("stableFailureCode", "AUTHENTICATION_OVERRIDE_DENIED")
+                .containsEntry("failureActionCode", "REMOVE_AUTHENTICATION_OVERRIDE")
                 .containsEntry("commandRisk", "DENIED");
         assertThat(statusAsDiff.structuredData())
                 .containsEntry("status", "SUCCEEDED")
                 .containsEntry("declaredOperationFamily", "DIFF")
                 .containsEntry("effectiveOperationFamily", "INSPECT")
+                .containsEntry("operationHintCode", "OPERATION_HINT_IGNORED")
                 .containsEntry("commandOperation", "INSPECT")
                 .containsEntry("commandClassificationReason", "GIT_STATUS");
+    }
+
+    @Test
+    void reportsRiskEscalationAndNetworkPermissionAsActionsInsteadOfParserFailures() {
+        AtomicInteger calls = new AtomicInteger();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                if (calls.getAndIncrement() < 2) return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                observer.onOutput(chunk("fatal: unable to access remote: Could not resolve host\n"));
+                return result(request.id(), ExecutionStatus.FAILED, 128);
+            }
+        };
+        var operations = operations(broker, 4096, 100);
+
+        var compound = operations.execute(
+                invocation(Map.of("command", "git status && git log -1", "operationFamily", "INSPECT"), () -> false),
+                access());
+        var unknownGit = operations.execute(
+                invocation(Map.of("command", "git frobnicate", "operationFamily", "UNKNOWN"), () -> false), access());
+        var network = operations.execute(
+                invocation(Map.of("command", "git ls-remote origin", "operationFamily", "INSPECT"), () -> false),
+                access());
+
+        assertThat(compound.successful()).isTrue();
+        assertThat(compound.structuredData())
+                .containsEntry("effectiveRisk", "HIGH")
+                .containsEntry("riskResolutionCode", "COMMAND_RISK_ESCALATED")
+                .containsEntry("operationHintCode", "OPERATION_HINT_UNVERIFIED");
+        assertThat(unknownGit.successful()).isTrue();
+        assertThat(unknownGit.structuredData())
+                .containsEntry("effectiveRisk", "HIGH")
+                .containsEntry("riskResolutionCode", "GIT_COMMAND_UNKNOWN_HIGH_RISK");
+        assertThat(network.structuredData())
+                .containsEntry("stableFailureCode", "NETWORK_PERMISSION_REQUIRED")
+                .containsEntry("failureActionCode", "REQUEST_EXACT_PERMISSION_ONCE");
     }
 
     @Test

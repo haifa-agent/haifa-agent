@@ -103,7 +103,8 @@ class ProjectApplicationTest {
                 .containsExactly("execution_run", "file_read");
         var execution = disclosed.snapshot().bindings().getFirst();
         var fileRead = disclosed.snapshot().bindings().get(1);
-        assertThat(execution.definition().version().value()).isEqualTo("1.2.0");
+        assertThat(execution.definition().version().value()).isEqualTo("1.3.0");
+        assertThat(fileRead.definition().version().value()).isEqualTo("1.2.0");
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");

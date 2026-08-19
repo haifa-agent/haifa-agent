@@ -498,8 +498,7 @@ class RuntimeCoreHardeningTest {
         Queue<io.haifa.agent.runtime.core.decision.AgentDecision> decisions = new ArrayDeque<>(List.of(
                 environmentFailureRequest("failure-1", "/private/random-a", "probe"),
                 environmentFailureRequest("failure-2", "/private/random-b", "probe"),
-                environmentFailureRequest("failure-3", "/private/random-c", "alternate-probe"),
-                environmentFailureRequest("failure-4", "/private/random-d", "final-probe")));
+                environmentFailureRequest("failure-3", "/private/random-c", "alternate-probe")));
         AgentChatModel boundedModel = request -> {
             modelCalls.incrementAndGet();
             return response(decisions.remove());
@@ -533,13 +532,13 @@ class RuntimeCoreHardeningTest {
         var accepted = fixture.runtime.start(request("bounded-environment-recovery"));
         fixture.scheduler.runAll();
 
-        assertThat(modelCalls).hasValue(4);
-        assertThat(toolCalls).hasValue(4);
+        assertThat(modelCalls).hasValue(3);
+        assertThat(toolCalls).hasValue(3);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
                 .isEqualTo(AgentRunStatus.FAILED);
         assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().output())
                 .hasValueSatisfying(summary -> assertThat(summary)
-                        .contains("The task did not fully complete", "final-probe", "REPEATED_TOOL_FAILURE")
+                        .contains("The task did not fully complete", "alternate-probe", "REPEATED_TOOL_FAILURE")
                         .doesNotContain("/private/random"));
         assertThat(fixture.store.messages(accepted.runId())).anySatisfy(message -> {
             assertThat(message.role()).isEqualTo(io.haifa.agent.core.message.MessageRole.ASSISTANT);

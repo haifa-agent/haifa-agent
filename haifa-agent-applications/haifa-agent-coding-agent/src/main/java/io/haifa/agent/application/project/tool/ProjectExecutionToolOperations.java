@@ -452,6 +452,7 @@ public final class ProjectExecutionToolOperations {
         data.put("semanticOutcome", semantic.outcome().name());
         data.put("semanticReasonCode", semantic.reasonCode());
         data.put("semanticInterpreterVersion", CommandSemanticOutcomeInterpreter.VERSION);
+        data.put("commandOutcomeCode", commandOutcomeCode(semantic.outcome()));
         data.put("output", output);
         data.put("truncated", truncated);
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
@@ -468,6 +469,9 @@ public final class ProjectExecutionToolOperations {
         data.put("commandOperation", commandClassification.operation().name());
         data.put("commandClassificationReason", commandClassification.reasonCode());
         data.put("riskResolverVersion", CodingExecutionRiskResolver.VERSION);
+        data.put("riskResolutionCode", riskResolutionCode(commandClassification));
+        data.put("riskAction", riskAction(commandClassification));
+        data.put("operationHintCode", operationHintCode(operationFamily, commandClassification));
         data.put(
                 "sandboxProfileDigest",
                 io.haifa.agent.policy.api.PolicyDigest.sha256Fields(
@@ -485,6 +489,7 @@ public final class ProjectExecutionToolOperations {
             data.put("failureCategory", classification.category());
             data.put("stableFailureCode", classification.stableFailureCode());
             data.put("resourceClass", classification.resourceClass());
+            data.put("failureActionCode", failureActionCode(classification.stableFailureCode()));
             data.put("failureAction", classification.action());
         }
         List<AssetRef> assets = new ArrayList<>();
@@ -537,6 +542,8 @@ public final class ProjectExecutionToolOperations {
                         "ABSOLUTE_WORKDIR_FORBIDDEN",
                         "resourceClass",
                         "COMMAND",
+                        "failureActionCode",
+                        "USE_WORKSPACE_RELATIVE_WORKDIR",
                         "failureAction",
                         "Remove the absolute cd and use the workspace-relative workdir field."),
                 List.of(),
@@ -559,6 +566,8 @@ public final class ProjectExecutionToolOperations {
                         stableFailureCode,
                         "resourceClass",
                         "WORKDIR",
+                        "failureActionCode",
+                        "USE_WORKSPACE_RELATIVE_WORKDIR",
                         "failureAction",
                         "Use a normalized path relative to the authorized workspace root."),
                 List.of(),
@@ -568,6 +577,8 @@ public final class ProjectExecutionToolOperations {
 
     private static ToolResult rejectedCommandClassification(
             String operationFamily, SystemGitCliCommandClassifier.Classification classification) {
+        String stableCode = hardBoundaryCode(classification.reasonCode());
+        String resourceClass = hardBoundaryResource(classification.reasonCode());
         return new ToolResult(
                 false,
                 "Command rejected before execution: the command crosses a protected execution boundary.",
@@ -581,11 +592,10 @@ public final class ProjectExecutionToolOperations {
                         Map.entry("commandOperation", classification.operation().name()),
                         Map.entry("commandClassificationReason", classification.reasonCode()),
                         Map.entry("failureCategory", "POLICY"),
-                        Map.entry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED"),
-                        Map.entry("resourceClass", "COMMAND"),
-                        Map.entry(
-                                "failureAction",
-                                "Remove the authentication, executable path, or repository boundary override.")),
+                        Map.entry("stableFailureCode", stableCode),
+                        Map.entry("resourceClass", resourceClass),
+                        Map.entry("failureActionCode", failureActionCode(stableCode)),
+                        Map.entry("failureAction", hardBoundaryAction(stableCode))),
                 List.of(),
                 List.of(),
                 false);
@@ -593,6 +603,81 @@ public final class ProjectExecutionToolOperations {
 
     private static String effectiveOperationFamily(SystemGitCliCommandClassifier.Classification classification) {
         return classification.operation().name();
+    }
+
+    private static String riskResolutionCode(SystemGitCliCommandClassifier.Classification classification) {
+        if (classification.risk() != SystemGitCliCommandClassifier.Risk.UNKNOWN) return "COMMAND_RISK_RESOLVED";
+        if (classification.target() == SystemGitCliCommandClassifier.Target.GIT
+                && classification.reasonCode().equals("GIT_SUBCOMMAND_UNKNOWN")) {
+            return "GIT_COMMAND_UNKNOWN_HIGH_RISK";
+        }
+        return "COMMAND_RISK_ESCALATED";
+    }
+
+    private static String riskAction(SystemGitCliCommandClassifier.Classification classification) {
+        return classification.risk() == SystemGitCliCommandClassifier.Risk.UNKNOWN
+                ? "Continue with trusted HIGH risk under the configured approval threshold; do not rewrite solely for classification."
+                : "Continue with the trusted resolved risk under the configured approval threshold.";
+    }
+
+    private static String operationHintCode(
+            String declaredOperation, SystemGitCliCommandClassifier.Classification classification) {
+        String effective = effectiveOperationFamily(classification);
+        if (declaredOperation.equals("UNKNOWN")) return "OPERATION_HINT_NOT_PROVIDED";
+        if (effective.equals("UNKNOWN")) return "OPERATION_HINT_UNVERIFIED";
+        return declaredOperation.equals(effective) ? "OPERATION_HINT_ACCEPTED" : "OPERATION_HINT_IGNORED";
+    }
+
+    private static String hardBoundaryCode(String reasonCode) {
+        if (reasonCode.contains("AUTHENTICATION")
+                || reasonCode.contains("CREDENTIAL")
+                || reasonCode.contains("TOKEN")) {
+            return "AUTHENTICATION_OVERRIDE_DENIED";
+        }
+        if (reasonCode.contains("PATH") || reasonCode.contains("REPOSITORY") || reasonCode.contains("BOUNDARY")) {
+            return "REPOSITORY_BOUNDARY_DENIED";
+        }
+        return reasonCode.equals("COMMAND_INVALID") ? "COMMAND_INVALID" : "COMMAND_BOUNDARY_DENIED";
+    }
+
+    private static String hardBoundaryResource(String reasonCode) {
+        String stableCode = hardBoundaryCode(reasonCode);
+        if (stableCode.equals("AUTHENTICATION_OVERRIDE_DENIED")) return "AUTHENTICATION";
+        if (stableCode.equals("REPOSITORY_BOUNDARY_DENIED")) return "REPOSITORY";
+        return "COMMAND";
+    }
+
+    private static String hardBoundaryAction(String stableCode) {
+        return switch (stableCode) {
+            case "AUTHENTICATION_OVERRIDE_DENIED" ->
+                "Remove the authentication override; use the managed Credential Lease path when available.";
+            case "REPOSITORY_BOUNDARY_DENIED" -> "Use the authorized repository and workspace-relative workdir.";
+            case "COMMAND_INVALID" -> "Provide a non-empty command using the configured shell syntax.";
+            default -> "Remove the executable or command boundary override before retrying.";
+        };
+    }
+
+    private static String failureActionCode(String stableCode) {
+        return switch (stableCode) {
+            case "AUTHENTICATION_OVERRIDE_DENIED" -> "REMOVE_AUTHENTICATION_OVERRIDE";
+            case "REPOSITORY_BOUNDARY_DENIED" -> "USE_BOUND_REPOSITORY";
+            case "NETWORK_PERMISSION_REQUIRED" -> "REQUEST_EXACT_PERMISSION_ONCE";
+            case "GIT_REVISION_NOT_FOUND" -> "READ_AUTHORITATIVE_REF_ONCE";
+            case "DEPENDENCY_UNAVAILABLE", "GIT_CLI_UNAVAILABLE", "GH_CLI_UNAVAILABLE" ->
+                "RESTORE_TOOLCHAIN_OR_USE_EQUIVALENT";
+            case "TIMEOUT", "CANCELLED", "OUTCOME_UNKNOWN" -> "VERIFY_OUTCOME_BEFORE_RETRY";
+            default -> "REVIEW_BOUNDED_FAILURE";
+        };
+    }
+
+    private static String commandOutcomeCode(io.haifa.agent.execution.core.command.CommandSemanticOutcome outcome) {
+        return switch (outcome) {
+            case SUCCEEDED -> "COMMAND_EXIT_SUCCEEDED";
+            case EXPECTED_VARIANT -> "COMMAND_EXIT_EXPECTED_VARIANT";
+            case EMPTY_RESULT -> "COMMAND_EMPTY_RESULT";
+            case COMMAND_FAILED -> "COMMAND_EXIT_FAILED";
+            case OUTCOME_UNKNOWN -> "COMMAND_OUTCOME_UNKNOWN";
+        };
     }
 
     private static boolean hasLeadingAbsoluteDirectoryChange(String command) {

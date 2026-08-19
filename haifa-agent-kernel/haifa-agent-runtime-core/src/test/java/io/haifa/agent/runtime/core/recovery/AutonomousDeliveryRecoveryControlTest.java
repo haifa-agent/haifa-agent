@@ -73,6 +73,29 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     @Test
+    void semanticFingerprintBindsTrustedCommandFactsAndNormalizedIntentWithoutLeakingArguments() {
+        var classifier = new ToolOutcomeClassifier();
+        var first = classifier
+                .classify(failedCommand("intent-1", "git show missing", "GIT", "INSPECT"))
+                .orElseThrow();
+        var same = classifier
+                .classify(failedCommand("intent-2", "git show missing", "GIT", "INSPECT"))
+                .orElseThrow();
+        var sameIntentWithDifferentOperand = classifier
+                .classify(failedCommand("intent-3", "git show other-random-ref", "GIT", "INSPECT"))
+                .orElseThrow();
+        var otherOperation = classifier
+                .classify(failedCommand("intent-4", "git show missing", "GIT", "DIFF"))
+                .orElseThrow();
+
+        assertThat(first.fingerprint()).isEqualTo(same.fingerprint());
+        assertThat(first.fingerprint()).isEqualTo(sameIntentWithDifferentOperand.fingerprint());
+        assertThat(first.fingerprint()).isNotEqualTo(otherOperation.fingerprint());
+        assertThat(first.fingerprint().normalizedIntentDigest()).matches("[0-9a-f]{64}");
+        assertThat(first.fingerprint().toString()).doesNotContain("git show", "missing", "other-random-ref");
+    }
+
+    @Test
     void recoveryEscalatesDeterministicallyAndMeaningfulProgressResetsTheCluster() {
         var controller = new RecoveryController();
         var observation = new ToolOutcomeClassifier()
@@ -81,7 +104,6 @@ class AutonomousDeliveryRecoveryControlTest {
 
         assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.CONTINUE_WITH_DIAGNOSTIC);
         assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.REQUIRE_STRATEGY_CHANGE);
-        assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.REQUIRE_CONVERGENCE);
         assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.TERMINATE_REPEATED_FAILURE);
 
         controller.meaningfulProgress();
@@ -376,6 +398,38 @@ class AutonomousDeliveryRecoveryControlTest {
                                 "TEST",
                                 "sandboxProfileDigest",
                                 sandboxDigest),
+                        "diag-" + id,
+                        NOW.plusSeconds(2))),
+                NOW.plusSeconds(2));
+        return call;
+    }
+
+    private static ToolCall failedCommand(String id, String command, String target, String operation) {
+        ToolCall call = requested(
+                id,
+                Map.of(
+                        "operationFamily",
+                        "INSPECT",
+                        "command",
+                        command,
+                        "workdir",
+                        ".",
+                        "description",
+                        "diagnostic-" + id));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW.plusSeconds(1));
+        call.fail(
+                new ToolExecutionError(new AgentError(
+                        AgentErrorCode.TOOL_BUSINESS_FAILURE,
+                        Map.ofEntries(
+                                Map.entry("failureCategory", "COMMAND_FAILED"),
+                                Map.entry("stableFailureCode", "GIT_REVISION_NOT_FOUND"),
+                                Map.entry("resourceClass", "REPOSITORY_REF"),
+                                Map.entry("effectiveOperationFamily", operation),
+                                Map.entry("commandOperation", operation),
+                                Map.entry("commandTarget", target),
+                                Map.entry("sandboxProfileDigest", PROFILE_A)),
                         "diag-" + id,
                         NOW.plusSeconds(2))),
                 NOW.plusSeconds(2));

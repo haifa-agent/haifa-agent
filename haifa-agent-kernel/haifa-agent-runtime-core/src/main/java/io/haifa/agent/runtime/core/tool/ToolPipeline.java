@@ -718,7 +718,14 @@ public final class ToolPipeline {
                                 ? id
                                 : call.id().value());
                 event.put("toolCallId", call.id().value());
-                event.put("status", lifecycle);
+                event.put("rawStatus", lifecycle);
+                event.put("status", result.successful() ? "SUCCEEDED" : lifecycle);
+                if (data.get("semanticOutcome") instanceof String semanticOutcome) {
+                    event.put("semanticOutcome", semanticOutcome);
+                }
+                if (data.get("commandOutcomeCode") instanceof String commandOutcomeCode) {
+                    event.put("commandOutcomeCode", commandOutcomeCode);
+                }
                 event.put(
                         "commandSummary",
                         safeText(call.arguments().values().get("purpose"), "approved command or script"));
@@ -732,11 +739,12 @@ public final class ToolPipeline {
                 }
                 events.append(
                         run.id(),
-                        switch (lifecycle) {
-                            case "CANCELLED" -> "execution.cancelled";
-                            case "SUCCEEDED" -> "execution.completed";
-                            default -> "execution.failed";
-                        },
+                        result.successful()
+                                ? "execution.completed"
+                                : switch (lifecycle) {
+                                    case "CANCELLED" -> "execution.cancelled";
+                                    default -> "execution.failed";
+                                },
                         Map.copyOf(event),
                         time.now());
                 if (data.get("fileChangeSetId") instanceof String changeSet) {
@@ -757,7 +765,11 @@ public final class ToolPipeline {
                 "stableFailureCode",
                 "resourceClass",
                 "operationFamily",
+                "effectiveOperationFamily",
+                "commandOperation",
+                "commandTarget",
                 "sandboxProfileDigest",
+                "failureActionCode",
                 "failureCode",
                 "status",
                 "fileChangeSetId")) {

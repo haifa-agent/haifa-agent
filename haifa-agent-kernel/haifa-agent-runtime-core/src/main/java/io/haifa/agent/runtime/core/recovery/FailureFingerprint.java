@@ -10,12 +10,44 @@ import java.util.Objects;
 /** Safe canonical identity for semantically equivalent Tool failures. */
 public record FailureFingerprint(
         String toolCoordinateDigest,
-        String operationFamily,
+        String commandTarget,
+        String effectiveOperation,
         ToolFailureCategory failureCategory,
         String stableFailureCode,
+        String normalizedIntentDigest,
         String resourceClass,
         String sandboxProfileDigest,
         String digest) {
+    public FailureFingerprint(
+            String toolCoordinateDigest,
+            String commandTarget,
+            String effectiveOperation,
+            ToolFailureCategory failureCategory,
+            String stableFailureCode,
+            String normalizedIntentDigest,
+            String resourceClass,
+            String sandboxProfileDigest) {
+        this(
+                safe(toolCoordinateDigest, "toolCoordinateDigest"),
+                token(commandTarget, "commandTarget"),
+                token(effectiveOperation, "effectiveOperation"),
+                Objects.requireNonNull(failureCategory, "failureCategory must not be null"),
+                token(stableFailureCode, "stableFailureCode"),
+                safe(normalizedIntentDigest, "normalizedIntentDigest"),
+                token(resourceClass, "resourceClass"),
+                safe(sandboxProfileDigest, "sandboxProfileDigest"),
+                digest(List.of(
+                        safe(toolCoordinateDigest, "toolCoordinateDigest"),
+                        token(commandTarget, "commandTarget"),
+                        token(effectiveOperation, "effectiveOperation"),
+                        failureCategory.name(),
+                        token(stableFailureCode, "stableFailureCode"),
+                        safe(normalizedIntentDigest, "normalizedIntentDigest"),
+                        token(resourceClass, "resourceClass"),
+                        safe(sandboxProfileDigest, "sandboxProfileDigest"))));
+    }
+
+    /** Source-compatible constructor for non-command callers that predate trusted target and intent fields. */
     public FailureFingerprint(
             String toolCoordinateDigest,
             String operationFamily,
@@ -24,19 +56,14 @@ public record FailureFingerprint(
             String resourceClass,
             String sandboxProfileDigest) {
         this(
-                safe(toolCoordinateDigest, "toolCoordinateDigest"),
-                token(operationFamily, "operationFamily"),
-                Objects.requireNonNull(failureCategory, "failureCategory must not be null"),
-                token(stableFailureCode, "stableFailureCode"),
-                token(resourceClass, "resourceClass"),
-                safe(sandboxProfileDigest, "sandboxProfileDigest"),
-                digest(List.of(
-                        safe(toolCoordinateDigest, "toolCoordinateDigest"),
-                        token(operationFamily, "operationFamily"),
-                        failureCategory.name(),
-                        token(stableFailureCode, "stableFailureCode"),
-                        token(resourceClass, "resourceClass"),
-                        safe(sandboxProfileDigest, "sandboxProfileDigest"))));
+                toolCoordinateDigest,
+                "OTHER",
+                operationFamily,
+                failureCategory,
+                stableFailureCode,
+                digest(List.of("legacy-intent")),
+                resourceClass,
+                sandboxProfileDigest);
     }
 
     public FailureFingerprint {

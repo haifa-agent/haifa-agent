@@ -469,9 +469,12 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 逐文件 Java 扫描。通用 Shell 命令仍遵循配置的 Approval、ExecutionBroker、Workspace、Sandbox、输出
 预算和审计边界；不会因为 `operationFamily=INSPECT` 是模型声明就自动降低授权要求。
 
-`file.read` 1.1 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
+`file.read` 1.2 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
 后续窗口通过 `SeekableByteChannel` 从游标字节位置读取，不按文件大小分配内存；游标绑定逻辑路径和版本，
-文件变化会返回 `FILE_CURSOR_STALE`，跨路径复用则作为无效游标拒绝。
+文件变化会返回 `FILE_CURSOR_STALE` 与 `RESTART_READ_FROM_CURRENT_VERSION`，只允许从当前版本无游标
+确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
+调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file.write` 遇到不存在目标返回
+`USE_FILE_CREATE`，`file.create` 遇到已有目标返回 `USE_FILE_WRITE_OR_PATCH`，二者都不是原样重试信号。
 
 `file.patch` 1.1 默认启用，接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，可在同一次调用中
 新增、删除、更新或移动多个文件。更新使用 `@@` 精确上下文定位；本地 Provider 以流方式读取源文件，
@@ -556,7 +559,11 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
 `git diff --exit-code` / `--no-index` 的退出 1 是 `EXPECTED_VARIANT/DIFFERENCES_FOUND`，`git grep` 的退出 1
-是 `EMPTY_RESULT/NO_MATCHES`；无效 revision、构建或测试的非零退出仍是失败。
+是 `EMPTY_RESULT/NO_MATCHES`；无效 revision、构建或测试的非零退出仍是失败。复合命令风险提升返回
+`COMMAND_RISK_ESCALATED`，未知 Git 子命令返回 `GIT_COMMAND_UNKNOWN_HIGH_RISK`，不可信
+`operationFamily` 返回 `OPERATION_HINT_IGNORED` 或 `UNVERIFIED`。认证环境覆盖硬拒绝使用
+`AUTHENTICATION_OVERRIDE_DENIED`，受限网络失败使用 `NETWORK_PERMISSION_REQUIRED`，二者分别引导移除
+覆盖或通过托管的一次性权限请求处理，而不是重复执行原命令。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 

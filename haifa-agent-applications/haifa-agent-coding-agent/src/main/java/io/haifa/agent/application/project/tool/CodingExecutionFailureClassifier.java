@@ -44,11 +44,14 @@ final class CodingExecutionFailureClassifier {
                 || output.contains("name or service not known")
                 || output.contains("failed to connect")
                 || output.contains("couldn't connect to server")) {
+            boolean permissionEligible = commandClassification.target() != SystemGitCliCommandClassifier.Target.OTHER;
             return new Classification(
                     "NETWORK_DENIED",
-                    "NETWORK_UNAVAILABLE",
+                    permissionEligible ? "NETWORK_PERMISSION_REQUIRED" : "NETWORK_UNAVAILABLE",
                     "NETWORK",
-                    "Check the trusted host network and proxy configuration, then retry if authorized.");
+                    permissionEligible
+                            ? "If request_permissions is disclosed, request one exact retry of this Git/GH command; otherwise ask the user to restore network access."
+                            : "Check the trusted host network and proxy configuration, then retry if authorized.");
         }
         if (output.contains("permission denied (publickey)")
                 || output.contains("could not read username")

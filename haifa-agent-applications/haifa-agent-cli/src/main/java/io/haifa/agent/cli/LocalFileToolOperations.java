@@ -92,8 +92,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                 default -> throw new IllegalStateException("CLI does not support tool: " + toolName);
             };
         } catch (WorkspaceFileException exception) {
-            Map<String, Object> data = new java.util.LinkedHashMap<>();
-            data.put("errorCode", exception.code().name());
+            Map<String, Object> data = workspaceFileFailure(toolName, exception.code());
             String logicalPath = exception
                     .logicalPath()
                     .map(WorkspacePath::projectPath)
@@ -105,9 +104,11 @@ final class LocalFileToolOperations implements ProjectToolOperations {
             return failure(summary, data);
         } catch (WorkspaceMutationException exception) {
             String logicalPath = exception.path().projectPath().toString();
+            Map<String, Object> data = workspaceMutationFailure(toolName, exception.code());
+            data.put("path", logicalPath);
             return failure(
                     "Workspace mutation failed: " + exception.code().name() + " (path=" + logicalPath + ")",
-                    Map.of("errorCode", exception.code().name(), "path", logicalPath));
+                    Map.copyOf(data));
         } catch (IllegalArgumentException exception) {
             return failure("Workspace file arguments are invalid", Map.of("errorCode", "INVALID_ARGUMENT"));
         }
@@ -431,5 +432,110 @@ final class LocalFileToolOperations implements ProjectToolOperations {
 
     private static ToolResult failure(String summary, Map<String, Object> data) {
         return new ToolResult(false, summary, data, List.of(), List.of(), false);
+    }
+
+    private static Map<String, Object> workspaceFileFailure(String toolName, WorkspaceFileErrorCode code) {
+        var data = baseFailure(code.name());
+        switch (code) {
+            case FILE_CURSOR_STALE ->
+                recovery(
+                        data,
+                        "INVALID_INPUT",
+                        "FILE_CURSOR",
+                        "RESTART_READ_FROM_CURRENT_VERSION",
+                        "Restart file.read once without the stale cursor and use the returned current contentVersion.",
+                        true,
+                        1);
+            case SENSITIVE_PATH ->
+                recovery(
+                        data,
+                        "POLICY_DENIED",
+                        "SENSITIVE_PATH",
+                        "USER_ACTION_REQUIRED",
+                        "Ask the user to handle the sensitive path; do not rename, relocate, or copy its contents.",
+                        false,
+                        0);
+            case PATH_NOT_FOUND ->
+                recovery(
+                        data,
+                        "INVALID_INPUT",
+                        "WORKSPACE_PATH",
+                        toolName.equals("file.write") ? "USE_FILE_CREATE" : "READ_AUTHORITATIVE_PATH",
+                        toolName.equals("file.write")
+                                ? "The target does not exist; use file.create with the same intended content."
+                                : "Read the authoritative workspace listing before choosing another path.",
+                        false,
+                        0);
+            default ->
+                recovery(
+                        data,
+                        code == WorkspaceFileErrorCode.PERMISSION_DENIED ? "POLICY_DENIED" : "FILESYSTEM_DENIED",
+                        "WORKSPACE_PATH",
+                        "USER_ACTION_REQUIRED",
+                        "Use the reported logical workspace path and resolve the stated boundary before retrying.",
+                        false,
+                        0);
+        }
+        return data;
+    }
+
+    private static Map<String, Object> workspaceMutationFailure(
+            String toolName, io.haifa.agent.project.mutation.MutationErrorCode code) {
+        var data = baseFailure(code.name());
+        if (code == io.haifa.agent.project.mutation.MutationErrorCode.TARGET_EXISTS && toolName.equals("file.create")) {
+            recovery(
+                    data,
+                    "INVALID_INPUT",
+                    "WORKSPACE_PATH",
+                    "USE_FILE_WRITE_OR_PATCH",
+                    "The target exists; use file.write for an intentional full replacement or file.patch for a bounded edit.",
+                    false,
+                    0);
+        } else if (code == io.haifa.agent.project.mutation.MutationErrorCode.TARGET_NOT_FOUND
+                && toolName.equals("file.write")) {
+            recovery(
+                    data,
+                    "INVALID_INPUT",
+                    "WORKSPACE_PATH",
+                    "USE_FILE_CREATE",
+                    "The target does not exist; use file.create with the same intended content.",
+                    false,
+                    0);
+        } else {
+            recovery(
+                    data,
+                    code == io.haifa.agent.project.mutation.MutationErrorCode.OUTCOME_UNKNOWN
+                            ? "OUTCOME_UNKNOWN"
+                            : "FILESYSTEM_DENIED",
+                    "WORKSPACE_PATH",
+                    "READ_AUTHORITATIVE_WORKSPACE_STATE",
+                    "Read the authoritative workspace state before choosing one bounded mutation strategy.",
+                    false,
+                    0);
+        }
+        return data;
+    }
+
+    private static LinkedHashMap<String, Object> baseFailure(String stableCode) {
+        var data = new LinkedHashMap<String, Object>();
+        data.put("errorCode", stableCode);
+        data.put("stableFailureCode", stableCode);
+        return data;
+    }
+
+    private static void recovery(
+            Map<String, Object> data,
+            String category,
+            String resourceClass,
+            String actionCode,
+            String action,
+            boolean retryable,
+            int maximumAutomaticRetries) {
+        data.put("failureCategory", category);
+        data.put("resourceClass", resourceClass);
+        data.put("failureActionCode", actionCode);
+        data.put("failureAction", action);
+        data.put("retryable", retryable);
+        data.put("maximumAutomaticRetries", maximumAutomaticRetries);
     }
 }

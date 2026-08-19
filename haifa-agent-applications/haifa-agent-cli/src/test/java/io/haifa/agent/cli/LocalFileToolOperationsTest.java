@@ -84,7 +84,11 @@ class LocalFileToolOperationsTest {
                 "policy-1",
                 arguments(Map.of("path", "large.txt", "cursor", cursor)));
         assertThat(stale.successful()).isFalse();
-        assertThat(stale.structuredData()).containsEntry("errorCode", "FILE_CURSOR_STALE");
+        assertThat(stale.structuredData())
+                .containsEntry("errorCode", "FILE_CURSOR_STALE")
+                .containsEntry("failureActionCode", "RESTART_READ_FROM_CURRENT_VERSION")
+                .containsEntry("retryable", true)
+                .containsEntry("maximumAutomaticRetries", 1);
     }
 
     @Test
@@ -131,7 +135,41 @@ class LocalFileToolOperationsTest {
         assertThat(result.summary()).isEqualTo("Workspace mutation failed: TARGET_EXISTS (path=existing.txt)");
         assertThat(result.structuredData())
                 .containsEntry("errorCode", "TARGET_EXISTS")
+                .containsEntry("failureActionCode", "USE_FILE_WRITE_OR_PATCH")
+                .containsEntry("retryable", false)
                 .containsEntry("path", "existing.txt");
+    }
+
+    @Test
+    void givesDeterministicCreateWriteAndSensitivePathRecoveryActions() {
+        Fixture fixture = fixture();
+
+        var missingWrite = fixture.operations.execute(
+                "file.write",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "missing.txt", "content", "new")));
+        var sensitiveRead = fixture.operations.execute(
+                "file.read",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", ".env")));
+
+        assertThat(missingWrite.structuredData())
+                .containsEntry("stableFailureCode", "PATH_NOT_FOUND")
+                .containsEntry("failureActionCode", "USE_FILE_CREATE")
+                .containsEntry("retryable", false);
+        assertThat(sensitiveRead.structuredData())
+                .containsEntry("stableFailureCode", "SENSITIVE_PATH")
+                .containsEntry("failureActionCode", "USER_ACTION_REQUIRED")
+                .containsEntry("retryable", false)
+                .containsEntry("maximumAutomaticRetries", 0);
+        assertThat(sensitiveRead.structuredData().get("failureAction").toString())
+                .contains("do not rename, relocate, or copy");
     }
 
     private Fixture fixture() {

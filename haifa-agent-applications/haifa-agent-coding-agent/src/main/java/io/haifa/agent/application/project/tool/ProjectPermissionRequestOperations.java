@@ -21,6 +21,7 @@ public final class ProjectPermissionRequestOperations {
     public static final String HOST_NETWORK_ACCESS = "HOST_NETWORK_ACCESS";
     private static final Set<String> ELIGIBLE_FAILURE_CODES = Set.of(
             "NETWORK_UNAVAILABLE",
+            "NETWORK_PERMISSION_REQUIRED",
             "HOST_AUTHENTICATION_UNAVAILABLE",
             "GIT_AUTHENTICATION_UNAVAILABLE",
             "GH_AUTHENTICATION_UNAVAILABLE");

@@ -268,9 +268,13 @@ public final class ProjectToolCatalog {
                         ? Set.of("unrestricted-network")
                         : Set.of(),
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
-        String version = name.equals("execution.run") || name.equals(ProjectPermissionRequestOperations.TOOL_NAME)
-                ? "1.2.0"
-                : name.equals("file.read") || name.equals("file.patch") ? "1.1.0" : "1.0.0";
+        String version =
+                switch (name) {
+                    case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> "1.3.0";
+                    case "file.read" -> "1.2.0";
+                    case "file.create", "file.write", "file.patch" -> "1.1.0";
+                    default -> "1.0.0";
+                };
         return new ToolDefinition(
                 new ToolName(name),
                 new SemanticVersion(version),
@@ -350,7 +354,16 @@ public final class ProjectToolCatalog {
         if (name.equals("file.read")) {
             return "Read one bounded text window from a workspace file. Continue with nextCursor only when hasMore "
                     + "is true; the cursor detects path reuse and file changes, so large files are never loaded in "
-                    + "full by default.";
+                    + "full by default. On FILE_CURSOR_STALE, restart once without the old cursor; sensitive paths "
+                    + "require user action and must not be copied or renamed.";
+        }
+        if (name.equals("file.create")) {
+            return "Create a new file only when the target is absent. If the target exists, use file.write for an "
+                    + "intentional full replacement or file.patch for a bounded edit.";
+        }
+        if (name.equals("file.write")) {
+            return "Replace the complete contents of an existing file with revision and content-hash protection. "
+                    + "If the target is absent, use file.create; prefer file.patch for bounded edits.";
         }
         if (name.equals("file.patch")) {
             return "Apply a bounded context patch to one or more workspace files. Use *** Begin Patch / "
@@ -523,6 +536,7 @@ public final class ProjectToolCatalog {
             properties.put("semanticOutcome", Map.of("type", "string"));
             properties.put("semanticReasonCode", Map.of("type", "string"));
             properties.put("semanticInterpreterVersion", Map.of("type", "string"));
+            properties.put("commandOutcomeCode", Map.of("type", "string"));
             properties.put("output", Map.of("type", "string"));
             properties.put("truncated", Map.of("type", "boolean"));
             properties.put("outputRef", Map.of("type", "string"));
@@ -535,6 +549,7 @@ public final class ProjectToolCatalog {
             properties.put("stableFailureCode", Map.of("type", "string"));
             properties.put("resourceClass", Map.of("type", "string"));
             properties.put("failureAction", Map.of("type", "string"));
+            properties.put("failureActionCode", Map.of("type", "string"));
             properties.put("operationFamily", Map.of("type", "string"));
             properties.put("declaredOperationFamily", Map.of("type", "string"));
             properties.put("effectiveOperationFamily", Map.of("type", "string"));
@@ -544,6 +559,9 @@ public final class ProjectToolCatalog {
             properties.put("commandOperation", Map.of("type", "string"));
             properties.put("commandClassificationReason", Map.of("type", "string"));
             properties.put("riskResolverVersion", Map.of("type", "string"));
+            properties.put("riskResolutionCode", Map.of("type", "string"));
+            properties.put("riskAction", Map.of("type", "string"));
+            properties.put("operationHintCode", Map.of("type", "string"));
             properties.put("sandboxProfileDigest", Map.of("type", "string"));
             properties.put("scratchSpecDigest", Map.of("type", "string"));
             properties.put("scratchProvisioned", Map.of("type", "boolean"));
