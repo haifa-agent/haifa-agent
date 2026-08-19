@@ -46,6 +46,7 @@
         <sqlite.jdbc.version>3.53.1.0</sqlite.jdbc.version>
         <tui4j.jline-backend.version>3.30.0</tui4j.jline-backend.version>
         <tui4j.version>0.3.3</tui4j.version>
+        <langgraph4j.version>1.8.24</langgraph4j.version>
 
         <maven.compiler.plugin.version>3.14.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.5.3</maven.surefire.plugin.version>
@@ -98,6 +99,11 @@
             <dependency>
                 <groupId>io.haifa</groupId>
                 <artifactId>haifa-agent-orchestration-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.haifa</groupId>
+                <artifactId>haifa-agent-graph-langgraph4j</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -184,6 +190,11 @@
                 <groupId>com.williamcallahan</groupId>
                 <artifactId>tui4j</artifactId>
                 <version>${tui4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bsc.langgraph4j</groupId>
+                <artifactId>langgraph4j-core</artifactId>
+                <version>${langgraph4j.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.haifa</groupId>
