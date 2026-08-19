@@ -60,6 +60,9 @@ public final class SystemGitCliCommandClassifier {
         if (usesGitExecutionBoundarySyntax(command)) {
             return classified(Target.GIT, Risk.DENIED, Operation.UNKNOWN, "GIT_EXECUTION_BOUNDARY_OVERRIDE");
         }
+        if (usesGithubPullRequestMergeSyntax(command)) {
+            return classified(Target.GITHUB, Risk.DENIED, Operation.UNKNOWN, "GH_PR_MERGE_DENIED");
+        }
         if (containsShellComposition(command)) {
             return classified(detectTarget(command), Risk.UNKNOWN, Operation.UNKNOWN, "COMPOUND_OR_WRAPPED_COMMAND");
         }
@@ -205,6 +208,12 @@ public final class SystemGitCliCommandClassifier {
         if (subcommand.equals("tag") && hasAny(args, "-d", "--delete", "-f", "--force")) {
             return git(Risk.DESTRUCTIVE, "GIT_TAG_DESTRUCTIVE");
         }
+        if (subcommand.equals("add")) {
+            return git(Risk.LOCAL_WRITE, Operation.MUTATE, "GIT_STAGE");
+        }
+        if (subcommand.equals("commit")) {
+            return git(Risk.LOCAL_WRITE, Operation.MUTATE, "GIT_COMMIT");
+        }
         if (GIT_WRITE.contains(subcommand) || subcommand.equals("tag")) {
             return git(Risk.LOCAL_WRITE, "GIT_LOCAL_WRITE");
         }
@@ -236,12 +245,21 @@ public final class SystemGitCliCommandClassifier {
             return github(Risk.UNKNOWN, Operation.UNKNOWN, "GH_API_HIGH_RISK");
         }
         String action = args.isEmpty() ? "" : args.getFirst().toLowerCase(Locale.ROOT);
+        if (group.equals("pr") && action.equals("merge")) {
+            return github(Risk.DENIED, Operation.UNKNOWN, "GH_PR_MERGE_DENIED");
+        }
         if (Set.of("repo", "pr", "issue", "run", "workflow", "release").contains(group)
                 && Set.of("list", "view", "status", "checks", "diff", "watch").contains(action)) {
             return github(Risk.NETWORK_READ, Operation.INSPECT, "GH_REMOTE_READ");
         }
         if ((group.equals("repo") || group.equals("release")) && action.equals("delete")) {
             return github(Risk.DESTRUCTIVE, "GH_DESTRUCTIVE");
+        }
+        if (group.equals("pr") && action.equals("create")) {
+            return github(Risk.EXTERNAL_WRITE, Operation.MUTATE, "GH_PR_CREATE");
+        }
+        if (group.equals("pr") && !action.isBlank()) {
+            return github(Risk.EXTERNAL_WRITE, Operation.MUTATE, "GH_PR_UPDATE");
         }
         if (Set.of("repo", "pr", "issue", "run", "workflow", "release").contains(group)) {
             return github(Risk.EXTERNAL_WRITE, "GH_REMOTE_WRITE");
@@ -287,6 +305,10 @@ public final class SystemGitCliCommandClassifier {
     private static boolean usesGitAuthenticationConfigSyntax(String command) {
         return command.matches("(?is).*\\bgit(?:\\.exe)?\\s+.*(?:-c\\s+)[\"']?"
                 + "(?:credential\\.|http\\.[^\\s;&|]*extraheader|core\\.sshcommand|credentialhelper).*");
+    }
+
+    private static boolean usesGithubPullRequestMergeSyntax(String command) {
+        return command.matches("(?is).*\\bgh(?:\\.exe)?\\b[^\\r\\n]*\\bpr\\s+merge\\b.*");
     }
 
     private static boolean usesAuthenticationCommandSyntax(String command) {

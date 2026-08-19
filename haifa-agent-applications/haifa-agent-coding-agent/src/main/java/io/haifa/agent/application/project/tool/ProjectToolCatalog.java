@@ -270,7 +270,7 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> "1.4.0";
+                    case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> "1.5.0";
                     case "file.read" -> "1.2.0";
                     case "file.create", "file.write", "file.patch" -> "1.1.0";
                     default -> "1.0.0";
@@ -341,7 +341,12 @@ public final class ProjectToolCatalog {
                     + "wrappers. Output is always bounded by operation family; use paging or returned artifact refs "
                     + "instead of repeating broad commands, and adapt when a command is unavailable. operationFamily is an "
                     + "optional declared hint: use BUILD or TEST for validation intent and DIFF only for read-only "
-                    + "final diff inspection; trusted risk and authorization never depend on the hint.";
+                    + "final diff inspection; trusted risk and authorization never depend on the hint."
+                    + " Git delivery defaults to WORKTREE_ONLY. A trusted host may freeze LOCAL_COMMIT, REMOTE_PUSH, "
+                    + "or PULL_REQUEST; delivery must then proceed through status/root/branch inspection, diff and "
+                    + "validation, exact-path staging, staged-diff review, commit/HEAD verification, exact-branch "
+                    + "push/remote-ref verification, and optional gh pr create/view. Do not use broad staging, blind "
+                    + "replay after an unknown outcome, or gh pr merge.";
         }
         if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
             return "Request user approval to rerun one exact execution.run command that failed in this Run because "
@@ -563,6 +568,10 @@ public final class ProjectToolCatalog {
             properties.put("riskResolutionCode", Map.of("type", "string"));
             properties.put("riskAction", Map.of("type", "string"));
             properties.put("operationHintCode", Map.of("type", "string"));
+            properties.put("deliveryAction", Map.of("type", "string"));
+            properties.put("deliveryVerification", Map.of("type", "string"));
+            properties.put("deliveryEvidenceCode", Map.of("type", "string"));
+            properties.put("deliveryEvidenceRef", Map.of("type", "string"));
             properties.put("outputBudgetFamily", Map.of("type", "string"));
             properties.put("outputBudgetBytesPerChannel", Map.of("type", "integer", "minimum", 1));
             properties.put("modelOutputBudgetBytes", Map.of("type", "integer", "minimum", 1));

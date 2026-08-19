@@ -60,11 +60,32 @@ public final class CodingDeliveryEvidenceLedger {
         Map<String, AgentStep> steps = new LinkedHashMap<>();
         state.steps(runId).forEach(step -> steps.put(step.id().value(), step));
         EnumSet<CodingDeliveryEvidenceKind> facts = EnumSet.noneOf(CodingDeliveryEvidenceKind.class);
-        state.toolCalls(runId).stream()
+        Map<CodingDeliveryEvidenceKind, Integer> latestDeliveryEvidence =
+                new java.util.EnumMap<>(CodingDeliveryEvidenceKind.class);
+        List<ToolCall> calls = state.toolCalls(runId).stream()
                 .sorted(Comparator.comparing(ToolCall::requestedAt)
                         .thenComparing(call -> call.id().value()))
-                .forEach(call -> collect(call, steps.get(call.stepId().value()), facts));
-        return new Snapshot(facts);
+                .toList();
+        for (int index = 0; index < calls.size(); index++) {
+            ToolCall call = calls.get(index);
+            collect(call, steps.get(call.stepId().value()), facts);
+            int position = index;
+            deliveryEvidenceKind(call).ifPresent(kind -> latestDeliveryEvidence.put(kind, position));
+        }
+        return new Snapshot(facts, latestDeliveryEvidence);
+    }
+
+    private static java.util.Optional<CodingDeliveryEvidenceKind> deliveryEvidenceKind(ToolCall call) {
+        if (call.status() != ToolCallStatus.COMPLETED) return java.util.Optional.empty();
+        Object code = call.result()
+                .map(result -> result.structuredData().get("deliveryEvidenceCode"))
+                .orElse(null);
+        if (!(code instanceof String value)) return java.util.Optional.empty();
+        try {
+            return java.util.Optional.of(CodingDeliveryEvidenceKind.valueOf(value));
+        } catch (IllegalArgumentException ignored) {
+            return java.util.Optional.empty();
+        }
     }
 
     private static void collect(ToolCall call, AgentStep step, EnumSet<CodingDeliveryEvidenceKind> facts) {
@@ -92,6 +113,15 @@ public final class CodingDeliveryEvidenceLedger {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         }
         if (!EXECUTION_TOOLS.contains(call.toolName()) || data.isEmpty()) return;
+
+        Object deliveryEvidenceCode = data.get("deliveryEvidenceCode");
+        if (deliveryEvidenceCode instanceof String code) {
+            try {
+                facts.add(CodingDeliveryEvidenceKind.valueOf(code));
+            } catch (IllegalArgumentException ignored) {
+                // Frozen or future executions may carry evidence unknown to this Runtime version.
+            }
+        }
 
         String declaredFamily = String.valueOf(
                 data.getOrDefault("declaredOperationFamily", data.getOrDefault("operationFamily", "UNKNOWN")));
@@ -162,13 +192,26 @@ public final class CodingDeliveryEvidenceLedger {
         };
     }
 
-    public record Snapshot(Set<CodingDeliveryEvidenceKind> kinds) {
+    public record Snapshot(
+            Set<CodingDeliveryEvidenceKind> kinds, Map<CodingDeliveryEvidenceKind, Integer> latestDeliveryEvidence) {
         public Snapshot {
             kinds = Set.copyOf(Objects.requireNonNull(kinds, "kinds must not be null"));
+            latestDeliveryEvidence = Map.copyOf(
+                    Objects.requireNonNull(latestDeliveryEvidence, "latestDeliveryEvidence must not be null"));
+        }
+
+        public Snapshot(Set<CodingDeliveryEvidenceKind> kinds) {
+            this(kinds, Map.of());
         }
 
         public boolean has(CodingDeliveryEvidenceKind kind) {
             return kinds.contains(kind);
+        }
+
+        public boolean hasAfter(CodingDeliveryEvidenceKind kind, CodingDeliveryEvidenceKind predecessor) {
+            Integer position = latestDeliveryEvidence.get(kind);
+            Integer previous = latestDeliveryEvidence.get(predecessor);
+            return position != null && previous != null && position > previous;
         }
 
         public List<String> codes() {

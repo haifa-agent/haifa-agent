@@ -31,6 +31,18 @@ class SystemGitCliCommandClassifierTest {
                 .isEqualTo(SystemGitCliCommandClassifier.Operation.DIFF);
         assertThat(SystemGitCliCommandClassifier.classify("git status --short").operation())
                 .isEqualTo(SystemGitCliCommandClassifier.Operation.INSPECT);
+        assertThat(SystemGitCliCommandClassifier.classify("git add src/Main.java")
+                        .reasonCode())
+                .isEqualTo("GIT_STAGE");
+        assertThat(SystemGitCliCommandClassifier.classify("git commit -m message")
+                        .reasonCode())
+                .isEqualTo("GIT_COMMIT");
+        assertThat(SystemGitCliCommandClassifier.classify("gh pr create --base dev --title title")
+                        .reasonCode())
+                .isEqualTo("GH_PR_CREATE");
+        assertThat(SystemGitCliCommandClassifier.classify("gh pr merge 42").reasonCode())
+                .isEqualTo("GH_PR_MERGE_DENIED");
+        assertThat(classify("gh pr merge 42")).isEqualTo(DENIED);
     }
 
     @Test
@@ -47,6 +59,8 @@ class SystemGitCliCommandClassifierTest {
         assertThat(classify("git credential fill && echo done")).isEqualTo(DENIED);
         assertThat(classify("gh auth token && echo done")).isEqualTo(DENIED);
         assertThat(classify("gh auth status --show-token && echo done")).isEqualTo(DENIED);
+        assertThat(classify("gh pr merge 42 && echo done")).isEqualTo(DENIED);
+        assertThat(classify("powershell -Command gh pr merge 42")).isEqualTo(DENIED);
         assertThat(classify("powershell -Command git status")).isEqualTo(UNKNOWN);
         assertThat(classify("git -C ../other status")).isEqualTo(DENIED);
         assertThat(classify("git -C nested status")).isEqualTo(DENIED);

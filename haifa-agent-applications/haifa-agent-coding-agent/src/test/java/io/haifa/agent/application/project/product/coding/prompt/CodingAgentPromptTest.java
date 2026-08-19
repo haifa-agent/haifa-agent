@@ -11,9 +11,9 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.0.3");
+        assertThat(first.version()).isEqualTo("1.0.4");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.0.3#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.0.4#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",

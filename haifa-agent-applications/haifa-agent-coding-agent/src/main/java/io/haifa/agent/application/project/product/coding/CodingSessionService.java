@@ -6,6 +6,7 @@ import io.haifa.agent.application.project.product.ProjectProductSession;
 import io.haifa.agent.application.project.product.ProjectProductSessionStore;
 import io.haifa.agent.application.project.product.TrustedProductCaller;
 import io.haifa.agent.application.project.product.TrustedProductCallerProvider;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimePrecision;
 import io.haifa.agent.core.content.TextPart;
@@ -105,12 +106,22 @@ public final class CodingSessionService {
 
     public CodingSessionView createSession(
             ProjectId projectId, String firstTurn, List<AssetRef> attachments, String idempotencyKey) {
+        return createSession(projectId, firstTurn, attachments, idempotencyKey, CodingDeliveryIntent.WORKTREE_ONLY);
+    }
+
+    public CodingSessionView createSession(
+            ProjectId projectId,
+            String firstTurn,
+            List<AssetRef> attachments,
+            String idempotencyKey,
+            CodingDeliveryIntent deliveryIntent) {
         TrustedProductCaller caller = callers.current();
         Instant now = now();
         List<AssetRef> safeAttachments = attachments(attachments);
         String message = message(firstTurn);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
-        String requestDigest = requestDigest(projectId.value(), message, safeAttachments);
+        CodingDeliveryIntent frozenIntent = Objects.requireNonNull(deliveryIntent, "deliveryIntent must not be null");
+        String requestDigest = requestDigest(projectId.value() + "|" + frozenIntent.name(), message, safeAttachments);
         String scope = callerScope(caller);
         String dispatchKey = dispatchKey(CREATE, scope + "|" + keyDigest);
         CodingCommandBinding binding = codingSessions.reserveCommand(new CodingCommandBinding(
@@ -123,6 +134,7 @@ public final class CodingSessionService {
                 projectId,
                 message,
                 safeAttachments,
+                frozenIntent,
                 Optional.empty(),
                 now));
         String modelId = codingSessions
@@ -274,6 +286,15 @@ public final class CodingSessionService {
 
     public CodingSessionCommandReceipt submitTurn(
             AgentSessionId sessionId, String message, List<AssetRef> attachments, String idempotencyKey) {
+        return submitTurn(sessionId, message, attachments, idempotencyKey, CodingDeliveryIntent.WORKTREE_ONLY);
+    }
+
+    public CodingSessionCommandReceipt submitTurn(
+            AgentSessionId sessionId,
+            String message,
+            List<AssetRef> attachments,
+            String idempotencyKey,
+            CodingDeliveryIntent deliveryIntent) {
         TrustedProductCaller caller = callers.current();
         ProjectProductSession product = requireProductSession(sessionId, caller);
         CodingSessionActivity activity = reconcile(requireActivity(sessionId, caller), caller);
@@ -281,7 +302,9 @@ public final class CodingSessionService {
         String safeMessage = message(message);
         List<AssetRef> safeAttachments = attachments(attachments);
         String keyDigest = digest(idempotencyKey(idempotencyKey));
-        String requestDigest = requestDigest(sessionId.value(), safeMessage, safeAttachments);
+        CodingDeliveryIntent frozenIntent = Objects.requireNonNull(deliveryIntent, "deliveryIntent must not be null");
+        String requestDigest =
+                requestDigest(sessionId.value() + "|" + frozenIntent.name(), safeMessage, safeAttachments);
         String dispatchKey = dispatchKey(SUBMIT, callerScope(caller) + "|" + keyDigest);
         CodingCommandBinding existing = codingSessions.reserveCommand(new CodingCommandBinding(
                 callerScope(caller),
@@ -293,6 +316,7 @@ public final class CodingSessionService {
                 product.projectId(),
                 safeMessage,
                 safeAttachments,
+                frozenIntent,
                 Optional.empty(),
                 now()));
         if (existing.runId().isPresent()) {

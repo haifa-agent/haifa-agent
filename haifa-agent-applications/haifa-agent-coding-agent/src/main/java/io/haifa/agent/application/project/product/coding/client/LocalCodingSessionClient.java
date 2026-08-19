@@ -17,6 +17,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.run.AgentRunId;
@@ -144,6 +145,13 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     }
 
     @Override
+    public CodingSessionView create(
+            ProjectId projectId, String firstTurn, String idempotencyKey, CodingDeliveryIntent deliveryIntent) {
+        requireProject(projectId);
+        return scoped(sessions.createSession(projectId, firstTurn, List.of(), idempotencyKey, deliveryIntent));
+    }
+
+    @Override
     public List<CodingSessionSummary> list(ProjectId projectId, int limit) {
         requireProject(projectId);
         return sessions.listSessions(projectId, CodingSessionQuery.firstPage(limit))
@@ -202,6 +210,13 @@ public final class LocalCodingSessionClient implements CodingSessionClient {
     public void submit(AgentSessionId sessionId, String message, String idempotencyKey) {
         requireScoped(sessionId);
         sessions.submitTurn(sessionId, message, List.of(), idempotencyKey);
+    }
+
+    @Override
+    public void submit(
+            AgentSessionId sessionId, String message, String idempotencyKey, CodingDeliveryIntent deliveryIntent) {
+        requireScoped(sessionId);
+        sessions.submitTurn(sessionId, message, List.of(), idempotencyKey, deliveryIntent);
     }
 
     @Override

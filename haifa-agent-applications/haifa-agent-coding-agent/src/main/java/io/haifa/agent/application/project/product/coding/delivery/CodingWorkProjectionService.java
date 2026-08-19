@@ -42,6 +42,7 @@ public final class CodingWorkProjectionService {
     private final CodingDeliveryEvidenceLedger evidence;
     private final CodingDeliveryProfile profile;
     private final TimeProvider time;
+    private final CodingDeliveryIntentResolver deliveryIntents;
 
     public CodingWorkProjectionService(
             RuntimeStateRepository state,
@@ -49,11 +50,22 @@ public final class CodingWorkProjectionService {
             CodingDeliveryEvidenceLedger evidence,
             CodingDeliveryProfile profile,
             TimeProvider time) {
+        this(state, taskModes, evidence, profile, time, null);
+    }
+
+    public CodingWorkProjectionService(
+            RuntimeStateRepository state,
+            CodingTaskModeResolver taskModes,
+            CodingDeliveryEvidenceLedger evidence,
+            CodingDeliveryProfile profile,
+            TimeProvider time,
+            CodingDeliveryIntentResolver deliveryIntents) {
         this.state = Objects.requireNonNull(state, "state must not be null");
         this.taskModes = Objects.requireNonNull(taskModes, "taskModes must not be null");
         this.evidence = Objects.requireNonNull(evidence, "evidence must not be null");
         this.profile = Objects.requireNonNull(profile, "profile must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
+        this.deliveryIntents = deliveryIntents;
     }
 
     public CodingWorkProjection project(AgentRun run) {
@@ -80,7 +92,9 @@ public final class CodingWorkProjectionService {
         }));
         failures.forEach((key, count) -> add(refs.get(RefKind.FAILURE), key + ":" + count));
 
-        List<String> missing = missingEvidence(taskIntent, snapshot);
+        CodingDeliveryIntent deliveryIntent =
+                deliveryIntents == null ? CodingDeliveryIntent.WORKTREE_ONLY : deliveryIntents.resolve(run);
+        List<String> missing = missingEvidence(taskIntent, deliveryIntent, snapshot);
         CodingWorkPhase phase = phase(taskIntent, snapshot, refs.get(RefKind.BLOCKED_ITEM), missing);
         int remainingModelCalls =
                 remaining(run.budget().maxModelCalls(), run.usage().modelCalls());
@@ -98,12 +112,7 @@ public final class CodingWorkProjectionService {
                         || toolPercent <= profile.toolCallsReservePercent()
                         || wallPercent <= profile.wallTimeReservePercent());
         String taskContractDigest = taskContractDigest(run, taskIntent);
-        String deliveryIntent =
-                switch (taskIntent) {
-                    case ANALYZE, REVIEW -> "READ_ONLY";
-                    case CHANGE, CREATE -> "WORKSPACE_CHANGE_ONLY";
-                    case UNKNOWN -> "UNSPECIFIED";
-                };
+        String deliveryIntentName = deliveryIntent.name();
         List<String> failureSummaries = values(refs, RefKind.FAILURE);
         String digest = PolicyDigest.sha256Fields(List.of(
                 SCHEMA_VERSION,
@@ -118,7 +127,7 @@ public final class CodingWorkProjectionService {
                 String.join(",", values(refs, RefKind.VALIDATION)),
                 String.join(",", values(refs, RefKind.DIFF)),
                 String.join(",", failureSummaries),
-                deliveryIntent,
+                deliveryIntentName,
                 String.join(",", missing),
                 Integer.toString(remainingModelCalls),
                 Integer.toString(remainingToolCalls),
@@ -137,7 +146,7 @@ public final class CodingWorkProjectionService {
                 values(refs, RefKind.VALIDATION),
                 values(refs, RefKind.DIFF),
                 failureSummaries,
-                deliveryIntent,
+                deliveryIntentName,
                 missing,
                 remainingModelCalls,
                 remainingToolCalls,
@@ -216,7 +225,9 @@ public final class CodingWorkProjectionService {
     }
 
     private static List<String> missingEvidence(
-            CodingTaskIntent intent, CodingDeliveryEvidenceLedger.Snapshot snapshot) {
+            CodingTaskIntent intent,
+            CodingDeliveryIntent deliveryIntent,
+            CodingDeliveryEvidenceLedger.Snapshot snapshot) {
         List<String> missing = new ArrayList<>();
         if (intent == CodingTaskIntent.CHANGE || intent == CodingTaskIntent.CREATE) {
             if (!snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
@@ -233,7 +244,62 @@ public final class CodingWorkProjectionService {
                 && !snapshot.has(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION)) {
             missing.add("READ_ONLY_EVIDENCE");
         }
+        if (deliveryIntent.allows(CodingDeliveryIntent.LOCAL_COMMIT)) {
+            addMissing(snapshot, missing, CodingDeliveryEvidenceKind.STAGE_COMPLETED);
+            addMissingAfter(
+                    snapshot,
+                    missing,
+                    CodingDeliveryEvidenceKind.STAGED_DIFF_INSPECTED,
+                    CodingDeliveryEvidenceKind.STAGE_COMPLETED);
+            addMissingAfter(
+                    snapshot,
+                    missing,
+                    CodingDeliveryEvidenceKind.COMMIT_COMPLETED,
+                    CodingDeliveryEvidenceKind.STAGED_DIFF_INSPECTED);
+            addMissingAfter(
+                    snapshot,
+                    missing,
+                    CodingDeliveryEvidenceKind.HEAD_VERIFIED,
+                    CodingDeliveryEvidenceKind.COMMIT_COMPLETED);
+        }
+        if (deliveryIntent.allows(CodingDeliveryIntent.REMOTE_PUSH)) {
+            addMissingAfter(
+                    snapshot,
+                    missing,
+                    CodingDeliveryEvidenceKind.PUSH_COMPLETED,
+                    CodingDeliveryEvidenceKind.HEAD_VERIFIED);
+            addMissingAfter(
+                    snapshot,
+                    missing,
+                    CodingDeliveryEvidenceKind.REMOTE_REF_VERIFIED,
+                    CodingDeliveryEvidenceKind.PUSH_COMPLETED);
+        }
+        if (deliveryIntent.allows(CodingDeliveryIntent.PULL_REQUEST)) {
+            addMissingAfter(
+                    snapshot,
+                    missing,
+                    CodingDeliveryEvidenceKind.PULL_REQUEST_COMPLETED,
+                    CodingDeliveryEvidenceKind.REMOTE_REF_VERIFIED);
+            addMissingAfter(
+                    snapshot,
+                    missing,
+                    CodingDeliveryEvidenceKind.PULL_REQUEST_VERIFIED,
+                    CodingDeliveryEvidenceKind.PULL_REQUEST_COMPLETED);
+        }
         return List.copyOf(missing);
+    }
+
+    private static void addMissing(
+            CodingDeliveryEvidenceLedger.Snapshot snapshot, List<String> missing, CodingDeliveryEvidenceKind kind) {
+        if (!snapshot.has(kind)) missing.add(kind.name());
+    }
+
+    private static void addMissingAfter(
+            CodingDeliveryEvidenceLedger.Snapshot snapshot,
+            List<String> missing,
+            CodingDeliveryEvidenceKind kind,
+            CodingDeliveryEvidenceKind predecessor) {
+        if (!snapshot.hasAfter(kind, predecessor)) missing.add(kind.name());
     }
 
     private String taskContractDigest(AgentRun run, CodingTaskIntent intent) {

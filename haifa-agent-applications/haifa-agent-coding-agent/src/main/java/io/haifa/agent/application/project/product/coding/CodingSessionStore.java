@@ -30,6 +30,10 @@ public interface CodingSessionStore {
 
     Optional<CodingCommandBinding> findCommandByDispatchKey(String dispatchKey);
 
+    Optional<CodingCommandBinding> findCommandByRunId(AgentRunId runId);
+
+    Optional<CodingCommandBinding> findPendingCommand(AgentSessionId sessionId);
+
     CodingSessionActivity createActivity(CodingSessionActivity activity);
 
     Optional<CodingSessionActivity> findActivity(AgentSessionId sessionId);

@@ -13,7 +13,9 @@ import io.haifa.agent.application.project.product.coding.CodingSessionHistorySer
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionMiddleware;
@@ -421,6 +423,10 @@ final class LocalCodingAgent implements AutoCloseable {
                     identifiers,
                     time);
             var operations = new LocalFileToolOperations(workspaces, files, mutations, identifiers);
+            var deliveryIntents = new CodingDeliveryIntentResolver(
+                    persistence.codingSessions(), persistence.ports().runs());
+            var deliveryGuard =
+                    new CodingDeliveryCommandGuard(persistence.ports().state(), deliveryIntents);
             CliExecutionPlatform executionPlatform = executionEnabled
                     ? CliExecutionPlatform.create(
                             configuration.execution(),
@@ -437,7 +443,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceId,
                             workspaceRoot,
                             output,
-                            resolvedEnvironment)
+                            resolvedEnvironment,
+                            deliveryGuard)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
             var permissionRequests = executionPlatform == null
@@ -481,7 +488,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
             var workProjection = new CodingWorkProjectionService(
-                    persistence.ports().state(), taskModes, deliveryEvidence, deliveryProfile, time);
+                    persistence.ports().state(), taskModes, deliveryEvidence, deliveryProfile, time, deliveryIntents);
             var runtimeBuilder = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -491,7 +498,8 @@ final class LocalCodingAgent implements AutoCloseable {
                         traceObserver.accept(event);
                     })
                     .failureDiagnostics(CliFailureDiagnosticSink.forPersistence(configuration.persistence()))
-                    .completionPolicy(new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile))
+                    .completionPolicy(
+                            new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile, deliveryIntents))
                     .middleware(CodingWorkProjectionMiddleware.events(
                             workProjection,
                             io.haifa.agent.runtime.core.middleware.RuntimePhase.BEFORE_RUN,

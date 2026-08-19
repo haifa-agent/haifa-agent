@@ -39,7 +39,7 @@ ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
 不会隐式产生 commit、push 或 PR 意图。旧 Checkpoint 不增加 Codec 或 Migration，Resume 直接从权威
 记录重建投影。
 
-`execution.run` 1.4 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+`execution.run` 1.5 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
 
@@ -54,6 +54,14 @@ Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/R
 No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
 没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；一旦观察到 Workspace 修改，
 仍必须满足完整的修改、验证和 Diff 证据。需要硬性交付保证的调用方必须提供可信任务模式。
+
+可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
+交付意图；默认是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。Commit、Push、PR 仍通过唯一的
+`execution.run` 调用系统 `git`/`gh`，但在 Broker Dispatch 前受产品交付事务门禁约束：先确认仓库根、
+分支、状态、HEAD、Diff 和验证，再精确路径 Stage、检查 staged diff、Commit 后重查 HEAD、精确分支
+Push 后读取 remote ref，最后可创建并查看以 `dev` 为 Base 的 PR。权威 Tool 结果按顺序记录证据；旧
+HEAD/remote ref 不能满足新动作后的确认，Outcome Unknown 必须先只读核验再决定是否重放。宽泛
+`git add .`、意图越级、复合交付动作和 `gh pr merge` 在任何普通审批阈值下都不会 Dispatch。
 
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
 不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后

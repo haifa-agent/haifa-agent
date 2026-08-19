@@ -12,6 +12,7 @@ import io.haifa.agent.application.project.product.coding.CodingModelPreference;
 import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
@@ -385,6 +386,62 @@ class ProjectPersistenceAssemblyTest {
 
             RuntimeCommandResult aborted = coding.abortActiveRun(sessionId, "abort-key");
             assertThat(aborted.status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
+        }
+    }
+
+    @Test
+    void codingDeliveryIntentIsFrozenIdempotentAndSurvivesSqliteReopen() {
+        Path database = directory.resolve("coding-delivery-intent.db");
+        ProductFixture fixture = productFixture();
+        AgentRunId runId;
+        try (ProjectPersistenceAssembly assembly = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqliteUnprotected(database),
+                CLOCK,
+                new TestIds("delivery-first"),
+                null)) {
+            CodingSessionService coding =
+                    fixture.codingService(assembly, new CapturingRuntime(), new TestIds("delivery-service"));
+            var created = coding.createSession(
+                    fixture.projectId,
+                    "implement and open a pull request",
+                    List.of(),
+                    "delivery-key",
+                    CodingDeliveryIntent.PULL_REQUEST);
+            runId = created.activeRun().orElseThrow().runId();
+
+            assertThat(assembly.codingSessions().findCommandByRunId(runId))
+                    .get()
+                    .extracting(binding -> binding.deliveryIntent())
+                    .isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
+            assertThat(coding.createSession(
+                                    fixture.projectId,
+                                    "implement and open a pull request",
+                                    List.of(),
+                                    "delivery-key",
+                                    CodingDeliveryIntent.PULL_REQUEST)
+                            .activeRun()
+                            .orElseThrow()
+                            .runId())
+                    .isEqualTo(runId);
+            assertThatThrownBy(() -> coding.createSession(
+                            fixture.projectId,
+                            "implement and open a pull request",
+                            List.of(),
+                            "delivery-key",
+                            CodingDeliveryIntent.WORKTREE_ONLY))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasRootCauseMessage("idempotency key is bound to another request");
+        }
+
+        try (ProjectPersistenceAssembly reopened = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqliteUnprotected(database),
+                CLOCK,
+                new TestIds("delivery-second"),
+                null)) {
+            assertThat(reopened.codingSessions().findCommandByRunId(runId))
+                    .get()
+                    .extracting(binding -> binding.deliveryIntent())
+                    .isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
         }
     }
 

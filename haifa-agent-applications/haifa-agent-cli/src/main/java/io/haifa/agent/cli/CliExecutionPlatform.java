@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -123,6 +124,42 @@ final class CliExecutionPlatform implements AutoCloseable {
             Path workspaceRoot,
             PrintStream output,
             Map<String, String> hostEnvironment) {
+        return create(
+                configuration,
+                workspaces,
+                bindings,
+                locations,
+                files,
+                changeSets,
+                changeSetService,
+                identifiers,
+                time,
+                clock,
+                policy,
+                workspaceId,
+                workspaceRoot,
+                output,
+                hostEnvironment,
+                null);
+    }
+
+    static CliExecutionPlatform create(
+            CliConfiguration.Execution configuration,
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            LocalWorkspaceLocationStore locations,
+            LocalWorkspaceFileService files,
+            InMemoryFileChangeSetStore changeSets,
+            FileChangeSetService changeSetService,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            Clock clock,
+            CodingAgentPolicyAssembly policy,
+            WorkspaceId workspaceId,
+            Path workspaceRoot,
+            PrintStream output,
+            Map<String, String> hostEnvironment,
+            CodingDeliveryCommandGuard deliveryGuard) {
         Objects.requireNonNull(configuration, "configuration must not be null");
         HostShell shell = shell(configuration);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
@@ -215,7 +252,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                workspaceWorkdirNormalizer(workspaceRoot));
+                workspaceWorkdirNormalizer(workspaceRoot),
+                deliveryGuard);
         var permissionOperations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -230,7 +268,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 observer,
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
-                workspaceWorkdirNormalizer(workspaceRoot));
+                workspaceWorkdirNormalizer(workspaceRoot),
+                deliveryGuard);
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(

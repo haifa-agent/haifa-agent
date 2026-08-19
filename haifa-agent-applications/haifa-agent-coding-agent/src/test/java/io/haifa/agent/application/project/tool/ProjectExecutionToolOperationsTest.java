@@ -167,6 +167,34 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void projectsTrustedDeliveryActionAndVerificationEvidence() {
+        AtomicInteger calls = new AtomicInteger();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                if (calls.getAndIncrement() == 0) observer.onOutput(chunk("D:/workspace/project\n"));
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        ToolResult root = operations(broker, 4096, 100)
+                .execute(invocation(Map.of("command", "git rev-parse --show-toplevel"), () -> false), access());
+        ToolResult staged = operations(broker, 4096, 100)
+                .execute(invocation(Map.of("command", "git add src/Main.java"), () -> false), access());
+
+        assertThat(root.structuredData())
+                .containsEntry("deliveryAction", "NONE")
+                .containsEntry("deliveryVerification", "REPOSITORY_ROOT")
+                .containsEntry("deliveryEvidenceCode", "REPOSITORY_ROOT_VERIFIED")
+                .containsKey("deliveryEvidenceRef");
+        assertThat(staged.structuredData())
+                .containsEntry("deliveryAction", "STAGE")
+                .containsEntry("deliveryVerification", "NONE")
+                .containsEntry("deliveryEvidenceCode", "STAGE_COMPLETED")
+                .containsKey("deliveryEvidenceRef");
+    }
+
+    @Test
     void keepsMissingGitRevisionsAsActionableCommandFailures() {
         ExecutionBroker broker = new StubBroker() {
             @Override

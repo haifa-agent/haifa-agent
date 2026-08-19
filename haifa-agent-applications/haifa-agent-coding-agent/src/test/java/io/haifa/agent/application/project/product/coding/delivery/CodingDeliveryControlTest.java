@@ -3,6 +3,8 @@ package io.haifa.agent.application.project.product.coding.delivery;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.product.coding.CodingCommandBinding;
+import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionStore;
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.TextPart;
@@ -29,6 +31,7 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.policy.api.PolicyDigest;
+import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
 import io.haifa.agent.runtime.core.middleware.RuntimeMiddlewareContext;
 import io.haifa.agent.runtime.core.middleware.RuntimePhase;
@@ -308,6 +311,49 @@ class CodingDeliveryControlTest {
     }
 
     @Test
+    void pullRequestIntentRequiresOrderedAuthoritativeDeliveryEvidence() {
+        Fixture fixture = fixture("fix and open a pull request", trusted("CHANGE"));
+        CodingDeliveryIntentResolver intents = deliveryResolver(fixture, CodingDeliveryIntent.PULL_REQUEST);
+        CodingCompletionPolicy policy = new CodingCompletionPolicy(
+                new CodingTaskModeResolver(fixture.store()),
+                new CodingDeliveryEvidenceLedger(fixture.store()),
+                CodingDeliveryProfile.safeDefault(),
+                intents);
+        tool(fixture, "file.write", Map.of(), Map.of("changeSetId", "change-1"));
+        tool(fixture, "execution.run", Map.of(), Map.of("operationFamily", "TEST", "status", "SUCCEEDED"));
+        tool(fixture, "execution.run", Map.of(), Map.of("operationFamily", "DIFF", "status", "SUCCEEDED"));
+        deliveryEvidence(fixture, "STAGE_COMPLETED");
+        deliveryEvidence(fixture, "HEAD_VERIFIED");
+        deliveryEvidence(fixture, "STAGED_DIFF_INSPECTED");
+        deliveryEvidence(fixture, "COMMIT_COMPLETED");
+
+        assertThat(policy.evaluate(fixture.run(), finalDecision()).blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("HEAD_VERIFIED_MISSING");
+
+        deliveryEvidence(fixture, "HEAD_VERIFIED");
+        deliveryEvidence(fixture, "PUSH_COMPLETED");
+        deliveryEvidence(fixture, "REMOTE_REF_VERIFIED");
+        deliveryEvidence(fixture, "PULL_REQUEST_COMPLETED");
+        deliveryEvidence(fixture, "PULL_REQUEST_VERIFIED");
+
+        assertThat(policy.evaluate(fixture.run(), finalDecision()).allowed()).isTrue();
+        assertThat(new CodingWorkProjectionService(
+                                fixture.store(),
+                                new CodingTaskModeResolver(fixture.store()),
+                                new CodingDeliveryEvidenceLedger(fixture.store()),
+                                CodingDeliveryProfile.safeDefault(),
+                                () -> NOW.plusSeconds(20),
+                                intents)
+                        .project(fixture.run()))
+                .satisfies(projection -> {
+                    assertThat(projection.deliveryIntent()).isEqualTo("PULL_REQUEST");
+                    assertThat(projection.missingEvidence()).isEmpty();
+                    assertThat(projection.phase()).isEqualTo(CodingWorkPhase.DELIVER);
+                });
+    }
+
+    @Test
     void workProjectionAdvancesFromAuthoritativeEvidenceAndKeepsOnlySafeBoundedRefs() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         CodingWorkProjectionService projections = projection(fixture.store());
@@ -343,7 +389,7 @@ class CodingDeliveryControlTest {
         CodingWorkProjection delivered = projections.project(fixture.run());
         assertThat(delivered.phase()).isEqualTo(CodingWorkPhase.DELIVER);
         assertThat(delivered.missingEvidence()).isEmpty();
-        assertThat(delivered.deliveryIntent()).isEqualTo("WORKSPACE_CHANGE_ONLY");
+        assertThat(delivered.deliveryIntent()).isEqualTo("WORKTREE_ONLY");
         assertThat(delivered.contextText()).doesNotContain("test-command", "diff-command", "change-1");
     }
 
@@ -474,6 +520,28 @@ class CodingDeliveryControlTest {
         call.complete(
                 new ToolResult(true, "completed", resultData, List.of(), List.of(), false), NOW.plusSeconds(sequence));
         fixture.store().appendToolCall(call);
+    }
+
+    private static void deliveryEvidence(Fixture fixture, String code) {
+        tool(fixture, "execution.run", Map.of(), Map.of("status", "SUCCEEDED", "deliveryEvidenceCode", code));
+    }
+
+    private static CodingDeliveryIntentResolver deliveryResolver(Fixture fixture, CodingDeliveryIntent intent) {
+        var sessions = new InMemoryCodingSessionStore();
+        sessions.reserveCommand(new CodingCommandBinding(
+                "caller",
+                "create-session",
+                "idempotency",
+                "request",
+                "dispatch",
+                fixture.run().sessionId(),
+                new ProjectId("project-1"),
+                "deliver",
+                List.of(),
+                intent,
+                Optional.of(fixture.run().id()),
+                NOW));
+        return new CodingDeliveryIntentResolver(sessions, fixture.store());
     }
 
     private static Fixture fixture(String request, Map<String, Object> metadata) {

@@ -1,6 +1,8 @@
 package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandSemantics;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.AssetRef;
@@ -63,6 +65,7 @@ public final class ProjectExecutionToolOperations {
     private final UnaryOperator<String> outputSanitizer;
     private final ExecutionScratchSpaceSpec scratchSpace;
     private final UnaryOperator<String> workdirNormalizer;
+    private final CodingDeliveryCommandGuard deliveryGuard;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -169,6 +172,40 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> outputSanitizer,
             ExecutionScratchSpaceSpec scratchSpace,
             UnaryOperator<String> workdirNormalizer) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                outputSanitizer,
+                scratchSpace,
+                workdirNormalizer,
+                null);
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace,
+            UnaryOperator<String> workdirNormalizer,
+            CodingDeliveryCommandGuard deliveryGuard) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -198,6 +235,7 @@ public final class ProjectExecutionToolOperations {
         this.outputSanitizer = Objects.requireNonNull(outputSanitizer, "outputSanitizer must not be null");
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
         this.workdirNormalizer = Objects.requireNonNull(workdirNormalizer, "workdirNormalizer must not be null");
+        this.deliveryGuard = deliveryGuard;
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -209,6 +247,12 @@ public final class ProjectExecutionToolOperations {
         var commandClassification = SystemGitCliCommandClassifier.classify(command);
         if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
             return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
+        }
+        if (deliveryGuard != null) {
+            var delivery = deliveryGuard.evaluate(invocation.runId(), command, commandClassification);
+            if (!delivery.allowed()) {
+                return withToolCallId(invocation, rejectedDeliveryCommand(operationFamily, delivery));
+            }
         }
         if (hasLeadingAbsoluteDirectoryChange(command)) {
             return withToolCallId(invocation, rejectedAbsoluteDirectoryChange(operationFamily));
@@ -481,6 +525,10 @@ public final class ProjectExecutionToolOperations {
         data.put("riskResolutionCode", riskResolutionCode(commandClassification));
         data.put("riskAction", riskAction(commandClassification));
         data.put("operationHintCode", operationHintCode(operationFamily, commandClassification));
+        var deliveryAction = CodingDeliveryCommandSemantics.action(command, commandClassification);
+        var deliveryVerification = CodingDeliveryCommandSemantics.verification(command, commandClassification);
+        data.put("deliveryAction", deliveryAction.name());
+        data.put("deliveryVerification", deliveryVerification.name());
         String outputBudgetFamily = outputBudgetFamily(operationFamily, commandClassification);
         data.put("outputBudgetFamily", outputBudgetFamily);
         data.put("outputBudgetBytesPerChannel", outputChannelBudget(outputBudgetFamily));
@@ -525,6 +573,19 @@ public final class ProjectExecutionToolOperations {
                     "diffSummary",
                     "observedFiles=" + files + ", observedHunks=" + hunks + ", countsComplete=" + !truncated);
             if (!assets.isEmpty()) data.put("diffArtifactRef", assets.getFirst().assetId());
+        }
+        if (semantic.successfulToolResult()) {
+            String deliveryEvidenceCode = deliveryEvidenceCode(deliveryAction, deliveryVerification, output);
+            if (!deliveryEvidenceCode.isEmpty()) {
+                data.put("deliveryEvidenceCode", deliveryEvidenceCode);
+                data.put(
+                        "deliveryEvidenceRef",
+                        PolicyDigest.sha256Fields(List.of(
+                                "coding-delivery-evidence-v1",
+                                result.id().value(),
+                                deliveryEvidenceCode,
+                                commandClassification.reasonCode())));
+            }
         }
         String headline =
                 switch (semantic.outcome()) {
@@ -582,6 +643,60 @@ public final class ProjectExecutionToolOperations {
                 List.of(),
                 List.of(),
                 false);
+    }
+
+    private static ToolResult rejectedDeliveryCommand(
+            String operationFamily, CodingDeliveryCommandGuard.Decision decision) {
+        return new ToolResult(
+                false,
+                "Delivery command rejected before execution: " + decision.safeMessage(),
+                Map.of(
+                        "status",
+                        "FAILED",
+                        "operationFamily",
+                        operationFamily,
+                        "deliveryAction",
+                        decision.action().name(),
+                        "failureCategory",
+                        "POLICY_DENIED",
+                        "stableFailureCode",
+                        decision.code(),
+                        "resourceClass",
+                        "DELIVERY_TRANSACTION",
+                        "failureActionCode",
+                        "REVIEW_DELIVERY_TRANSACTION",
+                        "failureAction",
+                        decision.safeMessage()),
+                List.of(),
+                List.of(),
+                false);
+    }
+
+    private static String deliveryEvidenceCode(
+            CodingDeliveryCommandSemantics.Action action,
+            CodingDeliveryCommandSemantics.Verification verification,
+            String output) {
+        if (output.isBlank()
+                && action == CodingDeliveryCommandSemantics.Action.NONE
+                && verification != CodingDeliveryCommandSemantics.Verification.STATUS
+                && verification != CodingDeliveryCommandSemantics.Verification.STAGED_DIFF) return "";
+        return switch (verification) {
+            case STATUS -> "STATUS_INSPECTED";
+            case REPOSITORY_ROOT -> "REPOSITORY_ROOT_VERIFIED";
+            case BRANCH -> "BRANCH_VERIFIED";
+            case STAGED_DIFF -> "STAGED_DIFF_INSPECTED";
+            case HEAD -> "HEAD_VERIFIED";
+            case REMOTE_REF -> "REMOTE_REF_VERIFIED";
+            case PULL_REQUEST -> "PULL_REQUEST_VERIFIED";
+            case NONE ->
+                switch (action) {
+                    case STAGE -> "STAGE_COMPLETED";
+                    case COMMIT -> "COMMIT_COMPLETED";
+                    case PUSH -> "PUSH_COMPLETED";
+                    case PULL_REQUEST -> "PULL_REQUEST_COMPLETED";
+                    case NONE -> "";
+                };
+        };
     }
 
     private static ToolResult rejectedWorkdir(String operationFamily, String stableFailureCode) {
