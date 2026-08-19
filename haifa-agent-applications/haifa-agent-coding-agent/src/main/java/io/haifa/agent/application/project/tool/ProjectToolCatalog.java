@@ -257,25 +257,23 @@ public final class ProjectToolCatalog {
             throw new IllegalArgumentException(name + " requires a frozen sandbox profile");
         }
         boolean write = WRITES.contains(name);
-        ToolRisk risk = permissionRequest
-                ? ToolRisk.CRITICAL
-                : execution ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
+        ToolRisk risk = execution ? ToolRisk.HIGH : write ? ToolRisk.MEDIUM : ToolRisk.LOW;
         ToolIdempotency idempotency = execution || write ? ToolIdempotency.NON_IDEMPOTENT : ToolIdempotency.PURE;
-        Set<ToolSideEffect> effects = execution
-                ? executionProfile.networkPolicy() == NetworkPolicy.ALLOW
-                        ? Set.of(ToolSideEffect.PROCESS_EXECUTION, ToolSideEffect.NETWORK_ACCESS)
-                        : Set.of(ToolSideEffect.PROCESS_EXECUTION)
-                : write ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ);
-        ToolApprovalRequirement approval = permissionRequest
-                ? ToolApprovalRequirement.ALWAYS
-                : execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
+        Set<ToolSideEffect> effects = executionEffects(executionProfile, permissionRequest, execution, write);
+        ToolApprovalRequirement approval =
+                execution || write ? ToolApprovalRequirement.POLICY : ToolApprovalRequirement.NEVER;
         ToolResourceRequirements resources = new ToolResourceRequirements(
                 Set.of(REQUIRED_CAPABILITY.get(name)),
                 execution && executionProfile.networkPolicy() == NetworkPolicy.ALLOW
                         ? Set.of("unrestricted-network")
                         : Set.of(),
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
-        String version = name.equals("file.read") || name.equals("file.patch") ? "1.1.0" : "1.0.0";
+        String version = name.equals("file.read")
+                        || name.equals("file.patch")
+                        || name.equals("execution.run")
+                        || name.equals(ProjectPermissionRequestOperations.TOOL_NAME)
+                ? "1.1.0"
+                : "1.0.0";
         return new ToolDefinition(
                 new ToolName(name),
                 new SemanticVersion(version),
@@ -300,6 +298,17 @@ public final class ProjectToolCatalog {
                 "haifa-coding-agent",
                 false,
                 Set.of("project", name.substring(0, name.indexOf('.'))));
+    }
+
+    private static Set<ToolSideEffect> executionEffects(
+            SandboxProfile executionProfile, boolean permissionRequest, boolean execution, boolean write) {
+        if (!execution) return write ? Set.of(ToolSideEffect.FILE_WRITE) : Set.of(ToolSideEffect.FILE_READ);
+        var effects = java.util.EnumSet.of(ToolSideEffect.PROCESS_EXECUTION);
+        if (executionProfile.networkPolicy() == NetworkPolicy.ALLOW) {
+            effects.add(ToolSideEffect.NETWORK_ACCESS);
+        }
+        if (permissionRequest) effects.add(ToolSideEffect.PERMISSION_ELEVATION);
+        return Set.copyOf(effects);
     }
 
     private static String title(String name) {
@@ -328,15 +337,15 @@ public final class ProjectToolCatalog {
                     + "repository discovery, content search, source inspection, system git/gh workflows, builds, "
                     + "tests, and diffs; choose an "
                     + "available CLI and its complete arguments at runtime instead of expecting command-specific "
-                    + "wrappers. Keep output bounded, adapt when a command is unavailable, and classify every call "
-                    + "with operationFamily, using BUILD or TEST for validation and DIFF only for read-only final "
-                    + "diff inspection.";
+                    + "wrappers. Keep output bounded and adapt when a command is unavailable. operationFamily is an "
+                    + "optional declared hint: use BUILD or TEST for validation intent and DIFF only for read-only "
+                    + "final diff inspection; trusted risk and authorization never depend on the hint.";
         }
         if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
             return "Request user approval to rerun one exact execution.run command that failed in this Run because "
                     + "the isolated profile could not use remote network or host authentication. Only direct, "
                     + "non-destructive system git or gh commands are eligible. The prior Tool Call, command, workdir, "
-                    + "operation family, and timeout must match; "
+                    + "and timeout must match; the optional operation family remains a diagnostic hint. "
                     + "compound, wrapped, path-escaping, credential-overriding, destructive, or outcome-unknown "
                     + "requests remain denied. Approval applies once to this Tool Call and does not create a reusable "
                     + "grant.";
@@ -446,7 +455,6 @@ public final class ProjectToolCatalog {
                                 "Stable operation family for delivery and recovery control. Use DIFF only for "
                                         + "read-only diff inspection and UNKNOWN when the command cannot "
                                         + "be reliably classified; do not infer it from arbitrary shell syntax."));
-                required.add("operationFamily");
                 if (name.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
                     properties.put("priorToolCallId", Map.of("type", "string", "minLength", 1, "maxLength", 256));
                     properties.put(
@@ -528,10 +536,14 @@ public final class ProjectToolCatalog {
             properties.put("resourceClass", Map.of("type", "string"));
             properties.put("failureAction", Map.of("type", "string"));
             properties.put("operationFamily", Map.of("type", "string"));
+            properties.put("declaredOperationFamily", Map.of("type", "string"));
+            properties.put("effectiveOperationFamily", Map.of("type", "string"));
             properties.put("commandTarget", Map.of("type", "string"));
             properties.put("commandRisk", Map.of("type", "string"));
+            properties.put("effectiveRisk", Map.of("type", "string"));
             properties.put("commandOperation", Map.of("type", "string"));
             properties.put("commandClassificationReason", Map.of("type", "string"));
+            properties.put("riskResolverVersion", Map.of("type", "string"));
             properties.put("sandboxProfileDigest", Map.of("type", "string"));
             properties.put("scratchSpecDigest", Map.of("type", "string"));
             properties.put("scratchProvisioned", Map.of("type", "boolean"));

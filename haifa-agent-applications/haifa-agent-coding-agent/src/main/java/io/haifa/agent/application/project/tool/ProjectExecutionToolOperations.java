@@ -210,9 +210,6 @@ public final class ProjectExecutionToolOperations {
         if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
             return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
         }
-        if (!supportsOperationFamily(operationFamily, commandClassification)) {
-            return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
-        }
         if (hasLeadingAbsoluteDirectoryChange(command)) {
             return withToolCallId(invocation, rejectedAbsoluteDirectoryChange(operationFamily));
         }
@@ -256,7 +253,7 @@ public final class ProjectExecutionToolOperations {
                 workingDirectory,
                 ExecutionCommand.shell(command),
                 environmentRef,
-                executionLimits(timeout, operationFamily),
+                executionLimits(timeout, operationFamily, commandClassification),
                 sandboxProfileRef,
                 ExecutionInput.none(),
                 invocationDigest(invocation, command, workdir, scratchSpace),
@@ -283,8 +280,14 @@ public final class ProjectExecutionToolOperations {
                 result.truncated());
     }
 
-    private ExecutionLimits executionLimits(Duration timeout, String operationFamily) {
-        boolean boundedInspection = "INSPECT".equals(operationFamily);
+    private ExecutionLimits executionLimits(
+            Duration timeout,
+            String declaredOperationFamily,
+            SystemGitCliCommandClassifier.Classification classification) {
+        String budgetFamily = classification.target() == SystemGitCliCommandClassifier.Target.OTHER
+                ? declaredOperationFamily
+                : effectiveOperationFamily(classification);
+        boolean boundedInspection = "INSPECT".equals(budgetFamily);
         int channelBudget = boundedInspection ? maximumModelOutputBytes : FULL_OUTPUT_BYTES_PER_CHANNEL;
         return new ExecutionLimits(
                 timeout,
@@ -307,7 +310,6 @@ public final class ProjectExecutionToolOperations {
                     requiredText(arguments, "priorToolCallId"),
                     requiredText(arguments, "requestedPermission"),
                     requiredText(arguments, "justification"),
-                    operationFamily(arguments.get("operationFamily")),
                     String.valueOf(arguments.getOrDefault("timeoutMillis", "DEFAULT")));
         } else {
             fields = List.of(command, workdir);
@@ -443,6 +445,8 @@ public final class ProjectExecutionToolOperations {
         data.put("truncated", truncated);
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
         data.put("operationFamily", operationFamily);
+        data.put("declaredOperationFamily", operationFamily);
+        data.put("effectiveOperationFamily", effectiveOperationFamily(commandClassification));
         data.put("commandTarget", commandClassification.target().name());
         data.put("commandRisk", commandClassification.risk().name());
         data.put(
@@ -554,46 +558,29 @@ public final class ProjectExecutionToolOperations {
             String operationFamily, SystemGitCliCommandClassifier.Classification classification) {
         return new ToolResult(
                 false,
-                "Command rejected before execution: trusted command classification does not permit the requested "
-                        + "operation family.",
-                Map.of(
-                        "status",
-                        "FAILED",
-                        "operationFamily",
-                        operationFamily,
-                        "commandTarget",
-                        classification.target().name(),
-                        "commandRisk",
-                        classification.risk().name(),
-                        "commandOperation",
-                        classification.operation().name(),
-                        "commandClassificationReason",
-                        classification.reasonCode(),
-                        "failureCategory",
-                        "POLICY",
-                        "stableFailureCode",
-                        "COMMAND_CLASSIFICATION_REJECTED",
-                        "resourceClass",
-                        "COMMAND",
-                        "failureAction",
-                        "Use the bare system git or gh command and report its trusted operation family exactly."),
+                "Command rejected before execution: the command crosses a protected execution boundary.",
+                Map.ofEntries(
+                        Map.entry("status", "FAILED"),
+                        Map.entry("operationFamily", operationFamily),
+                        Map.entry("declaredOperationFamily", operationFamily),
+                        Map.entry("effectiveOperationFamily", effectiveOperationFamily(classification)),
+                        Map.entry("commandTarget", classification.target().name()),
+                        Map.entry("commandRisk", classification.risk().name()),
+                        Map.entry("commandOperation", classification.operation().name()),
+                        Map.entry("commandClassificationReason", classification.reasonCode()),
+                        Map.entry("failureCategory", "POLICY"),
+                        Map.entry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED"),
+                        Map.entry("resourceClass", "COMMAND"),
+                        Map.entry(
+                                "failureAction",
+                                "Remove the authentication, executable path, or repository boundary override.")),
                 List.of(),
                 List.of(),
                 false);
     }
 
-    private static boolean supportsOperationFamily(
-            String operationFamily, SystemGitCliCommandClassifier.Classification classification) {
-        if (classification.target() == SystemGitCliCommandClassifier.Target.OTHER) return true;
-        if (classification.operation() == SystemGitCliCommandClassifier.Operation.UNKNOWN) return true;
-        if (operationFamily.equals("DIFF")) {
-            return classification.operation() == SystemGitCliCommandClassifier.Operation.DIFF;
-        }
-        if (operationFamily.equals("INSPECT")) {
-            return classification.operation() == SystemGitCliCommandClassifier.Operation.INSPECT
-                    || classification.operation() == SystemGitCliCommandClassifier.Operation.DIFF;
-        }
-        return true;
+    private static String effectiveOperationFamily(SystemGitCliCommandClassifier.Classification classification) {
+        return classification.operation().name();
     }
 
     private static boolean hasLeadingAbsoluteDirectoryChange(String command) {

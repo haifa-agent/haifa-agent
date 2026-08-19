@@ -159,6 +159,7 @@ public final class StandaloneCodingAgents {
                 "executionNetwork=" + configuration.execution().network(),
                 "executionShell=" + configuration.execution().shell(),
                 "approval=" + configuration.approval().name(),
+                "approval-threshold=" + configuration.approvalThreshold().name(),
                 "persistence=" + configuration.persistence().mode().name(),
                 "protection=" + configuration.persistence().protection().name(),
                 "maxIterations=" + configuration.maxIterations(),

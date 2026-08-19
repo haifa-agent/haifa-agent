@@ -103,13 +103,14 @@ class ProjectApplicationTest {
                 .containsExactly("execution_run", "file_read");
         var execution = disclosed.snapshot().bindings().getFirst();
         var fileRead = disclosed.snapshot().bindings().get(1);
+        assertThat(execution.definition().version().value()).isEqualTo("1.1.0");
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
                 execution.definition().inputSchema().document().get("properties");
         assertThat(properties)
                 .containsOnlyKeys("command", "workdir", "timeoutMillis", "description", "operationFamily");
         assertThat(execution.definition().inputSchema().document())
-                .containsEntry("required", List.of("command", "operationFamily"))
+                .containsEntry("required", List.of("command"))
                 .containsEntry("additionalProperties", false);
         assertThat(execution.definition().outputSchema().document()).containsEntry("additionalProperties", false);
         assertThat(execution.definition().resources().executionProfiles())
@@ -127,6 +128,7 @@ class ProjectApplicationTest {
                         "available CLI",
                         "command-specific wrappers",
                         "operationFamily",
+                        "optional declared hint",
                         "BUILD or TEST",
                         "final diff inspection");
         @SuppressWarnings("unchecked")
@@ -230,8 +232,10 @@ class ProjectApplicationTest {
                 .singleElement()
                 .satisfies(binding -> {
                     assertThat(binding.definition().approvalRequirement())
-                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
-                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.CRITICAL);
+                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.POLICY);
+                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.HIGH);
+                    assertThat(binding.definition().sideEffects())
+                            .contains(io.haifa.agent.tool.api.ToolSideEffect.PERMISSION_ELEVATION);
                     assertThat(binding.definition()
                                     .inputSchema()
                                     .document()

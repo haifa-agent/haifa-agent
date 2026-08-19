@@ -61,9 +61,15 @@ public final class CodingAgentPolicyAssembly {
     }
 
     public static CodingAgentPolicyAssembly create(ApprovalMode mode, Clock clock, Supplier<String> identifiers) {
+        return create(mode, CodingApprovalThreshold.compatibleWith(mode), clock, identifiers);
+    }
+
+    public static CodingAgentPolicyAssembly create(
+            ApprovalMode mode, CodingApprovalThreshold threshold, Clock clock, Supplier<String> identifiers) {
         var store = new InMemoryPolicyStore();
         return create(
                 mode,
+                threshold,
                 clock,
                 identifiers,
                 new PolicyPersistencePorts(store, store, new InMemoryPolicyAuthorizationEvidenceStore(), store, store));
@@ -71,8 +77,18 @@ public final class CodingAgentPolicyAssembly {
 
     public static CodingAgentPolicyAssembly create(
             ApprovalMode mode, Clock clock, Supplier<String> identifiers, PolicyPersistencePorts persistence) {
+        return create(mode, CodingApprovalThreshold.compatibleWith(mode), clock, identifiers, persistence);
+    }
+
+    public static CodingAgentPolicyAssembly create(
+            ApprovalMode mode,
+            CodingApprovalThreshold threshold,
+            Clock clock,
+            Supplier<String> identifiers,
+            PolicyPersistencePorts persistence) {
         Objects.requireNonNull(persistence, "persistence must not be null");
-        var snapshot = snapshot(mode, clock);
+        Objects.requireNonNull(threshold, "threshold must not be null");
+        var snapshot = snapshot(mode, threshold, clock);
         PolicySnapshot effectiveSnapshot =
                 persistence.snapshots().find(snapshot.ref()).orElse(null);
         if (effectiveSnapshot == null) {
@@ -101,7 +117,7 @@ public final class CodingAgentPolicyAssembly {
                 verification);
     }
 
-    private static PolicySnapshot snapshot(ApprovalMode mode, Clock clock) {
+    private static PolicySnapshot snapshot(ApprovalMode mode, CodingApprovalThreshold threshold, Clock clock) {
         List<PolicyRule> rules = new ArrayList<>();
         rules.add(rule(
                 "coding-critical-risk",
@@ -118,51 +134,6 @@ public final class CodingAgentPolicyAssembly {
                 PolicyEffect.DENY,
                 Optional.empty(),
                 "CODING_CRITICAL_RISK_DENY"));
-        PolicyEffect sideEffect =
-                switch (mode) {
-                    case ASK -> PolicyEffect.ASK;
-                    case AUTO -> PolicyEffect.ALLOW;
-                    case DENY -> PolicyEffect.DENY;
-                };
-        Optional<PolicyChallenge> sideEffectChallenge =
-                sideEffect == PolicyEffect.ASK ? Optional.of(PolicyChallenge.APPROVAL) : Optional.empty();
-        for (PolicySideEffect effect : List.of(
-                PolicySideEffect.FILE_WRITE,
-                PolicySideEffect.PROCESS_EXECUTION,
-                PolicySideEffect.NETWORK_ACCESS,
-                PolicySideEffect.EXTERNAL_SYSTEM_MUTATION)) {
-            rules.add(rule(
-                    "coding-" + effect.name().toLowerCase(java.util.Locale.ROOT),
-                    new PolicyRuleMatcher(
-                            Optional.empty(),
-                            Optional.of("haifa-coding-agent"),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Optional.empty(),
-                            Set.of(effect)),
-                    sideEffect,
-                    sideEffectChallenge,
-                    "CODING_SIDE_EFFECT_" + sideEffect.name()));
-        }
-        PolicyEffect highRisk = sideEffect;
-        rules.add(rule(
-                "coding-high-risk",
-                new PolicyRuleMatcher(
-                        Optional.empty(),
-                        Optional.of("haifa-coding-agent"),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.empty(),
-                        Optional.of(PolicyRiskLevel.HIGH),
-                        Set.of()),
-                highRisk,
-                sideEffectChallenge,
-                "CODING_HIGH_RISK_" + highRisk.name()));
         rules.add(rule(
                 "coding-credential",
                 new PolicyRuleMatcher(
@@ -178,22 +149,110 @@ public final class CodingAgentPolicyAssembly {
                 mode == ApprovalMode.DENY ? PolicyEffect.DENY : PolicyEffect.ASK,
                 mode == ApprovalMode.DENY ? Optional.empty() : Optional.of(PolicyChallenge.REAUTHENTICATE),
                 "CODING_CREDENTIAL_" + mode.name()));
+        if (mode == ApprovalMode.DENY) {
+            for (PolicySideEffect effect : List.of(
+                    PolicySideEffect.FILE_WRITE,
+                    PolicySideEffect.PROCESS_EXECUTION,
+                    PolicySideEffect.NETWORK_ACCESS,
+                    PolicySideEffect.EXTERNAL_SYSTEM_MUTATION,
+                    PolicySideEffect.PERMISSION_ELEVATION)) {
+                rules.add(rule(
+                        "coding-deny-" + effect.name().toLowerCase(java.util.Locale.ROOT),
+                        sideEffectMatcher(effect),
+                        PolicyEffect.DENY,
+                        Optional.empty(),
+                        "CODING_DISABLED_SIDE_EFFECT_DENY"));
+            }
+        } else {
+            rules.add(rule(
+                    "coding-permission-elevation",
+                    sideEffectMatcher(PolicySideEffect.PERMISSION_ELEVATION),
+                    PolicyEffect.ASK,
+                    Optional.of(PolicyChallenge.APPROVAL),
+                    "MANAGED_PERMISSION_ELEVATION_APPROVAL_REQUIRED"));
+            threshold
+                    .minimumRisk()
+                    .ifPresent(minimumRisk -> rules.add(rule(
+                            "coding-risk-threshold-" + threshold.name().toLowerCase(java.util.Locale.ROOT),
+                            new PolicyRuleMatcher(
+                                    Optional.empty(),
+                                    Optional.of("haifa-coding-agent"),
+                                    Optional.empty(),
+                                    Optional.empty(),
+                                    Optional.of("execution.run"),
+                                    Optional.of("invoke"),
+                                    Optional.empty(),
+                                    Optional.of(minimumRisk),
+                                    Set.of()),
+                            PolicyEffect.ASK,
+                            Optional.of(PolicyChallenge.APPROVAL),
+                            "RISK_THRESHOLD_APPROVAL_REQUIRED")));
+            if (mode == ApprovalMode.ASK) {
+                for (String capability :
+                        List.of("file.create", "file.write", "file.delete", "file.move", "file.patch")) {
+                    rules.add(rule(
+                            "coding-" + capability.replace('.', '-'),
+                            capabilitySideEffectMatcher(capability, PolicySideEffect.FILE_WRITE),
+                            PolicyEffect.ASK,
+                            Optional.of(PolicyChallenge.APPROVAL),
+                            "CODING_SIDE_EFFECT_ASK"));
+                }
+                for (String capability : List.of("web.search", "web.fetch")) {
+                    rules.add(rule(
+                            "coding-" + capability.replace('.', '-'),
+                            capabilitySideEffectMatcher(capability, PolicySideEffect.NETWORK_ACCESS),
+                            PolicyEffect.ASK,
+                            Optional.of(PolicyChallenge.APPROVAL),
+                            "CODING_SIDE_EFFECT_ASK"));
+                }
+            }
+        }
         PolicyRule defaultRule = rule(
                 "coding-default",
                 PolicyRuleMatcher.any(),
                 PolicyEffect.ALLOW,
                 Optional.empty(),
-                "CODING_LOW_RISK_ALLOW");
-        String digest = PolicyDigest.sha256Fields(List.of("haifa-coding-agent", mode.name(), "v2"));
+                "CODING_RISK_BELOW_THRESHOLD_ALLOW");
+        String digest = PolicyDigest.sha256Fields(List.of("haifa-coding-agent", mode.name(), threshold.name(), "v3"));
+        String refSuffix = mode.name().toLowerCase(java.util.Locale.ROOT)
+                + "-"
+                + threshold.name().toLowerCase(java.util.Locale.ROOT)
+                + "-v3";
         return new PolicySnapshot(
-                new PolicySnapshotRef("coding-" + mode.name().toLowerCase(java.util.Locale.ROOT) + "-v2"),
+                new PolicySnapshotRef("coding-" + refSuffix),
                 rules,
                 Optional.of(defaultRule),
                 mode,
-                "coding-default-v2",
+                "coding-default-" + refSuffix,
                 Optional.empty(),
                 digest,
                 Instant.ofEpochMilli(clock.millis()));
+    }
+
+    private static PolicyRuleMatcher sideEffectMatcher(PolicySideEffect effect) {
+        return new PolicyRuleMatcher(
+                Optional.empty(),
+                Optional.of("haifa-coding-agent"),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Set.of(effect));
+    }
+
+    private static PolicyRuleMatcher capabilitySideEffectMatcher(String capability, PolicySideEffect effect) {
+        return new PolicyRuleMatcher(
+                Optional.empty(),
+                Optional.of("haifa-coding-agent"),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(capability),
+                Optional.of("invoke"),
+                Optional.empty(),
+                Optional.empty(),
+                Set.of(effect));
     }
 
     private static PolicyRule rule(

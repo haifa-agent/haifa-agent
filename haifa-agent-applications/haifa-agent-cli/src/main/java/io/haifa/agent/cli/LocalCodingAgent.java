@@ -340,7 +340,11 @@ final class LocalCodingAgent implements AutoCloseable {
             locations.register(locationRef, workspaceRoot);
             Set<String> configuredTools = effectiveBuiltInTools(configuration);
             var policy = CodingAgentPolicyAssembly.create(
-                    policyMode(configuration.approval()), clock, identifiers::nextValue, persistence.policy());
+                    policyMode(configuration.approval()),
+                    configuration.approvalThreshold(),
+                    clock,
+                    identifiers::nextValue,
+                    persistence.policy());
             boolean executionEnabled = configuredTools.contains("execution.run");
             Set<String> effectiveCapabilities = executionEnabled
                     ? Set.of("file.read", "file.write", "execution.run")
@@ -697,7 +701,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.\n"
                 + "- request_permissions is not a general sandbox bypass. Use it only after execution_run returns an eligible "
                 + "stable remote-access or host-authentication code for a direct system git or gh command, and repeat the exact command, "
-                + "workdir, operation family, timeout, and prior Tool Call ID. Compound commands, wrappers, path "
+                + "workdir, timeout, and prior Tool Call ID. operationFamily is only an optional diagnostic hint. Compound commands, wrappers, path "
                 + "escape, credential override, destructive commands, and unknown outcomes cannot be elevated.";
     }
 

@@ -211,11 +211,11 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void rejectsGitWritesAndNonDiffCommandsMisreportedAsReadOnly() {
+    void ignoresOperationHintsForAuthorizationButStillRejectsHardBoundaries() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                throw new AssertionError("rejected commands must not reach the broker");
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
             }
         };
         var operations = operations(broker, 4096, 100);
@@ -231,19 +231,38 @@ class ProjectExecutionToolOperationsTest {
                 invocation(Map.of("command", "git status --short", "operationFamily", "DIFF"), () -> false), access());
 
         assertThat(writeAsRead.structuredData())
-                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("status", "SUCCEEDED")
                 .containsEntry("commandRisk", "EXTERNAL_WRITE")
-                .containsEntry("commandTarget", "GIT");
+                .containsEntry("commandTarget", "GIT")
+                .containsEntry("declaredOperationFamily", "INSPECT")
+                .containsEntry("effectiveOperationFamily", "MUTATE");
         assertThat(tokenOverride.structuredData())
                 .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
                 .containsEntry("commandRisk", "DENIED");
         assertThat(statusAsDiff.structuredData())
-                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("status", "SUCCEEDED")
+                .containsEntry("declaredOperationFamily", "DIFF")
+                .containsEntry("effectiveOperationFamily", "INSPECT")
                 .containsEntry("commandOperation", "INSPECT")
-                .containsEntry("commandClassificationReason", "GIT_STATUS")
-                .containsEntry(
-                        "failureAction",
-                        "Use the bare system git or gh command and report its trusted operation family exactly.");
+                .containsEntry("commandClassificationReason", "GIT_STATUS");
+    }
+
+    @Test
+    void acceptsMissingOperationFamilyAsAnUnknownDeclaredHint() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        var result = operations(broker, 4096, 100)
+                .execute(invocation(Map.of("command", "git status --short"), () -> false), access());
+
+        assertThat(result.structuredData())
+                .containsEntry("declaredOperationFamily", "UNKNOWN")
+                .containsEntry("effectiveOperationFamily", "INSPECT")
+                .containsEntry("operationFamily", "UNKNOWN");
     }
 
     @Test
@@ -611,9 +630,7 @@ class ProjectExecutionToolOperationsTest {
                         "command",
                         "git ls-remote origin",
                         "workdir",
-                        ".",
-                        "operationFamily",
-                        "INSPECT")),
+                        ".")),
                 access());
 
         assertThat(captured.get()).isNotNull();
@@ -623,7 +640,9 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("toolCallId", "permission-tool-call")
                 .containsEntry("priorToolCallId", "prior-tool-call")
                 .containsEntry("requestedPermission", ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS)
-                .containsEntry("permissionEscalated", true);
+                .containsEntry("permissionEscalated", true)
+                .containsEntry("declaredOperationFamily", "UNKNOWN")
+                .containsEntry("effectiveOperationFamily", "INSPECT");
     }
 
     @Test

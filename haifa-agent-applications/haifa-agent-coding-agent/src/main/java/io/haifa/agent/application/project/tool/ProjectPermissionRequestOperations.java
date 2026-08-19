@@ -88,10 +88,10 @@ public final class ProjectPermissionRequestOperations {
                     "PERMISSION_REQUEST_NOT_ELIGIBLE",
                     "The prior failure is not eligible for permission escalation: " + failureCode + ".");
         }
-        if (!same(prior.arguments().values(), arguments, "command", "workdir", "operationFamily", "timeoutMillis")) {
+        if (!same(prior.arguments().values(), arguments, "command", "workdir", "timeoutMillis")) {
             return rejected(
                     "PERMISSION_REQUEST_INTENT_MISMATCH",
-                    "The command, workdir, operation family, and timeout must match the failed Tool Call exactly.");
+                    "The command, workdir, and timeout must match the failed Tool Call exactly.");
         }
         var classification = SystemGitCliCommandClassifier.classify(requiredText(arguments, "command"));
         if (classification.target() == SystemGitCliCommandClassifier.Target.OTHER

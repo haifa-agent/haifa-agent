@@ -93,24 +93,29 @@ public final class CodingDeliveryEvidenceLedger {
         }
         if (!EXECUTION_TOOLS.contains(call.toolName()) || data.isEmpty()) return;
 
-        String family = String.valueOf(data.getOrDefault("operationFamily", "UNKNOWN"));
+        String declaredFamily = String.valueOf(
+                data.getOrDefault("declaredOperationFamily", data.getOrDefault("operationFamily", "UNKNOWN")));
+        String effectiveFamily = String.valueOf(data.getOrDefault(
+                "effectiveOperationFamily",
+                data.containsKey("commandOperation") ? data.get("commandOperation") : declaredFamily));
+        String evidenceFamily = "UNKNOWN".equals(effectiveFamily) ? declaredFamily : effectiveFamily;
         String status = String.valueOf(data.getOrDefault("status", "UNKNOWN"));
         boolean trustedReadOnly = trustedReadOnlyClassification(data);
         if (data.containsKey("fileChangeSetId")) {
             facts.add(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
         }
-        if (("INSPECT".equals(family) || "DIFF".equals(family))
+        if (("INSPECT".equals(evidenceFamily) || "DIFF".equals(evidenceFamily))
                 && trustedReadOnly
-                && trustedOperationFamily(data, family)) {
+                && trustedOperationFamily(data, evidenceFamily)) {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
         }
-        if ("DIFF".equals(family)
+        if ("DIFF".equals(evidenceFamily)
                 && "SUCCEEDED".equals(status)
                 && trustedReadOnly
-                && trustedOperationFamily(data, family)) {
+                && trustedOperationFamily(data, evidenceFamily)) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         }
-        if ("BUILD".equals(family) || "TEST".equals(family)) {
+        if ("BUILD".equals(declaredFamily) || "TEST".equals(declaredFamily)) {
             facts.add(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT);
             facts.add(
                     "SUCCEEDED".equals(status)
@@ -123,7 +128,7 @@ public final class CodingDeliveryEvidenceLedger {
         Object noChangeCode = data.get("noChangeJustificationCode");
         if (noChangeCode instanceof String code
                 && NO_CHANGE_CODES.contains(code)
-                && (("SUCCEEDED".equals(status) && ("BUILD".equals(family) || "TEST".equals(family)))
+                && (("SUCCEEDED".equals(status) && ("BUILD".equals(declaredFamily) || "TEST".equals(declaredFamily)))
                         || (data.containsKey("failureCategory") && !"SUCCEEDED".equals(status)))) {
             facts.add(CodingDeliveryEvidenceKind.NO_CHANGE_JUSTIFICATION);
         }
@@ -143,6 +148,10 @@ public final class CodingDeliveryEvidenceLedger {
     private static boolean trustedOperationFamily(Map<String, Object> data, String family) {
         if (!data.containsKey("commandOperation")) {
             return true; // Frozen legacy results predate trusted operation classification.
+        }
+        if ("OTHER".equals(String.valueOf(data.getOrDefault("commandTarget", "OTHER")))
+                && "NOT_APPLICABLE".equals(String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN")))) {
+            return true; // Generic commands retain the declared delivery intent, never authorization or risk.
         }
         String operation = String.valueOf(data.getOrDefault("commandOperation", "UNKNOWN"));
         return switch (family) {
