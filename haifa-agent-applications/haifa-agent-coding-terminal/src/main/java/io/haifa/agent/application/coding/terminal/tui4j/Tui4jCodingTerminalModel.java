@@ -32,6 +32,7 @@ import java.util.function.LongSupplier;
 /** Production tui4j adapter around the authoritative terminal Controller and Reducer state. */
 final class Tui4jCodingTerminalModel implements Model {
     private static final Duration EVENT_POLL_INTERVAL = Duration.ofMillis(50);
+    private static final Duration UNBRACKETED_PASTE_GUARD_INTERVAL = Duration.ofMillis(100);
 
     private final CodingTerminalController controller;
     private final TerminalEventPump pump;
@@ -55,8 +56,11 @@ final class Tui4jCodingTerminalModel implements Model {
     private boolean fullRepaintRequested;
     private int pendingTranscriptScrollRows;
     private AgentRunId timedRunId;
-    private long runStartedNanos;
+    private long timedActivityRevision = -1;
+    private long activityStartedNanos;
     private PreparedMessageSubmission pendingSubmission;
+    private long deferredEnterSequence;
+    private DeferredEnter pendingEnter;
 
     Tui4jCodingTerminalModel(CodingTerminalController controller, TerminalEventPump pump) {
         this(controller, pump, System::nanoTime, null);
@@ -105,6 +109,8 @@ final class Tui4jCodingTerminalModel implements Model {
             controller.drainEvents();
             syncComponents();
             command = nextTick();
+        } else if (message instanceof DeferredEnterMessage deferred) {
+            command = commitDeferredEnter(deferred);
         } else if (message instanceof SubmissionCompletedMessage completed) {
             if (completed.result().submission().equals(pendingSubmission)) {
                 controller.completeMessageSubmission(completed.result());
@@ -119,12 +125,14 @@ final class Tui4jCodingTerminalModel implements Model {
                 && (modified.modifier() == EnterKeyModifier.Shift
                         || modified.modifier() == EnterKeyModifier.Ctrl
                         || modified.modifier() == EnterKeyModifier.CtrlShift)) {
+            resolvePendingEnterAsNewline();
             edit(new PasteMessage("\n"));
         } else if (message instanceof MouseMessage mouse) {
             command = mouse(mouse);
         } else if (message instanceof KeyPressMessage key) {
             command = key(key);
         } else if (message instanceof PasteMessage paste) {
+            resolvePendingEnterAsNewline();
             edit(new PasteMessage(sanitizeEditorInput(paste.content())));
         } else {
             editor.update(message);
@@ -156,7 +164,7 @@ final class Tui4jCodingTerminalModel implements Model {
         TerminalUiState state = controller.state();
         int requestedScrollRows = pendingTranscriptScrollRows;
         pendingTranscriptScrollRows = 0;
-        Duration elapsed = workingElapsed(state);
+        Duration elapsed = activityElapsed(state);
         String rendered = view.render(
                 state, transcript, editor, followTranscript, newOutputPending, elapsed, requestedScrollRows);
         if (requestedScrollRows > 0 && transcript.atBottom()) {
@@ -167,21 +175,34 @@ final class Tui4jCodingTerminalModel implements Model {
         return rendered;
     }
 
-    private Duration workingElapsed(TerminalUiState state) {
+    private Duration activityElapsed(TerminalUiState state) {
         if (state.currentRunId().isEmpty()) {
             timedRunId = null;
+            timedActivityRevision = -1;
             return Duration.ZERO;
         }
         AgentRunId runId = state.currentRunId().orElseThrow();
         long now = monotonicNanos.getAsLong();
-        if (!runId.equals(timedRunId)) {
+        if (!runId.equals(timedRunId)
+                || timedActivityRevision != state.activity().revision()) {
             timedRunId = runId;
-            runStartedNanos = now;
+            timedActivityRevision = state.activity().revision();
+            activityStartedNanos = now;
         }
-        return Duration.ofNanos(Math.max(0, now - runStartedNanos));
+        return Duration.ofNanos(Math.max(0, now - activityStartedNanos));
     }
 
     private Command key(KeyPressMessage key) {
+        if (pendingEnter != null && isUnbracketedPasteContinuation(key)) {
+            resolvePendingEnterAsNewline();
+            if (key.type() == KeyType.keyLF) {
+                return Command.none();
+            }
+            if (key.type() == KeyType.keyHT) {
+                edit(new PasteMessage("    "));
+                return Command.none();
+            }
+        }
         TerminalUiState state = controller.state();
         if (state.selector().isPresent()) {
             if ("completion".equals(state.selector().orElseThrow().kind()) && editCompletion(key)) {
@@ -215,7 +236,10 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (key.type() == KeyType.keyCR) {
-            return submit(shortcuts.matchesFollowUp(key) ? TerminalInput.Kind.FOLLOW_UP : TerminalInput.Kind.SUBMIT);
+            if (shortcuts.matchesFollowUp(key)) {
+                return submit(TerminalInput.Kind.FOLLOW_UP);
+            }
+            return deferEnter(TerminalInput.Kind.SUBMIT);
         }
         if (key.type() == KeyType.keyLF) {
             edit(new PasteMessage("\n"));
@@ -271,6 +295,37 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         return edit(key);
+    }
+
+    private boolean isUnbracketedPasteContinuation(KeyPressMessage key) {
+        return key.type() == KeyType.KeyRunes
+                || key.type() == KeyType.keyCR
+                || key.type() == KeyType.keyLF
+                || key.type() == KeyType.keyHT;
+    }
+
+    private Command deferEnter(TerminalInput.Kind kind) {
+        long sequence = ++deferredEnterSequence;
+        pendingEnter = new DeferredEnter(sequence, kind);
+        return Command.tick(UNBRACKETED_PASTE_GUARD_INTERVAL, ignored -> new DeferredEnterMessage(sequence, kind));
+    }
+
+    private Command commitDeferredEnter(DeferredEnterMessage deferred) {
+        if (pendingEnter == null
+                || pendingEnter.sequence() != deferred.sequence()
+                || pendingEnter.kind() != deferred.kind()) {
+            return Command.none();
+        }
+        pendingEnter = null;
+        return submit(deferred.kind());
+    }
+
+    private void resolvePendingEnterAsNewline() {
+        if (pendingEnter == null) {
+            return;
+        }
+        pendingEnter = null;
+        edit(new PasteMessage("\n"));
     }
 
     private void requestTranscriptScroll(int rows) {
@@ -374,6 +429,7 @@ final class Tui4jCodingTerminalModel implements Model {
             return Command.none();
         }
         if (!state.editorBuffer().isBlank()) {
+            resumeTranscriptFollowing();
             history.add(state.editorBuffer());
         }
         resetHistoryNavigation();
@@ -388,6 +444,13 @@ final class Tui4jCodingTerminalModel implements Model {
         syncComponents();
         PreparedMessageSubmission submission = pendingSubmission;
         return () -> new SubmissionCompletedMessage(controller.executeMessageSubmission(submission));
+    }
+
+    private void resumeTranscriptFollowing() {
+        followTranscript = true;
+        newOutputPending = false;
+        pendingTranscriptScrollRows = 0;
+        transcript.gotoBottom();
     }
 
     private void navigateHistory(int direction) {
@@ -523,6 +586,10 @@ final class Tui4jCodingTerminalModel implements Model {
     }
 
     private record PollMessage() implements Message {}
+
+    private record DeferredEnter(long sequence, TerminalInput.Kind kind) {}
+
+    private record DeferredEnterMessage(long sequence, TerminalInput.Kind kind) implements Message {}
 
     private record SubmissionCompletedMessage(MessageSubmissionResult result) implements Message {}
 }

@@ -25,6 +25,7 @@ public record TerminalUiState(
         Optional<RunEventCursor> appliedCursor,
         Set<String> seenEventIds,
         Optional<String> recoverableError,
+        TerminalActivity activity,
         boolean exitRequested) {
     public TerminalUiState {
         header = Objects.requireNonNull(header, "header must not be null");
@@ -44,6 +45,46 @@ public record TerminalUiState(
         appliedCursor = Objects.requireNonNull(appliedCursor, "appliedCursor must not be null");
         seenEventIds = Set.copyOf(seenEventIds);
         recoverableError = Objects.requireNonNull(recoverableError, "recoverableError must not be null");
+        activity = Objects.requireNonNull(activity, "activity must not be null");
+    }
+
+    public TerminalUiState(
+            String header,
+            List<String> loadedResources,
+            List<TranscriptItem> transcript,
+            List<PendingMessage> pending,
+            String status,
+            String editorBuffer,
+            int editorCursor,
+            Optional<TerminalSelector> selector,
+            TerminalFooter footer,
+            int columns,
+            int rows,
+            Optional<CodingSessionView> session,
+            Optional<AgentRunId> currentRunId,
+            Optional<RunEventCursor> appliedCursor,
+            Set<String> seenEventIds,
+            Optional<String> recoverableError,
+            boolean exitRequested) {
+        this(
+                header,
+                loadedResources,
+                transcript,
+                pending,
+                status,
+                editorBuffer,
+                editorCursor,
+                selector,
+                footer,
+                columns,
+                rows,
+                session,
+                currentRunId,
+                appliedCursor,
+                seenEventIds,
+                recoverableError,
+                TerminalActivity.initial(),
+                exitRequested);
     }
 
     public static TerminalUiState initial(int columns, int rows) {
@@ -70,6 +111,7 @@ public record TerminalUiState(
                 Optional.empty(),
                 Set.of(),
                 Optional.empty(),
+                TerminalActivity.initial(),
                 false);
     }
 }

@@ -16,16 +16,26 @@ public final class BaseSkills {
     public static final String SOURCE_ID = "classpath:haifa-agent-base-skills";
     public static final String SOURCE_VERSION = "1";
     public static final List<String> NAMES = List.of("result-verification", "task-planning");
+    public static final String GIT_CLI_SOURCE_ID = "classpath:haifa-agent-git-cli-skills";
+    public static final List<String> GIT_CLI_NAMES = List.of("git", "github");
 
     private BaseSkills() {}
 
     public static SkillSource source() {
+        return source(SOURCE_ID, NAMES);
+    }
+
+    public static SkillSource gitCliSource() {
+        return source(GIT_CLI_SOURCE_ID, GIT_CLI_NAMES);
+    }
+
+    private static SkillSource source(String sourceId, List<String> names) {
         return new ClasspathSkillSource(
                 BaseSkills.class.getClassLoader(),
                 "META-INF/haifa-agent/skills",
-                NAMES,
+                names,
                 new SkillSourceDescriptor(
-                        new SkillSourceRef(SOURCE_ID, SOURCE_VERSION),
+                        new SkillSourceRef(sourceId, SOURCE_VERSION),
                         SkillScopeRef.sdk(),
                         SkillOrigin.BUNDLED,
                         0,

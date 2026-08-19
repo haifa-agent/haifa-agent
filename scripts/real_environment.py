@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -26,6 +28,9 @@ FRONTEND_PORT = 20000
 BACKEND_PORT = 20001
 MCP_PORT = 20002
 DEFAULT_MODEL_ID = "deepseek-chat-flash"
+EXPECTED_SERVER_START_CLASS = (
+    "io.haifa.agent.personalassistant.server.PersonalAssistantServerApplication"
+)
 BAILIAN_DEFAULT_MODEL_ID = "qwen3.7-max-2026-05-17"
 SUPPORTED_DEFAULT_MODEL_IDS = (
     "deepseek-chat-pro",
@@ -91,7 +96,7 @@ class ServiceDefinition:
     role: str
     port: int
     process_name: str
-    command_token: str
+    command_tokens: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -569,10 +574,10 @@ def validate_process(definition: ServiceDefinition, process_id: int) -> None:
             f"{definition.role} PID {process_id} is '{name}', expected "
             f"'{definition.process_name}'. No process was stopped."
         )
-    if definition.command_token.lower() not in command.lower():
+    if not any(token.lower() in command.lower() for token in definition.command_tokens):
         fail(
-            f"{definition.role} PID {process_id} command line does not contain "
-            f"'{definition.command_token}'. No process was stopped."
+            f"{definition.role} PID {process_id} command line does not contain any expected token "
+            f"{definition.command_tokens}. No process was stopped."
         )
 
 
@@ -604,13 +609,23 @@ def wait_for_port_release(port: int, timeout_seconds: int = 30) -> None:
 
 def definitions(value: Paths) -> tuple[ServiceDefinition, ...]:
     return (
-        ServiceDefinition("personal-web", FRONTEND_PORT, "node.exe" if os.name == "nt" else "node", str(value.web)),
-        ServiceDefinition("personal-backend", BACKEND_PORT, "java.exe" if os.name == "nt" else "java", str(value.server)),
+        ServiceDefinition(
+            "personal-web",
+            FRONTEND_PORT,
+            "node.exe" if os.name == "nt" else "node",
+            (str(value.web),),
+        ),
+        ServiceDefinition(
+            "personal-backend",
+            BACKEND_PORT,
+            "java.exe" if os.name == "nt" else "java",
+            (str(value.runtime / "backend"), str(value.server)),
+        ),
         ServiceDefinition(
             "utility-mcp",
             MCP_PORT,
             "java.exe" if os.name == "nt" else "java",
-            "org.wrj.haifa.ai.utilitymcp.UtilityMcpServerApplication",
+            ("org.wrj.haifa.ai.utilitymcp.UtilityMcpServerApplication",),
         ),
     )
 
@@ -688,6 +703,105 @@ def latest_server_jar(value: Paths) -> Path | None:
         if not candidate.name.endswith(("-sources.jar", "-javadoc.jar"))
     ]
     return max(candidates, key=lambda candidate: candidate.stat().st_mtime, default=None)
+
+
+def manifest_attributes(payload: bytes) -> dict[str, str]:
+    unfolded: list[str] = []
+    for line in payload.decode("utf-8", "replace").splitlines():
+        if line.startswith(" ") and unfolded:
+            unfolded[-1] += line[1:]
+        else:
+            unfolded.append(line)
+    return {
+        name.strip(): content.strip()
+        for line in unfolded
+        if ":" in line
+        for name, content in (line.split(":", 1),)
+    }
+
+
+def server_jar_validation_error(path: Path | None) -> str | None:
+    if path is None or not path.is_file():
+        return "executable JAR does not exist"
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+            manifest = manifest_attributes(archive.read("META-INF/MANIFEST.MF"))
+    except (OSError, KeyError, zipfile.BadZipFile) as exception:
+        return f"JAR or manifest cannot be read ({type(exception).__name__})"
+
+    main_class = manifest.get("Main-Class", "")
+    if not main_class.startswith("org.springframework.boot.loader.") or not main_class.endswith(
+        "JarLauncher"
+    ):
+        return "manifest Main-Class is not a Spring Boot JarLauncher"
+    if manifest.get("Start-Class") != EXPECTED_SERVER_START_CLASS:
+        return f"manifest Start-Class is not {EXPECTED_SERVER_START_CLASS}"
+    if not any(name.startswith("BOOT-INF/classes/") for name in names):
+        return "BOOT-INF/classes is missing"
+    if not any(name.startswith("BOOT-INF/lib/") for name in names):
+        return "BOOT-INF/lib is missing"
+    return None
+
+
+def ensure_executable_server_jar(value: Paths, rebuild: bool) -> Path:
+    server_jar = latest_server_jar(value)
+    validation_error = server_jar_validation_error(server_jar)
+    if rebuild or validation_error is not None:
+        if validation_error is None:
+            print("Rebuilding the Personal Assistant backend...")
+        else:
+            print(f"Building the Personal Assistant backend: {validation_error}.")
+        run_checked(
+            value.maven_wrapper,
+            *backend_build_arguments(rebuild),
+            cwd=value.repository,
+        )
+        server_jar = latest_server_jar(value)
+        validation_error = server_jar_validation_error(server_jar)
+        if validation_error is not None:
+            fail(f"Backend build did not produce an executable Spring Boot JAR: {validation_error}.")
+    if server_jar is None:
+        fail("Backend build completed without producing an executable server JAR.")
+    return server_jar
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def stage_server_jar(source: Path, value: Paths) -> Path:
+    validation_error = server_jar_validation_error(source)
+    if validation_error is not None:
+        fail(f"Refusing to stage a non-executable backend JAR: {validation_error}.")
+    deployment = value.runtime / "backend"
+    deployment.mkdir(parents=True, exist_ok=True)
+    deployment.chmod(stat.S_IRWXU)
+
+    source_digest = file_sha256(source)
+    staged = deployment / f"{source.stem}-{source_digest[:16]}.jar"
+    if not staged.is_file() or file_sha256(staged) != source_digest:
+        temporary = deployment / f"{staged.name}.tmp-{os.getpid()}"
+        try:
+            shutil.copyfile(source, temporary)
+            temporary.chmod(stat.S_IRUSR | stat.S_IWUSR)
+            if file_sha256(temporary) != source_digest:
+                fail(f"Backend runtime JAR copy verification failed: {temporary}")
+            temporary.replace(staged)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    for candidate in deployment.glob("haifa-agent-personal-assistant-server-*.jar"):
+        if candidate != staged:
+            try:
+                candidate.unlink()
+            except OSError as exception:
+                warn(f"Could not remove stale backend runtime JAR {candidate}: {exception}")
+    return staged
 
 
 def backend_environment(
@@ -1153,17 +1267,18 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(stat.S_IRWXU)
 
-    server_jar = latest_server_jar(value)
-    if args.rebuild or server_jar is None:
-        print("Building the Personal Assistant backend...")
-        run_checked(
-            value.maven_wrapper,
-            *backend_build_arguments(args.rebuild),
-            cwd=value.repository,
+    server_jar = ensure_executable_server_jar(value, args.rebuild)
+
+    backend_health_uri = f"http://127.0.0.1:{BACKEND_PORT}/actuator/health"
+    if http_healthy(backend_health_uri):
+        runtime_server_jar = server_jar
+    elif port_open(BACKEND_PORT):
+        fail(
+            f"Port {BACKEND_PORT} is occupied, but personal-backend health check failed. "
+            "No process was stopped."
         )
-        server_jar = latest_server_jar(value)
-        if server_jar is None:
-            fail("Backend build completed without producing an executable server JAR.")
+    else:
+        runtime_server_jar = stage_server_jar(server_jar, value)
 
     serve_script = value.web / "node_modules/serve/build/main.js"
     if not serve_script.is_file():
@@ -1199,10 +1314,10 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
         records,
         "personal-backend",
         BACKEND_PORT,
-        f"http://127.0.0.1:{BACKEND_PORT}/actuator/health",
-        value.server,
+        backend_health_uri,
+        value.runtime / "backend",
         java,
-        ("-jar", str(server_jar)),
+        ("-jar", str(runtime_server_jar)),
         backend_environment(
             deepseek_key,
             default_model_id,
@@ -1251,6 +1366,7 @@ def start_environment(args: argparse.Namespace, value: Paths) -> None:
     print(f"  Repository:       {value.repository}")
     print(f"  Personal Web:     {value.web}")
     print(f"  Personal Server:  {value.server}")
+    print(f"  Backend runtime:  {value.runtime / 'backend'}")
     print(f"  Utility MCP:      {utility}")
     print(f"  Utility Proxy:    {args.utility_mcp_proxy_url} ({args.utility_mcp_proxy_providers})")
     print(f"  Personal Skills:  {skill_root}")

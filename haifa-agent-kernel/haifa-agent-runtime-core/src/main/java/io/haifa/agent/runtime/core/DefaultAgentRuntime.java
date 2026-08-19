@@ -896,6 +896,7 @@ public final class DefaultAgentRuntime implements AgentRuntime {
         events.append(run.id(), "children.termination-requested", Map.of("reason", "PARENT_CANCELLED"), time.now());
         if (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
             controls.requestCancel(run);
+            scheduler.cancel(run.id());
             return;
         }
         transitions.cancelled(run, new RunTerminationReason("USER_CANCELLED", "Cancellation requested"));

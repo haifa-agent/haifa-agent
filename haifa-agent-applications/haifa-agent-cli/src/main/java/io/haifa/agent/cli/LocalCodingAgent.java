@@ -19,6 +19,7 @@ import io.haifa.agent.application.project.product.coding.delivery.CodingTaskMode
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
+import io.haifa.agent.application.project.tool.ProjectPermissionRequestOperations;
 import io.haifa.agent.application.project.tool.ProjectToolCatalog;
 import io.haifa.agent.application.project.tool.ProjectToolExecutor;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -99,6 +100,7 @@ import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
 import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
+import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.skill.api.SkillAlias;
 import io.haifa.agent.tool.core.DefaultToolInvoker;
 import io.haifa.agent.tool.core.JsonSchema202012Validator;
@@ -433,11 +435,19 @@ final class LocalCodingAgent implements AutoCloseable {
                             resolvedEnvironment)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
+            var permissionRequests = executionPlatform == null
+                    ? null
+                    : new ProjectPermissionRequestOperations(
+                            persistence.ports().state(),
+                            executionPlatform.permissionOperations(),
+                            executionPlatform.profile(),
+                            executionPlatform.permissionProfile());
             var provider = new ProjectToolExecutor(
                     (runId, ignoredPrincipal) -> new io.haifa.agent.application.project.tool.RunWorkspaceAccess(
                             workspaceId, effectiveCapabilities),
                     operations,
-                    executionPlatform == null ? null : executionPlatform.operations());
+                    executionPlatform == null ? null : executionPlatform.operations(),
+                    permissionRequests);
             var skillService = new DefaultSkillActivationService(
                     persistence.ports().runs(), persistence.ports().state(), skillPlatform.contentLoader(), time);
             List<SkillToolCatalogContribution> skillTools =
@@ -454,6 +464,7 @@ final class LocalCodingAgent implements AutoCloseable {
                             webPlatform.contributions(),
                             skillTools,
                             executionPlatform == null ? null : executionPlatform.profile(),
+                            executionPlatform == null ? null : executionPlatform.permissionProfile(),
                             CodingToolchainEnvironmentProfile.defaultScratchSpace());
             var interactions = persistence.ports().interactions();
             Map<String, ResolvedModelSnapshot> modelSnapshots = configuration.availableModels().stream()
@@ -482,7 +493,9 @@ final class LocalCodingAgent implements AutoCloseable {
                     .toolPlatform(catalog, new DefaultToolInvoker(catalog), new JsonSchema202012Validator())
                     .skillPlatform(skillPlatform.catalog(), skillPlatform.contentLoader())
                     .toolApprovalPrompts((binding, call, reauthentication) -> {
-                        if (!binding.definition().name().value().equals("execution.run")) {
+                        String toolName = binding.definition().name().value();
+                        if (!toolName.equals("execution.run")
+                                && !toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
                             return io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter
                                     .defaultFormatter()
                                     .format(binding, call, reauthentication);
@@ -493,15 +506,28 @@ final class LocalCodingAgent implements AutoCloseable {
                         Object timeout = arguments.getOrDefault(
                                 "timeoutMillis",
                                 configuration.execution().defaultTimeout().toMillis());
-                        String description = safeApprovalText(
-                                String.valueOf(arguments.getOrDefault("description", "Run shell command")));
+                        boolean permissionRequest = toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME);
+                        String description = safeApprovalText(String.valueOf(arguments.getOrDefault(
+                                permissionRequest ? "justification" : "description",
+                                permissionRequest ? "Request one-time host network access" : "Run shell command")));
+                        String permissionDetails = permissionRequest
+                                ? "\nPrior failed Tool Call: "
+                                        + safeApprovalText(String.valueOf(arguments.get("priorToolCallId")))
+                                        + "\nRequested permission: "
+                                        + safeApprovalText(String.valueOf(arguments.get("requestedPermission")))
+                                        + "\nScope: this exact command once; no reusable grant"
+                                : "";
                         return description + "\nCommand: " + safeApprovalText(command) + "\nWorkdir: "
                                 + safeApprovalText(workdir) + "\nTimeout: " + timeout + " ms\nShell: "
                                 + (executionPlatform == null ? "unavailable" : executionPlatform.shellDisplayName())
+                                + permissionDetails
                                 + "\nSecurity: "
                                 + (executionPlatform == null
                                         ? "execution unavailable"
-                                        : executionPlatform.securitySummary());
+                                        : permissionRequest
+                                                ? "approved host execution, network=ALLOW, current OS user; workspace "
+                                                        + "and hard command denials remain enforced"
+                                                : executionPlatform.securitySummary());
                     })
                     .policyStores(policy.decisionsStore(), policy.evidence())
                     .approvalVerification(policy.approvalVerification())
@@ -669,7 +695,11 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "discovery and rg for text search because they are fast; if rg is unavailable, use an appropriate "
                 + "alternative for the configured shell. Choose the exact command and options for the task rather than "
                 + "expecting a dedicated search wrapper.\n"
-                + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.";
+                + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.\n"
+                + "- request_permissions is not a general sandbox bypass. Use it only after execution_run returns an eligible "
+                + "stable remote-access or host-authentication code for a direct system git or gh command, and repeat the exact command, "
+                + "workdir, operation family, timeout, and prior Tool Call ID. Compound commands, wrappers, path "
+                + "escape, credential override, destructive commands, and unknown outcomes cannot be elevated.";
     }
 
     private static String hostFact(String value) {
@@ -772,7 +802,15 @@ final class LocalCodingAgent implements AutoCloseable {
 
     static Set<String> effectiveBuiltInTools(CliConfiguration configuration) {
         java.util.Set<String> configuredTools = new java.util.HashSet<>(configuration.enabledTools());
-        if (configuration.approval() == ApprovalMode.DENY) configuredTools.remove("execution.run");
+        if (configuration.approval() == ApprovalMode.DENY) {
+            configuredTools.remove("execution.run");
+            configuredTools.remove(ProjectPermissionRequestOperations.TOOL_NAME);
+        } else if (configuredTools.contains("execution.run")
+                && !configuration.execution().provider().equals(HostGuardedSandboxProvider.PROVIDER_ID)) {
+            configuredTools.add(ProjectPermissionRequestOperations.TOOL_NAME);
+        } else {
+            configuredTools.remove(ProjectPermissionRequestOperations.TOOL_NAME);
+        }
         return Set.copyOf(configuredTools);
     }
 

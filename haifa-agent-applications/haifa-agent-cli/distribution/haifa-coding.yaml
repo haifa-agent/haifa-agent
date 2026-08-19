@@ -78,6 +78,9 @@ skills:
   allowed:
     - task-planning
     - result-verification
+    - git
+    - github
+    - git-delivery
 
 approval:
   mode: ask

@@ -263,6 +263,12 @@ public final class ExecutionToolProvider implements ToolProvider {
                     throw new IllegalArgumentException("language is only valid for SCRIPT mode");
                 }
                 if (!arguments.isEmpty()) throw new IllegalArgumentException("args are only valid for SCRIPT mode");
+                var classification =
+                        io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier.classify(content);
+                if (classification.risk()
+                        == io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier.Risk.DENIED) {
+                    throw new SecurityException(classification.reasonCode());
+                }
                 yield new ParsedInvocation(
                         mode,
                         "",

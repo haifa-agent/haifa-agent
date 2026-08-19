@@ -26,7 +26,7 @@ import org.junit.jupiter.api.Test;
 
 class GitAdapterTest {
     @Test
-    void usesBrokerForBoundedReadOnlyInspectStatusAndDiff() {
+    void usesBrokerForBoundedInternalRevisionProbe() {
         List<List<String>> commands = new ArrayList<>();
         ExecutionBroker broker = new ExecutionBroker() {
             @Override
@@ -39,8 +39,6 @@ class GitAdapterTest {
                 else if (argv.contains("HEAD") && argv.contains("rev-parse")) output = "abcdef1234567890\n";
                 else if (argv.contains("symbolic-ref")) output = "main\n";
                 else if (argv.contains("submodule")) output = "";
-                else if (argv.contains("status")) output = " M src/App.java\n?? new.txt\n";
-                else if (argv.contains("diff")) output = "--- a/src/App.java\n+++ b/src/App.java\n";
                 else {
                     output = "";
                     exit = 1;
@@ -59,21 +57,19 @@ class GitAdapterTest {
             }
         };
         AtomicInteger ids = new AtomicInteger();
-        var adapter = new ExecutionBrokerGitRepositoryAdapter(
+        var adapter = new ExecutionBrokerGitRevisionProbe(
                 broker, () -> "git-" + ids.incrementAndGet(), new SandboxProfileRef("git-read", "1"), "git");
         WorkspaceId workspaceId = new WorkspaceId("workspace-1");
         var repository = new GitRepositoryRef(WorkspacePath.root(workspaceId));
         var context = new GitCommandContext(new TrustedExecutionContext(
                 "run-1", new PrincipalRef("actor", "user"), Set.of("execution.run", "git.read"), "allow-1"));
 
-        assertThat(adapter.inspect(context, repository).branch()).isEqualTo("main");
-        assertThat(adapter.status(context, repository, 10).entries())
-                .extracting(entry -> entry.path().value())
-                .containsExactly("src/App.java", "new.txt");
-        assertThat(adapter.diff(context, repository, 4096).unifiedDiff()).contains("src/App.java");
+        assertThat(adapter.inspectHead(context, repository).branch()).isEqualTo("main");
+        assertThat(commands).hasSize(4);
         assertThat(commands).allSatisfy(argv -> {
             assertThat(argv).contains("-c", "credential.interactive=never");
-            assertThat(argv).doesNotContain("commit", "push", "fetch", "reset", "clean", "merge");
+            assertThat(argv.get(3))
+                    .isNotIn("status", "diff", "log", "blame", "commit", "push", "fetch", "reset", "clean", "merge");
         });
     }
 

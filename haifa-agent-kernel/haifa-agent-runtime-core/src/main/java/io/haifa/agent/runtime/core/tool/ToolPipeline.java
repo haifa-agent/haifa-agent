@@ -358,7 +358,13 @@ public final class ToolPipeline {
                 failureCode = AgentErrorCode.isKnownWireCode(invocationFailureCode)
                         ? AgentErrorCode.fromWireCode(invocationFailureCode)
                         : AgentErrorCode.TOOL_INVOCATION_FAILED;
-                appendToolEvent(run, call, "tool.failed", "FAILED", failureCode.wireCode(), "");
+                appendToolEvent(
+                        run,
+                        call,
+                        "tool.failed",
+                        "FAILED",
+                        stableInvocationFailureCode(invocationFailureCode, failureCode.wireCode()),
+                        "");
             }
             Map<String, Object> errorDetails;
             if (resultPersistenceFailed) {
@@ -614,7 +620,7 @@ public final class ToolPipeline {
                     call,
                     result.successful() ? "tool.succeeded" : "tool.failed",
                     result.successful() ? "SUCCEEDED" : "FAILED",
-                    result.successful() ? "NONE" : "TOOL_BUSINESS_FAILURE",
+                    result.successful() ? "NONE" : stableResultFailureCode(result),
                     result.assets().isEmpty() ? "" : result.assets().getFirst().assetId());
             appendExecutionAndResourceEvents(run, call, result);
         } catch (RuntimeException persistenceFailure) {
@@ -761,6 +767,22 @@ public final class ToolPipeline {
             }
         }
         return Map.copyOf(attributes);
+    }
+
+    private static String stableResultFailureCode(ToolResult result) {
+        for (String key : List.of("stableFailureCode", "failureCode")) {
+            Object value = result.structuredData().get(key);
+            if (value instanceof String code && isStableFailureCode(code)) return code;
+        }
+        return "TOOL_BUSINESS_FAILURE";
+    }
+
+    private static String stableInvocationFailureCode(String candidate, String fallback) {
+        return isStableFailureCode(candidate) ? candidate : fallback;
+    }
+
+    private static boolean isStableFailureCode(String value) {
+        return value != null && value.matches("[A-Z][A-Z0-9_]{0,127}");
     }
 
     private void recordTrace(RuntimeTraceEvent event) {

@@ -115,6 +115,22 @@ class CliExecutionPlatformTest {
                 .doesNotContain("<workspace>", "\u001B", "\u0000");
     }
 
+    @Test
+    void normalizesAbsoluteWorkdirsOnlyInsideTheAuthorizedWorkspace() {
+        Path workspace = Path.of(System.getProperty("java.io.tmpdir"), "haifa-workdir", "workspace")
+                .toAbsolutePath()
+                .normalize();
+        var normalizer = CliExecutionPlatform.workspaceWorkdirNormalizer(workspace);
+
+        assertThat(normalizer.apply(workspace.toString())).isEqualTo(".");
+        assertThat(normalizer.apply(workspace.resolve("src").resolve("main").toString()))
+                .isEqualTo("src/main");
+        assertThat(normalizer.apply("src/test")).isEqualTo("src/test");
+
+        String outside = workspace.resolveSibling("outside").toString();
+        assertThat(normalizer.apply(outside)).isEqualTo(outside);
+    }
+
     private static HostGuardedSandboxProvider hostProvider(CliConfiguration.Execution configuration) {
         return new HostGuardedSandboxProvider(
                 new InMemoryWorkspaceStore(),

@@ -40,10 +40,12 @@ import io.haifa.agent.runtime.api.RunEventCursor;
 import io.haifa.agent.runtime.api.RunEventPage;
 import io.haifa.agent.runtime.api.RunEventPayloads;
 import io.haifa.agent.runtime.api.RunEventSubscription;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -140,7 +142,12 @@ class Tui4jCodingTerminalModelTest {
         var fixture = fixture();
         fixture.model.update(new PasteMessage("inspect the repository"));
 
-        var updated = fixture.model.update(key(KeyType.keyCR));
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+
+        assertThat(Command.isNone(guarded.command())).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("inspect the repository");
+
+        var updated = fixture.model.update(guarded.command().execute());
 
         assertThat(Command.isNone(updated.command())).isFalse();
         assertThat(fixture.controller.state().editorBuffer()).isEmpty();
@@ -149,6 +156,33 @@ class Tui4jCodingTerminalModelTest {
             assertThat(item.title()).isEqualTo("You");
             assertThat(item.body()).isEqualTo("inspect the repository");
         });
+    }
+
+    @Test
+    void keepsUnbracketedCrAndCrLfMultilinePasteInTheEditorUntilASeparateEnter() {
+        var fixture = fixture();
+        fixture.model.update(new PasteMessage("first line"));
+
+        var firstCr = fixture.model.update(key(KeyType.keyCR));
+        "second line".chars().forEach(value -> fixture.model.update(runes((char) value)));
+        fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(key(KeyType.keyLF));
+        "third line".chars().forEach(value -> fixture.model.update(runes((char) value)));
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
+        assertThat(fixture.controller.state().status()).isEqualTo("Idle");
+
+        fixture.model.update(firstCr.command().execute());
+
+        assertThat(fixture.controller.state().editorBuffer()).isEqualTo("first line\nsecond line\nthird line");
+        assertThat(fixture.controller.state().transcript()).isEmpty();
+
+        var explicitEnter = fixture.model.update(key(KeyType.keyCR));
+        var submitted = fixture.model.update(explicitEnter.command().execute());
+
+        assertThat(Command.isNone(submitted.command())).isFalse();
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.controller.state().status()).isEqualTo("Submitting");
     }
 
     @Test
@@ -255,6 +289,55 @@ class Tui4jCodingTerminalModelTest {
     }
 
     @Test
+    void resumesFollowingWhenTheUserSubmitsANewMessageAfterReviewingHistory() {
+        var fixture = fixture();
+        fixture.model.init();
+        for (int index = 1; index <= 30; index++) {
+            fixture.pump.offer(new TerminalUiAction.UserMessageCommitted("message-" + index, "history-" + index));
+        }
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.update(key(KeyType.KeyPgUp));
+
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "HIDDEN_BEFORE_SUBMIT", "SUCCEEDED"));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("new output below");
+
+        fixture.model.update(new PasteMessage("start a new turn"));
+        commitPlainEnter(fixture);
+        fixture.pump.offer(new TerminalUiAction.ShellCompleted("!pwd", "VISIBLE_AFTER_SUBMIT", "SUCCEEDED"));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+
+        assertThat(fixture.model.view()).contains("VISIBLE_AFTER_SUBMIT").doesNotContain("new output below");
+    }
+
+    @Test
+    void restartsTheActivityTimerWhenToolsStartAndReturnControlToTheModel() {
+        AtomicLong clock = new AtomicLong();
+        var fixture = fixture(clock::get);
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(
+                event(1, new RunEventPayloads.RunLifecycle("RUNNING", 1, "NONE"))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        fixture.model.view();
+        clock.set(Duration.ofSeconds(9).toNanos());
+        assertThat(fixture.model.view()).contains("THINKING (9s)");
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                2,
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution.run", "STARTED", "NONE", "git status", ""))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("WORKING (1s) · execution.run");
+        clock.set(Duration.ofSeconds(14).toNanos());
+        assertThat(fixture.model.view()).contains("WORKING (5s) · execution.run");
+
+        fixture.pump.offer(new TerminalUiAction.RunEventReceived(event(
+                3,
+                new RunEventPayloads.ToolLifecycle("tool-1", "execution.run", "SUCCEEDED", "NONE", "git status", ""))));
+        fixture.model.update(new WindowSizeMessage(80, 24));
+        assertThat(fixture.model.view()).contains("THINKING (1s)").doesNotContain("WORKING (");
+    }
+
+    @Test
     void routesParsedSgrMouseWheelInputToTheTranscript() {
         var fixture = fixture();
         for (int index = 1; index <= 30; index++) {
@@ -274,9 +357,9 @@ class Tui4jCodingTerminalModelTest {
         var fixture = fixture();
 
         fixture.model.update(new PasteMessage("/unknown-one"));
-        fixture.model.update(key(KeyType.keyCR));
+        commitPlainEnter(fixture);
         fixture.model.update(new PasteMessage("/unknown-two"));
-        fixture.model.update(key(KeyType.keyCR));
+        commitPlainEnter(fixture);
         fixture.model.update(new PasteMessage("current draft"));
 
         fixture.model.update(key(KeyType.KeyUp));
@@ -347,6 +430,10 @@ class Tui4jCodingTerminalModelTest {
     }
 
     private Fixture fixture() {
+        return fixture(System::nanoTime);
+    }
+
+    private Fixture fixture(java.util.function.LongSupplier monotonicNanos) {
         var pump = new TerminalEventPump(64);
         var controller = new CodingTerminalController(
                 new ProjectId("project-1"),
@@ -355,11 +442,16 @@ class Tui4jCodingTerminalModelTest {
                 new TerminalUiReducer(),
                 TerminalUiState.initial(80, 24),
                 Runnable::run);
-        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
+        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump, monotonicNanos));
     }
 
     private KeyPressMessage key(KeyType type) {
         return new KeyPressMessage(new Key(type));
+    }
+
+    private void commitPlainEnter(Fixture fixture) {
+        var guarded = fixture.model.update(key(KeyType.keyCR));
+        fixture.model.update(guarded.command().execute());
     }
 
     private KeyPressMessage runes(char value) {

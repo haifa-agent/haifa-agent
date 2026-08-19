@@ -20,6 +20,7 @@ import io.haifa.agent.skill.api.SkillSourceRef;
 import io.haifa.agent.skill.api.SkillTrustSnapshot;
 import io.haifa.agent.skill.api.SkillTrustSubject;
 import io.haifa.agent.skill.api.SkillVisibilityContext;
+import io.haifa.agent.skill.base.BaseSkills;
 import io.haifa.agent.skill.core.ClasspathSkillSource;
 import io.haifa.agent.skill.core.CompositeSkillContentLoader;
 import io.haifa.agent.skill.core.LocalDirectorySkillSource;
@@ -72,7 +73,11 @@ public record PersonalSkillPlatform(
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Skill alias is unavailable: " + alias));
         var visibility = new SkillVisibilityContext(
-                tenant, principal, Optional.empty(), false, Set.of(SkillScope.PRODUCT, SkillScope.USER));
+                tenant,
+                principal,
+                Optional.empty(),
+                false,
+                Set.of(SkillScope.PRODUCT, SkillScope.USER, SkillScope.SDK));
         return contentLoader.load(binding, visibility);
     }
 
@@ -95,12 +100,17 @@ public record PersonalSkillPlatform(
             PersonalTrustedScriptManifest trustManifest,
             Clock clock) {
         List<SkillSource> sources = new ArrayList<>();
+        sources.add(BaseSkills.gitCliSource());
         sources.addAll(bundled());
         configuredLocalRoot.ifPresent(root -> sources.add(local(tenant, principal, root, forbiddenRoots)));
         var visibility = new SkillVisibilityContext(
-                tenant, principal, Optional.empty(), false, Set.of(SkillScope.PRODUCT, SkillScope.USER));
+                tenant,
+                principal,
+                Optional.empty(),
+                false,
+                Set.of(SkillScope.PRODUCT, SkillScope.USER, SkillScope.SDK));
         var policy = new SkillResolutionPolicy(
-                "personal-skill-resolution@1", List.of(SkillScope.USER, SkillScope.PRODUCT), true);
+                "personal-skill-resolution@2", List.of(SkillScope.USER, SkillScope.PRODUCT, SkillScope.SDK), true);
         List<io.haifa.agent.skill.api.SkillRegistration> registrations = sources.stream()
                 .flatMap(source -> source.discover(new SkillDiscoveryContext(visibility)).registrations().stream())
                 .toList();
@@ -168,7 +178,7 @@ public record PersonalSkillPlatform(
         SkillSource standard = new ClasspathSkillSource(
                 PersonalSkillPlatform.class.getClassLoader(),
                 "META-INF/haifa-agent/personal-skills",
-                List.of("daily-planning", "local-script-execution"),
+                List.of("daily-planning", "github-project-watch", "local-script-execution"),
                 new SkillSourceDescriptor(
                         new SkillSourceRef("classpath:haifa-personal-skills", "1"),
                         SkillScopeRef.product(),

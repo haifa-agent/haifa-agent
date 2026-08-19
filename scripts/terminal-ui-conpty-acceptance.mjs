@@ -633,6 +633,24 @@ async function send(text, label, settleMillis = 500) {
   captureScreen(label);
 }
 
+async function sendPaste(text, label, settleMillis = 500) {
+  const elapsedSeconds = (Date.now() - startedAt) / 1000;
+  interactionEvents.push({
+    elapsedSeconds,
+    label,
+    kind: "paste",
+    text: text
+      .replace(/\u001b\[200~/g, "<PASTE-START>")
+      .replace(/\u001b\[201~/g, "<PASTE-END>")
+      .replace(/\r/g, "<CR>")
+      .replace(/\n/g, "<LF>"),
+  });
+  outputEvents.push([elapsedSeconds, "i", text]);
+  child.write(text);
+  await sleep(settleMillis);
+  captureScreen(label);
+}
+
 async function sendAndWait(text, label, marker, timeoutMillis) {
   const start = terminalOutput.length;
   await send(text, label);
@@ -664,6 +682,24 @@ try {
   await send("/help\r", "help");
   observations.helpOpened = terminalOutput.slice(start).includes("Commands");
   if (observations.helpOpened) await send("\u001b", "help-close");
+
+  const traceBeforePaste = fs.existsSync(traceFile) ? fs.readFileSync(traceFile, "utf8").length : 0;
+  await sendPaste("UNBRACKETED-FIRST\rUNBRACKETED-SECOND", "unbracketed-multiline-paste");
+  observations.unbracketedMultilinePasteStayedDraft =
+    hasTerminalText("UNBRACKETED-FIRST") &&
+    hasTerminalText("UNBRACKETED-SECOND") &&
+    (!fs.existsSync(traceFile) || fs.readFileSync(traceFile, "utf8").length === traceBeforePaste);
+  await send("\u0003", "clear-unbracketed-multiline-paste");
+
+  await sendPaste(
+    "\u001b[200~BRACKETED-FIRST\r\nBRACKETED-SECOND\u001b[201~",
+    "bracketed-multiline-paste",
+  );
+  observations.bracketedMultilinePasteStayedDraft =
+    hasTerminalText("BRACKETED-FIRST") &&
+    hasTerminalText("BRACKETED-SECOND") &&
+    (!fs.existsSync(traceFile) || fs.readFileSync(traceFile, "utf8").length === traceBeforePaste);
+  await send("\u0003", "clear-bracketed-multiline-paste");
 
   await sendAndWait("/commands\r", "commands", "Commands", 5_000);
   await send("\u001b", "commands-close");
@@ -893,6 +929,8 @@ const commonAssertions = {
   alternateScreenExited: terminalOutput.includes("\u001b[?1049l"),
   helpOpened: observations.helpOpened === true,
   commandSelectorVisible: terminalOutput.includes("Commands"),
+  unbracketedMultilinePasteStayedDraft: observations.unbracketedMultilinePasteStayedDraft === true,
+  bracketedMultilinePasteStayedDraft: observations.bracketedMultilinePasteStayedDraft === true,
   seedRunCompleted: observations.seedRunCompleted === true,
   noCommandUnknown: !terminalOutput.includes("COMMAND_UNKNOWN"),
   noKeyLeak: keyLeakFiles.length === 0,

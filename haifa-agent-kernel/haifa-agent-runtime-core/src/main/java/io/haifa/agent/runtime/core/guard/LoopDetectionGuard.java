@@ -19,12 +19,14 @@ public final class LoopDetectionGuard implements AgentLoopGuard {
                 .skip(Math.max(0, fingerprints.size() - maximumRepeats))
                 .filter(latest::equals)
                 .count();
-        if (repeats == maximumRepeats) throw new IllegalStateException("repeated decision loop detected");
+        if (repeats == maximumRepeats) {
+            throw new LoopDetectedException(LoopDetectedException.Reason.REPEATED_DECISION);
+        }
         if (fingerprints.size() >= 4) {
             int size = fingerprints.size();
             if (fingerprints.get(size - 1).equals(fingerprints.get(size - 3))
                     && fingerprints.get(size - 2).equals(fingerprints.get(size - 4))) {
-                throw new IllegalStateException("alternating decision loop detected");
+                throw new LoopDetectedException(LoopDetectedException.Reason.ALTERNATING_DECISION);
             }
         }
         var progress = context.progressSignatures();
@@ -35,7 +37,9 @@ public final class LoopDetectionGuard implements AgentLoopGuard {
             boolean stalled = progress.stream()
                     .skip(progress.size() - maximumRepeats - 1L)
                     .allMatch(current::equals);
-            if (stalled) throw new IllegalStateException("loop made no observable progress");
+            if (stalled) {
+                throw new LoopDetectedException(LoopDetectedException.Reason.NO_OBSERVABLE_PROGRESS);
+            }
         }
     }
 }

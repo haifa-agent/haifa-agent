@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.haifa.agent.context.api.ContextBuildException;
 import io.haifa.agent.context.api.ContextBuildFailure;
 import io.haifa.agent.core.error.AgentErrorCode;
+import io.haifa.agent.runtime.core.guard.LoopDetectedException;
 import org.junit.jupiter.api.Test;
 
 class AttemptExecutorTest {
@@ -21,6 +22,14 @@ class AttemptExecutorTest {
                 .isEqualTo(AgentErrorCode.MODEL_CONTEXT_TOO_LONG);
         assertThat(AttemptExecutor.classifiedErrorCode(null, failure(ContextBuildFailure.UNSUPPORTED_CONTEXT_CONTENT)))
                 .isEqualTo(AgentErrorCode.RUNTIME_EXECUTION_FAILED);
+    }
+
+    @Test
+    void classifiesLoopDetectionAsAStableRuntimeFailure() {
+        var failure = new LoopDetectedException(LoopDetectedException.Reason.NO_OBSERVABLE_PROGRESS);
+
+        assertThat(AttemptExecutor.classifiedErrorCode(null, null, failure))
+                .isEqualTo(AgentErrorCode.AGENT_LOOP_DETECTED);
     }
 
     private static ContextBuildException failure(ContextBuildFailure failure) {

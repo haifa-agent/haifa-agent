@@ -15,6 +15,8 @@ import io.haifa.agent.core.message.MessageStatus;
 import io.haifa.agent.core.message.MessageVisibility;
 import io.haifa.agent.core.reference.InteractionRequestRef;
 import io.haifa.agent.core.run.AgentRun;
+import io.haifa.agent.core.run.AgentRunOutcome;
+import io.haifa.agent.core.run.AgentRunResult;
 import io.haifa.agent.core.run.AgentRunUsageDelta;
 import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.step.AgentStepError;
@@ -41,6 +43,7 @@ import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.delegation.DelegationPort;
 import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
+import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
 import io.haifa.agent.runtime.core.interaction.InteractionPort;
 import io.haifa.agent.runtime.core.interaction.InteractionRequest;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalPromptFormatter;
@@ -50,6 +53,7 @@ import io.haifa.agent.runtime.core.loop.AgentLoopContext;
 import io.haifa.agent.runtime.core.model.ModelInvocationResult;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationDraft;
 import io.haifa.agent.runtime.core.model.continuation.ModelContinuationRef;
+import io.haifa.agent.runtime.core.recovery.BudgetLimitedSummary;
 import io.haifa.agent.runtime.core.retry.RepairRetryPolicy;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
@@ -60,6 +64,7 @@ import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
 import io.haifa.agent.runtime.core.tool.ToolInputValidationException;
 import io.haifa.agent.runtime.core.tool.ToolPipeline;
 import io.haifa.agent.runtime.core.tool.ToolPipelineOutcome;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -161,6 +166,65 @@ public final class DecisionExecutor {
                                 error.code().wireCode(),
                                 "terminalSummaryVersion",
                                 "1")));
+    }
+
+    public boolean supportsBudgetLimitedCompletion(AgentRun run) {
+        return state.configuration(run.configurationSnapshot())
+                .flatMap(configuration -> configuration.structuredOutput())
+                .isEmpty();
+    }
+
+    public boolean completeBudgetLimited(
+            AgentRun run, RuntimeLimitExceededException limit, Optional<FinalAnswerDecision> finalDecision) {
+        if (!supportsBudgetLimitedCompletion(run)) return false;
+        String resource = upperSnake(limit.resource());
+        FinalAnswerDecision candidate = finalDecision.orElse(null);
+        String summary = candidate == null
+                ? BudgetLimitedSummary.create(resource, limit.used(), limit.limit(), state.toolCalls(run.id()))
+                : candidate.summary();
+        List<String> warnings = new ArrayList<>(candidate == null ? List.of() : candidate.warnings());
+        warnings.add("BUDGET_LIMITED:" + resource);
+        AgentRunResult result = new AgentRunResult(
+                AgentRunOutcome.PARTIAL_SUCCESS,
+                summary,
+                candidate == null ? "haifa.agent.partial-result" : candidate.outputSchemaId(),
+                candidate == null ? "1" : candidate.outputSchemaVersion(),
+                candidate == null
+                        ? Map.of(
+                                "completionReason",
+                                "BUDGET_LIMITED",
+                                "limitingResource",
+                                resource,
+                                "used",
+                                limit.used(),
+                                "limit",
+                                limit.limit())
+                        : candidate.structuredOutput(),
+                candidate == null ? List.of() : candidate.artifacts(),
+                warnings.stream().distinct().toList());
+        transitions.completedWithOutput(
+                run,
+                result,
+                summary,
+                messageDraft(
+                        run,
+                        MessageRole.ASSISTANT,
+                        List.of(new TextPart(summary, "plain")),
+                        MessageVisibility.USER_VISIBLE,
+                        Map.of(
+                                "final",
+                                true,
+                                "partial",
+                                true,
+                                "completionReason",
+                                "BUDGET_LIMITED",
+                                "limitingResource",
+                                resource,
+                                "limitingUsed",
+                                limit.used(),
+                                "limitingLimit",
+                                limit.limit())));
+        return true;
     }
 
     private AgentLoopDirective executeFinal(AgentRun run, FinalAnswerDecision decision, AgentLoopContext loopContext) {
@@ -331,6 +395,13 @@ public final class DecisionExecutor {
             ToolCallDecision decision,
             AgentLoopContext loopContext,
             java.util.Optional<ModelInvocationResult> invocation) {
+        long projectedToolCalls = run.usage().toolCalls() + decision.requests().size();
+        if (projectedToolCalls > run.budget().maxToolCalls()) {
+            RuntimeLimitExceededException limit =
+                    new RuntimeLimitExceededException("toolCalls", run.budget().maxToolCalls(), projectedToolCalls);
+            if (completeBudgetLimited(run, limit, Optional.empty())) return AgentLoopDirective.STOP;
+            throw limit;
+        }
         List<PreparedTool> prepared = decision.requests().stream()
                 .map(request -> prepareTool(run, request))
                 .toList();
@@ -695,6 +766,13 @@ public final class DecisionExecutor {
 
     private AgentLoopDirective executeDelegation(
             AgentRun run, DelegationDecision decision, AgentLoopContext loopContext) {
+        long projectedChildRuns = run.usage().childRuns() + 1;
+        if (projectedChildRuns > run.budget().maxChildRuns()) {
+            RuntimeLimitExceededException limit =
+                    new RuntimeLimitExceededException("childRuns", run.budget().maxChildRuns(), projectedChildRuns);
+            if (completeBudgetLimited(run, limit, Optional.empty())) return AgentLoopDirective.STOP;
+            throw limit;
+        }
         var result = delegations.executeChild(run, decision);
         appendMessage(
                 run,
@@ -715,6 +793,12 @@ public final class DecisionExecutor {
                 CheckpointType.AUTOMATIC);
         if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
         return AgentLoopDirective.CONTINUE;
+    }
+
+    private static String upperSnake(String value) {
+        return value.replaceAll("([a-z0-9])([A-Z])", "$1_$2")
+                .replaceAll("[^A-Za-z0-9_]", "_")
+                .toUpperCase(java.util.Locale.ROOT);
     }
 
     private AgentLoopDirective executeInteraction(

@@ -374,6 +374,9 @@ Maven 只构建后端 executable JAR，不需要 Node.js/npm，也不读取相�
 [`REAL_ENVIRONMENT.md`](REAL_ENVIRONMENT.md)。PowerShell 与 POSIX Shell 入口都要求 Python 3；两者只负责
 参数兼容和解释器发现，启动、健康检查、状态文件与安全停止逻辑统一由根目录
 [`scripts/real_environment.py`](../../scripts/real_environment.py) 实现。
+脚本会把构建产物复制到 `local-tmp/personal-assistant-real/backend/` 后再启动，运行中的服务不会锁定
+模块 `target/` 下的 JAR。复制前会验证 Spring Boot Manifest 与 `BOOT-INF`，残缺构建产物自动重新
+`package` 并二次校验；直接执行本节前面的 `java -jar .\target\...` 命令不具备这些保护。
 
 macOS 可直接使用与 Windows PowerShell 版本行为对齐的启动脚本：
 

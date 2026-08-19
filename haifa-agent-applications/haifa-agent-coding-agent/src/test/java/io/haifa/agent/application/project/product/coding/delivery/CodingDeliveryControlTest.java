@@ -71,7 +71,7 @@ class CodingDeliveryControlTest {
                 .filteredOn(blocker -> blocker.code().equals("DIFF_INSPECTION_MISSING"))
                 .singleElement()
                 .satisfies(blocker -> assertThat(blocker.safeMessage())
-                        .contains("git.diff", "execution.run", "operationFamily=DIFF"));
+                        .contains("execution.run", "operationFamily=DIFF", "git diff"));
 
         tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
         tool(
@@ -89,6 +89,63 @@ class CodingDeliveryControlTest {
         assertThat(complete.allowed()).isTrue();
         assertThat(complete.evidenceCodes())
                 .contains("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "VALIDATION_PASSED", "DIFF_INSPECTION");
+    }
+
+    @Test
+    void newExecutionEvidenceRequiresTrustedDiffOperationClassification() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of("operationFamily", "TEST", "status", "SUCCEEDED", "exitCode", 0));
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "DIFF",
+                        "status",
+                        "SUCCEEDED",
+                        "commandTarget",
+                        "GIT",
+                        "commandRisk",
+                        "LOCAL_READ",
+                        "commandOperation",
+                        "INSPECT",
+                        "commandClassificationReason",
+                        "GIT_STATUS"));
+
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("DIFF_INSPECTION_MISSING");
+
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "DIFF",
+                        "status",
+                        "SUCCEEDED",
+                        "commandTarget",
+                        "GIT",
+                        "commandRisk",
+                        "LOCAL_READ",
+                        "commandOperation",
+                        "DIFF",
+                        "commandClassificationReason",
+                        "GIT_DIFF"));
+
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .allowed())
+                .isTrue();
     }
 
     @Test

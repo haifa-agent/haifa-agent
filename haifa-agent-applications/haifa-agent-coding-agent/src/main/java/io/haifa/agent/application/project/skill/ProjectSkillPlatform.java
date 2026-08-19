@@ -62,6 +62,8 @@ public record ProjectSkillPlatform(SkillCatalog catalog, SkillContentLoader cont
 
         List<SkillSource> sources = new ArrayList<>();
         sources.add(BaseSkills.source());
+        sources.add(BaseSkills.gitCliSource());
+        sources.add(codingProductSkills());
         directories.stream()
                 .sorted(Comparator.comparing(UserDirectorySource::id))
                 .map(directory -> userDirectorySource(tenant, principal, directory))
@@ -79,6 +81,23 @@ public record ProjectSkillPlatform(SkillCatalog catalog, SkillContentLoader cont
         return new ProjectSkillPlatform(
                 new SkillCatalogBuilder(sources, policy).build(new SkillDiscoveryContext(visibility)),
                 new CompositeSkillContentLoader(sources));
+    }
+
+    private static SkillSource codingProductSkills() {
+        return new io.haifa.agent.skill.core.ClasspathSkillSource(
+                ProjectSkillPlatform.class.getClassLoader(),
+                "META-INF/haifa-agent/coding-skills",
+                List.of("git-delivery"),
+                new SkillSourceDescriptor(
+                        new SkillSourceRef("classpath:haifa-coding-skills", "1"),
+                        SkillScopeRef.product(),
+                        SkillOrigin.BUNDLED,
+                        0,
+                        SkillParserMode.STRICT,
+                        true,
+                        false),
+                new SkillPackageParser(SkillPackageLimits.defaults()),
+                io.haifa.agent.skill.api.SkillAvailability.ENABLED);
     }
 
     private static SkillSource userDirectorySource(

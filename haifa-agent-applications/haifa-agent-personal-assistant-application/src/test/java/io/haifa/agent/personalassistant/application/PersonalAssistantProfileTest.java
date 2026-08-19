@@ -40,7 +40,12 @@ class PersonalAssistantProfileTest {
                 Set.of());
 
         assertThat(profile.allowedSkills())
-                .contains(PersonalAssistantProfile.BUNDLED_SKILL_ALIAS, "user-skill")
+                .contains(
+                        PersonalAssistantProfile.BUNDLED_SKILL_ALIAS,
+                        PersonalAssistantProfile.GIT_SKILL_ALIAS,
+                        PersonalAssistantProfile.GITHUB_SKILL_ALIAS,
+                        PersonalAssistantProfile.GITHUB_PROJECT_WATCH_SKILL_ALIAS,
+                        "user-skill")
                 .doesNotContain(PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS);
     }
 
@@ -105,7 +110,12 @@ class PersonalAssistantProfileTest {
                         PersonalAssistantProfile.WEB_FETCH_ALIAS,
                         mcpAlias);
         assertThat(profile.allowedSkills())
-                .contains(PersonalAssistantProfile.BUNDLED_SKILL_ALIAS, PersonalAssistantProfile.EXECUTION_SKILL_ALIAS)
+                .contains(
+                        PersonalAssistantProfile.BUNDLED_SKILL_ALIAS,
+                        PersonalAssistantProfile.EXECUTION_SKILL_ALIAS,
+                        PersonalAssistantProfile.GIT_SKILL_ALIAS,
+                        PersonalAssistantProfile.GITHUB_SKILL_ALIAS,
+                        PersonalAssistantProfile.GITHUB_PROJECT_WATCH_SKILL_ALIAS)
                 .doesNotContain(PersonalAssistantProfile.DEEP_RESEARCH_SKILL_ALIAS);
         assertThat(profile.instructions())
                 .contains(

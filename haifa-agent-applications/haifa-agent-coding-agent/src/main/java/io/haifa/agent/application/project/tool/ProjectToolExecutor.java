@@ -12,18 +12,28 @@ public final class ProjectToolExecutor implements ToolProvider {
     private final RunWorkspaceAccessResolver access;
     private final ProjectToolOperations operations;
     private final ProjectExecutionToolOperations executionOperations;
+    private final ProjectPermissionRequestOperations permissionRequestOperations;
 
     public ProjectToolExecutor(RunWorkspaceAccessResolver access, ProjectToolOperations operations) {
-        this(access, operations, null);
+        this(access, operations, null, null);
     }
 
     public ProjectToolExecutor(
             RunWorkspaceAccessResolver access,
             ProjectToolOperations operations,
             ProjectExecutionToolOperations executionOperations) {
+        this(access, operations, executionOperations, null);
+    }
+
+    public ProjectToolExecutor(
+            RunWorkspaceAccessResolver access,
+            ProjectToolOperations operations,
+            ProjectExecutionToolOperations executionOperations,
+            ProjectPermissionRequestOperations permissionRequestOperations) {
         this.access = Objects.requireNonNull(access, "access must not be null");
         this.operations = Objects.requireNonNull(operations, "operations must not be null");
         this.executionOperations = executionOperations;
+        this.permissionRequestOperations = permissionRequestOperations;
     }
 
     @Override
@@ -44,7 +54,12 @@ public final class ProjectToolExecutor implements ToolProvider {
             if (executionOperations == null) {
                 throw new IllegalStateException("execution.run is not configured for this application");
             }
-            result = executionOperations.execute(request, binding);
+            return executionOperations.execute(request, binding);
+        } else if (toolName.equals(ProjectPermissionRequestOperations.TOOL_NAME)) {
+            if (permissionRequestOperations == null) {
+                throw new IllegalStateException("request_permissions is not configured for this application");
+            }
+            return permissionRequestOperations.execute(request, binding);
         } else {
             request.observer().dispatched();
             String policyDecisionRef = request.policyDecisionRef()
@@ -56,8 +71,8 @@ public final class ProjectToolExecutor implements ToolProvider {
                     request.runId().value(),
                     policyDecisionRef,
                     request.arguments());
+            request.observer().acknowledged();
+            return result;
         }
-        request.observer().acknowledged();
-        return result;
     }
 }

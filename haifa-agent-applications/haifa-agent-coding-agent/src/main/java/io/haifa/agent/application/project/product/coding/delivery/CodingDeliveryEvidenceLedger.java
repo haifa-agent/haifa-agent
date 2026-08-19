@@ -27,6 +27,7 @@ public final class CodingDeliveryEvidenceLedger {
             "file_delete",
             "file_move",
             "file_patch");
+    // Legacy identities remain readable for persisted frozen Runs; new catalogs do not disclose git.* Tools.
     private static final Set<String> READ_TOOLS = Set.of(
             "file.list",
             "file.stat",
@@ -94,13 +95,19 @@ public final class CodingDeliveryEvidenceLedger {
 
         String family = String.valueOf(data.getOrDefault("operationFamily", "UNKNOWN"));
         String status = String.valueOf(data.getOrDefault("status", "UNKNOWN"));
+        boolean trustedReadOnly = trustedReadOnlyClassification(data);
         if (data.containsKey("fileChangeSetId")) {
             facts.add(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
         }
-        if ("INSPECT".equals(family) || "DIFF".equals(family)) {
+        if (("INSPECT".equals(family) || "DIFF".equals(family))
+                && trustedReadOnly
+                && trustedOperationFamily(data, family)) {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
         }
-        if ("DIFF".equals(family) && "SUCCEEDED".equals(status)) {
+        if ("DIFF".equals(family)
+                && "SUCCEEDED".equals(status)
+                && trustedReadOnly
+                && trustedOperationFamily(data, family)) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         }
         if ("BUILD".equals(family) || "TEST".equals(family)) {
@@ -120,6 +127,29 @@ public final class CodingDeliveryEvidenceLedger {
                         || (data.containsKey("failureCategory") && !"SUCCEEDED".equals(status)))) {
             facts.add(CodingDeliveryEvidenceKind.NO_CHANGE_JUSTIFICATION);
         }
+    }
+
+    private static boolean trustedReadOnlyClassification(Map<String, Object> data) {
+        if (!data.containsKey("commandTarget") && !data.containsKey("commandRisk")) {
+            return true; // Frozen legacy execution results predate trusted command classification.
+        }
+        String target = String.valueOf(data.getOrDefault("commandTarget", "OTHER"));
+        String risk = String.valueOf(data.getOrDefault("commandRisk", "UNKNOWN"));
+        return ("OTHER".equals(target) && "NOT_APPLICABLE".equals(risk))
+                || "LOCAL_READ".equals(risk)
+                || "NETWORK_READ".equals(risk);
+    }
+
+    private static boolean trustedOperationFamily(Map<String, Object> data, String family) {
+        if (!data.containsKey("commandOperation")) {
+            return true; // Frozen legacy results predate trusted operation classification.
+        }
+        String operation = String.valueOf(data.getOrDefault("commandOperation", "UNKNOWN"));
+        return switch (family) {
+            case "DIFF" -> "DIFF".equals(operation);
+            case "INSPECT" -> "INSPECT".equals(operation) || "DIFF".equals(operation);
+            default -> false;
+        };
     }
 
     public record Snapshot(Set<CodingDeliveryEvidenceKind> kinds) {

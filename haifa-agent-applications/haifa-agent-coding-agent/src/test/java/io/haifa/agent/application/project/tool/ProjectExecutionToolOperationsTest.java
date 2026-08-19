@@ -3,12 +3,20 @@ package io.haifa.agent.application.project.tool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.core.reference.PrincipalRef;
 import io.haifa.agent.core.reference.TenantRef;
 import io.haifa.agent.core.run.AgentRunId;
+import io.haifa.agent.core.step.AgentStepId;
+import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
+import io.haifa.agent.core.tool.RuntimeIdempotencyKey;
 import io.haifa.agent.core.tool.ToolArguments;
+import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
+import io.haifa.agent.core.tool.ToolExecutionError;
+import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.api.ExecutionBroker;
 import io.haifa.agent.execution.api.ExecutionCommandMode;
 import io.haifa.agent.execution.api.ExecutionEnvironmentRef;
@@ -26,6 +34,8 @@ import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.project.changeset.FileChangeSetId;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
+import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
@@ -92,6 +102,7 @@ class ProjectExecutionToolOperationsTest {
                 .contains("Command failed (exit 7)", "first", "1 lines omitted", "third")
                 .doesNotContain("second");
         assertThat(result.structuredData())
+                .containsEntry("toolCallId", "tool-call-1")
                 .containsEntry("status", "FAILED")
                 .containsEntry("exitCode", 7)
                 .containsEntry("truncated", true)
@@ -138,6 +149,101 @@ class ProjectExecutionToolOperationsTest {
         assertThat(captured.get().limits().maxStderrBytes()).isEqualTo(4096);
         assertThat(captured.get().limits().outputOverflowPolicy())
                 .isEqualTo(io.haifa.agent.execution.api.ExecutionOutputOverflowPolicy.TERMINATE);
+    }
+
+    @Test
+    void classifiesIsolatedSystemGitAuthenticationAsAnEligibleStableFailure() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                observer.onOutput(chunk("git@github.com: Permission denied (publickey).\n"));
+                return result(request.id(), ExecutionStatus.FAILED, 128);
+            }
+        };
+
+        var result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of("command", "git ls-remote origin", "operationFamily", "INSPECT"), () -> false),
+                        access());
+
+        assertThat(result.structuredData())
+                .containsEntry("failureCategory", "AUTHENTICATION_UNAVAILABLE")
+                .containsEntry("stableFailureCode", "GIT_AUTHENTICATION_UNAVAILABLE")
+                .containsEntry("resourceClass", "AUTHENTICATION")
+                .containsEntry(
+                        "failureAction",
+                        "Verify the current OS user's Git credential helper or SSH agent, then retry the command.");
+    }
+
+    @Test
+    void reportsStableGithubCliAvailabilityAndLoginActions() {
+        AtomicInteger invocation = new AtomicInteger();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                if (invocation.getAndIncrement() == 0) {
+                    observer.onOutput(chunk("gh: command not found\n"));
+                } else {
+                    observer.onOutput(chunk("You are not logged into any GitHub hosts.\n"));
+                }
+                return result(request.id(), ExecutionStatus.FAILED, 1);
+            }
+        };
+
+        var missing = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of("command", "gh pr list --repo owner/repo", "operationFamily", "INSPECT"),
+                                () -> false),
+                        access());
+        var loggedOut = operations(broker, 4096, 100)
+                .execute(
+                        invocation(Map.of("command", "gh auth status", "operationFamily", "INSPECT"), () -> false),
+                        access());
+
+        assertThat(missing.structuredData())
+                .containsEntry("stableFailureCode", "GH_CLI_UNAVAILABLE")
+                .containsEntry("failureAction", "Install GitHub CLI and make gh available on the trusted host PATH.");
+        assertThat(loggedOut.structuredData())
+                .containsEntry("stableFailureCode", "GH_AUTHENTICATION_UNAVAILABLE")
+                .containsEntry("failureAction", "Run gh auth login in your system terminal, then retry the command.");
+    }
+
+    @Test
+    void rejectsGitWritesAndNonDiffCommandsMisreportedAsReadOnly() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new AssertionError("rejected commands must not reach the broker");
+            }
+        };
+        var operations = operations(broker, 4096, 100);
+
+        var writeAsRead = operations.execute(
+                invocation(Map.of("command", "git push origin feature", "operationFamily", "INSPECT"), () -> false),
+                access());
+        var tokenOverride = operations.execute(
+                invocation(
+                        Map.of("command", "env GH_TOKEN=value gh pr list", "operationFamily", "UNKNOWN"), () -> false),
+                access());
+        var statusAsDiff = operations.execute(
+                invocation(Map.of("command", "git status --short", "operationFamily", "DIFF"), () -> false), access());
+
+        assertThat(writeAsRead.structuredData())
+                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("commandRisk", "EXTERNAL_WRITE")
+                .containsEntry("commandTarget", "GIT");
+        assertThat(tokenOverride.structuredData())
+                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("commandRisk", "DENIED");
+        assertThat(statusAsDiff.structuredData())
+                .containsEntry("stableFailureCode", "COMMAND_CLASSIFICATION_REJECTED")
+                .containsEntry("commandOperation", "INSPECT")
+                .containsEntry("commandClassificationReason", "GIT_STATUS")
+                .containsEntry(
+                        "failureAction",
+                        "Use the bare system git or gh command and report its trusted operation family exactly.");
     }
 
     @Test
@@ -198,7 +304,8 @@ class ProjectExecutionToolOperationsTest {
         assertThat(result.successful()).isFalse();
         assertThat(result.structuredData())
                 .containsEntry("failureCategory", "INVALID_INPUT")
-                .containsEntry("stableFailureCode", "WORKDIR_INVALID");
+                .containsEntry("stableFailureCode", "WORKDIR_INVALID")
+                .containsEntry("failureAction", "Use a normalized path relative to the authorized workspace root.");
         assertThat(invoked).isFalse();
     }
 
@@ -249,6 +356,37 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("failureCategory", "INVALID_INPUT")
                 .containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN");
         assertThat(invoked).isFalse();
+    }
+
+    @Test
+    void providerAdapterDoesNotAcknowledgeKnownRejectionBeforeDispatch() {
+        AtomicInteger dispatches = new AtomicInteger();
+        AtomicInteger acknowledgements = new AtomicInteger();
+        var executor = new ProjectToolExecutor(
+                (runId, principal) -> access(),
+                (toolName, workspaceId, principal, runRef, policyDecisionRef, arguments) -> {
+                    throw new AssertionError("file operations must not run");
+                },
+                operations(new StubBroker() {}, 1024, 2000));
+        var result = executor.invoke(invocation(
+                Map.of("command", "git status --short", "workdir", "C:\\outside", "operationFamily", "INSPECT"),
+                () -> false,
+                new ToolInvocationObserver() {
+                    @Override
+                    public void dispatched() {
+                        dispatches.incrementAndGet();
+                    }
+
+                    @Override
+                    public void acknowledged() {
+                        acknowledgements.incrementAndGet();
+                    }
+                }));
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN");
+        assertThat(dispatches).hasValue(0);
+        assertThat(acknowledgements).hasValue(0);
     }
 
     @Test
@@ -338,12 +476,15 @@ class ProjectExecutionToolOperationsTest {
     @Test
     void marksDispatchOnlyAfterTheBrokerReportsProcessStart() {
         AtomicInteger dispatches = new AtomicInteger();
+        AtomicInteger acknowledgements = new AtomicInteger();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 assertThat(dispatches).hasValue(0);
+                assertThat(acknowledgements).hasValue(0);
                 observer.onStarted();
                 assertThat(dispatches).hasValue(1);
+                assertThat(acknowledgements).hasValue(0);
                 return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
             }
         };
@@ -358,11 +499,14 @@ class ProjectExecutionToolOperationsTest {
                                     }
 
                                     @Override
-                                    public void acknowledged() {}
+                                    public void acknowledged() {
+                                        acknowledgements.incrementAndGet();
+                                    }
                                 }),
                         access());
 
         assertThat(dispatches).hasValue(1);
+        assertThat(acknowledgements).hasValue(1);
     }
 
     @Test
@@ -384,6 +528,176 @@ class ProjectExecutionToolOperationsTest {
                     assertThat(exception.dispatchState())
                             .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
                 });
+    }
+
+    @Test
+    void preservesStableSandboxFailureCodeBeforeProcessDispatch() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new SandboxException("SANDBOX_PROVISION_FAILED", "sandbox setup failed");
+            }
+        };
+
+        assertThatThrownBy(() -> operations(broker, 1024, 2000)
+                        .execute(invocation(Map.of("command", "git status --short"), () -> false), access()))
+                .isInstanceOfSatisfying(ToolInvocationException.class, exception -> {
+                    assertThat(exception.failureCode()).isEqualTo("SANDBOX_PROVISION_FAILED");
+                    assertThat(exception.dispatchState())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolDispatchState.NOT_DISPATCHED);
+                });
+    }
+
+    @Test
+    void controlledPermissionRequestRerunsOnlyTheExactEligibleRemoteFailure() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        store.appendToolCall(failedExecutionCall(
+                "prior-tool-call",
+                Map.of(
+                        "command", "git ls-remote origin",
+                        "workdir", ".",
+                        "operationFamily", "INSPECT"),
+                "GIT_AUTHENTICATION_UNAVAILABLE"));
+        AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                captured.set(request);
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+        var permissionOperations = new ProjectPermissionRequestOperations(
+                store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
+
+        var result = permissionOperations.execute(
+                permissionInvocation(Map.of(
+                        "priorToolCallId",
+                        "prior-tool-call",
+                        "requestedPermission",
+                        ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
+                        "justification",
+                        "Read the configured Git remote",
+                        "command",
+                        "git ls-remote origin",
+                        "workdir",
+                        ".",
+                        "operationFamily",
+                        "INSPECT")),
+                access());
+
+        assertThat(captured.get()).isNotNull();
+        assertThat(captured.get().command().shellCommand()).isEqualTo("git ls-remote origin");
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("toolCallId", "permission-tool-call")
+                .containsEntry("priorToolCallId", "prior-tool-call")
+                .containsEntry("requestedPermission", ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS)
+                .containsEntry("permissionEscalated", true);
+    }
+
+    @Test
+    void controlledPermissionRequestCannotInventOrChangeThePriorIntent() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        store.appendToolCall(failedExecutionCall(
+                "prior-tool-call",
+                Map.of("command", "git ls-remote origin", "operationFamily", "INSPECT"),
+                "NETWORK_UNAVAILABLE"));
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new AssertionError("an ineligible request must not reach elevated execution");
+            }
+        };
+        var permissionOperations = new ProjectPermissionRequestOperations(
+                store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
+
+        var result = permissionOperations.execute(
+                permissionInvocation(Map.of(
+                        "priorToolCallId",
+                        "prior-tool-call",
+                        "requestedPermission",
+                        ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
+                        "justification",
+                        "Change the command",
+                        "command",
+                        "git fetch origin",
+                        "operationFamily",
+                        "MUTATE")),
+                access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("stableFailureCode", "PERMISSION_REQUEST_INTENT_MISMATCH");
+    }
+
+    @Test
+    void controlledPermissionRequestCannotReuseAnAlreadyConsumedAttempt() {
+        InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+        store.appendToolCall(failedExecutionCall(
+                "prior-tool-call",
+                Map.of("command", "git ls-remote origin", "operationFamily", "INSPECT"),
+                "NETWORK_UNAVAILABLE"));
+        store.appendToolCall(completedPermissionCall("first-permission-call", "prior-tool-call"));
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                throw new AssertionError("a consumed permission attempt must not execute again");
+            }
+        };
+        var permissionOperations = new ProjectPermissionRequestOperations(
+                store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
+
+        var result = permissionOperations.execute(
+                permissionInvocation(Map.of(
+                        "priorToolCallId",
+                        "prior-tool-call",
+                        "requestedPermission",
+                        ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
+                        "justification",
+                        "Retry again",
+                        "command",
+                        "git ls-remote origin",
+                        "operationFamily",
+                        "INSPECT")),
+                access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData()).containsEntry("stableFailureCode", "PERMISSION_REQUEST_ALREADY_USED");
+    }
+
+    @Test
+    void controlledPermissionRequestRejectsNonGitAndDestructiveCommands() {
+        for (String command : List.of("curl https://example.test", "git clean -fd")) {
+            InMemoryRuntimeStore store = new InMemoryRuntimeStore();
+            store.appendToolCall(failedExecutionCall(
+                    "prior-tool-call", Map.of("command", command, "operationFamily", "MUTATE"), "NETWORK_UNAVAILABLE"));
+            ExecutionBroker broker = new StubBroker() {
+                @Override
+                public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                    throw new AssertionError("an ineligible command must not reach elevated execution");
+                }
+            };
+            var permissionOperations = new ProjectPermissionRequestOperations(
+                    store, operations(broker, 4096, 100), deniedExecutionProfile(), executionProfile());
+
+            var result = permissionOperations.execute(
+                    permissionInvocation(Map.of(
+                            "priorToolCallId",
+                            "prior-tool-call",
+                            "requestedPermission",
+                            ProjectPermissionRequestOperations.HOST_NETWORK_ACCESS,
+                            "justification",
+                            "Try an ineligible command",
+                            "command",
+                            command,
+                            "operationFamily",
+                            "MUTATE")),
+                    access());
+
+            assertThat(result.successful()).as(command).isFalse();
+            assertThat(result.structuredData())
+                    .as(command)
+                    .containsEntry("stableFailureCode", "PERMISSION_REQUEST_NOT_ELIGIBLE");
+        }
     }
 
     private static ProjectExecutionToolOperations operations(
@@ -433,6 +747,83 @@ class ProjectExecutionToolOperationsTest {
                 observer);
     }
 
+    private static ToolInvocationRequest permissionInvocation(Map<String, Object> arguments) {
+        var binding = new ProjectToolCatalog()
+                .freeze(
+                        Set.of(ProjectPermissionRequestOperations.TOOL_NAME),
+                        Set.of("execution.run"),
+                        true,
+                        provider(),
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        deniedExecutionProfile(),
+                        executionProfile(),
+                        CodingToolchainEnvironmentProfile.defaultScratchSpace())
+                .snapshot()
+                .bindings()
+                .getFirst();
+        return new ToolInvocationRequest(
+                binding,
+                new ToolCallId("permission-tool-call"),
+                new AgentRunId("run-1"),
+                new TenantRef("tenant-1"),
+                new PrincipalRef("operator", "user"),
+                new ToolArguments("haifa.execution.request_permissions.input", "1.0.0", arguments),
+                NOW.plusSeconds(30),
+                Optional.of("permission-key"),
+                Optional.of("permission-policy-1"),
+                () -> false,
+                List.of(),
+                ToolInvocationObserver.noop());
+    }
+
+    private static ToolCall failedExecutionCall(
+            String toolCallId, Map<String, Object> arguments, String stableFailureCode) {
+        ToolCall call = new ToolCall(
+                new ToolCallId(toolCallId),
+                new AgentRunId("run-1"),
+                new AgentStepId("step-1"),
+                new ProviderToolCallCorrelationId("provider-" + toolCallId),
+                new RuntimeIdempotencyKey("idempotency-" + toolCallId),
+                "execution.run",
+                "1.0.0",
+                new ToolArguments("haifa.execution.run.input", "1.0.0", arguments),
+                NOW.minusSeconds(2));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW.minusSeconds(1));
+        call.fail(
+                new ToolExecutionError(new AgentError(
+                        AgentErrorCode.TOOL_BUSINESS_FAILURE,
+                        Map.of("stableFailureCode", stableFailureCode),
+                        "diagnostic-tool-failure",
+                        NOW)),
+                NOW);
+        return call;
+    }
+
+    private static ToolCall completedPermissionCall(String toolCallId, String priorToolCallId) {
+        ToolCall call = new ToolCall(
+                new ToolCallId(toolCallId),
+                new AgentRunId("run-1"),
+                new AgentStepId("permission-step-1"),
+                new ProviderToolCallCorrelationId("provider-" + toolCallId),
+                new RuntimeIdempotencyKey("idempotency-" + toolCallId),
+                ProjectPermissionRequestOperations.TOOL_NAME,
+                "1.0.0",
+                new ToolArguments(
+                        "haifa.execution.request_permissions.input",
+                        "1.0.0",
+                        Map.of("priorToolCallId", priorToolCallId)),
+                NOW.minusSeconds(2));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW.minusSeconds(1));
+        call.complete(new ToolResult(true, "done", Map.of(), List.of(), List.of(), false), NOW);
+        return call;
+    }
+
     private static RunWorkspaceAccess access() {
         return new RunWorkspaceAccess(WORKSPACE_ID, Set.of("execution.run"));
     }
@@ -448,6 +839,19 @@ class ProjectExecutionToolOperationsTest {
                 io.haifa.agent.sandbox.api.NetworkPolicy.ALLOW,
                 io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
                 new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, false, false, false));
+    }
+
+    private static io.haifa.agent.sandbox.api.SandboxProfile deniedExecutionProfile() {
+        return new io.haifa.agent.sandbox.api.SandboxProfile(
+                new SandboxProfileRef("shell-denied", "1"),
+                "local-native",
+                io.haifa.agent.sandbox.api.SandboxConfigurationDigest.sha256Fields(List.of("denied")),
+                Set.of(),
+                Set.of(),
+                true,
+                io.haifa.agent.sandbox.api.NetworkPolicy.DENY,
+                io.haifa.agent.sandbox.api.SandboxFilesystemPolicy.hostCompatible(),
+                new io.haifa.agent.sandbox.api.SandboxCapabilities(true, false, true, false, false));
     }
 
     private static ProcessOutputChunk chunk(String value) {

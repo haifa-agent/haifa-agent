@@ -23,6 +23,7 @@ import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
+import io.haifa.agent.runtime.core.control.CancellationObservedException;
 import io.haifa.agent.runtime.core.control.RunControlRegistry;
 import io.haifa.agent.runtime.core.control.RunControlSignal;
 import io.haifa.agent.runtime.core.control.SafePoint;
@@ -30,7 +31,9 @@ import io.haifa.agent.runtime.core.decision.AgentDecision;
 import io.haifa.agent.runtime.core.decision.AgentLoopDirective;
 import io.haifa.agent.runtime.core.decision.DecisionExecutor;
 import io.haifa.agent.runtime.core.decision.DecisionValidator;
+import io.haifa.agent.runtime.core.decision.DelegationDecision;
 import io.haifa.agent.runtime.core.decision.FinalAnswerDecision;
+import io.haifa.agent.runtime.core.decision.ToolCallDecision;
 import io.haifa.agent.runtime.core.execution.AgentExecutionFailureException;
 import io.haifa.agent.runtime.core.guard.AgentLoopGuard;
 import io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException;
@@ -177,6 +180,20 @@ public final class DefaultAgentLoop implements AgentLoop {
                         run, new RunTerminationReason("IDLE_TIME_EXCEEDED", "Run idle-time limit exceeded"));
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
+            RuntimeLimitExceededException beforeModelLimit = modelContinuationLimit(run, progress.iteration());
+            if (beforeModelLimit != null) {
+                if (decisionExecutor.supportsBudgetLimitedCompletion(run)) {
+                    checkpoints.capture(
+                            run,
+                            Math.max(0, progress.iteration() - 1),
+                            progress.fingerprints(),
+                            progress.forcedContextRebuildAttempts(),
+                            CheckpointType.AUTOMATIC);
+                    decisionExecutor.completeBudgetLimited(run, beforeModelLimit, Optional.empty());
+                    return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
+                }
+                throw beforeModelLimit;
+            }
             guards.forEach(guard -> guard.check(run, progress));
             RunBudgetSnapshot budget = RunBudgetSnapshot.from(
                     run,
@@ -188,27 +205,22 @@ public final class DefaultAgentLoop implements AgentLoop {
             events.append(
                     run.id(),
                     "loop.budget-snapshot",
-                    Map.of(
-                            "remainingModelCalls",
-                            budget.remainingModelCalls(),
-                            "remainingToolCalls",
-                            budget.remainingToolCalls(),
-                            "remainingIterations",
-                            budget.remainingIterations(),
-                            "remainingWallTimeMillis",
-                            budget.remainingWallTimeMillis(),
-                            "remainingInputTokens",
-                            budget.remainingInputTokens(),
-                            "remainingOutputTokens",
-                            budget.remainingOutputTokens(),
-                            "failureClusterAttempts",
-                            budget.failureClusterAttempts(),
-                            "completionRepairAttempts",
-                            budget.completionRepairAttempts(),
-                            "remainingPercent",
-                            budget.remainingPercent(),
-                            "newThresholds",
-                            thresholds.stream().sorted().toList()),
+                    Map.ofEntries(
+                            Map.entry("remainingModelCalls", budget.remainingModelCalls()),
+                            Map.entry("remainingToolCalls", budget.remainingToolCalls()),
+                            Map.entry("remainingIterations", budget.remainingIterations()),
+                            Map.entry("remainingWallTimeMillis", budget.remainingWallTimeMillis()),
+                            Map.entry("remainingInputTokens", budget.remainingInputTokens()),
+                            Map.entry("remainingOutputTokens", budget.remainingOutputTokens()),
+                            Map.entry("failureClusterAttempts", budget.failureClusterAttempts()),
+                            Map.entry("completionRepairAttempts", budget.completionRepairAttempts()),
+                            Map.entry("limitingResource", budget.limitingResource()),
+                            Map.entry("limitingUsed", budget.limitingUsed()),
+                            Map.entry("limitingLimit", budget.limitingLimit()),
+                            Map.entry("remainingPercent", budget.remainingPercent()),
+                            Map.entry(
+                                    "newThresholds",
+                                    thresholds.stream().sorted().toList())),
                     time.now());
             if (!thresholds.isEmpty()) {
                 List<Integer> orderedThresholds = thresholds.stream()
@@ -354,6 +366,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             AgentStep[] modelStepRef = {modelStep};
             AgentDecision decision;
             ModelInvocationResult response;
+            RuntimeLimitExceededException[] budgetLimitRef = {null};
             java.util.concurrent.atomic.AtomicReference<ModelInvocationResult> invocationRef =
                     new java.util.concurrent.atomic.AtomicReference<>();
             try {
@@ -462,9 +475,6 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 0,
                                 response.costMinorUnits(),
                                 0));
-                if (run.budget().isExceededBy(run.usage())) {
-                    throw RuntimeLimitExceededException.forRunBudget(run);
-                }
                 recordTrace(new RuntimeTraceEvent(
                         traceId,
                         run.id(),
@@ -481,6 +491,18 @@ public final class DefaultAgentLoop implements AgentLoop {
                 middleware.apply(RuntimePhase.AFTER_MODEL_CALL, middlewareContextRef[0]);
                 decision = response.decision();
                 validator.validate(run, decision);
+                budgetLimitRef[0] = decisionBudgetLimit(run, progress.iteration(), decision);
+                if (budgetLimitRef[0] != null && !decisionExecutor.supportsBudgetLimitedCompletion(run)) {
+                    throw budgetLimitRef[0];
+                }
+            } catch (CancellationObservedException cancelled) {
+                AgentStep cancelledModelStep = modelStepRef[0];
+                if (cancelledModelStep != null
+                        && cancelledModelStep.status() == io.haifa.agent.core.step.AgentStepStatus.RUNNING) {
+                    cancelledModelStep.cancel(time.now());
+                    state.appendStep(cancelledModelStep);
+                }
+                throw cancelled;
             } catch (RuntimeException error) {
                 RuntimeException terminal = isContextTooLong(error) && progress.forcedContextRebuildAttempts() > 0
                         ? new ContextRebuildExhaustedException(
@@ -518,6 +540,27 @@ public final class DefaultAgentLoop implements AgentLoop {
 
             if (applyControl(run, progress, SafePoint.AFTER_MODEL_CALL, progress.iteration() - 1)) {
                 models.failed(run, response, progress.iteration());
+                return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
+            }
+
+            if (budgetLimitRef[0] != null) {
+                middleware.apply(RuntimePhase.BEFORE_COMPLETION, middlewareContextRef[0]);
+                checkpoints.capture(
+                        run,
+                        progress.iteration(),
+                        progress.fingerprints(),
+                        progress.forcedContextRebuildAttempts(),
+                        CheckpointType.AUTOMATIC);
+                Optional<FinalAnswerDecision> finalDecision =
+                        decision instanceof FinalAnswerDecision value ? Optional.of(value) : Optional.empty();
+                decisionExecutor.completeBudgetLimited(run, budgetLimitRef[0], finalDecision);
+                models.committed(run, response, progress.iteration());
+                middleware.apply(RuntimePhase.AFTER_COMPLETION, middlewareContextRef[0]);
+                events.append(
+                        run.id(),
+                        "loop.iteration-persisted",
+                        Map.of("iteration", progress.iteration(), "directive", AgentLoopDirective.STOP.name()),
+                        time.now());
                 return new AgentLoopResult(run.status(), iteration, AgentLoopDirective.STOP);
             }
 
@@ -764,6 +807,65 @@ public final class DefaultAgentLoop implements AgentLoop {
             case CANCELLED -> AgentErrorCode.MODEL_CANCELLED;
             case UNKNOWN_PROVIDER_ERROR -> AgentErrorCode.MODEL_CALL_FAILED;
         };
+    }
+
+    private static RuntimeLimitExceededException modelContinuationLimit(AgentRun run, int iteration) {
+        if (run.budget().isExceededBy(run.usage())) return RuntimeLimitExceededException.forRunBudget(run);
+        if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+            return new RuntimeLimitExceededException(
+                    "modelCalls", run.budget().maxModelCalls(), run.usage().modelCalls());
+        }
+        if (iteration > run.limits().maxIterations()) {
+            return new RuntimeLimitExceededException(
+                    "iterations", run.limits().maxIterations(), Math.max(0, iteration - 1L));
+        }
+        if (run.budget().maxInputTokens() > 0
+                && run.usage().inputTokens() >= run.budget().maxInputTokens()) {
+            return new RuntimeLimitExceededException(
+                    "inputTokens", run.budget().maxInputTokens(), run.usage().inputTokens());
+        }
+        if (run.budget().maxOutputTokens() > 0
+                && run.usage().outputTokens() >= run.budget().maxOutputTokens()) {
+            return new RuntimeLimitExceededException(
+                    "outputTokens", run.budget().maxOutputTokens(), run.usage().outputTokens());
+        }
+        if (run.budget().maxCostMinorUnits() > 0
+                && run.usage().costMinorUnits() >= run.budget().maxCostMinorUnits()) {
+            return new RuntimeLimitExceededException(
+                    "costMinorUnits",
+                    run.budget().maxCostMinorUnits(),
+                    run.usage().costMinorUnits());
+        }
+        return null;
+    }
+
+    private static RuntimeLimitExceededException decisionBudgetLimit(
+            AgentRun run, int iteration, AgentDecision decision) {
+        if (run.budget().isExceededBy(run.usage())) return RuntimeLimitExceededException.forRunBudget(run);
+        if (decision instanceof FinalAnswerDecision) return null;
+        if (decision instanceof ToolCallDecision toolDecision) {
+            long projectedToolCalls =
+                    run.usage().toolCalls() + toolDecision.requests().size();
+            if (projectedToolCalls > run.budget().maxToolCalls()) {
+                return new RuntimeLimitExceededException(
+                        "toolCalls", run.budget().maxToolCalls(), projectedToolCalls);
+            }
+        }
+        if (decision instanceof DelegationDecision) {
+            long projectedChildRuns = run.usage().childRuns() + 1;
+            if (projectedChildRuns > run.budget().maxChildRuns()) {
+                return new RuntimeLimitExceededException(
+                        "childRuns", run.budget().maxChildRuns(), projectedChildRuns);
+            }
+        }
+        if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
+            return new RuntimeLimitExceededException(
+                    "modelCalls", run.budget().maxModelCalls(), run.usage().modelCalls());
+        }
+        if (iteration >= run.limits().maxIterations()) {
+            return new RuntimeLimitExceededException("iterations", run.limits().maxIterations(), iteration);
+        }
+        return null;
     }
 
     private static Map<String, Object> modelErrorDetails(RuntimeException error) {

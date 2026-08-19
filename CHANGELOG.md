@@ -1,5 +1,11 @@
 # Changelog
 
+- Personal Assistant 真实环境脚本改从按内容摘要生成的 Maven `target/` 外运行副本启动后端 JAR，避免运行中的
+  Java 进程锁定 Maven `target/` 产物；复制前校验 Spring Boot Manifest 与 `BOOT-INF`，残缺产物自动
+  重新 `package` 并二次校验；停止时兼容新运行目录和旧 `target/` 命令行身份。
+- Runtime 预算耗尽不再把普通文本 Run 一律判定为执行故障：在下一次 Model、Tool、Child 或迭代动作
+  dispatch 前受控停止，原子保存用户可见总结和 `PARTIAL_SUCCESS` 结果，并以稳定 warning 记录具体限制
+  资源；要求结构化输出的 Run 继续 fail closed。Coding Terminal 的预算卡片同时显示实际限制资源及用量。
 - `web.fetch` 新增 Browserless Content 与 Tavily Extract Provider：通过短期 Credential Lease 和 Authorization
   请求头分别获取 JavaScript 渲染 HTML 或清洗后的 Markdown/文本；CLI 和 Personal Assistant 可显式选择，
   Personal Assistant 的 Search/Fetch 配置与凭据现已分离，并默认分别使用 Tavily Search 与 Extract。

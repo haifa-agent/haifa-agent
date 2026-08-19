@@ -159,7 +159,7 @@ class ProjectApplicationTest {
         var skills = ProjectSkillPlatform.baseSkills(tenant, principal, Optional.empty(), false);
         assertThat(skills.catalog().snapshot().bindings())
                 .extracting(binding -> binding.alias().value())
-                .containsExactly("result-verification", "task-planning");
+                .containsExactly("git", "git-delivery", "github", "result-verification", "task-planning");
 
         SkillActivationService unusedService = new SkillActivationService() {
             @Override
@@ -192,17 +192,17 @@ class ProjectApplicationTest {
     }
 
     @Test
-    void publishesAllFourteenProjectToolsWithCompleteFrozenDefinitions() {
+    void publishesProjectToolsIncludingControlledPermissionRequests() {
         var catalog = new ProjectToolCatalog();
         var frozen = catalog.freeze(
                 catalog.names(),
-                Set.of("file.read", "file.write", "git.read", "execution.run"),
+                Set.of("file.read", "file.write", "execution.run"),
                 true,
                 providerThatMustNotRun(),
                 executionProfile("host-guarded", NetworkPolicy.ALLOW, "two"));
 
         assertThat(frozen.snapshot().bindings())
-                .hasSize(14)
+                .hasSize(12)
                 .extracting(binding -> binding.alias().value())
                 .containsExactly(
                         "execution_run",
@@ -216,9 +216,7 @@ class ProjectApplicationTest {
                         "file_search",
                         "file_stat",
                         "file_write",
-                        "git_diff",
-                        "git_inspect",
-                        "git_status");
+                        "request_permissions");
         assertThat(frozen.snapshot().bindings()).allSatisfy(binding -> {
             assertThat(binding.definition().inputSchema().document()).containsKey("$schema");
             assertThat(binding.definition().outputSchema().document()).containsKey("$schema");
@@ -227,6 +225,20 @@ class ProjectApplicationTest {
                     .isNotEmpty();
             assertThat(binding.coordinate().definitionHash().value()).matches("[0-9a-f]{64}");
         });
+        assertThat(frozen.snapshot().bindings())
+                .filteredOn(binding -> binding.alias().value().equals("request_permissions"))
+                .singleElement()
+                .satisfies(binding -> {
+                    assertThat(binding.definition().approvalRequirement())
+                            .isEqualTo(io.haifa.agent.tool.api.ToolApprovalRequirement.ALWAYS);
+                    assertThat(binding.definition().risk()).isEqualTo(io.haifa.agent.tool.api.ToolRisk.CRITICAL);
+                    assertThat(binding.definition()
+                                    .inputSchema()
+                                    .document()
+                                    .get("required")
+                                    .toString())
+                            .contains("priorToolCallId", "requestedPermission", "justification");
+                });
     }
 
     @Test

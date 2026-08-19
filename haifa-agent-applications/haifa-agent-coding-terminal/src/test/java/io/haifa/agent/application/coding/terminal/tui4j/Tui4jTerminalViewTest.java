@@ -9,6 +9,7 @@ import com.williamcallahan.tui4j.compat.lipgloss.color.NoColor;
 import com.williamcallahan.tui4j.term.TerminalInfo;
 import io.haifa.agent.application.coding.terminal.event.TerminalUiAction;
 import io.haifa.agent.application.coding.terminal.state.PendingMessage;
+import io.haifa.agent.application.coding.terminal.state.TerminalActivity;
 import io.haifa.agent.application.coding.terminal.state.TerminalFooter;
 import io.haifa.agent.application.coding.terminal.state.TerminalSelector;
 import io.haifa.agent.application.coding.terminal.state.TerminalUiReducer;
@@ -203,7 +204,7 @@ class Tui4jTerminalViewTest {
                 initial.loadedResources(),
                 initial.transcript(),
                 initial.pending(),
-                "Working",
+                "THINKING",
                 initial.editorBuffer(),
                 initial.editorCursor(),
                 initial.selector(),
@@ -220,12 +221,63 @@ class Tui4jTerminalViewTest {
         String rendered = view.render(active, transcript(active), editor(80), true, false, Duration.ofSeconds(125));
 
         assertThat(rendered)
-                .contains(
-                        "enter steer",
-                        "alt+enter follow-up",
-                        "alt+up restore queued message",
-                        "Working (02m 05s · esc to interrupt)")
+                .contains("enter steer", "alt+enter follow-up", "alt+up restore queued message", "THINKING (2m 5s)")
                 .doesNotContain("enter send");
+    }
+
+    @Test
+    void timesThinkingFromOneSecondAndSwitchesToMinutesAfterSixtySeconds() {
+        TerminalUiState initial = TerminalUiState.initial(80, 24);
+        TerminalUiState running = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                "THINKING",
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                Optional.of(new AgentRunId("run-1")),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                initial.exitRequested());
+
+        assertThat(view.render(running, transcript(running), editor(80), true, false, Duration.ZERO))
+                .contains("THINKING (1s)");
+        assertThat(view.render(running, transcript(running), editor(80), true, false, Duration.ofSeconds(61)))
+                .contains("THINKING (1m 1s)");
+    }
+
+    @Test
+    void showsTheShortToolLabelBesideTheWorkingActivityTimer() {
+        TerminalUiState initial = TerminalUiState.initial(80, 24);
+        TerminalUiState working = new TerminalUiState(
+                initial.header(),
+                initial.loadedResources(),
+                initial.transcript(),
+                initial.pending(),
+                "WORKING",
+                initial.editorBuffer(),
+                initial.editorCursor(),
+                initial.selector(),
+                initial.footer(),
+                initial.columns(),
+                initial.rows(),
+                initial.session(),
+                Optional.of(new AgentRunId("run-1")),
+                initial.appliedCursor(),
+                initial.seenEventIds(),
+                initial.recoverableError(),
+                new TerminalActivity(2, "execution.run"),
+                initial.exitRequested());
+
+        assertThat(view.render(working, transcript(working), editor(80), true, false, Duration.ofSeconds(12)))
+                .contains("WORKING (12s) · execution.run");
     }
 
     @Test

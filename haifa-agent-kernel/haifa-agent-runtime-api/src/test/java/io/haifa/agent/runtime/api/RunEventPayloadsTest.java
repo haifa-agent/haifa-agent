@@ -32,12 +32,22 @@ class RunEventPayloadsTest {
                 25,
                 1);
         assertThat(payload.missingEvidence()).containsExactly("DIFF_INSPECTION", "VALIDATION_ATTEMPT");
+        assertThat(payload.limitingResource()).isEqualTo("NONE");
+
+        var budget = new RunEventPayloads.DeliveryLifecycle(
+                "BUDGET", "BUDGET_THRESHOLD_REACHED", "REMAINING_25_PERCENT", List.of(), 25, 0, "TOOL_CALLS", 24, 32);
+        assertThat(budget.limitingResource()).isEqualTo("TOOL_CALLS");
+        assertThat(budget.limitingUsed()).isEqualTo(24);
+        assertThat(budget.limitingLimit()).isEqualTo(32);
 
         assertThatThrownBy(() -> new RunEventPayloads.DeliveryLifecycle(
                         "VERIFYING", "COMPLETION_DEFERRED", "CODE", List.of("/host/path"), 25, 1))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new RunEventPayloads.DeliveryLifecycle(
                         "VERIFYING", "COMPLETION_DEFERRED", "CODE", List.of(), 101, 1))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RunEventPayloads.DeliveryLifecycle(
+                        "BUDGET", "BUDGET_THRESHOLD_REACHED", "CODE", List.of(), 25, 0, "toolCalls", 1, 2))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

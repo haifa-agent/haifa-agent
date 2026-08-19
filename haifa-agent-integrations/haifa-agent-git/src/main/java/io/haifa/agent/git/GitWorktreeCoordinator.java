@@ -12,17 +12,17 @@ import java.util.Objects;
 
 public final class GitWorktreeCoordinator {
     private final GitWorktreeIsolationProvider isolation;
-    private final GitRepositoryPort repositories;
+    private final GitRevisionProbe revisions;
     private final WorkspaceStore workspaces;
     private final WorktreePatchApplier patches;
 
     public GitWorktreeCoordinator(
             GitWorktreeIsolationProvider isolation,
-            GitRepositoryPort repositories,
+            GitRevisionProbe revisions,
             WorkspaceStore workspaces,
             WorktreePatchApplier patches) {
         this.isolation = Objects.requireNonNull(isolation, "isolation must not be null");
-        this.repositories = Objects.requireNonNull(repositories, "repositories must not be null");
+        this.revisions = Objects.requireNonNull(revisions, "revisions must not be null");
         this.workspaces = Objects.requireNonNull(workspaces, "workspaces must not be null");
         this.patches = Objects.requireNonNull(patches, "patches must not be null");
     }
@@ -43,8 +43,8 @@ public final class GitWorktreeCoordinator {
         if (!parent.revision().equals(request.expectedParentRevision())) {
             return conflict(request, "parent workspace revision drifted");
         }
-        GitInspection inspection = repositories.inspect(request.context(), request.parentRepository());
-        if (!inspection.repository() || !inspection.commit().equalsIgnoreCase(request.expectedBaseCommit())) {
+        GitRevision revision = revisions.inspectHead(request.context(), request.parentRepository());
+        if (!revision.repository() || !revision.commit().equalsIgnoreCase(request.expectedBaseCommit())) {
             return conflict(request, "parent Git base commit drifted");
         }
         if (!request.patchRequest().workspaceId().equals(parent.id())) {

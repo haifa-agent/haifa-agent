@@ -149,6 +149,22 @@ class SqliteOperationalAdaptersTest {
         journal.recordDispatched(run.id(), uncertainKey);
         journal.recordUncertain(run.id(), uncertainKey);
         assertThat(journal.hasUncertain(run.id())).isTrue();
+
+        var rejectedKey = new RuntimeIdempotencyKey("pre-dispatch-rejection-key");
+        var rejected = new ToolResult(
+                false,
+                "working directory rejected",
+                Map.of("stableFailureCode", "ABSOLUTE_WORKDIR_FORBIDDEN"),
+                List.of(),
+                List.of(),
+                false);
+        journal.recordIntent(run.id(), rejectedKey);
+        assertThatThrownBy(() -> journal.recordAcknowledged(run.id(), rejectedKey))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("INTENT_RECORDED -> ACKNOWLEDGED");
+        journal.recordPendingResult(run.id(), rejectedKey, rejected);
+        journal.recordCompleted(run.id(), rejectedKey, rejected);
+        assertThat(journal.completed(run.id(), rejectedKey)).contains(rejected);
     }
 
     @Test

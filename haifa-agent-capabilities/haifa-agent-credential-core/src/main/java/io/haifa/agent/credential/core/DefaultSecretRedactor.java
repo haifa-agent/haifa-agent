@@ -14,6 +14,7 @@ public final class DefaultSecretRedactor implements SecretRedactor {
     private static final Pattern KEY_VALUE = Pattern.compile(
             "(?i)((?:api[-_]?key|access[-_]?token|client[-_]?secret|password)\\s*[:=]\\s*)[^\\s,;]+",
             Pattern.MULTILINE);
+    private static final Pattern URI_USER_INFO = Pattern.compile("(?i)(https?://)[^/@\\s]+@", Pattern.MULTILINE);
 
     private final Map<CredentialLease, String> activeSecrets = new ConcurrentHashMap<>();
 
@@ -39,6 +40,7 @@ public final class DefaultSecretRedactor implements SecretRedactor {
             }
         }
         redacted = AUTHORIZATION.matcher(redacted).replaceAll("$1" + REDACTED);
-        return KEY_VALUE.matcher(redacted).replaceAll("$1" + REDACTED);
+        redacted = KEY_VALUE.matcher(redacted).replaceAll("$1" + REDACTED);
+        return URI_USER_INFO.matcher(redacted).replaceAll("$1" + REDACTED + "@");
     }
 }
