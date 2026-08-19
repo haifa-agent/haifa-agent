@@ -248,12 +248,6 @@ public final class ProjectExecutionToolOperations {
         if (commandClassification.risk() == SystemGitCliCommandClassifier.Risk.DENIED) {
             return withToolCallId(invocation, rejectedCommandClassification(operationFamily, commandClassification));
         }
-        if (deliveryGuard != null) {
-            var delivery = deliveryGuard.evaluate(invocation.runId(), command, commandClassification);
-            if (!delivery.allowed()) {
-                return withToolCallId(invocation, rejectedDeliveryCommand(operationFamily, delivery));
-            }
-        }
         if (hasLeadingAbsoluteDirectoryChange(command)) {
             return withToolCallId(invocation, rejectedAbsoluteDirectoryChange(operationFamily));
         }
@@ -262,6 +256,14 @@ public final class ProjectExecutionToolOperations {
                 workdirNormalizer.apply(requestedWorkdir), "workdirNormalizer must not return null");
         if (isAbsoluteDirectoryPath(workdir)) {
             return withToolCallId(invocation, rejectedWorkdir(operationFamily, "ABSOLUTE_WORKDIR_FORBIDDEN"));
+        }
+        String repositoryScopeDigest = repositoryScopeDigest(workdir);
+        if (deliveryGuard != null) {
+            var delivery =
+                    deliveryGuard.evaluate(invocation.runId(), command, commandClassification, repositoryScopeDigest);
+            if (!delivery.allowed()) {
+                return withToolCallId(invocation, rejectedDeliveryCommand(operationFamily, delivery));
+            }
         }
         Duration requestedTimeout = Duration.ofMillis(
                 optionalLong(arguments, "timeoutMillis", defaultTimeout.toMillis(), 1, maximumTimeout.toMillis()));
@@ -310,7 +312,8 @@ public final class ProjectExecutionToolOperations {
                         invocation.observer(),
                         command,
                         operationFamily,
-                        commandClassification));
+                        commandClassification,
+                        repositoryScopeDigest));
     }
 
     private static ToolResult withToolCallId(ToolInvocationRequest invocation, ToolResult result) {
@@ -420,7 +423,13 @@ public final class ProjectExecutionToolOperations {
                 ExecutionRequest.digestWithScratch(PolicyDigest.sha256Fields(List.of(command, workdir)), scratchSpace),
                 scratchSpace);
         return executeRequest(
-                request, () -> false, ToolInvocationObserver.noop(), command, "UNKNOWN", commandClassification);
+                request,
+                () -> false,
+                ToolInvocationObserver.noop(),
+                command,
+                "UNKNOWN",
+                commandClassification,
+                repositoryScopeDigest(workdir));
     }
 
     private ToolResult executeRequest(
@@ -429,7 +438,8 @@ public final class ProjectExecutionToolOperations {
             ToolInvocationObserver invocationObserver,
             String command,
             String operationFamily,
-            SystemGitCliCommandClassifier.Classification commandClassification) {
+            SystemGitCliCommandClassifier.Classification commandClassification,
+            String repositoryScopeDigest) {
         MergedTailObserver merged = new MergedTailObserver(
                 outputObserver, invocationObserver, maximumModelOutputBytes, maximumModelOutputLines);
         AtomicBoolean complete = new AtomicBoolean();
@@ -458,7 +468,8 @@ public final class ProjectExecutionToolOperations {
                     operationFamily,
                     commandClassification,
                     sandboxProfileRef,
-                    scratchSpace);
+                    scratchSpace,
+                    repositoryScopeDigest);
         } catch (ExecutionPreflightException exception) {
             throw new ToolInvocationException(
                     exception.code(), ToolDispatchState.NOT_DISPATCHED, exception.getMessage(), exception);
@@ -488,7 +499,8 @@ public final class ProjectExecutionToolOperations {
             String operationFamily,
             SystemGitCliCommandClassifier.Classification commandClassification,
             SandboxProfileRef sandboxProfileRef,
-            ExecutionScratchSpaceSpec scratchSpace) {
+            ExecutionScratchSpaceSpec scratchSpace,
+            String repositoryScopeDigest) {
         var semantic = CommandSemanticOutcomeInterpreter.interpret(command, result.status(), result.exitCode());
         String output = merged.text();
         if (output.isBlank() && !semantic.successfulToolResult()) {
@@ -529,6 +541,7 @@ public final class ProjectExecutionToolOperations {
         var deliveryVerification = CodingDeliveryCommandSemantics.verification(command, commandClassification);
         data.put("deliveryAction", deliveryAction.name());
         data.put("deliveryVerification", deliveryVerification.name());
+        data.put("deliveryRepositoryScopeDigest", repositoryScopeDigest);
         String outputBudgetFamily = outputBudgetFamily(operationFamily, commandClassification);
         data.put("outputBudgetFamily", outputBudgetFamily);
         data.put("outputBudgetBytesPerChannel", outputChannelBudget(outputBudgetFamily));
@@ -679,11 +692,13 @@ public final class ProjectExecutionToolOperations {
         if (output.isBlank()
                 && action == CodingDeliveryCommandSemantics.Action.NONE
                 && verification != CodingDeliveryCommandSemantics.Verification.STATUS
-                && verification != CodingDeliveryCommandSemantics.Verification.STAGED_DIFF) return "";
+                && verification != CodingDeliveryCommandSemantics.Verification.STAGED_DIFF
+                && verification != CodingDeliveryCommandSemantics.Verification.UPSTREAM) return "";
         return switch (verification) {
             case STATUS -> "STATUS_INSPECTED";
             case REPOSITORY_ROOT -> "REPOSITORY_ROOT_VERIFIED";
             case BRANCH -> "BRANCH_VERIFIED";
+            case UPSTREAM -> "UPSTREAM_INSPECTED";
             case STAGED_DIFF -> "STAGED_DIFF_INSPECTED";
             case HEAD -> "HEAD_VERIFIED";
             case REMOTE_REF -> "REMOTE_REF_VERIFIED";
@@ -697,6 +712,10 @@ public final class ProjectExecutionToolOperations {
                     case NONE -> "";
                 };
         };
+    }
+
+    private static String repositoryScopeDigest(String workdir) {
+        return PolicyDigest.sha256Fields(List.of("coding-delivery-repository-scope-v1", workdir));
     }
 
     private static ToolResult rejectedWorkdir(String operationFamily, String stableFailureCode) {

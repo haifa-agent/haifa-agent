@@ -18,6 +18,8 @@ class SystemGitCliCommandClassifierTest {
         assertThat(classify("git --no-pager diff --no-color")).isEqualTo(LOCAL_READ);
         assertThat(classify("git grep needle")).isEqualTo(LOCAL_READ);
         assertThat(classify("git ls-files")).isEqualTo(LOCAL_READ);
+        assertThat(classify("git for-each-ref '--format=%(upstream:short)' refs/heads/feat-delivery"))
+                .isEqualTo(LOCAL_READ);
         assertThat(classify("git add src/Main.java")).isEqualTo(LOCAL_WRITE);
         assertThat(classify("git fetch origin")).isEqualTo(LOCAL_WRITE);
         assertThat(classify("git ls-remote origin")).isEqualTo(NETWORK_READ);
@@ -64,7 +66,12 @@ class SystemGitCliCommandClassifierTest {
         assertThat(classify("powershell -Command git status")).isEqualTo(UNKNOWN);
         assertThat(classify("git -C ../other status")).isEqualTo(DENIED);
         assertThat(classify("git -C nested status")).isEqualTo(DENIED);
+        assertThat(classify("git --git-dir=.git status")).isEqualTo(DENIED);
+        assertThat(classify("git --work-tree=.. status")).isEqualTo(DENIED);
+        assertThat(classify("git --exec-path=tools status")).isEqualTo(DENIED);
+        assertThat(classify("git --config-env=http.extraHeader=HEADER status")).isEqualTo(DENIED);
         assertThat(classify("env GH_TOKEN=value gh pr list")).isEqualTo(DENIED);
+        assertThat(classify("$env:GH_TOKEN='value'; gh pr list")).isEqualTo(DENIED);
         assertThat(classify("env LANG=C git status")).isEqualTo(UNKNOWN);
         assertThat(classify("LANG=C git status")).isEqualTo(UNKNOWN);
         assertThat(classify("git -c color.ui=false status")).isEqualTo(UNKNOWN);
@@ -76,6 +83,13 @@ class SystemGitCliCommandClassifierTest {
         assertThat(classify("gh auth status --show-token")).isEqualTo(DENIED);
         assertThat(classify("git credential fill")).isEqualTo(DENIED);
         assertThat(classify("echo 'GH_TOKEN=value' && git status")).isEqualTo(DENIED);
+        assertThat(classify("alias inspect='git status'; inspect")).isEqualTo(UNKNOWN);
+        assertThat(classify("(git status)")).isEqualTo(UNKNOWN);
+        assertThat(classify("echo $(git status)")).isEqualTo(UNKNOWN);
+        assertThat(classify("git status > status.txt")).isEqualTo(UNKNOWN);
+        assertThat(classify("git status | more")).isEqualTo(UNKNOWN);
+        assertThat(classify("git push origin --delete obsolete")).isEqualTo(DESTRUCTIVE);
+        assertThat(classify("gh release delete v1")).isEqualTo(DESTRUCTIVE);
     }
 
     private static SystemGitCliCommandClassifier.Risk classify(String command) {

@@ -18,6 +18,7 @@ import io.haifa.agent.policy.api.PolicySubject;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -83,6 +84,26 @@ class CodingAgentPolicyAssemblyTest {
                                 false)
                         .reasonCode())
                 .isEqualTo("RISK_THRESHOLD_APPROVAL_REQUIRED");
+    }
+
+    @Test
+    void coversTheCompleteExecutionRiskThresholdDecisionMatrix() {
+        var risks = List.of(PolicyRiskLevel.LOW, PolicyRiskLevel.MEDIUM, PolicyRiskLevel.HIGH);
+        for (CodingApprovalThreshold threshold : CodingApprovalThreshold.values()) {
+            for (PolicyRiskLevel risk : risks) {
+                PolicyEffect expected =
+                        switch (threshold) {
+                            case LOW -> PolicyEffect.ASK;
+                            case MEDIUM -> risk == PolicyRiskLevel.LOW ? PolicyEffect.ALLOW : PolicyEffect.ASK;
+                            case HIGH -> risk == PolicyRiskLevel.HIGH ? PolicyEffect.ASK : PolicyEffect.ALLOW;
+                            case NEVER -> PolicyEffect.ALLOW;
+                        };
+                assertThat(decide(ApprovalMode.ASK, threshold, risk, Set.of(PolicySideEffect.PROCESS_EXECUTION), false)
+                                .effect())
+                        .as("threshold=%s risk=%s", threshold, risk)
+                        .isEqualTo(expected);
+            }
+        }
     }
 
     @Test

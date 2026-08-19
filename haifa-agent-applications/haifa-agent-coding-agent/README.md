@@ -58,10 +58,12 @@ No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意
 可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
 交付意图；默认是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。Commit、Push、PR 仍通过唯一的
 `execution.run` 调用系统 `git`/`gh`，但在 Broker Dispatch 前受产品交付事务门禁约束：先确认仓库根、
-分支、状态、HEAD、Diff 和验证，再精确路径 Stage、检查 staged diff、Commit 后重查 HEAD、精确分支
+分支、Upstream、状态、HEAD、Diff 和验证，再精确路径 Stage、检查 staged diff、Commit 后重查 HEAD、精确分支
 Push 后读取 remote ref，最后可创建并查看以 `dev` 为 Base 的 PR。权威 Tool 结果按顺序记录证据；旧
 HEAD/remote ref 不能满足新动作后的确认，Outcome Unknown 必须先只读核验再决定是否重放。宽泛
-`git add .`、意图越级、复合交付动作和 `gh pr merge` 在任何普通审批阈值下都不会 Dispatch。
+`git add .`、意图越级、复合交付动作和 `gh pr merge` 在任何普通审批阈值下都不会 Dispatch。交付证据
+同时绑定脱敏的 workspace-relative Repository Scope Digest；根仓、`docs/`、`test-config/` 等独立仓库
+不能互相复用拓扑、Diff、验证或结果确认事实。
 
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
 不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后

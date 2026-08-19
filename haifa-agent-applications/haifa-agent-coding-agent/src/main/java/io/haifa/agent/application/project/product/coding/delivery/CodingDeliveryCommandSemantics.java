@@ -34,6 +34,9 @@ public final class CodingDeliveryCommandSemantics {
                 || (classification.reasonCode().equals("GIT_SYMBOLIC_REF") && lower.contains("--short"))) {
             return Verification.BRANCH;
         }
+        if (classification.reasonCode().equals("GIT_FOR_EACH_REF") && lower.contains("%(upstream:short)")) {
+            return Verification.UPSTREAM;
+        }
         if (classification.reasonCode().equals("GIT_REV_PARSE") && lower.matches(".*\\bhead\\b.*")) {
             return Verification.HEAD;
         }
@@ -155,6 +158,7 @@ public final class CodingDeliveryCommandSemantics {
         STATUS,
         REPOSITORY_ROOT,
         BRANCH,
+        UPSTREAM,
         STAGED_DIFF,
         HEAD,
         REMOTE_REF,

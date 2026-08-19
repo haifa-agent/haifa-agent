@@ -179,6 +179,14 @@ class ProjectExecutionToolOperationsTest {
 
         ToolResult root = operations(broker, 4096, 100)
                 .execute(invocation(Map.of("command", "git rev-parse --show-toplevel"), () -> false), access());
+        ToolResult upstream = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of(
+                                        "command",
+                                        "git for-each-ref '--format=%(upstream:short)' refs/heads/feat-delivery"),
+                                () -> false),
+                        access());
         ToolResult staged = operations(broker, 4096, 100)
                 .execute(invocation(Map.of("command", "git add src/Main.java"), () -> false), access());
 
@@ -186,7 +194,12 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("deliveryAction", "NONE")
                 .containsEntry("deliveryVerification", "REPOSITORY_ROOT")
                 .containsEntry("deliveryEvidenceCode", "REPOSITORY_ROOT_VERIFIED")
+                .containsKey("deliveryRepositoryScopeDigest")
                 .containsKey("deliveryEvidenceRef");
+        assertThat(upstream.structuredData())
+                .containsEntry("deliveryVerification", "UPSTREAM")
+                .containsEntry("deliveryEvidenceCode", "UPSTREAM_INSPECTED")
+                .containsKey("deliveryRepositoryScopeDigest");
         assertThat(staged.structuredData())
                 .containsEntry("deliveryAction", "STAGE")
                 .containsEntry("deliveryVerification", "NONE")

@@ -174,6 +174,22 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
         self.assertEqual(report["toolStatuses"], {"COMPLETED": 1, "FAILED": 1})
         self.assertEqual(report["failureClasses"], {"POLICY_OR_CLASSIFICATION": 1})
         self.assertEqual(report["recovery"]["maximumAttempts"], 2)
+        self.assertEqual(report["schemaVersion"], "1.1.0")
+        self.assertEqual(report["requiredMetrics"]["rawToolFailureRate"]["ratePercent"], 50.0)
+        self.assertEqual(report["requiredMetrics"]["policyDenialRate"]["denied"], 1)
+        self.assertEqual(
+            report["requiredMetrics"]["riskEscalationDistribution"]["counts"],
+            {"LOW": 1, "MEDIUM": 0, "HIGH": 0},
+        )
+        self.assertEqual(
+            report["requiredMetrics"]["compositeCommandAdmissionCompletionRate"]["total"], 2
+        )
+        self.assertEqual(
+            report["requiredMetrics"]["sameFingerprintRetryAmplification"]["amplifiedAttempts"], 1
+        )
+        self.assertEqual(
+            report["requiredMetrics"]["approvalAskAllowRateByThreshold"]["status"], "UNAVAILABLE"
+        )
         serialized = json.dumps(report)
         self.assertNotIn("git status", serialized)
         self.assertNotIn("git push", serialized)
@@ -186,6 +202,8 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
             report = analyze(connection, 4)
         self.assertIsNone(report["window"])
         self.assertEqual(report["scope"], {"sessions": 0, "runs": 0, "toolCalls": 0})
+        self.assertEqual(len(report["requiredMetrics"]), 18)
+        self.assertEqual(report["requiredMetrics"]["costKnownUnknown"]["status"], "UNKNOWN")
 
     def test_rejects_non_finite_or_out_of_range_windows(self):
         with closing(connect_read_only(self.database)) as connection:

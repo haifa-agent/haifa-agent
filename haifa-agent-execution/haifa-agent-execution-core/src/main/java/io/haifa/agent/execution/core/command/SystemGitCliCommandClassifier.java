@@ -24,7 +24,17 @@ public final class SystemGitCliCommandClassifier {
             "GIT_ASKPASS",
             "SSH_ASKPASS");
     private static final Set<String> GIT_READ = Set.of(
-            "status", "diff", "log", "show", "blame", "grep", "ls-files", "rev-parse", "symbolic-ref", "describe");
+            "status",
+            "diff",
+            "log",
+            "show",
+            "blame",
+            "grep",
+            "ls-files",
+            "rev-parse",
+            "symbolic-ref",
+            "for-each-ref",
+            "describe");
     private static final Set<String> GIT_WRITE = Set.of(
             "add",
             "commit",
@@ -335,7 +345,9 @@ public final class SystemGitCliCommandClassifier {
                             || value == '\r'
                             || value == '>'
                             || value == '<'
-                            || value == '`')) return true;
+                            || value == '`'
+                            || value == '('
+                            || value == ')')) return true;
         }
         return single || doub;
     }

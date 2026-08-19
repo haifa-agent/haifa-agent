@@ -24,6 +24,7 @@ import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallId;
 import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.execution.core.command.SystemGitCliCommandClassifier;
+import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import java.time.Instant;
@@ -34,6 +35,8 @@ import org.junit.jupiter.api.Test;
 
 class CodingDeliveryCommandGuardTest {
     private static final Instant NOW = Instant.parse("2026-08-19T00:00:00Z");
+    private static final String ROOT_SCOPE = scope(".");
+    private static final String DOCS_SCOPE = scope("docs");
 
     @Test
     void worktreeIntentRejectsDeliveryAndPullRequestMergeRemainsHardDenied() {
@@ -52,6 +55,7 @@ class CodingDeliveryCommandGuardTest {
         evidence(fixture, "STATUS_INSPECTED");
         evidence(fixture, "REPOSITORY_ROOT_VERIFIED");
         evidence(fixture, "BRANCH_VERIFIED");
+        evidence(fixture, "UPSTREAM_INSPECTED");
         evidence(fixture, "HEAD_VERIFIED");
         execution(fixture, Map.of("effectiveOperationFamily", "DIFF", "status", "SUCCEEDED"));
         execution(fixture, Map.of("declaredOperationFamily", "TEST", "status", "SUCCEEDED"));
@@ -97,16 +101,65 @@ class CodingDeliveryCommandGuardTest {
         assertThat(evaluate(fixture, "git push origin feat-delivery").allowed()).isTrue();
     }
 
+    @Test
+    void doesNotReuseDeliveryEvidenceAcrossIndependentRepositoryScopes() {
+        Fixture fixture = fixture(CodingDeliveryIntent.LOCAL_COMMIT);
+        evidence(fixture, ROOT_SCOPE, "STATUS_INSPECTED");
+        evidence(fixture, ROOT_SCOPE, "REPOSITORY_ROOT_VERIFIED");
+        evidence(fixture, ROOT_SCOPE, "BRANCH_VERIFIED");
+        evidence(fixture, ROOT_SCOPE, "UPSTREAM_INSPECTED");
+        evidence(fixture, ROOT_SCOPE, "HEAD_VERIFIED");
+        execution(
+                fixture,
+                Map.of(
+                        "deliveryRepositoryScopeDigest",
+                        ROOT_SCOPE,
+                        "effectiveOperationFamily",
+                        "DIFF",
+                        "status",
+                        "SUCCEEDED"));
+        execution(
+                fixture,
+                Map.of(
+                        "deliveryRepositoryScopeDigest",
+                        ROOT_SCOPE,
+                        "declaredOperationFamily",
+                        "TEST",
+                        "status",
+                        "SUCCEEDED"));
+
+        assertThat(evaluate(fixture, DOCS_SCOPE, "git add README.md").code())
+                .isEqualTo("DELIVERY_TOPOLOGY_OR_REVIEW_MISSING");
+        assertThat(evaluate(fixture, ROOT_SCOPE, "git add README.md").allowed()).isTrue();
+    }
+
     private static CodingDeliveryCommandGuard.Decision evaluate(Fixture fixture, String command) {
-        return fixture.guard().evaluate(fixture.run().id(), command, SystemGitCliCommandClassifier.classify(command));
+        return evaluate(fixture, ROOT_SCOPE, command);
+    }
+
+    private static CodingDeliveryCommandGuard.Decision evaluate(Fixture fixture, String scope, String command) {
+        return fixture.guard()
+                .evaluate(fixture.run().id(), command, SystemGitCliCommandClassifier.classify(command), scope);
     }
 
     private static void evidence(Fixture fixture, String code) {
-        execution(fixture, Map.of("deliveryEvidenceCode", code, "status", "SUCCEEDED"));
+        evidence(fixture, ROOT_SCOPE, code);
+    }
+
+    private static void evidence(Fixture fixture, String scope, String code) {
+        execution(
+                fixture,
+                Map.of(
+                        "deliveryRepositoryScopeDigest", scope,
+                        "deliveryEvidenceCode", code,
+                        "status", "SUCCEEDED"));
     }
 
     private static void execution(Fixture fixture, Map<String, Object> data) {
         int sequence = fixture.store().toolCalls(fixture.run().id()).size() + 1;
+        Map<String, Object> scopedData = new java.util.LinkedHashMap<>();
+        scopedData.put("deliveryRepositoryScopeDigest", ROOT_SCOPE);
+        scopedData.putAll(data);
         ToolCall call = new ToolCall(
                 new ToolCallId("tool-" + sequence),
                 fixture.run().id(),
@@ -120,8 +173,14 @@ class CodingDeliveryCommandGuardTest {
         call.beginValidation();
         call.beginPolicyCheck();
         call.start(NOW.plusSeconds(sequence));
-        call.complete(new ToolResult(true, "done", data, List.of(), List.of(), false), NOW.plusSeconds(sequence));
+        call.complete(
+                new ToolResult(true, "done", Map.copyOf(scopedData), List.of(), List.of(), false),
+                NOW.plusSeconds(sequence));
         fixture.store().appendToolCall(call);
+    }
+
+    private static String scope(String workdir) {
+        return PolicyDigest.sha256Fields(List.of("coding-delivery-repository-scope-v1", workdir));
     }
 
     private static Fixture fixture(CodingDeliveryIntent intent) {

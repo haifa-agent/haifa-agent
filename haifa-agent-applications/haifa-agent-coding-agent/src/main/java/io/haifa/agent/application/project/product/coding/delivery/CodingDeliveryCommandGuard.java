@@ -22,7 +22,11 @@ public final class CodingDeliveryCommandGuard {
     }
 
     public Decision evaluate(
-            AgentRunId runId, String command, SystemGitCliCommandClassifier.Classification classification) {
+            AgentRunId runId,
+            String command,
+            SystemGitCliCommandClassifier.Classification classification,
+            String repositoryScopeDigest) {
+        repositoryScopeDigest = requireScopeDigest(repositoryScopeDigest);
         var action = CodingDeliveryCommandSemantics.action(command, classification);
         if (action == CodingDeliveryCommandSemantics.Action.NONE) return Decision.allow(action);
         CodingDeliveryIntent intent = intents.resolve(runId);
@@ -37,7 +41,7 @@ public final class CodingDeliveryCommandGuard {
                     "DELIVERY_COMMAND_MUST_BE_DIRECT",
                     "Commit, push, and pull-request delivery commands must be direct and independently journaled");
         }
-        Evidence evidence = evidence(runId);
+        Evidence evidence = evidence(runId, repositoryScopeDigest);
         if (evidence.outcomeUnknown().contains(action)
                 && !evidence.verifiedAfterUnknown().contains(action)) {
             return Decision.deny(
@@ -56,9 +60,10 @@ public final class CodingDeliveryCommandGuard {
                                 action,
                                 evidence,
                                 "DELIVERY_TOPOLOGY_OR_REVIEW_MISSING",
-                                "Inspect repository root, branch, status, diff, and validation before staging",
+                                "Inspect repository root, branch, upstream, status, diff, and validation before staging",
                                 "REPOSITORY_ROOT_VERIFIED",
                                 "BRANCH_VERIFIED",
+                                "UPSTREAM_INSPECTED",
                                 "STATUS_INSPECTED",
                                 "HEAD_VERIFIED",
                                 "DIFF_INSPECTION",
@@ -109,7 +114,7 @@ public final class CodingDeliveryCommandGuard {
         };
     }
 
-    private Evidence evidence(AgentRunId runId) {
+    private Evidence evidence(AgentRunId runId, String repositoryScopeDigest) {
         EnumSet<CodingDeliveryCommandSemantics.Action> unknown =
                 EnumSet.noneOf(CodingDeliveryCommandSemantics.Action.class);
         EnumSet<CodingDeliveryCommandSemantics.Action> verified =
@@ -126,6 +131,7 @@ public final class CodingDeliveryCommandGuard {
                     .map(result -> result.structuredData())
                     .orElseGet(() ->
                             call.error().map(error -> error.error().details()).orElse(Map.of()));
+            if (!repositoryScopeDigest.equals(data.get("deliveryRepositoryScopeDigest"))) continue;
             Object code = data.get("deliveryEvidenceCode");
             if (code instanceof String value) {
                 codes.add(value);
@@ -206,6 +212,15 @@ public final class CodingDeliveryCommandGuard {
             case PULL_REQUEST -> CodingDeliveryIntent.PULL_REQUEST;
             case NONE -> CodingDeliveryIntent.WORKTREE_ONLY;
         };
+    }
+
+    private static String requireScopeDigest(String value) {
+        String normalized = Objects.requireNonNull(value, "repositoryScopeDigest must not be null")
+                .trim();
+        if (!normalized.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("repositoryScopeDigest must be a lowercase SHA-256 digest");
+        }
+        return normalized;
     }
 
     private record Evidence(

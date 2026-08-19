@@ -6,7 +6,10 @@
 
 `analyze-coding-runtime.ps1`（Windows）和 `analyze-coding-runtime.sh`（macOS/Linux）只读打开 Coding
 Agent 的 `runtime.db`，以最新 `runtime_event.occurred_at` 为窗口终点，输出脱敏的 Run/Tool/失败分类、
-Git/GH 目标、Operation Family 和恢复指标。公共逻辑位于 `analyze_coding_runtime.py`。
+Git/GH 目标、Operation Family 和恢复指标。报告 Schema 1.1 的 `requiredMetrics` 固定列出可靠性提示词
+要求的全部 KPI；当前最小 SQLite Schema 能直接计算的项标为 `MEASURED/PARTIALLY_MEASURED`，缺少
+Approval、Model Attempt、Context Preflight、Delivery Intent、Resume 对比或 Cost 事实源的项明确标为
+`UNAVAILABLE/UNKNOWN`，不得用零值伪装为已测量。公共逻辑位于 `analyze_coding_runtime.py`。
 
 报告不会包含 Prompt、完整命令、命令输出、Credential、Provider 原始响应、Run/Tool 原始 ID 或主机绝对
 路径；Command 和 Identifier 只输出 SHA-256 摘要。输出必须位于数据目录、源码仓库和独立 docs 仓库
