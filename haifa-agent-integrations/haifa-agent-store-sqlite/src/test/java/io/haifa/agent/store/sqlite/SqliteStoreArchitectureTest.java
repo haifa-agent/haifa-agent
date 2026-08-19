@@ -39,4 +39,17 @@ class SqliteStoreArchitectureTest {
                         .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
                         .importPackages("io.haifa.agent.store.sqlite"));
     }
+
+    @Test
+    void workflowStoreDoesNotDependOnAGraphProvider() {
+        noClasses()
+                .that()
+                .resideInAPackage("io.haifa.agent.store.sqlite..")
+                .should()
+                .dependOnClassesThat()
+                .resideInAnyPackage("org.bsc.langgraph4j..", "com.alibaba.cloud.ai.graph..")
+                .check(new ClassFileImporter()
+                        .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
+                        .importPackages("io.haifa.agent.store.sqlite"));
+    }
 }

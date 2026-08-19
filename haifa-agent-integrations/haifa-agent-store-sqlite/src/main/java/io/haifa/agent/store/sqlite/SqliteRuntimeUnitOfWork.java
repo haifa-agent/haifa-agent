@@ -1,5 +1,6 @@
 package io.haifa.agent.store.sqlite;
 
+import io.haifa.agent.orchestration.core.spi.WorkflowUnitOfWork;
 import io.haifa.agent.runtime.core.storage.RuntimeUnitOfWork;
 import io.haifa.agent.store.sqlite.mybatis.SqliteMyBatisSessionFactory;
 import java.sql.Connection;
@@ -13,7 +14,7 @@ import org.apache.ibatis.session.SqlSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork {
+public final class SqliteRuntimeUnitOfWork implements RuntimeUnitOfWork, WorkflowUnitOfWork {
     private static final Logger LOGGER = LoggerFactory.getLogger(SqliteRuntimeUnitOfWork.class);
     private static final AtomicLong UNIT_OF_WORK_IDS = new AtomicLong();
     private static final long SLOW_OPERATION_MILLIS = 50;

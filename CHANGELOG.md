@@ -1,5 +1,9 @@
 # Changelog
 
+- Incubating Workflow/Graph M3 新增 SQLite V8 单机持久恢复：冻结 Definition/Adapter/Codec，使用共享
+  Runtime/Workflow UoW、两阶段 Node Attempt、原子 Agent Run 关联、Wait/Resume、固定 `ALL_OF` 游标、
+  幂等命令及 Event/Outbox；未知副作用结果不重放，现有产品仍不自动或被动触发 Graph。
+
 - `file.write` 在读写授权的 Workspace 根中遇到不存在的目标时改为原子创建并记录 Create；已有目标仍以
   revision/content-hash 保护整体替换，目录、敏感路径、只读根和并发冲突继续 fail closed。
 - 新增原生 Google Gemini `generateContent` Integration，并严格区分官方 Standard 与个人本机

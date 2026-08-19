@@ -169,6 +169,11 @@ public final class SqliteStoreFoundation implements AutoCloseable {
         return new SqliteArtifactStore(connections);
     }
 
+    /** Explicit M3 Workflow persistence contribution; never enabled by default product assembly. */
+    public SqliteWorkflowStore workflows() {
+        return new SqliteWorkflowStore(unitOfWork, maximumPayloadBytes);
+    }
+
     public FileArtifactPayloadStore artifactPayloads() {
         return new FileArtifactPayloadStore(
                 connections.configuration().databasePath().getParent().resolve("artifacts"));
