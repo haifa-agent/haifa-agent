@@ -167,6 +167,8 @@ class TerminalUiReducerTest {
         });
         assertThat(TerminalRecovery.fromCode("RUN_BUDGET_EXCEEDED").action())
                 .contains("smaller request", "larger budget");
+        assertThat(TerminalRecovery.fromCode("AGENT_LOOP_DETECTED").action())
+                .contains("completed workspace changes", "new run", "more specific next step");
     }
 
     @Test
@@ -483,7 +485,15 @@ class TerminalUiReducerTest {
                         3,
                         "event-3",
                         new RunEventPayloads.DeliveryLifecycle(
-                                "BUDGET", "BUDGET_THRESHOLD_REACHED", "REMAINING_25_PERCENT", List.of(), 25, 0))));
+                                "BUDGET",
+                                "BUDGET_THRESHOLD_REACHED",
+                                "REMAINING_25_PERCENT",
+                                List.of(),
+                                25,
+                                0,
+                                "TOOL_CALLS",
+                                24,
+                                32))));
 
         assertThat(recovering.status()).isEqualTo("Recovering");
         assertThat(verifying.status()).isEqualTo("Verifying");
@@ -491,9 +501,14 @@ class TerminalUiReducerTest {
                 .filteredOn(item -> item.id().equals("delivery-COMPLETION_DEFERRED"))
                 .singleElement()
                 .satisfies(item -> assertThat(item.body())
-                        .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining budget: 24%")
+                        .contains("DIFF_INSPECTION", "VALIDATION_ATTEMPT", "Remaining: 24%")
                         .doesNotContain("/Users/", "stderr", "fingerprint"));
         assertThat(budget.status()).isEqualTo("Budget threshold");
+        assertThat(budget.transcript())
+                .filteredOn(item -> item.id().equals("delivery-BUDGET_THRESHOLD_REACHED"))
+                .singleElement()
+                .satisfies(item -> assertThat(item.body())
+                        .contains("Limiting resource: TOOL_CALLS", "Usage: 24 / 32", "Remaining: 25%"));
     }
 
     @Test

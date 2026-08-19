@@ -10,7 +10,8 @@ Dashboard、Scenario toolbar 或另一套产品 UI。
 Terminal 只消费 Runtime API 的 `DeliveryLifecycle` 安全 DTO，不读取 Runtime Store、SQLite、模型正文或
 Tool 原始输出来推断交付状态。`completion.deferred` 显示 Recovering 或 Verifying，
 `recovery.required` 显示 Recovering，`budget.threshold-reached` 显示 Budget threshold；卡片只包含
-稳定 reason code、缺失 Evidence code、剩余百分比和纠偏次数。Run 到达终态后仍由既有生命周期归约
+稳定 reason code、缺失 Evidence code、实际限制资源、当前用量/冻结上限、剩余百分比和纠偏次数，
+不再要求用户从一个聚合百分比猜测限制来源。Run 到达终态后仍由既有生命周期归约
 收起活动状态。NoColor 模式保留同样的稳定文字，不显示 Host Path、stderr、Fingerprint 或 Credential。
 
 ## 模块定位

@@ -792,7 +792,11 @@ public final class TerminalUiReducer {
             lines.add("Missing: " + String.join(", ", payload.missingEvidence()));
         }
         if (payload.attempt() > 0) lines.add("Repair: " + payload.attempt());
-        lines.add("Remaining budget: " + payload.remainingPercent() + "%");
+        if (!"NONE".equals(payload.limitingResource())) {
+            lines.add("Limiting resource: " + payload.limitingResource());
+            lines.add("Usage: " + payload.limitingUsed() + " / " + payload.limitingLimit());
+        }
+        lines.add("Remaining: " + payload.remainingPercent() + "%");
         return String.join("\n", lines);
     }
 
