@@ -190,6 +190,9 @@ final class SqliteWorkflowCodec {
                                 "entryNode", branch.entryNode().value(),
                                 "delta", decodeRaw(encodeDelta(branch.delta()).payload())))
                         .toList());
+        if (fork.mode() != WorkflowForkState.Mode.ALL_OF) {
+            value.put("mode", fork.mode().name());
+        }
         return value;
     }
 
@@ -212,7 +215,11 @@ final class SqliteWorkflowCodec {
                         .toList(),
                 number(value, "branchIndex").intValue(),
                 new WorkflowNodeId(string(value, "cursor")),
-                completed);
+                completed,
+                Optional.ofNullable(value.get("mode"))
+                        .map(Object::toString)
+                        .map(WorkflowForkState.Mode::valueOf)
+                        .orElse(WorkflowForkState.Mode.ALL_OF));
     }
 
     private static Map<String, Object> encodeWait(WorkflowWait wait) {

@@ -6,6 +6,9 @@ public enum WorkflowNodeType {
     SUBGRAPH,
     FORK_ALL,
     JOIN_ALL,
+    FORK_DYNAMIC,
+    FORK_ANY,
+    JOIN_ANY,
     WAIT,
     TERMINAL
 }

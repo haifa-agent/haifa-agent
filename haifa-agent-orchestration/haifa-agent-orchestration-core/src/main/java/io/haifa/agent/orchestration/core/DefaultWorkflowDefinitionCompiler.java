@@ -35,7 +35,9 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
             WorkflowCapability.BOUNDED_LOOP,
             WorkflowCapability.FIXED_ALL_OF,
             WorkflowCapability.INTERRUPTION,
-            WorkflowCapability.SUBGRAPH));
+            WorkflowCapability.SUBGRAPH,
+            WorkflowCapability.DYNAMIC_FAN_OUT,
+            WorkflowCapability.ANY_OF));
 
     @Override
     public CompiledWorkflowDefinition compile(WorkflowDefinition definition) {
@@ -155,7 +157,9 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
 
     private static int branchCount(WorkflowDefinition definition) {
         Set<WorkflowNodeId> forks = definition.nodes().stream()
-                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL)
+                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL
+                        || node.type() == WorkflowNodeType.FORK_DYNAMIC
+                        || node.type() == WorkflowNodeType.FORK_ANY)
                 .map(WorkflowNodeDefinition::id)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         return Math.toIntExact(definition.edges().stream()
@@ -170,7 +174,9 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
         definition.edges().forEach(edge -> outgoing.computeIfAbsent(edge.source(), ignored -> new ArrayList<>())
                 .add(edge));
         return definition.nodes().stream()
-                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL)
+                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL
+                        || node.type() == WorkflowNodeType.FORK_DYNAMIC
+                        || node.type() == WorkflowNodeType.FORK_ANY)
                 .flatMap(fork -> outgoing.getOrDefault(fork.id(), List.of()).stream())
                 .anyMatch(edge -> branchContains(edge.target(), target, nodes, outgoing, new HashSet<>()));
     }
@@ -182,7 +188,9 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
             Map<WorkflowNodeId, List<WorkflowEdge>> outgoing,
             Set<WorkflowNodeId> visited) {
         if (current.equals(target)) return true;
-        if (!visited.add(current) || nodes.get(current).type() == WorkflowNodeType.JOIN_ALL) return false;
+        if (!visited.add(current)
+                || nodes.get(current).type() == WorkflowNodeType.JOIN_ALL
+                || nodes.get(current).type() == WorkflowNodeType.JOIN_ANY) return false;
         return outgoing.getOrDefault(current, List.of()).stream()
                 .anyMatch(edge -> branchContains(edge.target(), target, nodes, outgoing, visited));
     }
@@ -248,7 +256,7 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
                     .add(edge);
         }
         validateNodeShapes(definition, nodes, outgoing);
-        validateFixedForks(definition, nodes, outgoing);
+        validateForks(definition, nodes, outgoing);
         assertAllNodesReachable(definition.entryNode(), nodes.keySet(), outgoing);
         if (hasCycle(definition.entryNode(), outgoing, new HashSet<>(), new HashSet<>())
                 && !definition.requiredCapabilities().contains(WorkflowCapability.BOUNDED_LOOP)) {
@@ -256,52 +264,67 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
         }
     }
 
-    private static void validateFixedForks(
+    private static void validateForks(
             WorkflowDefinition definition,
             Map<WorkflowNodeId, WorkflowNodeDefinition> nodes,
             Map<WorkflowNodeId, List<WorkflowEdge>> outgoing) {
         definition.nodes().stream()
-                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL)
+                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL
+                        || node.type() == WorkflowNodeType.FORK_DYNAMIC
+                        || node.type() == WorkflowNodeType.FORK_ANY)
                 .forEach(fork -> {
                     Set<WorkflowNodeId> joins = new HashSet<>();
                     outgoing.getOrDefault(fork.id(), List.of()).stream()
                             .map(WorkflowEdge::target)
-                            .map(target -> resolveFixedBranchJoin(target, nodes, outgoing, new HashSet<>()))
+                            .map(target -> resolveBranchJoin(target, fork.type(), nodes, outgoing, new HashSet<>()))
                             .forEach(joins::add);
                     if (joins.size() != 1) {
                         throw failure(
                                 WorkflowErrorCode.INVALID_DEFINITION,
-                                "fixed branches must converge on one JOIN_ALL node");
+                                "fork branches must converge on one matching join node");
                     }
                 });
     }
 
-    private static WorkflowNodeId resolveFixedBranchJoin(
+    private static WorkflowNodeId resolveBranchJoin(
             WorkflowNodeId current,
+            WorkflowNodeType forkType,
             Map<WorkflowNodeId, WorkflowNodeDefinition> nodes,
             Map<WorkflowNodeId, List<WorkflowEdge>> outgoing,
             Set<WorkflowNodeId> visited) {
         if (!visited.add(current)) {
-            throw failure(
-                    WorkflowErrorCode.INVALID_DEFINITION, "fixed branch must not contain a cycle before JOIN_ALL");
+            throw failure(WorkflowErrorCode.INVALID_DEFINITION, "fork branch must not contain a cycle before its join");
         }
         WorkflowNodeDefinition node = nodes.get(current);
-        if (node.type() == WorkflowNodeType.JOIN_ALL) {
+        WorkflowNodeType joinType =
+                forkType == WorkflowNodeType.FORK_ANY ? WorkflowNodeType.JOIN_ANY : WorkflowNodeType.JOIN_ALL;
+        if (node.type() == joinType) {
             return current;
         }
-        if (node.type() != WorkflowNodeType.ACTION
-                && node.type() != WorkflowNodeType.AGENT_RUN
-                && node.type() != WorkflowNodeType.SUBGRAPH) {
+        boolean allowed = forkType == WorkflowNodeType.FORK_ANY
+                ? node.type() == WorkflowNodeType.ACTION
+                : node.type() == WorkflowNodeType.ACTION
+                        || node.type() == WorkflowNodeType.AGENT_RUN
+                        || node.type() == WorkflowNodeType.SUBGRAPH;
+        if (!allowed) {
             throw failure(
                     WorkflowErrorCode.INVALID_DEFINITION,
-                    "fixed branch may only contain action, agent, or subgraph nodes before JOIN_ALL");
+                    forkType == WorkflowNodeType.FORK_ANY
+                            ? "ANY_OF candidates must be one cancel-safe ACTION before JOIN_ANY"
+                            : "fan-out branch may only contain action, agent, or subgraph nodes before JOIN_ALL");
         }
         List<WorkflowEdge> edges = outgoing.getOrDefault(current, List.of());
         if (edges.size() != 1 || edges.getFirst().conditionId().isPresent()) {
             throw failure(
-                    WorkflowErrorCode.INVALID_DEFINITION, "fixed branch must have one unconditional path to JOIN_ALL");
+                    WorkflowErrorCode.INVALID_DEFINITION, "fork branch must have one unconditional path to its join");
         }
-        return resolveFixedBranchJoin(edges.getFirst().target(), nodes, outgoing, visited);
+        if (forkType == WorkflowNodeType.FORK_ANY
+                && nodes.get(edges.getFirst().target()).type() != joinType) {
+            throw failure(
+                    WorkflowErrorCode.INVALID_DEFINITION,
+                    "ANY_OF candidates must contain exactly one cancel-safe ACTION");
+        }
+        return resolveBranchJoin(edges.getFirst().target(), forkType, nodes, outgoing, visited);
     }
 
     private static void validateNodeShapes(
@@ -316,21 +339,43 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
             if (node.type() != WorkflowNodeType.TERMINAL && edges.isEmpty()) {
                 throw failure(WorkflowErrorCode.INVALID_DEFINITION, "non-terminal node has no outgoing edge");
             }
-            if (node.type() == WorkflowNodeType.FORK_ALL) {
-                if (!definition.requiredCapabilities().contains(WorkflowCapability.FIXED_ALL_OF)) {
-                    throw failure(WorkflowErrorCode.INVALID_DEFINITION, "FORK_ALL requires FIXED_ALL_OF capability");
+            if (node.type() == WorkflowNodeType.FORK_ALL
+                    || node.type() == WorkflowNodeType.FORK_DYNAMIC
+                    || node.type() == WorkflowNodeType.FORK_ANY) {
+                WorkflowCapability required =
+                        switch (node.type()) {
+                            case FORK_ALL -> WorkflowCapability.FIXED_ALL_OF;
+                            case FORK_DYNAMIC -> WorkflowCapability.DYNAMIC_FAN_OUT;
+                            case FORK_ANY -> WorkflowCapability.ANY_OF;
+                            default -> throw new IllegalStateException("not a fork");
+                        };
+                if (!definition.requiredCapabilities().contains(required)) {
+                    throw failure(WorkflowErrorCode.INVALID_DEFINITION, node.type() + " requires " + required);
                 }
+                boolean dynamic = node.type() == WorkflowNodeType.FORK_DYNAMIC;
                 if (edges.size() < 2
                         || edges.size() > definition.limits().maximumParallelBranches()
-                        || edges.stream().anyMatch(edge -> edge.conditionId().isPresent())
+                        || (dynamic
+                                ? edges.stream()
+                                        .anyMatch(edge -> edge.conditionId().isEmpty())
+                                : edges.stream()
+                                        .anyMatch(edge -> edge.conditionId().isPresent()))
                         || edges.stream()
                                         .map(WorkflowEdge::branchOrdinal)
                                         .distinct()
                                         .count()
-                                != edges.size()) {
+                                != edges.size()
+                        || edges.stream().map(WorkflowEdge::target).distinct().count() != edges.size()
+                        || (dynamic
+                                && edges.stream()
+                                                .map(edge -> edge.conditionId().orElseThrow())
+                                                .distinct()
+                                                .count()
+                                        != edges.size())) {
                     throw failure(
                             WorkflowErrorCode.INVALID_DEFINITION,
-                            "FORK_ALL requires bounded, uniquely ordered unconditional branches");
+                            node.type() + " requires bounded, uniquely ordered "
+                                    + (dynamic ? "conditional" : "unconditional") + " branches");
                 }
             } else if (edges.size() > 1) {
                 if (!definition.requiredCapabilities().contains(WorkflowCapability.CONDITION)
@@ -348,20 +393,27 @@ public final class DefaultWorkflowDefinitionCompiler implements WorkflowDefiniti
                     && !definition.requiredCapabilities().contains(WorkflowCapability.SUBGRAPH)) {
                 throw failure(WorkflowErrorCode.INVALID_DEFINITION, "SUBGRAPH requires SUBGRAPH capability");
             }
-            if (node.type() == WorkflowNodeType.JOIN_ALL
+            if ((node.type() == WorkflowNodeType.JOIN_ALL || node.type() == WorkflowNodeType.JOIN_ANY)
                     && edges.size() != 1
                     && node.type() != WorkflowNodeType.TERMINAL) {
                 throw failure(WorkflowErrorCode.INVALID_DEFINITION, "JOIN_ALL must have one successor");
             }
         }
-        long forks = nodes.values().stream()
-                .filter(node -> node.type() == WorkflowNodeType.FORK_ALL)
+        long allForks = nodes.values().stream()
+                .filter(node ->
+                        node.type() == WorkflowNodeType.FORK_ALL || node.type() == WorkflowNodeType.FORK_DYNAMIC)
                 .count();
-        long joins = nodes.values().stream()
+        long allJoins = nodes.values().stream()
                 .filter(node -> node.type() == WorkflowNodeType.JOIN_ALL)
                 .count();
-        if (forks != joins) {
-            throw failure(WorkflowErrorCode.INVALID_DEFINITION, "every fixed fork must have a corresponding join");
+        long anyForks = nodes.values().stream()
+                .filter(node -> node.type() == WorkflowNodeType.FORK_ANY)
+                .count();
+        long anyJoins = nodes.values().stream()
+                .filter(node -> node.type() == WorkflowNodeType.JOIN_ANY)
+                .count();
+        if (allForks != allJoins || anyForks != anyJoins) {
+            throw failure(WorkflowErrorCode.INVALID_DEFINITION, "every fork must have a corresponding matching join");
         }
     }
 

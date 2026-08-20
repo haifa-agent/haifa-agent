@@ -259,11 +259,15 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
                     interrupt(run, node);
                     continue;
                 }
-                if (node.type() == WorkflowNodeType.FORK_ALL) {
+                if (node.type() == WorkflowNodeType.FORK_ALL || node.type() == WorkflowNodeType.FORK_DYNAMIC) {
                     executeFork(run, node);
                     continue;
                 }
-                if (node.type() == WorkflowNodeType.JOIN_ALL) {
+                if (node.type() == WorkflowNodeType.FORK_ANY) {
+                    executeAnyFork(run, node);
+                    continue;
+                }
+                if (node.type() == WorkflowNodeType.JOIN_ALL || node.type() == WorkflowNodeType.JOIN_ANY) {
                     run.currentNode = onlySuccessor(run, node.id()).target();
                     continue;
                 }
@@ -527,9 +531,18 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
     }
 
     private void executeFork(MutableRun run, WorkflowNodeDefinition fork) {
-        List<WorkflowEdge> branches = outgoing(run, fork.id()).stream()
+        List<WorkflowEdge> candidates = outgoing(run, fork.id()).stream()
                 .sorted(Comparator.comparingInt(WorkflowEdge::branchOrdinal).thenComparing(WorkflowEdge::target))
                 .toList();
+        List<WorkflowEdge> branches = fork.type() == WorkflowNodeType.FORK_DYNAMIC
+                ? candidates.stream()
+                        .filter(edge -> conditions.evaluate(edge.conditionId().orElseThrow(), run.state))
+                        .toList()
+                : candidates;
+        if (branches.isEmpty()) {
+            throw error(
+                    WorkflowErrorCode.NODE_EXECUTION_FAILED, "fan-out", "bounded dynamic fan-out selected no branches");
+        }
         WorkflowState base = run.state;
         List<BranchDelta> deltas = new ArrayList<>();
         WorkflowNodeId commonJoin = null;
@@ -587,6 +600,63 @@ public final class InMemoryWorkflowRuntime implements WorkflowRuntime {
             run.state = base;
             throw exception;
         }
+    }
+
+    private void executeAnyFork(MutableRun run, WorkflowNodeDefinition fork) {
+        List<WorkflowEdge> candidates = outgoing(run, fork.id()).stream()
+                .sorted(Comparator.comparingInt(WorkflowEdge::branchOrdinal).thenComparing(WorkflowEdge::target))
+                .toList();
+        WorkflowState base = run.state;
+        WorkflowException lastFailure = null;
+        for (int index = 0; index < candidates.size(); index++) {
+            WorkflowEdge candidate = candidates.get(index);
+            WorkflowNodeDefinition action = node(run, candidate.target());
+            run.state = base;
+            run.visits.merge(action.id(), 1, Integer::sum);
+            try {
+                executeNode(run, action);
+                WorkflowNodeId join = onlySuccessor(run, action.id()).target();
+                for (int loser = index + 1; loser < candidates.size(); loser++) {
+                    event(
+                            run,
+                            WorkflowEventType.ANY_OF_LOSER_CANCELLED,
+                            Optional.of(candidates.get(loser).target()),
+                            Map.of("winnerOrdinal", Integer.toString(candidate.branchOrdinal())));
+                }
+                event(
+                        run,
+                        WorkflowEventType.ANY_OF_WINNER_SELECTED,
+                        Optional.of(action.id()),
+                        Map.of("winnerOrdinal", Integer.toString(candidate.branchOrdinal())));
+                run.currentNode = join;
+                return;
+            } catch (WorkflowException exception) {
+                if (exception.code() == WorkflowErrorCode.OUTCOME_UNKNOWN) throw exception;
+                lastFailure = exception;
+                event(
+                        run,
+                        WorkflowEventType.ANY_OF_LOSER_CANCELLED,
+                        Optional.of(action.id()),
+                        Map.of("reason", "failed"));
+            } catch (RuntimeException exception) {
+                WorkflowNodeAttempt failed = run.attempts.getLast();
+                run.attempts.set(
+                        run.attempts.size() - 1,
+                        new WorkflowNodeAttempt(
+                                failed.nodeId(),
+                                failed.attempt(),
+                                WorkflowNodeAttemptStatus.OUTCOME_UNKNOWN,
+                                failed.agentRunId(),
+                                Optional.of(WorkflowErrorCode.OUTCOME_UNKNOWN),
+                                failed.startedAt(),
+                                failed.finishedAt()));
+                throw error(WorkflowErrorCode.OUTCOME_UNKNOWN, "any-of", "candidate outcome is unknown");
+            }
+        }
+        run.state = base;
+        throw lastFailure == null
+                ? error(WorkflowErrorCode.NODE_EXECUTION_FAILED, "any-of", "ANY_OF has no successful candidate")
+                : error(lastFailure.code(), "any-of", "all ANY_OF candidates failed");
     }
 
     private static WorkflowStateDelta difference(WorkflowState base, WorkflowState updated) {

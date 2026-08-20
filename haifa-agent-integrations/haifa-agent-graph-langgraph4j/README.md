@@ -12,7 +12,9 @@ Pure Java M2/M5 Integration Adapter for `org.bsc.langgraph4j:langgraph4j-core:1.
   stable branch ordinal and Node ID.
 - Provider `MemorySaver` is only an in-process continuation detail. It is not a Haifa durable store or a production
   recovery claim.
-- Dynamic fan-out, `ANY_OF`, interrupting subgraphs inside fixed branches, Provider-native model/tool actions, Spring
-  AI, Studio, and Provider database savers are not supported.
+- The provider-neutral M6 dynamic fan-out and `ANY_OF` capabilities are rejected before provider translation; the
+  adapter never silently falls back to the in-memory implementation for them.
+- Interrupting subgraphs inside fixed branches, Provider-native model/tool actions, Spring AI, Studio, and Provider
+  database savers are not supported.
 
 This module is not pulled into Starter, SDK, Coding Agent, Personal Assistant, or any existing product by default.

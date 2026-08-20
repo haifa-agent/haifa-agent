@@ -16,6 +16,7 @@ import io.haifa.agent.orchestration.api.WorkflowEdge;
 import io.haifa.agent.orchestration.api.WorkflowErrorCode;
 import io.haifa.agent.orchestration.api.WorkflowEventType;
 import io.haifa.agent.orchestration.api.WorkflowException;
+import io.haifa.agent.orchestration.api.WorkflowFailure;
 import io.haifa.agent.orchestration.api.WorkflowLimits;
 import io.haifa.agent.orchestration.api.WorkflowNodeAttemptStatus;
 import io.haifa.agent.orchestration.api.WorkflowNodeDefinition;
@@ -165,6 +166,154 @@ class InMemoryWorkflowRuntimeTest {
         assertThat(result.attempts())
                 .extracting(attempt -> attempt.nodeId().value())
                 .containsExactly("left", "right");
+    }
+
+    @Test
+    void selectsAndDeterministicallyMergesBoundedDynamicFanOut() {
+        CompiledWorkflowDefinition compiled = compile(
+                "dynamic",
+                "fork",
+                List.of(
+                        WorkflowNodeDefinition.control("fork", WorkflowNodeType.FORK_DYNAMIC),
+                        WorkflowNodeDefinition.action("right", "right"),
+                        WorkflowNodeDefinition.action("left", "left"),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ALL),
+                        terminal()),
+                List.of(
+                        WorkflowEdge.dynamicBranch("fork", "right", "include-right", 2),
+                        WorkflowEdge.dynamicBranch("fork", "left", "include-left", 1),
+                        WorkflowEdge.unconditional("right", "join"),
+                        WorkflowEdge.unconditional("left", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                Set.of(WorkflowCapability.DYNAMIC_FAN_OUT),
+                WorkflowLimits.defaults());
+        WorkflowActionGateway actions = (runId, node, state) ->
+                new WorkflowStateDelta(node.id().value().equals("left") ? Map.of("left", "L") : Map.of("right", "R"));
+        WorkflowConditionEvaluator conditions = (condition, state) -> true;
+
+        WorkflowRunSnapshot result =
+                runtime(compiled, actions, NO_AGENT, conditions).start(start(compiled, Map.of(), "dynamic-start"));
+
+        assertThat(result.status()).isEqualTo(WorkflowStatus.COMPLETED);
+        assertThat(result.state().values()).containsEntry("left", "L").containsEntry("right", "R");
+        assertThat(result.attempts())
+                .extracting(attempt -> attempt.nodeId().value())
+                .containsExactly("left", "right");
+    }
+
+    @Test
+    void dynamicFanOutRejectsEmptySelectionAndRollsBackPartialFailure() {
+        CompiledWorkflowDefinition compiled = compile(
+                "dynamic-failure",
+                "fork",
+                List.of(
+                        WorkflowNodeDefinition.control("fork", WorkflowNodeType.FORK_DYNAMIC),
+                        WorkflowNodeDefinition.action("left", "left"),
+                        WorkflowNodeDefinition.action("right", "right"),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ALL),
+                        terminal()),
+                List.of(
+                        WorkflowEdge.dynamicBranch("fork", "left", "left-selected", 0),
+                        WorkflowEdge.dynamicBranch("fork", "right", "right-selected", 1),
+                        WorkflowEdge.unconditional("left", "join"),
+                        WorkflowEdge.unconditional("right", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                Set.of(WorkflowCapability.DYNAMIC_FAN_OUT),
+                WorkflowLimits.defaults());
+        WorkflowRunSnapshot empty =
+                runtime(compiled, NO_ACTION, NO_AGENT, NO_CONDITION).start(start(compiled, Map.of(), "dynamic-empty"));
+        assertThat(empty.status()).isEqualTo(WorkflowStatus.FAILED);
+
+        WorkflowActionGateway partialFailure = (runId, node, state) -> {
+            if (node.id().value().equals("right")) {
+                throw new WorkflowException(WorkflowErrorCode.NODE_EXECUTION_FAILED, "fixture", "known failure");
+            }
+            return new WorkflowStateDelta(Map.of("left", "must-be-rolled-back"));
+        };
+        WorkflowRunSnapshot failed = runtime(compiled, partialFailure, NO_AGENT, (condition, state) -> true)
+                .start(start(compiled, Map.of(), "dynamic-partial"));
+        assertThat(failed.status()).isEqualTo(WorkflowStatus.FAILED);
+        assertThat(failed.state().values()).doesNotContainKey("left");
+    }
+
+    @Test
+    void anyOfUsesStableFirstSuccessAndDoesNotStartLaterCandidates() {
+        CompiledWorkflowDefinition compiled = compile(
+                "any",
+                "fork",
+                List.of(
+                        WorkflowNodeDefinition.control("fork", WorkflowNodeType.FORK_ANY),
+                        WorkflowNodeDefinition.action("first", "first"),
+                        WorkflowNodeDefinition.action("second", "second"),
+                        WorkflowNodeDefinition.action("third", "third"),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ANY),
+                        terminal()),
+                List.of(
+                        WorkflowEdge.branch("fork", "third", 2),
+                        WorkflowEdge.branch("fork", "second", 1),
+                        WorkflowEdge.branch("fork", "first", 0),
+                        WorkflowEdge.unconditional("first", "join"),
+                        WorkflowEdge.unconditional("second", "join"),
+                        WorkflowEdge.unconditional("third", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                Set.of(WorkflowCapability.ANY_OF),
+                WorkflowLimits.defaults());
+        WorkflowActionGateway actions = (runId, node, state) -> {
+            if (node.id().value().equals("first")) {
+                throw new WorkflowException(WorkflowErrorCode.NODE_EXECUTION_FAILED, "action", "known failure");
+            }
+            return new WorkflowStateDelta(Map.of("choice", node.id().value()));
+        };
+        InMemoryWorkflowRuntime runtime = runtime(compiled, actions, NO_AGENT, NO_CONDITION);
+
+        WorkflowRunSnapshot result = runtime.start(start(compiled, Map.of(), "any-start"));
+
+        assertThat(result.status()).isEqualTo(WorkflowStatus.COMPLETED);
+        assertThat(result.state().values()).containsEntry("choice", "second");
+        assertThat(result.attempts())
+                .extracting(attempt -> attempt.nodeId().value())
+                .containsExactly("first", "second");
+        assertThat(runtime.events(result.id(), 0, 100))
+                .extracting(event -> event.type())
+                .contains(WorkflowEventType.ANY_OF_WINNER_SELECTED, WorkflowEventType.ANY_OF_LOSER_CANCELLED);
+    }
+
+    @Test
+    void anyOfFailsClosedOnUnknownOutcomeWithoutStartingAnotherCandidate() {
+        CompiledWorkflowDefinition compiled = compile(
+                "any-unknown",
+                "fork",
+                List.of(
+                        WorkflowNodeDefinition.control("fork", WorkflowNodeType.FORK_ANY),
+                        WorkflowNodeDefinition.action("first", "first"),
+                        WorkflowNodeDefinition.action("second", "second"),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ANY),
+                        terminal()),
+                List.of(
+                        WorkflowEdge.branch("fork", "first", 0),
+                        WorkflowEdge.branch("fork", "second", 1),
+                        WorkflowEdge.unconditional("first", "join"),
+                        WorkflowEdge.unconditional("second", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                Set.of(WorkflowCapability.ANY_OF),
+                WorkflowLimits.defaults());
+        AtomicInteger secondCalls = new AtomicInteger();
+        WorkflowActionGateway actions = (runId, node, state) -> {
+            if (node.id().value().equals("first")) throw new IllegalStateException("ambiguous transport failure");
+            secondCalls.incrementAndGet();
+            return WorkflowStateDelta.empty();
+        };
+
+        WorkflowRunSnapshot result =
+                runtime(compiled, actions, NO_AGENT, NO_CONDITION).start(start(compiled, Map.of(), "any-unknown"));
+
+        assertThat(result.failure())
+                .get()
+                .extracting(WorkflowFailure::code)
+                .isEqualTo(WorkflowErrorCode.OUTCOME_UNKNOWN);
+        assertThat(result.attempts()).singleElement().satisfies(attempt -> assertThat(attempt.status())
+                .isEqualTo(WorkflowNodeAttemptStatus.OUTCOME_UNKNOWN));
+        assertThat(secondCalls).hasValue(0);
     }
 
     @Test

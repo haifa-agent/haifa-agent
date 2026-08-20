@@ -28,4 +28,10 @@ public record WorkflowEdge(
         return new WorkflowEdge(
                 new WorkflowNodeId(source), new WorkflowNodeId(target), Optional.empty(), branchOrdinal);
     }
+
+    /** A deterministically ordered candidate selected by a bounded dynamic fan-out condition. */
+    public static WorkflowEdge dynamicBranch(String source, String target, String conditionId, int branchOrdinal) {
+        return new WorkflowEdge(
+                new WorkflowNodeId(source), new WorkflowNodeId(target), Optional.of(conditionId), branchOrdinal);
+    }
 }

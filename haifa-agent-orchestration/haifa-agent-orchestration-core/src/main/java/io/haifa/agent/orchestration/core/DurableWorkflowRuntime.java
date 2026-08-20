@@ -345,9 +345,11 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
                         Optional.empty());
             } else if (node.type() == WorkflowNodeType.WAIT) {
                 interrupt(run, node);
-            } else if (node.type() == WorkflowNodeType.FORK_ALL) {
+            } else if (node.type() == WorkflowNodeType.FORK_ALL
+                    || node.type() == WorkflowNodeType.FORK_DYNAMIC
+                    || node.type() == WorkflowNodeType.FORK_ANY) {
                 beginFork(run, node);
-            } else if (node.type() == WorkflowNodeType.JOIN_ALL) {
+            } else if (node.type() == WorkflowNodeType.JOIN_ALL || node.type() == WorkflowNodeType.JOIN_ANY) {
                 run.currentNode = onlySuccessor(run, node.id()).target();
                 save(run, List.of(), Optional.empty());
             } else {
@@ -370,6 +372,13 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         try {
             delta = actions.execute(run.id, node, run.state);
         } catch (WorkflowException exception) {
+            if (run.forkState
+                            .filter(fork -> fork.mode() == WorkflowForkState.Mode.ANY_OF)
+                            .isPresent()
+                    && exception.code() != WorkflowErrorCode.OUTCOME_UNKNOWN) {
+                failAnyCandidate(run, exception.code());
+                return;
+            }
             failActive(run, exception.code(), exception.operation());
             return;
         } catch (RuntimeException exception) {
@@ -715,7 +724,8 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
                     fork.branchEntries(),
                     fork.branchIndex(),
                     onlySuccessor(run, active.nodeId()).target(),
-                    fork.completedBranches()));
+                    fork.completedBranches(),
+                    fork.mode()));
         } else {
             run.currentNode = selectSuccessor(run, active.nodeId()).target();
         }
@@ -727,23 +737,37 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
     }
 
     private void beginFork(MutableRun run, WorkflowNodeDefinition forkNode) {
-        List<WorkflowEdge> branches = outgoing(run, forkNode.id()).stream()
+        List<WorkflowEdge> candidates = outgoing(run, forkNode.id()).stream()
                 .sorted(Comparator.comparingInt(WorkflowEdge::branchOrdinal).thenComparing(WorkflowEdge::target))
                 .toList();
+        List<WorkflowEdge> branches = forkNode.type() == WorkflowNodeType.FORK_DYNAMIC
+                ? candidates.stream()
+                        .filter(edge -> conditions.evaluate(edge.conditionId().orElseThrow(), run.state))
+                        .toList()
+                : candidates;
+        if (branches.isEmpty()) {
+            fail(run, WorkflowErrorCode.NODE_EXECUTION_FAILED, "fan-out");
+            return;
+        }
         run.forkState = Optional.of(new WorkflowForkState(
                 forkNode.id(),
                 run.state,
                 branches.stream().map(WorkflowEdge::target).toList(),
                 0,
                 branches.getFirst().target(),
-                List.of()));
+                List.of(),
+                forkNode.type() == WorkflowNodeType.FORK_ANY
+                        ? WorkflowForkState.Mode.ANY_OF
+                        : WorkflowForkState.Mode.ALL_OF));
         save(run, List.of(), Optional.empty());
     }
 
     private void driveFork(MutableRun run) {
         WorkflowForkState fork = run.forkState.orElseThrow();
         WorkflowNodeDefinition cursor = node(run, fork.cursor());
-        if (cursor.type() != WorkflowNodeType.JOIN_ALL) {
+        WorkflowNodeType joinType =
+                fork.mode() == WorkflowForkState.Mode.ANY_OF ? WorkflowNodeType.JOIN_ANY : WorkflowNodeType.JOIN_ALL;
+        if (cursor.type() != joinType) {
             if (cursor.type() != WorkflowNodeType.ACTION
                     && cursor.type() != WorkflowNodeType.AGENT_RUN
                     && cursor.type() != WorkflowNodeType.SUBGRAPH) {
@@ -753,9 +777,38 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
             executeScheduledNode(run, cursor);
             return;
         }
+        if (fork.mode() == WorkflowForkState.Mode.ANY_OF) {
+            List<WorkflowEvent> events = new ArrayList<>();
+            for (int loser = fork.branchIndex() + 1;
+                    loser < fork.branchEntries().size();
+                    loser++) {
+                events.add(event(
+                        run,
+                        WorkflowEventType.ANY_OF_LOSER_CANCELLED,
+                        Optional.of(fork.branchEntries().get(loser)),
+                        Map.of(
+                                "winnerOrdinal",
+                                Integer.toString(branchOrdinal(
+                                        run,
+                                        fork.forkNode(),
+                                        fork.branchEntries().get(fork.branchIndex()))))));
+            }
+            events.add(event(
+                    run,
+                    WorkflowEventType.ANY_OF_WINNER_SELECTED,
+                    Optional.of(fork.branchEntries().get(fork.branchIndex())),
+                    Map.of(
+                            "winnerOrdinal",
+                            Integer.toString(branchOrdinal(
+                                    run, fork.forkNode(), fork.branchEntries().get(fork.branchIndex()))))));
+            run.currentNode = cursor.id();
+            run.forkState = Optional.empty();
+            save(run, events, Optional.empty());
+            return;
+        }
         List<WorkflowForkState.CompletedBranch> completed = new ArrayList<>(fork.completedBranches());
         completed.add(new WorkflowForkState.CompletedBranch(
-                fork.branchIndex(),
+                branchOrdinal(run, fork.forkNode(), fork.branchEntries().get(fork.branchIndex())),
                 fork.branchEntries().get(fork.branchIndex()),
                 difference(fork.baseState(), run.state)));
         if (fork.branchIndex() + 1 < fork.branchEntries().size()) {
@@ -767,7 +820,8 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
                     fork.branchEntries(),
                     next,
                     fork.branchEntries().get(next),
-                    completed));
+                    completed,
+                    fork.mode()));
             save(run, List.of(), Optional.empty());
             return;
         }
@@ -778,6 +832,68 @@ public final class DurableWorkflowRuntime implements RecoverableWorkflowRuntime 
         run.currentNode = cursor.id();
         run.forkState = Optional.empty();
         save(run, List.of(), Optional.empty());
+    }
+
+    private int branchOrdinal(MutableRun run, WorkflowNodeId forkNode, WorkflowNodeId branchEntry) {
+        return outgoing(run, forkNode).stream()
+                .filter(edge -> edge.target().equals(branchEntry))
+                .findFirst()
+                .orElseThrow(() -> error(
+                        WorkflowErrorCode.PERSISTENCE_CONFLICT,
+                        "fork",
+                        "persisted branch entry does not exist in the frozen definition"))
+                .branchOrdinal();
+    }
+
+    private void failAnyCandidate(MutableRun run, WorkflowErrorCode code) {
+        WorkflowForkState fork = run.forkState.orElseThrow();
+        WorkflowNodeAttempt active = run.activeAttempt().orElseThrow();
+        replaceLastAttempt(
+                run,
+                new WorkflowNodeAttempt(
+                        active.nodeId(),
+                        active.attempt(),
+                        WorkflowNodeAttemptStatus.FAILED,
+                        active.agentRunId(),
+                        Optional.of(code),
+                        active.startedAt(),
+                        Optional.of(now())));
+        run.pendingDelta = Optional.empty();
+        WorkflowEvent loser = event(
+                run,
+                WorkflowEventType.ANY_OF_LOSER_CANCELLED,
+                Optional.of(active.nodeId()),
+                Map.of("reason", "failed"));
+        int next = fork.branchIndex() + 1;
+        if (next < fork.branchEntries().size()) {
+            run.state = fork.baseState();
+            run.forkState = Optional.of(new WorkflowForkState(
+                    fork.forkNode(),
+                    fork.baseState(),
+                    fork.branchEntries(),
+                    next,
+                    fork.branchEntries().get(next),
+                    fork.completedBranches(),
+                    fork.mode()));
+            run.revision++;
+            save(run, List.of(loser), Optional.empty());
+            return;
+        }
+        run.state = fork.baseState();
+        run.forkState = Optional.empty();
+        run.status = WorkflowStatus.FAILED;
+        run.failure = Optional.of(new WorkflowFailure(code, "any-of", Optional.of(run.currentNode)));
+        run.revision++;
+        save(
+                run,
+                List.of(
+                        loser,
+                        event(
+                                run,
+                                WorkflowEventType.FAILED,
+                                Optional.of(run.currentNode),
+                                Map.of("code", code.name()))),
+                Optional.empty());
     }
 
     private void interrupt(MutableRun run, WorkflowNodeDefinition node) {
