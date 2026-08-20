@@ -12,4 +12,9 @@ and explicit `WorkflowRuntime.start(...)` routing.
 - M5 adds `SUBGRAPH`, frozen child `WorkflowDefinitionRef`, explicit input/output key mapping, parent/active-child Run
   links, bounded expanded depth/nodes/branches, trusted timeout propagation, and the frozen first-version
   `FAIL_PARENT` child failure policy. Either mapping direction may be explicitly empty for control-only boundaries.
-- Dynamic fan-out, `ANY_OF`, runtime Definition discovery, and arbitrary Provider node actions fail at compilation.
+- The M6 provider-neutral increment adds bounded `FORK_DYNAMIC -> JOIN_ALL` and fixed-candidate
+  `FORK_ANY -> JOIN_ANY`. Dynamic candidates are explicit conditional edges with unique ordinals, targets, and
+  condition IDs. `ANY_OF` candidates are compile-time fixed, one-Action, cancel-safe paths; the first successful
+  ordinal wins and unknown outcomes fail closed.
+- Runtime Definition discovery and arbitrary Provider node actions still fail at compilation. LangGraph4j continues
+  to reject the M6 node types until that adapter receives a separately verified mapping.

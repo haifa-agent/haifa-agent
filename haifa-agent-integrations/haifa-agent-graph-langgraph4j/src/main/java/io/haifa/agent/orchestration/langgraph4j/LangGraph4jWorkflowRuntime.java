@@ -39,7 +39,6 @@ import io.haifa.agent.orchestration.api.WorkflowSubgraphLink;
 import io.haifa.agent.orchestration.api.WorkflowTimeoutRequest;
 import io.haifa.agent.orchestration.api.WorkflowWait;
 import io.haifa.agent.orchestration.api.WorkflowWaitId;
-import io.haifa.agent.orchestration.core.DefaultWorkflowDefinitionCompiler;
 import io.haifa.agent.orchestration.core.DeterministicStateMerger;
 import io.haifa.agent.orchestration.core.DeterministicStateMerger.BranchDelta;
 import io.haifa.agent.orchestration.core.spi.WorkflowActionGateway;
@@ -290,7 +289,13 @@ public final class LangGraph4jWorkflowRuntime implements WorkflowRuntime {
     private ProviderDefinition translate(CompiledWorkflowDefinition compiled) {
         Objects.requireNonNull(compiled, "compiled definition must not be null");
         Set<WorkflowCapability> unsupported = new HashSet<>(compiled.capabilities());
-        unsupported.removeAll(DefaultWorkflowDefinitionCompiler.SUPPORTED_CAPABILITIES);
+        unsupported.removeAll(Set.of(
+                WorkflowCapability.SEQUENCE,
+                WorkflowCapability.CONDITION,
+                WorkflowCapability.BOUNDED_LOOP,
+                WorkflowCapability.FIXED_ALL_OF,
+                WorkflowCapability.INTERRUPTION,
+                WorkflowCapability.SUBGRAPH));
         if (!unsupported.isEmpty()) {
             throw error(
                     WorkflowErrorCode.UNSUPPORTED_CAPABILITY,

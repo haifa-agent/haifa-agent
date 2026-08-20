@@ -36,6 +36,7 @@ import io.haifa.agent.orchestration.core.DurableWorkflowRuntime;
 import io.haifa.agent.orchestration.core.spi.DurableWorkflowAgentGateway;
 import io.haifa.agent.orchestration.core.spi.WorkflowActionGateway;
 import io.haifa.agent.orchestration.core.spi.WorkflowAgentGateway;
+import io.haifa.agent.orchestration.core.spi.WorkflowConditionEvaluator;
 import io.haifa.agent.orchestration.core.spi.WorkflowFailureInjector;
 import io.haifa.agent.orchestration.core.spi.WorkflowFailurePoint;
 import io.haifa.agent.orchestration.core.spi.WorkflowPersistenceBinding;
@@ -310,6 +311,94 @@ class SqliteWorkflowRecoveryTest {
             assertThat(recovered.state().values()).containsEntry("left", "L").containsEntry("right", "R");
             assertThat(leftCalls).hasValue(1);
             assertThat(rightCalls).hasValue(1);
+        }
+    }
+
+    @Test
+    void persistsSelectedDynamicBranchesAndContinuesAfterRestart() {
+        CompiledWorkflowDefinition definition = dynamicForkDefinition();
+        AtomicInteger calls = new AtomicInteger();
+        WorkflowActionGateway action = (runId, node, state) -> {
+            calls.incrementAndGet();
+            return new WorkflowStateDelta(
+                    node.id().value().equals("left") ? Map.of("left", "L") : Map.of("right", "R"));
+        };
+        WorkflowRunSnapshot crashed;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            assertThatThrownBy(() -> runtime(
+                                    first,
+                                    definition,
+                                    action,
+                                    NO_AGENT,
+                                    (condition, state) -> true,
+                                    once(WorkflowFailurePoint.AFTER_NODE_RESULT_STORED),
+                                    "dynamic-first",
+                                    BINDING)
+                            .start(start(definition, Map.of(), "dynamic-start")))
+                    .isInstanceOf(SimulatedCrash.class);
+            crashed = first.workflows().recoverable().getFirst().snapshot();
+        }
+        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+            WorkflowRunSnapshot result = runtime(
+                            second,
+                            definition,
+                            action,
+                            NO_AGENT,
+                            (condition, state) -> {
+                                throw new AssertionError("persisted selection must not be evaluated again");
+                            },
+                            WorkflowFailureInjector.NONE,
+                            "dynamic-second",
+                            BINDING)
+                    .recover(crashed.id());
+            assertThat(result.status()).isEqualTo(WorkflowStatus.COMPLETED);
+            assertThat(result.state().values()).containsEntry("left", "L").containsEntry("right", "R");
+            assertThat(calls).hasValue(2);
+        }
+    }
+
+    @Test
+    void persistsAnyOfWinnerSelectionAndDoesNotReplayKnownFailureAfterRestart() {
+        CompiledWorkflowDefinition definition = anyOfDefinition();
+        AtomicInteger firstCalls = new AtomicInteger();
+        AtomicInteger secondCalls = new AtomicInteger();
+        AtomicInteger thirdCalls = new AtomicInteger();
+        WorkflowActionGateway action = (runId, node, state) -> {
+            if (node.id().value().equals("first")) {
+                firstCalls.incrementAndGet();
+                throw new WorkflowException(WorkflowErrorCode.NODE_EXECUTION_FAILED, "fixture", "known failure");
+            }
+            if (node.id().value().equals("second")) {
+                secondCalls.incrementAndGet();
+                return new WorkflowStateDelta(Map.of("choice", "second"));
+            }
+            thirdCalls.incrementAndGet();
+            return new WorkflowStateDelta(Map.of("choice", "third"));
+        };
+        WorkflowRunSnapshot crashed;
+        try (SqliteStoreFoundation first = SqliteTestSupport.foundation(directory)) {
+            assertThatThrownBy(() -> runtime(
+                                    first,
+                                    definition,
+                                    action,
+                                    once(WorkflowFailurePoint.AFTER_NODE_RESULT_STORED),
+                                    "any-first")
+                            .start(start(definition, Map.of(), "any-start")))
+                    .isInstanceOf(SimulatedCrash.class);
+            crashed = first.workflows().recoverable().getFirst().snapshot();
+        }
+        try (SqliteStoreFoundation second = SqliteTestSupport.foundation(directory)) {
+            DurableWorkflowRuntime recoveredRuntime =
+                    runtime(second, definition, action, WorkflowFailureInjector.NONE, "any-second");
+            WorkflowRunSnapshot result = recoveredRuntime.recover(crashed.id());
+            assertThat(result.status()).isEqualTo(WorkflowStatus.COMPLETED);
+            assertThat(result.state().values()).containsEntry("choice", "second");
+            assertThat(firstCalls).hasValue(1);
+            assertThat(secondCalls).hasValue(1);
+            assertThat(thirdCalls).hasValue(0);
+            assertThat(recoveredRuntime.events(result.id(), 0, 100))
+                    .extracting(event -> event.type())
+                    .contains(WorkflowEventType.ANY_OF_WINNER_SELECTED, WorkflowEventType.ANY_OF_LOSER_CANCELLED);
         }
     }
 
@@ -705,6 +794,7 @@ class SqliteWorkflowRecoveryTest {
             CompiledWorkflowDefinition definition,
             WorkflowActionGateway actions,
             WorkflowAgentGateway agents,
+            WorkflowConditionEvaluator conditions,
             WorkflowFailureInjector failures,
             String idPrefix,
             WorkflowPersistenceBinding binding) {
@@ -714,13 +804,25 @@ class SqliteWorkflowRecoveryTest {
                 List.of(definition),
                 actions,
                 agents,
-                (condition, state) -> false,
+                conditions,
                 ids,
                 TIME,
                 foundation.workflows(),
                 foundation.unitOfWork(),
                 binding,
                 failures);
+    }
+
+    private DurableWorkflowRuntime runtime(
+            SqliteStoreFoundation foundation,
+            CompiledWorkflowDefinition definition,
+            WorkflowActionGateway actions,
+            WorkflowAgentGateway agents,
+            WorkflowFailureInjector failures,
+            String idPrefix,
+            WorkflowPersistenceBinding binding) {
+        return runtime(
+                foundation, definition, actions, agents, (condition, state) -> false, failures, idPrefix, binding);
     }
 
     private static DurableWorkflowAgentGateway agentGateway(SqliteStoreFoundation foundation, boolean recoverable) {
@@ -814,6 +916,47 @@ class SqliteWorkflowRecoveryTest {
                         WorkflowEdge.unconditional("left", "join"),
                         WorkflowEdge.unconditional("join", "end")),
                 Set.of(WorkflowCapability.FIXED_ALL_OF));
+    }
+
+    private static CompiledWorkflowDefinition dynamicForkDefinition() {
+        return compile(
+                "durable-dynamic-fork",
+                "fork",
+                List.of(
+                        WorkflowNodeDefinition.control("fork", WorkflowNodeType.FORK_DYNAMIC),
+                        WorkflowNodeDefinition.action("right", "right"),
+                        WorkflowNodeDefinition.action("left", "left"),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ALL),
+                        terminal()),
+                List.of(
+                        WorkflowEdge.dynamicBranch("fork", "right", "right-selected", 2),
+                        WorkflowEdge.dynamicBranch("fork", "left", "left-selected", 1),
+                        WorkflowEdge.unconditional("right", "join"),
+                        WorkflowEdge.unconditional("left", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                Set.of(WorkflowCapability.DYNAMIC_FAN_OUT));
+    }
+
+    private static CompiledWorkflowDefinition anyOfDefinition() {
+        return compile(
+                "durable-any-of",
+                "fork",
+                List.of(
+                        WorkflowNodeDefinition.control("fork", WorkflowNodeType.FORK_ANY),
+                        WorkflowNodeDefinition.action("first", "first"),
+                        WorkflowNodeDefinition.action("second", "second"),
+                        WorkflowNodeDefinition.action("third", "third"),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ANY),
+                        terminal()),
+                List.of(
+                        WorkflowEdge.branch("fork", "third", 2),
+                        WorkflowEdge.branch("fork", "second", 1),
+                        WorkflowEdge.branch("fork", "first", 0),
+                        WorkflowEdge.unconditional("first", "join"),
+                        WorkflowEdge.unconditional("second", "join"),
+                        WorkflowEdge.unconditional("third", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                Set.of(WorkflowCapability.ANY_OF));
     }
 
     private static CompiledWorkflowDefinition subgraphDefinition(boolean waiting) {

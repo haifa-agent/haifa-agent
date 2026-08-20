@@ -168,7 +168,8 @@ Checkpoint payload 自身的完整性 hash。Migration 仍按 checksum 严格校
 V3 提供 Policy/Approval/Trust 权威表。V4 提供稳定 Event Journal range/head/earliest、Interaction
 revision/state 和 durable Run Input；旧库通过连续 Migration 升级，重复启动只校验 name/checksum。
 V5～V7 分别提供 SDK Conversation、Memory 与 Artifact；V8 提供 Workflow 单机持久恢复，V9 提供受限
-子图父子 Run 关系。
+子图父子 Run 关系。M6 中立动态 fan-out/固定 `ANY_OF` 复用现有 Workflow continuation BLOB；新增可选
+fork mode，旧 payload 缺失时仍按 `ALL_OF` 解码，不新增数据库 Migration。
 
 ## Port—表—Codec 对照
 

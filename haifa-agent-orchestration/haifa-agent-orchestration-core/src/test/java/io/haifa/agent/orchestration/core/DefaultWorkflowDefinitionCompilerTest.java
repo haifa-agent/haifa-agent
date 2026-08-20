@@ -57,19 +57,33 @@ class DefaultWorkflowDefinitionCompilerTest {
     }
 
     @Test
-    void rejectsEveryDeferredCapabilityFailClosed() {
-        for (WorkflowCapability capability : List.of(WorkflowCapability.DYNAMIC_FAN_OUT, WorkflowCapability.ANY_OF)) {
-            WorkflowDefinition definition = definition(
-                    List.of(
-                            WorkflowNodeDefinition.action("a", "action:a"),
-                            WorkflowNodeDefinition.control("end", WorkflowNodeType.TERMINAL)),
-                    List.of(WorkflowEdge.unconditional("a", "end")),
-                    Set.of(capability));
+    void rejectsCapabilityDeclarationsWithoutTheirRequiredBoundedShape() {
+        WorkflowDefinition definition = definition(
+                List.of(
+                        WorkflowNodeDefinition.action("a", "action:a"),
+                        WorkflowNodeDefinition.control("end", WorkflowNodeType.TERMINAL)),
+                List.of(WorkflowEdge.unconditional("a", "end")),
+                Set.of(WorkflowCapability.DYNAMIC_FAN_OUT));
 
-            assertThatThrownBy(() -> compiler.compile(definition))
-                    .isInstanceOfSatisfying(WorkflowException.class, exception -> assertThat(exception.code())
-                            .isEqualTo(WorkflowErrorCode.UNSUPPORTED_CAPABILITY));
-        }
+        assertThat(compiler.compile(definition).capabilities()).containsExactly(WorkflowCapability.DYNAMIC_FAN_OUT);
+
+        WorkflowDefinition unsafeAny = definition(
+                List.of(
+                        WorkflowNodeDefinition.control("a", WorkflowNodeType.FORK_ANY),
+                        WorkflowNodeDefinition.agentRun("left", "agent:left"),
+                        WorkflowNodeDefinition.action("right", "action:right"),
+                        WorkflowNodeDefinition.control("join", WorkflowNodeType.JOIN_ANY),
+                        WorkflowNodeDefinition.control("end", WorkflowNodeType.TERMINAL)),
+                List.of(
+                        WorkflowEdge.branch("a", "left", 0),
+                        WorkflowEdge.branch("a", "right", 1),
+                        WorkflowEdge.unconditional("left", "join"),
+                        WorkflowEdge.unconditional("right", "join"),
+                        WorkflowEdge.unconditional("join", "end")),
+                Set.of(WorkflowCapability.ANY_OF));
+        assertThatThrownBy(() -> compiler.compile(unsafeAny))
+                .isInstanceOf(WorkflowException.class)
+                .hasMessageContaining("cancel-safe ACTION");
     }
 
     @Test
