@@ -49,6 +49,11 @@ final class DeepSeekOpenAiChatDialect implements OpenAiCompatibleDialect {
         if ("enabled".equals(thinking)) body.put("reasoning_effort", frozen(request, "reasoning_effort", "high"));
     }
 
+    @Override
+    public String structuredOutputInstructionRole() {
+        return "system";
+    }
+
     private static void validateOptions(Map<String, Object> options) {
         Object thinking = options.get("thinking");
         if (thinking != null && !"disabled".equals(thinking) && !"enabled".equals(thinking)) {

@@ -163,7 +163,7 @@ class OpenAiResponsesModelTest {
 
         var actual = model().invoke(request);
 
-        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2L));
         JsonNode format = json.readTree(requestBody.get()).path("text").path("format");
         assertThat(format.path("type").asText()).isEqualTo("json_schema");
         assertThat(format.path("name").asText()).isEqualTo("TripPlan");

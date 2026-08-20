@@ -18,6 +18,10 @@ public interface OpenAiCompatibleDialect {
 
     void applyRequest(AgentChatRequest request, Map<String, Object> body);
 
+    default String structuredOutputInstructionRole() {
+        return "developer";
+    }
+
     default boolean acceptsResponseObject(String object, boolean streaming) {
         return true;
     }

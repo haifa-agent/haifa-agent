@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.reference.AssetRef;
 import io.haifa.agent.mcp.config.McpProtocolProfile;
+import io.haifa.agent.mcp.config.McpToolImportPolicy;
 import io.haifa.agent.mcp.config.StdioDefinition;
 import io.haifa.agent.mcp.config.StreamableHttpDefinition;
 import io.haifa.agent.mcp.protocol.McpRemoteContent;
@@ -75,6 +76,47 @@ class McpConfigurationAndMappingTest {
                 .isPresent();
         assertThat(candidate.definition().orElseThrow().outputSchema().document())
                 .containsEntry("additionalProperties", true);
+    }
+
+    @Test
+    void mapsReviewedDottedRemoteNameThroughExplicitTrustedAliasAndDigestsTheMapping() {
+        var endpoint = URI.create("http://127.0.0.1:8091/mcp");
+        var aliases = Map.of("commerce.order.list_my_orders", "commerce_order_list_my_orders");
+        var server = McpTestFixtures.httpServer(endpoint, aliases.keySet(), aliases);
+        var withoutOverride = McpTestFixtures.httpServer(endpoint, Set.of("commerce_order_list_my_orders"));
+        var mapper = new McpToolDefinitionMapper(
+                ignored -> new ToolDefinitionHash("d".repeat(64)), new InMemoryMcpToolBindingStore());
+        var remote = new McpRemoteTool(
+                "commerce.order.list_my_orders",
+                "List my orders",
+                "Lists orders for the trusted caller",
+                Map.of("type", "object"),
+                Map.of("type", "object"),
+                Map.of(),
+                Map.of());
+
+        var candidate = mapper.map(server, McpProtocolProfile.VERSION_2025_11_25, remote);
+
+        assertThat(candidate.enabled()).isTrue();
+        assertThat(candidate.alias().orElseThrow().value()).isEqualTo("commerce_order_list_my_orders");
+        assertThat(server.bindingDigest()).isNotEqualTo(withoutOverride.bindingDigest());
+    }
+
+    @Test
+    void rejectsUnknownMissingInvalidAndDuplicateAliasOverrides() {
+        assertThatThrownBy(() -> policy(Set.of("reviewed"), Map.of("unknown", "safe_unknown")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("outside the allowlist");
+        assertThatThrownBy(() -> policy(Set.of("commerce.order.list_my_orders"), Map.of()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tool alias");
+        assertThatThrownBy(() -> policy(Set.of("first", "second"), Map.of("first", "shared", "second", "shared")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unique");
+    }
+
+    private static McpToolImportPolicy policy(Set<String> allowed, Map<String, String> aliases) {
+        return new McpToolImportPolicy(allowed, Set.of(), "safe", Map.of(), Map.of(), Map.of(), Map.of(), aliases);
     }
 
     @Test

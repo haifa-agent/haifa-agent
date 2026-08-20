@@ -39,6 +39,7 @@ chunks, SDK types, and reasoning text must not cross this module boundary.
 
 `ResolvedModelSnapshot` 当前只接受严格的 `3.0` Schema。本项目尚未发布旧配置或旧快照，因此不提供
 旧构造器、双轨解析或隐式迁移；不完整快照直接失败关闭。
+Snapshot digest 对整数和小数分别做数值规范化，不依赖 JSON 往返后具体的 Java 数字包装类型。
 
 Provider 持有共享 Endpoint、`CredentialRef` 和 `nativeStreaming`。Binding 只持有必填 `style`、缺省为
 `standard` 的可选 dialect，以及可选的完整 Endpoint 覆盖；Model 通过 `style` 精确引用同一 Provider

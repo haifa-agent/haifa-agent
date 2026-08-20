@@ -257,8 +257,18 @@ public record ResolvedModelSnapshot(
     }
 
     private static String canonicalValue(Object value) {
+        if (value instanceof Byte
+                || value instanceof Short
+                || value instanceof Integer
+                || value instanceof Long
+                || value instanceof java.math.BigInteger) {
+            return "integer:" + new java.math.BigInteger(value.toString());
+        }
+        if (value instanceof Float || value instanceof Double || value instanceof java.math.BigDecimal) {
+            java.math.BigDecimal decimal = new java.math.BigDecimal(value.toString()).stripTrailingZeros();
+            return "decimal:" + decimal.toPlainString();
+        }
         if (value instanceof String
-                || value instanceof Number
                 || value instanceof Boolean
                 || value instanceof Enum<?>
                 || value instanceof URI

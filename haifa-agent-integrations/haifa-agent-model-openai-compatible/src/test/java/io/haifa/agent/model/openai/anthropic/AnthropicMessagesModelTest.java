@@ -140,7 +140,7 @@ class AnthropicMessagesModelTest {
                                 "reasoning_effort", "high")),
                 List.of()));
 
-        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2L));
         JsonNode format = json.readTree(requestBody.get()).path("output_config").path("format");
         assertThat(format.path("type").asText()).isEqualTo("json_schema");
         assertThat(format.path("schema").path("additionalProperties").asBoolean())
@@ -185,7 +185,7 @@ class AnthropicMessagesModelTest {
             return ModelStreamControl.CONTINUE;
         });
 
-        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2L));
         assertThat(events).anyMatch(ModelStreamEvent.ContentDelta.class::isInstance);
     }
 
