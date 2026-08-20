@@ -35,6 +35,21 @@ final class McpTestFixtures {
         return httpServer(endpoint, allowedTools, Duration.ofSeconds(3), 1024 * 1024, 16 * 1024);
     }
 
+    static McpServerDefinition httpServer(URI endpoint, Set<String> allowedTools, Map<String, String> aliasOverrides) {
+        var base = httpServer(endpoint, Set.of());
+        return McpServerDefinition.create(
+                base.serverId(),
+                base.displayName(),
+                base.enabled(),
+                base.protocol(),
+                base.transport(),
+                new McpToolImportPolicy(
+                        allowedTools, Set.of(), "utility", Map.of(), Map.of(), Map.of(), Map.of(), aliasOverrides),
+                base.connectionPolicy(),
+                base.discoveryCredentials(),
+                base.bindingVersion());
+    }
+
     static McpServerDefinition httpServer(
             URI endpoint, Set<String> allowedTools, Duration requestTimeout, int maxBodyBytes, int maxHeaderBytes) {
         return McpServerDefinition.create(

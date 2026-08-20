@@ -186,7 +186,7 @@ class OpenAiCompatibleChatModelTest {
 
         var actual = model().invoke(request);
 
-        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2));
+        assertThat(actual.structuredOutput()).contains(Map.of("city", "Shanghai", "days", 2L));
         JsonNode format = json.readTree(requestBody.get()).path("response_format");
         assertThat(format.path("type").asText()).isEqualTo("json_schema");
         assertThat(format.path("json_schema").path("name").asText()).isEqualTo("TripPlan");
@@ -231,7 +231,7 @@ class OpenAiCompatibleChatModelTest {
         assertThat(actual.structuredOutput()).isEmpty();
         JsonNode sent = json.readTree(requestBody.get());
         assertThat(sent.path("response_format").path("type").asText()).isEqualTo("json_object");
-        assertThat(sent.path("messages").get(1).path("role").asText()).isEqualTo("developer");
+        assertThat(sent.path("messages").get(1).path("role").asText()).isEqualTo("system");
         assertThat(sent.path("messages").get(1).path("content").asText()).contains("additionalProperties");
     }
 
@@ -356,7 +356,7 @@ class OpenAiCompatibleChatModelTest {
         });
 
         assertThat(result.content()).isEqualTo("hello");
-        assertThat(result.metadata()).containsEntry("reasoningCharacters", 14);
+        assertThat(result.metadata()).containsEntry("reasoningCharacters", 14L);
         assertThat(result.toString()).doesNotContain("secret thought");
         assertThat(events)
                 .extracting(event -> event.getClass().getSimpleName())

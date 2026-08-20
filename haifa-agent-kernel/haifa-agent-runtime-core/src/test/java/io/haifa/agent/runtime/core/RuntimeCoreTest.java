@@ -187,7 +187,7 @@ class RuntimeCoreTest {
         Fixture fixture = fixture(
                 model(new ToolCallDecision(List.of(first, second)), finalDecision("tools done")),
                 builder -> TestToolPlatform.install(builder, "echo", "1.0.0", "echo.input", false, request -> {
-                    order.add((Integer) request.arguments().values().get("v"));
+                    order.add(((Number) request.arguments().values().get("v")).intValue());
                     return new ToolResult(true, "echoed", request.arguments().values(), List.of(), List.of(), false);
                 }));
 
@@ -1410,7 +1410,7 @@ class RuntimeCoreTest {
                         true,
                         ToolPolicyDecision.REQUIRE_APPROVAL,
                         request -> {
-                            executed.add((Integer) request.arguments().values().get("v"));
+                            executed.add(((Number) request.arguments().values().get("v")).intValue());
                             return new ToolResult(true, "written", Map.of(), List.of(), List.of(), false);
                         }));
 

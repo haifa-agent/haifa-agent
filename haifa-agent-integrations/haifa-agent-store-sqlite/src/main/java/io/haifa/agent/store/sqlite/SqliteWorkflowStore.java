@@ -103,6 +103,7 @@ public final class SqliteWorkflowStore implements WorkflowStore {
     @Override
     public void create(StoredWorkflowRun run, StoredWorkflowCommand startCommand, List<WorkflowEvent> events) {
         write(() -> {
+            unitOfWork.currentSession().flushStatements();
             insertRun(run);
             synchronizeSubgraphRelation(run.snapshot());
             replaceChildren(run);
@@ -119,6 +120,7 @@ public final class SqliteWorkflowStore implements WorkflowStore {
             List<WorkflowEvent> events,
             Optional<StoredWorkflowCommand> command) {
         write(() -> {
+            unitOfWork.currentSession().flushStatements();
             updateRun(expectedStorageVersion, run);
             synchronizeSubgraphRelation(run.snapshot());
             replaceChildren(run);

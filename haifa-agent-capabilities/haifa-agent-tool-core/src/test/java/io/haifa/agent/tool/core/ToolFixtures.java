@@ -34,7 +34,7 @@ final class ToolFixtures {
                                 "type",
                                 "object",
                                 "properties",
-                                Map.of("path", Map.of("type", "string", "minLength", 1)),
+                                Map.of("path", Map.of("type", "string", "minLength", 1L)),
                                 "required",
                                 List.of("path"),
                                 "additionalProperties",

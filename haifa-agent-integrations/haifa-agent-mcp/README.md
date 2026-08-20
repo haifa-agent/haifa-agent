@@ -29,7 +29,7 @@ HTTP 401/403 不会把 SDK request snapshot 或凭据带入对外异常：未配
 
 `McpServerDefinition.create(...)` 生成内容寻址的不可变 server binding。HTTP 使用 `StreamableHttpDefinition`，stdio 使用只包含逻辑 executable、固定 argv、逻辑 cwd 和 env allowlist 的 `StdioDefinition`。应用层按 server 注册 `McpToolProvider`，再用 `McpToolCatalogContribution` 把已审查候选加入现有 `ToolCatalogBuilder`。
 
-远端发现不等于启用。Tool 必须同时通过本地 allowlist/denylist、alias 唯一性、风险元数据和 Schema import diagnostic；不可信 MCP annotations 不能降低本地策略。
+远端发现不等于启用。Tool 必须同时通过本地 allowlist/denylist、alias 唯一性、风险元数据和 Schema import diagnostic；不可信 MCP annotations 不能降低本地策略。`McpToolImportPolicy.aliasOverrides` 可由可信宿主显式冻结 `remote tool name -> ToolAlias` 映射，适用于带点号等协议名称；映射键必须属于 allowlist，所有生效 alias 必须合法且唯一，映射会进入 server binding digest。公共实现不会静默把点号替换成下划线。
 
 ## 测试
 

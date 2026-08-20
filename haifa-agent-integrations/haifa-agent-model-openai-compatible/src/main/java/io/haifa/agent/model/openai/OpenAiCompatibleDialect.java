@@ -26,6 +26,10 @@ public interface OpenAiCompatibleDialect {
         return StreamUsageMode.FINAL_ONLY_STRICT;
     }
 
+    default String structuredOutputInstructionRole() {
+        return "developer";
+    }
+
     default boolean acceptsResponseObject(String object, boolean streaming) {
         return true;
     }
