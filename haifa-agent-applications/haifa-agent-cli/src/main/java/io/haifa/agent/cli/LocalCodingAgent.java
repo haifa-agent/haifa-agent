@@ -422,7 +422,7 @@ final class LocalCodingAgent implements AutoCloseable {
                     new InMemoryQuarantineStore(),
                     identifiers,
                     time);
-            var operations = new LocalFileToolOperations(workspaces, files, mutations, identifiers);
+            var operations = new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             var deliveryGuard =

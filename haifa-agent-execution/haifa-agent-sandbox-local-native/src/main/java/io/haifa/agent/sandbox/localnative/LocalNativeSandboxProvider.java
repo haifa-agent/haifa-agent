@@ -306,7 +306,7 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
-                observer.onStarted();
+                observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(process.pid()));
                 shutdownHook = registerShutdownHook(process);
                 try (var standardInput = process.getOutputStream()) {
                     standardInput.write(execution.input().bytes());

@@ -270,7 +270,8 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution.run", ProjectPermissionRequestOperations.TOOL_NAME -> "1.5.0";
+                    case "execution.run" -> "1.6.0";
+                    case ProjectPermissionRequestOperations.TOOL_NAME -> "1.5.0";
                     case "file.read" -> "1.2.0";
                     case "file.create", "file.write", "file.patch" -> "1.1.0";
                     default -> "1.0.0";
@@ -543,6 +544,12 @@ public final class ProjectToolCatalog {
             properties.put("semanticReasonCode", Map.of("type", "string"));
             properties.put("semanticInterpreterVersion", Map.of("type", "string"));
             properties.put("commandOutcomeCode", Map.of("type", "string"));
+            if (name.equals("execution.run")) {
+                properties.put("runtimeOutcome", Map.of("type", "string", "enum", List.of("OUTCOME_UNKNOWN")));
+                properties.put("reconcileStatus", Map.of("type", "string"));
+                properties.put("reconcileReason", Map.of("type", "string"));
+                properties.put("replayAllowed", Map.of("type", "boolean"));
+            }
             properties.put("output", Map.of("type", "string"));
             properties.put("truncated", Map.of("type", "boolean"));
             properties.put("outputRef", Map.of("type", "string"));

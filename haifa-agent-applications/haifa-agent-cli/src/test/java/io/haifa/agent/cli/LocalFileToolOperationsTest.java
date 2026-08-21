@@ -8,8 +8,10 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
+import io.haifa.agent.project.changeset.FileChangeSet;
 import io.haifa.agent.project.changeset.FileChangeSetId;
 import io.haifa.agent.project.changeset.FileChangeSetStatus;
+import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.domain.ProjectId;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
@@ -33,6 +35,7 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -172,6 +175,45 @@ class LocalFileToolOperationsTest {
                 .contains("do not rename, relocate, or copy");
     }
 
+    @Test
+    void bindsFileMutationToTheToolCallAndReconcilesMatchingContentWithoutAnotherWrite() throws Exception {
+        Files.writeString(root.resolve("tracked.txt"), "before", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+        ToolArguments arguments = arguments(Map.of("path", "tracked.txt", "content", "after"));
+
+        var result = fixture.operations.execute(
+                "file.write",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-reconcile",
+                "tool-call-reconcile",
+                "idempotency-reconcile",
+                "policy-reconcile",
+                arguments);
+        var changeSet = fixture.changeSets
+                .findByOperation(fixture.workspaceId, "idempotency-reconcile")
+                .orElseThrow();
+        var reconciliation = fixture.operations.reconcile(
+                "file.write",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-reconcile",
+                "tool-call-reconcile",
+                "idempotency-reconcile",
+                arguments);
+
+        assertThat(result.successful()).isTrue();
+        assertThat(changeSet.toolCallRef()).isEqualTo("tool-call-reconcile");
+        assertThat(changeSet.runRef()).isEqualTo("run-reconcile");
+        assertThat(changeSet.actor()).isEqualTo(new PrincipalRef("operator", "user"));
+        assertThat(reconciliation.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
+        assertThat(reconciliation.reasonCode()).isEqualTo("FILE_CONTENT_AND_CHANGE_SET_CONFIRMED");
+        assertThat(reconciliation.result()).hasValueSatisfying(reconciled -> assertThat(reconciled.structuredData())
+                .containsEntry("changeSetId", changeSet.id().value())
+                .containsEntry("replayAllowed", false));
+        assertThat(Files.readString(root.resolve("tracked.txt"))).isEqualTo("after");
+    }
+
     private Fixture fixture() {
         Instant now = Instant.parse("2026-08-05T00:00:00Z");
         WorkspaceId workspaceId = new WorkspaceId("workspace-file-read");
@@ -201,16 +243,25 @@ class LocalFileToolOperationsTest {
                         now)
                 .activate(now));
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var operations =
-                new LocalFileToolOperations(workspaces, files, testMutations(workspaces, workspaceId), () -> "id-1");
-        return new Fixture(workspaceId, operations);
+        var changeSets = new InMemoryFileChangeSetStore();
+        var operations = new LocalFileToolOperations(
+                workspaces,
+                files,
+                testMutations(workspaces, workspaceId, changeSets, new ProjectId("project-file-read")),
+                () -> "id-1",
+                changeSets);
+        return new Fixture(workspaceId, operations, changeSets);
     }
 
     private static ToolArguments arguments(Map<String, Object> values) {
         return new ToolArguments("haifa.file.read.input", "1.1.0", values);
     }
 
-    private WorkspaceMutationProvider testMutations(InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId) {
+    private WorkspaceMutationProvider testMutations(
+            InMemoryWorkspaceStore workspaces,
+            WorkspaceId workspaceId,
+            InMemoryFileChangeSetStore changeSets,
+            ProjectId projectId) {
         return new WorkspaceMutationProvider() {
             @Override
             public String providerId() {
@@ -237,6 +288,19 @@ class LocalFileToolOperationsTest {
                     WorkspaceRevision before =
                             workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:test-patch-result");
+                    FileChangeSet changeSet = FileChangeSet.pending(
+                                    new FileChangeSetId("change-set-test"),
+                                    projectId,
+                                    workspaceId,
+                                    request.context().operationId(),
+                                    request.context().runRef(),
+                                    request.context().toolCallRef(),
+                                    before,
+                                    request.context().actor(),
+                                    request.context().securityDecisionRef(),
+                                    Instant.parse("2026-08-05T00:00:00Z"))
+                            .applied(after, java.util.List.of(), true, Instant.parse("2026-08-05T00:00:01Z"));
+                    changeSets.create(changeSet);
                     return new MutationResult(
                             new FileChangeSetId("change-set-test"),
                             FileChangeSetStatus.APPLIED,
@@ -262,5 +326,6 @@ class LocalFileToolOperationsTest {
         };
     }
 
-    private record Fixture(WorkspaceId workspaceId, LocalFileToolOperations operations) {}
+    private record Fixture(
+            WorkspaceId workspaceId, LocalFileToolOperations operations, InMemoryFileChangeSetStore changeSets) {}
 }

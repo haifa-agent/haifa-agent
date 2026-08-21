@@ -31,10 +31,13 @@ import io.haifa.agent.policy.api.PolicyRiskLevel;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.tool.api.ToolCancellation;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
+import io.haifa.agent.tool.api.ToolReconciliation;
+import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -42,6 +45,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
@@ -316,6 +320,72 @@ public final class ProjectExecutionToolOperations {
                         repositoryScopeDigest));
     }
 
+    /** Read-only reconciliation for a previously dispatched local execution. */
+    public ToolReconciliation reconcile(ToolReconciliationRequest invocation, RunWorkspaceAccess access) {
+        Objects.requireNonNull(invocation, "invocation must not be null");
+        Objects.requireNonNull(access, "access must not be null");
+        Map<String, Object> arguments = invocation.arguments().values();
+        String command = requiredText(arguments, "command");
+        String operationFamily = operationFamily(arguments.get("operationFamily"));
+        String workdir = optionalText(arguments, "workdir", ".");
+        String expectedWorkingDirectoryDigest = workingDirectoryDigest(access.workspaceId(), workdir);
+        if (invocation
+                .dispatchEvidence()
+                .filter(evidence -> !evidence.workingDirectoryDigest().equals(expectedWorkingDirectoryDigest))
+                .isPresent()) {
+            return ToolReconciliation.stillUnknown("WORKING_DIRECTORY_EVIDENCE_MISMATCH");
+        }
+        var classification = SystemGitCliCommandClassifier.classify(command);
+        Optional<ExecutionResult> persistedExecution = broker.findByIdempotencyKey(invocation.idempotencyKey());
+        if (persistedExecution.isPresent()
+                && invocation
+                        .dispatchEvidence()
+                        .filter(evidence -> !evidence.executionId()
+                                .equals(persistedExecution.orElseThrow().id().value()))
+                        .isPresent()) {
+            return ToolReconciliation.stillUnknown("EXECUTION_ID_EVIDENCE_MISMATCH");
+        }
+        ToolResult observed = persistedExecution
+                .map(result -> toToolResult(
+                        result,
+                        new MergedTailObserver(
+                                ExecutionOutputObserver.noop(),
+                                ToolInvocationObserver.noop(),
+                                maximumModelOutputBytes,
+                                maximumModelOutputLines,
+                                result.id().value(),
+                                expectedWorkingDirectoryDigest),
+                        outputSanitizer,
+                        command,
+                        operationFamily,
+                        classification,
+                        sandboxProfileRef,
+                        scratchSpace,
+                        repositoryScopeDigest(workdir)))
+                .or(() -> invocation.observedResult())
+                .orElse(null);
+        if (observed == null) return ToolReconciliation.stillUnknown("EXECUTION_RESULT_MISSING");
+        Map<String, Object> data = observed.structuredData();
+        if (invocation
+                .dispatchEvidence()
+                .filter(evidence -> data.get("executionId") instanceof String observedExecutionId
+                        && !evidence.executionId().equals(observedExecutionId))
+                .isPresent()) {
+            return ToolReconciliation.stillUnknown("EXECUTION_ID_EVIDENCE_MISMATCH");
+        }
+        String semanticOutcome = String.valueOf(data.getOrDefault("semanticOutcome", "OUTCOME_UNKNOWN"));
+        if (!semanticOutcome.equals("OUTCOME_UNKNOWN")) {
+            return ToolReconciliation.resolved(
+                    reconciledResult(observed, "PROCESS_TERMINAL_RESULT_CONFIRMED"),
+                    "PROCESS_TERMINAL_RESULT_CONFIRMED");
+        }
+        if (data.get("fileChangeSetId") instanceof String changeSetId && !changeSetId.isBlank()) {
+            return ToolReconciliation.resolved(
+                    reconciledResult(observed, "WORKSPACE_CHANGE_SET_CONFIRMED"), "WORKSPACE_CHANGE_SET_CONFIRMED");
+        }
+        return ToolReconciliation.stillUnknown("LOCAL_SIDE_EFFECT_EVIDENCE_MISSING");
+    }
+
     private static ToolResult withToolCallId(ToolInvocationRequest invocation, ToolResult result) {
         var data = new LinkedHashMap<String, Object>(result.structuredData());
         data.put("toolCallId", invocation.toolCallId().value());
@@ -441,7 +511,14 @@ public final class ProjectExecutionToolOperations {
             SystemGitCliCommandClassifier.Classification commandClassification,
             String repositoryScopeDigest) {
         MergedTailObserver merged = new MergedTailObserver(
-                outputObserver, invocationObserver, maximumModelOutputBytes, maximumModelOutputLines);
+                outputObserver,
+                invocationObserver,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                request.id().value(),
+                workingDirectoryDigest(
+                        request.workspaceId(),
+                        request.workingDirectory().projectPath().toString()));
         AtomicBoolean complete = new AtomicBoolean();
         Thread cancellation = Thread.ofVirtual()
                 .name("haifa-execution-cancellation")
@@ -518,6 +595,9 @@ public final class ProjectExecutionToolOperations {
         data.put("semanticReasonCode", semantic.reasonCode());
         data.put("semanticInterpreterVersion", CommandSemanticOutcomeInterpreter.VERSION);
         data.put("commandOutcomeCode", commandOutcomeCode(semantic.outcome()));
+        if (semantic.outcome() == io.haifa.agent.execution.core.command.CommandSemanticOutcome.OUTCOME_UNKNOWN) {
+            data.put("runtimeOutcome", "OUTCOME_UNKNOWN");
+        }
         data.put("output", output);
         data.put("truncated", truncated);
         data.put("durationMillis", result.resourceUsage().wallTime().toMillis());
@@ -716,6 +796,26 @@ public final class ProjectExecutionToolOperations {
 
     private static String repositoryScopeDigest(String workdir) {
         return PolicyDigest.sha256Fields(List.of("coding-delivery-repository-scope-v1", workdir));
+    }
+
+    private static String workingDirectoryDigest(
+            io.haifa.agent.project.workspace.WorkspaceId workspaceId, String workdir) {
+        return PolicyDigest.sha256Fields(List.of("execution-working-directory-v1", workspaceId.value(), workdir));
+    }
+
+    private static ToolResult reconciledResult(ToolResult observed, String reasonCode) {
+        var data = new LinkedHashMap<String, Object>(observed.structuredData());
+        data.remove("runtimeOutcome");
+        data.put("reconcileStatus", "RESOLVED");
+        data.put("reconcileReason", reasonCode);
+        data.put("replayAllowed", false);
+        return new ToolResult(
+                observed.successful(),
+                "Reconciled without replay: " + observed.summary(),
+                Map.copyOf(data),
+                observed.assets(),
+                observed.artifacts(),
+                observed.truncated());
     }
 
     private static ToolResult rejectedWorkdir(String operationFamily, String stableFailureCode) {
@@ -943,24 +1043,46 @@ public final class ProjectExecutionToolOperations {
         private final AtomicBoolean started = new AtomicBoolean();
         private final io.haifa.agent.execution.api.BoundedOutputBuffer output;
         private final int maximumLines;
+        private final String executionId;
+        private final String workingDirectoryDigest;
         private boolean upstreamTruncated;
 
         private MergedTailObserver(
                 ExecutionOutputObserver delegate,
                 ToolInvocationObserver invocationObserver,
                 int maximumBytes,
-                int maximumLines) {
+                int maximumLines,
+                String executionId,
+                String workingDirectoryDigest) {
             this.delegate = delegate;
             this.invocationObserver = invocationObserver;
             output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximumBytes);
             this.maximumLines = maximumLines;
+            this.executionId = executionId;
+            this.workingDirectoryDigest = workingDirectoryDigest;
         }
 
         @Override
         public void onStarted() {
-            if (started.compareAndSet(false, true)) invocationObserver.dispatched();
+            if (started.compareAndSet(false, true)) {
+                invocationObserver.dispatched(
+                        new ToolDispatchEvidence(executionId, java.util.OptionalLong.empty(), workingDirectoryDigest));
+            }
             try {
                 delegate.onStarted();
+            } catch (RuntimeException ignored) {
+                // CLI rendering errors cannot change the authoritative dispatch boundary.
+            }
+        }
+
+        @Override
+        public void onStarted(io.haifa.agent.execution.api.ExecutionProcessIdentity identity) {
+            if (started.compareAndSet(false, true)) {
+                invocationObserver.dispatched(new ToolDispatchEvidence(
+                        executionId, java.util.OptionalLong.of(identity.processId()), workingDirectoryDigest));
+            }
+            try {
+                delegate.onStarted(identity);
             } catch (RuntimeException ignored) {
                 // CLI rendering errors cannot change the authoritative dispatch boundary.
             }

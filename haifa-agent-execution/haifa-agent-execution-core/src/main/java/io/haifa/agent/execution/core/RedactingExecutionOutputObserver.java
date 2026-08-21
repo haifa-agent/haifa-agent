@@ -42,6 +42,11 @@ final class RedactingExecutionOutputObserver implements ExecutionOutputObserver 
     }
 
     @Override
+    public void onStarted(io.haifa.agent.execution.api.ExecutionProcessIdentity identity) {
+        delegate.onStarted(identity);
+    }
+
+    @Override
     public synchronized void onOutput(ProcessOutputChunk chunk) {
         byte[] previous = pending.get(chunk.channel());
         byte[] combined = new byte[previous.length + chunk.bytes().length];

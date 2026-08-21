@@ -20,7 +20,7 @@ class SqliteMigrationRunnerTest {
     Path directory;
 
     @Test
-    void createsV1OnceAndAllowsRepeatedStartup() throws Exception {
+    void createsAllRuntimeMigrationsOnceAndAllowsRepeatedStartup() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -29,14 +29,14 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(7);
+                    .isEqualTo(8);
             assertThat(queryLong(connection, "SELECT applied_at FROM schema_migration WHERE version = 1"))
                     .isEqualTo(SqliteTestSupport.NOW.toEpochMilli());
         }
     }
 
     @Test
-    void upgradesAnExistingV3DatabaseToV7WithoutReapplyingHistory() throws Exception {
+    void upgradesAnExistingV3DatabaseToV8WithoutReapplyingHistory() throws Exception {
         SqliteConnectionFactory connections = initializedConnections();
         SqliteMigrationRunner runner = new SqliteMigrationRunner(connections, SqliteTestSupport.CLOCK);
 
@@ -46,7 +46,7 @@ class SqliteMigrationRunnerTest {
 
         try (Connection connection = connections.openConnection()) {
             assertThat(queryLong(connection, "SELECT COUNT(*) FROM schema_migration"))
-                    .isEqualTo(7);
+                    .isEqualTo(8);
             assertThat(queryLong(
                             connection,
                             "SELECT COUNT(*) FROM sqlite_master "
@@ -69,6 +69,12 @@ class SqliteMigrationRunnerTest {
                                     + "WHERE type='table' AND name IN "
                                     + "('memory_candidate', 'memory_record', 'memory_audit_event')"))
                     .isEqualTo(3);
+            assertThat(queryLong(
+                            connection,
+                            "SELECT COUNT(*) FROM pragma_table_info('tool_journal') "
+                                    + "WHERE name IN ('dispatch_execution_id', 'dispatch_process_id', "
+                                    + "'dispatch_workdir_digest', 'reconcile_status', 'reconcile_reason')"))
+                    .isEqualTo(5);
         }
     }
 

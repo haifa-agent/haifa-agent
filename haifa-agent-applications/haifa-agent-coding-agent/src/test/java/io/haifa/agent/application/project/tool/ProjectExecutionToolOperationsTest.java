@@ -32,15 +32,19 @@ import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.changeset.FileChangeSetId;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.sandbox.api.SandboxException;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
+import io.haifa.agent.tool.api.ToolReconciliationRequest;
+import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -48,6 +52,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -120,6 +125,61 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
+    void reconcilesTimedOutExecutionFromTheCompletedProcessAndObservedChangeSetWithoutReplaying() {
+        AtomicInteger executions = new AtomicInteger();
+        AtomicReference<ExecutionResult> completed = new AtomicReference<>();
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                executions.incrementAndGet();
+                observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(991));
+                ExecutionResult result = result(request.id(), ExecutionStatus.TIMED_OUT, null);
+                completed.set(result);
+                return result;
+            }
+
+            @Override
+            public Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
+                return Optional.ofNullable(completed.get());
+            }
+        };
+        var operations = operations(broker, 4096, 100);
+        ToolInvocationRequest invocation = invocation(
+                Map.of("command", "generate-file > generated.txt", "operationFamily", "MUTATE"), () -> false);
+        ToolResult observed = operations.execute(invocation, access());
+
+        var reconciled = operations.reconcile(
+                new ToolReconciliationRequest(
+                        invocation.binding(),
+                        invocation.toolCallId(),
+                        invocation.runId(),
+                        invocation.tenant(),
+                        invocation.principal(),
+                        invocation.arguments(),
+                        invocation.idempotencyKey().orElseThrow(),
+                        Optional.of(new ToolDispatchEvidence(
+                                completed.get().id().value(),
+                                OptionalLong.of(991),
+                                PolicyDigest.sha256Fields(
+                                        List.of("execution-working-directory-v1", WORKSPACE_ID.value(), ".")))),
+                        Optional.of(observed)),
+                access());
+
+        assertThat(executions).hasValue(1);
+        assertThat(observed.structuredData()).containsEntry("runtimeOutcome", "OUTCOME_UNKNOWN");
+        assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
+        assertThat(reconciled.reasonCode()).isEqualTo("WORKSPACE_CHANGE_SET_CONFIRMED");
+        assertThat(reconciled.result()).hasValueSatisfying(result -> {
+            assertThat(result.successful()).isFalse();
+            assertThat(result.structuredData())
+                    .containsEntry("status", "TIMED_OUT")
+                    .containsEntry("fileChangeSetId", "changes-1")
+                    .containsEntry("reconcileStatus", "RESOLVED")
+                    .containsEntry("replayAllowed", false);
+        });
+    }
+
+    @Test
     void treatsDocumentedGitNonzeroVariantsAsSuccessfulToolResults() {
         AtomicInteger calls = new AtomicInteger();
         ExecutionBroker broker = new StubBroker() {
@@ -159,7 +219,8 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry("diffHunkCount", 1L)
                 .containsEntry("diffCountsComplete", true)
                 .containsEntry("diffSummary", "observedFiles=1, observedHunks=1, countsComplete=true")
-                .doesNotContainKeys("failureCategory", "stableFailureCode", "failureCode");
+                .doesNotContainKeys(
+                        "failureCategory", "stableFailureCode", "failureCode", "runtimeOutcome", "reconcileStatus");
         assertThat(noMatches.successful()).isTrue();
         assertThat(noMatches.structuredData())
                 .containsEntry("semanticOutcome", "EMPTY_RESULT")

@@ -889,6 +889,11 @@
             <arg column="result_schema_version" javaType="java.lang.String"/>
             <arg column="result_payload" javaType="[B"/>
             <arg column="result_hash" javaType="java.lang.String"/>
+            <arg column="dispatch_execution_id" javaType="java.lang.String"/>
+            <arg column="dispatch_process_id" javaType="java.lang.Long"/>
+            <arg column="dispatch_workdir_digest" javaType="java.lang.String"/>
+            <arg column="reconcile_status" javaType="java.lang.String"/>
+            <arg column="reconcile_reason" javaType="java.lang.String"/>
             <arg column="created_at" javaType="java.time.Instant"
                  typeHandler="io.haifa.agent.store.sqlite.mybatis.InstantEpochMillisTypeHandler"/>
             <arg column="updated_at" javaType="java.time.Instant"
@@ -898,17 +903,21 @@
 
     <select id="findToolJournal" resultMap="toolJournalRow">
         SELECT run_id, idempotency_key, state, tool_idempotency, result_schema_version,
-               result_payload, result_hash, created_at, updated_at
+               result_payload, result_hash, dispatch_execution_id, dispatch_process_id,
+               dispatch_workdir_digest, reconcile_status, reconcile_reason, created_at, updated_at
         FROM tool_journal WHERE run_id = #{runId} AND idempotency_key = #{key}
     </select>
 
     <insert id="insertToolJournal">
         INSERT INTO tool_journal (
             run_id, idempotency_key, state, tool_idempotency, result_schema_version,
-            result_payload, result_hash, created_at, updated_at
+            result_payload, result_hash, dispatch_execution_id, dispatch_process_id,
+            dispatch_workdir_digest, reconcile_status, reconcile_reason, created_at, updated_at
         ) VALUES (
             #{row.runId}, #{row.idempotencyKey}, #{row.state}, #{row.toolIdempotency},
             #{row.resultSchemaVersion}, #{row.resultPayload}, #{row.resultHash},
+            #{row.dispatchExecutionId}, #{row.dispatchProcessId}, #{row.dispatchWorkdirDigest},
+            #{row.reconcileStatus}, #{row.reconcileReason},
             #{row.createdAt}, #{row.updatedAt}
         )
     </insert>
@@ -917,6 +926,10 @@
         UPDATE tool_journal SET state = #{row.state},
             result_schema_version = #{row.resultSchemaVersion},
             result_payload = #{row.resultPayload}, result_hash = #{row.resultHash},
+            dispatch_execution_id = #{row.dispatchExecutionId},
+            dispatch_process_id = #{row.dispatchProcessId},
+            dispatch_workdir_digest = #{row.dispatchWorkdirDigest},
+            reconcile_status = #{row.reconcileStatus}, reconcile_reason = #{row.reconcileReason},
             updated_at = #{row.updatedAt}
         WHERE run_id = #{row.runId} AND idempotency_key = #{row.idempotencyKey}
           AND state = #{expectedState}

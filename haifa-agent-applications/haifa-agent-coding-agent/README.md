@@ -157,6 +157,11 @@ Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻
 普通手工源码更新优先使用 `file.patch` 1.1：它接受 Codex 风格的上下文 Patch，覆盖新增、删除、更新、
 移动和多文件调用；本地实现流式转换大文件并通过同目录临时文件与提交前哈希复核完成原子替换。
 `file.write` 保留给有意整体替换的小文件，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
+文件 Mutation 现在以 Runtime idempotency key 作为 operation ID，并把权威 Tool Call ID 写入 ChangeSet。
+`file.create`/`file.write` 的只读 reconcile 同时核对 terminal ChangeSet、Tool Call 关联和目标内容摘要；任一
+证据缺失或漂移都保持 outcome-unknown。`execution.run` 会在进程启动时记录 execution ID、PID 和工作目录
+摘要；已得到终态进程结果可直接对账，timeout/cancel 只有在观察到本地 ChangeSet 时才收敛为“不重放的
+已知失败”，否则保持 outcome-unknown。
 `execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于

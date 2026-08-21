@@ -2,7 +2,9 @@
 
 `ExecutionOutputObserver.onStarted()` marks the irreversible dispatch boundary. Process-backed providers notify it
 only after the operating-system process has started; validation, policy, manifest, environment, workspace, and
-scratch provisioning failures remain not dispatched.
+scratch provisioning failures remain not dispatched. When a host-local PID is available, the callback includes an
+`ExecutionProcessIdentity`; callers may persist that bounded identity for reconciliation, but it is not a reusable
+process-control authority.
 
 Provider-neutral 的执行契约，定义有界请求、可信调用上下文、幂等执行、取消、结构化结果、输出存储和环境租约端口。
 

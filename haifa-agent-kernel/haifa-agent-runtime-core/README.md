@@ -1,5 +1,17 @@
 # Haifa Agent Runtime Core
 
+## Tool outcome convergence
+
+At the irreversible dispatch boundary, Tool Journal records an optional bounded execution identity, host-local PID,
+and safe working-directory digest. A returned `runtimeOutcome=OUTCOME_UNKNOWN`, an exception after dispatch, or an
+abandoned Tool Call enters the same read-only reconciliation path. Runtime invokes the frozen provider once, persists
+the reconciliation status/reason, and either commits the resolved result through the existing pending-result boundary
+or closes ToolCall and Step with `TOOL_OUTCOME_UNKNOWN`. Unresolved side-effecting calls use
+`SIDE_EFFECTING_REPLAY_FORBIDDEN`; they are never invoked a second time. Recovery appends exactly one correlated Tool
+Result message before the next model request, so ToolCall, Tool Journal, Step, event, and model protocol facts converge.
+The normalized result reaches durable Journal `COMPLETED` before the ToolCall terminal projection; after a crash,
+recovery uses `PENDING_RESULT`/`COMPLETED` facts to idempotently finish ToolCall, Step, and the correlated message.
+
 ## Model-call client events
 
 `FrozenModelInvoker` records each physical model attempt as durable `model.attempt.scheduled` and

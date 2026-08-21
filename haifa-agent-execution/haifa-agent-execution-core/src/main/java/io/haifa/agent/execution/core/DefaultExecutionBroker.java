@@ -175,6 +175,12 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
     }
 
     @Override
+    public Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
+        Objects.requireNonNull(idempotencyKey, "idempotencyKey must not be null");
+        return executions.findByIdempotencyKey(idempotencyKey);
+    }
+
+    @Override
     public io.haifa.agent.execution.api.ManagedProcessSession openManagedSession(
             io.haifa.agent.execution.api.ManagedProcessRequest managedRequest) {
         Objects.requireNonNull(managedRequest, "managedRequest must not be null");

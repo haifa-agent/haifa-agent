@@ -71,6 +71,8 @@ import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
+import io.haifa.agent.tool.api.ToolReconciliation;
 import io.haifa.agent.tool.api.ToolSchema;
 import java.time.Duration;
 import java.time.Instant;
@@ -721,6 +723,123 @@ class RuntimeCoreTest {
                 .anyMatch(message -> message.role() == ModelMessageRole.TOOL
                         && message.providerCorrelationId().orElseThrow().value().equals("provider-uncertain")
                         && message.content().equals("Tool outcome could not be determined"));
+    }
+
+    @Test
+    void reconcilesAnAbandonedLocalToolFromDurableEvidenceWithoutReplayingIt() {
+        AtomicBoolean owned = new AtomicBoolean(true);
+        AtomicInteger invocations = new AtomicInteger();
+        AtomicInteger reconciliations = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> recoveredRequest = new AtomicReference<>();
+        ToolRequest request =
+                toolRequest("reconciled", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        AgentChatModel model = chatRequest -> {
+            if (modelCalls.incrementAndGet() == 1) return response(new ToolCallDecision(List.of(request)));
+            recoveredRequest.set(chatRequest);
+            return response(finalDecision("recovered after reconcile"));
+        };
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        invocation -> {
+                            invocations.incrementAndGet();
+                            invocation
+                                    .observer()
+                                    .dispatched(new ToolDispatchEvidence(
+                                            "execution-reconciled", OptionalLong.of(321), "a".repeat(64)));
+                            throw new AssertionError("simulated executor loss after dispatch");
+                        },
+                        reconciliation -> {
+                            reconciliations.incrementAndGet();
+                            assertThat(reconciliation.dispatchEvidence())
+                                    .contains(new ToolDispatchEvidence(
+                                            "execution-reconciled", OptionalLong.of(321), "a".repeat(64)));
+                            return ToolReconciliation.resolved(
+                                    new ToolResult(
+                                            true,
+                                            "write observed after recovery",
+                                            Map.of("changeSetId", "changes-reconciled"),
+                                            List.of(),
+                                            List.of(),
+                                            false),
+                                    "CHANGE_SET_CONFIRMED");
+                        })
+                .executionOwnership(attempt -> owned.get() || attempt.attemptNumber() > 1));
+        var accepted = fixture.runtime.start(request("reconcile-abandoned-tool"));
+
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        owned.set(false);
+        fixture.runtime.recover(accepted.runId());
+        fixture.scheduler.runAll();
+
+        assertThat(invocations).hasValue(1);
+        assertThat(reconciliations).hasValue(1);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> {
+            assertThat(call.status().name()).isEqualTo("COMPLETED");
+            assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
+                    .contains(ToolJournalState.COMPLETED);
+        });
+        assertThat(recoveredRequest.get().messages())
+                .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                        && message.content().contains("write observed after recovery"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .anySatisfy(event -> assertThat(event.type()).isEqualTo("tool.reconciled"));
+    }
+
+    @Test
+    void stopsAnAbandonedSideEffectingToolWhenReadOnlyReconciliationCannotResolveIt() {
+        AtomicBoolean owned = new AtomicBoolean(true);
+        AtomicInteger invocations = new AtomicInteger();
+        AtomicInteger reconciliations = new AtomicInteger();
+        ToolRequest request = toolRequest(
+                "unresolved-side-effect", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(model(new ToolCallDecision(List.of(request))), builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        invocation -> {
+                            invocations.incrementAndGet();
+                            invocation
+                                    .observer()
+                                    .dispatched(new ToolDispatchEvidence(
+                                            "execution-unresolved", OptionalLong.empty(), "b".repeat(64)));
+                            throw new AssertionError("simulated executor loss after dispatch");
+                        },
+                        reconciliation -> {
+                            reconciliations.incrementAndGet();
+                            return ToolReconciliation.stillUnknown("LOCAL_EVIDENCE_MISSING");
+                        })
+                .executionOwnership(attempt -> owned.get() || attempt.attemptNumber() > 1));
+        var accepted = fixture.runtime.start(request("unresolved-side-effect"));
+
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        owned.set(false);
+        fixture.runtime.recover(accepted.runId());
+        fixture.scheduler.runAll();
+
+        assertThat(invocations).hasValue(1);
+        assertThat(reconciliations).hasValue(1);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
+        });
+        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> {
+            assertThat(call.status().name()).isEqualTo("FAILED");
+            assertThat(call.error().orElseThrow().error().details())
+                    .containsEntry("reconcileStatus", "STILL_UNKNOWN")
+                    .containsEntry("reconcileReason", "LOCAL_EVIDENCE_MISSING")
+                    .containsEntry("stopReason", "SIDE_EFFECTING_REPLAY_FORBIDDEN");
+            assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
+                    .contains(ToolJournalState.OUTCOME_UNKNOWN);
+        });
     }
 
     @Test

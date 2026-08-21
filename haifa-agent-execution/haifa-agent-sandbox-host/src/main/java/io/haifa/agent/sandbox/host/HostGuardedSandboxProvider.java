@@ -275,7 +275,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                 builder.environment().putAll(environment);
                 Process process = builder.start();
                 current = process;
-                observer.onStarted();
+                observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(process.pid()));
                 try (var standardInput = process.getOutputStream()) {
                     standardInput.write(execution.input().bytes());
                 }
@@ -336,7 +336,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         out.truncated(),
                         err.truncated(),
                         treeTerminated,
-                        observedProcesses(process),
+                        safeObservedProcesses(process),
                         true,
                         false);
             } catch (HostSandboxException exception) {
@@ -353,7 +353,7 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
                         false,
                         false,
                         current == null || !current.isAlive(),
-                        current == null ? 0 : observedProcesses(current),
+                        current == null ? 0 : safeObservedProcesses(current),
                         true,
                         false);
             } finally {
@@ -801,23 +801,65 @@ public final class HostGuardedSandboxProvider implements SandboxProvider {
     private static boolean terminateTree(Process process) {
         List<ProcessHandle> descendants =
                 new ArrayList<>(process.toHandle().descendants().toList());
+        if (isWindowsHost()) terminateWindowsTree(process.pid());
         descendants.forEach(ProcessHandle::destroy);
         process.destroy();
         try {
-            if (!process.waitFor(500, TimeUnit.MILLISECONDS)) {
-                descendants.forEach(ProcessHandle::destroyForcibly);
-                process.destroyForcibly();
-                process.waitFor(2, TimeUnit.SECONDS);
+            process.waitFor(500, TimeUnit.MILLISECONDS);
+            descendants.stream()
+                    .filter(HostGuardedSandboxProvider::isProcessAlive)
+                    .forEach(ProcessHandle::destroyForcibly);
+            if (isProcessAlive(process.toHandle())) process.destroyForcibly();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while ((isProcessAlive(process.toHandle())
+                            || descendants.stream().anyMatch(HostGuardedSandboxProvider::isProcessAlive))
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             return false;
         }
-        return !process.isAlive() && descendants.stream().noneMatch(ProcessHandle::isAlive);
+        return !isProcessAlive(process.toHandle())
+                && descendants.stream().noneMatch(HostGuardedSandboxProvider::isProcessAlive);
+    }
+
+    private static boolean isProcessAlive(ProcessHandle handle) {
+        return ProcessHandle.of(handle.pid()).filter(ProcessHandle::isAlive).isPresent();
+    }
+
+    private static void terminateWindowsTree(long processId) {
+        String systemRoot = System.getenv("SystemRoot");
+        String executable = systemRoot == null || systemRoot.isBlank()
+                ? "taskkill"
+                : Path.of(systemRoot, "System32", "taskkill.exe").toString();
+        try {
+            Process taskkill = new ProcessBuilder(executable, "/PID", Long.toString(processId), "/T", "/F")
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start();
+            taskkill.waitFor(3, TimeUnit.SECONDS);
+        } catch (IOException | InterruptedException failure) {
+            if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
+        }
+    }
+
+    private static boolean isWindowsHost() {
+        return System.getProperty("os.name", "")
+                .toLowerCase(java.util.Locale.ROOT)
+                .startsWith("windows");
     }
 
     private static int observedProcesses(Process process) {
         return 1 + Math.toIntExact(process.toHandle().descendants().limit(63).count());
+    }
+
+    private static int safeObservedProcesses(Process process) {
+        try {
+            return observedProcesses(process);
+        } catch (RuntimeException ignored) {
+            return 1;
+        }
     }
 
     private static boolean isLink(Path path) {

@@ -103,7 +103,7 @@ class ProjectApplicationTest {
                 .containsExactly("execution_run", "file_read");
         var execution = disclosed.snapshot().bindings().getFirst();
         var fileRead = disclosed.snapshot().bindings().get(1);
-        assertThat(execution.definition().version().value()).isEqualTo("1.5.0");
+        assertThat(execution.definition().version().value()).isEqualTo("1.6.0");
         assertThat(fileRead.definition().version().value()).isEqualTo("1.2.0");
         @SuppressWarnings("unchecked")
         var properties = (java.util.Map<String, Object>)
@@ -124,6 +124,9 @@ class ProjectApplicationTest {
                 .contains("cli-local-native@1");
         assertThat(execution.definition().sideEffects())
                 .containsExactly(io.haifa.agent.tool.api.ToolSideEffect.PROCESS_EXECUTION);
+        assertThat(execution.definition().effectClass())
+                .isEqualTo(io.haifa.agent.tool.api.ToolEffectClass.SIDE_EFFECTING);
+        assertThat(fileRead.definition().effectClass()).isEqualTo(io.haifa.agent.tool.api.ToolEffectClass.PURE_READ);
         assertThat(execution.definition().provenance()).isEqualTo("haifa-coding-agent");
         assertThat(execution.definition().description())
                 .contains(

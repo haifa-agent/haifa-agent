@@ -11,6 +11,10 @@ Windows PowerShell 包装器对命令不存在、PowerShell 错误和原生命�
 
 Provider 约束 Workspace cwd、允许继承的非 secret 环境名称、超时、有界 stdout/stderr 和进程树。它并发排空输出、关闭 stdin、保留截断尾部，并在 timeout/cancel/close 时终止子进程树。它会诚实拒绝无法保证的只读挂载与网络关闭策略，不承诺 CPU、内存、网络或文件系统挂载强隔离。
 
+进程成功启动后，Provider 通过 `ExecutionProcessIdentity` 报告 host-local PID。超时或取消会分别确认父进程
+与已观察到的后代进程；Windows 使用 `taskkill /T /F` 完成树级终止，再以新 PID 查询复核，不把仅父进程
+退出误报为已收敛。无法确认整棵树消失时仍返回 `UNKNOWN`。
+
 Host Guarded 在 Coding Agent 三端默认的可信本地开发模式中，从装配提供的私有、Workspace/用户目录之外 Scratch Root
 创建 owner-only 会话目录，再解析 `TMPDIR/TMP/TEMP` 与逻辑子目录绑定。创建前校验 symlink、重叠和
 可写性；required Scratch 不满足即 fail closed。同步和 Managed Process 都在进程收敛后清理目录，并

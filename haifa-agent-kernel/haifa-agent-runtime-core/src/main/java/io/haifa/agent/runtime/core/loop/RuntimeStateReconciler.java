@@ -22,6 +22,7 @@ public final class RuntimeStateReconciler {
     private final ToolPipeline tools;
     private final TimeProvider time;
     private final ExecutionOwnershipPort ownership;
+    private final ToolRecoveryCoordinator toolRecovery;
 
     public RuntimeStateReconciler(
             RuntimeStateRepository state,
@@ -29,13 +30,15 @@ public final class RuntimeStateReconciler {
             InteractionPort interactions,
             ToolPipeline tools,
             TimeProvider time,
-            ExecutionOwnershipPort ownership) {
+            ExecutionOwnershipPort ownership,
+            ToolRecoveryCoordinator toolRecovery) {
         this.state = Objects.requireNonNull(state);
         this.attempts = Objects.requireNonNull(attempts);
         this.interactions = Objects.requireNonNull(interactions);
         this.tools = Objects.requireNonNull(tools);
         this.time = Objects.requireNonNull(time);
         this.ownership = Objects.requireNonNull(ownership);
+        this.toolRecovery = Objects.requireNonNull(toolRecovery);
     }
 
     public void reconcile(AgentRun run, AgentRunExecutionAttempt attempt) {
@@ -54,6 +57,7 @@ public final class RuntimeStateReconciler {
         if (interactions.pending(run.id()).isPresent()) {
             throw new IllegalStateException("mandatory interaction must be resolved before execution");
         }
+        toolRecovery.reconcile(run);
         if (state.steps(run.id()).stream().anyMatch(step -> !isTerminal(step.status()))) {
             throw new IllegalStateException("previous runtime step is not durably terminal");
         }

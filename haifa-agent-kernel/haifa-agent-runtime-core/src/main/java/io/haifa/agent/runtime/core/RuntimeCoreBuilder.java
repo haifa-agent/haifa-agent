@@ -714,7 +714,14 @@ public final class RuntimeCoreBuilder {
                 time,
                 trace,
                 promptDiagnostics,
-                new RuntimeStateReconciler(state, attempts, interactions, pipeline, time, configuredOwnership),
+                new RuntimeStateReconciler(
+                        state,
+                        attempts,
+                        interactions,
+                        pipeline,
+                        time,
+                        configuredOwnership,
+                        new io.haifa.agent.runtime.core.loop.ToolRecoveryCoordinator(state, pipeline, ids, time)),
                 middleware,
                 runInputApplier);
         AttemptExecutor attemptExecutor = new AttemptExecutor(

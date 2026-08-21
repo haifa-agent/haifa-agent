@@ -17,10 +17,12 @@ import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.TrustedExecutionContext;
 import io.haifa.agent.execution.core.ExecutionRejectedException;
 import io.haifa.agent.execution.core.manifest.ManifestBudgetException;
+import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.path.WorkspacePath;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolCancellation;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolDispatchState;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
@@ -306,7 +308,9 @@ public final class ExecutionToolProvider implements ToolProvider {
                 configuration.outputObserver(),
                 invocationObserver,
                 configuration.maximumOutputBytes(),
-                configuration.maximumOutputLines());
+                configuration.maximumOutputLines(),
+                request.id().value(),
+                workingDirectoryDigest(request));
         AtomicBoolean complete = new AtomicBoolean();
         Thread watcher = Thread.ofVirtual()
                 .name("haifa-execution-tool-cancellation")
@@ -435,6 +439,13 @@ public final class ExecutionToolProvider implements ToolProvider {
         return List.copyOf(result);
     }
 
+    private static String workingDirectoryDigest(ExecutionRequest request) {
+        return PolicyDigest.sha256Fields(List.of(
+                "execution-working-directory-v1",
+                request.workspaceId().value(),
+                request.workingDirectory().projectPath().toString()));
+    }
+
     private static long number(Object value, long fallback, long minimum, long maximum) {
         if (value == null) return fallback;
         if (!(value instanceof Number number)) throw new IllegalArgumentException("timeoutMillis must be a number");
@@ -461,26 +472,48 @@ public final class ExecutionToolProvider implements ToolProvider {
         private final AtomicBoolean started = new AtomicBoolean();
         private final io.haifa.agent.execution.api.BoundedOutputBuffer output;
         private final int maximumLines;
+        private final String executionId;
+        private final String workingDirectoryDigest;
         private boolean upstreamTruncated;
 
         private MergedTailObserver(
                 ExecutionOutputObserver delegate,
                 ToolInvocationObserver invocationObserver,
                 int maximumBytes,
-                int maximumLines) {
+                int maximumLines,
+                String executionId,
+                String workingDirectoryDigest) {
             this.delegate = delegate;
             this.invocationObserver = invocationObserver;
             output = new io.haifa.agent.execution.api.BoundedOutputBuffer(maximumBytes);
             this.maximumLines = maximumLines;
+            this.executionId = executionId;
+            this.workingDirectoryDigest = workingDirectoryDigest;
         }
 
         @Override
         public void onStarted() {
-            if (started.compareAndSet(false, true)) invocationObserver.dispatched();
+            if (started.compareAndSet(false, true)) {
+                invocationObserver.dispatched(
+                        new ToolDispatchEvidence(executionId, java.util.OptionalLong.empty(), workingDirectoryDigest));
+            }
             try {
                 delegate.onStarted();
             } catch (RuntimeException ignored) {
                 // Rendering failures cannot change the authoritative dispatch boundary.
+            }
+        }
+
+        @Override
+        public void onStarted(io.haifa.agent.execution.api.ExecutionProcessIdentity identity) {
+            if (started.compareAndSet(false, true)) {
+                invocationObserver.dispatched(new ToolDispatchEvidence(
+                        executionId, java.util.OptionalLong.of(identity.processId()), workingDirectoryDigest));
+            }
+            try {
+                delegate.onStarted(identity);
+            } catch (RuntimeException ignored) {
+                // Rendering errors cannot change the authoritative dispatch boundary.
             }
         }
 

@@ -19,6 +19,7 @@ import io.haifa.agent.execution.api.ExecutionResult;
 import io.haifa.agent.execution.api.ExecutionStatus;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
+import io.haifa.agent.policy.api.PolicyDigest;
 import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.WorkspaceId;
 import io.haifa.agent.skill.api.FrozenSkillBinding;
@@ -41,6 +42,7 @@ import io.haifa.agent.tool.api.ToolApprovalRequirement;
 import io.haifa.agent.tool.api.ToolCoordinate;
 import io.haifa.agent.tool.api.ToolDefinition;
 import io.haifa.agent.tool.api.ToolDefinitionHash;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolExecutionMode;
 import io.haifa.agent.tool.api.ToolIdempotency;
 import io.haifa.agent.tool.api.ToolInvocationObserver;
@@ -171,6 +173,65 @@ class TrustedScriptExecutionToolProviderTest {
     }
 
     @Test
+    void publishesExecutionIdentityAndSafeWorkingDirectoryDigestAtDispatch() {
+        AtomicReference<ToolDispatchEvidence> dispatched = new AtomicReference<>();
+        ExecutionBroker broker = new ExecutionBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request) {
+                throw new AssertionError("streaming execution path must be used");
+            }
+
+            @Override
+            public ExecutionResult execute(
+                    ExecutionRequest request, io.haifa.agent.execution.api.ExecutionOutputObserver observer) {
+                observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(811));
+                return success(request.id());
+            }
+
+            @Override
+            public boolean cancel(ExecutionId id) {
+                return false;
+            }
+
+            @Override
+            public Optional<ExecutionResult> find(ExecutionId id) {
+                return Optional.empty();
+            }
+        };
+        ToolInvocationObserver observer = new ToolInvocationObserver() {
+            @Override
+            public void dispatched() {}
+
+            @Override
+            public void dispatched(ToolDispatchEvidence evidence) {
+                dispatched.set(evidence);
+            }
+
+            @Override
+            public void acknowledged() {}
+        };
+        ExecutionToolProvider provider =
+                provider(broker, Set.of("execution.run"), TrustedWorkspacePathValidator.rejectWorkspaceInputs());
+
+        provider.invokeTrustedScript(
+                invocation(binding(), observer),
+                "fixture-runtime",
+                "safe",
+                List.of(),
+                "fixed transform",
+                ".",
+                Duration.ofSeconds(5),
+                Set.of("execution.run"),
+                List.of());
+
+        assertThat(dispatched.get())
+                .isEqualTo(new ToolDispatchEvidence(
+                        "execution-id",
+                        java.util.OptionalLong.of(811),
+                        PolicyDigest.sha256Fields(List.of("execution-working-directory-v1", "workspace", "."))));
+    }
+
+    @Test
     void fixedToolProviderLoadsAndRehashesTheFrozenSkillResource() {
         AtomicReference<ExecutionRequest> captured = new AtomicReference<>();
         ExecutionToolProvider execution = provider(captured, Set.of("execution.run"), (workspaceId, paths) -> {});
@@ -287,6 +348,10 @@ class TrustedScriptExecutionToolProviderTest {
     }
 
     private static ToolInvocationRequest invocation(FrozenToolBinding binding) {
+        return invocation(binding, ToolInvocationObserver.noop());
+    }
+
+    private static ToolInvocationRequest invocation(FrozenToolBinding binding, ToolInvocationObserver observer) {
         return new ToolInvocationRequest(
                 binding,
                 new ToolCallId("call"),
@@ -299,7 +364,7 @@ class TrustedScriptExecutionToolProviderTest {
                 Optional.of("policy-decision"),
                 () -> false,
                 List.of(),
-                ToolInvocationObserver.noop());
+                observer);
     }
 
     private static FrozenToolBinding binding() {

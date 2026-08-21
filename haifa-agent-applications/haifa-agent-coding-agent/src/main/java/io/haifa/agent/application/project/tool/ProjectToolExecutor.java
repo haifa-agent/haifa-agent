@@ -4,6 +4,8 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
+import io.haifa.agent.tool.api.ToolReconciliation;
+import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import java.util.Objects;
 
 /** Adapter installed into the existing Runtime ToolPipeline; it is not a registry or policy engine. */
@@ -69,10 +71,33 @@ public final class ProjectToolExecutor implements ToolProvider {
                     binding.workspaceId(),
                     request.principal(),
                     request.runId().value(),
+                    request.toolCallId().value(),
+                    request.idempotencyKey().orElse(request.toolCallId().value()),
                     policyDecisionRef,
                     request.arguments());
             request.observer().acknowledged();
             return result;
         }
+    }
+
+    @Override
+    public ToolReconciliation reconcile(ToolReconciliationRequest request) {
+        RunWorkspaceAccess binding = access.resolve(request.runId(), request.principal());
+        var requiredCapabilities = request.binding().definition().resources().filesystemCapabilities();
+        if (!binding.capabilities().containsAll(requiredCapabilities)) {
+            throw new SecurityException("run workspace access does not authorize reconciliation");
+        }
+        String toolName = request.binding().definition().name().value();
+        if (toolName.equals("execution.run") && executionOperations != null) {
+            return executionOperations.reconcile(request, binding);
+        }
+        return operations.reconcile(
+                toolName,
+                binding.workspaceId(),
+                request.principal(),
+                request.runId().value(),
+                request.toolCallId().value(),
+                request.idempotencyKey(),
+                request.arguments());
     }
 }
