@@ -555,7 +555,10 @@ class SqliteRuntimeRecoveryTest {
             processB.scheduler().runAll();
 
             assertThat(providerCalls).hasValue(0);
-            assertThat(processB.runtime().find(runId).orElseThrow().status()).isEqualTo(AgentRunStatus.COMPLETED);
+            var recovered = processB.runtime().find(runId).orElseThrow();
+            assertThat(recovered.status())
+                    .as("recovery error: %s", recovered.error())
+                    .isEqualTo(AgentRunStatus.COMPLETED);
             assertThat(processB.ports().state().toolCalls(runId).getFirst().result())
                     .hasValueSatisfying(result -> assertThat(result.summary()).isEqualTo("persisted"));
         }

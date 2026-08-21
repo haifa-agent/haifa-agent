@@ -132,6 +132,8 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     @Override
     public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt) {
+        decisionExecutor.applyPendingToolApproval(run);
+        reconciler.reconcileRecoveryFacts(run, attempt);
         var restored = checkpoints.restoreLatest(run);
         AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
                         value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
@@ -153,7 +155,6 @@ public final class DefaultAgentLoop implements AgentLoop {
                 run.usage().childRuns(),
                 restored.isPresent(),
                 initialBudget);
-        decisionExecutor.applyPendingToolApproval(run);
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         String traceId = ids.nextValue();
         while (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {

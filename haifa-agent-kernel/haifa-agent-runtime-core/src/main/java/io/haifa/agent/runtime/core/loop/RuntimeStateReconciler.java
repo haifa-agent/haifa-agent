@@ -42,6 +42,21 @@ public final class RuntimeStateReconciler {
     }
 
     public void reconcile(AgentRun run, AgentRunExecutionAttempt attempt) {
+        validateExecutionOwnership(run, attempt);
+        toolRecovery.reconcile(run);
+        validateTerminalState(run);
+        long expected = attempt.version();
+        attempt.heartbeat(time.now());
+        attempts.save(attempt, expected);
+    }
+
+    /** Resolves already-dispatched durable Tool facts before capability checkpoint drift validation. */
+    public void reconcileRecoveryFacts(AgentRun run, AgentRunExecutionAttempt attempt) {
+        validateExecutionOwnership(run, attempt);
+        toolRecovery.reconcile(run);
+    }
+
+    private void validateExecutionOwnership(AgentRun run, AgentRunExecutionAttempt attempt) {
         if (run.status() != AgentRunStatus.RUNNING && run.status() != AgentRunStatus.SUSPENDING) {
             throw new IllegalStateException("run is not executable from " + run.status());
         }
@@ -57,7 +72,9 @@ public final class RuntimeStateReconciler {
         if (interactions.pending(run.id()).isPresent()) {
             throw new IllegalStateException("mandatory interaction must be resolved before execution");
         }
-        toolRecovery.reconcile(run);
+    }
+
+    private void validateTerminalState(AgentRun run) {
         if (state.steps(run.id()).stream().anyMatch(step -> !isTerminal(step.status()))) {
             throw new IllegalStateException("previous runtime step is not durably terminal");
         }
@@ -67,9 +84,6 @@ public final class RuntimeStateReconciler {
         if (tools.hasUncertainExecution(run)) {
             throw new IllegalStateException("tool execution journal requires controlled reconciliation");
         }
-        long expected = attempt.version();
-        attempt.heartbeat(time.now());
-        attempts.save(attempt, expected);
     }
 
     private static boolean isTerminal(AgentStepStatus status) {
