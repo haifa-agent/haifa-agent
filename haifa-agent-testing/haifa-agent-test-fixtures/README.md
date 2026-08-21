@@ -28,3 +28,6 @@
 - `fixtures/coding-runtime-reliability/replay-v1.json`：从聚合失败形态提炼的十二个合成 Replay Contract，
   覆盖复合 Shell、Git/GH 风险、退出码、Workspace 恢复、Model/Context、复数 ChangeSet 和 Push
   outcome unknown；不包含真实 Prompt、命令输出、Provider 响应、凭据、仓库数据或主机路径。
+- `fixtures/coding-evaluation-reliability/`：首轮 30 题 Coding 评测的脱敏聚合基线，以及模型分类、
+  Physical Attempt、Tool Outcome 和 Completion Evidence 的合成契约 Case；只保存摘要和最小观察，
+  原始 SQLite、JSONL、Prompt 和 Provider 响应继续留在独立私有归档。

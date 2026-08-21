@@ -278,6 +278,108 @@ class AnalyzeCodingRuntimeTest(unittest.TestCase):
         self.assertNotRegex(serialized, r"[a-z]:\\")
         self.assertNotRegex(serialized, r"/(users|home)/")
 
+    def test_evaluation_baseline_freezes_required_metrics_without_raw_evidence(self):
+        fixture = (
+            Path(__file__).resolve().parent.parent
+            / "haifa-agent-testing"
+            / "haifa-agent-test-fixtures"
+            / "src"
+            / "main"
+            / "resources"
+            / "fixtures"
+            / "coding-evaluation-reliability"
+            / "baseline-v1.json"
+        )
+        value = json.loads(fixture.read_text(encoding="utf-8"))
+
+        self.assertEqual(value["schemaVersion"], "1.0.0")
+        self.assertEqual(value["dataset"]["taskCount"], 30)
+        self.assertEqual(
+            set(value["metrics"]),
+            {
+                "verifierResult",
+                "cleanCompletion",
+                "firstEffectiveWrite",
+                "modelAttempts",
+                "toolOutcomeUnknown",
+                "completionRepair",
+                "modelResponseInvalid",
+            },
+        )
+        self.assertEqual(value["metrics"]["verifierResult"]["passed"], 10)
+        self.assertEqual(value["metrics"]["cleanCompletion"]["clean"], 13)
+        self.assertEqual(value["metrics"]["modelAttempts"]["totalPersistedModelCalls"], 324)
+        self.assertEqual(value["metrics"]["toolOutcomeUnknown"]["terminalRuns"], 5)
+        self.assertEqual(value["metrics"]["completionRepair"]["exhaustedTerminalRuns"], 2)
+        self.assertEqual(value["metrics"]["firstEffectiveWrite"]["status"], "INFERRED")
+        for digest in (
+            value["dataset"]["digest"],
+            value["artifacts"]["agentArtifactSha256"],
+            value["artifacts"]["primaryResultSha256"],
+            value["artifacts"]["archiveManifestSha256"],
+        ):
+            self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+        serialized = json.dumps(value).lower()
+        for forbidden in (
+            "api_key",
+            "authorization:",
+            "bearer ",
+            "reasoning_content",
+            "provider response contains",
+            "technicaldetailref",
+        ):
+            self.assertNotIn(forbidden, serialized)
+        self.assertNotRegex(serialized, r"[a-z]:\\")
+        self.assertNotRegex(serialized, r"/(users|home)/")
+
+    def test_evaluation_contract_fixture_covers_reliability_boundaries(self):
+        fixture = (
+            Path(__file__).resolve().parent.parent
+            / "haifa-agent-testing"
+            / "haifa-agent-test-fixtures"
+            / "src"
+            / "main"
+            / "resources"
+            / "fixtures"
+            / "coding-evaluation-reliability"
+            / "contracts-v1.json"
+        )
+        value = json.loads(fixture.read_text(encoding="utf-8"))
+
+        self.assertEqual(value["source"], "SYNTHETIC")
+        self.assertEqual(
+            set(value),
+            {
+                "schemaVersion",
+                "kind",
+                "source",
+                "modelCases",
+                "attemptCases",
+                "toolOutcomeCases",
+                "completionEvidenceCases",
+            },
+        )
+        model_case_ids = {case["caseId"] for case in value["modelCases"]}
+        self.assertIn("empty-response-then-success", model_case_ids)
+        self.assertIn("valid-tool-call-without-text", model_case_ids)
+        self.assertEqual(
+            {case["expected"]["terminal"] for case in value["toolOutcomeCases"]},
+            {"SUCCEEDED", "FAILED", "REJECTED", "CANCELLED", "OUTCOME_UNKNOWN"},
+        )
+        self.assertTrue(
+            any(
+                case["expected"].get("modelDiffCommandRequired") is False
+                for case in value["completionEvidenceCases"]
+            )
+        )
+
+        serialized = json.dumps(value).lower()
+        for forbidden in ("api_key", "authorization:", "bearer ", "reasoning_content", "sk-"):
+            self.assertNotIn(forbidden, serialized)
+        self.assertNotRegex(serialized, r"[a-z]:\\")
+        self.assertNotRegex(serialized, r"/(users|home)/")
+
 
 if __name__ == "__main__":
     unittest.main()
