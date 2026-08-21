@@ -600,6 +600,12 @@ CLI 使用 Execution Core 公共增量 Observer，不再在产品内维护扫描
 `WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 且不标记 DISPATCHED；只有 OS 进程创建成功后才进入 DISPATCHED。
 进程启动后的增量对账失败仍按结果不确定失败关闭。
 
+Runtime 会在冻结 Tool Definition 首次出现 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时、实际 dispatch 前创建
+`WORKSPACE_SNAPSHOT` 类型的 Runtime checkpoint。当前本地 CLI 未注册持久
+`WorkspaceCheckpointParticipant`，因此该 checkpoint 用于恢复 Run/Tool/ChangeSet 引用和 current-state
+reconcile，不提供文件副本或自动回滚；CLI 不会在恢复时执行 Git reset/checkout 或覆盖用户文件。托管
+Coding Host 若要声明可恢复文件，必须另行装配隔离 Workspace、持久 Snapshot Store 与 Participant。
+
 当前已包含 tui4j Terminal、顶层 `resume` 五种形式、最近 100 条安全可见历史、真实 `/resume` 搜索、
 Session 重命名/归档/逻辑删除、线性历史
 `/compact`、根 `AGENTS.md` 冻结与 `/reload`、受治理的 `!`/`!!`、安全 `/export`、Steer、持久

@@ -252,4 +252,4 @@ Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版�
 `ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝。dispatch 前的确定性
 拒绝直接保存失败 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 
-Workspace Checkpoint Adapter 将 Project Snapshot 作为通用 Runtime Capability Checkpoint Participant 接入，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。
+Workspace Checkpoint Adapter 可由受信 Host 注册为通用 Runtime Capability Checkpoint Participant，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift；类型存在不等于所有 Host 已完成装配。DIRECT Host 只做 current-state reconcile，永不自动覆盖文件；无人值守 Host 必须使用隔离 Workspace 与可恢复 Snapshot，否则不能声明具备自动恢复等级。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。

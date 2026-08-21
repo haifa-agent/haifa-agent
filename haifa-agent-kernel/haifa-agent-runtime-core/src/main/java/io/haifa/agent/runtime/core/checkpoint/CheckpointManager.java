@@ -144,11 +144,18 @@ public final class CheckpointManager {
                     run.id(),
                     "checkpoint.available",
                     java.util.Map.of(
-                            "reference", snapshot.checkpoint().id().value(),
-                            "kind", "checkpoint",
-                            "title", "Checkpoint " + sequence,
-                            "status", "AVAILABLE",
-                            "action", "resume"),
+                            "reference",
+                            snapshot.checkpoint().id().value(),
+                            "kind",
+                            "checkpoint",
+                            "title",
+                            "Checkpoint " + sequence,
+                            "status",
+                            "AVAILABLE",
+                            "action",
+                            "resume",
+                            "checkpointType",
+                            type.name()),
                     time.now());
         }
         long eventMillis = elapsedMillis(phaseStarted);

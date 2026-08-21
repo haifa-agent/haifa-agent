@@ -102,6 +102,20 @@ public final class RuntimeClientEventProjector {
                                 List.of(),
                                 0,
                                 integer(event.data(), "attempts", 0));
+                    case "loop.progress-observed" ->
+                        delivery(
+                                "progress.observed",
+                                event,
+                                "EXECUTING",
+                                "PROGRESS_OBSERVED",
+                                text(event.data(), "evidence", "AUTHORITATIVE_FACT"),
+                                List.of(),
+                                0,
+                                0);
+                    case "loop.stall-detected" -> stall(event, "stall.detected", "STALL_DETECTED");
+                    case "loop.recovery-strategy-required" ->
+                        stall(event, "recovery.strategy-required", "STRATEGY_CHANGE_REQUIRED");
+                    case "loop.recovery-exhausted" -> stall(event, "recovery.exhausted", "RECOVERY_EXHAUSTED");
                     case "coding.work-phase" ->
                         delivery(
                                 "coding.work-phase",
@@ -157,6 +171,10 @@ public final class RuntimeClientEventProjector {
                         .contains(event.type())
                 || event.type().equals("completion.deferred")
                 || event.type().equals("tool.recovery-strategy-required")
+                || event.type().equals("loop.progress-observed")
+                || event.type().equals("loop.stall-detected")
+                || event.type().equals("loop.recovery-strategy-required")
+                || event.type().equals("loop.recovery-exhausted")
                 || event.type().equals("coding.work-phase")
                 || event.type().equals("loop.budget-snapshot")
                 || event.type().equals("run.created")
@@ -285,6 +303,18 @@ public final class RuntimeClientEventProjector {
                         text(event.data(), "limitingResource", "UNKNOWN"),
                         longValue(event.data(), "limitingUsed", 0),
                         longValue(event.data(), "limitingLimit", 0)));
+    }
+
+    private static Projection stall(RuntimeEvent event, String eventType, String status) {
+        return delivery(
+                eventType,
+                event,
+                "RECOVERING",
+                status,
+                text(event.data(), "reason", "NO_OBSERVABLE_PROGRESS"),
+                List.of(),
+                0,
+                integer(event.data(), "recoveryAttempts", 0));
     }
 
     private static Projection delivery(
