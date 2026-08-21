@@ -63,6 +63,10 @@ class CodingChangeReviewArtifactTest {
                 .containsEntry("oversize", 1);
         assertThat(CodingChangeReviewArtifact.fromStructuredData(artifact.toStructuredData()))
                 .contains(artifact);
+
+        var tampered = new java.util.LinkedHashMap<String, Object>(artifact.toStructuredData());
+        tampered.put("resultWorkspaceDigest", digest('9'));
+        assertThat(CodingChangeReviewArtifact.fromStructuredData(tampered)).isEmpty();
     }
 
     @Test

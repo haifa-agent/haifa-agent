@@ -90,20 +90,8 @@ public final class CodingChangeReviewArtifactFactory {
                 .orElseThrow();
         List<String> orderedIds =
                 resolved.stream().map(value -> value.id().value()).toList();
-        String artifactRef = "sha256:"
-                + digest(canonical(
-                        orderedIds, base, result, summaries, totalFiles, totalFiles > summaries.size(), counts));
-        return Optional.of(new CodingChangeReviewArtifact(
-                CodingChangeReviewArtifact.SCHEMA_VERSION,
-                artifactRef,
-                orderedIds,
-                base,
-                result,
-                summaries,
-                totalFiles,
-                totalFiles > summaries.size(),
-                counts,
-                true));
+        return Optional.of(CodingChangeReviewArtifact.create(
+                orderedIds, base, result, summaries, totalFiles, totalFiles > summaries.size(), counts, true));
     }
 
     private CodingChangeContentKind classify(FileChangeSet changeSet, FileChange change) {
@@ -159,38 +147,6 @@ public final class CodingChangeReviewArtifactFactory {
             counts.put(key, 0);
         }
         return counts;
-    }
-
-    private static String canonical(
-            List<String> changeSetIds,
-            String base,
-            String result,
-            List<CodingChangeReviewArtifact.FileSummary> summaries,
-            int totalFiles,
-            boolean truncated,
-            Map<String, Integer> counts) {
-        StringBuilder value = new StringBuilder(CodingChangeReviewArtifact.SCHEMA_VERSION);
-        append(value, String.join("|", changeSetIds));
-        append(value, base);
-        append(value, result);
-        for (CodingChangeReviewArtifact.FileSummary summary : summaries) {
-            append(value, summary.changeType().name());
-            append(value, summary.path());
-            append(value, summary.destination());
-            append(value, summary.beforeDigest());
-            append(value, summary.afterDigest());
-            append(value, Long.toString(summary.beforeSize()));
-            append(value, Long.toString(summary.afterSize()));
-            append(value, summary.contentKind().name());
-        }
-        append(value, Integer.toString(totalFiles));
-        append(value, Boolean.toString(truncated));
-        counts.forEach((key, count) -> append(value, key + "=" + count));
-        return value.toString();
-    }
-
-    private static void append(StringBuilder value, String field) {
-        value.append('|').append(field.length()).append(':').append(field);
     }
 
     private static String digest(String value) {

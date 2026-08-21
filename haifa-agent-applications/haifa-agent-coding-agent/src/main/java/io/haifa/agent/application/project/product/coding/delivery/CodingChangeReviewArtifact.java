@@ -1,7 +1,11 @@
 package io.haifa.agent.application.project.product.coding.delivery;
 
 import io.haifa.agent.project.changeset.FileChangeType;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +60,49 @@ public record CodingChangeReviewArtifact(
             throw new IllegalArgumentException("change review counts contain unknown keys");
         }
         counts = Map.copyOf(normalized);
+        String expectedRef = contentAddress(
+                changeSetIds,
+                baseWorkspaceDigest,
+                resultWorkspaceDigest,
+                fileSummaries,
+                totalFileCount,
+                summariesTruncated,
+                counts,
+                complete);
+        if (!artifactRef.equals(expectedRef)) {
+            throw new IllegalArgumentException("artifactRef does not match change review content");
+        }
+    }
+
+    public static CodingChangeReviewArtifact create(
+            List<String> changeSetIds,
+            String baseWorkspaceDigest,
+            String resultWorkspaceDigest,
+            List<FileSummary> fileSummaries,
+            int totalFileCount,
+            boolean summariesTruncated,
+            Map<String, Integer> counts,
+            boolean complete) {
+        String artifactRef = contentAddress(
+                changeSetIds,
+                baseWorkspaceDigest,
+                resultWorkspaceDigest,
+                fileSummaries,
+                totalFileCount,
+                summariesTruncated,
+                counts,
+                complete);
+        return new CodingChangeReviewArtifact(
+                SCHEMA_VERSION,
+                artifactRef,
+                changeSetIds,
+                baseWorkspaceDigest,
+                resultWorkspaceDigest,
+                fileSummaries,
+                totalFileCount,
+                summariesTruncated,
+                counts,
+                complete);
     }
 
     public Map<String, Object> toStructuredData() {
@@ -239,5 +286,47 @@ public record CodingChangeReviewArtifact(
             result.put(text, number.intValue());
         });
         return result;
+    }
+
+    private static String contentAddress(
+            List<String> changeSetIds,
+            String baseWorkspaceDigest,
+            String resultWorkspaceDigest,
+            List<FileSummary> fileSummaries,
+            int totalFileCount,
+            boolean summariesTruncated,
+            Map<String, Integer> counts,
+            boolean complete) {
+        StringBuilder value = new StringBuilder(SCHEMA_VERSION);
+        append(value, String.join("|", changeSetIds));
+        append(value, baseWorkspaceDigest);
+        append(value, resultWorkspaceDigest);
+        for (FileSummary summary : fileSummaries) {
+            append(value, summary.changeType().name());
+            append(value, summary.path());
+            append(value, summary.destination());
+            append(value, summary.beforeDigest());
+            append(value, summary.afterDigest());
+            append(value, Long.toString(summary.beforeSize()));
+            append(value, Long.toString(summary.afterSize()));
+            append(value, summary.contentKind().name());
+        }
+        append(value, Integer.toString(totalFileCount));
+        append(value, Boolean.toString(summariesTruncated));
+        COUNT_KEYS.forEach(key -> append(value, key + "=" + counts.get(key)));
+        append(value, Boolean.toString(complete));
+        try {
+            return "sha256:"
+                    + HexFormat.of()
+                            .formatHex(MessageDigest.getInstance("SHA-256")
+                                    .digest(value.toString().getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required", exception);
+        }
+    }
+
+    private static void append(StringBuilder value, String field) {
+        String normalized = Objects.requireNonNull(field, "content-address field must not be null");
+        value.append('|').append(normalized.length()).append(':').append(normalized);
     }
 }

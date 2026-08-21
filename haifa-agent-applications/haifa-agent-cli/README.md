@@ -583,6 +583,12 @@ Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命�
 Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。该环境指令同时说明 `PATH` 中任意非交互 CLI
 均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
 
+CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pytest.ini`、`package.json`、
+`Cargo.toml`、`go.mod`、`.sln`/`.csproj` 生成有界的最终门禁候选，并优先选择仓库 Wrapper。它只识别
+构建入口，不解析自然语言 README、猜测用户意图或建立语言插件注册表。验证结果只有在 pytest、单一
+Surefire 摘要或 Cargo 输出提供无歧义数量时才记录 discovered/selected/ignored；其他 runner、截断输出
+或重复摘要保留 `COUNTS_UNAVAILABLE`，成功退出也不等于完整测试覆盖。
+
 CLI 使用 Execution Core 公共增量 Observer，不再在产品内维护扫描算法，也不再为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。启动后的首次执行建立一次基线，
 后续通过 `WatchService` 收集执行窗口内的候选路径，只重新检查和哈希候选文件；事件溢出、Watcher
 失效或候选状态无法确认时才在授权 Workspace 内执行受限重同步，不能确认则以

@@ -39,7 +39,7 @@ ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
 不会隐式产生 commit、push 或 PR 意图。旧 Checkpoint 不增加 Codec 或 Migration，Resume 直接从权威
 记录重建投影。
 
-`execution.run` 1.5 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+`execution.run` 1.7 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
 TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
 可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
 
@@ -49,11 +49,29 @@ Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/R
 `UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
 
 `CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、ChangeSet 和 Execution 状态
-引用重建工作区修改、Diff、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
-修改或验证通过证据。`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限
-No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
+引用重建工作区修改、确定性 Change Review、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
+修改或验证通过证据。文件 Mutation 与本地进程观察到的 terminal ChangeSet 会生成
+`coding-change-review/1` 内容寻址摘要：只保留 base/result Workspace Digest、文件路径或长路径摘要、
+before/after Digest、大小及 create/replace/delete/move/binary/oversize/opaque 计数，不保存文件正文，
+也不依赖 Git。读取证据时会重新计算 Artifact Ref，并核对 Tool Result 中的 ChangeSet 引用。
+
+`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限 No-change、最后一次修改之后的验证尝试，
+以及覆盖最后一次修改的确定性 Review；新 Run 不要求模型仅为完成协议手工发出 DIFF-family 命令，旧冻结
+Run 的可信 Diff 证据继续兼容。ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
 没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；一旦观察到 Workspace 修改，
-仍必须满足完整的修改、验证和 Diff 证据。需要硬性交付保证的调用方必须提供可信任务模式。
+仍必须满足完整的修改、验证和 Review 证据。需要硬性交付保证的调用方必须提供可信任务模式。
+
+轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本、超时与触发层级，按“用户显式配置 →
+仓库指令/构建配置 → 相邻测试 → 生态默认”在每个触发层级独立选择，不引入语言插件框架。验证阶梯仍由
+Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影响模块和最终门禁。TEST/BUILD Tool Result
+保留每次结构化 Validation Attempt；只有 pytest、单一 Surefire 摘要和 Cargo 的明确摘要会填充测试数量，
+截断、重复或无法可靠解释的输出一律报告 `COUNTS_UNAVAILABLE`，不会从退出码推测，也不会扩展 runner
+专用解析器来制造虚假的完整覆盖。
+
+`CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别投影为
+`EVIDENCE_SATISFIED/NOT_READY` 和 `CLEAN/UNCLEAN/IN_PROGRESS`，并通过幂等的
+`coding.task-outcome` 安全事件记录。它不是 Benchmark Verifier 结果，不增加新的 Core Run 状态；当代码
+证据满足但最终回答修复耗尽时，可以明确报告协议不干净且无需重新执行代码修改。
 
 可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
 交付意图；默认是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。Commit、Push、PR 仍通过唯一的

@@ -646,26 +646,22 @@ class CodingDeliveryControlTest {
     }
 
     private static Map<String, Object> deterministicReview(String changeSetId) {
-        String digest = "sha256:" + "a".repeat(64);
-        return Map.ofEntries(
-                Map.entry("schemaVersion", CodingChangeReviewArtifact.SCHEMA_VERSION),
-                Map.entry("artifactRef", digest),
-                Map.entry("changeSetIds", List.of(changeSetId)),
-                Map.entry("baseWorkspaceDigest", "sha256:" + "b".repeat(64)),
-                Map.entry("resultWorkspaceDigest", "sha256:" + "c".repeat(64)),
-                Map.entry(
-                        "fileSummaries",
-                        List.of(Map.ofEntries(
-                                Map.entry("changeType", "REPLACE"),
-                                Map.entry("path", "src/Main.java"),
-                                Map.entry("destination", ""),
-                                Map.entry("beforeDigest", "sha256:" + "d".repeat(64)),
-                                Map.entry("afterDigest", "sha256:" + "e".repeat(64)),
-                                Map.entry("beforeSize", 10L),
-                                Map.entry("afterSize", 12L),
-                                Map.entry("contentKind", "TEXT")))),
-                Map.entry(
-                        "counts",
+        var summary = new CodingChangeReviewArtifact.FileSummary(
+                io.haifa.agent.project.changeset.FileChangeType.REPLACE,
+                "src/Main.java",
+                "",
+                "sha256:" + "d".repeat(64),
+                "sha256:" + "e".repeat(64),
+                10L,
+                12L,
+                CodingChangeContentKind.TEXT);
+        return CodingChangeReviewArtifact.create(
+                        List.of(changeSetId),
+                        "sha256:" + "b".repeat(64),
+                        "sha256:" + "c".repeat(64),
+                        List.of(summary),
+                        1,
+                        false,
                         Map.of(
                                 "created", 0,
                                 "replaced", 1,
@@ -673,8 +669,9 @@ class CodingDeliveryControlTest {
                                 "moved", 0,
                                 "binary", 0,
                                 "oversize", 0,
-                                "opaque", 0)),
-                Map.entry("complete", true));
+                                "opaque", 0),
+                        true)
+                .toStructuredData();
     }
 
     private static void deliveryEvidence(Fixture fixture, String code) {
