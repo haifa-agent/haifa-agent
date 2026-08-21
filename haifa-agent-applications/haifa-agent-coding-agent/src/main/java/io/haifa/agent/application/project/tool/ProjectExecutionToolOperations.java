@@ -732,6 +732,7 @@ public final class ProjectExecutionToolOperations {
                 changeReviews.create(runRef, List.of(value.value())).ifPresent(review -> {
                     data.put("changeReviewArtifact", review.toStructuredData());
                     data.put("changeReviewArtifactRef", review.artifactRef());
+                    data.put("artifactRef", review.artifactRef());
                 });
             }
         });
@@ -740,7 +741,19 @@ public final class ProjectExecutionToolOperations {
                         command,
                         semantic.successfulToolResult(),
                         verificationProfiles.configurationFor(new AgentRunId(runRef)))
-                .ifPresent(evidence -> data.put("validationEvidence", evidence.toStructuredData()));
+                .ifPresent(evidence -> {
+                    data.put("validationEvidence", evidence.toStructuredData());
+                    if (!"UNMATCHED".equals(evidence.verificationCandidateDigest())) {
+                        data.put(
+                                "validationAttemptRef",
+                                PolicyDigest.sha256Fields(List.of(
+                                        evidence.schemaVersion(),
+                                        evidence.status().name(),
+                                        evidence.verificationProfileDigest(),
+                                        evidence.verificationCandidateDigest(),
+                                        evidence.claimCode())));
+                    }
+                });
         if (!semantic.successfulToolResult()) {
             result.optionalFailure().ifPresent(value -> {
                 data.put("failureCode", value.code());

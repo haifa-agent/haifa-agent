@@ -122,7 +122,9 @@ class LocalFileToolOperationsTest {
                         """)));
 
         assertThat(result.successful()).isTrue();
-        assertThat(result.structuredData()).containsEntry("complete", true).containsKey("changeReviewArtifactRef");
+        assertThat(result.structuredData())
+                .containsEntry("complete", true)
+                .containsKeys("changeReviewArtifactRef", "artifactRef");
         assertThat(result.structuredData().get("changeReviewArtifact"))
                 .isInstanceOfSatisfying(Map.class, review -> assertThat(review)
                         .containsEntry("complete", true)

@@ -541,7 +541,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
                 throw classified == null ? terminal : new AgentExecutionFailureException(classified, terminal);
             }
-            String fingerprint = decision.getClass().getSimpleName() + ":" + decision;
+            String fingerprint = DecisionFingerprint.of(decision);
             progress.record(fingerprint);
             Map<String, Object> stepMetadata = new LinkedHashMap<>(modelTraceAttributes(run, response));
             stepMetadata.put("fingerprint", fingerprint);

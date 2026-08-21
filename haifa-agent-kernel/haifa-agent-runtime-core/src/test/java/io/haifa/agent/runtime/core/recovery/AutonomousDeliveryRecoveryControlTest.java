@@ -208,7 +208,7 @@ class AutonomousDeliveryRecoveryControlTest {
         assertThat(ledger.observe(successfulValidation("validation-2", "TEST", "python -m unittest")))
                 .isFalse();
         assertThat(ledger.observe(successfulValidation("validation-3", "DIFF", "git diff --check")))
-                .isTrue();
+                .isFalse();
         assertThat(ledger.observe(successfulValidation("validation-4", "DIFF", "git diff --check")))
                 .isFalse();
         assertThat(ledger.observe(successfulValidation("validation-5", "TEST", "python acceptance.py")))
@@ -216,10 +216,30 @@ class AutonomousDeliveryRecoveryControlTest {
 
         assertThat(ledger.evidence())
                 .extracting(ProgressEvidence::type)
-                .containsExactly(
-                        ProgressEvidence.Type.VALIDATION_ADVANCE,
-                        ProgressEvidence.Type.VALIDATION_ADVANCE,
-                        ProgressEvidence.Type.VALIDATION_ADVANCE);
+                .containsExactly(ProgressEvidence.Type.VALIDATION_ADVANCE, ProgressEvidence.Type.VALIDATION_ADVANCE);
+    }
+
+    @Test
+    void validationIdentityIsBoundToTheCurrentWorkspaceAndRebuildIsDeterministic() {
+        var first = new ProgressLedger();
+        var rebuilt = new ProgressLedger();
+        ToolCall validation = successfulValidation("validation-1", "TEST", "python -m unittest");
+        ToolCall change = completedChangeSets("patch-1", List.of("change-1"));
+
+        assertThat(first.observe(validation)).isTrue();
+        assertThat(first.observe(successfulValidation("validation-2", "TEST", "python -m unittest")))
+                .isFalse();
+        assertThat(first.observe(change)).isTrue();
+        assertThat(first.observe(successfulValidation("validation-3", "TEST", "python -m unittest")))
+                .isTrue();
+
+        assertThat(rebuilt.observe(validation)).isTrue();
+        assertThat(rebuilt.observe(successfulValidation("validation-2", "TEST", "python -m unittest")))
+                .isFalse();
+        assertThat(rebuilt.observe(change)).isTrue();
+        assertThat(rebuilt.observe(successfulValidation("validation-3", "TEST", "python -m unittest")))
+                .isTrue();
+        assertThat(rebuilt.digest()).isEqualTo(first.digest());
     }
 
     @Test
@@ -444,7 +464,11 @@ class AutonomousDeliveryRecoveryControlTest {
                 new ToolResult(
                         true,
                         "bounded success",
-                        Map.of("fileChangeSetId", "change-1", "operationFamily", "TEST", "status", "SUCCEEDED"),
+                        Map.of(
+                                "fileChangeSetId",
+                                "change-1",
+                                "validationAttemptRef",
+                                FailureFingerprint.digest(List.of("trusted-validation"))),
                         List.of(),
                         List.of(new ArtifactRef("artifact-1", "test-report", "1", "Test report")),
                         false),
@@ -461,7 +485,11 @@ class AutonomousDeliveryRecoveryControlTest {
                 new ToolResult(
                         true,
                         "bounded success",
-                        Map.of("operationFamily", operationFamily, "status", "SUCCEEDED"),
+                        operationFamily.equals("TEST") || operationFamily.equals("BUILD")
+                                ? Map.of(
+                                        "validationAttemptRef",
+                                        FailureFingerprint.digest(List.of(operationFamily, command)))
+                                : Map.of("operationFamily", operationFamily, "status", "SUCCEEDED"),
                         List.of(),
                         List.of(),
                         false),

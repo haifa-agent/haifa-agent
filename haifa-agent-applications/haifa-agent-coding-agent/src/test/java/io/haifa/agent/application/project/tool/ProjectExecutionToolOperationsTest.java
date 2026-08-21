@@ -146,6 +146,7 @@ class ProjectExecutionToolOperationsTest {
                         .containsEntry("scope", "UNKNOWN")
                         .containsEntry("countSource", "COUNTS_UNAVAILABLE")
                         .containsEntry("claimCode", "COMMAND_NOT_IN_FROZEN_PROFILE"));
+        assertThat(result.structuredData()).doesNotContainKey("validationAttemptRef");
         assertThat(result.assets()).extracting(AssetRef::assetId).containsExactly("stdout-asset");
     }
 
@@ -181,6 +182,15 @@ class ProjectExecutionToolOperationsTest {
                         .containsEntry("verificationSource", "USER_EXPLICIT")
                         .containsEntry("claimCode", "TRUSTED_SELECTED_SCOPE")
                         .doesNotContainKeys("discoveredTestCount", "selectedTestCount", "ignoredTestCount"));
+        assertThat(result.structuredData())
+                .containsEntry(
+                        "validationAttemptRef",
+                        io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(
+                                "coding-validation-evidence/2",
+                                "PASSED",
+                                configuration.digest(),
+                                configuration.candidateDigest(candidate),
+                                "TRUSTED_SELECTED_SCOPE")));
     }
 
     @Test
@@ -224,7 +234,7 @@ class ProjectExecutionToolOperationsTest {
                         invocation(Map.of("command", "generate result", "operationFamily", "MUTATE"), () -> false),
                         access());
 
-        assertThat(result.structuredData()).containsKey("changeReviewArtifactRef");
+        assertThat(result.structuredData()).containsKeys("changeReviewArtifactRef", "artifactRef");
         assertThat(result.structuredData().get("changeReviewArtifact")).isInstanceOfSatisfying(Map.class, review -> {
             assertThat(review).containsEntry("complete", true).containsEntry("totalFileCount", 1);
             assertThat(review.get("counts")).isInstanceOfSatisfying(Map.class, counts -> assertThat(counts)

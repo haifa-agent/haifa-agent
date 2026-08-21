@@ -537,6 +537,7 @@ final class LocalFileToolOperations implements ProjectToolOperations {
                     Map<String, Object> data = new LinkedHashMap<>(result.structuredData());
                     data.put("changeReviewArtifact", review.toStructuredData());
                     data.put("changeReviewArtifactRef", review.artifactRef());
+                    data.put("artifactRef", review.artifactRef());
                     return new ToolResult(
                             result.successful(),
                             result.summary(),
