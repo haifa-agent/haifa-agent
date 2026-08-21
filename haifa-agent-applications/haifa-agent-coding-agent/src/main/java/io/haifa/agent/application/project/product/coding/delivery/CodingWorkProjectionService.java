@@ -217,8 +217,7 @@ public final class CodingWorkProjectionService {
                     ? CodingWorkPhase.REVIEW
                     : CodingWorkPhase.ORIENT;
         }
-        if ((snapshot.has(CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW)
-                        || snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION))
+        if (snapshot.has(CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW)
                 && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)
                 && missing.isEmpty()) {
             return CodingWorkPhase.DELIVER;
@@ -253,9 +252,7 @@ public final class CodingWorkProjectionService {
             if (snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
                     && !snapshot.hasAtOrAfter(
                             CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW,
-                            CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
-                    && !snapshot.hasAfter(
-                            CodingDeliveryEvidenceKind.DIFF_INSPECTION, CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
+                            CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
                 missing.add("DETERMINISTIC_CHANGE_REVIEW");
             }
             if (snapshot.latestValidationFailed()
@@ -353,13 +350,16 @@ public final class CodingWorkProjectionService {
     private static String validationReference(
             ToolCall call, String family, String status, String semantic, CodingValidationAttemptEvidence validation) {
         String identity = reference("validation", call.id().value(), family, status, semantic);
-        if (validation == null || validation.selectedTestCount() == null) {
+        if (validation == null) {
             return identity + ":counts=UNKNOWN";
         }
-        return identity + ":status=" + validation.status().name() + ":discovered="
-                + validation.discoveredTestCount() + ":selected="
-                + validation.selectedTestCount() + ":ignored=" + validation.ignoredTestCount() + ":claim="
-                + validation.claimCode();
+        String counts = validation.selectedTestCount() == null
+                ? validation.countSource()
+                : validation.countSource() + "(" + validation.discoveredTestCount() + "/"
+                        + validation.selectedTestCount() + "/" + validation.ignoredTestCount() + ")";
+        return identity + ":status=" + validation.status().name() + ":scope="
+                + validation.scope().name() + ":counts=" + counts + ":source="
+                + validation.verificationSource() + ":claim=" + validation.claimCode();
     }
 
     private static void add(Set<String> values, String value) {

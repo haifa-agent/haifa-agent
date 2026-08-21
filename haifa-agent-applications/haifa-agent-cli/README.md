@@ -585,9 +585,9 @@ Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。该环�
 
 CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pytest.ini`、`package.json`、
 `Cargo.toml`、`go.mod`、`.sln`/`.csproj` 生成有界的最终门禁候选，并优先选择仓库 Wrapper。它只识别
-构建入口，不解析自然语言 README、猜测用户意图或建立语言插件注册表。验证结果只有在 pytest、单一
-Surefire 摘要或 Cargo 输出提供无歧义数量时才记录 discovered/selected/ignored；其他 runner、截断输出
-或重复摘要保留 `COUNTS_UNAVAILABLE`，成功退出也不等于完整测试覆盖。
+构建入口，不解析自然语言 README、猜测用户意图或建立语言插件注册表。候选在 Coding Session 创建时
+冻结到可信 Session metadata；重启后以冻结摘要和精确命令匹配恢复 scope。runner 输出不再用于推断
+discovered/selected/ignored 或完整覆盖，当前统一保留 `COUNTS_UNAVAILABLE`，成功退出也不等于完整测试覆盖。
 
 CLI 使用 Execution Core 公共增量 Observer，不再在产品内维护扫描算法，也不再为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。启动后的首次执行建立一次基线，
 后续通过 `WatchService` 收集执行窗口内的候选路径，只重新检查和哈希候选文件；事件溢出、Watcher

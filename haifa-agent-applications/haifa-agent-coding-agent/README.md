@@ -56,22 +56,23 @@ before/after Digest、大小及 create/replace/delete/move/binary/oversize/opaqu
 也不依赖 Git。读取证据时会重新计算 Artifact Ref，并核对 Tool Result 中的 ChangeSet 引用。
 
 `CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限 No-change、最后一次修改之后的验证尝试，
-以及覆盖最后一次修改的确定性 Review；新 Run 不要求模型仅为完成协议手工发出 DIFF-family 命令，旧冻结
-Run 的可信 Diff 证据继续兼容。ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
+以及覆盖最后一次修改的确定性 Review；`DIFF_INSPECTION` 不再作为修改任务完成门禁的兼容 fallback，
+但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
 没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；一旦观察到 Workspace 修改，
 仍必须满足完整的修改、验证和 Review 证据。需要硬性交付保证的调用方必须提供可信任务模式。
 
 轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本、超时与触发层级，按“用户显式配置 →
 仓库指令/构建配置 → 相邻测试 → 生态默认”在每个触发层级独立选择，不引入语言插件框架。验证阶梯仍由
 Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影响模块和最终门禁。TEST/BUILD Tool Result
-保留每次结构化 Validation Attempt；只有 pytest、单一 Surefire 摘要和 Cargo 的明确摘要会填充测试数量，
-截断、重复或无法可靠解释的输出一律报告 `COUNTS_UNAVAILABLE`，不会从退出码推测，也不会扩展 runner
-专用解析器来制造虚假的完整覆盖。
+保留每次结构化 Validation Attempt；候选在 Coding Session 创建时由可信 Host 冻结到 Session metadata，
+重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，当前
+统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。
 
 `CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别投影为
-`EVIDENCE_SATISFIED/NOT_READY` 和 `CLEAN/UNCLEAN/IN_PROGRESS`，并通过幂等的
-`coding.task-outcome` 安全事件记录。它不是 Benchmark Verifier 结果，不增加新的 Core Run 状态；当代码
-证据满足但最终回答修复耗尽时，可以明确报告协议不干净且无需重新执行代码修改。
+`SATISFIED/INCOMPLETE` 和 `CLEAN/UNCLEAN/IN_PROGRESS`，并通过 `coding-run-outcome/2` 的幂等
+`coding.task-outcome` 安全事件记录。Coding CLI、Coding Web 与受信 Coding Host 可通过
+`CodingSessionClient.findOutcome` 查询权威投影，无需解析 Event map；归档查看器仍可兼容读取历史
+`outcome/1` 与当前 `outcome/2` 文件事件。它不是 Benchmark Verifier 结果，也不增加新的 Core Run 状态。
 
 可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
 交付意图；默认是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。Commit、Push、PR 仍通过唯一的

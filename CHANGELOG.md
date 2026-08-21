@@ -1,8 +1,9 @@
 # Changelog
 
 - Coding Agent 完成门禁改用 terminal ChangeSet、Workspace Digest、内容寻址 Change Review 和结构化
-  Validation Attempt，不再要求模型为协议专门执行 DIFF-family 命令；轻量 Verification Profile 提供
-  有界验证阶梯和可靠测试数量声明，代码证据结果与最终 Run 协议状态通过安全投影分别观察。
+  Validation Attempt；DIFF 命令和诊断事实继续保留，但不再作为修改任务的完成 fallback。轻量
+  Verification Profile 在 Coding Session metadata 冻结有界验证阶梯，runner 输出不参与数量或 scope
+  推断；Coding 客户端可直接查询与最终 Run 协议状态分离的 outcome/2 安全投影。
 - Runtime 为 Tool 增加只读 reconcile 契约和持久化 dispatch 证据；Coding Agent 用 Execution 终态、
   ChangeSet 与文件摘要收敛未知本地命令/写入结果，未知副作用不重放。Host Sandbox 在 Windows 超时或取消时
   终止并复核整棵进程树，恢复会幂等补齐 ToolCall、Journal、Step 与 Tool Result 消息。

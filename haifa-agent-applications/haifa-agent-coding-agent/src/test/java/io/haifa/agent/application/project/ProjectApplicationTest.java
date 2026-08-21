@@ -380,7 +380,7 @@ class ProjectApplicationTest {
                 workspaces,
                 new ProjectConfigurationService(configurationStore),
                 new InMemoryProjectProductSessionStore(),
-                provisioned::add,
+                (session, metadata) -> provisioned.add(session),
                 () -> new TrustedProductCaller(tenant, principal),
                 runtime,
                 () -> "id-" + sequence.incrementAndGet(),

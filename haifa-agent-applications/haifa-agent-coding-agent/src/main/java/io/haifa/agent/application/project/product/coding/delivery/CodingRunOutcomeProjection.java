@@ -7,20 +7,17 @@ import java.util.Objects;
 /** Product projection that deliberately does not introduce another Core Run terminal state. */
 public record CodingRunOutcomeProjection(
         AgentRunId runId,
-        CodingCodeResult codeResult,
+        CodingDeliveryEvidenceStatus deliveryEvidenceStatus,
         CodingRunProtocolStatus protocolStatus,
         List<String> evidenceCodes,
-        List<String> diagnosticCodes,
-        boolean requiresCodeReexecution) {
+        List<String> diagnosticCodes) {
     public CodingRunOutcomeProjection {
         runId = Objects.requireNonNull(runId, "runId must not be null");
-        codeResult = Objects.requireNonNull(codeResult, "codeResult must not be null");
+        deliveryEvidenceStatus =
+                Objects.requireNonNull(deliveryEvidenceStatus, "deliveryEvidenceStatus must not be null");
         protocolStatus = Objects.requireNonNull(protocolStatus, "protocolStatus must not be null");
         evidenceCodes = bounded(evidenceCodes, "evidenceCodes");
         diagnosticCodes = bounded(diagnosticCodes, "diagnosticCodes");
-        if (codeResult == CodingCodeResult.EVIDENCE_SATISFIED && requiresCodeReexecution) {
-            throw new IllegalArgumentException("verified code evidence must not require code reexecution");
-        }
     }
 
     private static List<String> bounded(List<String> values, String field) {

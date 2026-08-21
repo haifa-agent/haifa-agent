@@ -26,6 +26,11 @@ public final class CodingVerificationProfileResolver {
         all.addAll(required(repository, "repository"));
         all.addAll(required(adjacent, "adjacent"));
         all.addAll(required(ecosystemDefaults, "ecosystemDefaults"));
+        return resolve(all);
+    }
+
+    public CodingVerificationProfile resolve(List<CodingVerificationCandidate> candidates) {
+        List<CodingVerificationCandidate> all = new ArrayList<>(required(candidates, "candidates"));
         all = new ArrayList<>(new LinkedHashSet<>(all));
         if (all.size() > CodingVerificationProfile.MAXIMUM_CANDIDATES * 2) {
             throw new IllegalArgumentException("verification candidate input exceeds its bound");

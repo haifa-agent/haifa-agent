@@ -249,11 +249,21 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
 
     public ProjectSessionProvisioner projectSessionProvisioner(Clock clock) {
         Objects.requireNonNull(clock, "clock must not be null");
-        return session -> provisionProjectSession(session, clock);
+        return (session, metadata) -> provisionProjectSession(session, metadata, clock);
     }
 
     public void provisionUserSession(AgentSessionId sessionId, TenantRef tenant, PrincipalRef principal, Clock clock) {
+        provisionUserSession(sessionId, tenant, principal, Map.of(), clock);
+    }
+
+    public void provisionUserSession(
+            AgentSessionId sessionId,
+            TenantRef tenant,
+            PrincipalRef principal,
+            Map<String, Object> metadata,
+            Clock clock) {
         Objects.requireNonNull(clock, "clock must not be null");
+        Map<String, Object> frozenMetadata = Map.copyOf(Objects.requireNonNull(metadata, "metadata must not be null"));
         ports.unitOfWork().execute(() -> {
             if (ports.sessions().find(sessionId).isEmpty()) {
                 ports.sessions()
@@ -264,7 +274,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                                 null,
                                 SessionScope.USER,
                                 java.time.Instant.ofEpochMilli(clock.millis()),
-                                Map.of()));
+                                frozenMetadata));
             }
             return null;
         });
@@ -297,8 +307,9 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
         if (failure != null) throw failure;
     }
 
-    private void provisionProjectSession(ProjectProductSession session, Clock clock) {
+    private void provisionProjectSession(ProjectProductSession session, Map<String, Object> metadata, Clock clock) {
         Objects.requireNonNull(session, "session must not be null");
+        Map<String, Object> frozenMetadata = Map.copyOf(Objects.requireNonNull(metadata, "metadata must not be null"));
         ports.unitOfWork().execute(() -> {
             Optional<AgentSession> existing = ports.sessions().find(session.sessionId());
             if (existing.isPresent()) {
@@ -312,7 +323,7 @@ public final class ProjectPersistenceAssembly implements AutoCloseable {
                                 new ProjectRef(session.projectId().value()),
                                 SessionScope.PROJECT,
                                 java.time.Instant.ofEpochMilli(clock.millis()),
-                                Map.of()));
+                                frozenMetadata));
             }
             return null;
         });

@@ -1,5 +1,6 @@
 package io.haifa.agent.cli;
 
+import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
 import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
@@ -65,7 +66,8 @@ final class CliVerificationProfileDiscovery {
                 Duration.ofMinutes(10),
                 CodingVerificationTrigger.FINAL_GATE,
                 CodingVerificationSource.BUILD_CONFIGURATION,
-                sourceReference));
+                sourceReference,
+                CodingValidationScope.FULL));
     }
 
     private static boolean exists(Path root, String name) {

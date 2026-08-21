@@ -24,6 +24,9 @@ import io.haifa.agent.application.project.product.coding.delivery.CodingTaskMode
 import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionMiddleware;
 import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionService;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
+import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileMiddleware;
+import io.haifa.agent.application.project.product.coding.verification.PersistedCodingVerificationProfileProvider;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectPermissionRequestOperations;
@@ -150,6 +153,8 @@ final class LocalCodingAgent implements AutoCloseable {
     private final Optional<CodingShellService> shell;
     private final Optional<CliExecutionPlatform> executionPlatform;
     private final CodingSessionExportService exporter;
+    private final CodingSessionVerificationConfiguration defaultVerification;
+    private final CodingRunOutcomeProjectionService outcomes;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Set<AgentRunId> startedRuns = ConcurrentHashMap.newKeySet();
 
@@ -170,7 +175,9 @@ final class LocalCodingAgent implements AutoCloseable {
             TrustedProjectResourceCatalog resources,
             Optional<CodingShellService> shell,
             Optional<CliExecutionPlatform> executionPlatform,
-            CodingSessionExportService exporter) {
+            CodingSessionExportService exporter,
+            CodingSessionVerificationConfiguration defaultVerification,
+            CodingRunOutcomeProjectionService outcomes) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
@@ -188,6 +195,8 @@ final class LocalCodingAgent implements AutoCloseable {
         this.shell = shell;
         this.executionPlatform = executionPlatform;
         this.exporter = exporter;
+        this.defaultVerification = Objects.requireNonNull(defaultVerification, "defaultVerification must not be null");
+        this.outcomes = Objects.requireNonNull(outcomes, "outcomes must not be null");
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
@@ -344,6 +353,8 @@ final class LocalCodingAgent implements AutoCloseable {
             WorkspaceId workspaceId = workspaceIdentity.workspaceId();
             var verificationProfile =
                     CliVerificationProfileDiscovery.discover(workspaceRoot, System.getProperty("os.name", ""));
+            var verificationProfiles = new PersistedCodingVerificationProfileProvider(
+                    persistence.ports().runs(), persistence.ports().sessions());
             WorkspaceBindingId bindingId = workspaceIdentity.bindingId();
             WorkspaceLocationRef locationRef = workspaceIdentity.locationRef();
             locations.register(locationRef, workspaceRoot);
@@ -452,7 +463,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceRoot,
                             output,
                             resolvedEnvironment,
-                            deliveryGuard)
+                            deliveryGuard,
+                            verificationProfiles)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
             var permissionRequests = executionPlatform == null
@@ -497,6 +509,10 @@ final class LocalCodingAgent implements AutoCloseable {
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
             var completionPolicy =
                     new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile, deliveryIntents);
+            var outcomeProjection = new CodingRunOutcomeProjectionService(
+                    completionPolicy,
+                    persistence.ports().events(),
+                    persistence.ports().runs());
             var workProjection = new CodingWorkProjectionService(
                     persistence.ports().state(), taskModes, deliveryEvidence, deliveryProfile, time, deliveryIntents);
             var runtimeBuilder = persistence
@@ -520,10 +536,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             persistence.ports().events(),
                             time))
                     .middleware(new CodingRunOutcomeProjectionMiddleware(
-                            new CodingRunOutcomeProjectionService(
-                                    completionPolicy, persistence.ports().events()),
-                            persistence.ports().events(),
-                            time))
+                            outcomeProjection, persistence.ports().events(), time))
+                    .middleware(new CodingVerificationProfileMiddleware(verificationProfiles))
                     .repairRetry(new RepairRetryPolicy(2));
             modelAdapters.forEach((key, adapter) ->
                     runtimeBuilder.registerChatModel(key.adapterType(), key.adapterVersion(), adapter));
@@ -587,8 +601,6 @@ final class LocalCodingAgent implements AutoCloseable {
                             configuration.skills().allowedAliases(),
                             Set.of(),
                             CodingAgentPrompt.current().text()
-                                    + "\n\n"
-                                    + verificationProfile.instructionText()
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + resources.snapshot().instructionBlock(),
@@ -642,7 +654,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     runtime,
                     identifiers,
                     clock,
-                    new CliCodingModelCatalog(configuration));
+                    new CliCodingModelCatalog(configuration),
+                    verificationProfile);
             var sessionHistory = new CodingSessionHistoryService(
                     codingSessions,
                     persistence.ports().state(),
@@ -684,7 +697,9 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceRoot,
                             codingSessions,
                             persistence.ports().state(),
-                            webPlatform.credentialBroker().redactor()));
+                            webPlatform.credentialBroker().redactor()),
+                    CodingSessionVerificationConfiguration.freeze(verificationProfile),
+                    outcomeProjection);
             runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
             return agent;
         } catch (RuntimeException | Error exception) {
@@ -752,7 +767,7 @@ final class LocalCodingAgent implements AutoCloseable {
     AgentRunSnapshot start(String message) {
         if (closed.get()) throw new IllegalStateException("coding agent is closed");
         AgentSessionId sessionId = new AgentSessionId(identifiers.nextValue());
-        persistence.provisionUserSession(sessionId, tenant, principal, clock);
+        persistence.provisionUserSession(sessionId, tenant, principal, defaultVerification.sessionMetadata(), clock);
         AgentRunSnapshot accepted = runtime.start(new AgentRunRequest(
                 identifiers.nextValue(),
                 DEFINITION_ID,
@@ -777,6 +792,10 @@ final class LocalCodingAgent implements AutoCloseable {
 
     CodingSessionService codingSessions() {
         return codingSessions;
+    }
+
+    CodingRunOutcomeProjectionService outcomes() {
+        return outcomes;
     }
 
     CodingSessionHistoryService sessionHistory() {

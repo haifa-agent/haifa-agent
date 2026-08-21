@@ -98,7 +98,7 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void newExecutionEvidenceRequiresTrustedDiffOperationClassification() {
+    void trustedDiffClassificationRemainsDiagnosticWithoutCompletingChangeReview() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
         tool(
@@ -150,8 +150,14 @@ class CodingDeliveryControlTest {
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .allowed())
-                .isTrue();
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("CHANGE_REVIEW_MISSING");
+        assertThat(new CodingDeliveryEvidenceLedger(fixture.store())
+                        .reconstruct(fixture.run().id())
+                        .kinds())
+                .contains(CodingDeliveryEvidenceKind.DIFF_INSPECTION)
+                .doesNotContain(CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW);
     }
 
     @Test
@@ -177,8 +183,9 @@ class CodingDeliveryControlTest {
 
         assertThat(policy(fixture.store())
                         .evaluate(fixture.run(), finalDecision())
-                        .allowed())
-                .isTrue();
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("CHANGE_REVIEW_MISSING");
     }
 
     @Test
@@ -217,12 +224,11 @@ class CodingDeliveryControlTest {
                         .evaluate(fixture.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED")
-                .doesNotContain("CHANGE_REVIEW_MISSING");
+                .contains("VALIDATION_NOT_PASSED", "CHANGE_REVIEW_MISSING");
     }
 
     @Test
-    void validationFailureRequiresPassUnlessProfileAllowsConfirmedBlocker() {
+    void diffInspectionDoesNotReplaceDeterministicChangeReview() {
         Fixture fixture = fixture("change the implementation", trusted("CHANGE"));
         tool(fixture, "file.write", Map.of("path", "README.md"), Map.of("changeSetId", "change-1"));
         tool(
@@ -236,7 +242,27 @@ class CodingDeliveryControlTest {
                         .evaluate(fixture.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .contains("VALIDATION_NOT_PASSED");
+                .contains("VALIDATION_NOT_PASSED", "CHANGE_REVIEW_MISSING");
+        assertThat(new CodingCompletionPolicy(
+                                new CodingTaskModeResolver(fixture.store()),
+                                new CodingDeliveryEvidenceLedger(fixture.store()),
+                                new CodingDeliveryProfile(20, 25, 20, true))
+                        .evaluate(fixture.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("CHANGE_REVIEW_MISSING");
+    }
+
+    @Test
+    void validationFailureCanCompleteOnlyWithConfirmedBlockerAndDeterministicReview() {
+        Fixture fixture = fixture("change the implementation", trusted("CHANGE"));
+        changeTool(fixture, "file.write", "change-1");
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of("operationFamily", "TEST", "status", "FAILED", "exitCode", 1, "failureCategory", "ENVIRONMENT"));
+
         assertThat(new CodingCompletionPolicy(
                                 new CodingTaskModeResolver(fixture.store()),
                                 new CodingDeliveryEvidenceLedger(fixture.store()),
@@ -327,7 +353,7 @@ class CodingDeliveryControlTest {
         CodingWorkProjection projection = projection(fixture.store()).project(fixture.run());
         assertThat(projection.validationEvidenceRefs()).hasSize(2);
         assertThat(projection.contextText())
-                .contains("discovered=1:selected=1:ignored=0")
+                .contains("counts=COUNTS_UNAVAILABLE")
                 .doesNotContain("complete test suite");
 
         validationTool(fixture, false, 1, 1, 0);
@@ -391,10 +417,9 @@ class CodingDeliveryControlTest {
         CodingRunOutcomeProjection outcome =
                 new CodingRunOutcomeProjectionService(policy(fixture.store()), fixture.store()).project(fixture.run());
 
-        assertThat(outcome.codeResult()).isEqualTo(CodingCodeResult.EVIDENCE_SATISFIED);
+        assertThat(outcome.deliveryEvidenceStatus()).isEqualTo(CodingDeliveryEvidenceStatus.SATISFIED);
         assertThat(outcome.protocolStatus()).isEqualTo(CodingRunProtocolStatus.UNCLEAN);
         assertThat(outcome.diagnosticCodes()).contains("COMPLETION_REPAIR_EXHAUSTED", "OUTPUT_CONTRACT_INVALID");
-        assertThat(outcome.requiresCodeReexecution()).isFalse();
 
         new CodingRunOutcomeProjectionMiddleware(
                         new CodingRunOutcomeProjectionService(policy(fixture.store()), fixture.store()),
@@ -405,9 +430,10 @@ class CodingDeliveryControlTest {
                 .filteredOn(event -> event.type().equals("coding.task-outcome"))
                 .singleElement()
                 .satisfies(event -> assertThat(event.data())
-                        .containsEntry("codeResult", "EVIDENCE_SATISFIED")
+                        .containsEntry("schemaVersion", "coding-run-outcome/2")
+                        .containsEntry("deliveryEvidenceStatus", "SATISFIED")
                         .containsEntry("protocolStatus", "UNCLEAN")
-                        .containsEntry("requiresCodeReexecution", false));
+                        .doesNotContainKeys("codeResult", "requiresCodeReexecution"));
     }
 
     @Test
@@ -626,12 +652,15 @@ class CodingDeliveryControlTest {
         CodingValidationAttemptEvidence evidence = new CodingValidationAttemptEvidence(
                 CodingValidationAttemptEvidence.SCHEMA_VERSION,
                 passed ? CodingValidationStatus.PASSED : CodingValidationStatus.FAILED,
-                discovered,
-                selected,
-                ignored,
+                null,
+                null,
+                null,
                 selected < discovered ? CodingValidationScope.SELECTED : CodingValidationScope.FULL,
-                "TEST_FRAMEWORK_SUMMARY",
-                selected < discovered ? "SELECTED_TESTS_ONLY" : "DISCOVERED_TESTS_SELECTED");
+                "COUNTS_UNAVAILABLE",
+                "BUILD_CONFIGURATION",
+                selected < discovered ? "TRUSTED_SELECTED_SCOPE" : "TRUSTED_FULL_SCOPE",
+                "d".repeat(64),
+                "e".repeat(64));
         tool(
                 fixture,
                 "execution.run",

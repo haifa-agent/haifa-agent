@@ -5,6 +5,7 @@ import io.haifa.agent.application.project.product.coding.CodingModelOption;
 import io.haifa.agent.application.project.product.coding.CodingModelSelection;
 import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
+import io.haifa.agent.application.project.product.coding.CodingSessionCreateOptions;
 import io.haifa.agent.application.project.product.coding.CodingSessionExportResult;
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryPage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
@@ -12,6 +13,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
+import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjection;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
 import io.haifa.agent.project.domain.ProjectId;
@@ -41,6 +43,14 @@ public interface CodingSessionClient {
         return create(projectId, firstTurn, idempotencyKey);
     }
 
+    default CodingSessionView create(
+            ProjectId projectId, String firstTurn, String idempotencyKey, CodingSessionCreateOptions options) {
+        if (!CodingSessionCreateOptions.defaults().equals(options)) {
+            throw new UnsupportedOperationException("Trusted Coding Session options are unavailable");
+        }
+        return create(projectId, firstTurn, idempotencyKey);
+    }
+
     List<CodingSessionSummary> list(ProjectId projectId, int limit);
 
     default List<CodingSessionSummary> search(ProjectId projectId, String text, int limit) {
@@ -53,6 +63,11 @@ public interface CodingSessionClient {
 
     /** Finds an authoritative Run snapshot, including terminal Runs, within this product client's project scope. */
     Optional<AgentRunSnapshot> findRun(AgentRunId runId);
+
+    /** Derives the safe Coding product outcome without requiring clients to parse persisted Event maps. */
+    default Optional<CodingRunOutcomeProjection> findOutcome(AgentRunId runId) {
+        return Optional.empty();
+    }
 
     default CodingSessionHistoryPage history(AgentSessionId sessionId, int limit) {
         return CodingSessionHistoryPage.empty(sessionId);

@@ -2,6 +2,7 @@ package io.haifa.agent.application.project.product.coding.verification;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Bounded product-owned command candidates; it is a policy input, not a language plugin registry. */
 public record CodingVerificationProfile(
@@ -17,15 +18,24 @@ public record CodingVerificationProfile(
         return new CodingVerificationProfile(List.of(), List.of());
     }
 
+    public Optional<CodingVerificationCandidate> exactCandidate(String command) {
+        String normalized =
+                Objects.requireNonNull(command, "command must not be null").trim();
+        return candidates.stream()
+                .filter(candidate -> candidate.command().equals(normalized))
+                .findFirst();
+    }
+
     public String instructionText() {
-        StringBuilder text = new StringBuilder(String.join(
-                "\n",
-                "[CODING_VERIFICATION_PROFILE]",
-                "sourcePriority=USER_EXPLICIT>REPOSITORY_INSTRUCTIONS>BUILD_CONFIGURATION>ADJACENT_TEST>ECOSYSTEM_DEFAULT",
-                "ladder=AFTER_EDIT>ADJACENT_CHANGE>MODULE_CHANGE>FINAL_GATE",
-                "rule=run the narrowest risk-proportionate available candidate; retain every attempt",
-                "rule=report selected, ignored, and discovered test counts only when tool evidence provides them",
-                "rule=one selected test is never a complete test-suite claim"));
+        StringBuilder text = new StringBuilder(
+                String.join(
+                        "\n",
+                        "[CODING_VERIFICATION_PROFILE]",
+                        "sourcePriority=USER_EXPLICIT>REPOSITORY_INSTRUCTIONS>BUILD_CONFIGURATION>ADJACENT_TEST>ECOSYSTEM_DEFAULT",
+                        "ladder=AFTER_EDIT>ADJACENT_CHANGE>MODULE_CHANGE>FINAL_GATE",
+                        "rule=run the narrowest risk-proportionate available candidate; retain every attempt",
+                        "rule=runner output is not a trusted test-count source; report COUNTS_UNAVAILABLE",
+                        "rule=scope comes only from an exact frozen candidate match; selected scope is never a complete test-suite claim"));
         if (candidates.isEmpty()) return text.append("\ncandidates=NONE").toString();
         for (int index = 0; index < candidates.size(); index++) {
             CodingVerificationCandidate candidate = candidates.get(index);
@@ -41,6 +51,8 @@ public record CodingVerificationProfile(
                     .append(candidate.source())
                     .append('|')
                     .append(candidate.sourceReference())
+                    .append('|')
+                    .append(candidate.claimedScope())
                     .append('|')
                     .append(candidate.command());
         }

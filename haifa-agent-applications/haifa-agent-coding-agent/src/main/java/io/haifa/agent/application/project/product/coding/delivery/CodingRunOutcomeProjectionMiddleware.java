@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/** Publishes the separate code-result/protocol projection as a safe persisted client event. */
+/** Publishes the separate delivery-evidence/protocol projection as a safe persisted client event. */
 public final class CodingRunOutcomeProjectionMiddleware implements AgentRuntimeMiddleware {
     private final CodingRunOutcomeProjectionService outcomes;
     private final RuntimeEventAppender events;
@@ -39,13 +39,12 @@ public final class CodingRunOutcomeProjectionMiddleware implements AgentRuntimeM
         if (!context.run().status().isTerminal()) return;
         CodingRunOutcomeProjection outcome = outcomes.project(context.run());
         String digest = PolicyDigest.sha256Fields(List.of(
-                "coding-run-outcome/1",
+                "coding-run-outcome/2",
                 outcome.runId().value(),
-                outcome.codeResult().name(),
+                outcome.deliveryEvidenceStatus().name(),
                 outcome.protocolStatus().name(),
                 String.join(",", outcome.evidenceCodes()),
-                String.join(",", outcome.diagnosticCodes()),
-                Boolean.toString(outcome.requiresCodeReexecution())));
+                String.join(",", outcome.diagnosticCodes())));
         boolean exists = events.eventsFor(context.run().id()).stream()
                 .filter(event -> event.type().equals("coding.task-outcome"))
                 .anyMatch(event -> digest.equals(event.data().get("projectionDigest")));
@@ -54,12 +53,13 @@ public final class CodingRunOutcomeProjectionMiddleware implements AgentRuntimeM
                 context.run().id(),
                 "coding.task-outcome",
                 Map.ofEntries(
-                        Map.entry("schemaVersion", "coding-run-outcome/1"),
-                        Map.entry("codeResult", outcome.codeResult().name()),
+                        Map.entry("schemaVersion", "coding-run-outcome/2"),
+                        Map.entry(
+                                "deliveryEvidenceStatus",
+                                outcome.deliveryEvidenceStatus().name()),
                         Map.entry("protocolStatus", outcome.protocolStatus().name()),
                         Map.entry("evidenceCodes", outcome.evidenceCodes()),
                         Map.entry("diagnosticCodes", outcome.diagnosticCodes()),
-                        Map.entry("requiresCodeReexecution", outcome.requiresCodeReexecution()),
                         Map.entry("projectionDigest", digest)),
                 time.now());
     }

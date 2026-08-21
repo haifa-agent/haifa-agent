@@ -4,7 +4,8 @@ import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandSemantics;
-import io.haifa.agent.application.project.product.coding.delivery.CodingValidationEvidenceExtractor;
+import io.haifa.agent.application.project.product.coding.delivery.CodingValidationAttemptFactory;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.AssetRef;
@@ -73,6 +74,7 @@ public final class ProjectExecutionToolOperations {
     private final UnaryOperator<String> workdirNormalizer;
     private final CodingDeliveryCommandGuard deliveryGuard;
     private final CodingChangeReviewArtifactFactory changeReviews;
+    private final CodingVerificationProfileProvider verificationProfiles;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -250,6 +252,44 @@ public final class ProjectExecutionToolOperations {
             UnaryOperator<String> workdirNormalizer,
             CodingDeliveryCommandGuard deliveryGuard,
             CodingChangeReviewArtifactFactory changeReviews) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                outputSanitizer,
+                scratchSpace,
+                workdirNormalizer,
+                deliveryGuard,
+                changeReviews,
+                CodingVerificationProfileProvider.empty());
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace,
+            UnaryOperator<String> workdirNormalizer,
+            CodingDeliveryCommandGuard deliveryGuard,
+            CodingChangeReviewArtifactFactory changeReviews,
+            CodingVerificationProfileProvider verificationProfiles) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -281,6 +321,8 @@ public final class ProjectExecutionToolOperations {
         this.workdirNormalizer = Objects.requireNonNull(workdirNormalizer, "workdirNormalizer must not be null");
         this.deliveryGuard = deliveryGuard;
         this.changeReviews = changeReviews;
+        this.verificationProfiles =
+                Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -693,7 +735,11 @@ public final class ProjectExecutionToolOperations {
                 });
             }
         });
-        CodingValidationEvidenceExtractor.extract(operationFamily, semantic.successfulToolResult(), output, truncated)
+        CodingValidationAttemptFactory.create(
+                        operationFamily,
+                        command,
+                        semantic.successfulToolResult(),
+                        verificationProfiles.configurationFor(new AgentRunId(runRef)))
                 .ifPresent(evidence -> data.put("validationEvidence", evidence.toStructuredData()));
         if (!semantic.successfulToolResult()) {
             result.optionalFailure().ifPresent(value -> {

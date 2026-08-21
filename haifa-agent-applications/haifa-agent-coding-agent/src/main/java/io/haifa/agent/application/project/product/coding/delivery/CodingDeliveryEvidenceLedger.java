@@ -167,15 +167,9 @@ public final class CodingDeliveryEvidenceLedger {
     }
 
     private static CodingValidationAttemptEvidence legacyValidation(String status) {
-        return new CodingValidationAttemptEvidence(
-                CodingValidationAttemptEvidence.SCHEMA_VERSION,
+        return CodingValidationAttemptEvidence.unavailable(
                 "SUCCEEDED".equals(status) ? CodingValidationStatus.PASSED : CodingValidationStatus.FAILED,
-                null,
-                null,
-                null,
-                CodingValidationScope.UNKNOWN,
-                "LEGACY_TOOL_RESULT",
-                "TEST_COUNTS_UNAVAILABLE");
+                "LEGACY_TOOL_RESULT");
     }
 
     private static boolean reviewReferencesResultChangeSets(

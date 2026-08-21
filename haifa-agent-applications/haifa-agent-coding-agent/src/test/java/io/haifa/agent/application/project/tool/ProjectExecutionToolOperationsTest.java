@@ -5,6 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeContentKind;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
+import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
+import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
 import io.haifa.agent.core.error.AgentError;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.reference.AssetRef;
@@ -136,12 +144,13 @@ class ProjectExecutionToolOperationsTest {
                 .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
                         .containsEntry("status", "FAILED")
                         .containsEntry("scope", "UNKNOWN")
-                        .containsEntry("claimCode", "TEST_COUNTS_UNAVAILABLE"));
+                        .containsEntry("countSource", "COUNTS_UNAVAILABLE")
+                        .containsEntry("claimCode", "COMMAND_NOT_IN_FROZEN_PROFILE"));
         assertThat(result.assets()).extracting(AssetRef::assetId).containsExactly("stdout-asset");
     }
 
     @Test
-    void extractsReliableTestCountsIntoStructuredValidationEvidence() {
+    void ignoresRunnerCountsAndUsesExactFrozenCandidateScope() {
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
@@ -150,21 +159,28 @@ class ProjectExecutionToolOperationsTest {
             }
         };
 
-        ToolResult result = operations(broker, 4096, 100)
-                .execute(
-                        invocation(
-                                Map.of("command", "python -m pytest focused.py", "operationFamily", "TEST"),
-                                () -> false),
-                        access());
+        String command = "python -m pytest focused.py";
+        CodingVerificationCandidate candidate = new CodingVerificationCandidate(
+                command,
+                CodingVerificationCost.LOW,
+                Duration.ofMinutes(2),
+                CodingVerificationTrigger.ADJACENT_CHANGE,
+                CodingVerificationSource.USER_EXPLICIT,
+                "trusted-host",
+                CodingValidationScope.SELECTED);
+        CodingSessionVerificationConfiguration configuration = CodingSessionVerificationConfiguration.freeze(
+                new CodingVerificationProfile(List.of(candidate), List.of()));
+        ToolResult result = operations(broker, 4096, 100, null, ignored -> configuration)
+                .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
 
         assertThat(result.structuredData().get("validationEvidence"))
                 .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
                         .containsEntry("status", "PASSED")
-                        .containsEntry("discoveredTestCount", 8)
-                        .containsEntry("selectedTestCount", 1)
-                        .containsEntry("ignoredTestCount", 7)
                         .containsEntry("scope", "SELECTED")
-                        .containsEntry("claimCode", "SELECTED_TESTS_ONLY"));
+                        .containsEntry("countSource", "COUNTS_UNAVAILABLE")
+                        .containsEntry("verificationSource", "USER_EXPLICIT")
+                        .containsEntry("claimCode", "TRUSTED_SELECTED_SCOPE")
+                        .doesNotContainKeys("discoveredTestCount", "selectedTestCount", "ignoredTestCount"));
     }
 
     @Test
@@ -1093,6 +1109,20 @@ class ProjectExecutionToolOperationsTest {
             int maximumOutputBytes,
             int maximumOutputLines,
             CodingChangeReviewArtifactFactory changeReviews) {
+        return operations(
+                broker,
+                maximumOutputBytes,
+                maximumOutputLines,
+                changeReviews,
+                CodingVerificationProfileProvider.empty());
+    }
+
+    private static ProjectExecutionToolOperations operations(
+            ExecutionBroker broker,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            CodingChangeReviewArtifactFactory changeReviews,
+            CodingVerificationProfileProvider verificationProfiles) {
         return new ProjectExecutionToolOperations(
                 broker,
                 () -> "execution-1",
@@ -1109,7 +1139,8 @@ class ProjectExecutionToolOperationsTest {
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 java.util.function.UnaryOperator.identity(),
                 null,
-                changeReviews);
+                changeReviews,
+                verificationProfiles);
     }
 
     private static ToolInvocationRequest invocation(

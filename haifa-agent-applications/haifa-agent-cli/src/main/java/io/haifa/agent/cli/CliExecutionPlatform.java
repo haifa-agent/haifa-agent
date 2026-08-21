@@ -3,6 +3,7 @@ package io.haifa.agent.cli;
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileProvider;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
 import io.haifa.agent.common.id.IdentifierGenerator;
@@ -161,7 +162,46 @@ final class CliExecutionPlatform implements AutoCloseable {
             PrintStream output,
             Map<String, String> hostEnvironment,
             CodingDeliveryCommandGuard deliveryGuard) {
+        return create(
+                configuration,
+                workspaces,
+                bindings,
+                locations,
+                files,
+                changeSets,
+                changeSetService,
+                identifiers,
+                time,
+                clock,
+                policy,
+                workspaceId,
+                workspaceRoot,
+                output,
+                hostEnvironment,
+                deliveryGuard,
+                CodingVerificationProfileProvider.empty());
+    }
+
+    static CliExecutionPlatform create(
+            CliConfiguration.Execution configuration,
+            WorkspaceStore workspaces,
+            WorkspaceBindingStore bindings,
+            LocalWorkspaceLocationStore locations,
+            LocalWorkspaceFileService files,
+            InMemoryFileChangeSetStore changeSets,
+            FileChangeSetService changeSetService,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            Clock clock,
+            CodingAgentPolicyAssembly policy,
+            WorkspaceId workspaceId,
+            Path workspaceRoot,
+            PrintStream output,
+            Map<String, String> hostEnvironment,
+            CodingDeliveryCommandGuard deliveryGuard,
+            CodingVerificationProfileProvider verificationProfiles) {
         Objects.requireNonNull(configuration, "configuration must not be null");
+        Objects.requireNonNull(verificationProfiles, "verificationProfiles must not be null");
         HostShell shell = shell(configuration);
         LocalNativeSandboxConfiguration localConfiguration = localConfiguration(configuration, shell);
         var host = new HostGuardedSandboxProvider(
@@ -257,7 +297,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceWorkdirNormalizer(workspaceRoot),
                 deliveryGuard,
-                changeReviews);
+                changeReviews,
+                verificationProfiles);
         var permissionOperations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -274,7 +315,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceWorkdirNormalizer(workspaceRoot),
                 deliveryGuard,
-                changeReviews);
+                changeReviews,
+                verificationProfiles);
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(

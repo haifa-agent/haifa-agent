@@ -154,9 +154,7 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
         if (changed
                 && !snapshot.hasAtOrAfter(
                         CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW,
-                        CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
-                && !snapshot.hasAfter(
-                        CodingDeliveryEvidenceKind.DIFF_INSPECTION, CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
+                        CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
             blockers.add(CompletionBlocker.recoverable(
                     "CHANGE_REVIEW_MISSING",
                     "Deterministic ChangeSet review evidence is missing; the Coding product must generate it from "

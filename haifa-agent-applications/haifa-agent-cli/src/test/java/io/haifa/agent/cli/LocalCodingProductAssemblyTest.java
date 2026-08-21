@@ -285,6 +285,7 @@ class LocalCodingProductAssemblyTest {
 
             finishFirstRun.countDown();
             awaitTerminal(first, firstRunId);
+            assertThat(client.findOutcome(firstRunId)).isPresent();
         }
 
         AgentRunId dispatchedRunId;
@@ -326,6 +327,7 @@ class LocalCodingProductAssemblyTest {
             assertThatThrownBy(() -> client.history(sessionId, 100)).hasMessageContaining("Session is unavailable");
             assertThatThrownBy(() -> client.events(firstRunId, RunEventCursor.beforeFirst(firstRunId), 10))
                     .hasMessageContaining("Session is unavailable");
+            assertThatThrownBy(() -> client.findOutcome(firstRunId)).hasMessageContaining("Session is unavailable");
         }
         assertThat(modelCalls).hasValue(4);
     }
@@ -348,7 +350,13 @@ class LocalCodingProductAssemblyTest {
                 agent.sessionHistory(),
                 agent.runtime(),
                 agent.identifiers(),
-                agent.time());
+                agent.time(),
+                List::of,
+                agent::loadedResources,
+                agent::reloadResources,
+                agent.shell(),
+                agent.exporter(),
+                agent.outcomes());
     }
 
     private static io.haifa.agent.runtime.api.RunEventPage awaitEvents(

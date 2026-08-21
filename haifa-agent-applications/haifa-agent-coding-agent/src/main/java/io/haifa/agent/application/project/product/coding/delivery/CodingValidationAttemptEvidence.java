@@ -1,10 +1,11 @@
 package io.haifa.agent.application.project.product.coding.delivery;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/** One immutable validation attempt; counts are nullable when a tool cannot report them reliably. */
+/** One immutable validation attempt; runner output is never a trusted count or scope source. */
 public record CodingValidationAttemptEvidence(
         String schemaVersion,
         CodingValidationStatus status,
@@ -13,8 +14,12 @@ public record CodingValidationAttemptEvidence(
         Integer ignoredTestCount,
         CodingValidationScope scope,
         String countSource,
-        String claimCode) {
-    public static final String SCHEMA_VERSION = "coding-validation-evidence/1";
+        String verificationSource,
+        String claimCode,
+        String verificationProfileDigest,
+        String verificationCandidateDigest) {
+    public static final String SCHEMA_VERSION = "coding-validation-evidence/2";
+    private static final String LEGACY_SCHEMA_VERSION = "coding-validation-evidence/1";
 
     public CodingValidationAttemptEvidence {
         if (!SCHEMA_VERSION.equals(schemaVersion)) {
@@ -23,7 +28,10 @@ public record CodingValidationAttemptEvidence(
         status = Objects.requireNonNull(status, "status must not be null");
         scope = Objects.requireNonNull(scope, "scope must not be null");
         countSource = token(countSource, "countSource");
+        verificationSource = token(verificationSource, "verificationSource");
         claimCode = token(claimCode, "claimCode");
+        verificationProfileDigest = digest(verificationProfileDigest, "verificationProfileDigest");
+        verificationCandidateDigest = digest(verificationCandidateDigest, "verificationCandidateDigest");
         boolean none = discoveredTestCount == null && selectedTestCount == null && ignoredTestCount == null;
         boolean all = discoveredTestCount != null && selectedTestCount != null && ignoredTestCount != null;
         if (!none && !all)
@@ -35,49 +43,82 @@ public record CodingValidationAttemptEvidence(
             if (selectedTestCount > discoveredTestCount || ignoredTestCount > discoveredTestCount) {
                 throw new IllegalArgumentException("validation test counts are inconsistent");
             }
-            if (scope == CodingValidationScope.UNKNOWN) {
-                throw new IllegalArgumentException("known validation counts require a known scope");
+            if ("COUNTS_UNAVAILABLE".equals(countSource)) {
+                throw new IllegalArgumentException("authoritative counts require an authoritative source");
             }
-        } else if (scope != CodingValidationScope.UNKNOWN) {
-            throw new IllegalArgumentException("unknown validation counts require UNKNOWN scope");
+        } else if (!"COUNTS_UNAVAILABLE".equals(countSource)) {
+            throw new IllegalArgumentException("missing counts require COUNTS_UNAVAILABLE");
         }
     }
 
     public Map<String, Object> toStructuredData() {
-        if (selectedTestCount == null) {
-            return Map.of(
-                    "schemaVersion", schemaVersion,
-                    "status", status.name(),
-                    "scope", scope.name(),
-                    "countSource", countSource,
-                    "claimCode", claimCode);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("schemaVersion", schemaVersion);
+        data.put("status", status.name());
+        if (selectedTestCount != null) {
+            data.put("discoveredTestCount", discoveredTestCount);
+            data.put("selectedTestCount", selectedTestCount);
+            data.put("ignoredTestCount", ignoredTestCount);
         }
-        return Map.ofEntries(
-                Map.entry("schemaVersion", schemaVersion),
-                Map.entry("status", status.name()),
-                Map.entry("discoveredTestCount", discoveredTestCount),
-                Map.entry("selectedTestCount", selectedTestCount),
-                Map.entry("ignoredTestCount", ignoredTestCount),
-                Map.entry("scope", scope.name()),
-                Map.entry("countSource", countSource),
-                Map.entry("claimCode", claimCode));
+        data.put("scope", scope.name());
+        data.put("countSource", countSource);
+        data.put("verificationSource", verificationSource);
+        data.put("claimCode", claimCode);
+        data.put("verificationProfileDigest", verificationProfileDigest);
+        data.put("verificationCandidateDigest", verificationCandidateDigest);
+        return Map.copyOf(data);
     }
 
     public static Optional<CodingValidationAttemptEvidence> fromStructuredData(Object value) {
         if (!(value instanceof Map<?, ?> map)) return Optional.empty();
         try {
+            String schemaVersion = text(map, "schemaVersion");
+            if (LEGACY_SCHEMA_VERSION.equals(schemaVersion)) return Optional.of(fromLegacy(map));
             return Optional.of(new CodingValidationAttemptEvidence(
-                    text(map, "schemaVersion"),
+                    schemaVersion,
                     CodingValidationStatus.valueOf(text(map, "status")),
                     integer(map, "discoveredTestCount"),
                     integer(map, "selectedTestCount"),
                     integer(map, "ignoredTestCount"),
                     CodingValidationScope.valueOf(text(map, "scope")),
                     text(map, "countSource"),
-                    text(map, "claimCode")));
+                    text(map, "verificationSource"),
+                    text(map, "claimCode"),
+                    text(map, "verificationProfileDigest"),
+                    text(map, "verificationCandidateDigest")));
         } catch (IllegalArgumentException | ClassCastException ignored) {
             return Optional.empty();
         }
+    }
+
+    public static CodingValidationAttemptEvidence unavailable(CodingValidationStatus status, String source) {
+        return new CodingValidationAttemptEvidence(
+                SCHEMA_VERSION,
+                status,
+                null,
+                null,
+                null,
+                CodingValidationScope.UNKNOWN,
+                "COUNTS_UNAVAILABLE",
+                source,
+                "SCOPE_UNAVAILABLE",
+                "UNAVAILABLE",
+                "UNMATCHED");
+    }
+
+    private static CodingValidationAttemptEvidence fromLegacy(Map<?, ?> map) {
+        return new CodingValidationAttemptEvidence(
+                SCHEMA_VERSION,
+                CodingValidationStatus.valueOf(text(map, "status")),
+                null,
+                null,
+                null,
+                CodingValidationScope.UNKNOWN,
+                "COUNTS_UNAVAILABLE",
+                "LEGACY_TOOL_RESULT",
+                "LEGACY_COUNTS_UNTRUSTED",
+                "UNAVAILABLE",
+                "UNMATCHED");
     }
 
     private static Integer integer(Map<?, ?> map, String key) {
@@ -97,6 +138,15 @@ public record CodingValidationAttemptEvidence(
         String normalized =
                 Objects.requireNonNull(value, field + " must not be null").trim();
         if (!normalized.matches("[A-Z][A-Z0-9_]{0,63}")) throw new IllegalArgumentException(field + " is invalid");
+        return normalized;
+    }
+
+    private static String digest(String value, String field) {
+        String normalized =
+                Objects.requireNonNull(value, field + " must not be null").trim();
+        if (!normalized.matches("[a-f0-9]{64}|UNAVAILABLE|UNMATCHED")) {
+            throw new IllegalArgumentException(field + " is invalid");
+        }
         return normalized;
     }
 }
