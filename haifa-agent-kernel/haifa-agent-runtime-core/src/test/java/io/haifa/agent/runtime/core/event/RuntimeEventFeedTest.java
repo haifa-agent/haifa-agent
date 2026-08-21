@@ -220,6 +220,26 @@ class RuntimeEventFeedTest {
                         Optional.empty(),
                         Optional.empty()))
                 .orElseThrow();
+        var modelRetry = projector
+                .project(new RuntimeEvent(
+                        "model-retry",
+                        runId,
+                        2,
+                        "model.attempt.retry-scheduled",
+                        "1",
+                        Map.of(
+                                "modelRequestId", "model-request-1",
+                                "modelCallId", "model-call-1",
+                                "status", "RETRY_SCHEDULED",
+                                "attempt", 1,
+                                "delayMillis", 500L,
+                                "category", "RATE_LIMITED",
+                                "providerMessage", "must-not-project",
+                                "responseText", "must-not-project"),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
         var tool = projector
                 .project(new RuntimeEvent(
                         "tool",
@@ -284,6 +304,16 @@ class RuntimeEventFeedTest {
             assertThat(payload.outputTokens()).isEqualTo(5);
             assertThat(payload.toString()).doesNotContain("must-not-project");
         });
+        assertThat(modelRetry.eventType()).isEqualTo("model.attempt.retry-scheduled");
+        assertThat(modelRetry.payload())
+                .isInstanceOfSatisfying(RunEventPayloads.ModelAttemptLifecycle.class, payload -> {
+                    assertThat(payload.modelRequestId()).isEqualTo("model-request-1");
+                    assertThat(payload.modelCallId()).isEqualTo("model-call-1");
+                    assertThat(payload.attempt()).isEqualTo(1);
+                    assertThat(payload.delayMillis()).isEqualTo(500);
+                    assertThat(payload.reasonCode()).isEqualTo("RATE_LIMITED");
+                    assertThat(payload.toString()).doesNotContain("must-not-project");
+                });
         assertThat(tool.eventType()).isEqualTo("tool.call.succeeded");
         assertThat(tool.payload()).isInstanceOf(RunEventPayloads.ToolLifecycle.class);
         assertThat(execution.eventType()).isEqualTo("execution.completed");

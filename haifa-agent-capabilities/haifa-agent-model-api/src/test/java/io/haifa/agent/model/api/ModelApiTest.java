@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.core.tool.ProviderToolCallCorrelationId;
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -13,6 +14,23 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class ModelApiTest {
+    @Test
+    void modelFailureProjectsUntrustedRetryDelayWithoutOverflow() {
+        ModelInvocationException failure = new ModelInvocationException(
+                ModelErrorCategory.RATE_LIMITED,
+                true,
+                429,
+                "rate_limited",
+                new ModelCallId("call-1"),
+                "safe failure",
+                null,
+                Duration.ofSeconds(Long.MAX_VALUE),
+                false);
+
+        assertThat(failure.retryAfterMillis()).hasValue(Long.MAX_VALUE);
+        assertThat(failure.toString()).doesNotContain("credential", "prompt", "response");
+    }
+
     @Test
     void providerDefensivelyCopiesOrderedModelsAndRejectsDuplicates() {
         ModelProviderId providerId = new ModelProviderId("deepseek");

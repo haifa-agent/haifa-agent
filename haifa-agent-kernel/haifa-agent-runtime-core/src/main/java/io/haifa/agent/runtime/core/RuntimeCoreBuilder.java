@@ -200,7 +200,7 @@ public final class RuntimeCoreBuilder {
     };
     private ToolApprovalPromptFormatter toolApprovalPrompts = ToolApprovalPromptFormatter.defaultFormatter();
     private CredentialBroker credentialBroker;
-    private ModelRetryPolicy modelRetry = ModelRetryPolicy.none();
+    private ModelRetryPolicy modelRetry = ModelRetryPolicy.defaults();
     private ToolRetryPolicy toolRetry = ToolRetryPolicy.none();
     private PersistenceRetryPolicy persistenceRetry = PersistenceRetryPolicy.none();
     private RepairRetryPolicy repairRetry = new RepairRetryPolicy(3);
@@ -401,6 +401,11 @@ public final class RuntimeCoreBuilder {
 
     public RuntimeCoreBuilder modelRetry(RetryPolicy value) {
         modelRetry = new ModelRetryPolicy(value);
+        return this;
+    }
+
+    public RuntimeCoreBuilder modelRetry(ModelRetryPolicy value) {
+        modelRetry = Objects.requireNonNull(value, "value");
         return this;
     }
 

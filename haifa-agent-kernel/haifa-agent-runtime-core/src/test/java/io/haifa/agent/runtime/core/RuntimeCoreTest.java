@@ -29,7 +29,9 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
@@ -537,17 +539,29 @@ class RuntimeCoreTest {
     @Test
     void retriesOneEmptyNonStreamingResponseOnTheSameFrozenBinding() {
         AtomicInteger calls = new AtomicInteger();
-        AgentChatModel model = request -> calls.incrementAndGet() == 1
-                ? emptyResponse("empty-non-streaming")
-                : response(finalDecision("recovered from empty response"));
+        List<AgentChatRequest> requests = new ArrayList<>();
+        AgentChatModel model = request -> {
+            requests.add(request);
+            return calls.incrementAndGet() == 1
+                    ? emptyResponse("empty-non-streaming")
+                    : response(finalDecision("recovered from empty response"));
+        };
         Fixture fixture = fixture(model);
 
         var accepted = fixture.runtime.start(request("empty-non-streaming-retry"));
         fixture.scheduler.runAll();
 
         assertThat(calls).hasValue(2);
-        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
-                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(requests).extracting(AgentChatRequest::attempt).containsExactly(1, 2);
+        assertThat(requests)
+                .extracting(request -> request.requestId().value())
+                .containsOnly(requests.getFirst().requestId().value());
+        assertThat(requests.getFirst().requestId()).isEqualTo(requests.getLast().requestId());
+        assertThat(requests.getFirst().callId()).isNotEqualTo(requests.getLast().callId());
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(run.usage().modelCalls()).isEqualTo(2);
+        });
         assertThat(fixture.store.eventsFor(accepted.runId()))
                 .filteredOn(event -> event.type().equals("model.empty-response"))
                 .singleElement()
@@ -555,11 +569,30 @@ class RuntimeCoreTest {
                         .containsEntry("attempt", 1)
                         .containsEntry("providerCode", "empty_response")
                         .doesNotContainKeys("response", "content"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .containsSubsequence(
+                        "model.attempt.scheduled",
+                        "model.call.started",
+                        "model.call.failed",
+                        "model.attempt.retry-scheduled",
+                        "model.attempt.scheduled",
+                        "model.call.started",
+                        "model.call.succeeded");
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().startsWith("model.call."))
+                .allSatisfy(event -> assertThat(event.data())
+                        .containsEntry(
+                                "modelRequestId",
+                                requests.getFirst().requestId().value())
+                        .containsKey("durationMillis")
+                        .doesNotContainKeys("response", "reasoning", "prompt"));
     }
 
     @Test
     void terminatesAfterTwoEmptyStreamingResponsesWithoutDispatchingTools() {
         AtomicInteger calls = new AtomicInteger();
+        List<AgentChatRequest> requests = new ArrayList<>();
         AgentChatModel model = new AgentChatModel() {
             @Override
             public AgentChatResponse invoke(AgentChatRequest request) {
@@ -569,6 +602,7 @@ class RuntimeCoreTest {
             @Override
             public AgentChatResponse invokeStreaming(
                     AgentChatRequest request, io.haifa.agent.model.api.ModelStreamSink sink) {
+                requests.add(request);
                 calls.incrementAndGet();
                 return emptyResponse("empty-streaming-" + calls.get());
             }
@@ -579,6 +613,9 @@ class RuntimeCoreTest {
         fixture.scheduler.runAll();
 
         assertThat(calls).hasValue(2);
+        assertThat(requests).extracting(AgentChatRequest::attempt).containsExactly(1, 2);
+        assertThat(requests.getFirst().requestId()).isEqualTo(requests.getLast().requestId());
+        assertThat(requests.getFirst().callId()).isNotEqualTo(requests.getLast().callId());
         var run = fixture.runtime.find(accepted.runId()).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
         assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_RESPONSE_INVALID);
@@ -587,6 +624,49 @@ class RuntimeCoreTest {
                 .filteredOn(event -> event.type().equals("model.empty-response"))
                 .extracting(event -> event.data().get("attempt"))
                 .containsExactly(1, 2);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.attempt.exhausted"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("attempt", 2)
+                        .containsEntry("category", "EMPTY_RESPONSE")
+                        .containsEntry(
+                                "modelRequestId",
+                                requests.getFirst().requestId().value())
+                        .doesNotContainKeys("response", "reasoning", "prompt"));
+    }
+
+    @Test
+    void neverRetriesUnsafeModelFailureCategoriesEvenWhenTheConfiguredPredicateAllowsThem() {
+        for (ModelErrorCategory category : List.of(
+                ModelErrorCategory.AUTHENTICATION_FAILED,
+                ModelErrorCategory.INVALID_REQUEST,
+                ModelErrorCategory.PARTIAL_RESPONSE)) {
+            AtomicInteger calls = new AtomicInteger();
+            AgentChatModel model = request -> {
+                calls.incrementAndGet();
+                throw new ModelInvocationException(
+                        category,
+                        true,
+                        0,
+                        "safe_code",
+                        request.callId(),
+                        "safe model failure",
+                        null,
+                        null,
+                        category == ModelErrorCategory.PARTIAL_RESPONSE);
+            };
+            Fixture fixture = fixture(
+                    model, builder -> builder.modelRetry(new RetryPolicy(3, ignored -> true, BackoffStrategy.none())));
+
+            var accepted = fixture.runtime.start(request("model-no-retry-" + category.name()));
+            fixture.scheduler.runAll();
+
+            assertThat(calls).as(category.name()).hasValue(1);
+            assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                    .as(category.name())
+                    .isEqualTo(AgentRunStatus.FAILED);
+        }
     }
 
     @Test

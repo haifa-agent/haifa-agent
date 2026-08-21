@@ -10,6 +10,7 @@ import java.util.Objects;
 /** Complete provider-neutral input for one physical chat invocation. */
 public record AgentChatRequest(
         ModelCallId callId,
+        ModelRequestId requestId,
         AgentRunId runId,
         int iteration,
         int attempt,
@@ -31,9 +32,37 @@ public record AgentChatRequest(
             List<ModelToolSpecification> tools,
             int maxOutputTokens,
             Duration timeout,
+            Map<String, Object> options,
+            java.util.Optional<StructuredOutputRequirement> structuredOutput) {
+        this(
+                callId,
+                new ModelRequestId(callId.value()),
+                runId,
+                iteration,
+                attempt,
+                model,
+                messages,
+                tools,
+                maxOutputTokens,
+                timeout,
+                options,
+                structuredOutput);
+    }
+
+    public AgentChatRequest(
+            ModelCallId callId,
+            AgentRunId runId,
+            int iteration,
+            int attempt,
+            ResolvedModelSnapshot model,
+            List<ModelMessage> messages,
+            List<ModelToolSpecification> tools,
+            int maxOutputTokens,
+            Duration timeout,
             Map<String, Object> options) {
         this(
                 callId,
+                new ModelRequestId(callId.value()),
                 runId,
                 iteration,
                 attempt,
@@ -48,6 +77,7 @@ public record AgentChatRequest(
 
     public AgentChatRequest {
         callId = Objects.requireNonNull(callId, "callId must not be null");
+        requestId = Objects.requireNonNull(requestId, "requestId must not be null");
         runId = Objects.requireNonNull(runId, "runId must not be null");
         if (iteration < 1 || attempt < 1) throw new IllegalArgumentException("iteration and attempt must be positive");
         model = Objects.requireNonNull(model, "model must not be null");

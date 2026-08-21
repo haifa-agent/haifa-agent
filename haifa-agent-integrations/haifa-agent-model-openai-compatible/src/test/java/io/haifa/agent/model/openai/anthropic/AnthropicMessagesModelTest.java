@@ -381,7 +381,13 @@ class AnthropicMessagesModelTest {
         assertThat(events)
                 .extracting(event -> event.getClass().getSimpleName())
                 .containsExactly(
-                        "Started", "ReasoningDelta", "ContentDelta", "ToolCallDelta", "ToolCallDelta", "UsageReported");
+                        "Started",
+                        "ReasoningDelta",
+                        "ContentDelta",
+                        "ToolCallDelta",
+                        "ToolCallDelta",
+                        "ToolCallDelta",
+                        "UsageReported");
     }
 
     @Test
@@ -577,7 +583,7 @@ class AnthropicMessagesModelTest {
                 .isInstanceOf(ModelInvocationException.class)
                 .satisfies(error -> {
                     ModelInvocationException failure = (ModelInvocationException) error;
-                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.PROVIDER_UNAVAILABLE);
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.SERVER_ERROR);
                     assertThat(failure.getMessage()).doesNotContain("test-secret", "private prompt");
                 });
 
@@ -637,6 +643,30 @@ class AnthropicMessagesModelTest {
                 .isInstanceOf(ModelInvocationException.class)
                 .extracting(value -> ((ModelInvocationException) value).category())
                 .isEqualTo(ModelErrorCategory.CANCELLED);
+    }
+
+    @Test
+    void interruptedStreamAfterToolIntentIsANonRetryablePartialResponse() {
+        response.set(
+                Response.sse(
+                        """
+                event: message_start
+                data: {"type":"message_start","message":{"id":"msg-cut","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":0}}}
+
+                event: content_block_start
+                data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu-cut","name":"lookup","input":{}}}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(
+                                simpleRequest(standardSnapshot(true, Map.of())), event -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.PARTIAL_RESPONSE);
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
     }
 
     @Test

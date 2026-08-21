@@ -25,6 +25,8 @@ import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
+import io.haifa.agent.model.openai.ModelStreamObservation;
+import io.haifa.agent.model.openai.RetryAfterParser;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -35,6 +37,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -97,7 +101,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                         exception);
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw httpFailure(request, response.statusCode());
+                throw httpFailure(request, response.statusCode(), response.headers());
             }
             requireContentType(request, response, "application/json");
             return parseResponse(request, parseJson(request, body));
@@ -119,7 +123,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         } catch (IOException exception) {
             throw failure(
                     request,
-                    ModelErrorCategory.PROVIDER_UNAVAILABLE,
+                    ModelErrorCategory.TRANSPORT_ERROR,
                     true,
                     0,
                     "io_failure",
@@ -135,17 +139,18 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         if (!request.model().nativeStreaming()) return AgentChatModel.super.invokeStreaming(request, sink);
         ResolvedCredential credential = credential(request);
         HttpRequest httpRequest = request(request, profile, credential, true);
+        ModelStreamObservation observation = new ModelStreamObservation();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 try (InputStream body = response.body()) {
                     body.readNBytes(maxResponseBytes + 1);
                 }
-                throw httpFailure(request, response.statusCode());
+                throw httpFailure(request, response.statusCode(), response.headers());
             }
             requireContentType(request, response, "text/event-stream");
             try (InputStream body = response.body()) {
-                return parseStream(request, profile, body, sink);
+                return parseStream(request, profile, body, observation.observe(sink));
             }
         } catch (HttpTimeoutException exception) {
             throw failure(
@@ -161,16 +166,20 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                     "model request was cancelled",
                     exception);
         } catch (ModelInvocationException exception) {
-            throw exception;
+            throw observation.annotate(exception);
         } catch (IOException exception) {
             throw failure(
                     request,
-                    ModelErrorCategory.PROVIDER_UNAVAILABLE,
-                    true,
+                    observation.outputObserved()
+                            ? ModelErrorCategory.PARTIAL_RESPONSE
+                            : ModelErrorCategory.TRANSPORT_ERROR,
+                    !observation.outputObserved(),
                     0,
-                    "io_failure",
-                    "model provider is unavailable",
-                    exception);
+                    "stream_io_failure",
+                    "model provider stream was interrupted",
+                    exception,
+                    null,
+                    observation.outputObserved());
         }
     }
 
@@ -600,7 +609,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
         private void accept(String data) {
             if ("[DONE]".equals(data)) {
-                if (!terminal) throw malformed(request, "Responses stream ended before a terminal event");
+                if (!terminal) throw interrupted(request, "Responses stream ended before a terminal event");
                 return;
             }
             if (++eventCount > MAX_EVENTS) throw malformed(request, "Responses SSE event limit exceeded");
@@ -667,11 +676,12 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             JsonNode item = event.path("item");
             if (!"function_call".equals(item.path("type").asText())) return;
             int outputIndex = nonNegativeInt(request, event, "output_index");
-            if (functions.putIfAbsent(
-                            outputIndex, new FunctionItem(text(item, "call_id", true), text(item, "name", true)))
-                    != null) {
+            FunctionItem function = new FunctionItem(text(item, "call_id", true), text(item, "name", true));
+            if (functions.putIfAbsent(outputIndex, function) != null) {
                 throw malformed(request, "duplicate Responses function output index");
             }
+            emit(new ModelStreamEvent.ToolCallDelta(
+                    request.callId(), ++emittedIndex, 0, outputIndex, function.callId, function.name, ""));
         }
 
         private void functionDelta(JsonNode event) {
@@ -709,7 +719,7 @@ public final class OpenAiResponsesModel implements AgentChatModel {
 
         private AgentChatResponse finish() {
             if (!terminal || completed == null) {
-                throw malformed(request, "Responses stream ended without a terminal event");
+                throw interrupted(request, "Responses stream ended without a terminal event");
             }
             return completed;
         }
@@ -827,7 +837,8 @@ public final class OpenAiResponsesModel implements AgentChatModel {
         return value.isEmpty() ? fallback : value;
     }
 
-    private static ModelInvocationException httpFailure(AgentChatRequest request, int status) {
+    private static ModelInvocationException httpFailure(
+            AgentChatRequest request, int status, java.net.http.HttpHeaders headers) {
         ModelErrorCategory category =
                 switch (status) {
                     case 400, 422 -> ModelErrorCategory.INVALID_REQUEST;
@@ -836,12 +847,21 @@ public final class OpenAiResponsesModel implements AgentChatModel {
                     case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
                     case 408 -> ModelErrorCategory.TIMEOUT;
                     case 429 -> ModelErrorCategory.RATE_LIMITED;
-                    case 500, 502, 503, 504 -> ModelErrorCategory.PROVIDER_UNAVAILABLE;
+                    case 500, 502, 503, 504 -> ModelErrorCategory.SERVER_ERROR;
                     default -> ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
                 };
         boolean retryable = status == 408 || status == 429 || status >= 500;
+        Duration retryAfter = RetryAfterParser.parse(headers, Instant.now()).orElse(null);
         return failure(
-                request, category, retryable, status, "http_" + status, "model provider rejected the request", null);
+                request,
+                category,
+                retryable,
+                status,
+                "http_" + status,
+                "model provider rejected the request",
+                null,
+                retryAfter,
+                false);
     }
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
@@ -849,7 +869,11 @@ public final class OpenAiResponsesModel implements AgentChatModel {
     }
 
     private static ModelInvocationException emptyResponse(AgentChatRequest request, String message) {
-        return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, true, 200, "empty_response", message, null);
+        return failure(request, ModelErrorCategory.EMPTY_RESPONSE, true, 200, "empty_response", message, null);
+    }
+
+    private static ModelInvocationException interrupted(AgentChatRequest request, String message) {
+        return failure(request, ModelErrorCategory.TRANSPORT_ERROR, true, 200, "stream_interrupted", message, null);
     }
 
     private static ModelInvocationException failure(
@@ -860,6 +884,20 @@ public final class OpenAiResponsesModel implements AgentChatModel {
             String code,
             String safeMessage,
             Throwable cause) {
-        return new ModelInvocationException(category, retryable, status, code, request.callId(), safeMessage, cause);
+        return failure(request, category, retryable, status, code, safeMessage, cause, null, false);
+    }
+
+    private static ModelInvocationException failure(
+            AgentChatRequest request,
+            ModelErrorCategory category,
+            boolean retryable,
+            int status,
+            String code,
+            String safeMessage,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved) {
+        return new ModelInvocationException(
+                category, retryable, status, code, request.callId(), safeMessage, cause, retryAfter, outputObserved);
     }
 }

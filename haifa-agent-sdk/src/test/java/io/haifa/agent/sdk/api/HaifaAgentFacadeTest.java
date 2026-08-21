@@ -19,6 +19,7 @@ import io.haifa.agent.sdk.product.ProductProfile;
 import io.haifa.agent.sdk.tool.JavaTool;
 import io.haifa.agent.sdk.tool.JavaToolContext;
 import io.haifa.agent.sdk.tool.JavaToolSpec;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,17 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 public class HaifaAgentFacadeTest {
+    @Test
+    void exposesBoundedTypedModelRetryConfiguration() {
+        HaifaAgentBuilder builder = HaifaAgents.builder();
+
+        assertThat(builder.modelRetry(3, Duration.ofMillis(100), Duration.ofSeconds(2), 2.0d, 0.2d))
+                .isSameAs(builder);
+        assertThatThrownBy(() -> builder.modelRetry(3, Duration.ofMillis(100), Duration.ofSeconds(2), 2.0d, 1.1d))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("jitterRatio");
+    }
+
     @Test
     void registersOneTypedJavaToolWithoutManualPlatformAssembly() {
         try (HaifaAgent agent = HaifaAgents.builder()

@@ -11,6 +11,7 @@ import io.haifa.agent.runtime.core.bootstrap.ResolvedDefinition;
 import io.haifa.agent.runtime.core.bootstrap.ResolvedProfile;
 import io.haifa.agent.runtime.core.bootstrap.RuntimeCallerContext;
 import io.haifa.agent.runtime.core.execution.LocalExecutionScheduler;
+import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.tool.PublicToolPolicy;
@@ -67,6 +68,7 @@ public final class HaifaAgentBuilder {
             java.util.function.UnaryOperator.identity();
     private ModelImageResolver modelImageResolver = ModelImageResolver.unsupported();
     private RetryPolicy toolRetry = RetryPolicy.none();
+    private ModelRetryPolicy modelRetry = ModelRetryPolicy.defaults();
     private final Map<String, ProductRunProfile> runProfiles = new LinkedHashMap<>();
     private AgentMetadata metadata = AgentMetadata.defaults();
     private boolean starterDefaultInstructionsInUse;
@@ -136,6 +138,18 @@ public final class HaifaAgentBuilder {
                 maxAttempts,
                 Objects.requireNonNull(retryable, "retryable must not be null"),
                 new RuntimeBackoffPolicy(initialDelay, maxDelay, backoffMultiplier));
+        return this;
+    }
+
+    /** Configures bounded model I/O retries; Runtime still rejects unsafe failure categories. */
+    public HaifaAgentBuilder modelRetry(
+            int maxAttempts, Duration initialDelay, Duration maxDelay, double backoffMultiplier, double jitterRatio) {
+        modelRetry = new ModelRetryPolicy(
+                new RetryPolicy(
+                        maxAttempts,
+                        ignored -> false,
+                        new RuntimeBackoffPolicy(initialDelay, maxDelay, backoffMultiplier, jitterRatio)),
+                maxDelay);
         return this;
     }
 
@@ -224,6 +238,7 @@ public final class HaifaAgentBuilder {
                     .scheduler(scheduler)
                     .toolApprovalPrompts(toolApprovalPrompts::format)
                     .structuredOutputSchemaValidator(new io.haifa.agent.tool.core.JsonSchema202012Validator())
+                    .modelRetry(modelRetry)
                     .toolRetry(toolRetry)
                     .publicToolPolicyDecorator(publicToolPolicyDecorator)
                     .modelImageResolver(modelImageResolver::resolve)

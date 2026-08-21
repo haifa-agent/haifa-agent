@@ -35,7 +35,7 @@ public final class AgentChatResponseMapper {
                 && response.toolCalls().isEmpty()
                 && response.structuredOutput().isEmpty()) {
             throw new ModelInvocationException(
-                    ModelErrorCategory.MALFORMED_RESPONSE,
+                    ModelErrorCategory.EMPTY_RESPONSE,
                     true,
                     200,
                     "empty_response",

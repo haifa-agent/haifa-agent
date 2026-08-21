@@ -11,6 +11,7 @@ import io.haifa.agent.model.api.ModelCallId;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
+import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.model.api.ModelStreamControl;
 import io.haifa.agent.model.api.ModelStreamEvent;
 import io.haifa.agent.model.api.ModelToolSpecification;
@@ -23,6 +24,8 @@ import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.tool.api.FrozenToolBinding;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -90,9 +93,21 @@ public final class FrozenModelInvoker {
     }
 
     public ModelInvocationResult invoke(FrozenModelBinding binding, AgentRun run, int iteration, AgentContext context) {
+        return invoke(binding, run, iteration, context, new ModelRequestId(ids.nextValue()), 1);
+    }
+
+    public ModelInvocationResult invoke(
+            FrozenModelBinding binding,
+            AgentRun run,
+            int iteration,
+            AgentContext context,
+            ModelRequestId requestId,
+            int physicalAttempt) {
         if (!binding.configuration().reference().equals(run.configurationSnapshot())) {
             throw new IllegalArgumentException("model binding belongs to another configuration snapshot");
         }
+        Objects.requireNonNull(requestId, "requestId must not be null");
+        if (physicalAttempt < 1) throw new IllegalArgumentException("physicalAttempt must be positive");
         ModelCallId callId = new ModelCallId(ids.nextValue());
         if (binding.configuration().structuredOutput().isPresent()
                 && !binding.configuration().model().capabilities().contains(ModelCapability.STRUCTURED_OUTPUT)) {
@@ -105,13 +120,12 @@ public final class FrozenModelInvoker {
                     "selected model does not support structured output",
                     null);
         }
-        int attempt = Math.max(
-                1, Math.toIntExact(Math.min(Integer.MAX_VALUE, run.usage().modelCalls())));
         AgentChatRequest request = new AgentChatRequest(
                 callId,
+                requestId,
                 run.id(),
                 iteration,
-                attempt,
+                physicalAttempt,
                 binding.configuration().model(),
                 messages.assemble(run.id(), context, binding.configuration().model()),
                 context.tools(),
@@ -121,14 +135,44 @@ public final class FrozenModelInvoker {
                 Duration.ofMillis(Math.max(1, run.limits().maxIdleTimeMillis())),
                 RuntimeControlOptions.providerOptions(binding.configuration().modelRequestOptions()),
                 binding.configuration().structuredOutput());
-        appendLifecycle(binding, run, callId, iteration, attempt, "model.call.started", "STARTED", 0, 0, "", "NONE");
-        output.started(run.id(), callId.value(), attempt, iteration);
+        Instant startedAt = time.now();
+        appendLifecycle(
+                binding,
+                run,
+                callId,
+                requestId,
+                iteration,
+                physicalAttempt,
+                "model.attempt.scheduled",
+                "SCHEDULED",
+                0,
+                0,
+                "",
+                "NONE",
+                0,
+                null);
+        appendLifecycle(
+                binding,
+                run,
+                callId,
+                requestId,
+                iteration,
+                physicalAttempt,
+                "model.call.started",
+                "STARTED",
+                0,
+                0,
+                "",
+                "NONE",
+                0,
+                null);
+        output.started(run.id(), callId.value(), physicalAttempt, iteration);
         AgentChatResponse response;
         try {
             response = binding.chatModel().invokeStreaming(request, event -> {
                 if (controls.signal(run.id()) != RunControlSignal.NONE) return ModelStreamControl.CANCEL;
                 if (event instanceof ModelStreamEvent.ContentDelta content) {
-                    output.content(run.id(), callId.value(), attempt, content.delta());
+                    output.content(run.id(), callId.value(), physicalAttempt, content.delta());
                 }
                 return ModelStreamControl.CONTINUE;
             });
@@ -156,45 +200,51 @@ public final class FrozenModelInvoker {
                                     "adapterVersion",
                                     binding.configuration().model().adapterVersion()),
                             Map.entry("modelCallId", callId.value()),
+                            Map.entry("modelRequestId", requestId.value()),
                             Map.entry("responseId", response.responseId()),
                             Map.entry("finishReason", response.finishReason().name()),
                             Map.entry("cacheHitTokens", response.usage().cacheHitTokens()),
                             Map.entry("cacheMissTokens", response.usage().cacheMissTokens()),
                             Map.entry("reasoningTokens", response.usage().reasoningTokens())),
                     callId.value(),
-                    attempt,
+                    physicalAttempt,
                     binding.configuration().model(),
                     response.reasoning());
             appendLifecycle(
                     binding,
                     run,
                     callId,
+                    requestId,
                     iteration,
-                    attempt,
+                    physicalAttempt,
                     "model.call.succeeded",
                     "SUCCEEDED",
                     response.usage().inputTokens(),
                     response.usage().outputTokens(),
                     response.finishReason().name(),
-                    "NONE");
+                    "NONE",
+                    elapsedMillis(startedAt),
+                    null);
             return invocation;
         } catch (RuntimeException exception) {
             boolean cancelled = controls.signal(run.id()) == RunControlSignal.CANCEL;
-            output.failed(run.id(), callId.value(), attempt, iteration);
+            output.failed(run.id(), callId.value(), physicalAttempt, iteration);
             if (exception instanceof ModelInvocationException modelFailure
-                    && modelFailure.providerCode().equals("empty_response")) {
+                    && (modelFailure.category() == ModelErrorCategory.EMPTY_RESPONSE
+                            || modelFailure.providerCode().equals("empty_response"))) {
                 events.append(
                         run.id(),
                         "model.empty-response",
                         Map.of(
                                 "modelCallId", callId.value(),
+                                "modelRequestId", requestId.value(),
                                 "providerId",
                                         binding.configuration()
                                                 .model()
                                                 .providerId()
                                                 .value(),
                                 "modelId", binding.configuration().model().providerModelId(),
-                                "attempt", attempt,
+                                "attempt", physicalAttempt,
                                 "category", modelFailure.category().name(),
                                 "providerCode", modelFailure.providerCode(),
                                 "retryable", modelFailure.retryable()),
@@ -204,8 +254,9 @@ public final class FrozenModelInvoker {
                     binding,
                     run,
                     callId,
+                    requestId,
                     iteration,
-                    attempt,
+                    physicalAttempt,
                     "model.call.failed",
                     cancelled ? "CANCELLED" : "FAILED",
                     0,
@@ -215,7 +266,9 @@ public final class FrozenModelInvoker {
                             ? "CANCELLED"
                             : exception instanceof ModelInvocationException modelFailure
                                     ? modelFailure.category().name()
-                                    : "MODEL_CALL_FAILED");
+                                    : "MODEL_CALL_FAILED",
+                    elapsedMillis(startedAt),
+                    exception instanceof ModelInvocationException modelFailure ? modelFailure : null);
             if (cancelled) throw new CancellationObservedException();
             throw exception;
         }
@@ -225,6 +278,7 @@ public final class FrozenModelInvoker {
             FrozenModelBinding binding,
             AgentRun run,
             ModelCallId callId,
+            ModelRequestId requestId,
             int iteration,
             int attempt,
             String type,
@@ -232,23 +286,34 @@ public final class FrozenModelInvoker {
             long inputTokens,
             long outputTokens,
             String finishReason,
-            String reasonCode) {
+            String reasonCode,
+            long durationMillis,
+            ModelInvocationException failure) {
         var model = binding.configuration().model();
-        events.append(
-                run.id(),
-                type,
-                Map.of(
-                        "modelCallId", callId.value(),
-                        "providerId", model.providerId().value(),
-                        "modelId", model.providerModelId(),
-                        "status", status,
-                        "iteration", iteration,
-                        "attempt", attempt,
-                        "inputTokens", inputTokens,
-                        "outputTokens", outputTokens,
-                        "finishReason", finishReason,
-                        "reasonCode", reasonCode),
-                time.now());
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("modelCallId", callId.value());
+        data.put("modelRequestId", requestId.value());
+        data.put("providerId", model.providerId().value());
+        data.put("modelId", model.providerModelId());
+        data.put("status", status);
+        data.put("iteration", iteration);
+        data.put("attempt", attempt);
+        data.put("inputTokens", inputTokens);
+        data.put("outputTokens", outputTokens);
+        data.put("finishReason", finishReason);
+        data.put("reasonCode", reasonCode);
+        data.put("durationMillis", durationMillis);
+        if (failure != null) {
+            data.put("providerCode", failure.providerCode());
+            data.put("retryable", failure.retryable());
+            data.put("outputObserved", failure.outputObserved());
+            data.put("retryAfterMillis", failure.retryAfterMillis().orElse(0L));
+        }
+        events.append(run.id(), type, data, time.now());
+    }
+
+    private long elapsedMillis(Instant startedAt) {
+        return Math.max(0, Duration.between(startedAt, time.now()).toMillis());
     }
 
     public void committed(AgentRun run, ModelInvocationResult invocation, int iteration) {

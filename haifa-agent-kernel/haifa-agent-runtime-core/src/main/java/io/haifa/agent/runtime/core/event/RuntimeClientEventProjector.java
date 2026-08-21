@@ -67,6 +67,9 @@ public final class RuntimeClientEventProjector {
                     case "model.call.started" -> model("model.call.started", event, "STARTED");
                     case "model.call.succeeded" -> model("model.call.succeeded", event, "SUCCEEDED");
                     case "model.call.failed" -> model("model.call.failed", event, "FAILED");
+                    case "model.attempt.scheduled" -> modelAttempt(event, "SCHEDULED", "NONE");
+                    case "model.attempt.retry-scheduled" -> modelAttempt(event, "RETRY_SCHEDULED", "RETRYABLE_FAILURE");
+                    case "model.attempt.exhausted" -> modelAttempt(event, "EXHAUSTED", "RETRY_EXHAUSTED");
                     case "tool.requested" -> tool("tool.call.requested", event, "REQUESTED", "NONE");
                     case "tool.started" -> tool("tool.call.started", event, "STARTED", "NONE");
                     case "tool.succeeded", "tool.completed" -> tool("tool.call.succeeded", event, "SUCCEEDED", "NONE");
@@ -142,6 +145,9 @@ public final class RuntimeClientEventProjector {
                                 "model.call.started",
                                 "model.call.succeeded",
                                 "model.call.failed",
+                                "model.attempt.scheduled",
+                                "model.attempt.retry-scheduled",
+                                "model.attempt.exhausted",
                                 "execution.completed",
                                 "execution.failed",
                                 "execution.cancelled",
@@ -211,6 +217,18 @@ public final class RuntimeClientEventProjector {
                         requiredNonNegativeNumber(event.data(), "outputTokens"),
                         text(event.data(), "finishReason", ""),
                         requiredText(event.data(), "reasonCode")));
+    }
+
+    private static Projection modelAttempt(RuntimeEvent event, String status, String reasonCode) {
+        return new Projection(
+                event.type(),
+                new RunEventPayloads.ModelAttemptLifecycle(
+                        requiredText(event.data(), "modelRequestId"),
+                        text(event.data(), "modelCallId", ""),
+                        text(event.data(), "status", status),
+                        requiredPositiveInteger(event.data(), "attempt"),
+                        number(event.data(), "delayMillis", 0),
+                        text(event.data(), "category", reasonCode)));
     }
 
     private static Projection tool(String eventType, RuntimeEvent event, String status, String reasonCode) {

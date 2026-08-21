@@ -14,6 +14,10 @@ The provider-neutral Run Event Feed includes bounded `model.call.started`,
 `ModelLifecycle` payload contains only the call identifier, provider/model identifiers,
 iteration/attempt, safe status or reason codes, token counts, and finish reason. Prompt
 content, assistant output, endpoints, credentials, and raw provider failures are excluded.
+Logical request scheduling, retry waiting, and exhaustion are separately projected as
+`ModelAttemptLifecycle`, keyed by the stable model request identity and physical attempt.
+It carries only bounded status/reason codes and delay metadata; callers do not parse internal
+Journal maps or provider messages.
 
 ## Transient model output
 

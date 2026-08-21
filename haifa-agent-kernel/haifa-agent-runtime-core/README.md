@@ -2,16 +2,18 @@
 
 ## Model-call client events
 
-`FrozenModelInvoker` records each physical model attempt as durable
-`model.call.started` plus one terminal `model.call.succeeded` or `model.call.failed`
-event. `RuntimeClientEventProjector` exposes only the bounded provider-neutral
-`ModelLifecycle` fields; model text and provider payloads remain outside the durable
-client feed.
+`FrozenModelInvoker` records each physical model attempt as durable `model.attempt.scheduled` and
+`model.call.started` plus one terminal `model.call.succeeded` or `model.call.failed` event. Retry waiting and final
+exhaustion add `model.attempt.retry-scheduled` / `model.attempt.exhausted`. `RuntimeClientEventProjector` exposes only
+bounded provider-neutral `ModelLifecycle` and `ModelAttemptLifecycle` fields; model text, reasoning, Prompt and raw
+provider payloads remain outside the durable client feed.
 
 An HTTP-success response with no content, Tool Call, or structured output is normalized as retryable
-`MALFORMED_RESPONSE/empty_response`. Runtime retries the exact frozen binding at most twice by default, never changes
-provider/model and never dispatches a Tool from the empty response. Each occurrence adds only a safe
-`model.empty-response` event; exhaustion terminates through the existing stable model failure path.
+`EMPTY_RESPONSE/empty_response`. Runtime defaults to two physical attempts with bounded exponential backoff and jitter,
+keeps one logical request identity and frozen binding, honors a bounded `Retry-After`, counts every physical call
+against the Run budget, and checks cancellation/deadline throughout backoff. Authentication, invalid request,
+context-too-long and partial-output failures are never replayed by the generic retry policy. Each empty occurrence adds
+only a safe `model.empty-response` event; exhaustion terminates through the existing stable model failure path.
 
 ## 结构化完成纠偏
 
