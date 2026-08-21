@@ -360,11 +360,9 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     @Test
-    void alternatingDecisionLoopRemainsDetected() {
+    void repeatedActionsWithoutAuthoritativeProgressRemainExploration() {
         var context = new AgentLoopContext(1, List.of("A", "B", "A", "B"));
-        assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, context))
-                .isInstanceOf(LoopDetectedException.class)
-                .hasMessageContaining("alternating");
+        assertThatCode(() -> new LoopDetectionGuard(3).check(null, context)).doesNotThrowAnyException();
     }
 
     @Test
@@ -377,20 +375,39 @@ class AutonomousDeliveryRecoveryControlTest {
         assertThatCode(() -> new LoopDetectionGuard(3).check(null, initialExploration))
                 .doesNotThrowAnyException();
 
-        var afterDelivery = new AgentLoopContext(1, List.of("inspect-a", "inspect-b", "inspect-c"));
+        var afterDelivery = new AgentLoopContext(1, List.of("inspect", "inspect", "inspect"));
         assertThat(afterDelivery.observeInteractions(List.of("interaction-1"))).isPresent();
         String stableDeliveryState = afterDelivery.progressSignatures().getLast();
         afterDelivery.recordProgress(stableDeliveryState);
         afterDelivery.recordProgress(stableDeliveryState);
 
-        assertThatCode(() -> new LoopDetectionGuard(3).check(null, afterDelivery))
-                .doesNotThrowAnyException();
-
-        afterDelivery.recordProgress(stableDeliveryState);
+        new LoopDetectionGuard(3).check(null, afterDelivery);
+        assertThat(afterDelivery.takeStallRecoveryAnnouncement())
+                .hasValueSatisfying(signal ->
+                        assertThat(signal.reason()).isEqualTo(LoopDetectedException.Reason.REPEATED_DECISION));
+        assertThat(afterDelivery.stallRecoveryAttempts()).isOne();
+        assertThat(afterDelivery.modelControlPrompt())
+                .contains("REQUIRE_STRATEGY_CHANGE", "progressDigest=")
+                .doesNotContain("inspect");
 
         assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, afterDelivery))
                 .isInstanceOf(LoopDetectedException.class)
-                .hasMessageContaining("no observable progress");
+                .hasMessageContaining("repeated decision");
+    }
+
+    @Test
+    void restoredStrategySwitchBudgetCannotBeUsedAgain() {
+        var restored = new AgentLoopContext(1, List.of("A", "B", "A", "B"));
+        assertThat(restored.observeInteractions(List.of("interaction-1"))).isPresent();
+        String stable = restored.progressSignatures().getLast();
+        restored.recordProgress(stable);
+        restored.recordProgress(stable);
+        restored.recordProgress(stable);
+        restored.restoreStallRecoveryAttempts(1);
+
+        assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, restored))
+                .isInstanceOf(LoopDetectedException.class)
+                .hasMessageContaining("alternating decision");
     }
 
     private static RunBudgetSnapshot budgetAt(int remainingPercent) {

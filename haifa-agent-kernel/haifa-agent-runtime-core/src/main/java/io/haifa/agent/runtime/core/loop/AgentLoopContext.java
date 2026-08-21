@@ -3,6 +3,7 @@ package io.haifa.agent.runtime.core.loop;
 import io.haifa.agent.core.plan.AgentPlan;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
+import io.haifa.agent.runtime.core.guard.LoopDetectedException;
 import io.haifa.agent.runtime.core.recovery.ProgressLedger;
 import io.haifa.agent.runtime.core.recovery.RecoveryController;
 import io.haifa.agent.runtime.core.recovery.RecoveryDirective;
@@ -27,6 +28,9 @@ public final class AgentLoopContext {
     private final Set<Integer> issuedBudgetThresholds = new LinkedHashSet<>();
     private RunBudgetSnapshot budgetSnapshot;
     private RecoveryDirective pendingRecovery;
+    private int stallRecoveryAttempts;
+    private StallRecoverySignal activeStallRecovery;
+    private boolean stallRecoveryAnnouncementPending;
 
     public AgentLoopContext(int iteration, List<String> fingerprints) {
         this(iteration, fingerprints, 0);
@@ -85,6 +89,7 @@ public final class AgentLoopContext {
             if (progressObserved) {
                 recovery.meaningfulProgress();
                 pendingRecovery = null;
+                clearActiveStallRecovery();
             }
             outcomeClassifier.classify(call).ifPresent(observation -> {
                 RecoveryController.Update update = recovery.observe(observation);
@@ -108,6 +113,7 @@ public final class AgentLoopContext {
         if (progressObserved) {
             recovery.meaningfulProgress();
             pendingRecovery = null;
+            clearActiveStallRecovery();
         }
         List<RecoveryController.Update> updates = new ArrayList<>();
         for (ToolCall call : toolCalls.stream()
@@ -119,6 +125,7 @@ public final class AgentLoopContext {
             if (callProgress) {
                 recovery.meaningfulProgress();
                 pendingRecovery = null;
+                clearActiveStallRecovery();
             }
             outcomeClassifier.classify(call).ifPresent(observation -> {
                 RecoveryController.Update update = recovery.observe(observation);
@@ -130,6 +137,7 @@ public final class AgentLoopContext {
         if (progressObserved && updates.isEmpty()) {
             recovery.meaningfulProgress();
             pendingRecovery = null;
+            clearActiveStallRecovery();
         }
         return new ControlObservation(progressObserved, progressLedger.digest(), List.copyOf(updates));
     }
@@ -142,6 +150,7 @@ public final class AgentLoopContext {
         if (!progressObserved) return Optional.empty();
         recovery.meaningfulProgress();
         pendingRecovery = null;
+        clearActiveStallRecovery();
         String digest = progressLedger.digest();
         progressSignatures.add(digest);
         return Optional.of(digest);
@@ -184,7 +193,41 @@ public final class AgentLoopContext {
                     .append(": ")
                     .append(pendingRecovery.guidance());
         }
+        if (activeStallRecovery != null) {
+            text.append(" Stall recovery directive=REQUIRE_STRATEGY_CHANGE: choose one different semantic action")
+                    .append(" without changing provider, permissions, or policy; progressDigest=")
+                    .append(activeStallRecovery.progressDigest())
+                    .append("; pattern=")
+                    .append(activeStallRecovery.reason().name())
+                    .append('.');
+        }
         return text.toString();
+    }
+
+    public boolean requestStallRecovery(LoopDetectedException.Reason reason) {
+        if (stallRecoveryAttempts >= 1) return false;
+        String progressDigest = progressSignatures.isEmpty() ? progressLedger.digest() : progressSignatures.getLast();
+        stallRecoveryAttempts = 1;
+        activeStallRecovery = new StallRecoverySignal(reason, progressDigest, stallRecoveryAttempts);
+        stallRecoveryAnnouncementPending = true;
+        return true;
+    }
+
+    public Optional<StallRecoverySignal> takeStallRecoveryAnnouncement() {
+        if (!stallRecoveryAnnouncementPending || activeStallRecovery == null) return Optional.empty();
+        stallRecoveryAnnouncementPending = false;
+        return Optional.of(activeStallRecovery);
+    }
+
+    public void restoreStallRecoveryAttempts(int attempts) {
+        if (attempts < stallRecoveryAttempts || attempts > 1) {
+            throw new IllegalArgumentException("stall recovery attempts must be zero or one and not move backwards");
+        }
+        stallRecoveryAttempts = attempts;
+    }
+
+    public int stallRecoveryAttempts() {
+        return stallRecoveryAttempts;
     }
 
     public int recordRepairAttempt() {
@@ -224,6 +267,13 @@ public final class AgentLoopContext {
         return call.id().value() + ":" + call.version();
     }
 
+    private void clearActiveStallRecovery() {
+        activeStallRecovery = null;
+        stallRecoveryAnnouncementPending = false;
+    }
+
     public record ControlObservation(
             boolean progressObserved, String progressDigest, List<RecoveryController.Update> recoveryUpdates) {}
+
+    public record StallRecoverySignal(LoopDetectedException.Reason reason, String progressDigest, int attempt) {}
 }
