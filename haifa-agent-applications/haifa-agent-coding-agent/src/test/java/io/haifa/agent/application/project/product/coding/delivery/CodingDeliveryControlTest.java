@@ -8,6 +8,8 @@ import io.haifa.agent.application.project.product.coding.InMemoryCodingSessionSt
 import io.haifa.agent.core.agent.AgentDefinitionId;
 import io.haifa.agent.core.agent.AgentDefinitionVersion;
 import io.haifa.agent.core.content.TextPart;
+import io.haifa.agent.core.error.AgentError;
+import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.message.AgentMessageId;
 import io.haifa.agent.core.message.MessageRole;
 import io.haifa.agent.core.message.MessageStatus;
@@ -64,37 +66,35 @@ class CodingDeliveryControlTest {
     }
 
     @Test
-    void changeRequiresWorkspaceValidationAndDiffEvidence() {
+    void changeRequiresWorkspaceValidationAndDeterministicReviewEvidence() {
         Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
         CodingCompletionPolicy policy = policy(fixture.store());
 
         var initialBlockers = policy.evaluate(fixture.run(), finalDecision()).blockers();
         assertThat(initialBlockers)
                 .extracting(blocker -> blocker.code())
-                .containsExactlyInAnyOrder(
-                        "WORKSPACE_CHANGE_MISSING", "VALIDATION_ATTEMPT_MISSING", "DIFF_INSPECTION_MISSING");
-        assertThat(initialBlockers)
-                .filteredOn(blocker -> blocker.code().equals("DIFF_INSPECTION_MISSING"))
+                .containsExactlyInAnyOrder("WORKSPACE_CHANGE_MISSING", "VALIDATION_ATTEMPT_MISSING");
+
+        tool(fixture, "file.write", Map.of("path", "src/First.java"), Map.of("changeSetId", "change-0"));
+        assertThat(policy.evaluate(fixture.run(), finalDecision()).blockers())
+                .filteredOn(blocker -> blocker.code().equals("CHANGE_REVIEW_MISSING"))
                 .singleElement()
                 .satisfies(blocker -> assertThat(blocker.safeMessage())
-                        .contains("execution.run", "operationFamily=DIFF", "git diff"));
+                        .contains("Deterministic", "ChangeSet")
+                        .doesNotContain("operationFamily=DIFF", "git diff"));
 
-        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        changeTool(fixture, "file.write", "change-1");
         tool(
                 fixture,
                 "execution.run",
                 Map.of(),
                 Map.of("operationFamily", "TEST", "status", "SUCCEEDED", "exitCode", 0));
-        tool(
-                fixture,
-                "execution.run",
-                Map.of(),
-                Map.of("operationFamily", "DIFF", "status", "SUCCEEDED", "exitCode", 0));
 
         var complete = policy.evaluate(fixture.run(), finalDecision());
         assertThat(complete.allowed()).isTrue();
         assertThat(complete.evidenceCodes())
-                .contains("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "VALIDATION_PASSED", "DIFF_INSPECTION");
+                .contains("WORKSPACE_CHANGE", "VALIDATION_ATTEMPT", "VALIDATION_PASSED", "DETERMINISTIC_CHANGE_REVIEW")
+                .doesNotContain("DIFF_INSPECTION");
     }
 
     @Test
@@ -128,7 +128,7 @@ class CodingDeliveryControlTest {
                         .evaluate(fixture.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .contains("DIFF_INSPECTION_MISSING");
+                .contains("CHANGE_REVIEW_MISSING");
 
         tool(
                 fixture,
@@ -218,7 +218,7 @@ class CodingDeliveryControlTest {
                         .blockers())
                 .extracting(blocker -> blocker.code())
                 .contains("VALIDATION_NOT_PASSED")
-                .doesNotContain("DIFF_INSPECTION_MISSING");
+                .doesNotContain("CHANGE_REVIEW_MISSING");
     }
 
     @Test
@@ -280,7 +280,7 @@ class CodingDeliveryControlTest {
                         .evaluate(changed.run(), finalDecision())
                         .blockers())
                 .extracting(blocker -> blocker.code())
-                .containsExactlyInAnyOrder("VALIDATION_ATTEMPT_MISSING", "DIFF_INSPECTION_MISSING");
+                .containsExactlyInAnyOrder("VALIDATION_ATTEMPT_MISSING", "CHANGE_REVIEW_MISSING");
     }
 
     @Test
@@ -299,15 +299,115 @@ class CodingDeliveryControlTest {
                         0,
                         "noChangeJustificationCode",
                         "ALREADY_SATISFIED"));
-        tool(
-                fixture,
-                "execution.run",
-                Map.of(),
-                Map.of("operationFamily", "DIFF", "status", "SUCCEEDED", "exitCode", 0));
-
         var result = policy(fixture.store()).evaluate(fixture.run(), finalDecision());
         assertThat(result.allowed()).isTrue();
-        assertThat(result.evidenceCodes()).contains("NO_CHANGE_JUSTIFICATION", "VALIDATION_PASSED", "DIFF_INSPECTION");
+        assertThat(result.evidenceCodes())
+                .contains("NO_CHANGE_JUSTIFICATION", "VALIDATION_PASSED")
+                .doesNotContain("DIFF_INSPECTION", "DETERMINISTIC_CHANGE_REVIEW");
+    }
+
+    @Test
+    void retainsFailedAndPassingValidationAttemptsAndUsesTheLatestOutcome() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        changeTool(fixture, "file.write", "change-1");
+        validationTool(fixture, false, 4, 4, 0);
+        validationTool(fixture, true, 1, 1, 0);
+
+        CodingDeliveryEvidenceLedger.Snapshot snapshot = new CodingDeliveryEvidenceLedger(fixture.store())
+                .reconstruct(fixture.run().id());
+
+        assertThat(snapshot.validationAttempts())
+                .extracting(CodingValidationAttemptEvidence::status)
+                .containsExactly(CodingValidationStatus.FAILED, CodingValidationStatus.PASSED);
+        assertThat(snapshot.latestValidationPassed()).isTrue();
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .allowed())
+                .isTrue();
+        CodingWorkProjection projection = projection(fixture.store()).project(fixture.run());
+        assertThat(projection.validationEvidenceRefs()).hasSize(2);
+        assertThat(projection.contextText())
+                .contains("discovered=1:selected=1:ignored=0")
+                .doesNotContain("complete test suite");
+
+        validationTool(fixture, false, 1, 1, 0);
+        assertThat(policy(fixture.store())
+                        .evaluate(fixture.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("VALIDATION_NOT_PASSED");
+    }
+
+    @Test
+    void requiresValidationAndReviewEvidenceToCoverTheLatestWorkspaceChange() {
+        Fixture staleValidation = fixture("fix the implementation", trusted("CHANGE"));
+        changeTool(staleValidation, "file.write", "change-1");
+        validationTool(staleValidation, true, 8, 8, 0);
+        changeTool(staleValidation, "file.write", "change-2");
+
+        assertThat(policy(staleValidation.store())
+                        .evaluate(staleValidation.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("VALIDATION_ATTEMPT_MISSING")
+                .doesNotContain("CHANGE_REVIEW_MISSING");
+
+        Fixture staleReview = fixture("fix the implementation", trusted("CHANGE"));
+        changeTool(staleReview, "file.write", "change-1");
+        validationTool(staleReview, true, 8, 8, 0);
+        tool(staleReview, "file.write", Map.of("path", "src/Other.java"), Map.of("changeSetId", "change-2"));
+        validationTool(staleReview, true, 8, 8, 0);
+
+        assertThat(policy(staleReview.store())
+                        .evaluate(staleReview.run(), finalDecision())
+                        .blockers())
+                .extracting(blocker -> blocker.code())
+                .contains("CHANGE_REVIEW_MISSING")
+                .doesNotContain("VALIDATION_ATTEMPT_MISSING");
+        assertThat(projection(staleReview.store()).project(staleReview.run()).missingEvidence())
+                .contains("DETERMINISTIC_CHANGE_REVIEW");
+    }
+
+    @Test
+    void projectsVerifiedCodeResultSeparatelyFromUncleanRunProtocol() {
+        Fixture fixture = fixture("fix the implementation", trusted("CHANGE"));
+        changeTool(fixture, "file.write", "change-1");
+        validationTool(fixture, true, 8, 8, 0);
+        fixture.run()
+                .fail(
+                        new AgentError(
+                                AgentErrorCode.COMPLETION_REPAIR_EXHAUSTED,
+                                Map.of("blockerCodes", List.of("OUTPUT_CONTRACT_INVALID")),
+                                "diagnostic-1",
+                                NOW.plusSeconds(30)),
+                        NOW.plusSeconds(30));
+        fixture.store()
+                .append(
+                        fixture.run().id(),
+                        "run.structured-termination",
+                        Map.of("reason", "COMPLETION_REPAIR_EXHAUSTED", "attempts", 2),
+                        NOW.plusSeconds(30));
+
+        CodingRunOutcomeProjection outcome =
+                new CodingRunOutcomeProjectionService(policy(fixture.store()), fixture.store()).project(fixture.run());
+
+        assertThat(outcome.codeResult()).isEqualTo(CodingCodeResult.EVIDENCE_SATISFIED);
+        assertThat(outcome.protocolStatus()).isEqualTo(CodingRunProtocolStatus.UNCLEAN);
+        assertThat(outcome.diagnosticCodes()).contains("COMPLETION_REPAIR_EXHAUSTED", "OUTPUT_CONTRACT_INVALID");
+        assertThat(outcome.requiresCodeReexecution()).isFalse();
+
+        new CodingRunOutcomeProjectionMiddleware(
+                        new CodingRunOutcomeProjectionService(policy(fixture.store()), fixture.store()),
+                        fixture.store(),
+                        () -> NOW.plusSeconds(31))
+                .apply(new RuntimeMiddlewareContext(fixture.run(), fixture.store()));
+        assertThat(fixture.store().eventsFor(fixture.run().id()))
+                .filteredOn(event -> event.type().equals("coding.task-outcome"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("codeResult", "EVIDENCE_SATISFIED")
+                        .containsEntry("protocolStatus", "UNCLEAN")
+                        .containsEntry("requiresCodeReexecution", false));
     }
 
     @Test
@@ -319,9 +419,8 @@ class CodingDeliveryControlTest {
                 new CodingDeliveryEvidenceLedger(fixture.store()),
                 CodingDeliveryProfile.safeDefault(),
                 intents);
-        tool(fixture, "file.write", Map.of(), Map.of("changeSetId", "change-1"));
+        changeTool(fixture, "file.write", "change-1");
         tool(fixture, "execution.run", Map.of(), Map.of("operationFamily", "TEST", "status", "SUCCEEDED"));
-        tool(fixture, "execution.run", Map.of(), Map.of("operationFamily", "DIFF", "status", "SUCCEEDED"));
         deliveryEvidence(fixture, "STAGE_COMPLETED");
         deliveryEvidence(fixture, "HEAD_VERIFIED");
         deliveryEvidence(fixture, "STAGED_DIFF_INSPECTED");
@@ -371,7 +470,7 @@ class CodingDeliveryControlTest {
                 .matches("read:[0-9a-f]{64}"));
         assertThat(changed.contextText()).doesNotContain("private/source/Main.java", "version-1");
 
-        tool(fixture, "file.write", Map.of("path", "src/Main.java"), Map.of("changeSetId", "change-1"));
+        changeTool(fixture, "file.write", "change-1");
         assertThat(projections.project(fixture.run()).phase()).isEqualTo(CodingWorkPhase.VERIFY);
 
         tool(
@@ -379,18 +478,11 @@ class CodingDeliveryControlTest {
                 "execution.run",
                 Map.of("command", "test-command"),
                 Map.of("operationFamily", "TEST", "status", "SUCCEEDED", "exitCode", 0));
-        assertThat(projections.project(fixture.run()).phase()).isEqualTo(CodingWorkPhase.REVIEW);
-
-        tool(
-                fixture,
-                "execution.run",
-                Map.of("command", "diff-command"),
-                Map.of("operationFamily", "DIFF", "status", "SUCCEEDED", "exitCode", 0));
         CodingWorkProjection delivered = projections.project(fixture.run());
         assertThat(delivered.phase()).isEqualTo(CodingWorkPhase.DELIVER);
         assertThat(delivered.missingEvidence()).isEmpty();
         assertThat(delivered.deliveryIntent()).isEqualTo("WORKTREE_ONLY");
-        assertThat(delivered.contextText()).doesNotContain("test-command", "diff-command", "change-1");
+        assertThat(delivered.contextText()).doesNotContain("test-command", "change-1");
     }
 
     @Test
@@ -520,6 +612,69 @@ class CodingDeliveryControlTest {
         call.complete(
                 new ToolResult(true, "completed", resultData, List.of(), List.of(), false), NOW.plusSeconds(sequence));
         fixture.store().appendToolCall(call);
+    }
+
+    private static void changeTool(Fixture fixture, String name, String changeSetId) {
+        tool(
+                fixture,
+                name,
+                Map.of("path", "src/Main.java"),
+                Map.of("changeSetId", changeSetId, "changeReviewArtifact", deterministicReview(changeSetId)));
+    }
+
+    private static void validationTool(Fixture fixture, boolean passed, int discovered, int selected, int ignored) {
+        CodingValidationAttemptEvidence evidence = new CodingValidationAttemptEvidence(
+                CodingValidationAttemptEvidence.SCHEMA_VERSION,
+                passed ? CodingValidationStatus.PASSED : CodingValidationStatus.FAILED,
+                discovered,
+                selected,
+                ignored,
+                selected < discovered ? CodingValidationScope.SELECTED : CodingValidationScope.FULL,
+                "TEST_FRAMEWORK_SUMMARY",
+                selected < discovered ? "SELECTED_TESTS_ONLY" : "DISCOVERED_TESTS_SELECTED");
+        tool(
+                fixture,
+                "execution.run",
+                Map.of(),
+                Map.of(
+                        "operationFamily",
+                        "TEST",
+                        "status",
+                        passed ? "SUCCEEDED" : "FAILED",
+                        "validationEvidence",
+                        evidence.toStructuredData()));
+    }
+
+    private static Map<String, Object> deterministicReview(String changeSetId) {
+        String digest = "sha256:" + "a".repeat(64);
+        return Map.ofEntries(
+                Map.entry("schemaVersion", CodingChangeReviewArtifact.SCHEMA_VERSION),
+                Map.entry("artifactRef", digest),
+                Map.entry("changeSetIds", List.of(changeSetId)),
+                Map.entry("baseWorkspaceDigest", "sha256:" + "b".repeat(64)),
+                Map.entry("resultWorkspaceDigest", "sha256:" + "c".repeat(64)),
+                Map.entry(
+                        "fileSummaries",
+                        List.of(Map.ofEntries(
+                                Map.entry("changeType", "REPLACE"),
+                                Map.entry("path", "src/Main.java"),
+                                Map.entry("destination", ""),
+                                Map.entry("beforeDigest", "sha256:" + "d".repeat(64)),
+                                Map.entry("afterDigest", "sha256:" + "e".repeat(64)),
+                                Map.entry("beforeSize", 10L),
+                                Map.entry("afterSize", 12L),
+                                Map.entry("contentKind", "TEXT")))),
+                Map.entry(
+                        "counts",
+                        Map.of(
+                                "created", 0,
+                                "replaced", 1,
+                                "deleted", 0,
+                                "moved", 0,
+                                "binary", 0,
+                                "oversize", 0,
+                                "opaque", 0)),
+                Map.entry("complete", true));
     }
 
     private static void deliveryEvidence(Fixture fixture, String code) {

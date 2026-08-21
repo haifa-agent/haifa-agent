@@ -34,6 +34,12 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
 
     @Override
     public CompletionPolicyResult evaluate(AgentRun run, FinalAnswerDecision decision) {
+        Objects.requireNonNull(decision, "decision must not be null");
+        return evaluateEvidence(run);
+    }
+
+    public CompletionPolicyResult evaluateEvidence(AgentRun run) {
+        Objects.requireNonNull(run, "run must not be null");
         CodingTaskIntent taskMode = taskModes.resolve(run);
         CodingDeliveryEvidenceLedger.Snapshot snapshot = evidence.reconstruct(run.id());
         List<CompletionBlocker> blockers = new ArrayList<>();
@@ -132,19 +138,36 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
                     "No authoritative workspace change or evidence-backed no-change result exists.",
                     "WORKSPACE_CHANGE"));
         }
-        if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)) {
+        boolean changed = snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
+        if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)
+                || (changed
+                        && !snapshot.hasAfter(
+                                CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT,
+                                CodingDeliveryEvidenceKind.WORKSPACE_CHANGE))) {
             blockers.add(CompletionBlocker.recoverable(
-                    "VALIDATION_ATTEMPT_MISSING", "No authoritative validation attempt exists.", "VALIDATION_ATTEMPT"));
+                    "VALIDATION_ATTEMPT_MISSING",
+                    changed
+                            ? "No authoritative validation attempt exists after the latest workspace change."
+                            : "No authoritative validation attempt exists.",
+                    "VALIDATION_ATTEMPT"));
         }
-        if (!snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION)) {
+        if (changed
+                && !snapshot.hasAtOrAfter(
+                        CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW,
+                        CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
+                && !snapshot.hasAfter(
+                        CodingDeliveryEvidenceKind.DIFF_INSPECTION, CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
             blockers.add(CompletionBlocker.recoverable(
-                    "DIFF_INSPECTION_MISSING",
-                    "Inspect the final diff with execution.run using operationFamily=DIFF and a read-only git diff "
-                            + "command before submitting final output.",
-                    "DIFF_INSPECTION"));
+                    "CHANGE_REVIEW_MISSING",
+                    "Deterministic ChangeSet review evidence is missing; the Coding product must generate it from "
+                            + "the authoritative persisted change before completion.",
+                    "DETERMINISTIC_CHANGE_REVIEW"));
         }
-        if (snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)
-                && !snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED)
+        boolean latestFailed = snapshot.latestValidationFailed()
+                || (snapshot.validationAttempts().isEmpty()
+                        && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)
+                        && !snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED));
+        if (latestFailed
                 && !(profile.allowBlockedValidation() && snapshot.has(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED))) {
             blockers.add(CompletionBlocker.recoverable(
                     "VALIDATION_NOT_PASSED",

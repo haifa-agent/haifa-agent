@@ -3,6 +3,8 @@ package io.haifa.agent.application.project.tool;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.haifa.agent.application.project.product.coding.delivery.CodingChangeContentKind;
+import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.core.error.AgentError;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.reference.AssetRef;
@@ -33,8 +35,17 @@ import io.haifa.agent.execution.api.ProcessOutputChunk;
 import io.haifa.agent.execution.api.ResourceUsageSummary;
 import io.haifa.agent.execution.api.SandboxProfileRef;
 import io.haifa.agent.policy.api.PolicyDigest;
+import io.haifa.agent.project.changeset.FileChange;
+import io.haifa.agent.project.changeset.FileChangeSet;
 import io.haifa.agent.project.changeset.FileChangeSetId;
+import io.haifa.agent.project.changeset.FileChangeType;
+import io.haifa.agent.project.changeset.FileVersion;
+import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
+import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.filesystem.FileType;
+import io.haifa.agent.project.path.ProjectPath;
 import io.haifa.agent.project.workspace.WorkspaceId;
+import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
 import io.haifa.agent.sandbox.api.SandboxException;
 import io.haifa.agent.tool.api.ToolDispatchEvidence;
@@ -121,7 +132,89 @@ class ProjectExecutionToolOperationsTest {
                 .containsEntry(
                         "scratchSpecDigest",
                         CodingToolchainEnvironmentProfile.defaultScratchSpace().canonicalDigest());
+        assertThat(result.structuredData().get("validationEvidence"))
+                .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
+                        .containsEntry("status", "FAILED")
+                        .containsEntry("scope", "UNKNOWN")
+                        .containsEntry("claimCode", "TEST_COUNTS_UNAVAILABLE"));
         assertThat(result.assets()).extracting(AssetRef::assetId).containsExactly("stdout-asset");
+    }
+
+    @Test
+    void extractsReliableTestCountsIntoStructuredValidationEvidence() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                observer.onOutput(chunk("1 passed, 7 deselected in 0.25s\n"));
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        ToolResult result = operations(broker, 4096, 100)
+                .execute(
+                        invocation(
+                                Map.of("command", "python -m pytest focused.py", "operationFamily", "TEST"),
+                                () -> false),
+                        access());
+
+        assertThat(result.structuredData().get("validationEvidence"))
+                .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
+                        .containsEntry("status", "PASSED")
+                        .containsEntry("discoveredTestCount", 8)
+                        .containsEntry("selectedTestCount", 1)
+                        .containsEntry("ignoredTestCount", 7)
+                        .containsEntry("scope", "SELECTED")
+                        .containsEntry("claimCode", "SELECTED_TESTS_ONLY"));
+    }
+
+    @Test
+    void attachesDeterministicReviewArtifactToObservedExecutionChangeSet() {
+        var changeSets = new InMemoryFileChangeSetStore();
+        FileChangeSet pending = FileChangeSet.pending(
+                new FileChangeSetId("changes-1"),
+                new ProjectId("project-1"),
+                WORKSPACE_ID,
+                "execution:execution-1",
+                "run-1",
+                "execution-1",
+                new WorkspaceRevision(1, "sha256:" + "a".repeat(64)),
+                new PrincipalRef("operator", "user"),
+                "policy-1",
+                NOW);
+        changeSets.create(pending.applied(
+                new WorkspaceRevision(2, "sha256:" + "b".repeat(64)),
+                List.of(new FileChange(
+                        FileChangeType.CREATE,
+                        ProjectPath.of("generated/result.bin"),
+                        null,
+                        null,
+                        new FileVersion(FileType.FILE, 12, "sha256:" + "c".repeat(64)))),
+                true,
+                NOW.plusSeconds(1)));
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        ToolResult result = operations(
+                        broker,
+                        4096,
+                        100,
+                        new CodingChangeReviewArtifactFactory(
+                                changeSets, (set, change) -> CodingChangeContentKind.BINARY, 1024))
+                .execute(
+                        invocation(Map.of("command", "generate result", "operationFamily", "MUTATE"), () -> false),
+                        access());
+
+        assertThat(result.structuredData()).containsKey("changeReviewArtifactRef");
+        assertThat(result.structuredData().get("changeReviewArtifact")).isInstanceOfSatisfying(Map.class, review -> {
+            assertThat(review).containsEntry("complete", true).containsEntry("totalFileCount", 1);
+            assertThat(review.get("counts")).isInstanceOfSatisfying(Map.class, counts -> assertThat(counts)
+                    .containsEntry("created", 1)
+                    .containsEntry("binary", 1));
+        });
     }
 
     @Test
@@ -992,6 +1085,14 @@ class ProjectExecutionToolOperationsTest {
 
     private static ProjectExecutionToolOperations operations(
             ExecutionBroker broker, int maximumOutputBytes, int maximumOutputLines) {
+        return operations(broker, maximumOutputBytes, maximumOutputLines, null);
+    }
+
+    private static ProjectExecutionToolOperations operations(
+            ExecutionBroker broker,
+            int maximumOutputBytes,
+            int maximumOutputLines,
+            CodingChangeReviewArtifactFactory changeReviews) {
         return new ProjectExecutionToolOperations(
                 broker,
                 () -> "execution-1",
@@ -1005,7 +1106,10 @@ class ProjectExecutionToolOperationsTest {
                 8,
                 ExecutionOutputObserver.noop(),
                 java.util.function.UnaryOperator.identity(),
-                CodingToolchainEnvironmentProfile.defaultScratchSpace());
+                CodingToolchainEnvironmentProfile.defaultScratchSpace(),
+                java.util.function.UnaryOperator.identity(),
+                null,
+                changeReviews);
     }
 
     private static ToolInvocationRequest invocation(

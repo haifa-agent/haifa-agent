@@ -178,14 +178,22 @@ public final class CodingWorkProjectionService {
             String status = text(data, "status", call.status().name());
             String semantic = text(data, "semanticOutcome", "UNKNOWN");
             if (family.equals("BUILD") || family.equals("TEST")) {
-                add(
-                        refs.get(RefKind.VALIDATION),
-                        reference("validation", call.id().value(), family, status, semantic));
+                CodingValidationAttemptEvidence validation = CodingValidationAttemptEvidence.fromStructuredData(
+                                data.get("validationEvidence"))
+                        .orElse(null);
+                add(refs.get(RefKind.VALIDATION), validationReference(call, family, status, semantic, validation));
             }
             if (family.equals("DIFF") && (status.equals("SUCCEEDED") || semantic.equals("EXPECTED_VARIANT"))) {
                 add(refs.get(RefKind.DIFF), reference("diff", call.id().value(), status, semantic));
             }
         }
+        CodingChangeReviewArtifact.fromStructuredData(data.get("changeReviewArtifact"))
+                .filter(CodingChangeReviewArtifact::complete)
+                .ifPresent(review -> add(
+                        refs.get(RefKind.DIFF),
+                        "review:" + review.artifactRef() + ":files=" + review.totalFileCount() + ":binary="
+                                + review.counts().get("binary") + ":oversize="
+                                + review.counts().get("oversize")));
         if (call.status() == ToolCallStatus.FAILED || data.containsKey("failureCategory")) {
             String stableCode = token(text(data, "stableFailureCode", "UNCLASSIFIED_FAILURE"));
             String resource = token(text(data, "resourceClass", "UNKNOWN"));
@@ -209,7 +217,8 @@ public final class CodingWorkProjectionService {
                     ? CodingWorkPhase.REVIEW
                     : CodingWorkPhase.ORIENT;
         }
-        if (snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION)
+        if ((snapshot.has(CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW)
+                        || snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION))
                 && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)
                 && missing.isEmpty()) {
             return CodingWorkPhase.DELIVER;
@@ -234,10 +243,25 @@ public final class CodingWorkProjectionService {
                     && !snapshot.has(CodingDeliveryEvidenceKind.NO_CHANGE_JUSTIFICATION)) {
                 missing.add("WORKSPACE_CHANGE");
             }
-            if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)) missing.add("VALIDATION_ATTEMPT");
-            if (!snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION)) missing.add("DIFF_INSPECTION");
-            if (snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)
-                    && !snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED)) {
+            if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)
+                    || (snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
+                            && !snapshot.hasAfter(
+                                    CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT,
+                                    CodingDeliveryEvidenceKind.WORKSPACE_CHANGE))) {
+                missing.add("VALIDATION_ATTEMPT");
+            }
+            if (snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
+                    && !snapshot.hasAtOrAfter(
+                            CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW,
+                            CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)
+                    && !snapshot.hasAfter(
+                            CodingDeliveryEvidenceKind.DIFF_INSPECTION, CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
+                missing.add("DETERMINISTIC_CHANGE_REVIEW");
+            }
+            if (snapshot.latestValidationFailed()
+                    || (snapshot.validationAttempts().isEmpty()
+                            && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)
+                            && !snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED))) {
                 missing.add("VALIDATION_PASSED");
             }
         } else if ((intent == CodingTaskIntent.ANALYZE || intent == CodingTaskIntent.REVIEW)
@@ -324,6 +348,18 @@ public final class CodingWorkProjectionService {
 
     private static void addChange(Object value, Set<String> target) {
         if (value instanceof String text && !text.isBlank()) add(target, reference("change", text));
+    }
+
+    private static String validationReference(
+            ToolCall call, String family, String status, String semantic, CodingValidationAttemptEvidence validation) {
+        String identity = reference("validation", call.id().value(), family, status, semantic);
+        if (validation == null || validation.selectedTestCount() == null) {
+            return identity + ":counts=UNKNOWN";
+        }
+        return identity + ":status=" + validation.status().name() + ":discovered="
+                + validation.discoveredTestCount() + ":selected="
+                + validation.selectedTestCount() + ":ignored=" + validation.ignoredTestCount() + ":claim="
+                + validation.claimCode();
     }
 
     private static void add(Set<String> values, String value) {

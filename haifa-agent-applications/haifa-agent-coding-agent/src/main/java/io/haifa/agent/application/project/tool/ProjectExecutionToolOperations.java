@@ -1,8 +1,10 @@
 package io.haifa.agent.application.project.tool;
 
 import io.haifa.agent.application.project.policy.CodingExecutionRiskResolver;
+import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandSemantics;
+import io.haifa.agent.application.project.product.coding.delivery.CodingValidationEvidenceExtractor;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.reference.AssetRef;
@@ -70,6 +72,7 @@ public final class ProjectExecutionToolOperations {
     private final ExecutionScratchSpaceSpec scratchSpace;
     private final UnaryOperator<String> workdirNormalizer;
     private final CodingDeliveryCommandGuard deliveryGuard;
+    private final CodingChangeReviewArtifactFactory changeReviews;
 
     public ProjectExecutionToolOperations(
             ExecutionBroker broker,
@@ -191,6 +194,7 @@ public final class ProjectExecutionToolOperations {
                 outputSanitizer,
                 scratchSpace,
                 workdirNormalizer,
+                null,
                 null);
     }
 
@@ -210,6 +214,42 @@ public final class ProjectExecutionToolOperations {
             ExecutionScratchSpaceSpec scratchSpace,
             UnaryOperator<String> workdirNormalizer,
             CodingDeliveryCommandGuard deliveryGuard) {
+        this(
+                broker,
+                identifiers,
+                time,
+                environmentRef,
+                sandboxProfileRef,
+                defaultTimeout,
+                maximumTimeout,
+                maximumModelOutputBytes,
+                maximumModelOutputLines,
+                maximumProcesses,
+                outputObserver,
+                outputSanitizer,
+                scratchSpace,
+                workdirNormalizer,
+                deliveryGuard,
+                null);
+    }
+
+    public ProjectExecutionToolOperations(
+            ExecutionBroker broker,
+            IdentifierGenerator identifiers,
+            TimeProvider time,
+            ExecutionEnvironmentRef environmentRef,
+            SandboxProfileRef sandboxProfileRef,
+            Duration defaultTimeout,
+            Duration maximumTimeout,
+            int maximumModelOutputBytes,
+            int maximumModelOutputLines,
+            int maximumProcesses,
+            ExecutionOutputObserver outputObserver,
+            UnaryOperator<String> outputSanitizer,
+            ExecutionScratchSpaceSpec scratchSpace,
+            UnaryOperator<String> workdirNormalizer,
+            CodingDeliveryCommandGuard deliveryGuard,
+            CodingChangeReviewArtifactFactory changeReviews) {
         this.broker = Objects.requireNonNull(broker, "broker must not be null");
         this.identifiers = Objects.requireNonNull(identifiers, "identifiers must not be null");
         this.time = Objects.requireNonNull(time, "time must not be null");
@@ -240,6 +280,7 @@ public final class ProjectExecutionToolOperations {
         this.scratchSpace = Objects.requireNonNull(scratchSpace, "scratchSpace must not be null");
         this.workdirNormalizer = Objects.requireNonNull(workdirNormalizer, "workdirNormalizer must not be null");
         this.deliveryGuard = deliveryGuard;
+        this.changeReviews = changeReviews;
     }
 
     public ToolResult execute(ToolInvocationRequest invocation, RunWorkspaceAccess access) {
@@ -317,7 +358,8 @@ public final class ProjectExecutionToolOperations {
                         command,
                         operationFamily,
                         commandClassification,
-                        repositoryScopeDigest));
+                        repositoryScopeDigest,
+                        invocation.toolCallId().value()));
     }
 
     /** Read-only reconciliation for a previously dispatched local execution. */
@@ -361,7 +403,9 @@ public final class ProjectExecutionToolOperations {
                         classification,
                         sandboxProfileRef,
                         scratchSpace,
-                        repositoryScopeDigest(workdir)))
+                        repositoryScopeDigest(workdir),
+                        invocation.runId().value(),
+                        invocation.toolCallId().value()))
                 .or(() -> invocation.observedResult())
                 .orElse(null);
         if (observed == null) return ToolReconciliation.stillUnknown("EXECUTION_RESULT_MISSING");
@@ -499,7 +543,8 @@ public final class ProjectExecutionToolOperations {
                 command,
                 "UNKNOWN",
                 commandClassification,
-                repositoryScopeDigest(workdir));
+                repositoryScopeDigest(workdir),
+                null);
     }
 
     private ToolResult executeRequest(
@@ -509,7 +554,8 @@ public final class ProjectExecutionToolOperations {
             String command,
             String operationFamily,
             SystemGitCliCommandClassifier.Classification commandClassification,
-            String repositoryScopeDigest) {
+            String repositoryScopeDigest,
+            String reviewToolCallRef) {
         MergedTailObserver merged = new MergedTailObserver(
                 outputObserver,
                 invocationObserver,
@@ -546,7 +592,9 @@ public final class ProjectExecutionToolOperations {
                     commandClassification,
                     sandboxProfileRef,
                     scratchSpace,
-                    repositoryScopeDigest);
+                    repositoryScopeDigest,
+                    request.context().runRef(),
+                    reviewToolCallRef);
         } catch (ExecutionPreflightException exception) {
             throw new ToolInvocationException(
                     exception.code(), ToolDispatchState.NOT_DISPATCHED, exception.getMessage(), exception);
@@ -577,7 +625,9 @@ public final class ProjectExecutionToolOperations {
             SystemGitCliCommandClassifier.Classification commandClassification,
             SandboxProfileRef sandboxProfileRef,
             ExecutionScratchSpaceSpec scratchSpace,
-            String repositoryScopeDigest) {
+            String repositoryScopeDigest,
+            String runRef,
+            String reviewToolCallRef) {
         var semantic = CommandSemanticOutcomeInterpreter.interpret(command, result.status(), result.exitCode());
         String output = merged.text();
         if (output.isBlank() && !semantic.successfulToolResult()) {
@@ -634,7 +684,17 @@ public final class ProjectExecutionToolOperations {
         data.put("scratchSpecDigest", scratchSpace.canonicalDigest());
         data.put("scratchProvisioned", result.scratchProvisioned());
         data.put("scratchCleanupFailed", result.scratchCleanupFailed());
-        result.optionalFileChangeSetId().ifPresent(value -> data.put("fileChangeSetId", value.value()));
+        result.optionalFileChangeSetId().ifPresent(value -> {
+            data.put("fileChangeSetId", value.value());
+            if (changeReviews != null && reviewToolCallRef != null) {
+                changeReviews.create(runRef, List.of(value.value())).ifPresent(review -> {
+                    data.put("changeReviewArtifact", review.toStructuredData());
+                    data.put("changeReviewArtifactRef", review.artifactRef());
+                });
+            }
+        });
+        CodingValidationEvidenceExtractor.extract(operationFamily, semantic.successfulToolResult(), output, truncated)
+                .ifPresent(evidence -> data.put("validationEvidence", evidence.toStructuredData()));
         if (!semantic.successfulToolResult()) {
             result.optionalFailure().ifPresent(value -> {
                 data.put("failureCode", value.code());

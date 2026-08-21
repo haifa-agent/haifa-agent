@@ -12,11 +12,14 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportServ
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
+import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionMiddleware;
+import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionMiddleware;
 import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionService;
@@ -339,6 +342,8 @@ final class LocalCodingAgent implements AutoCloseable {
             var bindings = new InMemoryWorkspaceBindingStore();
             var locations = new LocalWorkspaceLocationStore();
             WorkspaceId workspaceId = workspaceIdentity.workspaceId();
+            var verificationProfile =
+                    CliVerificationProfileDiscovery.discover(workspaceRoot, System.getProperty("os.name", ""));
             WorkspaceBindingId bindingId = workspaceIdentity.bindingId();
             WorkspaceLocationRef locationRef = workspaceIdentity.locationRef();
             locations.register(locationRef, workspaceRoot);
@@ -410,6 +415,8 @@ final class LocalCodingAgent implements AutoCloseable {
             SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
             var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
             var changeSets = new InMemoryFileChangeSetStore();
+            var changeReviews = new CodingChangeReviewArtifactFactory(
+                    changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024);
             var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
             var mutations = new LocalWorkspaceMutationService(
                     workspaces,
@@ -422,7 +429,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     new InMemoryQuarantineStore(),
                     identifiers,
                     time);
-            var operations = new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets);
+            var operations =
+                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, changeReviews);
             var deliveryIntents = new CodingDeliveryIntentResolver(
                     persistence.codingSessions(), persistence.ports().runs());
             var deliveryGuard =
@@ -487,6 +495,8 @@ final class LocalCodingAgent implements AutoCloseable {
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
+            var completionPolicy =
+                    new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile, deliveryIntents);
             var workProjection = new CodingWorkProjectionService(
                     persistence.ports().state(), taskModes, deliveryEvidence, deliveryProfile, time, deliveryIntents);
             var runtimeBuilder = persistence
@@ -498,8 +508,7 @@ final class LocalCodingAgent implements AutoCloseable {
                         traceObserver.accept(event);
                     })
                     .failureDiagnostics(CliFailureDiagnosticSink.forPersistence(configuration.persistence()))
-                    .completionPolicy(
-                            new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile, deliveryIntents))
+                    .completionPolicy(completionPolicy)
                     .middleware(CodingWorkProjectionMiddleware.events(
                             workProjection,
                             io.haifa.agent.runtime.core.middleware.RuntimePhase.BEFORE_RUN,
@@ -508,6 +517,11 @@ final class LocalCodingAgent implements AutoCloseable {
                     .middleware(CodingWorkProjectionMiddleware.events(
                             workProjection,
                             io.haifa.agent.runtime.core.middleware.RuntimePhase.AFTER_DECISION_EXECUTION,
+                            persistence.ports().events(),
+                            time))
+                    .middleware(new CodingRunOutcomeProjectionMiddleware(
+                            new CodingRunOutcomeProjectionService(
+                                    completionPolicy, persistence.ports().events()),
                             persistence.ports().events(),
                             time))
                     .repairRetry(new RepairRetryPolicy(2));
@@ -573,6 +587,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             configuration.skills().allowedAliases(),
                             Set.of(),
                             CodingAgentPrompt.current().text()
+                                    + "\n\n"
+                                    + verificationProfile.instructionText()
                                     + executionEnvironmentPrompt(
                                             executionPlatform == null ? "" : executionPlatform.shellDisplayName())
                                     + resources.snapshot().instructionBlock(),

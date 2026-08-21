@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.policy.CodingAgentPolicyAssembly;
+import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectExecutionToolOperations;
@@ -238,6 +239,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 workspaceChanges,
                 observedChanges);
         ExecutionOutputObserver observer = new CliOutputObserver(output);
+        var changeReviews = new CodingChangeReviewArtifactFactory(
+                changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024);
         var operations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -253,7 +256,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceWorkdirNormalizer(workspaceRoot),
-                deliveryGuard);
+                deliveryGuard,
+                changeReviews);
         var permissionOperations = new ProjectExecutionToolOperations(
                 broker,
                 identifiers,
@@ -269,7 +273,8 @@ final class CliExecutionPlatform implements AutoCloseable {
                 java.util.function.UnaryOperator.identity(),
                 CodingToolchainEnvironmentProfile.defaultScratchSpace(),
                 workspaceWorkdirNormalizer(workspaceRoot),
-                deliveryGuard);
+                deliveryGuard,
+                changeReviews);
         String securitySummary = securitySummary(profile, preflight);
         output.println("Execution security: " + securitySummary);
         return new CliExecutionPlatform(

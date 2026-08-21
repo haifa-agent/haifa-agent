@@ -4,6 +4,7 @@ import io.haifa.agent.core.step.AgentStep;
 import io.haifa.agent.core.tool.ToolCall;
 import io.haifa.agent.core.tool.ToolCallStatus;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -62,33 +63,27 @@ public final class CodingDeliveryEvidenceLedger {
         EnumSet<CodingDeliveryEvidenceKind> facts = EnumSet.noneOf(CodingDeliveryEvidenceKind.class);
         Map<CodingDeliveryEvidenceKind, Integer> latestDeliveryEvidence =
                 new java.util.EnumMap<>(CodingDeliveryEvidenceKind.class);
+        List<CodingValidationAttemptEvidence> validationAttempts = new ArrayList<>();
         List<ToolCall> calls = state.toolCalls(runId).stream()
                 .sorted(Comparator.comparing(ToolCall::requestedAt)
                         .thenComparing(call -> call.id().value()))
                 .toList();
         for (int index = 0; index < calls.size(); index++) {
             ToolCall call = calls.get(index);
-            collect(call, steps.get(call.stepId().value()), facts);
+            EnumSet<CodingDeliveryEvidenceKind> callFacts = EnumSet.noneOf(CodingDeliveryEvidenceKind.class);
+            collect(call, steps.get(call.stepId().value()), callFacts, validationAttempts);
+            facts.addAll(callFacts);
             int position = index;
-            deliveryEvidenceKind(call).ifPresent(kind -> latestDeliveryEvidence.put(kind, position));
+            callFacts.forEach(kind -> latestDeliveryEvidence.put(kind, position));
         }
-        return new Snapshot(facts, latestDeliveryEvidence);
+        return new Snapshot(facts, latestDeliveryEvidence, validationAttempts);
     }
 
-    private static java.util.Optional<CodingDeliveryEvidenceKind> deliveryEvidenceKind(ToolCall call) {
-        if (call.status() != ToolCallStatus.COMPLETED) return java.util.Optional.empty();
-        Object code = call.result()
-                .map(result -> result.structuredData().get("deliveryEvidenceCode"))
-                .orElse(null);
-        if (!(code instanceof String value)) return java.util.Optional.empty();
-        try {
-            return java.util.Optional.of(CodingDeliveryEvidenceKind.valueOf(value));
-        } catch (IllegalArgumentException ignored) {
-            return java.util.Optional.empty();
-        }
-    }
-
-    private static void collect(ToolCall call, AgentStep step, EnumSet<CodingDeliveryEvidenceKind> facts) {
+    private static void collect(
+            ToolCall call,
+            AgentStep step,
+            EnumSet<CodingDeliveryEvidenceKind> facts,
+            List<CodingValidationAttemptEvidence> validationAttempts) {
         Map<String, Object> data = call.result()
                 .map(result -> result.structuredData())
                 .orElseGet(() -> java.util.Optional.ofNullable(step)
@@ -104,11 +99,13 @@ public final class CodingDeliveryEvidenceLedger {
             facts.add(CodingDeliveryEvidenceKind.READ_ONLY_INSPECTION);
             facts.add(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED);
         }
-        if (call.status() == ToolCallStatus.COMPLETED
-                && MUTATION_TOOLS.contains(call.toolName())
-                && data.containsKey("changeSetId")) {
+        if (MUTATION_TOOLS.contains(call.toolName()) && hasChangeSetReference(data)) {
             facts.add(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
         }
+        CodingChangeReviewArtifact.fromStructuredData(data.get("changeReviewArtifact"))
+                .filter(CodingChangeReviewArtifact::complete)
+                .filter(review -> reviewReferencesResultChangeSets(review, data))
+                .ifPresent(review -> facts.add(CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW));
         if (call.status() == ToolCallStatus.COMPLETED && DIFF_TOOLS.contains(call.toolName())) {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         }
@@ -147,9 +144,13 @@ public final class CodingDeliveryEvidenceLedger {
             facts.add(CodingDeliveryEvidenceKind.DIFF_INSPECTION);
         }
         if ("BUILD".equals(declaredFamily) || "TEST".equals(declaredFamily)) {
+            CodingValidationAttemptEvidence validation = CodingValidationAttemptEvidence.fromStructuredData(
+                            data.get("validationEvidence"))
+                    .orElseGet(() -> legacyValidation(status));
+            validationAttempts.add(validation);
             facts.add(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT);
             facts.add(
-                    "SUCCEEDED".equals(status)
+                    validation.status() == CodingValidationStatus.PASSED
                             ? CodingDeliveryEvidenceKind.VALIDATION_PASSED
                             : CodingDeliveryEvidenceKind.VALIDATION_FAILED);
         }
@@ -163,6 +164,37 @@ public final class CodingDeliveryEvidenceLedger {
                         || (data.containsKey("failureCategory") && !"SUCCEEDED".equals(status)))) {
             facts.add(CodingDeliveryEvidenceKind.NO_CHANGE_JUSTIFICATION);
         }
+    }
+
+    private static CodingValidationAttemptEvidence legacyValidation(String status) {
+        return new CodingValidationAttemptEvidence(
+                CodingValidationAttemptEvidence.SCHEMA_VERSION,
+                "SUCCEEDED".equals(status) ? CodingValidationStatus.PASSED : CodingValidationStatus.FAILED,
+                null,
+                null,
+                null,
+                CodingValidationScope.UNKNOWN,
+                "LEGACY_TOOL_RESULT",
+                "TEST_COUNTS_UNAVAILABLE");
+    }
+
+    private static boolean reviewReferencesResultChangeSets(
+            CodingChangeReviewArtifact review, Map<String, Object> data) {
+        Set<String> resultRefs = new java.util.LinkedHashSet<>();
+        addString(data.get("changeSetId"), resultRefs);
+        addString(data.get("fileChangeSetId"), resultRefs);
+        if (data.get("changeSetIds") instanceof List<?> values) values.forEach(value -> addString(value, resultRefs));
+        return !resultRefs.isEmpty() && resultRefs.equals(new java.util.LinkedHashSet<>(review.changeSetIds()));
+    }
+
+    private static void addString(Object value, Set<String> target) {
+        if (value instanceof String text && !text.isBlank()) target.add(text);
+    }
+
+    private static boolean hasChangeSetReference(Map<String, Object> data) {
+        if (data.get("changeSetId") instanceof String value && !value.isBlank()) return true;
+        if (!(data.get("changeSetIds") instanceof List<?> values)) return false;
+        return values.stream().anyMatch(value -> value instanceof String text && !text.isBlank());
     }
 
     private static boolean trustedReadOnlyClassification(Map<String, Object> data) {
@@ -194,15 +226,25 @@ public final class CodingDeliveryEvidenceLedger {
     }
 
     public record Snapshot(
-            Set<CodingDeliveryEvidenceKind> kinds, Map<CodingDeliveryEvidenceKind, Integer> latestDeliveryEvidence) {
+            Set<CodingDeliveryEvidenceKind> kinds,
+            Map<CodingDeliveryEvidenceKind, Integer> latestDeliveryEvidence,
+            List<CodingValidationAttemptEvidence> validationAttempts) {
         public Snapshot {
             kinds = Set.copyOf(Objects.requireNonNull(kinds, "kinds must not be null"));
             latestDeliveryEvidence = Map.copyOf(
                     Objects.requireNonNull(latestDeliveryEvidence, "latestDeliveryEvidence must not be null"));
+            validationAttempts =
+                    List.copyOf(Objects.requireNonNull(validationAttempts, "validationAttempts must not be null"));
         }
 
         public Snapshot(Set<CodingDeliveryEvidenceKind> kinds) {
-            this(kinds, Map.of());
+            this(kinds, Map.of(), List.of());
+        }
+
+        public Snapshot(
+                Set<CodingDeliveryEvidenceKind> kinds,
+                Map<CodingDeliveryEvidenceKind, Integer> latestDeliveryEvidence) {
+            this(kinds, latestDeliveryEvidence, List.of());
         }
 
         public boolean has(CodingDeliveryEvidenceKind kind) {
@@ -215,11 +257,27 @@ public final class CodingDeliveryEvidenceLedger {
             return position != null && previous != null && position > previous;
         }
 
+        public boolean hasAtOrAfter(CodingDeliveryEvidenceKind kind, CodingDeliveryEvidenceKind predecessor) {
+            Integer position = latestDeliveryEvidence.get(kind);
+            Integer previous = latestDeliveryEvidence.get(predecessor);
+            return position != null && previous != null && position >= previous;
+        }
+
         public List<String> codes() {
             return kinds.stream()
                     .sorted(Comparator.comparing(Enum::name))
                     .map(Enum::name)
                     .toList();
+        }
+
+        public boolean latestValidationPassed() {
+            return !validationAttempts.isEmpty()
+                    && validationAttempts.getLast().status() == CodingValidationStatus.PASSED;
+        }
+
+        public boolean latestValidationFailed() {
+            return !validationAttempts.isEmpty()
+                    && validationAttempts.getLast().status() == CodingValidationStatus.FAILED;
         }
     }
 }

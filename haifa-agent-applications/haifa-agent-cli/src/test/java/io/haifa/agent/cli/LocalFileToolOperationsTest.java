@@ -8,11 +8,15 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
+import io.haifa.agent.project.changeset.FileChange;
 import io.haifa.agent.project.changeset.FileChangeSet;
 import io.haifa.agent.project.changeset.FileChangeSetId;
 import io.haifa.agent.project.changeset.FileChangeSetStatus;
+import io.haifa.agent.project.changeset.FileChangeType;
+import io.haifa.agent.project.changeset.FileVersion;
 import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
@@ -118,7 +122,11 @@ class LocalFileToolOperationsTest {
                         """)));
 
         assertThat(result.successful()).isTrue();
-        assertThat(result.structuredData()).containsEntry("complete", true);
+        assertThat(result.structuredData()).containsEntry("complete", true).containsKey("changeReviewArtifactRef");
+        assertThat(result.structuredData().get("changeReviewArtifact"))
+                .isInstanceOfSatisfying(Map.class, review -> assertThat(review)
+                        .containsEntry("complete", true)
+                        .containsEntry("totalFileCount", 1));
         assertThat(Files.readString(root.resolve("source.txt"))).isEqualTo("anchor\nnew\n");
     }
 
@@ -288,6 +296,12 @@ class LocalFileToolOperationsTest {
                     WorkspaceRevision before =
                             workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:test-patch-result");
+                    FileChange change = new FileChange(
+                            FileChangeType.REPLACE,
+                            request.path().projectPath(),
+                            null,
+                            new FileVersion(FileType.FILE, request.content().length, "sha256:" + "a".repeat(64)),
+                            new FileVersion(FileType.FILE, request.content().length, "sha256:" + "b".repeat(64)));
                     FileChangeSet changeSet = FileChangeSet.pending(
                                     new FileChangeSetId("change-set-test"),
                                     projectId,
@@ -299,14 +313,14 @@ class LocalFileToolOperationsTest {
                                     request.context().actor(),
                                     request.context().securityDecisionRef(),
                                     Instant.parse("2026-08-05T00:00:00Z"))
-                            .applied(after, java.util.List.of(), true, Instant.parse("2026-08-05T00:00:01Z"));
+                            .applied(after, java.util.List.of(change), true, Instant.parse("2026-08-05T00:00:01Z"));
                     changeSets.create(changeSet);
                     return new MutationResult(
                             new FileChangeSetId("change-set-test"),
                             FileChangeSetStatus.APPLIED,
                             before,
                             after,
-                            java.util.List.of(),
+                            java.util.List.of(change),
                             true,
                             false);
                 } catch (java.io.IOException exception) {
