@@ -41,7 +41,8 @@ class MissionBackupServiceTest {
         var restore = fixture.service().restore(backup, restored);
 
         assertThat(result.manifest().missionSchemaVersion()).isEqualTo(7);
-        assertThat(result.manifest().runtimeSchemaVersion()).isEqualTo(7);
+        assertThat(result.manifest().runtimeSchemaVersion())
+                .isEqualTo(RuntimeStoreMigrations.CURRENT_SCHEMA_VERSION);
         assertThat(restore.directory()).isEqualTo(restored.toAbsolutePath());
         assertThat(new SqliteMissionStore(restored.resolve("personal-assistant.sqlite"), new ObjectMapper())
                         .schemaVersion())
