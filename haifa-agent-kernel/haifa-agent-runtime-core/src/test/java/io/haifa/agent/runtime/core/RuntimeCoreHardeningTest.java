@@ -642,6 +642,128 @@ class RuntimeCoreHardeningTest {
     }
 
     @Test
+    void stalledActionsReceiveOnePersistedStrategySwitchBeforeBoundedTermination() {
+        Queue<ToolCallDecision> decisions = new ArrayDeque<>(List.of(
+                progressRequest("stall-1", "deliver"),
+                progressRequest("stall-2", "inspect-a"),
+                progressRequest("stall-3", "inspect-b"),
+                progressRequest("stall-4", "inspect-a"),
+                progressRequest("stall-5", "inspect-b"),
+                progressRequest("stall-6", "strategy-c"),
+                progressRequest("stall-7", "strategy-d"),
+                progressRequest("stall-8", "strategy-c"),
+                progressRequest("stall-9", "strategy-d")));
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<List<String>> recoveryContext = new AtomicReference<>();
+        AgentChatModel stalledModel = request -> {
+            int call = modelCalls.incrementAndGet();
+            if (call == 6) {
+                recoveryContext.set(request.messages().stream()
+                        .map(message -> message.content())
+                        .toList());
+            }
+            return response(decisions.remove());
+        };
+        Fixture fixture = fixture(
+                stalledModel,
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "progress-probe",
+                        "1.0.0",
+                        "progress-probe.input",
+                        false,
+                        request -> "deliver".equals(request.arguments().values().get("purpose"))
+                                ? new ToolResult(
+                                        true,
+                                        "delivered",
+                                        Map.of("changeSetId", "change-stall-1"),
+                                        List.of(),
+                                        List.of(),
+                                        false)
+                                : new ToolResult(true, "inspected", Map.of(), List.of(), List.of(), false)));
+
+        var accepted = fixture.runtime.start(request("bounded-stall-recovery"));
+        fixture.scheduler.runAll();
+
+        assertThat(modelCalls).hasValue(9);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.AGENT_LOOP_DETECTED);
+        });
+        assertThat(recoveryContext.get())
+                .anyMatch(message -> message.contains("type=STALL_RECOVERY")
+                        && message.contains("nextAction=choose one different semantic action"))
+                .noneMatch(message -> message.contains("inspect-a") || message.contains("inspect-b"));
+        assertThat(fixture.store.messages(accepted.runId()))
+                .filteredOn(
+                        message -> "STALL_RECOVERY".equals(message.metadata().get("runtimeControlType")))
+                .singleElement()
+                .satisfies(message -> assertThat(message.metadata())
+                        .containsEntry("schemaVersion", "stall-recovery/1")
+                        .containsEntry("recoveryAttempts", 1)
+                        .containsKeys("progressDigest", "stallReason"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .contains("loop.stall-detected", "loop.recovery-strategy-required", "loop.recovery-exhausted");
+    }
+
+    @Test
+    void stallStrategySwitchBudgetSurvivesProcessRecovery() {
+        AtomicBoolean firstAttemptOwned = new AtomicBoolean(true);
+        AtomicInteger modelCalls = new AtomicInteger();
+        Queue<ToolCallDecision> decisions = new ArrayDeque<>(List.of(
+                progressRequest("restart-stall-1", "deliver"),
+                progressRequest("restart-stall-2", "inspect-a"),
+                progressRequest("restart-stall-3", "inspect-b"),
+                progressRequest("restart-stall-4", "inspect-a"),
+                progressRequest("restart-stall-5", "inspect-b"),
+                progressRequest("restart-stall-6", "strategy-c"),
+                progressRequest("restart-stall-7", "strategy-d"),
+                progressRequest("restart-stall-8", "strategy-c"),
+                progressRequest("restart-stall-9", "strategy-d")));
+        AgentChatModel interrupted = request -> {
+            int call = modelCalls.incrementAndGet();
+            if (call == 6) throw new AssertionError("simulated process loss after persisted stall recovery");
+            return response(decisions.remove());
+        };
+        Fixture fixture = fixture(interrupted, builder -> TestToolPlatform.install(
+                        builder,
+                        "progress-probe",
+                        "1.0.0",
+                        "progress-probe.input",
+                        false,
+                        request -> "deliver".equals(request.arguments().values().get("purpose"))
+                                ? new ToolResult(
+                                        true,
+                                        "delivered",
+                                        Map.of("changeSetId", "change-restart-stall-1"),
+                                        List.of(),
+                                        List.of(),
+                                        false)
+                                : new ToolResult(true, "inspected", Map.of(), List.of(), List.of(), false))
+                .executionOwnership(attempt -> firstAttemptOwned.get() || attempt.attemptNumber() > 1));
+
+        var accepted = fixture.runtime.start(request("restart-stall-recovery"));
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        firstAttemptOwned.set(false);
+        fixture.runtime.recover(accepted.runId());
+        fixture.scheduler.runAll();
+
+        assertThat(modelCalls).hasValue(10);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.AGENT_LOOP_DETECTED);
+        });
+        assertThat(fixture.store.messages(accepted.runId()))
+                .filteredOn(
+                        message -> "STALL_RECOVERY".equals(message.metadata().get("runtimeControlType")))
+                .hasSize(1);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("loop.recovery-strategy-required"))
+                .hasSize(1);
+    }
+
+    @Test
     void modelUsageBudgetOverrunCompletesWithRetainedPartialResult() {
         Fixture fixture = fixture(request -> new AgentChatResponse(
                 "over-budget-response",
@@ -1040,6 +1162,14 @@ class RuntimeCoreHardeningTest {
                                 commandForm,
                                 "purpose",
                                 commandForm)))));
+    }
+
+    private static ToolCallDecision progressRequest(String key, String purpose) {
+        return new ToolCallDecision(List.of(toolRequest(
+                key,
+                "progress-probe",
+                "1.0.0",
+                new ToolArguments("progress-probe.input", "1", Map.of("purpose", purpose)))));
     }
 
     private static ModelToolSpecification toolSpecification(String name, String version, String schemaId) {

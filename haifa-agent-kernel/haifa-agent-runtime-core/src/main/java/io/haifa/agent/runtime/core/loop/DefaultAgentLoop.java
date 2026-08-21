@@ -139,6 +139,11 @@ public final class DefaultAgentLoop implements AgentLoop {
         progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
                 .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .count());
+        progress.restoreStallRecoveryAttempts(
+                state.messages(run.id()).stream().anyMatch(message -> "STALL_RECOVERY"
+                                .equals(message.metadata().get("runtimeControlType")))
+                        ? 1
+                        : 0);
         RunBudgetSnapshot initialBudget =
                 RunBudgetSnapshot.from(run, progress.iteration(), 0, progress.repairAttempts(), time.now());
         progress.rebuildControlState(
@@ -196,7 +201,62 @@ public final class DefaultAgentLoop implements AgentLoop {
                 }
                 throw beforeModelLimit;
             }
-            guards.forEach(guard -> guard.check(run, progress));
+            try {
+                guards.forEach(guard -> guard.check(run, progress));
+            } catch (io.haifa.agent.runtime.core.guard.LoopDetectedException exhausted) {
+                events.append(
+                        run.id(),
+                        "loop.recovery-exhausted",
+                        Map.of(
+                                "schemaVersion",
+                                "stall-recovery/1",
+                                "iteration",
+                                progress.iteration(),
+                                "reason",
+                                exhausted.reason().name(),
+                                "recoveryAttempts",
+                                progress.stallRecoveryAttempts()),
+                        time.now());
+                throw exhausted;
+            }
+            progress.takeStallRecoveryAnnouncement().ifPresent(signal -> {
+                Map<String, Object> eventData = Map.of(
+                        "schemaVersion",
+                        "stall-recovery/1",
+                        "iteration",
+                        progress.iteration(),
+                        "reason",
+                        signal.reason().name(),
+                        "progressDigest",
+                        signal.progressDigest(),
+                        "recoveryAttempts",
+                        signal.attempt());
+                events.append(run.id(), "loop.stall-detected", eventData, time.now());
+                events.append(run.id(), "loop.recovery-strategy-required", eventData, time.now());
+                appendRuntimeControlMessage(
+                        run,
+                        String.join(
+                                "\n",
+                                "[RUNTIME_CONTROL_UPDATE]",
+                                "type=STALL_RECOVERY",
+                                "reason=" + signal.reason().name(),
+                                "progressDigest=" + signal.progressDigest(),
+                                "recoveryAttempts=" + signal.attempt(),
+                                "nextAction=choose one different semantic action without changing provider, permissions, or policy"),
+                        Map.of(
+                                "runtimeControl",
+                                true,
+                                "runtimeControlType",
+                                "STALL_RECOVERY",
+                                "stallReason",
+                                signal.reason().name(),
+                                "progressDigest",
+                                signal.progressDigest(),
+                                "recoveryAttempts",
+                                signal.attempt(),
+                                "schemaVersion",
+                                "stall-recovery/1"));
+            });
             RunBudgetSnapshot budget = RunBudgetSnapshot.from(
                     run,
                     progress.iteration(),
