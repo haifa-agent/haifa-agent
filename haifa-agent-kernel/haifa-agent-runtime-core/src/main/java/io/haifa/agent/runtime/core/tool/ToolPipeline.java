@@ -44,6 +44,7 @@ import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import io.haifa.agent.tool.api.ToolSchemaValidationResult;
 import io.haifa.agent.tool.api.ToolSchemaValidator;
+import io.haifa.agent.tool.api.ToolSideEffect;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -1008,6 +1009,12 @@ public final class ToolPipeline {
 
     public boolean hasUncertainExecution(AgentRun run) {
         return journal.hasUncertain(run.id());
+    }
+
+    public boolean mayModifyWorkspace(AgentRun run, ToolRequest request) {
+        var sideEffects = binding(run, request).definition().sideEffects();
+        return sideEffects.contains(ToolSideEffect.FILE_WRITE)
+                || sideEffects.contains(ToolSideEffect.PROCESS_EXECUTION);
     }
 
     private FrozenToolBinding binding(AgentRun run, ToolRequest request) {

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
+import io.haifa.agent.core.checkpoint.CheckpointType;
 import io.haifa.agent.core.content.TextPart;
 import io.haifa.agent.core.error.AgentErrorCode;
 import io.haifa.agent.core.reference.PrincipalRef;
@@ -609,6 +610,67 @@ class RuntimeCoreHardeningTest {
                 .containsExactly("execution.scratch-provisioned", "execution.scratch-cleanup-failed");
         assertThat(scratchEvents).allSatisfy(event -> assertThat(event.data().toString())
                 .doesNotContain("/private", "TMPDIR", "command", "stderr"));
+    }
+
+    @Test
+    void firstPotentialWorkspaceMutationCapturesBaselineBeforeToolJournalDispatch() {
+        ToolRequest write = toolRequest(
+                "workspace-write",
+                "workspace-write",
+                "1.0.0",
+                new ToolArguments("workspace-write.input", "1", Map.of("path", "src/Main.java")));
+        Fixture mutating = fixture(
+                model(new ToolCallDecision(List.of(write)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "workspace-write",
+                        "1.0.0",
+                        "workspace-write.input",
+                        true,
+                        ignored -> new ToolResult(
+                                true,
+                                "written",
+                                Map.of("changeSetId", "workspace-change-1"),
+                                List.of(),
+                                List.of(),
+                                false)));
+
+        var accepted = mutating.runtime.start(request("workspace-baseline"));
+        mutating.scheduler.runAll();
+
+        var baseline = mutating.store.checkpointsFor(accepted.runId()).stream()
+                .filter(checkpoint -> checkpoint.type() == CheckpointType.WORKSPACE_SNAPSHOT)
+                .toList();
+        assertThat(baseline).singleElement().satisfies(checkpoint -> assertThat(mutating.store
+                        .state(checkpoint.id().value())
+                        .orElseThrow()
+                        .toolCalls())
+                .isEmpty());
+        assertThat(mutating.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("workspace.baseline-checkpoint-captured"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("schemaVersion", "workspace-checkpoint/1")
+                        .containsEntry("checkpointRef", baseline.getFirst().id().value()));
+
+        ToolRequest read = toolRequest(
+                "workspace-read",
+                "workspace-read",
+                "1.0.0",
+                new ToolArguments("workspace-read.input", "1", Map.of("path", "src/Main.java")));
+        Fixture readOnly = fixture(
+                model(new ToolCallDecision(List.of(read)), finalDecision("done")),
+                builder -> TestToolPlatform.install(
+                        builder,
+                        "workspace-read",
+                        "1.0.0",
+                        "workspace-read.input",
+                        false,
+                        ignored -> new ToolResult(true, "read", Map.of(), List.of(), List.of(), false)));
+        var readAccepted = readOnly.runtime.start(request("no-workspace-baseline-for-read"));
+        readOnly.scheduler.runAll();
+        assertThat(readOnly.store.checkpointsFor(readAccepted.runId()))
+                .noneMatch(checkpoint -> checkpoint.type() == CheckpointType.WORKSPACE_SNAPSHOT);
     }
 
     @Test

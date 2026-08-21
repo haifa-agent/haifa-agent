@@ -136,6 +136,7 @@ public final class DefaultAgentLoop implements AgentLoop {
         AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
                         value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
                 .orElseGet(() -> new AgentLoopContext(1, List.of()));
+        if (restored.isPresent()) progress.markWorkspaceBaselineCheckpointCaptured();
         progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
                 .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .count());
@@ -645,6 +646,29 @@ public final class DefaultAgentLoop implements AgentLoop {
                         progress.fingerprints(),
                         progress.forcedContextRebuildAttempts(),
                         CheckpointType.AUTOMATIC);
+            }
+            if (decisionExecutor.mayModifyWorkspace(run, decision) && !progress.workspaceBaselineCheckpointCaptured()) {
+                var baseline = checkpoints.capture(
+                        run,
+                        Math.max(0, progress.iteration() - 1),
+                        progress.fingerprints(),
+                        progress.forcedContextRebuildAttempts(),
+                        CheckpointType.WORKSPACE_SNAPSHOT);
+                if (baseline.isEmpty()) {
+                    throw new IllegalStateException("workspace baseline checkpoint was required but not captured");
+                }
+                progress.markWorkspaceBaselineCheckpointCaptured();
+                events.append(
+                        run.id(),
+                        "workspace.baseline-checkpoint-captured",
+                        Map.of(
+                                "schemaVersion",
+                                "workspace-checkpoint/1",
+                                "checkpointRef",
+                                baseline.orElseThrow().id().value(),
+                                "iteration",
+                                progress.iteration()),
+                        time.now());
             }
             middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContextRef[0]);
             AgentLoopDirective directive;

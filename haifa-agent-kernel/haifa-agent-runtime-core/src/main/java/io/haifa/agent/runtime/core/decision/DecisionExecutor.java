@@ -147,6 +147,11 @@ public final class DecisionExecutor {
         return execute(run, decision, loopContext);
     }
 
+    public boolean mayModifyWorkspace(AgentRun run, AgentDecision decision) {
+        return decision instanceof ToolCallDecision toolsDecision
+                && toolsDecision.requests().stream().anyMatch(request -> tools.mayModifyWorkspace(run, request));
+    }
+
     public void failWithSummary(AgentRun run, AgentError error, String summary) {
         transitions.failedWithOutput(
                 run,

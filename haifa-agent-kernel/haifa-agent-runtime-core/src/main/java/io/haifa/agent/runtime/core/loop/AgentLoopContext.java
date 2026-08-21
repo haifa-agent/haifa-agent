@@ -31,6 +31,7 @@ public final class AgentLoopContext {
     private int stallRecoveryAttempts;
     private StallRecoverySignal activeStallRecovery;
     private boolean stallRecoveryAnnouncementPending;
+    private boolean workspaceBaselineCheckpointCaptured;
 
     public AgentLoopContext(int iteration, List<String> fingerprints) {
         this(iteration, fingerprints, 0);
@@ -228,6 +229,14 @@ public final class AgentLoopContext {
 
     public int stallRecoveryAttempts() {
         return stallRecoveryAttempts;
+    }
+
+    public boolean workspaceBaselineCheckpointCaptured() {
+        return workspaceBaselineCheckpointCaptured;
+    }
+
+    public void markWorkspaceBaselineCheckpointCaptured() {
+        workspaceBaselineCheckpointCaptured = true;
     }
 
     public int recordRepairAttempt() {
