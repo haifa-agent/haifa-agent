@@ -557,6 +557,7 @@ public final class ProjectToolCatalog {
             properties.put("outputRefs", Map.of("type", "array", "items", Map.of("type", "string")));
             properties.put("fileChangeSetId", Map.of("type", "string"));
             properties.put("durationMillis", Map.of("type", "integer", "minimum", 0));
+            properties.put("observedProcessCount", Map.of("type", "integer", "minimum", 0));
             properties.put("failureCode", Map.of("type", "string"));
             properties.put("failureDetail", Map.of("type", "string"));
             properties.put("failureCategory", Map.of("type", "string"));
@@ -592,6 +593,8 @@ public final class ProjectToolCatalog {
             properties.put("diffArtifactRef", Map.of("type", "string"));
             properties.put("changeReviewArtifactRef", Map.of("type", "string"));
             properties.put("changeReviewArtifact", Map.of("type", "object", "additionalProperties", true));
+            properties.put("changeReviewStatus", Map.of("type", "string"));
+            properties.put("changeReviewReasonCode", Map.of("type", "string"));
             properties.put("validationEvidence", Map.of("type", "object", "additionalProperties", true));
             properties.put("sandboxProfileDigest", Map.of("type", "string"));
             properties.put("scratchSpecDigest", Map.of("type", "string"));

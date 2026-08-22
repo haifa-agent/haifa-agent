@@ -537,7 +537,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                         modelRetryPolicy.policy(),
                         (failedAttempt, failure) -> modelRetryDelay(run, failedAttempt, failure),
                         () -> checkModelRetryControl(run),
-                        modelRetryListener(run, modelRequestIdRef, requestAttemptOffset));
+                        modelRetryListener(run, modelRequestIdRef, requestAttemptOffset),
+                        modelRetryPolicy::maxAttempts);
                 invocationRef.set(response);
                 transitions.usage(
                         run,

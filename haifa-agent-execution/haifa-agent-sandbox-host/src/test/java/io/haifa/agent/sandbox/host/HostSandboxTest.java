@@ -142,6 +142,21 @@ class HostSandboxTest {
             assertThat(treeTimeout.processTreeTerminated()).isTrue();
             assertThat(treeTimeout.status()).isEqualTo(SandboxProcessStatus.TIMED_OUT);
 
+            var processLimit = session.execute(new SandboxExecution(
+                    new ExecutionCommand(
+                            ExecutionCommandMode.DIRECT,
+                            List.of(
+                                    "java",
+                                    "-cp",
+                                    ".",
+                                    "io.haifa.agent.sandbox.host.ProcessTreeParent",
+                                    "limit-child.pid")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 1024, 1024, 1)));
+            assertThat(processLimit.status()).isEqualTo(SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED);
+            assertThat(processLimit.processTreeTerminated()).isTrue();
+
             try (var managed = session.openManagedProcess(new SandboxExecution(
                     new ExecutionCommand(
                             ExecutionCommandMode.DIRECT,

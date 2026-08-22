@@ -244,6 +244,8 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
+进程数预算触发且进程树已收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
+ExecutionResult 是权威执行事实；Change Review 等派生投影失败只返回安全的不可用原因码，不得吞掉执行结果。
 Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本：Git Diff 的退出 1 可作为
 `EXPECTED_VARIANT/DIFFERENCES_FOUND` 形成 Diff 证据，Git Grep 的退出 1 是 `EMPTY_RESULT/NO_MATCHES`；
 无效 revision 的 128 和 Build/Test 非零退出仍是失败，Timeout/Cancel/未知终止不得自动重放。

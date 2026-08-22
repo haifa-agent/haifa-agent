@@ -15,6 +15,9 @@ public final class CommandSemanticOutcomeInterpreter {
         if (status == ExecutionStatus.SUCCEEDED) {
             return new Interpretation(CommandSemanticOutcome.SUCCEEDED, "COMMAND_EXIT_ZERO");
         }
+        if (status == ExecutionStatus.PROCESS_LIMIT_EXCEEDED) {
+            return new Interpretation(CommandSemanticOutcome.COMMAND_FAILED, "PROCESS_LIMIT_EXCEEDED");
+        }
         if (status == ExecutionStatus.TIMED_OUT
                 || status == ExecutionStatus.CANCELLED
                 || status == ExecutionStatus.UNKNOWN

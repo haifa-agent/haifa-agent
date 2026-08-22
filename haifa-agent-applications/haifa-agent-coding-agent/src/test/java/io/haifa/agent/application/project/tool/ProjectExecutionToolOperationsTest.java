@@ -244,7 +244,59 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void reconcilesTimedOutExecutionFromTheCompletedProcessAndObservedChangeSetWithoutReplaying() {
+    void preservesAuthoritativeExecutionWhenDerivedChangeReviewProjectionFails() {
+        var changeSets = new InMemoryFileChangeSetStore();
+        FileChangeSet pending = FileChangeSet.pending(
+                new FileChangeSetId("changes-1"),
+                new ProjectId("project-1"),
+                WORKSPACE_ID,
+                "execution:execution-1",
+                "run-1",
+                "execution-1",
+                new WorkspaceRevision(1, "sha256:" + "a".repeat(64)),
+                new PrincipalRef("operator", "user"),
+                "policy-1",
+                NOW);
+        changeSets.create(pending.applied(
+                new WorkspaceRevision(2, "sha256:" + "b".repeat(64)),
+                List.of(new FileChange(
+                        FileChangeType.CREATE,
+                        ProjectPath.of("target/generated.bin"),
+                        null,
+                        null,
+                        new FileVersion(FileType.FILE, 12, "sha256:" + "c".repeat(64)))),
+                true,
+                NOW.plusSeconds(1)));
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+            }
+        };
+
+        ToolResult result = operations(
+                        broker,
+                        4096,
+                        100,
+                        new CodingChangeReviewArtifactFactory(
+                                changeSets,
+                                (set, change) -> {
+                                    throw new IllegalStateException("simulated derived projection failure");
+                                },
+                                1024))
+                .execute(invocation(Map.of("command", "mvn test", "operationFamily", "TEST"), () -> false), access());
+
+        assertThat(result.successful()).isTrue();
+        assertThat(result.structuredData())
+                .containsEntry("status", "SUCCEEDED")
+                .containsEntry("fileChangeSetId", "changes-1")
+                .containsEntry("changeReviewStatus", "UNAVAILABLE")
+                .containsEntry("changeReviewReasonCode", "CHANGE_REVIEW_PROJECTION_FAILED")
+                .doesNotContainKeys("runtimeOutcome", "changeReviewArtifact", "changeReviewArtifactRef");
+    }
+
+    @Test
+    void treatsTimedOutExecutionWithCompletedWorkspaceObservationAsTerminalWithoutReplaying() {
         AtomicInteger executions = new AtomicInteger();
         AtomicReference<ExecutionResult> completed = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
@@ -252,7 +304,7 @@ class ProjectExecutionToolOperationsTest {
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 executions.incrementAndGet();
                 observer.onStarted(new io.haifa.agent.execution.api.ExecutionProcessIdentity(991));
-                ExecutionResult result = result(request.id(), ExecutionStatus.TIMED_OUT, null);
+                ExecutionResult result = resultWithoutChangeSet(request.id(), ExecutionStatus.TIMED_OUT, null);
                 completed.set(result);
                 return result;
             }
@@ -285,17 +337,42 @@ class ProjectExecutionToolOperationsTest {
                 access());
 
         assertThat(executions).hasValue(1);
-        assertThat(observed.structuredData()).containsEntry("runtimeOutcome", "OUTCOME_UNKNOWN");
+        assertThat(observed.structuredData()).doesNotContainKey("runtimeOutcome");
         assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
-        assertThat(reconciled.reasonCode()).isEqualTo("WORKSPACE_CHANGE_SET_CONFIRMED");
+        assertThat(reconciled.reasonCode()).isEqualTo("EXECUTION_TERMINAL_AND_WORKSPACE_OBSERVATION_CONFIRMED");
         assertThat(reconciled.result()).hasValueSatisfying(result -> {
             assertThat(result.successful()).isFalse();
             assertThat(result.structuredData())
                     .containsEntry("status", "TIMED_OUT")
-                    .containsEntry("fileChangeSetId", "changes-1")
                     .containsEntry("reconcileStatus", "RESOLVED")
                     .containsEntry("replayAllowed", false);
         });
+    }
+
+    @Test
+    void exposesConfirmedProcessLimitAsAStableResourceFailure() {
+        ExecutionBroker broker = new StubBroker() {
+            @Override
+            public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
+                return resultWithFailure(
+                        request.id(),
+                        ExecutionStatus.PROCESS_LIMIT_EXCEEDED,
+                        new ExecutionFailure("PROCESS_LIMIT_EXCEEDED", "process count exceeded its budget"));
+            }
+        };
+
+        ToolResult result = operations(broker, 4096, 100)
+                .execute(invocation(Map.of("command", "mvn test", "operationFamily", "TEST"), () -> false), access());
+
+        assertThat(result.successful()).isFalse();
+        assertThat(result.structuredData())
+                .containsEntry("status", "PROCESS_LIMIT_EXCEEDED")
+                .containsEntry("semanticOutcome", "COMMAND_FAILED")
+                .containsEntry("semanticReasonCode", "PROCESS_LIMIT_EXCEEDED")
+                .containsEntry("failureCategory", "PROCESS_LIMIT")
+                .containsEntry("stableFailureCode", "PROCESS_LIMIT_EXCEEDED")
+                .containsEntry("observedProcessCount", 1)
+                .doesNotContainKey("runtimeOutcome");
     }
 
     @Test
@@ -1311,6 +1388,40 @@ class ProjectExecutionToolOperationsTest {
                         ? new ExecutionFailure("PROCESS_EXIT_NONZERO", "process exited with a non-zero code")
                         : null,
                 false);
+    }
+
+    private static ExecutionResult resultWithoutChangeSet(ExecutionId id, ExecutionStatus status, Integer exitCode) {
+        var base = result(id, status, exitCode);
+        return new ExecutionResult(
+                base.id(),
+                base.status(),
+                base.exitCode(),
+                base.startedAt(),
+                base.endedAt(),
+                base.stdout(),
+                base.stderr(),
+                null,
+                base.sandboxSessionRef(),
+                base.resourceUsage(),
+                base.failure(),
+                base.replayed());
+    }
+
+    private static ExecutionResult resultWithFailure(ExecutionId id, ExecutionStatus status, ExecutionFailure failure) {
+        var base = result(id, status, null);
+        return new ExecutionResult(
+                base.id(),
+                base.status(),
+                base.exitCode(),
+                base.startedAt(),
+                base.endedAt(),
+                base.stdout(),
+                base.stderr(),
+                base.fileChangeSetId(),
+                base.sandboxSessionRef(),
+                base.resourceUsage(),
+                failure,
+                base.replayed());
     }
 
     private static ToolProvider provider() {

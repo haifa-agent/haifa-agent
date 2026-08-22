@@ -442,6 +442,7 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
         return switch (status) {
             case EXITED -> exitCode != null && exitCode == 0 ? ExecutionStatus.SUCCEEDED : ExecutionStatus.FAILED;
             case OUTPUT_LIMIT_EXCEEDED -> ExecutionStatus.OUTPUT_LIMIT_EXCEEDED;
+            case PROCESS_LIMIT_EXCEEDED -> ExecutionStatus.PROCESS_LIMIT_EXCEEDED;
             case TIMED_OUT -> ExecutionStatus.TIMED_OUT;
             case CANCELLED -> ExecutionStatus.CANCELLED;
             case UNKNOWN -> ExecutionStatus.UNKNOWN;
@@ -458,6 +459,10 @@ public final class DefaultExecutionBroker implements ExecutionBroker {
                         treeTerminated
                                 ? "process output exceeded its budget and the process tree was terminated"
                                 : "process output exceeded its budget and process tree termination is uncertain");
+            case PROCESS_LIMIT_EXCEEDED ->
+                new ExecutionFailure(
+                        "PROCESS_LIMIT_EXCEEDED",
+                        "process count exceeded its budget and the process tree was terminated");
             case TIMED_OUT ->
                 new ExecutionFailure(
                         treeTerminated ? "TIMEOUT" : "TIMEOUT_TREE_UNKNOWN",

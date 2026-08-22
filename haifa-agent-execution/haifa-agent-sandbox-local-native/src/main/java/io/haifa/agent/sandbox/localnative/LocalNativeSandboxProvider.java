@@ -344,9 +344,11 @@ public final class LocalNativeSandboxProvider implements SandboxProvider {
                     treeTerminated = terminateTree(process);
                     status = outcome == WaitOutcome.OUTPUT_LIMIT_EXCEEDED && treeTerminated
                             ? SandboxProcessStatus.OUTPUT_LIMIT_EXCEEDED
-                            : outcome == WaitOutcome.TIMED_OUT && treeTerminated
-                                    ? SandboxProcessStatus.TIMED_OUT
-                                    : SandboxProcessStatus.UNKNOWN;
+                            : outcome == WaitOutcome.PROCESS_LIMIT_EXCEEDED && treeTerminated
+                                    ? SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED
+                                    : outcome == WaitOutcome.TIMED_OUT && treeTerminated
+                                            ? SandboxProcessStatus.TIMED_OUT
+                                            : SandboxProcessStatus.UNKNOWN;
                 }
                 BoundedBytes out = stdout.get(5, TimeUnit.SECONDS);
                 BoundedBytes err = stderr.get(5, TimeUnit.SECONDS);
