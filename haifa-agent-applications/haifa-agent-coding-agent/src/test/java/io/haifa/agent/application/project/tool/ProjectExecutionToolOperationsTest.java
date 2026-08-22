@@ -152,12 +152,20 @@ class ProjectExecutionToolOperationsTest {
     }
 
     @Test
-    void ignoresRunnerCountsAndUsesExactFrozenCandidateScope() {
+    void validatesExactFrozenCandidateScopeAcrossDirectAndReconciledResults() {
+        AtomicReference<ExecutionResult> completed = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
                 observer.onOutput(chunk("1 passed, 7 deselected in 0.25s\n"));
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                ExecutionResult result = result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                completed.set(result);
+                return result;
+            }
+
+            @Override
+            public Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
+                return Optional.ofNullable(completed.get());
             }
         };
 
@@ -172,8 +180,16 @@ class ProjectExecutionToolOperationsTest {
                 CodingValidationScope.SELECTED);
         CodingSessionVerificationConfiguration configuration = CodingSessionVerificationConfiguration.freeze(
                 new CodingVerificationProfile(List.of(candidate), List.of()));
-        ToolResult result = operations(broker, 4096, 100, null, ignored -> configuration)
-                .execute(invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false), access());
+        ToolInvocationRequest invocation =
+                invocation(Map.of("command", command, "operationFamily", "TEST"), () -> false);
+        var operations = operations(broker, 4096, 100, null, ignored -> configuration);
+        ToolResult result = operations.execute(invocation, access());
+        String expectedValidationAttemptRef = io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(
+                "coding-validation-evidence/2",
+                "PASSED",
+                configuration.digest(),
+                configuration.candidateDigest(candidate),
+                "TRUSTED_SELECTED_SCOPE"));
 
         assertThat(result.structuredData().get("validationEvidence"))
                 .isInstanceOfSatisfying(Map.class, evidence -> assertThat(evidence)
@@ -183,15 +199,42 @@ class ProjectExecutionToolOperationsTest {
                         .containsEntry("verificationSource", "USER_EXPLICIT")
                         .containsEntry("claimCode", "TRUSTED_SELECTED_SCOPE")
                         .doesNotContainKeys("discoveredTestCount", "selectedTestCount", "ignoredTestCount"));
-        assertThat(result.structuredData())
-                .containsEntry(
-                        "validationAttemptRef",
-                        io.haifa.agent.policy.api.PolicyDigest.sha256Fields(List.of(
-                                "coding-validation-evidence/2",
-                                "PASSED",
-                                configuration.digest(),
-                                configuration.candidateDigest(candidate),
-                                "TRUSTED_SELECTED_SCOPE")));
+        assertThat(result.structuredData()).containsEntry("validationAttemptRef", expectedValidationAttemptRef);
+        var validator = new JsonSchema202012Validator();
+        assertThat(validator
+                        .validate(invocation.binding().definition().outputSchema(), result.structuredData())
+                        .valid())
+                .isTrue();
+
+        var reconciled = operations.reconcile(
+                new ToolReconciliationRequest(
+                        invocation.binding(),
+                        invocation.toolCallId(),
+                        invocation.runId(),
+                        invocation.tenant(),
+                        invocation.principal(),
+                        invocation.arguments(),
+                        invocation.idempotencyKey().orElseThrow(),
+                        Optional.of(new ToolDispatchEvidence(
+                                completed.get().id().value(),
+                                OptionalLong.empty(),
+                                PolicyDigest.sha256Fields(
+                                        List.of("execution-working-directory-v1", WORKSPACE_ID.value(), ".")))),
+                        Optional.empty()),
+                access());
+
+        assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
+        assertThat(reconciled.result()).hasValueSatisfying(reconciledResult -> {
+            assertThat(reconciledResult.structuredData())
+                    .containsEntry("reconcileStatus", "RESOLVED")
+                    .containsEntry("replayAllowed", false)
+                    .containsEntry("validationAttemptRef", expectedValidationAttemptRef);
+            assertThat(validator
+                            .validate(
+                                    invocation.binding().definition().outputSchema(), reconciledResult.structuredData())
+                            .valid())
+                    .isTrue();
+        });
     }
 
     @Test

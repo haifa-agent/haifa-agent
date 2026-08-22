@@ -147,6 +147,14 @@ testing 位于 Reactor 末端，可按测试需要依赖产品模块；产品模
 Linux/macOS 的 Maven Wrapper 为 `./mvnw`，Windows PowerShell 为 `.\mvnw.cmd`。日常命令优先通过
 仓库统一入口调用 Wrapper，以获得固定并发、超时分类和构建指标。
 
+### Windows PowerShell 命令拼接规则
+
+- 调用 `.ps1` 统一构建入口时，Maven 参数分隔符必须写成字面量 `'--'`，禁止使用未加引号的 `--`。
+- 每个 Maven `-D...` 参数必须整体加单引号，例如 `'-Dtest=FooTest,BarTest'` 和
+  `'-Dsurefire.failIfNoSpecifiedTests=false'`；只有需要展开 PowerShell 变量时才整体使用双引号。
+- 长命令或动态参数使用字符串数组和 splatting 传递，每个数组元素只表示一个参数；禁止拼接命令字符串
+  或使用 `Invoke-Expression`。
+
 ```bash
 # 精确测试类及必要依赖；L1 默认串行，适合编辑内循环
 ./build-support/scripts/invoke-haifa-maven.sh --layer L1 -- \
