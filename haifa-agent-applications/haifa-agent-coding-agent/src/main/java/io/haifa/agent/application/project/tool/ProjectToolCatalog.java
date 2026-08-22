@@ -270,7 +270,7 @@ public final class ProjectToolCatalog {
                 execution ? Set.of(executionProfileIdentity(executionProfile)) : Set.of());
         String version =
                 switch (name) {
-                    case "execution.run" -> "1.7.0";
+                    case "execution.run" -> "1.7.1";
                     case ProjectPermissionRequestOperations.TOOL_NAME -> "1.6.0";
                     case "file.read" -> "1.2.0";
                     case "file.create", "file.write", "file.patch" -> "1.2.0";
@@ -592,6 +592,7 @@ public final class ProjectToolCatalog {
             properties.put("diffSummary", Map.of("type", "string"));
             properties.put("diffArtifactRef", Map.of("type", "string"));
             properties.put("changeReviewArtifactRef", Map.of("type", "string"));
+            properties.put("artifactRef", Map.of("type", "string"));
             properties.put("changeReviewArtifact", Map.of("type", "object", "additionalProperties", true));
             properties.put("changeReviewStatus", Map.of("type", "string"));
             properties.put("changeReviewReasonCode", Map.of("type", "string"));

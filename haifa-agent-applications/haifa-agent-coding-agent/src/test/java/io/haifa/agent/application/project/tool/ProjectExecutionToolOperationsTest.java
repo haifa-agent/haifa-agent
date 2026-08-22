@@ -64,6 +64,7 @@ import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
 import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import io.haifa.agent.tool.api.ToolReconciliationStatus;
+import io.haifa.agent.tool.core.JsonSchema202012Validator;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -217,29 +218,72 @@ class ProjectExecutionToolOperationsTest {
                         new FileVersion(FileType.FILE, 12, "sha256:" + "c".repeat(64)))),
                 true,
                 NOW.plusSeconds(1)));
+        AtomicReference<ExecutionResult> completed = new AtomicReference<>();
         ExecutionBroker broker = new StubBroker() {
             @Override
             public ExecutionResult execute(ExecutionRequest request, ExecutionOutputObserver observer) {
-                return result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                ExecutionResult result = result(request.id(), ExecutionStatus.SUCCEEDED, 0);
+                completed.set(result);
+                return result;
+            }
+
+            @Override
+            public Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
+                return Optional.ofNullable(completed.get());
             }
         };
 
-        ToolResult result = operations(
-                        broker,
-                        4096,
-                        100,
-                        new CodingChangeReviewArtifactFactory(
-                                changeSets, (set, change) -> CodingChangeContentKind.BINARY, 1024))
-                .execute(
-                        invocation(Map.of("command", "generate result", "operationFamily", "MUTATE"), () -> false),
-                        access());
+        ToolInvocationRequest invocation =
+                invocation(Map.of("command", "generate result", "operationFamily", "MUTATE"), () -> false);
+        var operations = operations(
+                broker,
+                4096,
+                100,
+                new CodingChangeReviewArtifactFactory(
+                        changeSets, (set, change) -> CodingChangeContentKind.BINARY, 1024));
+        ToolResult result = operations.execute(invocation, access());
 
         assertThat(result.structuredData()).containsKeys("changeReviewArtifactRef", "artifactRef");
+        var validator = new JsonSchema202012Validator();
+        assertThat(validator
+                        .validate(invocation.binding().definition().outputSchema(), result.structuredData())
+                        .valid())
+                .isTrue();
         assertThat(result.structuredData().get("changeReviewArtifact")).isInstanceOfSatisfying(Map.class, review -> {
             assertThat(review).containsEntry("complete", true).containsEntry("totalFileCount", 1);
             assertThat(review.get("counts")).isInstanceOfSatisfying(Map.class, counts -> assertThat(counts)
                     .containsEntry("created", 1)
                     .containsEntry("binary", 1));
+        });
+
+        var reconciled = operations.reconcile(
+                new ToolReconciliationRequest(
+                        invocation.binding(),
+                        invocation.toolCallId(),
+                        invocation.runId(),
+                        invocation.tenant(),
+                        invocation.principal(),
+                        invocation.arguments(),
+                        invocation.idempotencyKey().orElseThrow(),
+                        Optional.of(new ToolDispatchEvidence(
+                                completed.get().id().value(),
+                                OptionalLong.of(991),
+                                PolicyDigest.sha256Fields(
+                                        List.of("execution-working-directory-v1", WORKSPACE_ID.value(), ".")))),
+                        Optional.of(result)),
+                access());
+
+        assertThat(reconciled.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
+        assertThat(reconciled.result()).hasValueSatisfying(reconciledResult -> {
+            assertThat(reconciledResult.structuredData())
+                    .containsEntry("reconcileStatus", "RESOLVED")
+                    .containsEntry("replayAllowed", false)
+                    .containsKeys("changeReviewArtifactRef", "artifactRef");
+            assertThat(validator
+                            .validate(
+                                    invocation.binding().definition().outputSchema(), reconciledResult.structuredData())
+                            .valid())
+                    .isTrue();
         });
     }
 
