@@ -359,6 +359,49 @@ class CliConfigurationLoaderTest {
     }
 
     @Test
+    void freezesEnabledReasoningForBailianResponses() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-bailian-responses", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                models:
+                  default: bailian-responses-qwen
+                  providers:
+                    - id: aliyun-bailian
+                      displayName: Alibaba Cloud Bailian
+                      nativeStreaming: true
+                      endpoint: ${HAIFA_BAILIAN_ENDPOINT}
+                      credentialRef: env://DASHSCOPE_API_KEY
+                      apiBindings:
+                        - style: openai-responses
+                          dialect: aliyun-bailian-openai-responses
+                      models:
+                        - id: bailian-responses-qwen
+                          displayName: Qwen 3.7 Max Responses
+                          providerModelId: qwen3.7-max
+                          style: openai-responses
+                          capabilities: [TEXT_CHAT, TOOL_CALLING, STRUCTURED_OUTPUT, REASONING]
+                          contextWindow: 1000000
+                          maxOutputTokens: 65536
+                          reasoningMode: enabled
+                """);
+        String endpoint = "https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1";
+
+        CliConfiguration result = new CliConfigurationLoader(
+                        name -> name.equals("HAIFA_BAILIAN_ENDPOINT") ? endpoint : null)
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+        var snapshot = LocalCodingAgent.modelSnapshot(result);
+
+        assertThat(snapshot.providerId().value()).isEqualTo("aliyun-bailian");
+        assertThat(snapshot.providerModelId()).isEqualTo("qwen3.7-max");
+        assertThat(snapshot.apiStyle()).isEqualTo(ModelApiStyles.OPENAI_RESPONSES);
+        assertThat(snapshot.dialect()).isEqualTo("aliyun-bailian-openai-responses");
+        assertThat(snapshot.endpoint()).hasToString(endpoint);
+        assertThat(snapshot.invocationOptions()).containsEntry("reasoning_effort", "high");
+        assertThat(snapshot.providerOptions()).doesNotContainKeys("thinking", "reasoning_effort");
+    }
+
+    @Test
     void derivesBailianEndpointAndFreezesThinkingDisabledProfile() {
         var model = new CliConfiguration.Model(
                 "aliyun-bailian",
