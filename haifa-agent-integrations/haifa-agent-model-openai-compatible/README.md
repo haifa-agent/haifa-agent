@@ -94,6 +94,11 @@ Parser 对累计响应、单事件、事件数、内容和 Tool 参数设限；�
 并以 Responses 终态收敛而不等待 `[DONE]`。本地 `chatgpt2api` 文本与 SSE 使用 `standard`，但普通
 function tool 当前不产生 `function_call`，所以对应模型能力只声明 `TEXT_CHAT`。
 
+`openai-codex-responses` 是 Coding Agent 的独立受控 Dialect。它复用 Responses 的 item/SSE 解析器，
+但独立约束精确的 Codex endpoint、ChatGPT account Bearer/header 组合、originator/user-agent 和安全错误映射；
+它不把 `https://chatgpt.com/backend-api/codex` 当作任意 OpenAI-compatible base URL。401 不会隐式刷新后重放，
+而是要求重新认证；Codex 429 只解析允许的 plan/reset 字段和稳定错误码，原始响应不会进入异常或日志。
+
 `aliyun-bailian-openai-responses` 只允许已经过 Contract 与真实调用验证的 Qwen Max/Plus 精确型号，
 要求 workspace-scoped `/compatible-mode/v1` Endpoint，并映射 `reasoning.effort`。兼容 SSE 允许空字符串
 delta，但仍要求 delta 字段为字符串；空 delta 不产生公共流事件。

@@ -16,6 +16,8 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.run.AgentRunStatus;
@@ -51,6 +53,53 @@ import org.junit.jupiter.api.Test;
 class CodingTerminalControllerTest {
     private static final ProjectId PROJECT_ID = new ProjectId("project-1");
     private static final AgentSessionId SESSION_ID = new AgentSessionId("session-1");
+
+    @Test
+    void firstStartupOpensConnectionOnboardingWhenTheSelectedCredentialIsMissing() {
+        FakeClient client = new FakeClient(view(Optional.empty()));
+        CodingAuthenticationClient authentication = new CodingAuthenticationClient() {
+            @Override
+            public boolean connectionRequired() {
+                return true;
+            }
+
+            @Override
+            public List<CodingAuthenticationView> connections() {
+                return List.of();
+            }
+
+            @Override
+            public CodingAuthenticationView loginCodexBrowser() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean logout(String connectionId) {
+                return false;
+            }
+        };
+        var controller = new CodingTerminalController(
+                PROJECT_ID,
+                client,
+                authentication,
+                new TerminalEventPump(32),
+                new TerminalUiReducer(),
+                TerminalUiState.initial(120, 40),
+                Runnable::run);
+
+        controller.start(CodingTerminalStartup.empty());
+
+        assertThat(controller.state().selector()).get().satisfies(selector -> {
+            assertThat(selector.kind()).isEqualTo("auth-login");
+            assertThat(selector.title()).isEqualTo("Connect a model to get started");
+            assertThat(selector.options()).containsExactly("ChatGPT subscription", "Provider API key (secure input)");
+        });
+    }
 
     @Test
     void resumeSelectorOpensTheSelectedRealSession() {
@@ -364,8 +413,8 @@ class CodingTerminalControllerTest {
         controller.accept(input(TerminalInput.Kind.SUBMIT, ""));
 
         assertThat(controller.state().selector()).isEmpty();
-        assertThat(controller.state().editorBuffer()).isEqualTo("/new");
-        assertThat(controller.state().editorCursor()).isEqualTo("/new".length());
+        assertThat(controller.state().editorBuffer()).isEqualTo("/logout");
+        assertThat(controller.state().editorCursor()).isEqualTo("/logout".length());
     }
 
     @Test

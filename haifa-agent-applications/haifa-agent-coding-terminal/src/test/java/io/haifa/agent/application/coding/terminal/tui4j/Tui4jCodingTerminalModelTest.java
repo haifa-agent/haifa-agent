@@ -26,6 +26,8 @@ import io.haifa.agent.application.project.product.coding.CodingQueuedMessage;
 import io.haifa.agent.application.project.product.coding.CodingRestoredMessage;
 import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -46,6 +48,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -429,6 +432,28 @@ class Tui4jCodingTerminalModelTest {
         assertThat(fixture.model.view()).contains("Haifa Coding Agent", "Commands");
     }
 
+    @Test
+    void keepsApiKeyOutOfAuthoritativeEditorHistoryAndRenderedOutput() {
+        AtomicReference<char[]> saved = new AtomicReference<>();
+        var fixture = fixture(new CapturingAuthenticationClient(saved));
+
+        fixture.model.update(new PasteMessage("/login api deepseek"));
+        commitPlainEnter(fixture);
+        fixture.model.update(new PasteMessage("private-value\n"));
+
+        assertThat(fixture.controller.secureInputRequested()).isTrue();
+        assertThat(fixture.controller.state().editorBuffer()).isEmpty();
+        assertThat(fixture.model.view()).doesNotContain("private-value").contains("•••••••••••••");
+
+        fixture.model.update(key(KeyType.keyBS));
+        fixture.model.update(key(KeyType.keyCR));
+
+        assertThat(fixture.controller.secureInputRequested()).isFalse();
+        assertThat(saved.get()).containsExactly("private-valu".toCharArray());
+        assertThat(fixture.controller.state().status()).isEqualTo("API key connected for deepseek account");
+        assertThat(fixture.model.view()).doesNotContain("private-value", "private-valu");
+    }
+
     private Fixture fixture() {
         return fixture(System::nanoTime);
     }
@@ -443,6 +468,19 @@ class Tui4jCodingTerminalModelTest {
                 TerminalUiState.initial(80, 24),
                 Runnable::run);
         return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump, monotonicNanos));
+    }
+
+    private Fixture fixture(CodingAuthenticationClient authentication) {
+        var pump = new TerminalEventPump(64);
+        var controller = new CodingTerminalController(
+                new ProjectId("project-1"),
+                new UnusedClient(),
+                authentication,
+                pump,
+                new TerminalUiReducer(),
+                TerminalUiState.initial(80, 24),
+                Runnable::run);
+        return new Fixture(controller, pump, new Tui4jCodingTerminalModel(controller, pump));
     }
 
     private KeyPressMessage key(KeyType type) {
@@ -567,6 +605,43 @@ class Tui4jCodingTerminalModelTest {
         @Override
         public List<String> logicalPaths() {
             return List.of("README.md", "src/");
+        }
+    }
+
+    private static final class CapturingAuthenticationClient implements CodingAuthenticationClient {
+        private final AtomicReference<char[]> saved;
+
+        private CapturingAuthenticationClient(AtomicReference<char[]> saved) {
+            this.saved = saved;
+        }
+
+        @Override
+        public List<CodingAuthenticationView> connections() {
+            return List.of();
+        }
+
+        @Override
+        public CodingAuthenticationView loginCodexBrowser() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CodingAuthenticationView saveApiKey(String providerId, char[] apiKey) {
+            saved.set(apiKey.clone());
+            return new CodingAuthenticationView(
+                    providerId + "/default",
+                    providerId,
+                    CodingAuthenticationView.Method.API_KEY,
+                    CodingAuthenticationView.Status.AUTHENTICATED,
+                    providerId + " account",
+                    Optional.empty(),
+                    OptionalLong.empty(),
+                    false);
+        }
+
+        @Override
+        public boolean logout(String connectionId) {
+            return false;
         }
     }
 }

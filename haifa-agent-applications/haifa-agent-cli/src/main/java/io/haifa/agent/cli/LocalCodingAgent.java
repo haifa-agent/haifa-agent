@@ -12,6 +12,7 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportServ
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
 import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
@@ -53,7 +54,6 @@ import io.haifa.agent.model.api.ModelProviderId;
 import io.haifa.agent.model.api.ModelReasoningMode;
 import io.haifa.agent.model.api.ResolvedModelSnapshot;
 import io.haifa.agent.model.openai.AliyunBailianProviderFactory;
-import io.haifa.agent.model.openai.EnvironmentCredentialResolver;
 import io.haifa.agent.model.openai.OpenAiCompatibleChatModel;
 import io.haifa.agent.model.openai.OpenAiCompatibleDialects;
 import io.haifa.agent.model.openai.anthropic.AnthropicMessagesDialects;
@@ -157,6 +157,7 @@ final class LocalCodingAgent implements AutoCloseable {
     private final CodingSessionExportService exporter;
     private final CodingSessionVerificationConfiguration defaultVerification;
     private final CodingRunOutcomeProjectionService outcomes;
+    private final CodingAuthenticationClient authentication;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Set<AgentRunId> startedRuns = ConcurrentHashMap.newKeySet();
 
@@ -179,7 +180,8 @@ final class LocalCodingAgent implements AutoCloseable {
             Optional<CliExecutionPlatform> executionPlatform,
             CodingSessionExportService exporter,
             CodingSessionVerificationConfiguration defaultVerification,
-            CodingRunOutcomeProjectionService outcomes) {
+            CodingRunOutcomeProjectionService outcomes,
+            CodingAuthenticationClient authentication) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
@@ -199,6 +201,7 @@ final class LocalCodingAgent implements AutoCloseable {
         this.exporter = exporter;
         this.defaultVerification = Objects.requireNonNull(defaultVerification, "defaultVerification must not be null");
         this.outcomes = Objects.requireNonNull(outcomes, "outcomes must not be null");
+        this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
@@ -227,7 +230,28 @@ final class LocalCodingAgent implements AutoCloseable {
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         var json = new ObjectMapper();
-        var credentials = new EnvironmentCredentialResolver(resolvedEnvironment::get);
+        var authStore = CodingAuthFileStore.defaultStore(json);
+        var codexRegistration = CodexOAuthClientRegistration.localCompatibility(resolvedEnvironment);
+        var codexTokenClient = codexRegistration.map(registration ->
+                new CodexTokenClient(http, json, Clock.systemUTC(), Duration.ofSeconds(30), registration));
+        var credentials = new CodingModelCredentialResolver(
+                resolvedEnvironment::get,
+                authStore,
+                codexRegistration,
+                codexTokenClient,
+                Clock.systemUTC(),
+                Duration.ofMinutes(5));
+        var authentication = new CliCodingAuthenticationClient(
+                authStore,
+                codexRegistration,
+                codexTokenClient,
+                CodexLoginAttempt.BrowserLauncher.system(),
+                configuration.model().credentialRef(),
+                configuration.model().providerId(),
+                resolvedEnvironment::get,
+                http,
+                json,
+                Clock.systemUTC());
         var chat = new OpenAiCompatibleChatModel(
                 "openai-compatible", "1.0.0", http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
         var responses = new OpenAiResponsesModel(http, json, credentials, allowInsecureLoopback, 4 * 1024 * 1024);
@@ -242,7 +266,8 @@ final class LocalCodingAgent implements AutoCloseable {
                         new ModelAdapterKey(ModelApiStyles.ANTHROPIC_MESSAGES_ADAPTER, "1.0.0"), anthropic),
                 traceObserver,
                 resolveContinuationProtector(configuration, resolvedEnvironment),
-                resolvedEnvironment);
+                resolvedEnvironment,
+                authentication);
     }
 
     static boolean allowInsecureLoopback(CliConfiguration configuration, String optIn) {
@@ -306,7 +331,8 @@ final class LocalCodingAgent implements AutoCloseable {
                 Map.of(new ModelAdapterKey(selected.adapterType(), selected.adapterVersion()), model),
                 traceObserver,
                 continuationProtector,
-                System.getenv());
+                System.getenv(),
+                CodingAuthenticationClient.unavailable());
     }
 
     private static LocalCodingAgent create(
@@ -316,7 +342,8 @@ final class LocalCodingAgent implements AutoCloseable {
             Map<ModelAdapterKey, AgentChatModel> modelAdapters,
             Consumer<RuntimeTraceEvent> traceObserver,
             ModelContinuationProtector continuationProtector,
-            Map<String, String> environment) {
+            Map<String, String> environment,
+            CodingAuthenticationClient authentication) {
         Map<String, String> resolvedEnvironment =
                 Map.copyOf(Objects.requireNonNull(environment, "environment must not be null"));
         LocalWorkspaceIdentity workspaceIdentity = LocalWorkspaceIdentity.resolve(workspaceRoot);
@@ -701,7 +728,8 @@ final class LocalCodingAgent implements AutoCloseable {
                             persistence.ports().state(),
                             webPlatform.credentialBroker().redactor()),
                     CodingSessionVerificationConfiguration.freeze(verificationProfile),
-                    outcomeProjection);
+                    outcomeProjection,
+                    authentication);
             runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
             return agent;
         } catch (RuntimeException | Error exception) {
@@ -798,6 +826,10 @@ final class LocalCodingAgent implements AutoCloseable {
 
     CodingRunOutcomeProjectionService outcomes() {
         return outcomes;
+    }
+
+    CodingAuthenticationClient authentication() {
+        return authentication;
     }
 
     CodingSessionHistoryService sessionHistory() {
@@ -1029,6 +1061,10 @@ final class LocalCodingAgent implements AutoCloseable {
         if (OpenAiResponsesDialects.ALIYUN_BAILIAN.equals(model.dialect())
                 && model.reasoningMode() == ModelReasoningMode.ENABLED) {
             invocationOptions.put("reasoning_effort", "high");
+        }
+        if (OpenAiResponsesDialects.OPENAI_CODEX.equals(model.dialect())) {
+            providerOptions.put("codex_originator", model.originator());
+            providerOptions.put("codex_user_agent", model.userAgent());
         }
         return ResolvedModelSnapshot.create(
                 new ModelProviderId(model.providerId()),

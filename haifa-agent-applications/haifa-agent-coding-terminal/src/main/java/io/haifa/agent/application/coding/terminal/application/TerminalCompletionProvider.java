@@ -7,6 +7,9 @@ import java.util.function.Supplier;
 /** Bounded completion over supported commands and product-provided logical paths only. */
 public final class TerminalCompletionProvider {
     public static final List<String> COMMANDS = List.of(
+            "/login",
+            "/logout",
+            "/account",
             "/model",
             "/new",
             "/resume",

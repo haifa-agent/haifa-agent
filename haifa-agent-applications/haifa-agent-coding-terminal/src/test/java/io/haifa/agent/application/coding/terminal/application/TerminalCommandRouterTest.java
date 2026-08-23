@@ -31,7 +31,10 @@ class TerminalCommandRouterTest {
     @Test
     void rejectsDeferredCapabilitiesWithoutPretendingTheyExist() {
         assertThat(router.route("/model")).isEqualTo(TerminalCommand.MODEL);
-        assertThat(router.route("/login")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);
+        assertThat(router.route("/login")).isEqualTo(TerminalCommand.LOGIN);
+        assertThat(router.route("/login chatgpt")).isEqualTo(TerminalCommand.LOGIN);
+        assertThat(router.route("/logout")).isEqualTo(TerminalCommand.LOGOUT);
+        assertThat(router.route("/account")).isEqualTo(TerminalCommand.ACCOUNT);
         assertThat(router.route("/tree")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);
         assertThat(router.route("/fork")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);
         assertThat(router.route("/clone")).isEqualTo(TerminalCommand.NOT_IMPLEMENTED);

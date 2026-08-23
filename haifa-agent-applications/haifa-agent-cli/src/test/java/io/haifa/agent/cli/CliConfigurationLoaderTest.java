@@ -21,6 +21,48 @@ import org.junit.jupiter.api.io.TempDir;
 
 class CliConfigurationLoaderTest {
     @Test
+    void loadsTheDedicatedCodexResponsesBindingWithoutEmbeddingAClientId() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-codex", ".yaml");
+        Files.writeString(
+                configuration,
+                """
+                models:
+                  default: codex
+                  providers:
+                    - id: openai-codex
+                      displayName: ChatGPT Codex
+                      nativeStreaming: true
+                      endpoint: https://chatgpt.com/backend-api/codex
+                      credentialRef: coding-auth://openai-codex/default
+                      originator: haifa
+                      userAgent: haifa-agent/1
+                      apiBindings:
+                        - style: openai-responses
+                          dialect: openai-codex-responses
+                      models:
+                        - id: codex
+                          displayName: Codex
+                          providerModelId: codex-model
+                          style: openai-responses
+                          capabilities: [TEXT_CHAT, TOOL_CALLING]
+                          contextWindow: 200000
+                          maxOutputTokens: 8192
+                """);
+
+        CliConfiguration result = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of("."));
+        var snapshot = LocalCodingAgent.modelSnapshot(result);
+
+        assertThat(result.model().dialect()).isEqualTo("openai-codex-responses");
+        assertThat(result.model().credentialRef()).isEqualTo("coding-auth://openai-codex/default");
+        assertThat(snapshot.endpoint()).hasToString("https://chatgpt.com/backend-api/codex");
+        assertThat(snapshot.providerOptions())
+                .containsEntry("codex_originator", "haifa")
+                .containsEntry("codex_user_agent", "haifa-agent/1")
+                .doesNotContainKeys("client_id", "access_token", "refresh_token");
+    }
+
+    @Test
     void loadsTrustedMultiModelConfigurationAndSelectsByInternalId() throws Exception {
         Path configuration = Files.createTempFile("haifa-cli-models", ".yaml");
         Files.writeString(
@@ -122,7 +164,7 @@ class CliConfigurationLoaderTest {
 
         assertThat(result.model().providerId()).isEqualTo("deepseek");
         assertThat(result.model().id()).isEqualTo("deepseek-responses-flash");
-        assertThat(result.model().credentialRef()).isEqualTo("env://DEEPSEEK_API_KEY");
+        assertThat(result.model().credentialRef()).isEqualTo("coding-auth://deepseek/default");
         assertThat(result.availableModels())
                 .extracting(CliConfiguration.Model::id)
                 .containsExactly(

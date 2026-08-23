@@ -26,6 +26,48 @@ Terminal，同时保留兼容的 `-m` one-shot 模式。`haifa-agent-coding-term
 `close()` 统一释放资源。需要为每次隔离运行注入不同 SQLite/Transcript 路径时，可使用接收显式环境
 Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case。
 
+## Model connection and Codex subscription login
+
+Interactive startup checks only the selected model's credential reference. If an `env://...` value is absent or a
+`coding-auth://...` entry is missing, the Terminal opens a connection selector before the first prompt. `/login`,
+`/account`, and `/logout` manage the same product-private connection boundary. API keys use a masked, short-lived
+character buffer and may be saved to the current user's plaintext `~/.haifa-agent/auth.json`; the file is rejected
+unless the process can establish and verify user-only permissions/ACL. Credentials never belong in YAML.
+
+The dedicated `openai-codex-responses` binding uses ChatGPT subscription authentication, not an OpenAI Platform API
+key and not a conversion of subscription quota into an API key. Browser callback and headless device-code login are
+implemented with bounded attempts, token rotation, and `coding-auth://openai-codex/default`. Haifa does not compile a
+Pi/OpenCode Client ID. Until OpenAI provides a Haifa registration, personal compatibility testing requires both
+`HAIFA_CODEX_LOCAL_COMPAT_TEST=true` and an externally supplied `HAIFA_CODEX_OAUTH_CLIENT_ID`; it is always projected
+as `UNOFFICIAL_LOCAL_COMPAT` and is not a release configuration.
+
+```yaml
+models:
+  default: codex
+  providers:
+    - id: openai-codex
+      displayName: ChatGPT Codex
+      nativeStreaming: true
+      endpoint: https://chatgpt.com/backend-api/codex
+      credentialRef: coding-auth://openai-codex/default
+      originator: haifa
+      userAgent: haifa-agent/1
+      apiBindings:
+        - style: openai-responses
+          dialect: openai-codex-responses
+      models:
+        - id: codex
+          displayName: Codex
+          providerModelId: <approved-codex-model>
+          style: openai-responses
+          capabilities: [TEXT_CHAT, TOOL_CALLING]
+          contextWindow: 200000
+          maxOutputTokens: 8192
+```
+
+The model ID, originator, user agent, redirect registration, and Client ID remain deployment inputs governed by the
+OpenAI/Haifa contract; the example does not claim an approved production registration.
+
 生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
 字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
 Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。
@@ -57,7 +99,6 @@ haifa-coding-agent/
 ```bash
 ./scripts/package-local-coding-agent.sh
 export PATH="$HOME/.haifa-agent/coding:$PATH"
-export DEEPSEEK_API_KEY="<secret>"
 
 cd /path/to/any/project
 haifa-coding
@@ -74,7 +115,7 @@ haifa-coding resume --last "继续前面的工作"
 
 把 `PATH` 配置写入 `~/.zshrc` 或 `~/.bashrc` 后可长期使用。`haifa-coding` 不切换目录，且 Java
 入口未收到 `--workspace` 时默认使用进程当前目录，所以从哪个项目目录发起，该目录就是 Workspace。
-发行配置只使用 `env://...` 引用，不包含密钥，默认保持
+发行配置只使用 `coding-auth://deepseek/default` 引用，不包含密钥；首次启动通过掩码输入保存 API Key，默认保持
 `approval=ask`、`host-guarded + network allow + shell auto`，并启用
 `SQLITE_WITH_JSONL + protection=NONE`。SQLite 是 Session、Run、Tool Journal、Policy 证据等恢复状态
 的唯一事实源；本地默认 payload 在磁盘上可读，不提供保密性，但仍执行格式、binding 和 digest 校验。
@@ -113,7 +154,6 @@ coding\
 .\scripts\package-local-coding-agent.ps1 D:\tools\haifa-coding-agent
 $env:Path = 'D:\tools\haifa-coding-agent;' + $env:Path
 
-$env:DEEPSEEK_API_KEY = '<secret>'
 Set-Location D:\path\to\any\project
 haifa-coding
 ```

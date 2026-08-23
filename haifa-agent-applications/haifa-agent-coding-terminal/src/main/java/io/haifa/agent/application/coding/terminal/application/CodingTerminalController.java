@@ -14,6 +14,8 @@ import io.haifa.agent.application.project.product.coding.CodingSessionSummary;
 import io.haifa.agent.application.project.product.coding.CodingSessionView;
 import io.haifa.agent.application.project.product.coding.CodingShellPlan;
 import io.haifa.agent.application.project.product.coding.CodingShellResult;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationClient;
+import io.haifa.agent.application.project.product.coding.client.CodingAuthenticationView;
 import io.haifa.agent.application.project.product.coding.client.CodingSessionClient;
 import io.haifa.agent.core.run.AgentRunId;
 import io.haifa.agent.core.session.AgentSessionId;
@@ -55,6 +57,7 @@ public final class CodingTerminalController implements AutoCloseable {
 
     private final ProjectId projectId;
     private final CodingSessionClient client;
+    private final CodingAuthenticationClient authentication;
     private final TerminalEventPump pump;
     private final TerminalUiReducer reducer;
     private final Executor controlEffects;
@@ -79,8 +82,10 @@ public final class CodingTerminalController implements AutoCloseable {
     private List<CodingSessionSummary> resumeOptions = List.of();
     private List<CodingQueuedMessage> restoreOptions = List.of();
     private List<CodingModelOption> modelOptions = List.of();
+    private List<CodingAuthenticationView> authenticationOptions = List.of();
     private CompletionContext completionContext;
     private CodingShellPlan pendingShellPlan;
+    private String pendingApiKeyProvider;
     private RunEventCursor pendingAcknowledgement;
     private boolean acknowledgementInFlight;
     private boolean reconcileInFlight;
@@ -97,6 +102,27 @@ public final class CodingTerminalController implements AutoCloseable {
         this(
                 projectId,
                 client,
+                CodingAuthenticationClient.unavailable(),
+                pump,
+                reducer,
+                initialState,
+                newEffectExecutor("haifa-coding-terminal-control"),
+                newEffectExecutor("haifa-coding-terminal-effects"),
+                newEffectExecutor("haifa-coding-terminal-maintenance"),
+                true);
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState) {
+        this(
+                projectId,
+                client,
+                authentication,
                 pump,
                 reducer,
                 initialState,
@@ -113,7 +139,28 @@ public final class CodingTerminalController implements AutoCloseable {
             TerminalUiReducer reducer,
             TerminalUiState initialState,
             Executor effects) {
-        this(projectId, client, pump, reducer, initialState, effects, effects, effects, false);
+        this(
+                projectId,
+                client,
+                CodingAuthenticationClient.unavailable(),
+                pump,
+                reducer,
+                initialState,
+                effects,
+                effects,
+                effects,
+                false);
+    }
+
+    public CodingTerminalController(
+            ProjectId projectId,
+            CodingSessionClient client,
+            CodingAuthenticationClient authentication,
+            TerminalEventPump pump,
+            TerminalUiReducer reducer,
+            TerminalUiState initialState,
+            Executor effects) {
+        this(projectId, client, authentication, pump, reducer, initialState, effects, effects, effects, false);
     }
 
     public CodingTerminalController(
@@ -124,7 +171,17 @@ public final class CodingTerminalController implements AutoCloseable {
             TerminalUiState initialState,
             Executor effects,
             Executor maintenanceEffects) {
-        this(projectId, client, pump, reducer, initialState, effects, effects, maintenanceEffects, false);
+        this(
+                projectId,
+                client,
+                CodingAuthenticationClient.unavailable(),
+                pump,
+                reducer,
+                initialState,
+                effects,
+                effects,
+                maintenanceEffects,
+                false);
     }
 
     public CodingTerminalController(
@@ -136,12 +193,23 @@ public final class CodingTerminalController implements AutoCloseable {
             Executor controlEffects,
             Executor effects,
             Executor maintenanceEffects) {
-        this(projectId, client, pump, reducer, initialState, controlEffects, effects, maintenanceEffects, false);
+        this(
+                projectId,
+                client,
+                CodingAuthenticationClient.unavailable(),
+                pump,
+                reducer,
+                initialState,
+                controlEffects,
+                effects,
+                maintenanceEffects,
+                false);
     }
 
     private CodingTerminalController(
             ProjectId projectId,
             CodingSessionClient client,
+            CodingAuthenticationClient authentication,
             TerminalEventPump pump,
             TerminalUiReducer reducer,
             TerminalUiState initialState,
@@ -151,6 +219,7 @@ public final class CodingTerminalController implements AutoCloseable {
             boolean ownsEffects) {
         this.projectId = Objects.requireNonNull(projectId, "projectId must not be null");
         this.client = Objects.requireNonNull(client, "client must not be null");
+        this.authentication = Objects.requireNonNull(authentication, "authentication must not be null");
         this.pump = Objects.requireNonNull(pump, "pump must not be null");
         this.reducer = Objects.requireNonNull(reducer, "reducer must not be null");
         this.state = Objects.requireNonNull(initialState, "initialState must not be null");
@@ -262,9 +331,7 @@ public final class CodingTerminalController implements AutoCloseable {
         Objects.requireNonNull(startup, "startup must not be null");
         try {
             switch (startup.mode()) {
-                case EMPTY -> {
-                    return;
-                }
+                case EMPTY -> {}
                 case SELECTOR -> showResumeOptions(client.list(projectId, 50));
                 case LAST -> {
                     List<CodingSessionSummary> sessions = client.list(projectId, 1);
@@ -275,6 +342,11 @@ public final class CodingTerminalController implements AutoCloseable {
                     openForResume(sessions.getFirst().sessionId(), startup.prompt());
                 }
                 case SESSION -> openForResume(startup.sessionId().orElseThrow(), startup.prompt());
+            }
+            if (state.selector().isEmpty() && authentication.connectionRequired()) {
+                apply(new TerminalUiAction.SelectorOpened(
+                        new TerminalSelector("auth-login", "Connect a model to get started", connectionOptions(), 0)));
+                apply(new TerminalUiAction.StatusChanged("A model connection is required before the first prompt"));
             }
         } catch (ProjectProductException exception) {
             apply(new TerminalUiAction.RecoverableFailure(exception.code()));
@@ -786,6 +858,32 @@ public final class CodingTerminalController implements AutoCloseable {
                         },
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
+            case LOGIN -> {
+                String[] loginArguments =
+                        argument.toLowerCase(java.util.Locale.ROOT).split("\\s+", 2);
+                String method = loginArguments.length == 0 ? "" : loginArguments[0];
+                if (method.isEmpty()) {
+                    apply(new TerminalUiAction.SelectorOpened(
+                            new TerminalSelector("auth-login", "Connect a model", connectionOptions(), 0)));
+                } else if (method.equals("chatgpt") || method.equals("codex")) {
+                    if (loginArguments.length == 1 || loginArguments[1].isBlank()) {
+                        openChatGptLoginSelector();
+                    } else if (loginArguments[1].equals("browser")) {
+                        startCodexLogin();
+                    } else if (loginArguments[1].equals("device")) {
+                        startCodexDeviceLogin();
+                    } else {
+                        apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
+                    }
+                } else if (method.equals("api")) {
+                    beginApiKeyInput(
+                            loginArguments.length == 2 ? loginArguments[1] : authentication.apiKeyProviderId());
+                } else {
+                    apply(new TerminalUiAction.RecoverableFailure("AUTH_METHOD_UNSUPPORTED"));
+                }
+            }
+            case ACCOUNT -> loadAuthenticationOptions(false);
+            case LOGOUT -> loadAuthenticationOptions(true);
             case MODEL -> {
                 CodingSessionView current = requireCurrentSession();
                 Optional<RunEventCursor> cursor = state.appliedCursor();
@@ -983,6 +1081,145 @@ public final class CodingTerminalController implements AutoCloseable {
                 "interaction:" + interaction.requestId().value(), "Approval · " + interaction.title(), options, 0)));
     }
 
+    private void startCodexLogin() {
+        apply(new TerminalUiAction.StatusChanged("Opening browser for ChatGPT sign-in"));
+        submitEffect(
+                () -> {
+                    CodingAuthenticationView connected = authentication.loginCodexBrowser();
+                    return () -> apply(new TerminalUiAction.StatusChanged(
+                            connected.unofficialLocalCompatibility()
+                                    ? "Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)"
+                                    : "Connected to ChatGPT Codex"));
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void openChatGptLoginSelector() {
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                "auth-chatgpt",
+                "ChatGPT subscription login",
+                List.of("Browser callback", "Device code (headless)"),
+                0)));
+    }
+
+    private List<String> connectionOptions() {
+        return authentication.apiKeyConnectionSupported()
+                ? List.of("ChatGPT subscription", "Provider API key (secure input)")
+                : List.of("ChatGPT subscription");
+    }
+
+    private void startCodexDeviceLogin() {
+        apply(new TerminalUiAction.StatusChanged("Requesting a ChatGPT device code"));
+        submitEffect(
+                () -> {
+                    CodingAuthenticationView connected = authentication.loginCodexDevice(
+                            instruction -> pump.offer(new TerminalUiAction.StatusChanged("Open "
+                                    + instruction.verificationUri()
+                                    + " and enter code "
+                                    + instruction.userCode())));
+                    return () -> apply(new TerminalUiAction.StatusChanged(
+                            connected.unofficialLocalCompatibility()
+                                    ? "Connected to ChatGPT Codex (UNOFFICIAL_LOCAL_COMPAT)"
+                                    : "Connected to ChatGPT Codex"));
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void beginApiKeyInput(String providerId) {
+        String normalized = Objects.requireNonNull(providerId, "providerId must not be null")
+                .strip()
+                .toLowerCase(java.util.Locale.ROOT);
+        if (normalized.isEmpty() || !normalized.matches("[a-z0-9][a-z0-9._-]{0,63}")) {
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_PROVIDER_INVALID"));
+            return;
+        }
+        pendingApiKeyProvider = normalized;
+        apply(new TerminalUiAction.StatusChanged(
+                "Enter API key for " + normalized + " (stored as plaintext on this personal computer)"));
+    }
+
+    public boolean secureInputRequested() {
+        return pendingApiKeyProvider != null;
+    }
+
+    public void cancelSecureInput() {
+        if (pendingApiKeyProvider == null) {
+            return;
+        }
+        pendingApiKeyProvider = null;
+        apply(new TerminalUiAction.StatusChanged("API key entry cancelled"));
+    }
+
+    public void submitApiKey(char[] apiKey) {
+        Objects.requireNonNull(apiKey, "apiKey must not be null");
+        String providerId = pendingApiKeyProvider;
+        pendingApiKeyProvider = null;
+        if (providerId == null) {
+            java.util.Arrays.fill(apiKey, '\0');
+            apply(new TerminalUiAction.RecoverableFailure("AUTH_SECURE_INPUT_NOT_REQUESTED"));
+            return;
+        }
+        char[] owned = java.util.Arrays.copyOf(apiKey, apiKey.length);
+        java.util.Arrays.fill(apiKey, '\0');
+        apply(new TerminalUiAction.StatusChanged("Saving API key for " + providerId));
+        try {
+            effects.execute(() -> {
+                Runnable completion;
+                try {
+                    CodingAuthenticationView connected = authentication.saveApiKey(providerId, owned);
+                    completion = () -> apply(
+                            new TerminalUiAction.StatusChanged("API key connected for " + connected.accountLabel()));
+                } catch (ProjectProductException exception) {
+                    completion = () -> apply(new TerminalUiAction.RecoverableFailure(exception.code()));
+                } catch (IllegalArgumentException
+                        | IllegalStateException
+                        | SecurityException
+                        | UnsupportedOperationException exception) {
+                    String code = safeFailureCode(exception);
+                    completion = () -> apply(new TerminalUiAction.RecoverableFailure(code));
+                } catch (RuntimeException exception) {
+                    completion = () -> apply(new TerminalUiAction.RecoverableFailure("OPERATION_REJECTED"));
+                } finally {
+                    java.util.Arrays.fill(owned, '\0');
+                }
+                enqueueCompletion(effectCompletions, completion);
+            });
+        } catch (RejectedExecutionException exception) {
+            java.util.Arrays.fill(owned, '\0');
+            apply(new TerminalUiAction.RecoverableFailure("TERMINAL_BACKGROUND_UNAVAILABLE"));
+        }
+        drainEffectCompletions();
+    }
+
+    private void loadAuthenticationOptions(boolean logout) {
+        apply(new TerminalUiAction.StatusChanged(logout ? "Loading model accounts" : "Loading account status"));
+        submitEffect(
+                () -> {
+                    List<CodingAuthenticationView> found = authentication.connections();
+                    return () -> showAuthenticationOptions(found, logout);
+                },
+                code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+    }
+
+    private void showAuthenticationOptions(List<CodingAuthenticationView> found, boolean logout) {
+        authenticationOptions = List.copyOf(found);
+        if (authenticationOptions.isEmpty()) {
+            apply(new TerminalUiAction.StatusChanged("No model account is connected; use /login"));
+            return;
+        }
+        List<String> options = authenticationOptions.stream()
+                .map(connection -> connection.method()
+                        + " | "
+                        + connection.accountLabel()
+                        + (connection.unofficialLocalCompatibility() ? " | UNOFFICIAL_LOCAL_COMPAT" : ""))
+                .toList();
+        apply(new TerminalUiAction.SelectorOpened(new TerminalSelector(
+                logout ? "auth-logout" : "auth-account",
+                logout ? "Disconnect model account" : "Model account",
+                options,
+                0)));
+    }
+
     private void openCommandSelector() {
         completionContext = new CompletionContext("", 0, 0);
         apply(new TerminalUiAction.SelectorOpened(
@@ -1122,6 +1359,35 @@ public final class CodingTerminalController implements AutoCloseable {
                 apply(new TerminalUiAction.StatusChanged("Changing model"));
                 submitEffect(
                         () -> selectModel(current, option.id(), cursor, previousOutputRunId, previousOutputCursor),
+                        code -> apply(new TerminalUiAction.RecoverableFailure(code)));
+            }
+            case "auth-login" -> {
+                apply(new TerminalUiAction.SelectorClosed());
+                if (selected == 0) {
+                    openChatGptLoginSelector();
+                } else {
+                    beginApiKeyInput(authentication.apiKeyProviderId());
+                }
+            }
+            case "auth-chatgpt" -> {
+                apply(new TerminalUiAction.SelectorClosed());
+                if (selected == 0) {
+                    startCodexLogin();
+                } else {
+                    startCodexDeviceLogin();
+                }
+            }
+            case "auth-account" -> apply(new TerminalUiAction.SelectorClosed());
+            case "auth-logout" -> {
+                CodingAuthenticationView connection = authenticationOptions.get(selected);
+                apply(new TerminalUiAction.SelectorClosed());
+                apply(new TerminalUiAction.StatusChanged("Disconnecting model account"));
+                submitEffect(
+                        () -> {
+                            boolean removed = authentication.logout(connection.connectionId());
+                            return () -> apply(new TerminalUiAction.StatusChanged(
+                                    removed ? "Model account disconnected" : "Model account was already absent"));
+                        },
                         code -> apply(new TerminalUiAction.RecoverableFailure(code)));
             }
             case "archive-session" -> {
