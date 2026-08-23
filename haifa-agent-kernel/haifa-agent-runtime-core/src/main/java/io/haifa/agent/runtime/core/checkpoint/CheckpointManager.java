@@ -144,11 +144,18 @@ public final class CheckpointManager {
                     run.id(),
                     "checkpoint.available",
                     java.util.Map.of(
-                            "reference", snapshot.checkpoint().id().value(),
-                            "kind", "checkpoint",
-                            "title", "Checkpoint " + sequence,
-                            "status", "AVAILABLE",
-                            "action", "resume"),
+                            "reference",
+                            snapshot.checkpoint().id().value(),
+                            "kind",
+                            "checkpoint",
+                            "title",
+                            "Checkpoint " + sequence,
+                            "status",
+                            "AVAILABLE",
+                            "action",
+                            "resume",
+                            "checkpointType",
+                            type.name()),
                     time.now());
         }
         long eventMillis = elapsedMillis(phaseStarted);
@@ -237,8 +244,7 @@ public final class CheckpointManager {
                 .anyMatch(call -> call.id().equals(reference.toolCallId())
                         && call.providerCorrelationId().equals(reference.providerCorrelationId())
                         && call.idempotencyKey().equals(reference.idempotencyKey())
-                        && call.status() == reference.status()
-                        && call.version() == reference.version()));
+                        && compatibleToolProgress(reference, call)));
         if (!toolsValid) {
             throw new CheckpointRestoreException(
                     CheckpointRestoreFailure.TOOL_STATE_INVALID,
@@ -283,5 +289,19 @@ public final class CheckpointManager {
                     "checkpoint Skill activation state is unavailable or does not match exact frozen bindings");
         }
         memoryValidator.validate(run, checkpoint);
+    }
+
+    private static boolean compatibleToolProgress(ToolCheckpointRef reference, io.haifa.agent.core.tool.ToolCall call) {
+        if (terminal(reference.status())) {
+            return call.status() == reference.status() && call.version() == reference.version();
+        }
+        return call.version() >= reference.version();
+    }
+
+    private static boolean terminal(io.haifa.agent.core.tool.ToolCallStatus status) {
+        return switch (status) {
+            case COMPLETED, FAILED, DENIED, CANCELLED, TIMEOUT -> true;
+            default -> false;
+        };
     }
 }

@@ -71,7 +71,8 @@ public final class ProjectProductService {
             String message,
             List<AssetRef> attachments,
             String idempotencyKey) {
-        return startWithSessionId(projectId, sessionId, message, attachments, idempotencyKey, Optional.empty());
+        return startWithSessionId(
+                projectId, sessionId, message, attachments, idempotencyKey, Optional.empty(), java.util.Map.of());
     }
 
     public ProjectProductRun startWithSessionId(
@@ -87,7 +88,26 @@ public final class ProjectProductService {
                 message,
                 attachments,
                 idempotencyKey,
-                Optional.of(requireText(runProfileId, "runProfileId")));
+                Optional.of(requireText(runProfileId, "runProfileId")),
+                java.util.Map.of());
+    }
+
+    public ProjectProductRun startWithSessionId(
+            ProjectId projectId,
+            AgentSessionId sessionId,
+            String message,
+            List<AssetRef> attachments,
+            String idempotencyKey,
+            String runProfileId,
+            java.util.Map<String, Object> sessionMetadata) {
+        return startWithSessionId(
+                projectId,
+                sessionId,
+                message,
+                attachments,
+                idempotencyKey,
+                Optional.of(requireText(runProfileId, "runProfileId")),
+                java.util.Map.copyOf(Objects.requireNonNull(sessionMetadata, "sessionMetadata must not be null")));
     }
 
     private ProjectProductRun startWithSessionId(
@@ -96,7 +116,8 @@ public final class ProjectProductService {
             String message,
             List<AssetRef> attachments,
             String idempotencyKey,
-            Optional<String> runProfileId) {
+            Optional<String> runProfileId,
+            java.util.Map<String, Object> sessionMetadata) {
         var caller = callers.current();
         var project = projects.find(projectId)
                 .orElseThrow(() -> new ProjectProductException("PROJECT_NOT_FOUND", "Project not found"));
@@ -144,7 +165,7 @@ public final class ProjectProductService {
                 configuration.version(),
                 configuration.digest(),
                 configuration.runtimeProfileRef());
-        sessionProvisioner.provision(productSession);
+        sessionProvisioner.provision(productSession, sessionMetadata);
         sessions.create(productSession);
         AgentRunSnapshot snapshot = runtime.start(request(
                 project.reference(),

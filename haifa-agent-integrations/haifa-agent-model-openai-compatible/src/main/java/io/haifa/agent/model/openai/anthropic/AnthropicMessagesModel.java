@@ -24,6 +24,8 @@ import io.haifa.agent.model.api.ModelToolSpecification;
 import io.haifa.agent.model.api.ModelUsage;
 import io.haifa.agent.model.api.ResolvedCredential;
 import io.haifa.agent.model.api.SensitiveModelReasoning;
+import io.haifa.agent.model.openai.ModelStreamObservation;
+import io.haifa.agent.model.openai.RetryAfterParser;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -34,6 +36,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -99,7 +103,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                         exception);
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw httpFailure(request, response.statusCode());
+                throw httpFailure(request, response.statusCode(), response.headers());
             }
             requireContentType(request, response, "application/json");
             return parseResponse(request, profile, parseJson(request, body));
@@ -121,7 +125,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         } catch (IOException exception) {
             throw failure(
                     request,
-                    ModelErrorCategory.PROVIDER_UNAVAILABLE,
+                    ModelErrorCategory.TRANSPORT_ERROR,
                     true,
                     0,
                     "io_failure",
@@ -137,17 +141,18 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         if (!request.model().nativeStreaming()) return AgentChatModel.super.invokeStreaming(request, sink);
         ResolvedCredential credential = credential(request);
         HttpRequest httpRequest = request(request, profile, credential, true);
+        ModelStreamObservation observation = new ModelStreamObservation();
         try {
             HttpResponse<InputStream> response = http.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 try (InputStream body = response.body()) {
                     body.readNBytes(maxResponseBytes + 1);
                 }
-                throw httpFailure(request, response.statusCode());
+                throw httpFailure(request, response.statusCode(), response.headers());
             }
             requireContentType(request, response, "text/event-stream");
             try (InputStream body = response.body()) {
-                return parseStream(request, profile, body, sink);
+                return parseStream(request, profile, body, observation.observe(sink));
             }
         } catch (HttpTimeoutException exception) {
             throw failure(
@@ -163,16 +168,20 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                     "model request was cancelled",
                     exception);
         } catch (ModelInvocationException exception) {
-            throw exception;
+            throw observation.annotate(exception);
         } catch (IOException exception) {
             throw failure(
                     request,
-                    ModelErrorCategory.PROVIDER_UNAVAILABLE,
-                    true,
+                    observation.outputObserved()
+                            ? ModelErrorCategory.PARTIAL_RESPONSE
+                            : ModelErrorCategory.TRANSPORT_ERROR,
+                    !observation.outputObserved(),
                     0,
-                    "io_failure",
-                    "model provider is unavailable",
-                    exception);
+                    "stream_io_failure",
+                    "model provider stream was interrupted",
+                    exception,
+                    null,
+                    observation.outputObserved());
         }
     }
 
@@ -545,7 +554,9 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 throw malformed(request, "provider output exceeds the configured size limit");
             }
         }
-        if (text.isEmpty() && calls.isEmpty()) throw malformed(request, "provider response contains no usable output");
+        if (text.isEmpty() && calls.isEmpty()) {
+            throw emptyResponse(request, "provider response contains no usable output");
+        }
         return new ParsedContent(text.toString(), List.copyOf(calls), List.copyOf(reasoning), reasoningCharacters);
     }
 
@@ -750,6 +761,10 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             if (blocks.putIfAbsent(index, state) != null) {
                 throw malformed(request, "duplicate Anthropic Content Block index");
             }
+            if (state.type == BlockType.TOOL_USE) {
+                emit(new ModelStreamEvent.ToolCallDelta(
+                        request.callId(), ++emittedIndex, 0, index, state.id, state.name, ""));
+            }
         }
 
         private void blockDelta(JsonNode event) {
@@ -852,7 +867,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         }
 
         private AgentChatResponse finish() {
-            if (!terminal) throw malformed(request, "Anthropic stream ended without message_stop");
+            if (!terminal) throw interrupted(request, "Anthropic stream ended without message_stop");
             StringBuilder visible = new StringBuilder();
             List<ModelToolCall> calls = new ArrayList<>();
             List<Map<String, Object>> reasoning = new ArrayList<>();
@@ -886,7 +901,7 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                 }
             }
             if (visible.isEmpty() && calls.isEmpty()) {
-                throw malformed(request, "Anthropic stream contains no usable output");
+                throw emptyResponse(request, "Anthropic stream contains no usable output");
             }
             ParsedContent parsed = new ParsedContent(
                     visible.toString(), List.copyOf(calls), List.copyOf(reasoning), reasoningCharacters);
@@ -1059,7 +1074,8 @@ public final class AnthropicMessagesModel implements AgentChatModel {
         return value.isEmpty() ? fallback : value;
     }
 
-    private static ModelInvocationException httpFailure(AgentChatRequest request, int status) {
+    private static ModelInvocationException httpFailure(
+            AgentChatRequest request, int status, java.net.http.HttpHeaders headers) {
         ModelErrorCategory category =
                 switch (status) {
                     case 400, 413, 422 -> ModelErrorCategory.INVALID_REQUEST;
@@ -1068,16 +1084,33 @@ public final class AnthropicMessagesModel implements AgentChatModel {
                     case 404 -> ModelErrorCategory.MODEL_NOT_FOUND;
                     case 408, 504 -> ModelErrorCategory.TIMEOUT;
                     case 429 -> ModelErrorCategory.RATE_LIMITED;
-                    case 500, 502, 503, 529 -> ModelErrorCategory.PROVIDER_UNAVAILABLE;
+                    case 500, 502, 503, 529 -> ModelErrorCategory.SERVER_ERROR;
                     default -> ModelErrorCategory.UNKNOWN_PROVIDER_ERROR;
                 };
         boolean retryable = status == 408 || status == 429 || status == 504 || status == 529 || status >= 500;
+        Duration retryAfter = RetryAfterParser.parse(headers, Instant.now()).orElse(null);
         return failure(
-                request, category, retryable, status, "http_" + status, "model provider rejected the request", null);
+                request,
+                category,
+                retryable,
+                status,
+                "http_" + status,
+                "model provider rejected the request",
+                null,
+                retryAfter,
+                false);
     }
 
     private static ModelInvocationException malformed(AgentChatRequest request, String message) {
         return failure(request, ModelErrorCategory.MALFORMED_RESPONSE, false, 0, "malformed_response", message, null);
+    }
+
+    private static ModelInvocationException emptyResponse(AgentChatRequest request, String message) {
+        return failure(request, ModelErrorCategory.EMPTY_RESPONSE, true, 200, "empty_response", message, null);
+    }
+
+    private static ModelInvocationException interrupted(AgentChatRequest request, String message) {
+        return failure(request, ModelErrorCategory.TRANSPORT_ERROR, true, 200, "stream_interrupted", message, null);
     }
 
     private static ModelInvocationException failure(
@@ -1088,7 +1121,21 @@ public final class AnthropicMessagesModel implements AgentChatModel {
             String code,
             String safeMessage,
             Throwable cause) {
-        return new ModelInvocationException(category, retryable, status, code, request.callId(), safeMessage, cause);
+        return failure(request, category, retryable, status, code, safeMessage, cause, null, false);
+    }
+
+    private static ModelInvocationException failure(
+            AgentChatRequest request,
+            ModelErrorCategory category,
+            boolean retryable,
+            int status,
+            String code,
+            String safeMessage,
+            Throwable cause,
+            Duration retryAfter,
+            boolean outputObserved) {
+        return new ModelInvocationException(
+                category, retryable, status, code, request.callId(), safeMessage, cause, retryAfter, outputObserved);
     }
 
     private enum BlockType {

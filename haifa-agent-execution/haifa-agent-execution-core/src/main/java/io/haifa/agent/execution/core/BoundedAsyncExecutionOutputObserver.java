@@ -31,6 +31,11 @@ final class BoundedAsyncExecutionOutputObserver implements ExecutionOutputObserv
     }
 
     @Override
+    public void onStarted(io.haifa.agent.execution.api.ExecutionProcessIdentity identity) {
+        delegate.onStarted(identity);
+    }
+
+    @Override
     public void onOutput(ProcessOutputChunk chunk) {
         if (!accepting.get()) return;
         if (!queue.offer(chunk)) dropped.set(true);

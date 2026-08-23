@@ -11,9 +11,9 @@ class CodingAgentPromptTest {
         CodingAgentPrompt.Snapshot second = CodingAgentPrompt.current();
 
         assertThat(second).isEqualTo(first);
-        assertThat(first.version()).isEqualTo("1.0.3");
+        assertThat(first.version()).isEqualTo("1.1.0");
         assertThat(first.digest()).matches("sha256:[0-9a-f]{64}");
-        assertThat(first.identity()).startsWith("coding-agent-prompt@1.0.3#sha256:");
+        assertThat(first.identity()).startsWith("coding-agent-prompt@1.1.0#sha256:");
         assertThat(first.text())
                 .contains(
                         "You are Haifa Coding Agent",
@@ -21,7 +21,13 @@ class CodingAgentPromptTest {
                         "smallest complete change",
                         "authoritative tool results show a workspace change",
                         "validation attempt",
-                        "diff inspection",
+                        "deterministic change-review evidence",
+                        "Do not run a DIFF-family command only to satisfy the completion protocol",
+                        "public signatures, visibility, and types",
+                        "input and output units and numeric boundaries",
+                        "null, invalid-input, error-type, and exact-text requirements",
+                        "state changes, side effects, and ordering",
+                        "selected test count",
                         "later runtime control updates",
                         "report it as blocked or not run",
                         "do not infer that the code is correct or claim the check passed",

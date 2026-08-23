@@ -84,6 +84,7 @@ skills:
 
 approval:
   mode: ask
+  threshold: low
 
 execution:
   provider: host-guarded

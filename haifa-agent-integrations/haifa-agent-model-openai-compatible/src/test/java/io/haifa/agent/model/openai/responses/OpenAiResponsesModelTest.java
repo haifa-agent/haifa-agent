@@ -200,6 +200,28 @@ class OpenAiResponsesModelTest {
     }
 
     @Test
+    void interruptedStreamAfterTextIsANonRetryablePartialResponse() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"type":"response.created","response":{"id":"resp-cut","status":"in_progress"}}
+
+                data: {"type":"response.output_text.delta","item_id":"msg-1","output_index":0,"content_index":0,"delta":"partial"}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(
+                                simpleRequest(standardSnapshot(true)), event -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.PARTIAL_RESPONSE);
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
     void acceptsEmptyTextAndReasoningDeltasFromCompatibleStreams() {
         response.set(
                 Response.sse(

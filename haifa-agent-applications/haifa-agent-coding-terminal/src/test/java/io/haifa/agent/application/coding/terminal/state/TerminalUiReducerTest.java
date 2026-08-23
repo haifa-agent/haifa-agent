@@ -454,7 +454,7 @@ class TerminalUiReducerTest {
     }
 
     @Test
-    void deliveryEventsDriveRecoveringVerifyingAndBudgetStateWithoutParsingText() {
+    void deliveryEventsDriveRecoveryBudgetAndCodingWorkPhaseWithoutParsingText() {
         TerminalUiState recovering = reducer.reduce(
                 TerminalUiState.initial(120, 40),
                 new TerminalUiAction.RunEventReceived(event(
@@ -494,6 +494,18 @@ class TerminalUiReducerTest {
                                 "TOOL_CALLS",
                                 24,
                                 32))));
+        TerminalUiState workPhase = reducer.reduce(
+                budget,
+                new TerminalUiAction.RunEventReceived(event(
+                        4,
+                        "event-4",
+                        new RunEventPayloads.DeliveryLifecycle(
+                                "VERIFY",
+                                "ACTIVE",
+                                "AUTHORITATIVE_EVIDENCE_PROJECTION",
+                                List.of("VALIDATION_ATTEMPT", "DIFF_INSPECTION"),
+                                42,
+                                0))));
 
         assertThat(recovering.status()).isEqualTo("Recovering");
         assertThat(verifying.status()).isEqualTo("Verifying");
@@ -509,6 +521,14 @@ class TerminalUiReducerTest {
                 .singleElement()
                 .satisfies(item -> assertThat(item.body())
                         .contains("Limiting resource: TOOL_CALLS", "Usage: 24 / 32", "Remaining: 25%"));
+        assertThat(workPhase.status()).isEqualTo("Work phase: VERIFY");
+        assertThat(workPhase.transcript())
+                .filteredOn(item -> item.id().equals("delivery-ACTIVE"))
+                .singleElement()
+                .satisfies(item -> {
+                    assertThat(item.title()).isEqualTo("Work phase · VERIFY");
+                    assertThat(item.body()).contains("VALIDATION_ATTEMPT", "DIFF_INSPECTION", "Remaining: 42%");
+                });
     }
 
     @Test

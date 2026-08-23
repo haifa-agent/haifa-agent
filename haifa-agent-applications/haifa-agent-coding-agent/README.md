@@ -31,17 +31,58 @@ Coding Agent 的基础工作方法由产品拥有的版本化资源
 Agent-visible、用户不可见的 Session 消息追加；旧请求因此保持为新请求的完整历史前缀。追加消息不包含
 Case/Fixture 信息、宿主路径、原始 Tool 输出或模型自报的语义覆盖。
 
+`CodingWorkProjectionService` 从既有 ToolCall、Plan、Interaction、Usage、ChangeSet 和交付证据确定性
+重建 `ORIENT/PLAN/CHANGE/VERIFY/REVIEW/DELIVER/BLOCKED` 派生阶段；它不是新的 Core Run 状态或事实源。
+投影只保留有界摘要、稳定错误簇和路径/版本/变更/产物的 SHA-256 引用；Middleware 仅在阶段、缺失证据
+或交付预留变化时追加 Agent-visible 控制消息和安全 Client Event，保持模型请求历史前缀只追加不改写。
+ANALYZE/REVIEW 不会被强制进入 CHANGE；仅修改工作区也
+不会隐式产生 commit、push 或 PR 意图。旧 Checkpoint 不增加 Codec 或 Migration，Resume 直接从权威
+记录重建投影。
+
+`execution.run` 1.7.2 按可信有效操作族限制每通道输出：INSPECT 使用模型输出预算 1×、DIFF 4×，
+TEST/BUILD/MUTATE/UNKNOWN 8×，同时受硬上限约束。Diff 结果提供观察到的文件/分块数、计数是否完整和
+可选 Artifact Ref；截断后必须使用返回引用或更窄的分页命令，不能把观察计数当作完整 Diff。
+
 ## 自主交付模式与完成证据
 
 Coding 产品只接受可信调用方元数据提供的 `CHANGE/CREATE/ANALYZE/REVIEW` 模式；没有可信模式时保持
 `UNKNOWN`，不从普通用户文本的关键词推断意图。模型消息不能改变模式，也不能制造交付证据。
 
 `CodingDeliveryEvidenceLedger` 只从权威 ToolCall、AgentStep、ChangeSet 和 Execution 状态
-引用重建工作区修改、Diff、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
-修改或验证通过证据。`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限
-No-change、验证尝试和 Diff；ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
+引用重建工作区修改、确定性 Change Review、验证、只读检查、阻塞和有证据的 No-change 事实。模型自由文本不构成
+修改或验证通过证据。文件 Mutation 与本地进程观察到的 terminal ChangeSet 会生成
+`coding-change-review/1` 内容寻址摘要：只保留 base/result Workspace Digest、文件路径或长路径摘要、
+before/after Digest、大小及 create/replace/delete/move/binary/oversize/opaque 计数，不保存文件正文，
+也不依赖 Git。读取证据时会重新计算 Artifact Ref，并核对 Tool Result 中的 ChangeSet 引用。
+
+`CodingCompletionPolicy` 对 CHANGE/CREATE 默认要求修改或受限 No-change、最后一次修改之后的验证尝试，
+以及覆盖最后一次修改的确定性 Review；`DIFF_INSPECTION` 不再作为修改任务完成门禁的兼容 fallback，
+但 DIFF 命令、只读审阅能力和对应诊断事实继续保留。ANALYZE/REVIEW 要求只读证据且拒绝意外修改。UNKNOWN 用于普通交互：
 没有权威 Workspace 修改时允许文本回答正常结束，不触发完成修复；一旦观察到 Workspace 修改，
-仍必须满足完整的修改、验证和 Diff 证据。需要硬性交付保证的调用方必须提供可信任务模式。
+仍必须满足完整的修改、验证和 Review 证据。需要硬性交付保证的调用方必须提供可信任务模式。
+
+轻量 `CodingVerificationProfile` 只保存有界候选、来源、成本、超时与触发层级，按“用户显式配置 →
+仓库指令/构建配置 → 相邻测试 → 生态默认”在每个触发层级独立选择，不引入语言插件框架。验证阶梯仍由
+Coding Prompt/Skill 约束为语法/静态检查、精确相邻测试、受影响模块和最终门禁。TEST/BUILD Tool Result
+保留每次结构化 Validation Attempt；候选在 Coding Session 创建时由可信 Host 冻结到 Session metadata，
+重启后按摘要与精确命令匹配恢复来源和 scope。runner stdout/stderr 不作为数量或 scope 的可信来源，当前
+统一报告 `COUNTS_UNAVAILABLE`，也不会扩展 runner 专用解析器来制造虚假的完整覆盖。
+
+`CodingRunOutcomeProjectionService` 将交付证据结果与 Run 协议状态分别投影为
+`SATISFIED/INCOMPLETE` 和 `CLEAN/UNCLEAN/IN_PROGRESS`，并通过 `coding-run-outcome/2` 的幂等
+`coding.task-outcome` 安全事件记录。Coding CLI、Coding Web 与受信 Coding Host 可通过
+`CodingSessionClient.findOutcome` 查询权威投影，无需解析 Event map；归档查看器仍可兼容读取历史
+`outcome/1` 与当前 `outcome/2` 文件事件。它不是 Benchmark Verifier 结果，也不增加新的 Core Run 状态。
+
+可信宿主还可在创建 Session 或提交新 Turn 时冻结 `WORKTREE_ONLY/LOCAL_COMMIT/REMOTE_PUSH/PULL_REQUEST`
+交付意图；默认是 `WORKTREE_ONLY`，普通模型文本和“继续”不会升级它。Commit、Push、PR 仍通过唯一的
+`execution.run` 调用系统 `git`/`gh`，但在 Broker Dispatch 前受产品交付事务门禁约束：先确认仓库根、
+分支、Upstream、状态、HEAD、Diff 和验证，再精确路径 Stage、检查 staged diff、Commit 后重查 HEAD、精确分支
+Push 后读取 remote ref，最后可创建并查看以 `dev` 为 Base 的 PR。权威 Tool 结果按顺序记录证据；旧
+HEAD/remote ref 不能满足新动作后的确认，Outcome Unknown 必须先只读核验再决定是否重放。宽泛
+`git add .`、意图越级、复合交付动作和 `gh pr merge` 在任何普通审批阈值下都不会 Dispatch。交付证据
+同时绑定脱敏的 workspace-relative Repository Scope Digest；根仓、`docs/`、`test-config/` 等独立仓库
+不能互相复用拓扑、Diff、验证或结果确认事实。
 
 默认冻结交付预留为剩余 Model Call 20%、Tool Call 25%、Wall Time 20%。预留只作为控制面事实，
 不增加 Runtime 的总预算或时限，也不逐轮进入模型 Prompt。缺少完成证据时 Runtime 最多执行两次结构化纠偏，恢复后
@@ -135,20 +176,39 @@ Catalog 保留 `file.search` 供显式配置兼容，但 Coding CLI 默认不冻
 普通手工源码更新优先使用 `file.patch` 1.1：它接受 Codex 风格的上下文 Patch，覆盖新增、删除、更新、
 移动和多文件调用；本地实现流式转换大文件并通过同目录临时文件与提交前哈希复核完成原子替换。
 `file.write` 保留给有意整体替换的小文件，生成代码和机械批量修改继续通过通用 CLI/生成器完成。
+文件 Mutation 现在以 Runtime idempotency key 作为 operation ID，并把权威 Tool Call ID 写入 ChangeSet。
+`file.create`/`file.write` 的只读 reconcile 同时核对 terminal ChangeSet、Tool Call 关联和目标内容摘要；任一
+证据缺失或漂移都保持 outcome-unknown。`execution.run` 会在进程启动时记录 execution ID、PID 和工作目录
+摘要；已得到终态进程结果可直接对账，timeout/cancel 只有在观察到本地 ChangeSet 时才收敛为“不重放的
+已知失败”，否则保持 outcome-unknown。
 `execution.run` 不再使用通用 `project-safe` 标识：产品装配必须提供冻结 `SandboxProfile`，
 Catalog、Policy Resource、Execution Request 和 Broker 解析都使用同一精确 Profile Ref/version。
 Provider、网络或受信配置变化会改变 Definition/Binding 的安全身份，旧 Decision/Approval 不能用于
-新 Profile；模型可见 Schema 包含 command、逻辑 workdir、有界 timeout、安全描述和显式
-必填的 `operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，不能可靠识别时使用
-`UNKNOWN`。可信 `SystemGitCliCommandClassifier` 独立解析直接 `git`/`gh` 命令并产出风险事实；复合命令、
-未知 wrapper/alias 不能降级为只读，认证环境覆盖和仓库路径逃逸在执行前拒绝。模型自报的操作族仅用于
-语义失败归类和交付意图，不能覆盖可信分类。
+新 Profile；模型可见 Schema 包含 command、逻辑 workdir、有界 timeout、安全描述和可选
+`operationFamily`。操作族只允许 `BUILD/TEST/INSPECT/DIFF/MUTATE/UNKNOWN`，仅作为交付和诊断 Hint；
+省略时使用 `UNKNOWN`。可信 `SystemGitCliCommandClassifier` 独立解析直接 `git`/`gh` 命令并产出风险事实；Coding
+`ToolPolicyRequestAdapter` 在 Policy 决策前把本地读、写、网络读、外部写和未知形式映射为调用级风险及副作用，
+并把 Resolver 结果冻结进安全配置摘要。复合命令、未知 wrapper/alias 至少为 HIGH，但继续交给系统 Shell；
+认证环境覆盖、Credential 命令/配置和仓库路径逃逸在 Policy 与执行边界硬拒绝。模型自报的操作族不能覆盖
+可信分类、风险、审批或输出预算；直接 Git/GH 和复合形式都不因 Hint 缺失或不匹配被拒绝。结果通过
+稳定的 `riskResolutionCode`、`operationHintCode`、`failureActionCode` 和 `commandOutcomeCode` 区分
+风险提升、Hint 被忽略、可恢复失败和预期非零退出，恢复逻辑不解析 stderr 或依赖自然语言描述。
+
+Coding 审批使用 `LOW/MEDIUM/HIGH/NEVER` 阈值；风险事实先由可信解析器写入调用级 Policy Request，
+再由用户配置的阈值决定是否 ASK。兼容 `ask` 映射 LOW，`auto` 映射 NEVER，`deny` 移除通用执行能力。
+`NEVER` 自动执行所有非硬拒绝的 LOW/MEDIUM/HIGH 普通命令；可信分类硬拒绝仍 DENY，Credential 重认证
+和一次性 Host 权限升级仍是托管 ASK，不受普通风险阈值自动批准。
+
+Git/GH 只保留基础分级：`status/diff/log/show/grep/ls-files/rev-parse` 等本地读取为 LOW；本地写入及
+`fetch/pull`、GH 远端读取为 MEDIUM；Push、远端写入、破坏性操作、`gh api`、未知子命令和任意复合/
+Wrapper 形式为 HIGH。HIGH 继续进入用户阈值，不是分类失败；产品不维护完整 Git/GH 参数 DSL。
 
 `execution.request_permissions -> request_permissions` 不是通用 Sandbox 绕过入口，也不授予可复用权限。
-它只允许引用同一 Run 中一次以 `NETWORK_UNAVAILABLE`、`HOST_AUTHENTICATION_UNAVAILABLE`、
+它只允许引用同一 Run 中一次以 `NETWORK_PERMISSION_REQUIRED`（兼容读取旧
+`NETWORK_UNAVAILABLE`）、`HOST_AUTHENTICATION_UNAVAILABLE`、
 `GIT_AUTHENTICATION_UNAVAILABLE` 或 `GH_AUTHENTICATION_UNAVAILABLE` 失败的 `execution.run`，并要求逐字段复用该结果
-返回的 `toolCallId`、完整 command、逻辑 workdir、operationFamily 和 timeout。Runtime 仍按 Critical /
-Always Approval 创建独立 Policy Decision 与审批 Checkpoint；批准后只用受信 Host 配置及其系统
+返回的 `toolCallId`、完整 command、逻辑 workdir 和 timeout；operationFamily 仅是可选诊断 Hint，不参与
+精确授权绑定。Runtime 为该托管权限升级创建独立 Policy Decision 与审批 Checkpoint；批准后只用受信 Host 配置及其系统
 `git` / `gh` 登录环境的
 `host-guarded + network allow` Profile 执行这一次调用。只有直接、非破坏性的系统 `git` / `gh` 命令
 可申请；未知、复合、包装、凭据覆盖、路径逃逸、破坏性或结果未知的命令不可升级；Agent 不能创建
@@ -175,7 +235,7 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 经审查启用的 MCP Tool 由 `McpToolCatalogContribution` 写入同一个 `ToolCatalogBuilder`，不会建立 MCP 专用 Registry。每个 MCP server 使用独立 `mcp.<serverId>` Provider；本地 definition hash 与远端 definition digest 分别冻结，Runtime 只通过 `FrozenToolBinding.providerBindingReference` 恢复精确 binding。
 
 `ProjectToolExecutor` 是 Tool Provider adapter，只接收最小化 `ToolInvocationRequest`，并在委派前重新解析 Run Workspace、Principal 和 capability。文件操作继续走 `ProjectToolOperations`；`ProjectExecutionToolOperations` 把
-`command/workdir/timeoutMillis/description/operationFamily`
+`command/workdir/timeoutMillis/description` 及可选 `operationFamily`
 映射为可信 `ExecutionRequest` 并调用 `ExecutionBroker`。`execution.run` 使用配置 Shell 的通用命令文本，不包含命令
 目录、参数 DSL 或 Maven/npm/Python 等逐命令生产分支。Coding Profile 在产品边界为通用 Scratch 增加
 `GOTMPDIR` 和 `GOCACHE=go-build`；Execution/Runtime Core 不知道 Go。最终 `ToolResult` 提供状态、
@@ -184,9 +244,18 @@ Brave 或 Tavily，Fetch 可选择 Aliyun、Browserless 或 Tavily。具体 Prov
 引用。普通命令在固定内存中持续排空输出；`INSPECT` 在通道输出预算耗尽时终止进程树并返回
 `OUTPUT_LIMIT_EXCEEDED`，模型必须收窄查询后再试。Java 层只对系统 Git/GitHub CLI 做保守风险分类，
 不包装或解释普通命令语义。
+进程数预算触发且进程树已收敛时返回 `PROCESS_LIMIT_EXCEEDED`，不会伪装成 `OUTCOME_UNKNOWN`。已持久化的
+ExecutionResult 是权威执行事实；Change Review 等派生投影失败只返回安全的不可用原因码，不得吞掉执行结果。
+Change Review 成功结果中的 `artifactRef` 与 `changeReviewArtifactRef` 均由严格输出 Schema 声明，避免
+确定的 ExecutionResult 因派生字段契约漂移被误判为 `TOOL_OUTCOME_UNKNOWN`。
+命中冻结验证候选时生成的 `validationAttemptRef` 同样属于严格 Schema 契约，并在直接返回与只读
+reconcile 路径使用同一份冻结定义校验。
+Tool Result 另保留 `semanticOutcome`、`semanticReasonCode` 和解释器版本：Git Diff 的退出 1 可作为
+`EXPECTED_VARIANT/DIFFERENCES_FOUND` 形成 Diff 证据，Git Grep 的退出 1 是 `EMPTY_RESULT/NO_MATCHES`；
+无效 revision 的 128 和 Build/Test 非零退出仍是失败，Timeout/Cancel/未知终止不得自动重放。
 执行命令已经从受控 Workspace 启动。最高层受信本地装配可将等于当前 Workspace 或位于其下的绝对
 `workdir` 规范化为逻辑相对路径；Workspace 外绝对目录、绝对路径 `cd ...` 仍在进入 Broker 前以
 `ABSOLUTE_WORKDIR_FORBIDDEN` 结构化拒绝，非法相对路径以 `WORKDIR_INVALID` 拒绝。dispatch 前的确定性
 拒绝直接保存失败 ToolResult，不伪造 dispatched/acknowledged，也不会覆盖稳定错误码或误记为结果未知。
 
-Workspace Checkpoint Adapter 将 Project Snapshot 作为通用 Runtime Capability Checkpoint Participant 接入，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。
+Workspace Checkpoint Adapter 可由受信 Host 注册为通用 Runtime Capability Checkpoint Participant，并在恢复时重新检查当前授权、Binding、Provider 版本和 Drift；类型存在不等于所有 Host 已完成装配。DIRECT Host 只做 current-state reconcile，永不自动覆盖文件；无人值守 Host 必须使用隔离 Workspace 与可恢复 Snapshot，否则不能声明具备自动恢复等级。显式 Artifact Export 支持受保护文件及选定 ChangeSet/Patch/Diff 文档，不扫描目录自动发布。`PublishedArtifactRequiredChecker` 只接受 Store 中真实 `PUBLISHED` 的 Artifact；Admin Query 仅返回分页、脱敏、无正文的诊断投影。

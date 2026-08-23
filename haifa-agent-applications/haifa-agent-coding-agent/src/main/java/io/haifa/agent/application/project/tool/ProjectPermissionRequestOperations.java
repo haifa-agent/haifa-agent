@@ -21,6 +21,7 @@ public final class ProjectPermissionRequestOperations {
     public static final String HOST_NETWORK_ACCESS = "HOST_NETWORK_ACCESS";
     private static final Set<String> ELIGIBLE_FAILURE_CODES = Set.of(
             "NETWORK_UNAVAILABLE",
+            "NETWORK_PERMISSION_REQUIRED",
             "HOST_AUTHENTICATION_UNAVAILABLE",
             "GIT_AUTHENTICATION_UNAVAILABLE",
             "GH_AUTHENTICATION_UNAVAILABLE");
@@ -88,10 +89,10 @@ public final class ProjectPermissionRequestOperations {
                     "PERMISSION_REQUEST_NOT_ELIGIBLE",
                     "The prior failure is not eligible for permission escalation: " + failureCode + ".");
         }
-        if (!same(prior.arguments().values(), arguments, "command", "workdir", "operationFamily", "timeoutMillis")) {
+        if (!same(prior.arguments().values(), arguments, "command", "workdir", "timeoutMillis")) {
             return rejected(
                     "PERMISSION_REQUEST_INTENT_MISMATCH",
-                    "The command, workdir, operation family, and timeout must match the failed Tool Call exactly.");
+                    "The command, workdir, and timeout must match the failed Tool Call exactly.");
         }
         var classification = SystemGitCliCommandClassifier.classify(requiredText(arguments, "command"));
         if (classification.target() == SystemGitCliCommandClassifier.Target.OTHER

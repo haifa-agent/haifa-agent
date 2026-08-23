@@ -1,6 +1,7 @@
 package io.haifa.agent.cli;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
+import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.CredentialRef;
 import io.haifa.agent.model.api.ModelCapability;
@@ -28,6 +29,7 @@ record CliConfiguration(
         Skills skills,
         Execution execution,
         ApprovalMode approval,
+        CodingApprovalThreshold approvalThreshold,
         Duration timeout,
         int maxIterations,
         long maxToolCalls,
@@ -75,6 +77,7 @@ record CliConfiguration(
             throw new IllegalArgumentException("MCP server ids must be unique");
         }
         approval = Objects.requireNonNull(approval, "approval must not be null");
+        approvalThreshold = Objects.requireNonNull(approvalThreshold, "approvalThreshold must not be null");
         timeout = Objects.requireNonNull(timeout, "timeout must not be null");
         if (timeout.isNegative() || timeout.isZero()) throw new IllegalArgumentException("timeout must be positive");
         if (maxIterations < 1 || maxToolCalls < 1)
@@ -161,10 +164,40 @@ record CliConfiguration(
                         DEFAULT_ENVIRONMENT,
                         List.of()),
                 ApprovalMode.ASK,
+                CodingApprovalThreshold.LOW,
                 Duration.ofMinutes(5),
                 50,
                 32,
                 ProjectPersistenceConfiguration.memory());
+    }
+
+    CliConfiguration(
+            Model model,
+            List<Model> availableModels,
+            Set<String> enabledTools,
+            List<McpServer> mcpServers,
+            Web web,
+            Skills skills,
+            Execution execution,
+            ApprovalMode approval,
+            Duration timeout,
+            int maxIterations,
+            long maxToolCalls,
+            ProjectPersistenceConfiguration persistence) {
+        this(
+                model,
+                availableModels,
+                enabledTools,
+                mcpServers,
+                web,
+                skills,
+                execution,
+                approval,
+                CodingApprovalThreshold.compatibleWith(policyMode(approval)),
+                timeout,
+                maxIterations,
+                maxToolCalls,
+                persistence);
     }
 
     CliConfiguration(
@@ -180,12 +213,14 @@ record CliConfiguration(
             long maxToolCalls) {
         this(
                 model,
+                List.of(model),
                 enabledTools,
                 mcpServers,
                 web,
                 skills,
                 execution,
                 approval,
+                CodingApprovalThreshold.compatibleWith(policyMode(approval)),
                 timeout,
                 maxIterations,
                 maxToolCalls,
@@ -262,6 +297,10 @@ record CliConfiguration(
                 maxIterations,
                 maxToolCalls,
                 persistence);
+    }
+
+    private static io.haifa.agent.policy.api.ApprovalMode policyMode(ApprovalMode mode) {
+        return io.haifa.agent.policy.api.ApprovalMode.valueOf(mode.name());
     }
 
     record Model(

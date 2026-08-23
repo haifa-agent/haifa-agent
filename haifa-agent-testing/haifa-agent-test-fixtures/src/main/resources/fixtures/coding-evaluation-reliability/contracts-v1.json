@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "1.0.0",
+  "kind": "CODING_RELIABILITY_CONTRACT_CASES",
+  "source": "SYNTHETIC",
+  "modelCases": [
+    {
+      "caseId": "empty-response-then-success",
+      "observations": ["EMPTY_RESPONSE", "SUCCESS"],
+      "expected": {"attempts": 2, "retry": true, "consumerOutputFromFailedAttempt": false}
+    },
+    {
+      "caseId": "rate-limit-with-retry-after",
+      "observations": ["RATE_LIMIT"],
+      "expected": {"retry": true, "honorBoundedRetryAfter": true}
+    },
+    {
+      "caseId": "authentication-failure",
+      "observations": ["AUTHENTICATION"],
+      "expected": {"attempts": 1, "retry": false}
+    },
+    {
+      "caseId": "context-too-long",
+      "observations": ["CONTEXT_TOO_LONG"],
+      "expected": {"retrySameRequest": false}
+    },
+    {
+      "caseId": "partial-stream-with-tool-intent",
+      "observations": ["PARTIAL_RESPONSE"],
+      "expected": {"blindReplay": false}
+    },
+    {
+      "caseId": "valid-tool-call-without-text",
+      "observations": ["TOOL_CALL"],
+      "expected": {"classification": "SUCCESS", "emptyResponse": false}
+    }
+  ],
+  "attemptCases": [
+    {
+      "caseId": "bounded-retry-lifecycle",
+      "events": ["SCHEDULED", "STARTED", "FAILED", "SCHEDULED", "STARTED", "SUCCEEDED"],
+      "expected": {"sameFrozenRequest": true, "attemptsChargedToBudget": 2}
+    },
+    {
+      "caseId": "cancel-during-backoff",
+      "events": ["SCHEDULED", "STARTED", "FAILED", "CANCELLED"],
+      "expected": {"requestsAfterCancellation": 0}
+    }
+  ],
+  "toolOutcomeCases": [
+    {"caseId": "tool-succeeded", "expected": {"terminal": "SUCCEEDED"}},
+    {"caseId": "tool-failed", "expected": {"terminal": "FAILED"}},
+    {"caseId": "tool-rejected", "expected": {"terminal": "REJECTED"}},
+    {"caseId": "tool-cancelled", "expected": {"terminal": "CANCELLED"}},
+    {
+      "caseId": "side-effect-outcome-unknown",
+      "expected": {"terminal": "OUTCOME_UNKNOWN", "reconcile": "REQUIRED", "automaticReplay": false}
+    }
+  ],
+  "completionEvidenceCases": [
+    {
+      "caseId": "verified-change-without-model-diff-command",
+      "evidence": ["CHANGE_SET", "VALIDATION_PASSED", "DETERMINISTIC_DIFF_SUMMARY"],
+      "expected": {"ready": true, "modelDiffCommandRequired": false}
+    },
+    {
+      "caseId": "verifier-pass-with-unclean-protocol",
+      "evidence": ["VERIFIER_PASSED", "COMPLETION_REPAIR_EXHAUSTED"],
+      "expected": {"codeResult": "PASSED", "cleanCompletion": false}
+    }
+  ]
+}

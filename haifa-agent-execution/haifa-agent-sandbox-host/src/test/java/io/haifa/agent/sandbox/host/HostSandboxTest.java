@@ -83,6 +83,8 @@ class HostSandboxTest {
                 false);
         try (var session = provider.open(profile, new WorkspaceMount(fixture.workspaceId, false))) {
             AtomicInteger dispatches = new AtomicInteger();
+            java.util.concurrent.atomic.AtomicReference<io.haifa.agent.execution.api.ExecutionProcessIdentity>
+                    processIdentity = new java.util.concurrent.atomic.AtomicReference<>();
             var version = session.execute(
                     new SandboxExecution(
                             new ExecutionCommand(ExecutionCommandMode.DIRECT, List.of("java", "-version")),
@@ -91,8 +93,9 @@ class HostSandboxTest {
                             new ExecutionLimits(Duration.ofSeconds(10), 4096, 4096, 2)),
                     new io.haifa.agent.execution.api.ExecutionOutputObserver() {
                         @Override
-                        public void onStarted() {
+                        public void onStarted(io.haifa.agent.execution.api.ExecutionProcessIdentity identity) {
                             dispatches.incrementAndGet();
+                            processIdentity.set(identity);
                         }
 
                         @Override
@@ -101,6 +104,7 @@ class HostSandboxTest {
             assertThat(version.status()).isEqualTo(SandboxProcessStatus.EXITED);
             assertThat(version.exitCode()).isZero();
             assertThat(dispatches).hasValue(1);
+            assertThat(processIdentity.get().processId()).isPositive();
 
             try (var managed = session.openManagedProcess(new SandboxExecution(
                     new ExecutionCommand(ExecutionCommandMode.DIRECT, List.of("java", "-version")),
@@ -113,6 +117,7 @@ class HostSandboxTest {
             }
 
             copySleepClass(root);
+            copyProcessClass(root, ProcessTreeParent.class);
             var timeout = session.execute(new SandboxExecution(
                     new ExecutionCommand(
                             ExecutionCommandMode.DIRECT,
@@ -122,6 +127,35 @@ class HostSandboxTest {
                     new ExecutionLimits(Duration.ofMillis(100), 1024, 1024, 2)));
             assertThat(timeout.status()).isEqualTo(SandboxProcessStatus.TIMED_OUT);
             assertThat(timeout.processTreeTerminated()).isTrue();
+
+            var treeTimeout = session.execute(new SandboxExecution(
+                    new ExecutionCommand(
+                            ExecutionCommandMode.DIRECT,
+                            List.of("java", "-cp", ".", "io.haifa.agent.sandbox.host.ProcessTreeParent", "child.pid")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofMillis(500), 1024, 1024, 8)));
+            long childPid =
+                    Long.parseLong(Files.readString(root.resolve("child.pid")).trim());
+            assertThat(ProcessHandle.of(childPid)).isEmpty();
+            assertThat(treeTimeout.scratchCleanupFailed()).isFalse();
+            assertThat(treeTimeout.processTreeTerminated()).isTrue();
+            assertThat(treeTimeout.status()).isEqualTo(SandboxProcessStatus.TIMED_OUT);
+
+            var processLimit = session.execute(new SandboxExecution(
+                    new ExecutionCommand(
+                            ExecutionCommandMode.DIRECT,
+                            List.of(
+                                    "java",
+                                    "-cp",
+                                    ".",
+                                    "io.haifa.agent.sandbox.host.ProcessTreeParent",
+                                    "limit-child.pid")),
+                    WorkspacePath.root(fixture.workspaceId),
+                    Map.of(),
+                    new ExecutionLimits(Duration.ofSeconds(10), 1024, 1024, 1)));
+            assertThat(processLimit.status()).isEqualTo(SandboxProcessStatus.PROCESS_LIMIT_EXCEEDED);
+            assertThat(processLimit.processTreeTerminated()).isTrue();
 
             try (var managed = session.openManagedProcess(new SandboxExecution(
                     new ExecutionCommand(
@@ -135,16 +169,25 @@ class HostSandboxTest {
                         .isEqualTo(io.haifa.agent.execution.api.ExecutionStatus.CANCELLED);
             }
 
+            Path cancelledChildPid = root.resolve("cancel-child.pid");
             var cancelled = CompletableFuture.supplyAsync(() -> session.execute(new SandboxExecution(
                     new ExecutionCommand(
                             ExecutionCommandMode.DIRECT,
-                            List.of("java", "-cp", ".", "io.haifa.agent.sandbox.host.SleepProcess")),
+                            List.of(
+                                    "java",
+                                    "-cp",
+                                    ".",
+                                    "io.haifa.agent.sandbox.host.ProcessTreeParent",
+                                    cancelledChildPid.getFileName().toString())),
                     WorkspacePath.root(fixture.workspaceId),
                     Map.of(),
-                    new ExecutionLimits(Duration.ofSeconds(10), 1024, 1024, 2))));
-            Thread.sleep(100);
+                    new ExecutionLimits(Duration.ofSeconds(10), 1024, 1024, 8))));
+            long cancelledChild = Long.parseLong(waitForText(cancelledChildPid));
             assertThat(session.cancel()).isTrue();
-            assertThat(cancelled.get(5, TimeUnit.SECONDS).status()).isEqualTo(SandboxProcessStatus.CANCELLED);
+            var cancelledResult = cancelled.get(5, TimeUnit.SECONDS);
+            assertThat(cancelledResult.status()).isEqualTo(SandboxProcessStatus.CANCELLED);
+            assertThat(cancelledResult.processTreeTerminated()).isTrue();
+            assertThat(ProcessHandle.of(cancelledChild)).isEmpty();
         }
 
         assertThatThrownBy(() -> provider.open(
@@ -161,6 +204,18 @@ class HostSandboxTest {
                         new WorkspaceMount(fixture.workspaceId, false)))
                 .isInstanceOfSatisfying(HostSandboxException.class, exception -> assertThat(exception.code())
                         .isEqualTo("NETWORK_POLICY_UNENFORCEABLE"));
+    }
+
+    private static String waitForText(Path path) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        while (System.nanoTime() < deadline) {
+            if (Files.exists(path)) {
+                String value = Files.readString(path).trim();
+                if (!value.isEmpty()) return value;
+            }
+            Thread.sleep(10);
+        }
+        throw new AssertionError("timed out waiting for process identity file: " + path.getFileName());
     }
 
     @Test

@@ -55,6 +55,7 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
                 current.projectId(),
                 current.message(),
                 current.attachments(),
+                current.deliveryIntent(),
                 Optional.of(runId),
                 current.createdAt());
         entry.setValue(completed);
@@ -66,6 +67,25 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
         return commands.values().stream()
                 .filter(value -> value.dispatchKey().equals(dispatchKey))
                 .findFirst();
+    }
+
+    @Override
+    public synchronized Optional<CodingCommandBinding> findCommandByRunId(AgentRunId runId) {
+        return commands.values().stream()
+                .filter(value -> (value.operation().equals("create-session")
+                                || value.operation().equals("submit-turn"))
+                        && value.runId().filter(runId::equals).isPresent())
+                .findFirst();
+    }
+
+    @Override
+    public synchronized Optional<CodingCommandBinding> findPendingCommand(AgentSessionId sessionId) {
+        return commands.values().stream()
+                .filter(value -> (value.operation().equals("create-session")
+                                || value.operation().equals("submit-turn"))
+                        && value.sessionId().equals(sessionId)
+                        && value.runId().isEmpty())
+                .reduce((first, second) -> second);
     }
 
     @Override
@@ -501,7 +521,8 @@ public final class InMemoryCodingSessionStore implements CodingSessionStore {
 
     private static boolean sameRequest(CodingCommandBinding first, CodingCommandBinding second) {
         return first.requestDigest().equals(second.requestDigest())
-                && first.projectId().equals(second.projectId());
+                && first.projectId().equals(second.projectId())
+                && first.deliveryIntent() == second.deliveryIntent();
     }
 
     private static CodingFollowUp copyFollowUp(

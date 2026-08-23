@@ -23,8 +23,18 @@ public final class SystemGitCliCommandClassifier {
             "GIT_SSH_COMMAND",
             "GIT_ASKPASS",
             "SSH_ASKPASS");
-    private static final Set<String> GIT_READ =
-            Set.of("status", "diff", "log", "show", "blame", "rev-parse", "symbolic-ref", "describe");
+    private static final Set<String> GIT_READ = Set.of(
+            "status",
+            "diff",
+            "log",
+            "show",
+            "blame",
+            "grep",
+            "ls-files",
+            "rev-parse",
+            "symbolic-ref",
+            "for-each-ref",
+            "describe");
     private static final Set<String> GIT_WRITE = Set.of(
             "add",
             "commit",
@@ -36,8 +46,7 @@ public final class SystemGitCliCommandClassifier {
             "rebase",
             "cherry-pick",
             "revert",
-            "worktree",
-            "pull");
+            "worktree");
 
     private SystemGitCliCommandClassifier() {}
 
@@ -48,6 +57,21 @@ public final class SystemGitCliCommandClassifier {
         if (usesProtectedShellEnvironmentSyntax(command)) {
             return classified(
                     detectTarget(command), Risk.DENIED, Operation.UNKNOWN, "AUTHENTICATION_ENVIRONMENT_OVERRIDE");
+        }
+        if (usesAuthenticationCommandSyntax(command)) {
+            return classified(detectTarget(command), Risk.DENIED, Operation.UNKNOWN, "AUTHENTICATION_COMMAND_DENIED");
+        }
+        if (usesGitAuthenticationConfigSyntax(command)) {
+            return classified(Target.GIT, Risk.DENIED, Operation.UNKNOWN, "GIT_AUTHENTICATION_CONFIG_OVERRIDE");
+        }
+        if (usesSystemCliPathOverrideSyntax(command)) {
+            return classified(detectTarget(command), Risk.DENIED, Operation.UNKNOWN, "SYSTEM_CLI_PATH_OVERRIDE");
+        }
+        if (usesGitExecutionBoundarySyntax(command)) {
+            return classified(Target.GIT, Risk.DENIED, Operation.UNKNOWN, "GIT_EXECUTION_BOUNDARY_OVERRIDE");
+        }
+        if (usesGithubPullRequestMergeSyntax(command)) {
+            return classified(Target.GITHUB, Risk.DENIED, Operation.UNKNOWN, "GH_PR_MERGE_DENIED");
         }
         if (containsShellComposition(command)) {
             return classified(detectTarget(command), Risk.UNKNOWN, Operation.UNKNOWN, "COMPOUND_OR_WRAPPED_COMMAND");
@@ -169,8 +193,14 @@ public final class SystemGitCliCommandClassifier {
                             : hasAny(args, "show") ? Risk.NETWORK_READ : Risk.LOCAL_WRITE,
                     "GIT_REMOTE");
         }
-        if (subcommand.equals("ls-remote") || subcommand.equals("fetch")) {
+        if (subcommand.equals("ls-remote")) {
             return git(Risk.NETWORK_READ, Operation.INSPECT, "GIT_NETWORK_READ");
+        }
+        if (subcommand.equals("fetch")) {
+            return git(Risk.LOCAL_WRITE, Operation.MUTATE, "GIT_FETCH");
+        }
+        if (subcommand.equals("pull")) {
+            return git(Risk.LOCAL_WRITE, Operation.MUTATE, "GIT_PULL");
         }
         if (subcommand.equals("push")) {
             return git(
@@ -187,6 +217,12 @@ public final class SystemGitCliCommandClassifier {
         }
         if (subcommand.equals("tag") && hasAny(args, "-d", "--delete", "-f", "--force")) {
             return git(Risk.DESTRUCTIVE, "GIT_TAG_DESTRUCTIVE");
+        }
+        if (subcommand.equals("add")) {
+            return git(Risk.LOCAL_WRITE, Operation.MUTATE, "GIT_STAGE");
+        }
+        if (subcommand.equals("commit")) {
+            return git(Risk.LOCAL_WRITE, Operation.MUTATE, "GIT_COMMIT");
         }
         if (GIT_WRITE.contains(subcommand) || subcommand.equals("tag")) {
             return git(Risk.LOCAL_WRITE, "GIT_LOCAL_WRITE");
@@ -216,20 +252,24 @@ public final class SystemGitCliCommandClassifier {
             return github(Risk.DENIED, "GH_AUTHENTICATION_MUTATION_OR_DISCLOSURE");
         }
         if (group.equals("api")) {
-            boolean writes =
-                    hasAnyIgnoreCase(args, "--field", "-f", "--raw-field", "-F", "--input") || methodWrites(args);
-            return github(
-                    writes ? Risk.EXTERNAL_WRITE : Risk.NETWORK_READ,
-                    writes ? Operation.MUTATE : Operation.INSPECT,
-                    "GH_API");
+            return github(Risk.UNKNOWN, Operation.UNKNOWN, "GH_API_HIGH_RISK");
         }
         String action = args.isEmpty() ? "" : args.getFirst().toLowerCase(Locale.ROOT);
+        if (group.equals("pr") && action.equals("merge")) {
+            return github(Risk.DENIED, Operation.UNKNOWN, "GH_PR_MERGE_DENIED");
+        }
         if (Set.of("repo", "pr", "issue", "run", "workflow", "release").contains(group)
                 && Set.of("list", "view", "status", "checks", "diff", "watch").contains(action)) {
             return github(Risk.NETWORK_READ, Operation.INSPECT, "GH_REMOTE_READ");
         }
         if ((group.equals("repo") || group.equals("release")) && action.equals("delete")) {
             return github(Risk.DESTRUCTIVE, "GH_DESTRUCTIVE");
+        }
+        if (group.equals("pr") && action.equals("create")) {
+            return github(Risk.EXTERNAL_WRITE, Operation.MUTATE, "GH_PR_CREATE");
+        }
+        if (group.equals("pr") && !action.isBlank()) {
+            return github(Risk.EXTERNAL_WRITE, Operation.MUTATE, "GH_PR_UPDATE");
         }
         if (Set.of("repo", "pr", "issue", "run", "workflow", "release").contains(group)) {
             return github(Risk.EXTERNAL_WRITE, "GH_REMOTE_WRITE");
@@ -239,8 +279,54 @@ public final class SystemGitCliCommandClassifier {
 
     private static boolean usesProtectedShellEnvironmentSyntax(String command) {
         String upper = command.toUpperCase(Locale.ROOT);
-        return PROTECTED_ENVIRONMENT.stream()
-                .anyMatch(name -> upper.matches("(?s).*(?:\\$ENV:|(?:^|[;&|]\\s*)SET\\s+)" + name + "\\s*=.*"));
+        return PROTECTED_ENVIRONMENT.stream().anyMatch(name -> containsAssignment(upper, name));
+    }
+
+    private static boolean containsAssignment(String command, String name) {
+        int fromIndex = 0;
+        while (true) {
+            int index = command.indexOf(name, fromIndex);
+            if (index < 0) return false;
+            int end = index + name.length();
+            boolean leftBoundary = index == 0 || !isEnvironmentNameCharacter(command.charAt(index - 1));
+            int equals = end;
+            while (equals < command.length() && Character.isWhitespace(command.charAt(equals))) equals++;
+            if (leftBoundary && equals < command.length() && command.charAt(equals) == '=') return true;
+            fromIndex = end;
+        }
+    }
+
+    private static boolean isEnvironmentNameCharacter(char value) {
+        return Character.isLetterOrDigit(value) || value == '_';
+    }
+
+    private static boolean usesSystemCliPathOverrideSyntax(String command) {
+        return command.matches(
+                "(?is).*(?:^|[\\s;&|()\"'])[^\\s;&|()\"']*[\\\\/](?:git|gh)(?:\\.exe)?" + "(?:[\"']|$|\\s|[;&|()]).*");
+    }
+
+    private static boolean usesGitExecutionBoundarySyntax(String command) {
+        return command.matches("(?s).*\\b(?i:git(?:\\.exe)?)\\s+"
+                + "(?:(?i:--no-pager|--no-optional-locks|--literal-pathspecs)\\s+)*"
+                + "(?:[\"']?-C[\"']?(?:\\s|=)"
+                + "|[\"']?(?i:--(?:git-dir|work-tree|config-env|exec-path))[\"']?(?:\\s|=)).*");
+    }
+
+    private static boolean usesGitAuthenticationConfigSyntax(String command) {
+        return command.matches("(?is).*\\bgit(?:\\.exe)?\\s+.*(?:-c\\s+)[\"']?"
+                + "(?:credential\\.|http\\.[^\\s;&|]*extraheader|core\\.sshcommand|credentialhelper).*");
+    }
+
+    private static boolean usesGithubPullRequestMergeSyntax(String command) {
+        return command.matches("(?is).*\\bgh(?:\\.exe)?\\b[^\\r\\n]*\\bpr\\s+merge\\b.*");
+    }
+
+    private static boolean usesAuthenticationCommandSyntax(String command) {
+        if (command.matches("(?is).*\\bgit(?:\\.exe)?\\s+credential(?:-[^\\s;&|]+|\\s).*")
+                || command.matches("(?is).*\\bgh(?:\\.exe)?\\s+auth\\s+status\\b.*--show-token.*")) {
+            return true;
+        }
+        return command.matches("(?is).*\\bgh(?:\\.exe)?\\s+auth\\s+(?!status(?:\\s|$)).*");
     }
 
     private static boolean containsShellComposition(String command) {
@@ -259,7 +345,9 @@ public final class SystemGitCliCommandClassifier {
                             || value == '\r'
                             || value == '>'
                             || value == '<'
-                            || value == '`')) return true;
+                            || value == '`'
+                            || value == '('
+                            || value == ')')) return true;
         }
         return single || doub;
     }
@@ -344,19 +432,6 @@ public final class SystemGitCliCommandClassifier {
                         prefixes)
                 .map(prefix -> prefix.toLowerCase(Locale.ROOT))
                 .anyMatch(prefix -> value.equals(prefix) || value.startsWith(prefix + "=")));
-    }
-
-    private static boolean methodWrites(List<String> values) {
-        for (int index = 0; index < values.size(); index++) {
-            String value = values.get(index);
-            if (value.equalsIgnoreCase("--method") || value.equalsIgnoreCase("-X")) {
-                return index + 1 >= values.size() || !values.get(index + 1).equalsIgnoreCase("GET");
-            }
-            if (value.regionMatches(true, 0, "--method=", 0, 9)) {
-                return !value.substring(9).equalsIgnoreCase("GET");
-            }
-        }
-        return false;
     }
 
     private static Classification git(Risk risk, String reason) {

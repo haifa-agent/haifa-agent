@@ -26,6 +26,13 @@ final class CodingExecutionFailureClassifier {
                     "OUTPUT",
                     "Use a machine-readable command with narrower fields or a smaller result limit.");
         }
+        if (result.status() == ExecutionStatus.PROCESS_LIMIT_EXCEEDED) {
+            return new Classification(
+                    "PROCESS_LIMIT",
+                    "PROCESS_LIMIT_EXCEEDED",
+                    "PROCESS",
+                    "Use a narrower test target or reduce command concurrency before retrying.");
+        }
         if (result.status() == ExecutionStatus.UNKNOWN) {
             return new Classification(
                     "OUTCOME_UNKNOWN",
@@ -44,11 +51,14 @@ final class CodingExecutionFailureClassifier {
                 || output.contains("name or service not known")
                 || output.contains("failed to connect")
                 || output.contains("couldn't connect to server")) {
+            boolean permissionEligible = commandClassification.target() != SystemGitCliCommandClassifier.Target.OTHER;
             return new Classification(
                     "NETWORK_DENIED",
-                    "NETWORK_UNAVAILABLE",
+                    permissionEligible ? "NETWORK_PERMISSION_REQUIRED" : "NETWORK_UNAVAILABLE",
                     "NETWORK",
-                    "Check the trusted host network and proxy configuration, then retry if authorized.");
+                    permissionEligible
+                            ? "If request_permissions is disclosed, request one exact retry of this Git/GH command; otherwise ask the user to restore network access."
+                            : "Check the trusted host network and proxy configuration, then retry if authorized.");
         }
         if (output.contains("permission denied (publickey)")
                 || output.contains("could not read username")
@@ -104,6 +114,18 @@ final class CodingExecutionFailureClassifier {
         if (output.contains("invalid argument") || output.contains("unknown option")) {
             return new Classification(
                     "INVALID_INPUT", "COMMAND_INVALID_INPUT", "COMMAND", "Correct the command arguments and retry.");
+        }
+        if (commandClassification.target() == SystemGitCliCommandClassifier.Target.GIT
+                && (output.contains("bad revision")
+                        || output.contains("unknown revision")
+                        || output.contains("ambiguous argument")
+                        || output.contains("not a valid object name")
+                        || output.contains("invalid object name"))) {
+            return new Classification(
+                    "INVALID_INPUT",
+                    "GIT_REVISION_NOT_FOUND",
+                    "REPOSITORY_REF",
+                    "Read the authoritative repository refs with git status, branch, or rev-parse before retrying once.");
         }
         return new Classification(
                 "COMMAND_FAILED",

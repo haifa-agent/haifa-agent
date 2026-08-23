@@ -220,6 +220,26 @@ class RuntimeEventFeedTest {
                         Optional.empty(),
                         Optional.empty()))
                 .orElseThrow();
+        var modelRetry = projector
+                .project(new RuntimeEvent(
+                        "model-retry",
+                        runId,
+                        2,
+                        "model.attempt.retry-scheduled",
+                        "1",
+                        Map.of(
+                                "modelRequestId", "model-request-1",
+                                "modelCallId", "model-call-1",
+                                "status", "RETRY_SCHEDULED",
+                                "attempt", 1,
+                                "delayMillis", 500L,
+                                "category", "RATE_LIMITED",
+                                "providerMessage", "must-not-project",
+                                "responseText", "must-not-project"),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
         var tool = projector
                 .project(new RuntimeEvent(
                         "tool",
@@ -284,6 +304,16 @@ class RuntimeEventFeedTest {
             assertThat(payload.outputTokens()).isEqualTo(5);
             assertThat(payload.toString()).doesNotContain("must-not-project");
         });
+        assertThat(modelRetry.eventType()).isEqualTo("model.attempt.retry-scheduled");
+        assertThat(modelRetry.payload())
+                .isInstanceOfSatisfying(RunEventPayloads.ModelAttemptLifecycle.class, payload -> {
+                    assertThat(payload.modelRequestId()).isEqualTo("model-request-1");
+                    assertThat(payload.modelCallId()).isEqualTo("model-call-1");
+                    assertThat(payload.attempt()).isEqualTo(1);
+                    assertThat(payload.delayMillis()).isEqualTo(500);
+                    assertThat(payload.reasonCode()).isEqualTo("RATE_LIMITED");
+                    assertThat(payload.toString()).doesNotContain("must-not-project");
+                });
         assertThat(tool.eventType()).isEqualTo("tool.call.succeeded");
         assertThat(tool.payload()).isInstanceOf(RunEventPayloads.ToolLifecycle.class);
         assertThat(execution.eventType()).isEqualTo("execution.completed");
@@ -337,6 +367,106 @@ class RuntimeEventFeedTest {
                         Optional.empty(),
                         Optional.empty())))
                 .isEmpty();
+    }
+
+    @Test
+    void projectsProgressAndStallLifecycleWithoutLeakingInternalEvidence() {
+        InMemoryRuntimeStore store = storeWithRun("run-stall-events");
+        AgentRunId runId = new AgentRunId("run-stall-events");
+        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
+
+        List<io.haifa.agent.runtime.api.AgentRunEvent> events = List.of(
+                projected(projector, runId, 1, "loop.progress-observed", Map.of("evidence", "MEANINGFUL")),
+                projected(
+                        projector,
+                        runId,
+                        2,
+                        "loop.stall-detected",
+                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)),
+                projected(
+                        projector,
+                        runId,
+                        3,
+                        "loop.recovery-strategy-required",
+                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)),
+                projected(
+                        projector,
+                        runId,
+                        4,
+                        "loop.recovery-exhausted",
+                        Map.of("reason", "ALTERNATING_DECISION", "recoveryAttempts", 1)));
+
+        assertThat(events)
+                .extracting(io.haifa.agent.runtime.api.AgentRunEvent::eventType)
+                .containsExactly(
+                        "progress.observed", "stall.detected", "recovery.strategy-required", "recovery.exhausted");
+        assertThat(events)
+                .extracting(event -> ((RunEventPayloads.DeliveryLifecycle) event.payload()).status())
+                .containsExactly(
+                        "PROGRESS_OBSERVED", "STALL_DETECTED", "STRATEGY_CHANGE_REQUIRED", "RECOVERY_EXHAUSTED");
+        assertThat(events).allSatisfy(event -> assertThat(event.payload().toString())
+                .doesNotContain("progressDigest", "rawPath", "CANARY_PRIVATE_ACTION"));
+    }
+
+    private static io.haifa.agent.runtime.api.AgentRunEvent projected(
+            RuntimeClientEventProjector projector,
+            AgentRunId runId,
+            long sequence,
+            String type,
+            Map<String, Object> safeData) {
+        Map<String, Object> data = new java.util.LinkedHashMap<>(safeData);
+        data.put("progressDigest", "a".repeat(64));
+        data.put("rawPath", "/private/workspace");
+        data.put("decision", "CANARY_PRIVATE_ACTION");
+        return projector
+                .project(new RuntimeEvent(
+                        "event-" + sequence,
+                        runId,
+                        sequence,
+                        type,
+                        "1",
+                        Map.copyOf(data),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+    }
+
+    @Test
+    void projectsCodingWorkPhaseWithoutExposingInternalProjectionInputs() {
+        InMemoryRuntimeStore store = storeWithRun("run-coding-phase");
+        AgentRunId runId = new AgentRunId("run-coding-phase");
+        RuntimeClientEventProjector projector = new RuntimeClientEventProjector(store);
+
+        var projected = projector
+                .project(new RuntimeEvent(
+                        "coding-phase",
+                        runId,
+                        1,
+                        "coding.work-phase",
+                        "1",
+                        Map.ofEntries(
+                                Map.entry("phase", "VERIFY"),
+                                Map.entry("status", "ACTIVE"),
+                                Map.entry("reasonCode", "AUTHORITATIVE_EVIDENCE_PROJECTION"),
+                                Map.entry("missingEvidence", List.of("VALIDATION_ATTEMPT", "DIFF_INSPECTION")),
+                                Map.entry("remainingPercent", 42),
+                                Map.entry("attempt", 0),
+                                Map.entry("projectionDigest", "a".repeat(64)),
+                                Map.entry("taskContractDigest", "b".repeat(64)),
+                                Map.entry("rawPath", "must-not-project")),
+                        NOW,
+                        Optional.empty(),
+                        Optional.empty()))
+                .orElseThrow();
+
+        assertThat(projected.eventType()).isEqualTo("coding.work-phase");
+        assertThat(projected.payload()).isInstanceOfSatisfying(RunEventPayloads.DeliveryLifecycle.class, payload -> {
+            assertThat(payload.phase()).isEqualTo("VERIFY");
+            assertThat(payload.missingEvidence()).containsExactly("VALIDATION_ATTEMPT", "DIFF_INSPECTION");
+            assertThat(payload.remainingPercent()).isEqualTo(42);
+            assertThat(payload.toString()).doesNotContain("must-not-project", "rawPath");
+        });
     }
 
     @Test

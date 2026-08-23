@@ -164,9 +164,8 @@ public final class HaifaCliMain {
             PrintStream output) {
         InteractionResponseType response =
                 switch (approval) {
-                    case AUTO -> InteractionResponseType.APPROVE;
                     case DENY -> InteractionResponseType.REJECT;
-                    case ASK ->
+                    case ASK, AUTO ->
                         confirm(request.prompt(), input, output)
                                 ? InteractionResponseType.APPROVE
                                 : InteractionResponseType.REJECT;
@@ -236,7 +235,7 @@ public final class HaifaCliMain {
                       --workspace <path>     Workspace root (default: current directory)
                       --config <path>        Configuration file
                       --model <model-id>     Override configured model
-                      --approval <mode>      ask, auto, or deny (default: ask)
+                      --approval <mode>      ask=LOW, auto=NEVER, or deny (default: ask)
                       --timeout <duration>   ISO-8601 duration, e.g. PT5M
                       --trace <mode>         summary, detail, or jsonl
                       --trace-file <path>    Write trace to a file (required for Terminal trace)

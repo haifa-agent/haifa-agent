@@ -6,6 +6,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceConfiguration;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
+import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
 import io.haifa.agent.model.api.ApiStyleId;
 import io.haifa.agent.model.api.ModelApiBindingDefinition;
 import io.haifa.agent.model.api.ModelCapability;
@@ -77,10 +78,27 @@ final class CliConfigurationLoader {
         CliConfiguration.Web web = web(object(source, "web"), defaults.web());
         CliConfiguration.Skills skills = skills(object(source, "skills"), defaults.skills());
         CliConfiguration.Execution execution = execution(object(source, "execution"), defaults.execution());
+        Map<String, Object> approvalConfiguration = object(source, "approval");
         ApprovalMode approval = arguments
                 .approval()
-                .orElseGet(() -> ApprovalMode.parse(text(
-                        object(source, "approval"), "mode", defaults.approval().name())));
+                .orElseGet(() -> ApprovalMode.parse(
+                        text(approvalConfiguration, "mode", defaults.approval().name())));
+        CodingApprovalThreshold approvalThreshold;
+        if (arguments.approval().isPresent()) {
+            approvalThreshold = compatibleThreshold(approval);
+        } else if (approvalConfiguration.containsKey("threshold")) {
+            approvalThreshold = CodingApprovalThreshold.parse(text(approvalConfiguration, "threshold", ""));
+            if (approval == ApprovalMode.DENY) {
+                throw new IllegalArgumentException("approval.threshold cannot be used with approval.mode=deny");
+            }
+            if (approvalConfiguration.containsKey("mode") && approvalThreshold != compatibleThreshold(approval)) {
+                throw new IllegalArgumentException(
+                        "approval.mode and approval.threshold conflict; configure threshold alone or use the "
+                                + "compatible ask=low/auto=never mapping");
+            }
+        } else {
+            approvalThreshold = compatibleThreshold(approval);
+        }
         Map<String, Object> runtime = object(source, "runtime");
         ProjectPersistenceConfiguration persistence = persistence(object(source, "persistence"));
         Duration timeout = arguments
@@ -96,10 +114,15 @@ final class CliConfigurationLoader {
                 skills,
                 execution,
                 approval,
+                approvalThreshold,
                 timeout,
                 Math.toIntExact(number(runtime, "maxIterations", defaults.maxIterations())),
                 number(runtime, "maxToolCalls", defaults.maxToolCalls()),
                 persistence);
+    }
+
+    private static CodingApprovalThreshold compatibleThreshold(ApprovalMode approval) {
+        return CodingApprovalThreshold.compatibleWith(io.haifa.agent.policy.api.ApprovalMode.valueOf(approval.name()));
     }
 
     private List<CliConfiguration.Model> models(Map<String, Object> source) {

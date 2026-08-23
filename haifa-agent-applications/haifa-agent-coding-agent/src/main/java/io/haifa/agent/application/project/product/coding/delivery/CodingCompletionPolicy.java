@@ -14,16 +14,32 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
     private final CodingTaskModeResolver taskModes;
     private final CodingDeliveryEvidenceLedger evidence;
     private final CodingDeliveryProfile profile;
+    private final CodingDeliveryIntentResolver deliveryIntents;
 
     public CodingCompletionPolicy(
             CodingTaskModeResolver taskModes, CodingDeliveryEvidenceLedger evidence, CodingDeliveryProfile profile) {
+        this(taskModes, evidence, profile, null);
+    }
+
+    public CodingCompletionPolicy(
+            CodingTaskModeResolver taskModes,
+            CodingDeliveryEvidenceLedger evidence,
+            CodingDeliveryProfile profile,
+            CodingDeliveryIntentResolver deliveryIntents) {
         this.taskModes = Objects.requireNonNull(taskModes, "taskModes must not be null");
         this.evidence = Objects.requireNonNull(evidence, "evidence must not be null");
         this.profile = Objects.requireNonNull(profile, "profile must not be null");
+        this.deliveryIntents = deliveryIntents;
     }
 
     @Override
     public CompletionPolicyResult evaluate(AgentRun run, FinalAnswerDecision decision) {
+        Objects.requireNonNull(decision, "decision must not be null");
+        return evaluateEvidence(run);
+    }
+
+    public CompletionPolicyResult evaluateEvidence(AgentRun run) {
+        Objects.requireNonNull(run, "run must not be null");
         CodingTaskIntent taskMode = taskModes.resolve(run);
         CodingDeliveryEvidenceLedger.Snapshot snapshot = evidence.reconstruct(run.id());
         List<CompletionBlocker> blockers = new ArrayList<>();
@@ -33,8 +49,85 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
             case REVIEW -> readOnlyBlockers(snapshot, blockers, "REVIEW_EVIDENCE_MISSING");
             case UNKNOWN -> unknownBlockers(snapshot, blockers);
         }
+        deliveryBlockers(deliveryIntent(run), snapshot, blockers);
         if (blockers.isEmpty()) return CompletionPolicyResult.accepted(snapshot.codes());
         return CompletionPolicyResult.blocked(blockers, snapshot.codes());
+    }
+
+    private CodingDeliveryIntent deliveryIntent(AgentRun run) {
+        return deliveryIntents == null ? CodingDeliveryIntent.WORKTREE_ONLY : deliveryIntents.resolve(run);
+    }
+
+    private static void deliveryBlockers(
+            CodingDeliveryIntent intent,
+            CodingDeliveryEvidenceLedger.Snapshot snapshot,
+            List<CompletionBlocker> blockers) {
+        if (intent.allows(CodingDeliveryIntent.LOCAL_COMMIT)) {
+            requireDelivery(snapshot, blockers, CodingDeliveryEvidenceKind.STAGE_COMPLETED);
+            requireDeliveryAfter(
+                    snapshot,
+                    blockers,
+                    CodingDeliveryEvidenceKind.STAGED_DIFF_INSPECTED,
+                    CodingDeliveryEvidenceKind.STAGE_COMPLETED);
+            requireDeliveryAfter(
+                    snapshot,
+                    blockers,
+                    CodingDeliveryEvidenceKind.COMMIT_COMPLETED,
+                    CodingDeliveryEvidenceKind.STAGED_DIFF_INSPECTED);
+            requireDeliveryAfter(
+                    snapshot,
+                    blockers,
+                    CodingDeliveryEvidenceKind.HEAD_VERIFIED,
+                    CodingDeliveryEvidenceKind.COMMIT_COMPLETED);
+        }
+        if (intent.allows(CodingDeliveryIntent.REMOTE_PUSH)) {
+            requireDeliveryAfter(
+                    snapshot,
+                    blockers,
+                    CodingDeliveryEvidenceKind.PUSH_COMPLETED,
+                    CodingDeliveryEvidenceKind.HEAD_VERIFIED);
+            requireDeliveryAfter(
+                    snapshot,
+                    blockers,
+                    CodingDeliveryEvidenceKind.REMOTE_REF_VERIFIED,
+                    CodingDeliveryEvidenceKind.PUSH_COMPLETED);
+        }
+        if (intent.allows(CodingDeliveryIntent.PULL_REQUEST)) {
+            requireDeliveryAfter(
+                    snapshot,
+                    blockers,
+                    CodingDeliveryEvidenceKind.PULL_REQUEST_COMPLETED,
+                    CodingDeliveryEvidenceKind.REMOTE_REF_VERIFIED);
+            requireDeliveryAfter(
+                    snapshot,
+                    blockers,
+                    CodingDeliveryEvidenceKind.PULL_REQUEST_VERIFIED,
+                    CodingDeliveryEvidenceKind.PULL_REQUEST_COMPLETED);
+        }
+    }
+
+    private static void requireDelivery(
+            CodingDeliveryEvidenceLedger.Snapshot snapshot,
+            List<CompletionBlocker> blockers,
+            CodingDeliveryEvidenceKind required) {
+        if (snapshot.has(required)) return;
+        blockers.add(CompletionBlocker.recoverable(
+                required.name() + "_MISSING",
+                "The frozen delivery intent requires authoritative " + required.name() + " evidence.",
+                required.name()));
+    }
+
+    private static void requireDeliveryAfter(
+            CodingDeliveryEvidenceLedger.Snapshot snapshot,
+            List<CompletionBlocker> blockers,
+            CodingDeliveryEvidenceKind required,
+            CodingDeliveryEvidenceKind predecessor) {
+        if (snapshot.hasAfter(required, predecessor)) return;
+        blockers.add(CompletionBlocker.recoverable(
+                required.name() + "_MISSING",
+                "The frozen delivery intent requires authoritative " + required.name() + " evidence after "
+                        + predecessor.name() + ".",
+                required.name()));
     }
 
     private void changeBlockers(CodingDeliveryEvidenceLedger.Snapshot snapshot, List<CompletionBlocker> blockers) {
@@ -45,19 +138,34 @@ public final class CodingCompletionPolicy implements CompletionPolicy {
                     "No authoritative workspace change or evidence-backed no-change result exists.",
                     "WORKSPACE_CHANGE"));
         }
-        if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)) {
+        boolean changed = snapshot.has(CodingDeliveryEvidenceKind.WORKSPACE_CHANGE);
+        if (!snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT)
+                || (changed
+                        && !snapshot.hasAfter(
+                                CodingDeliveryEvidenceKind.VALIDATION_ATTEMPT,
+                                CodingDeliveryEvidenceKind.WORKSPACE_CHANGE))) {
             blockers.add(CompletionBlocker.recoverable(
-                    "VALIDATION_ATTEMPT_MISSING", "No authoritative validation attempt exists.", "VALIDATION_ATTEMPT"));
+                    "VALIDATION_ATTEMPT_MISSING",
+                    changed
+                            ? "No authoritative validation attempt exists after the latest workspace change."
+                            : "No authoritative validation attempt exists.",
+                    "VALIDATION_ATTEMPT"));
         }
-        if (!snapshot.has(CodingDeliveryEvidenceKind.DIFF_INSPECTION)) {
+        if (changed
+                && !snapshot.hasAtOrAfter(
+                        CodingDeliveryEvidenceKind.DETERMINISTIC_CHANGE_REVIEW,
+                        CodingDeliveryEvidenceKind.WORKSPACE_CHANGE)) {
             blockers.add(CompletionBlocker.recoverable(
-                    "DIFF_INSPECTION_MISSING",
-                    "Inspect the final diff with execution.run using operationFamily=DIFF and a read-only git diff "
-                            + "command before submitting final output.",
-                    "DIFF_INSPECTION"));
+                    "CHANGE_REVIEW_MISSING",
+                    "Deterministic ChangeSet review evidence is missing; the Coding product must generate it from "
+                            + "the authoritative persisted change before completion.",
+                    "DETERMINISTIC_CHANGE_REVIEW"));
         }
-        if (snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)
-                && !snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED)
+        boolean latestFailed = snapshot.latestValidationFailed()
+                || (snapshot.validationAttempts().isEmpty()
+                        && snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_FAILED)
+                        && !snapshot.has(CodingDeliveryEvidenceKind.VALIDATION_PASSED));
+        if (latestFailed
                 && !(profile.allowBlockedValidation() && snapshot.has(CodingDeliveryEvidenceKind.BLOCKER_CONFIRMED))) {
             blockers.add(CompletionBlocker.recoverable(
                     "VALIDATION_NOT_PASSED",

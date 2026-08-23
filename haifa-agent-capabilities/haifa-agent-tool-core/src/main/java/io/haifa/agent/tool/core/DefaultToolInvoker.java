@@ -5,6 +5,8 @@ import io.haifa.agent.tool.api.FrozenToolBinding;
 import io.haifa.agent.tool.api.ToolInvocationException;
 import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolInvoker;
+import io.haifa.agent.tool.api.ToolReconciliation;
+import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import java.util.Objects;
 
 public final class DefaultToolInvoker implements ToolInvoker {
@@ -18,6 +20,12 @@ public final class DefaultToolInvoker implements ToolInvoker {
     public ToolResult invoke(ToolInvocationRequest request) {
         FrozenToolBinding match = requireBinding(request.binding());
         return catalog.provider(match.coordinate().providerId()).invoke(request);
+    }
+
+    @Override
+    public ToolReconciliation reconcile(ToolReconciliationRequest request) {
+        FrozenToolBinding match = requireBinding(request.binding());
+        return catalog.provider(match.coordinate().providerId()).reconcile(request);
     }
 
     @Override

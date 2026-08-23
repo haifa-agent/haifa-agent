@@ -12,9 +12,11 @@ import java.util.Optional;
 /** Last 32 meaningful evidence summaries. Messages and failed-call counts are intentionally absent. */
 public final class ProgressLedger {
     static final int MAXIMUM_EVIDENCE = 32;
+    static final String DIGEST_VERSION = "progress/2";
     private static final int MAXIMUM_REFERENCES_PER_RESULT = 256;
     private final Deque<ProgressEvidence> evidence = new ArrayDeque<>();
     private String planDigest;
+    private String latestWorkspaceDigest = FailureFingerprint.digest(List.of("workspace-baseline"));
     private long childResults;
 
     public boolean observe(ToolCall call) {
@@ -22,22 +24,23 @@ public final class ProgressLedger {
         if (call.status() == ToolCallStatus.COMPLETED) {
             var result = call.result().orElseThrow();
             Map<String, Object> data = result.structuredData();
-            changed |= addReference(
+            changed |= addWorkspaceReference(
                     ProgressEvidence.Type.WORKSPACE_CHANGE, firstText(data, "changeSetId", "fileChangeSetId"));
-            changed |= addReferences(ProgressEvidence.Type.WORKSPACE_CHANGE, data.get("changeSetIds"));
+            changed |= addWorkspaceReferences(data.get("changeSetIds"));
             for (var artifact : result.artifacts()) {
                 changed |= add(ProgressEvidence.Type.ARTIFACT_CHANGE, artifact.artifactId());
             }
-            String family = firstText(data, "operationFamily").orElse("UNKNOWN");
-            String status = firstText(data, "status").orElse("");
-            if ((family.equals("TEST") || family.equals("BUILD") || family.equals("DIFF"))
-                    && status.equals("SUCCEEDED")) {
-                changed |= addDigest(ProgressEvidence.Type.VALIDATION_ADVANCE, validationDigest(call, family, status));
-            }
+            changed |= addReference(ProgressEvidence.Type.ARTIFACT_CHANGE, firstText(data, "artifactRef"));
+            changed |= addReferences(ProgressEvidence.Type.ARTIFACT_CHANGE, data.get("artifactRefs"));
+            changed |= firstText(data, "validationAttemptRef")
+                    .map(reference -> addDigest(
+                            ProgressEvidence.Type.VALIDATION_ADVANCE,
+                            FailureFingerprint.digest(List.of(reference, latestWorkspaceDigest))))
+                    .orElse(false);
         } else if (call.status() == ToolCallStatus.FAILED) {
             Map<String, Object> attributes =
                     call.error().map(value -> value.error().details()).orElse(Map.of());
-            changed |= addReference(
+            changed |= addWorkspaceReference(
                     ProgressEvidence.Type.WORKSPACE_CHANGE, firstText(attributes, "changeSetId", "fileChangeSetId"));
         }
         return changed;
@@ -74,10 +77,13 @@ public final class ProgressLedger {
     }
 
     public String digest() {
-        if (evidence.isEmpty()) return FailureFingerprint.digest(List.of("no-meaningful-progress"));
-        return FailureFingerprint.digest(evidence.stream()
+        if (evidence.isEmpty()) return FailureFingerprint.digest(List.of(DIGEST_VERSION, "no-meaningful-progress"));
+        List<String> facts = new java.util.ArrayList<>();
+        facts.add(DIGEST_VERSION);
+        facts.addAll(evidence.stream()
                 .map(value -> value.type().name() + ":" + value.safeDigest())
                 .toList());
+        return FailureFingerprint.digest(facts);
     }
 
     public int size() {
@@ -109,6 +115,30 @@ public final class ProgressLedger {
         return changed;
     }
 
+    private boolean addWorkspaceReference(ProgressEvidence.Type type, Optional<String> reference) {
+        return reference.map(value -> addWorkspace(type, value)).orElse(false);
+    }
+
+    private boolean addWorkspaceReferences(Object references) {
+        if (!(references instanceof List<?> values)) return false;
+        boolean changed = false;
+        int observed = 0;
+        for (Object value : values) {
+            if (++observed > MAXIMUM_REFERENCES_PER_RESULT) break;
+            if (value instanceof String text && !text.isBlank() && text.length() <= 256) {
+                changed |= addWorkspace(ProgressEvidence.Type.WORKSPACE_CHANGE, text);
+            }
+        }
+        return changed;
+    }
+
+    private boolean addWorkspace(ProgressEvidence.Type type, String stableReference) {
+        String digest = FailureFingerprint.digest(List.of(stableReference));
+        boolean changed = addDigest(type, digest);
+        if (changed) latestWorkspaceDigest = digest;
+        return changed;
+    }
+
     private boolean add(ProgressEvidence.Type type, String stableReference) {
         return addDigest(type, FailureFingerprint.digest(List.of(stableReference)));
     }
@@ -119,21 +149,6 @@ public final class ProgressLedger {
         evidence.addLast(next);
         while (evidence.size() > MAXIMUM_EVIDENCE) evidence.removeFirst();
         return true;
-    }
-
-    private static String validationDigest(ToolCall call, String family, String status) {
-        Map<String, Object> arguments = call.arguments().values();
-        return FailureFingerprint.digest(List.of(
-                call.toolName(),
-                call.toolVersion(),
-                family,
-                status,
-                text(arguments.get("command")),
-                text(arguments.get("workdir"))));
-    }
-
-    private static String text(Object value) {
-        return value instanceof String text ? text : "";
     }
 
     private static Optional<String> firstText(Map<String, Object> values, String... keys) {

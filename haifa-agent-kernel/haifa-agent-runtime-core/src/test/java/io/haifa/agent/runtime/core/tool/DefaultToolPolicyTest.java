@@ -143,7 +143,6 @@ class DefaultToolPolicyTest {
                         "failed-call",
                         "HOST_NETWORK_ACCESS",
                         "Read the configured remote",
-                        "INSPECT",
                         "5000")));
     }
 

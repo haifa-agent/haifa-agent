@@ -21,6 +21,7 @@ import io.haifa.agent.core.step.AgentStepResult;
 import io.haifa.agent.core.step.AgentStepType;
 import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelInvocationException;
+import io.haifa.agent.model.api.ModelRequestId;
 import io.haifa.agent.runtime.core.attempt.AgentRunExecutionAttempt;
 import io.haifa.agent.runtime.core.checkpoint.CheckpointManager;
 import io.haifa.agent.runtime.core.control.CancellationObservedException;
@@ -51,6 +52,7 @@ import io.haifa.agent.runtime.core.recovery.RunBudgetSnapshot;
 import io.haifa.agent.runtime.core.recovery.TerminalFailureSummary;
 import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryExecutor;
+import io.haifa.agent.runtime.core.retry.RetryListener;
 import io.haifa.agent.runtime.core.storage.RuntimeEventAppender;
 import io.haifa.agent.runtime.core.storage.RuntimeStateRepository;
 import io.haifa.agent.runtime.core.storage.SessionMessageDraft;
@@ -130,13 +132,21 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     @Override
     public AgentLoopResult run(AgentRun run, AgentRunExecutionAttempt attempt) {
+        decisionExecutor.applyPendingToolApproval(run);
+        reconciler.reconcileRecoveryFacts(run, attempt);
         var restored = checkpoints.restoreLatest(run);
         AgentLoopContext progress = restored.map(value -> new AgentLoopContext(
                         value.nextIteration(), value.decisionFingerprints(), value.forcedContextRebuildAttempts()))
                 .orElseGet(() -> new AgentLoopContext(1, List.of()));
+        if (restored.isPresent()) progress.markWorkspaceBaselineCheckpointCaptured();
         progress.restoreRepairAttempts((int) state.messages(run.id()).stream()
                 .filter(message -> Boolean.TRUE.equals(message.metadata().get("completionRepair")))
                 .count());
+        progress.restoreStallRecoveryAttempts(
+                state.messages(run.id()).stream().anyMatch(message -> "STALL_RECOVERY"
+                                .equals(message.metadata().get("runtimeControlType")))
+                        ? 1
+                        : 0);
         RunBudgetSnapshot initialBudget =
                 RunBudgetSnapshot.from(run, progress.iteration(), 0, progress.repairAttempts(), time.now());
         progress.rebuildControlState(
@@ -145,7 +155,6 @@ public final class DefaultAgentLoop implements AgentLoop {
                 run.usage().childRuns(),
                 restored.isPresent(),
                 initialBudget);
-        decisionExecutor.applyPendingToolApproval(run);
         middleware.apply(RuntimePhase.BEFORE_RUN, new RuntimeMiddlewareContext(run, state));
         String traceId = ids.nextValue();
         while (run.status() == AgentRunStatus.RUNNING || run.status() == AgentRunStatus.SUSPENDING) {
@@ -194,7 +203,62 @@ public final class DefaultAgentLoop implements AgentLoop {
                 }
                 throw beforeModelLimit;
             }
-            guards.forEach(guard -> guard.check(run, progress));
+            try {
+                guards.forEach(guard -> guard.check(run, progress));
+            } catch (io.haifa.agent.runtime.core.guard.LoopDetectedException exhausted) {
+                events.append(
+                        run.id(),
+                        "loop.recovery-exhausted",
+                        Map.of(
+                                "schemaVersion",
+                                "stall-recovery/1",
+                                "iteration",
+                                progress.iteration(),
+                                "reason",
+                                exhausted.reason().name(),
+                                "recoveryAttempts",
+                                progress.stallRecoveryAttempts()),
+                        time.now());
+                throw exhausted;
+            }
+            progress.takeStallRecoveryAnnouncement().ifPresent(signal -> {
+                Map<String, Object> eventData = Map.of(
+                        "schemaVersion",
+                        "stall-recovery/1",
+                        "iteration",
+                        progress.iteration(),
+                        "reason",
+                        signal.reason().name(),
+                        "progressDigest",
+                        signal.progressDigest(),
+                        "recoveryAttempts",
+                        signal.attempt());
+                events.append(run.id(), "loop.stall-detected", eventData, time.now());
+                events.append(run.id(), "loop.recovery-strategy-required", eventData, time.now());
+                appendRuntimeControlMessage(
+                        run,
+                        String.join(
+                                "\n",
+                                "[RUNTIME_CONTROL_UPDATE]",
+                                "type=STALL_RECOVERY",
+                                "reason=" + signal.reason().name(),
+                                "progressDigest=" + signal.progressDigest(),
+                                "recoveryAttempts=" + signal.attempt(),
+                                "nextAction=choose one different semantic action without changing provider, permissions, or policy"),
+                        Map.of(
+                                "runtimeControl",
+                                true,
+                                "runtimeControlType",
+                                "STALL_RECOVERY",
+                                "stallReason",
+                                signal.reason().name(),
+                                "progressDigest",
+                                signal.progressDigest(),
+                                "recoveryAttempts",
+                                signal.attempt(),
+                                "schemaVersion",
+                                "stall-recovery/1"));
+            });
             RunBudgetSnapshot budget = RunBudgetSnapshot.from(
                     run,
                     progress.iteration(),
@@ -369,9 +433,11 @@ public final class DefaultAgentLoop implements AgentLoop {
             RuntimeLimitExceededException[] budgetLimitRef = {null};
             java.util.concurrent.atomic.AtomicReference<ModelInvocationResult> invocationRef =
                     new java.util.concurrent.atomic.AtomicReference<>();
+            ModelRequestId[] modelRequestIdRef = {new ModelRequestId(ids.nextValue())};
+            int[] requestAttemptOffset = {0};
             try {
                 response = retries.execute(
-                        () -> {
+                        retryAttempt -> {
                             if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
                                 throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
                                         "modelCalls",
@@ -384,7 +450,9 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         model,
                                         run,
                                         progress.iteration(),
-                                        builtRef[0].context().context());
+                                        builtRef[0].context().context(),
+                                        modelRequestIdRef[0],
+                                        retryAttempt - requestAttemptOffset[0]);
                             } catch (ModelInvocationException contextTooLong) {
                                 if (contextTooLong.category() != ModelErrorCategory.CONTEXT_TOO_LONG
                                         || progress.forcedContextRebuildAttempts() > 0) {
@@ -448,6 +516,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                                 recoveryStep.start(time.now());
                                 state.appendStep(recoveryStep);
                                 modelStepRef[0] = recoveryStep;
+                                modelRequestIdRef[0] = new ModelRequestId(ids.nextValue());
+                                requestAttemptOffset[0] = retryAttempt - 1;
                                 if (run.usage().modelCalls() >= run.budget().maxModelCalls()) {
                                     throw new io.haifa.agent.runtime.core.guard.RuntimeLimitExceededException(
                                             "modelCalls",
@@ -459,10 +529,16 @@ public final class DefaultAgentLoop implements AgentLoop {
                                         model,
                                         run,
                                         progress.iteration(),
-                                        builtRef[0].context().context());
+                                        builtRef[0].context().context(),
+                                        modelRequestIdRef[0],
+                                        1);
                             }
                         },
-                        modelRetryPolicy.policy());
+                        modelRetryPolicy.policy(),
+                        (failedAttempt, failure) -> modelRetryDelay(run, failedAttempt, failure),
+                        () -> checkModelRetryControl(run),
+                        modelRetryListener(run, modelRequestIdRef, requestAttemptOffset),
+                        modelRetryPolicy::maxAttempts);
                 invocationRef.set(response);
                 transitions.usage(
                         run,
@@ -528,7 +604,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 middleware.apply(RuntimePhase.ON_ERROR, middlewareContextRef[0]);
                 throw classified == null ? terminal : new AgentExecutionFailureException(classified, terminal);
             }
-            String fingerprint = decision.getClass().getSimpleName() + ":" + decision;
+            String fingerprint = DecisionFingerprint.of(decision);
             progress.record(fingerprint);
             Map<String, Object> stepMetadata = new LinkedHashMap<>(modelTraceAttributes(run, response));
             stepMetadata.put("fingerprint", fingerprint);
@@ -572,6 +648,29 @@ public final class DefaultAgentLoop implements AgentLoop {
                         progress.fingerprints(),
                         progress.forcedContextRebuildAttempts(),
                         CheckpointType.AUTOMATIC);
+            }
+            if (decisionExecutor.mayModifyWorkspace(run, decision) && !progress.workspaceBaselineCheckpointCaptured()) {
+                var baseline = checkpoints.capture(
+                        run,
+                        Math.max(0, progress.iteration() - 1),
+                        progress.fingerprints(),
+                        progress.forcedContextRebuildAttempts(),
+                        CheckpointType.WORKSPACE_SNAPSHOT);
+                if (baseline.isEmpty()) {
+                    throw new IllegalStateException("workspace baseline checkpoint was required but not captured");
+                }
+                progress.markWorkspaceBaselineCheckpointCaptured();
+                events.append(
+                        run.id(),
+                        "workspace.baseline-checkpoint-captured",
+                        Map.of(
+                                "schemaVersion",
+                                "workspace-checkpoint/1",
+                                "checkpointRef",
+                                baseline.orElseThrow().id().value(),
+                                "iteration",
+                                progress.iteration()),
+                        time.now());
             }
             middleware.apply(RuntimePhase.BEFORE_DECISION_EXECUTION, middlewareContextRef[0]);
             AgentLoopDirective directive;
@@ -798,12 +897,12 @@ public final class DefaultAgentLoop implements AgentLoop {
             case PERMISSION_DENIED -> AgentErrorCode.MODEL_PERMISSION_DENIED;
             case RATE_LIMITED -> AgentErrorCode.MODEL_RATE_LIMITED;
             case TIMEOUT -> AgentErrorCode.MODEL_TIMEOUT;
-            case PROVIDER_UNAVAILABLE -> AgentErrorCode.MODEL_PROVIDER_UNAVAILABLE;
+            case PROVIDER_UNAVAILABLE, SERVER_ERROR, TRANSPORT_ERROR -> AgentErrorCode.MODEL_PROVIDER_UNAVAILABLE;
             case INVALID_REQUEST -> AgentErrorCode.MODEL_REQUEST_INVALID;
             case MODEL_NOT_FOUND -> AgentErrorCode.MODEL_NOT_FOUND;
             case CONTEXT_TOO_LONG -> AgentErrorCode.MODEL_CONTEXT_TOO_LONG;
             case CONTENT_REJECTED -> AgentErrorCode.MODEL_CONTENT_REJECTED;
-            case MALFORMED_RESPONSE -> AgentErrorCode.MODEL_RESPONSE_INVALID;
+            case EMPTY_RESPONSE, PARTIAL_RESPONSE, MALFORMED_RESPONSE -> AgentErrorCode.MODEL_RESPONSE_INVALID;
             case CANCELLED -> AgentErrorCode.MODEL_CANCELLED;
             case UNKNOWN_PROVIDER_ERROR -> AgentErrorCode.MODEL_CALL_FAILED;
         };
@@ -868,6 +967,68 @@ public final class DefaultAgentLoop implements AgentLoop {
         return null;
     }
 
+    private Duration modelRetryDelay(AgentRun run, int failedAttempt, RuntimeException failure) {
+        Duration selected = modelRetryPolicy.delay(failedAttempt, failure);
+        long elapsed = Math.max(0, Duration.between(run.createdAt(), time.now()).toMillis());
+        long remaining = Math.max(0, run.limits().maxWallTimeMillis() - elapsed);
+        Duration remainingWindow = Duration.ofMillis(remaining);
+        return selected.compareTo(remainingWindow) <= 0 ? selected : remainingWindow;
+    }
+
+    private void checkModelRetryControl(AgentRun run) {
+        if (controls.signal(run.id()) == RunControlSignal.CANCEL) throw new CancellationObservedException();
+        long elapsed = Math.max(0, Duration.between(run.createdAt(), time.now()).toMillis());
+        if (elapsed >= run.limits().maxWallTimeMillis()) {
+            throw new RuntimeLimitExceededException(
+                    "wallTimeMillis", run.limits().maxWallTimeMillis(), elapsed);
+        }
+    }
+
+    private RetryListener modelRetryListener(AgentRun run, ModelRequestId[] requestIds, int[] requestAttemptOffsets) {
+        return new RetryListener() {
+            @Override
+            public void retryScheduled(int failedAttempt, RuntimeException failure, Duration delay) {
+                append("model.attempt.retry-scheduled", "RETRY_SCHEDULED", failedAttempt, failure, delay);
+            }
+
+            @Override
+            public void exhausted(int finalAttempt, RuntimeException failure) {
+                append("model.attempt.exhausted", "EXHAUSTED", finalAttempt, failure, Duration.ZERO);
+            }
+
+            private void append(
+                    String eventType,
+                    String status,
+                    int retryExecutorAttempt,
+                    RuntimeException failure,
+                    Duration delay) {
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("modelRequestId", requestIds[0].value());
+                data.put("status", status);
+                data.put("attempt", Math.max(1, retryExecutorAttempt - requestAttemptOffsets[0]));
+                data.put("delayMillis", safeDurationMillis(delay));
+                if (failure instanceof ModelInvocationException modelFailure) {
+                    data.put("modelCallId", modelFailure.callId().value());
+                    data.put("category", modelFailure.category().name());
+                    data.put("providerCode", modelFailure.providerCode());
+                    data.put("retryable", modelFailure.retryable());
+                    data.put("outputObserved", modelFailure.outputObserved());
+                } else {
+                    data.put("category", failure.getClass().getSimpleName());
+                }
+                events.append(run.id(), eventType, data, time.now());
+            }
+        };
+    }
+
+    private static long safeDurationMillis(Duration duration) {
+        try {
+            return duration.toMillis();
+        } catch (ArithmeticException ignored) {
+            return Long.MAX_VALUE;
+        }
+    }
+
     private static Map<String, Object> modelErrorDetails(RuntimeException error) {
         Map<String, Object> details = new LinkedHashMap<>();
         if (error instanceof RuntimeLimitExceededException limit) {
@@ -880,6 +1041,8 @@ public final class DefaultAgentLoop implements AgentLoop {
             details.put("modelCategory", modelError.category().name());
             if (modelError.httpStatus() > 0) details.put("httpStatus", modelError.httpStatus());
             if (!modelError.providerCode().isBlank()) details.put("providerCode", modelError.providerCode());
+            details.put("outputObserved", modelError.outputObserved());
+            modelError.retryAfterMillis().ifPresent(delay -> details.put("retryAfterMillis", delay));
             details.put("providerMessage", modelError.getMessage());
         }
         return Map.copyOf(details);
@@ -909,6 +1072,8 @@ public final class DefaultAgentLoop implements AgentLoop {
             attributes.put("httpStatus", modelError.httpStatus());
             attributes.put("providerCode", modelError.providerCode());
             attributes.put("modelCallId", modelError.callId().value());
+            attributes.put("outputObserved", modelError.outputObserved());
+            modelError.retryAfterMillis().ifPresent(delay -> attributes.put("retryAfterMillis", delay));
             attributes.put("providerMessage", modelError.getMessage());
         }
         return Map.copyOf(attributes);

@@ -24,6 +24,10 @@ public interface CodingSessionMapper {
 
     CodingSessionCommandRow findCommandByDispatchKey(@Param("dispatchKey") String dispatchKey);
 
+    CodingSessionCommandRow findCommandByRunId(@Param("runId") String runId);
+
+    CodingSessionCommandRow findPendingCommand(@Param("sessionId") String sessionId);
+
     int insertCommand(@Param("row") CodingSessionCommandRow row);
 
     int completeCommand(@Param("dispatchKey") String dispatchKey, @Param("runId") String runId);

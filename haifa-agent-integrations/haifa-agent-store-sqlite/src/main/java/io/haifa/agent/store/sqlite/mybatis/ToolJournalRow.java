@@ -10,5 +10,10 @@ public record ToolJournalRow(
         String resultSchemaVersion,
         byte[] resultPayload,
         String resultHash,
+        String dispatchExecutionId,
+        Long dispatchProcessId,
+        String dispatchWorkdirDigest,
+        String reconcileStatus,
+        String reconcileReason,
         Instant createdAt,
         Instant updatedAt) {}

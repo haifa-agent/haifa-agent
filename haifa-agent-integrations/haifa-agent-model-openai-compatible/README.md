@@ -39,6 +39,13 @@ var configured = OpenAiCompatibleModelConfiguration.builder(new EnvironmentCrede
 `STRUCTURED_OUTPUT` 的 Chat Completions/Responses。该格式选项不是 Java record 解码或结构化最终输出 API。
 所有 endpoint 必须是干净的 HTTPS URI。高级宿主仍可直接构造 Adapter 与 Snapshot。
 
+三种内建 Style 的同步和 SSE 解析都把“终态存在但没有文本、Tool Call 或结构化输出”标准化为
+`EMPTY_RESPONSE/empty_response`，并标记为可由 Runtime 在同一冻结请求上有界重试。HTTP 5xx、连接失败
+和流在可消费输出前中断分别归一化为 `SERVER_ERROR`、`TRANSPORT_ERROR`；标准 `Retry-After` 只作为
+类型化等待建议交给 Runtime。流一旦已经发出文本或 Tool 意图，后续协议/传输失败归一化为不可盲重放的
+`PARTIAL_RESPONSE`。Adapter 不自行切换模型、不自行重试、不把空响应合成为成功文本，也不在错误中
+暴露供应商原始 Payload。
+
 ## Runtime 结构化最终输出映射
 
 SDK 的 `chat(message, Record.class)` 会把精确输出 Schema 作为 provider-neutral request requirement 传到

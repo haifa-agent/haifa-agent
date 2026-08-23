@@ -2,17 +2,18 @@
 
 ## Policy / Approval
 
-CLI 的 `ask / auto / deny` 继续保持 Coding Agent 级的简单权限体验；SQLite 模式下 Policy Snapshot、Decision 和审批证据与 Runtime 使用同一权威数据库。CLI 不提供企业审批路由、待办或业务单据提交能力。
+CLI 保留 `ask / auto / deny` 兼容入口，并以 `LOW / MEDIUM / HIGH / NEVER` 风险阈值表达实际审批策略；SQLite 模式下 Policy Snapshot、Decision 和审批证据与 Runtime 使用同一权威数据库。CLI 不提供企业审批路由、待办或业务单据提交能力。
 
 ## Unified approval policy
 
-`ask/auto/deny` 由产品 Policy Snapshot 表达，默认仍为 `ask`。`auto` 只自动满足允许自动化的
-Capability Confirmation；Critical/Never 冲突、无目标网络、Credential 重认证和
-Broker/Workspace/Sandbox 硬边界仍 fail closed。`execution.run` 的 Tool Decision 沿调用链传给
-Broker 复核，不产生第二个控制台审批；`deny` 仍在 Catalog freeze 前移除该 Tool 及其
-`execution.request_permissions` 配套入口。权限申请采用独立 Critical / Always Approval Decision；
-`ask` 必须由操作者批准，`auto` 仅代表操作者预先选择的宿主策略，不是 Agent 自我授权。该入口只在
-普通执行使用与 Host 不同的隔离 Provider 时披露；默认 `host-guarded` 已经是受信 Host 路径，不重复披露。
+`ask/auto/deny` 由产品 Policy Snapshot 表达，默认 `ask` 映射为 `LOW`，`auto` 映射为 `NEVER`，
+`deny` 在 Catalog freeze 前移除 `execution.run` 及其 `execution.request_permissions` 配套入口。也可只配置
+`approval.threshold` 为 `low`、`medium`、`high` 或 `never`；同时配置 mode 和 threshold 时必须使用兼容组合。
+达到阈值的普通执行风险创建一次 Policy 审批，Tool Decision 沿调用链传给 Broker 复核，不产生第二个
+控制台审批。`NEVER` 会自动执行包括 HIGH 在内的普通命令，但不覆盖可信分类器的硬拒绝、
+Broker/Workspace/Sandbox 边界、Credential 重认证或一次性 Host 权限升级；后两者仍要求操作者交互。
+权限申请只在普通执行使用与 Host 不同的隔离 Provider 时披露；默认 `host-guarded` 已经是受信 Host 路径，
+不重复披露。
 
 `haifa-agent-cli` 是 Coding Agent 的最高层生产装配与唯一可执行发行入口。它把同一个 Runtime、
 Project、Workspace、Policy、Tool、Execution、Persistence 与 `CodingSessionService` 交给 tui4j
@@ -28,6 +29,11 @@ Map 的重载；调用方不得把 Secret 或完整 YAML 序列化进测试 Case
 生产 Coding Agent 使用 Coding 产品模块中的版本化短 Prompt；CLI 不再维护逐 Case 累积的长方法论
 字符串。基础 Prompt 要求读取适用仓库指令和契约、做最小完整修改、按风险验证并检查最终 Diff。
 Tool 专属协议由冻结 Tool Definition 披露，复杂计划与结果复核方法通过基础 Skill 按需加载。
+
+长任务期间，Coding 产品从权威记录重建派生工作阶段并向模型注入有界脱敏投影；Terminal 只消费安全
+阶段事件。`execution.run` 对 INSPECT、DIFF、TEST/BUILD 和其他命令分别应用输出预算，超大 Diff 返回
+观察统计、截断标记和可选 Artifact Ref。模型返回空终态时，Runtime 只在同一冻结 Binding 上默认重试
+两次，不切换 Provider/Model，也不会从空响应调度 Tool。
 
 ## 构建与运行
 
@@ -237,6 +243,7 @@ web:
     credentialRef: env://ALIYUN_IQS_API_KEY
 approval:
   mode: ask
+  threshold: low
 execution:
   provider: host-guarded
   network: allow
@@ -411,6 +418,7 @@ mcp:
       policyProfile: utility
 approval:
   mode: ask
+  threshold: low
 execution:
   provider: host-guarded
   network: allow
@@ -466,9 +474,12 @@ Java `file.search` 仍是 Project Tool Catalog 支持的有界兼容能力，可
 逐文件 Java 扫描。通用 Shell 命令仍遵循配置的 Approval、ExecutionBroker、Workspace、Sandbox、输出
 预算和审计边界；不会因为 `operationFamily=INSPECT` 是模型声明就自动降低授权要求。
 
-`file.read` 1.1 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
+`file.read` 1.2 默认只读取最多 64 KiB/400 行，并返回 `hasMore`、`nextCursor`、总字节数和文件版本。
 后续窗口通过 `SeekableByteChannel` 从游标字节位置读取，不按文件大小分配内存；游标绑定逻辑路径和版本，
-文件变化会返回 `FILE_CURSOR_STALE`，跨路径复用则作为无效游标拒绝。
+文件变化会返回 `FILE_CURSOR_STALE` 与 `RESTART_READ_FROM_CURRENT_VERSION`，只允许从当前版本无游标
+确定性重读一次；跨路径复用仍作为无效游标拒绝。敏感路径返回 `USER_ACTION_REQUIRED`，明确要求用户
+调整边界或授权，不建议模型通过随机改名、移动或复制绕过。`file.write` 遇到不存在目标返回
+`USE_FILE_CREATE`，`file.create` 遇到已有目标返回 `USE_FILE_WRITE_OR_PATCH`，二者都不是原样重试信号。
 
 `file.patch` 1.1 默认启用，接受一份 `*** Begin Patch` / `*** End Patch` 上下文补丁，可在同一次调用中
 新增、删除、更新或移动多个文件。更新使用 `@@` 精确上下文定位；本地 Provider 以流方式读取源文件，
@@ -549,7 +560,21 @@ Credential 和模型列表必须通过 `models.providers` 显式配置；`--mode
 
 `policyProfile: conservative` 可用于任意显式 allowlist，但默认按高风险、未知幂等性和始终审批处理。`policyProfile: utility` 只接受 `CodingAgentMcpProfile` 已审核的 Utility 子集。生产 Server 必须使用 HTTPS；`allowLoopbackHttp: true` 只允许 `127.0.0.1` 或 `localhost` 开发端点。当前 CLI MCP 装配只支持无认证 Streamable HTTP，Credential 注入和 stdio 尚未开放为 CLI 配置。
 
-写文件、删除文件、移动文件和 Shell 命令默认要求控制台确认。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。CLI 接受指向当前 Workspace 本身或其子目录的绝对 `workdir`，并在受信装配边界将其规范化为逻辑相对路径；Workspace 外绝对路径仍拒绝。网络或系统 `git` / `gh` 登录环境被 Sandbox 隔离时，模型只能用失败结果中的 `toolCallId` 请求对同一条直接、非破坏性的系统 `git` / `gh` 命令做一次 `HOST_NETWORK_ACCESS` 重试；不能修改命令意图、生成权限或批准自己的请求。`--approval auto` 仅适用于用户明确信任的本地工作区，仍经过 Broker、Workspace capability、Profile、环境和审计；`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `execution.request_permissions`，模型不可见，底层授权仍 fail closed。
+风险达到配置阈值的 Shell 命令要求控制台确认；默认 `ask/LOW` 因而审批所有普通执行。Shell 审批显示完整 command、逻辑 workdir、timeout、Shell 类型及 Host 非强隔离提示。CLI 接受指向当前 Workspace 本身或其子目录的绝对 `workdir`，并在受信装配边界将其规范化为逻辑相对路径；Workspace 外绝对路径仍拒绝。网络或系统 `git` / `gh` 登录环境被 Sandbox 隔离时，模型只能用失败结果中的 `toolCallId` 请求对同一条直接、非破坏性的系统 `git` / `gh` 命令做一次 `HOST_NETWORK_ACCESS` 重试；不能修改命令意图、生成权限或批准自己的请求。`--approval auto` 映射为 `NEVER`，会自动执行可信分类为 LOW/MEDIUM/HIGH 的普通命令，包括 `git push`、`gh pr create` 和复合 Shell 命令；它只适用于用户明确信任的本地工作区，并仍经过 Broker、Workspace capability、Profile、环境和审计。可信分类硬拒绝、一次性 Host 权限升级和 Credential 重认证不会因 `auto` 自动批准。`--approval deny` 会在 Catalog freeze 前移除 `execution.run` 与 `execution.request_permissions`，模型不可见，底层授权仍 fail closed。
+
+系统 Git/GH 只做基础风险分级，不提供命令专用 Wrapper。Tool Result 保留原始退出码，并单独投影命令语义：
+当前本地 Terminal 的 Coding Session 未显式传入交付意图，因此冻结为 `WORKTREE_ONLY`；`--approval auto`
+只放宽普通命令审批，不会自动升级为 Commit、Push 或 PR。可信宿主通过 Coding Session Client 显式传入
+`LOCAL_COMMIT`、`REMOTE_PUSH` 或 `PULL_REQUEST` 后，仍需按顺序生成 Stage、staged diff、Commit、HEAD、
+Push、remote ref 与 PR 权威证据；`auto` 允许其中非硬拒绝的 HIGH 动作自动执行，但不允许越过意图、
+宽泛 Stage、盲目重放未知结果或自动 Merge。
+
+`git diff --exit-code` / `--no-index` 的退出 1 是 `EXPECTED_VARIANT/DIFFERENCES_FOUND`，`git grep` 的退出 1
+是 `EMPTY_RESULT/NO_MATCHES`；无效 revision、构建或测试的非零退出仍是失败。复合命令风险提升返回
+`COMMAND_RISK_ESCALATED`，未知 Git 子命令返回 `GIT_COMMAND_UNKNOWN_HIGH_RISK`，不可信
+`operationFamily` 返回 `OPERATION_HINT_IGNORED` 或 `UNVERIFIED`。认证环境覆盖硬拒绝使用
+`AUTHENTICATION_OVERRIDE_DENIED`，受限网络失败使用 `NETWORK_PERMISSION_REQUIRED`，二者分别引导移除
+覆盖或通过托管的一次性权限请求处理，而不是重复执行原命令。
 
 `execution.shell` 支持 `auto`、`bash` 和 `powershell`。自定义 Shell 必须通过本地配置中的绝对 `shellPath` 提供，不能来自 Tool 参数。环境配置只保存允许继承的名称；Host Guarded 统一由公共解析器提供真实 OS 用户 HOME 与三端最小命令环境，Local Native 输入不携带宿主 HOME/AppData/XDG/TMP。两种模式都拒绝 API Key、`*_TOKEN`、`*_SECRET`、云凭据、代理凭据，以及 `PYTHONHOME`、`PYTHONPATH`、`PYTHONUSERBASE`、`VIRTUAL_ENV`、`CONDA_PREFIX`、`NODE_PATH` 等解释器边界变量。命令输出实时脱敏展示，最终模型结果默认限制为首尾合计 2000 行且最多 50KB，中段带明确省略标记；较大分通道输出通过 Output Ref 访问。探索性 `INSPECT` 达到预算后会停止进程树并要求收窄查询，其他命令继续排空到进程结束。CLI timeout 与 Ctrl+C 会发送 Runtime CANCEL，并有界等待 Broker 收敛进程树。
 
@@ -557,6 +582,12 @@ CLI 在冻结 Definition 时把可信配置解析后的 Shell 显示名加入模
 Shell 支持的命令语法，避免在 Windows PowerShell 中混入 POSIX 命令；Shell 的实际路径、审批、能力与
 Sandbox 约束仍由可信装配和 Broker 决定，模型不能覆盖。该环境指令同时说明 `PATH` 中任意非交互 CLI
 均可使用，并要求模型在命令缺失时探测和切换替代方案、收窄过宽查询、保持输出有界。
+
+CLI 还会从 Workspace 根的 `pom.xml`、Gradle 文件、`pyproject.toml`/`pytest.ini`、`package.json`、
+`Cargo.toml`、`go.mod`、`.sln`/`.csproj` 生成有界的最终门禁候选，并优先选择仓库 Wrapper。它只识别
+构建入口，不解析自然语言 README、猜测用户意图或建立语言插件注册表。候选在 Coding Session 创建时
+冻结到可信 Session metadata；重启后以冻结摘要和精确命令匹配恢复 scope。runner 输出不再用于推断
+discovered/selected/ignored 或完整覆盖，当前统一保留 `COUNTS_UNAVAILABLE`，成功退出也不等于完整测试覆盖。
 
 CLI 使用 Execution Core 公共增量 Observer，不再在产品内维护扫描算法，也不再为每条 OS 命令执行前后各生成一次全量 Workspace Manifest。启动后的首次执行建立一次基线，
 后续通过 `WatchService` 收集执行窗口内的候选路径，只重新检查和哈希候选文件；事件溢出、Watcher
@@ -568,6 +599,12 @@ CLI 使用 Execution Core 公共增量 Observer，不再在产品内维护扫描
 进程启动前 Observer 不可用时使用稳定错误
 `WORKSPACE_CHANGE_OBSERVER_UNAVAILABLE` 且不标记 DISPATCHED；只有 OS 进程创建成功后才进入 DISPATCHED。
 进程启动后的增量对账失败仍按结果不确定失败关闭。
+
+Runtime 会在冻结 Tool Definition 首次出现 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时、实际 dispatch 前创建
+`WORKSPACE_SNAPSHOT` 类型的 Runtime checkpoint。当前本地 CLI 未注册持久
+`WorkspaceCheckpointParticipant`，因此该 checkpoint 用于恢复 Run/Tool/ChangeSet 引用和 current-state
+reconcile，不提供文件副本或自动回滚；CLI 不会在恢复时执行 Git reset/checkout 或覆盖用户文件。托管
+Coding Host 若要声明可恢复文件，必须另行装配隔离 Workspace、持久 Snapshot Store 与 Participant。
 
 当前已包含 tui4j Terminal、顶层 `resume` 五种形式、最近 100 条安全可见历史、真实 `/resume` 搜索、
 Session 重命名/归档/逻辑删除、线性历史

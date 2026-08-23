@@ -12,11 +12,21 @@ import io.haifa.agent.application.project.product.coding.CodingSessionExportServ
 import io.haifa.agent.application.project.product.coding.CodingSessionHistoryService;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
 import io.haifa.agent.application.project.product.coding.CodingShellService;
+import io.haifa.agent.application.project.product.coding.delivery.CodingChangeReviewArtifactFactory;
 import io.haifa.agent.application.project.product.coding.delivery.CodingCompletionPolicy;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryCommandGuard;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryEvidenceLedger;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntentResolver;
 import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryProfile;
+import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionMiddleware;
+import io.haifa.agent.application.project.product.coding.delivery.CodingRunOutcomeProjectionService;
 import io.haifa.agent.application.project.product.coding.delivery.CodingTaskModeResolver;
+import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionMiddleware;
+import io.haifa.agent.application.project.product.coding.delivery.CodingWorkProjectionService;
 import io.haifa.agent.application.project.product.coding.prompt.CodingAgentPrompt;
+import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfileMiddleware;
+import io.haifa.agent.application.project.product.coding.verification.PersistedCodingVerificationProfileProvider;
 import io.haifa.agent.application.project.skill.ProjectSkillPlatform;
 import io.haifa.agent.application.project.tool.CodingToolchainEnvironmentProfile;
 import io.haifa.agent.application.project.tool.ProjectPermissionRequestOperations;
@@ -98,7 +108,6 @@ import io.haifa.agent.runtime.core.skill.DefaultSkillActivationService;
 import io.haifa.agent.runtime.core.skill.SkillToolCatalogContribution;
 import io.haifa.agent.runtime.core.skill.SkillToolProvider;
 import io.haifa.agent.runtime.core.tool.DefaultPublicToolPolicy;
-import io.haifa.agent.runtime.core.tool.DefaultToolPolicyRequestAdapter;
 import io.haifa.agent.runtime.core.trace.RuntimeTraceEvent;
 import io.haifa.agent.sandbox.host.HostGuardedSandboxProvider;
 import io.haifa.agent.skill.api.SkillAlias;
@@ -144,6 +153,8 @@ final class LocalCodingAgent implements AutoCloseable {
     private final Optional<CodingShellService> shell;
     private final Optional<CliExecutionPlatform> executionPlatform;
     private final CodingSessionExportService exporter;
+    private final CodingSessionVerificationConfiguration defaultVerification;
+    private final CodingRunOutcomeProjectionService outcomes;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final Set<AgentRunId> startedRuns = ConcurrentHashMap.newKeySet();
 
@@ -164,7 +175,9 @@ final class LocalCodingAgent implements AutoCloseable {
             TrustedProjectResourceCatalog resources,
             Optional<CodingShellService> shell,
             Optional<CliExecutionPlatform> executionPlatform,
-            CodingSessionExportService exporter) {
+            CodingSessionExportService exporter,
+            CodingSessionVerificationConfiguration defaultVerification,
+            CodingRunOutcomeProjectionService outcomes) {
         this.identifiers = identifiers;
         this.time = time;
         this.runtime = runtime;
@@ -182,6 +195,8 @@ final class LocalCodingAgent implements AutoCloseable {
         this.shell = shell;
         this.executionPlatform = executionPlatform;
         this.exporter = exporter;
+        this.defaultVerification = Objects.requireNonNull(defaultVerification, "defaultVerification must not be null");
+        this.outcomes = Objects.requireNonNull(outcomes, "outcomes must not be null");
     }
 
     static LocalCodingAgent create(Path workspaceRoot, CliConfiguration configuration, PrintStream output) {
@@ -336,12 +351,20 @@ final class LocalCodingAgent implements AutoCloseable {
             var bindings = new InMemoryWorkspaceBindingStore();
             var locations = new LocalWorkspaceLocationStore();
             WorkspaceId workspaceId = workspaceIdentity.workspaceId();
+            var verificationProfile =
+                    CliVerificationProfileDiscovery.discover(workspaceRoot, System.getProperty("os.name", ""));
+            var verificationProfiles = new PersistedCodingVerificationProfileProvider(
+                    persistence.ports().runs(), persistence.ports().sessions());
             WorkspaceBindingId bindingId = workspaceIdentity.bindingId();
             WorkspaceLocationRef locationRef = workspaceIdentity.locationRef();
             locations.register(locationRef, workspaceRoot);
             Set<String> configuredTools = effectiveBuiltInTools(configuration);
             var policy = CodingAgentPolicyAssembly.create(
-                    policyMode(configuration.approval()), clock, identifiers::nextValue, persistence.policy());
+                    policyMode(configuration.approval()),
+                    configuration.approvalThreshold(),
+                    clock,
+                    identifiers::nextValue,
+                    persistence.policy());
             boolean executionEnabled = configuredTools.contains("execution.run");
             Set<String> effectiveCapabilities = executionEnabled
                     ? Set.of("file.read", "file.write", "execution.run")
@@ -403,6 +426,8 @@ final class LocalCodingAgent implements AutoCloseable {
             SensitivePathPolicy sensitivePaths = SensitivePathPolicy.defaults();
             var files = new LocalWorkspaceFileService(workspaces, bindings, locations, sensitivePaths);
             var changeSets = new InMemoryFileChangeSetStore();
+            var changeReviews = new CodingChangeReviewArtifactFactory(
+                    changeSets, new LocalCodingChangeContentClassifier(files), 512 * 1024);
             var changeSetService = new FileChangeSetService(changeSets, identifiers, time);
             var mutations = new LocalWorkspaceMutationService(
                     workspaces,
@@ -415,7 +440,12 @@ final class LocalCodingAgent implements AutoCloseable {
                     new InMemoryQuarantineStore(),
                     identifiers,
                     time);
-            var operations = new LocalFileToolOperations(workspaces, files, mutations, identifiers);
+            var operations =
+                    new LocalFileToolOperations(workspaces, files, mutations, identifiers, changeSets, changeReviews);
+            var deliveryIntents = new CodingDeliveryIntentResolver(
+                    persistence.codingSessions(), persistence.ports().runs());
+            var deliveryGuard =
+                    new CodingDeliveryCommandGuard(persistence.ports().state(), deliveryIntents);
             CliExecutionPlatform executionPlatform = executionEnabled
                     ? CliExecutionPlatform.create(
                             configuration.execution(),
@@ -432,7 +462,9 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceId,
                             workspaceRoot,
                             output,
-                            resolvedEnvironment)
+                            resolvedEnvironment,
+                            deliveryGuard,
+                            verificationProfiles)
                     : null;
             if (executionPlatform != null) executionResources.add(executionPlatform);
             var permissionRequests = executionPlatform == null
@@ -475,6 +507,14 @@ final class LocalCodingAgent implements AutoCloseable {
             var deliveryEvidence =
                     new CodingDeliveryEvidenceLedger(persistence.ports().state());
             var deliveryProfile = CodingDeliveryProfile.safeDefault();
+            var completionPolicy =
+                    new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile, deliveryIntents);
+            var outcomeProjection = new CodingRunOutcomeProjectionService(
+                    completionPolicy,
+                    persistence.ports().events(),
+                    persistence.ports().runs());
+            var workProjection = new CodingWorkProjectionService(
+                    persistence.ports().state(), taskModes, deliveryEvidence, deliveryProfile, time, deliveryIntents);
             var runtimeBuilder = persistence
                     .configure(new RuntimeCoreBuilder())
                     .identifierGenerator(identifiers)
@@ -484,7 +524,20 @@ final class LocalCodingAgent implements AutoCloseable {
                         traceObserver.accept(event);
                     })
                     .failureDiagnostics(CliFailureDiagnosticSink.forPersistence(configuration.persistence()))
-                    .completionPolicy(new CodingCompletionPolicy(taskModes, deliveryEvidence, deliveryProfile))
+                    .completionPolicy(completionPolicy)
+                    .middleware(CodingWorkProjectionMiddleware.events(
+                            workProjection,
+                            io.haifa.agent.runtime.core.middleware.RuntimePhase.BEFORE_RUN,
+                            persistence.ports().events(),
+                            time))
+                    .middleware(CodingWorkProjectionMiddleware.events(
+                            workProjection,
+                            io.haifa.agent.runtime.core.middleware.RuntimePhase.AFTER_DECISION_EXECUTION,
+                            persistence.ports().events(),
+                            time))
+                    .middleware(new CodingRunOutcomeProjectionMiddleware(
+                            outcomeProjection, persistence.ports().events(), time))
+                    .middleware(new CodingVerificationProfileMiddleware(verificationProfiles))
                     .repairRetry(new RepairRetryPolicy(2));
             modelAdapters.forEach((key, adapter) ->
                     runtimeBuilder.registerChatModel(key.adapterType(), key.adapterVersion(), adapter));
@@ -532,8 +585,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     .policyStores(policy.decisionsStore(), policy.evidence())
                     .approvalVerification(policy.approvalVerification())
                     .publicToolPolicy(new DefaultPublicToolPolicy(
-                            new DefaultToolPolicyRequestAdapter(
-                                    "haifa-coding-agent", policyMode(configuration.approval())),
+                            new io.haifa.agent.application.project.policy.CodingExecutionPolicyRequestAdapter(
+                                    policyMode(configuration.approval())),
                             policy.decisions(),
                             policy.decisionsStore(),
                             policy.snapshot(),
@@ -601,7 +654,8 @@ final class LocalCodingAgent implements AutoCloseable {
                     runtime,
                     identifiers,
                     clock,
-                    new CliCodingModelCatalog(configuration));
+                    new CliCodingModelCatalog(configuration),
+                    verificationProfile);
             var sessionHistory = new CodingSessionHistoryService(
                     codingSessions,
                     persistence.ports().state(),
@@ -643,7 +697,9 @@ final class LocalCodingAgent implements AutoCloseable {
                             workspaceRoot,
                             codingSessions,
                             persistence.ports().state(),
-                            webPlatform.credentialBroker().redactor()));
+                            webPlatform.credentialBroker().redactor()),
+                    CodingSessionVerificationConfiguration.freeze(verificationProfile),
+                    outcomeProjection);
             runtime.addListener(snapshot -> agent.startedRuns.add(snapshot.runId()));
             return agent;
         } catch (RuntimeException | Error exception) {
@@ -698,7 +754,7 @@ final class LocalCodingAgent implements AutoCloseable {
                 + "- Keep command output bounded and relevant. Narrow an overly broad query before repeating it.\n"
                 + "- request_permissions is not a general sandbox bypass. Use it only after execution_run returns an eligible "
                 + "stable remote-access or host-authentication code for a direct system git or gh command, and repeat the exact command, "
-                + "workdir, operation family, timeout, and prior Tool Call ID. Compound commands, wrappers, path "
+                + "workdir, timeout, and prior Tool Call ID. operationFamily is only an optional diagnostic hint. Compound commands, wrappers, path "
                 + "escape, credential override, destructive commands, and unknown outcomes cannot be elevated.";
     }
 
@@ -711,7 +767,7 @@ final class LocalCodingAgent implements AutoCloseable {
     AgentRunSnapshot start(String message) {
         if (closed.get()) throw new IllegalStateException("coding agent is closed");
         AgentSessionId sessionId = new AgentSessionId(identifiers.nextValue());
-        persistence.provisionUserSession(sessionId, tenant, principal, clock);
+        persistence.provisionUserSession(sessionId, tenant, principal, defaultVerification.sessionMetadata(), clock);
         AgentRunSnapshot accepted = runtime.start(new AgentRunRequest(
                 identifiers.nextValue(),
                 DEFINITION_ID,
@@ -736,6 +792,10 @@ final class LocalCodingAgent implements AutoCloseable {
 
     CodingSessionService codingSessions() {
         return codingSessions;
+    }
+
+    CodingRunOutcomeProjectionService outcomes() {
+        return outcomes;
     }
 
     CodingSessionHistoryService sessionHistory() {

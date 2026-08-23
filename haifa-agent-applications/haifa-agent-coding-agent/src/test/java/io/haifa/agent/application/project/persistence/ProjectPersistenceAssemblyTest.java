@@ -12,6 +12,14 @@ import io.haifa.agent.application.project.product.coding.CodingModelPreference;
 import io.haifa.agent.application.project.product.coding.CodingSessionActivity;
 import io.haifa.agent.application.project.product.coding.CodingSessionQuery;
 import io.haifa.agent.application.project.product.coding.CodingSessionService;
+import io.haifa.agent.application.project.product.coding.delivery.CodingDeliveryIntent;
+import io.haifa.agent.application.project.product.coding.delivery.CodingValidationScope;
+import io.haifa.agent.application.project.product.coding.verification.CodingSessionVerificationConfiguration;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCandidate;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationCost;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationProfile;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationSource;
+import io.haifa.agent.application.project.product.coding.verification.CodingVerificationTrigger;
 import io.haifa.agent.common.id.IdentifierGenerator;
 import io.haifa.agent.common.time.TimeProvider;
 import io.haifa.agent.core.agent.AgentDefinitionId;
@@ -89,6 +97,40 @@ class ProjectPersistenceAssemblyTest {
 
     @TempDir
     Path directory;
+
+    @Test
+    void sqlitePreservesFrozenCodingVerificationMetadataAcrossRestart() {
+        Path database = directory.resolve("verification-metadata.db");
+        AgentSessionId sessionId = new AgentSessionId("coding-session-verification");
+        CodingVerificationCandidate candidate = new CodingVerificationCandidate(
+                "python -m pytest tests/test_api.py",
+                CodingVerificationCost.LOW,
+                Duration.ofMinutes(3),
+                CodingVerificationTrigger.ADJACENT_CHANGE,
+                CodingVerificationSource.USER_EXPLICIT,
+                "trusted-coding-host",
+                CodingValidationScope.SELECTED);
+        CodingSessionVerificationConfiguration expected = CodingSessionVerificationConfiguration.freeze(
+                new CodingVerificationProfile(List.of(candidate), List.of()));
+
+        try (ProjectPersistenceAssembly first = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
+                CLOCK,
+                new TestIds("verification-first"),
+                protector())) {
+            first.provisionUserSession(sessionId, TENANT, PRINCIPAL, expected.sessionMetadata(), CLOCK);
+        }
+
+        try (ProjectPersistenceAssembly reopened = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqlite(database, "env://TEST_KEY"),
+                CLOCK,
+                new TestIds("verification-second"),
+                protector())) {
+            var persisted = reopened.ports().sessions().find(sessionId).orElseThrow();
+            assertThat(CodingSessionVerificationConfiguration.fromSessionMetadata(persisted.metadata()))
+                    .contains(expected);
+        }
+    }
 
     @Test
     void assemblesOnlyTheThreeSupportedModesWithFreshWorkerIds() throws Exception {
@@ -385,6 +427,62 @@ class ProjectPersistenceAssemblyTest {
 
             RuntimeCommandResult aborted = coding.abortActiveRun(sessionId, "abort-key");
             assertThat(aborted.status()).isEqualTo(RuntimeCommandStatus.ACCEPTED);
+        }
+    }
+
+    @Test
+    void codingDeliveryIntentIsFrozenIdempotentAndSurvivesSqliteReopen() {
+        Path database = directory.resolve("coding-delivery-intent.db");
+        ProductFixture fixture = productFixture();
+        AgentRunId runId;
+        try (ProjectPersistenceAssembly assembly = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqliteUnprotected(database),
+                CLOCK,
+                new TestIds("delivery-first"),
+                null)) {
+            CodingSessionService coding =
+                    fixture.codingService(assembly, new CapturingRuntime(), new TestIds("delivery-service"));
+            var created = coding.createSession(
+                    fixture.projectId,
+                    "implement and open a pull request",
+                    List.of(),
+                    "delivery-key",
+                    CodingDeliveryIntent.PULL_REQUEST);
+            runId = created.activeRun().orElseThrow().runId();
+
+            assertThat(assembly.codingSessions().findCommandByRunId(runId))
+                    .get()
+                    .extracting(binding -> binding.deliveryIntent())
+                    .isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
+            assertThat(coding.createSession(
+                                    fixture.projectId,
+                                    "implement and open a pull request",
+                                    List.of(),
+                                    "delivery-key",
+                                    CodingDeliveryIntent.PULL_REQUEST)
+                            .activeRun()
+                            .orElseThrow()
+                            .runId())
+                    .isEqualTo(runId);
+            assertThatThrownBy(() -> coding.createSession(
+                            fixture.projectId,
+                            "implement and open a pull request",
+                            List.of(),
+                            "delivery-key",
+                            CodingDeliveryIntent.WORKTREE_ONLY))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasRootCauseMessage("idempotency key is bound to another request");
+        }
+
+        try (ProjectPersistenceAssembly reopened = ProjectPersistenceAssembly.open(
+                ProjectPersistenceConfiguration.sqliteUnprotected(database),
+                CLOCK,
+                new TestIds("delivery-second"),
+                null)) {
+            assertThat(reopened.codingSessions().findCommandByRunId(runId))
+                    .get()
+                    .extracting(binding -> binding.deliveryIntent())
+                    .isEqualTo(CodingDeliveryIntent.PULL_REQUEST);
         }
     }
 

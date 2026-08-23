@@ -20,6 +20,15 @@ only at the model invocation/continuation boundary and is never a public Agent m
 `CANCEL`. The default implementation projects a synchronous result as one completed content delta. Provider raw
 chunks, SDK types, and reasoning text must not cross this module boundary.
 
+`AgentChatResponse` preserves an otherwise empty successful transport response so the Runtime can classify it at the
+provider-neutral boundary. Empty content with no Tool Call or structured output is not a valid agent decision; callers
+must not treat the transport object itself as successful task completion.
+
+`AgentChatRequest.requestId` identifies one frozen logical request across bounded physical attempts, while
+`callId` identifies one physical provider call. Adapters normalize empty, partial, server, timeout, and transport
+failures separately and may attach a typed `retryAfter` plus `outputObserved`; they never decide the Runtime retry
+count or switch the frozen provider/model binding.
+
 纯 Java、供应商无关的模型能力契约。
 
 本模块定义：

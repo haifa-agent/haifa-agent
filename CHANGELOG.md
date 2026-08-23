@@ -1,5 +1,12 @@
 # Changelog
 
+- Coding Agent 完成门禁改用 terminal ChangeSet、Workspace Digest、内容寻址 Change Review 和结构化
+  Validation Attempt；DIFF 命令和诊断事实继续保留，但不再作为修改任务的完成 fallback。轻量
+  Verification Profile 在 Coding Session metadata 冻结有界验证阶梯，runner 输出不参与数量或 scope
+  推断；Coding 客户端可直接查询与最终 Run 协议状态分离的 outcome/2 安全投影。
+- Runtime 为 Tool 增加只读 reconcile 契约和持久化 dispatch 证据；Coding Agent 用 Execution 终态、
+  ChangeSet 与文件摘要收敛未知本地命令/写入结果，未知副作用不重放。Host Sandbox 在 Windows 超时或取消时
+  终止并复核整棵进程树，恢复会幂等补齐 ToolCall、Journal、Step 与 Tool Result 消息。
 - Personal Assistant 真实环境脚本改从按内容摘要生成的 Maven `target/` 外运行副本启动后端 JAR，避免运行中的
   Java 进程锁定 Maven `target/` 产物；复制前校验 Spring Boot Manifest 与 `BOOT-INF`，残缺产物自动
   重新 `package` 并二次校验；停止时兼容新运行目录和旧 `target/` 命令行身份。

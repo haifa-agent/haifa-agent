@@ -13,6 +13,8 @@ import io.haifa.agent.tool.api.ToolInvocationRequest;
 import io.haifa.agent.tool.api.ToolName;
 import io.haifa.agent.tool.api.ToolProvider;
 import io.haifa.agent.tool.api.ToolProviderId;
+import io.haifa.agent.tool.api.ToolReconciliation;
+import io.haifa.agent.tool.api.ToolReconciliationRequest;
 import io.haifa.agent.tool.api.ToolResourceRequirements;
 import io.haifa.agent.tool.api.ToolRisk;
 import io.haifa.agent.tool.api.ToolSchema;
@@ -71,6 +73,15 @@ final class TestToolPlatform {
 
     private static RuntimeCoreBuilder install(
             RuntimeCoreBuilder builder, ToolDefinition definition, ToolPolicyDecision decision, ToolHandler handler) {
+        return install(builder, definition, decision, handler, ignored -> ToolReconciliation.unsupported());
+    }
+
+    private static RuntimeCoreBuilder install(
+            RuntimeCoreBuilder builder,
+            ToolDefinition definition,
+            ToolPolicyDecision decision,
+            ToolHandler handler,
+            ToolReconcileHandler reconciler) {
         ToolProvider provider = new ToolProvider() {
             @Override
             public ToolProviderId id() {
@@ -80,6 +91,11 @@ final class TestToolPlatform {
             @Override
             public ToolResult invoke(ToolInvocationRequest request) {
                 return handler.invoke(request);
+            }
+
+            @Override
+            public ToolReconciliation reconcile(ToolReconciliationRequest request) {
+                return reconciler.reconcile(request);
             }
         };
         var catalog = new ToolCatalogBuilder()
@@ -99,6 +115,18 @@ final class TestToolPlatform {
             ToolHandler handler) {
         ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
         return install(builder, definition, decision, handler);
+    }
+
+    static RuntimeCoreBuilder install(
+            RuntimeCoreBuilder builder,
+            String name,
+            String version,
+            String inputSchemaId,
+            boolean sideEffecting,
+            ToolHandler handler,
+            ToolReconcileHandler reconciler) {
+        ToolDefinition definition = definition(name, version, inputSchemaId, sideEffecting);
+        return install(builder, definition, ToolPolicyDecision.ALLOW, handler, reconciler);
     }
 
     static FrozenToolBinding binding(String name, String version, String inputSchemaId, boolean sideEffecting) {
@@ -174,5 +202,10 @@ final class TestToolPlatform {
     @FunctionalInterface
     interface ToolHandler {
         ToolResult invoke(ToolInvocationRequest request);
+    }
+
+    @FunctionalInterface
+    interface ToolReconcileHandler {
+        ToolReconciliation reconcile(ToolReconciliationRequest request);
     }
 }

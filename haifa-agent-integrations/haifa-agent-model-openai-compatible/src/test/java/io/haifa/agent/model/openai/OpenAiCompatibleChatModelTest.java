@@ -434,8 +434,32 @@ class OpenAiCompatibleChatModelTest {
 
         assertThatThrownBy(() -> model().invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
                 .isInstanceOf(ModelInvocationException.class)
-                .satisfies(error -> assertThat(((ModelInvocationException) error).providerCode())
-                        .isEqualTo("stream_ended_without_done"));
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.providerCode()).isEqualTo("stream_ended_without_done");
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.PARTIAL_RESPONSE);
+                    assertThat(failure.outputObserved()).isTrue();
+                    assertThat(failure.retryable()).isFalse();
+                });
+    }
+
+    @Test
+    void streamEndingBeforeConsumableOutputRemainsRetryableTransportFailure() {
+        response.set(
+                Response.sse(
+                        """
+                data: {"id":"stream-cut","model":"deepseek-v4-pro","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+                """));
+
+        assertThatThrownBy(() -> model().invokeStreaming(simpleRequest(), ignored -> ModelStreamControl.CONTINUE))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException failure = (ModelInvocationException) error;
+                    assertThat(failure.category()).isEqualTo(ModelErrorCategory.TRANSPORT_ERROR);
+                    assertThat(failure.outputObserved()).isFalse();
+                    assertThat(failure.retryable()).isTrue();
+                });
     }
 
     @Test
@@ -508,8 +532,8 @@ class OpenAiCompatibleChatModelTest {
                 404, ModelErrorCategory.MODEL_NOT_FOUND,
                 408, ModelErrorCategory.TIMEOUT,
                 429, ModelErrorCategory.RATE_LIMITED,
-                500, ModelErrorCategory.PROVIDER_UNAVAILABLE,
-                503, ModelErrorCategory.PROVIDER_UNAVAILABLE);
+                500, ModelErrorCategory.SERVER_ERROR,
+                503, ModelErrorCategory.SERVER_ERROR);
         expected.forEach((status, category) -> {
             response.set(Response.json(
                     status, "{\"error\":{\"code\":\"failure-test-secret\",\"message\":\"safe test-secret detail\"}}"));
@@ -528,11 +552,27 @@ class OpenAiCompatibleChatModelTest {
     }
 
     @Test
+    void preservesTrustedRetryAfterAsTypedMetadata() {
+        response.set(Response.json(429, "{\"error\":{\"code\":\"rate_limited\"}}", Map.of("Retry-After", "5")));
+
+        assertThatThrownBy(() -> model().invoke(simpleRequest()))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> assertThat(((ModelInvocationException) error).retryAfter())
+                        .contains(Duration.ofSeconds(5)));
+    }
+
+    @Test
     void rejectsInvalidJsonChoicesArgumentsContentTypeAndOversizedBodies() {
         response.set(Response.json(200, "not-json"));
         assertMalformed();
         response.set(Response.json(200, "{\"id\":\"x\",\"model\":\"deepseek-v4-pro\",\"choices\":[],\"usage\":{}}"));
-        assertMalformed();
+        assertThatThrownBy(() -> model().invoke(simpleRequest()))
+                .isInstanceOf(ModelInvocationException.class)
+                .satisfies(error -> {
+                    ModelInvocationException invocation = (ModelInvocationException) error;
+                    assertThat(invocation.category()).isEqualTo(ModelErrorCategory.EMPTY_RESPONSE);
+                    assertThat(invocation.retryable()).isTrue();
+                });
         response.set(
                 Response.json(
                         200,
@@ -631,7 +671,7 @@ class OpenAiCompatibleChatModelTest {
                 .isInstanceOf(ModelInvocationException.class)
                 .satisfies(error -> {
                     ModelInvocationException invocation = (ModelInvocationException) error;
-                    assertThat(invocation.category()).isEqualTo(ModelErrorCategory.PROVIDER_UNAVAILABLE);
+                    assertThat(invocation.category()).isEqualTo(ModelErrorCategory.TRANSPORT_ERROR);
                     assertThat(invocation.retryable()).isTrue();
                 });
 
@@ -998,18 +1038,29 @@ class OpenAiCompatibleChatModelTest {
         }
         byte[] bytes = selected.body().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", selected.contentType());
+        selected.headers()
+                .forEach((name, value) -> exchange.getResponseHeaders().set(name, value));
         exchange.sendResponseHeaders(selected.status(), bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();
     }
 
-    private record Response(int status, String contentType, String body, long delayMillis) {
+    private record Response(
+            int status, String contentType, String body, long delayMillis, Map<String, String> headers) {
         Response(int status, String contentType, String body) {
-            this(status, contentType, body, 0);
+            this(status, contentType, body, 0, Map.of());
+        }
+
+        Response(int status, String contentType, String body, long delayMillis) {
+            this(status, contentType, body, delayMillis, Map.of());
         }
 
         static Response json(int status, String body) {
             return new Response(status, "application/json; charset=utf-8", body);
+        }
+
+        static Response json(int status, String body, Map<String, String> headers) {
+            return new Response(status, "application/json; charset=utf-8", body, 0, Map.copyOf(headers));
         }
 
         static Response delayedJson(int status, String body, long delayMillis) {

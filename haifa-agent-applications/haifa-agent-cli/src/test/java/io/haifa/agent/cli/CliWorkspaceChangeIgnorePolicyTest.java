@@ -24,6 +24,11 @@ class CliWorkspaceChangeIgnorePolicyTest {
         assertThat(ignored(policy, metadata("target", FileType.DIRECTORY))).isTrue();
         assertThat(ignored(policy, metadata("module/target/app.jar", FileType.FILE)))
                 .isTrue();
+        assertThat(ignored(policy, metadata(".gradle/8.7/executionHistory/executionHistory.lock", FileType.FILE)))
+                .isTrue();
+        assertThat(ignored(
+                        policy, metadata("module/.gradle/buildOutputCleanup/buildOutputCleanup.lock", FileType.FILE)))
+                .isTrue();
         assertThat(ignored(policy, metadata("target", FileType.FILE))).isFalse();
         assertThat(ignored(policy, metadata("local-tmp/runtime/data.bin", FileType.FILE)))
                 .isTrue();

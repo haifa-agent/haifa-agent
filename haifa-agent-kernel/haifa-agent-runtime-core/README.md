@@ -1,12 +1,33 @@
 # Haifa Agent Runtime Core
 
+## Tool outcome convergence
+
+At the irreversible dispatch boundary, Tool Journal records an optional bounded execution identity, host-local PID,
+and safe working-directory digest. A returned `runtimeOutcome=OUTCOME_UNKNOWN`, an exception after dispatch, or an
+abandoned Tool Call enters the same read-only reconciliation path. Runtime invokes the frozen provider once, persists
+the reconciliation status/reason, and either commits the resolved result through the existing pending-result boundary
+or closes ToolCall and Step with `TOOL_OUTCOME_UNKNOWN`. Unresolved side-effecting calls use
+`SIDE_EFFECTING_REPLAY_FORBIDDEN`; they are never invoked a second time. Recovery appends exactly one correlated Tool
+Result message before the next model request, so ToolCall, Tool Journal, Step, event, and model protocol facts converge.
+The normalized result reaches durable Journal `COMPLETED` before the ToolCall terminal projection; after a crash,
+recovery uses `PENDING_RESULT`/`COMPLETED` facts to idempotently finish ToolCall, Step, and the correlated message.
+
 ## Model-call client events
 
-`FrozenModelInvoker` records each physical model attempt as durable
-`model.call.started` plus one terminal `model.call.succeeded` or `model.call.failed`
-event. `RuntimeClientEventProjector` exposes only the bounded provider-neutral
-`ModelLifecycle` fields; model text and provider payloads remain outside the durable
-client feed.
+`FrozenModelInvoker` records each physical model attempt as durable `model.attempt.scheduled` and
+`model.call.started` plus one terminal `model.call.succeeded` or `model.call.failed` event. Retry waiting and final
+exhaustion add `model.attempt.retry-scheduled` / `model.attempt.exhausted`. `RuntimeClientEventProjector` exposes only
+bounded provider-neutral `ModelLifecycle` and `ModelAttemptLifecycle` fields; model text, reasoning, Prompt and raw
+provider payloads remain outside the durable client feed.
+
+An HTTP-success response with no content, Tool Call, or structured output is normalized as retryable
+`EMPTY_RESPONSE/empty_response`. Runtime defaults to the initial physical attempt plus at most three retries after 1,
+3, and 6 seconds for this category. Other retryable model failures retain the default two-physical-attempt limit and
+bounded exponential backoff with jitter. Runtime keeps one logical request identity and frozen binding, honors a
+bounded `Retry-After` for non-empty failures, counts every physical call against the Run budget, and checks
+cancellation/deadline throughout backoff. Authentication, invalid request, context-too-long and partial-output failures
+are never replayed by the generic retry policy. Each empty occurrence adds only a safe `model.empty-response` event;
+exhaustion terminates through the existing stable model failure path.
 
 ## 结构化完成纠偏
 
@@ -28,10 +49,13 @@ Checkpoint 恢复、失败副作用和 Interaction/Approval 继续等十类控�
 
 ## 自主恢复与有效进展
 
-AgentLoop 按 Tool 坐标、操作族、语义失败类别、稳定错误码、资源类别和 Sandbox 摘要生成
-SHA-256 Failure Fingerprint；随机路径、命令文本和原始 stderr 不进入身份。无有效进展的同一失败簇按
-“诊断、改变策略、收敛、第 4 次结构化终止”推进；`OUTCOME_UNKNOWN`、取消和 Policy 拒绝继续服从
-各自更严格的既有边界。完全重复 Decision、A-B Loop 和单批重复调用仍由原 Guard 独立处理。
+AgentLoop 按 Tool 坐标摘要、命令目标、可信有效操作族、语义失败类别、稳定错误码、归一化意图摘要、
+资源类别和 Sandbox 摘要生成 SHA-256 Failure Fingerprint；原始命令、随机路径、描述、原始 stderr
+和 Credential 不进入身份或恢复事件。无有效进展的同一失败簇按“首次诊断、第二次强制改变策略、
+第三次结构化终止”推进；`OUTCOME_UNKNOWN`、取消和 Policy 拒绝继续服从
+各自更严格的既有边界。Decision 使用 `action/1:<type>:<sha256>` 的有界动作身份，原始 Prompt、正文、
+路径、Tool 参数和运行标识不写入 Step 或 Checkpoint。完全重复 Tool Call 仍由专门 Guard 处理；
+Decision 重复或 A-B 模式只有与冻结窗口内不变的权威 Progress Digest 同时出现才形成停滞。
 
 重复 Tool 失败或 Outcome Unknown 触发结构化终止时，Run 仍保持 `FAILED`，但 Runtime 会在同一
 Unit of Work 中持久化一条用户可见的部分完成总结和 Run output。总结只使用已持久化的安全事实：
@@ -39,15 +63,25 @@ Unit of Work 中持久化一条用户可见的部分完成总结和 Run output�
 回显 Tool 参数正文、Prompt、stderr、Provider 原始响应或凭据。Conversation 刷新或进程重启后仍可
 看到已完成事项、未完成事项和需要人工处理的下一步，且不会把部分结果伪装成成功。
 
-有效进展只来自 Workspace/Artifact 变化、Todo 状态推进、成功的 Build/Test 验证、Blocker 移除、
+有效进展只来自 Workspace/Artifact 变化、Todo 状态推进、绑定当前 Workspace 的可信 Build/Test Validation、Blocker 移除、
 Interaction 输入或 Child Result；Message 数与失败 Tool Call 数不算进展。最近 32 条安全摘要组成
-有界 Ledger。单文件 Mutation 的 `changeSetId`、执行观察的 `fileChangeSetId` 以及多文件 Patch 的
+`progress/2` 有界 Ledger；只读 DIFF 成功不算进展。单文件 Mutation 的 `changeSetId`、执行观察的 `fileChangeSetId` 以及多文件 Patch 的
 `changeSetIds` 都作为权威 Workspace 进展，重复引用不会重复计数。通用无进展窗口在首次权威有效进展后才开始计数；初始只读侦察仍受完全重复 Decision、
-A-B Loop、失败簇和硬预算约束，不会被误当成已停滞的交付。恢复时从权威 ToolCall、Plan、Child Run、
+失败簇和硬预算约束，不会被误当成已停滞的交付。首次停滞只持久化一次 Agent-visible
+`STALL_RECOVERY` 控制事实并要求改变语义动作；仍无进展才以 `AGENT_LOOP_DETECTED` 终止。恢复时从权威 ToolCall、Plan、Child Run、
 Interaction 与 Usage 重建控制状态；旧
 Checkpoint 无需 Schema 升级。精确剩余模型、工具、迭代、时间和 Token 预算只写入安全 Trace，不再逐轮
 改变模型请求；模型仅在失败恢复或 50%、25%、10% 阈值首次跨越时收到控制指导。动态指导作为新的
 Agent-visible Session Message 追加，不替换或插入既有消息，因此正常请求可复用稳定 Prompt 与完整历史前缀。
+失败簇和有效进展在 Resume 时继续从权威 ToolCall、Plan、Child Run、Interaction 与 Usage 重建；恢复后
+观察到同一停滞仍会结构化终止，不会因进程重启重置策略切换预算。客户端事件将
+`loop.progress-observed`、`loop.stall-detected`、`loop.recovery-strategy-required` 和
+`loop.recovery-exhausted` 投影为既有 `DeliveryLifecycle`，不暴露内部 Digest 或动作内容。
+
+冻结 Tool Definition 含 `FILE_WRITE` 或 `PROCESS_EXECUTION` 时，Runtime 在首次实际 dispatch 前捕获
+`WORKSPACE_SNAPSHOT` checkpoint；纯读 Tool 不触发该基线。已注册 Capability Participant 的 Host 会在同一
+checkpoint 捕获 Workspace snapshot reference。未注册 Participant 的本地 DIRECT Host 只具备 Runtime
+checkpoint 与 current-state reconcile，不承诺文件回滚；DIRECT 恢复从不自动 reset、checkout 或覆盖文件。
 
 ## Safe Tool argument repair
 

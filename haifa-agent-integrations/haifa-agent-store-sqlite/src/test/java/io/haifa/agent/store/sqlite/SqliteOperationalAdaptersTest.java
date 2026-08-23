@@ -34,7 +34,9 @@ import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.storage.OutboxMessage;
 import io.haifa.agent.runtime.core.storage.RunStartIdempotencyBinding;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
 import io.haifa.agent.tool.api.ToolIdempotency;
+import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.sql.DriverManager;
 import java.time.Instant;
 import java.util.List;
@@ -146,9 +148,57 @@ class SqliteOperationalAdaptersTest {
 
         var uncertainKey = new RuntimeIdempotencyKey("uncertain-key");
         journal.recordIntent(run.id(), uncertainKey);
-        journal.recordDispatched(run.id(), uncertainKey);
+        var dispatchEvidence = new ToolDispatchEvidence("execution-uncertain", OptionalLong.of(771), "c".repeat(64));
+        journal.recordDispatched(run.id(), uncertainKey, dispatchEvidence);
         journal.recordUncertain(run.id(), uncertainKey);
+        journal.recordReconciliation(
+                run.id(), uncertainKey, ToolReconciliationStatus.STILL_UNKNOWN, "LOCAL_EVIDENCE_MISSING");
         assertThat(journal.hasUncertain(run.id())).isTrue();
+        assertThat(journal.uncertainResult(run.id(), uncertainKey)).isEmpty();
+        assertThat(journal.dispatchEvidence(run.id(), uncertainKey)).contains(dispatchEvidence);
+        assertThat(journal.reconciliation(run.id(), uncertainKey)).hasValueSatisfying(reconciliation -> {
+            assertThat(reconciliation.status()).isEqualTo(ToolReconciliationStatus.STILL_UNKNOWN);
+            assertThat(reconciliation.reasonCode()).isEqualTo("LOCAL_EVIDENCE_MISSING");
+        });
+
+        var enrichedKey = new RuntimeIdempotencyKey("dispatch-evidence-enriched-key");
+        var enrichedEvidence = new ToolDispatchEvidence("execution-enriched", OptionalLong.of(772), "d".repeat(64));
+        journal.recordIntent(run.id(), enrichedKey);
+        journal.recordDispatched(run.id(), enrichedKey);
+        journal.recordAcknowledged(run.id(), enrichedKey);
+        journal.recordDispatched(run.id(), enrichedKey, enrichedEvidence);
+        assertThat(journal.state(run.id(), enrichedKey)).contains(ToolJournalState.ACKNOWLEDGED);
+        assertThat(journal.dispatchEvidence(run.id(), enrichedKey)).contains(enrichedEvidence);
+        assertThatThrownBy(() -> journal.recordDispatched(
+                        run.id(),
+                        enrichedKey,
+                        new ToolDispatchEvidence("execution-conflict", OptionalLong.of(772), "d".repeat(64))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("evidence changed");
+
+        var resolvedKey = new RuntimeIdempotencyKey("reconciled-key");
+        journal.recordIntent(run.id(), resolvedKey);
+        journal.recordDispatched(run.id(), resolvedKey);
+        journal.recordUncertain(run.id(), resolvedKey, result);
+        assertThat(journal.uncertainResult(run.id(), resolvedKey)).contains(result);
+        journal.recordReconciliation(
+                run.id(), resolvedKey, ToolReconciliationStatus.RESOLVED, "PROCESS_TERMINAL_RESULT_CONFIRMED");
+        journal.recordPendingResult(run.id(), resolvedKey, result);
+        journal.recordCompleted(run.id(), resolvedKey, result);
+        assertThat(journal.completed(run.id(), resolvedKey)).contains(result);
+
+        SqliteStoreFoundation reopened = SqliteTestSupport.foundation(directory);
+        assertThat(reopened.toolJournal().dispatchEvidence(run.id(), uncertainKey))
+                .contains(dispatchEvidence);
+        assertThat(reopened.toolJournal().reconciliation(run.id(), uncertainKey))
+                .hasValueSatisfying(reconciliation ->
+                        assertThat(reconciliation.reasonCode()).isEqualTo("LOCAL_EVIDENCE_MISSING"));
+        assertThat(reopened.toolJournal().dispatchEvidence(run.id(), enrichedKey))
+                .contains(enrichedEvidence);
+        assertThat(reopened.toolJournal().completed(run.id(), resolvedKey)).contains(result);
+        assertThat(reopened.toolJournal().reconciliation(run.id(), resolvedKey))
+                .hasValueSatisfying(reconciliation ->
+                        assertThat(reconciliation.status()).isEqualTo(ToolReconciliationStatus.RESOLVED));
 
         var rejectedKey = new RuntimeIdempotencyKey("pre-dispatch-rejection-key");
         var rejected = new ToolResult(

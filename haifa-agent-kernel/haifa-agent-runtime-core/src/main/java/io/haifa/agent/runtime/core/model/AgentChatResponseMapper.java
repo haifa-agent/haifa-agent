@@ -31,6 +31,18 @@ public final class AgentChatResponseMapper {
 
     public AgentDecision map(
             AgentChatRequest request, AgentChatResponse response, List<ModelToolSpecification> disclosedTools) {
+        if (response.content().isBlank()
+                && response.toolCalls().isEmpty()
+                && response.structuredOutput().isEmpty()) {
+            throw new ModelInvocationException(
+                    ModelErrorCategory.EMPTY_RESPONSE,
+                    true,
+                    200,
+                    "empty_response",
+                    request.callId(),
+                    "model returned no usable output",
+                    null);
+        }
         if (!response.toolCalls().isEmpty()) {
             Map<String, ModelToolSpecification> byName = new LinkedHashMap<>();
             disclosedTools.forEach(tool -> byName.put(tool.name(), tool));

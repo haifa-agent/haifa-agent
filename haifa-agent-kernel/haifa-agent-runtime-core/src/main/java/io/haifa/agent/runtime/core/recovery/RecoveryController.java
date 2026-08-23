@@ -48,7 +48,6 @@ public final class RecoveryController {
         return switch (attempts) {
             case 1 -> RecoveryDirective.CONTINUE_WITH_DIAGNOSTIC;
             case 2 -> RecoveryDirective.REQUIRE_STRATEGY_CHANGE;
-            case 3 -> RecoveryDirective.REQUIRE_CONVERGENCE;
             default -> RecoveryDirective.TERMINATE_REPEATED_FAILURE;
         };
     }

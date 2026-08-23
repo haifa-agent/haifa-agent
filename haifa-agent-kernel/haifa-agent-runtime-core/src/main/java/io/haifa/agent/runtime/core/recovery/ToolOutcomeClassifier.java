@@ -18,15 +18,29 @@ public final class ToolOutcomeClassifier {
                 call.error().map(value -> value.error().code().wireCode()).orElse("UNCLASSIFIED_TERMINAL");
         ToolFailureCategory category = category(status, text(attributes, "failureCategory", errorCode));
         String stableCode = token(text(attributes, "stableFailureCode", text(attributes, "failureCode", errorCode)));
-        String operationFamily = token(text(
+        String effectiveOperation = token(text(
                 attributes,
-                "operationFamily",
-                call.arguments().values().get("operationFamily") instanceof String family ? family : "UNKNOWN"));
+                "effectiveOperationFamily",
+                text(
+                        attributes,
+                        "commandOperation",
+                        call.arguments().values().get("operationFamily") instanceof String family
+                                ? family
+                                : "UNKNOWN")));
+        String commandTarget = token(text(attributes, "commandTarget", "OTHER"));
         String resourceClass = token(text(attributes, "resourceClass", defaultResource(category)));
         String sandboxDigest = digestOrUnknown(text(attributes, "sandboxProfileDigest", ""));
         String toolCoordinate = FailureFingerprint.digest(List.of(call.toolName(), call.toolVersion()));
+        String intentDigest = normalizedIntentDigest(call, commandTarget, effectiveOperation);
         FailureFingerprint fingerprint = new FailureFingerprint(
-                toolCoordinate, operationFamily, category, stableCode, resourceClass, sandboxDigest);
+                toolCoordinate,
+                commandTarget,
+                effectiveOperation,
+                category,
+                stableCode,
+                intentDigest,
+                resourceClass,
+                sandboxDigest);
         return Optional.of(new ToolOutcomeObservation(call.id().value(), status, category, fingerprint));
     }
 
@@ -82,5 +96,18 @@ public final class ToolOutcomeClassifier {
         return normalized.matches("(?:sha256:)?[0-9a-f]{64}")
                 ? normalized
                 : FailureFingerprint.digest(List.of("unknown-sandbox-profile"));
+    }
+
+    private static String normalizedIntentDigest(ToolCall call, String commandTarget, String effectiveOperation) {
+        Map<String, Object> values = call.arguments().values();
+        List<String> fields = new java.util.ArrayList<>();
+        fields.add(call.toolName());
+        fields.add(commandTarget);
+        fields.add(effectiveOperation);
+        values.keySet().stream()
+                .filter(key -> !key.equals("description") && !key.equals("purpose") && !key.equals("operationFamily"))
+                .sorted()
+                .forEach(fields::add);
+        return FailureFingerprint.digest(fields);
     }
 }

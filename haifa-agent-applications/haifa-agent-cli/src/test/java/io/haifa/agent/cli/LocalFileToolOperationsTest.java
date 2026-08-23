@@ -8,9 +8,15 @@ import io.haifa.agent.project.binding.WorkspaceBinding;
 import io.haifa.agent.project.binding.WorkspaceBindingId;
 import io.haifa.agent.project.binding.WorkspaceBindingMode;
 import io.haifa.agent.project.binding.WorkspaceLocationRef;
+import io.haifa.agent.project.changeset.FileChange;
+import io.haifa.agent.project.changeset.FileChangeSet;
 import io.haifa.agent.project.changeset.FileChangeSetId;
 import io.haifa.agent.project.changeset.FileChangeSetStatus;
+import io.haifa.agent.project.changeset.FileChangeType;
+import io.haifa.agent.project.changeset.FileVersion;
+import io.haifa.agent.project.changeset.InMemoryFileChangeSetStore;
 import io.haifa.agent.project.domain.ProjectId;
+import io.haifa.agent.project.filesystem.FileType;
 import io.haifa.agent.project.mutation.CreateFileRequest;
 import io.haifa.agent.project.mutation.DeleteFileRequest;
 import io.haifa.agent.project.mutation.MoveFileRequest;
@@ -33,6 +39,7 @@ import io.haifa.agent.project.workspace.WorkspacePermissionSet;
 import io.haifa.agent.project.workspace.WorkspacePurpose;
 import io.haifa.agent.project.workspace.WorkspaceRevision;
 import io.haifa.agent.project.workspace.WorkspaceRoot;
+import io.haifa.agent.tool.api.ToolReconciliationStatus;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -84,7 +91,11 @@ class LocalFileToolOperationsTest {
                 "policy-1",
                 arguments(Map.of("path", "large.txt", "cursor", cursor)));
         assertThat(stale.successful()).isFalse();
-        assertThat(stale.structuredData()).containsEntry("errorCode", "FILE_CURSOR_STALE");
+        assertThat(stale.structuredData())
+                .containsEntry("errorCode", "FILE_CURSOR_STALE")
+                .containsEntry("failureActionCode", "RESTART_READ_FROM_CURRENT_VERSION")
+                .containsEntry("retryable", true)
+                .containsEntry("maximumAutomaticRetries", 1);
     }
 
     @Test
@@ -111,7 +122,13 @@ class LocalFileToolOperationsTest {
                         """)));
 
         assertThat(result.successful()).isTrue();
-        assertThat(result.structuredData()).containsEntry("complete", true);
+        assertThat(result.structuredData())
+                .containsEntry("complete", true)
+                .containsKeys("changeReviewArtifactRef", "artifactRef");
+        assertThat(result.structuredData().get("changeReviewArtifact"))
+                .isInstanceOfSatisfying(Map.class, review -> assertThat(review)
+                        .containsEntry("complete", true)
+                        .containsEntry("totalFileCount", 1));
         assertThat(Files.readString(root.resolve("source.txt"))).isEqualTo("anchor\nnew\n");
     }
 
@@ -131,7 +148,80 @@ class LocalFileToolOperationsTest {
         assertThat(result.summary()).isEqualTo("Workspace mutation failed: TARGET_EXISTS (path=existing.txt)");
         assertThat(result.structuredData())
                 .containsEntry("errorCode", "TARGET_EXISTS")
+                .containsEntry("failureActionCode", "USE_FILE_WRITE_OR_PATCH")
+                .containsEntry("retryable", false)
                 .containsEntry("path", "existing.txt");
+    }
+
+    @Test
+    void givesDeterministicCreateWriteAndSensitivePathRecoveryActions() {
+        Fixture fixture = fixture();
+
+        var missingWrite = fixture.operations.execute(
+                "file.write",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", "missing.txt", "content", "new")));
+        var sensitiveRead = fixture.operations.execute(
+                "file.read",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-1",
+                "policy-1",
+                arguments(Map.of("path", ".env")));
+
+        assertThat(missingWrite.structuredData())
+                .containsEntry("stableFailureCode", "PATH_NOT_FOUND")
+                .containsEntry("failureActionCode", "USE_FILE_CREATE")
+                .containsEntry("retryable", false);
+        assertThat(sensitiveRead.structuredData())
+                .containsEntry("stableFailureCode", "SENSITIVE_PATH")
+                .containsEntry("failureActionCode", "USER_ACTION_REQUIRED")
+                .containsEntry("retryable", false)
+                .containsEntry("maximumAutomaticRetries", 0);
+        assertThat(sensitiveRead.structuredData().get("failureAction").toString())
+                .contains("do not rename, relocate, or copy");
+    }
+
+    @Test
+    void bindsFileMutationToTheToolCallAndReconcilesMatchingContentWithoutAnotherWrite() throws Exception {
+        Files.writeString(root.resolve("tracked.txt"), "before", StandardCharsets.UTF_8);
+        Fixture fixture = fixture();
+        ToolArguments arguments = arguments(Map.of("path", "tracked.txt", "content", "after"));
+
+        var result = fixture.operations.execute(
+                "file.write",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-reconcile",
+                "tool-call-reconcile",
+                "idempotency-reconcile",
+                "policy-reconcile",
+                arguments);
+        var changeSet = fixture.changeSets
+                .findByOperation(fixture.workspaceId, "idempotency-reconcile")
+                .orElseThrow();
+        var reconciliation = fixture.operations.reconcile(
+                "file.write",
+                fixture.workspaceId,
+                new PrincipalRef("operator", "user"),
+                "run-reconcile",
+                "tool-call-reconcile",
+                "idempotency-reconcile",
+                arguments);
+
+        assertThat(result.successful()).isTrue();
+        assertThat(changeSet.toolCallRef()).isEqualTo("tool-call-reconcile");
+        assertThat(changeSet.runRef()).isEqualTo("run-reconcile");
+        assertThat(changeSet.actor()).isEqualTo(new PrincipalRef("operator", "user"));
+        assertThat(reconciliation.status()).isEqualTo(ToolReconciliationStatus.RESOLVED);
+        assertThat(reconciliation.reasonCode()).isEqualTo("FILE_CONTENT_AND_CHANGE_SET_CONFIRMED");
+        assertThat(reconciliation.result()).hasValueSatisfying(reconciled -> assertThat(reconciled.structuredData())
+                .containsEntry("changeSetId", changeSet.id().value())
+                .containsEntry("replayAllowed", false));
+        assertThat(Files.readString(root.resolve("tracked.txt"))).isEqualTo("after");
     }
 
     private Fixture fixture() {
@@ -163,16 +253,25 @@ class LocalFileToolOperationsTest {
                         now)
                 .activate(now));
         var files = new LocalWorkspaceFileService(workspaces, bindings, locations, SensitivePathPolicy.defaults());
-        var operations =
-                new LocalFileToolOperations(workspaces, files, testMutations(workspaces, workspaceId), () -> "id-1");
-        return new Fixture(workspaceId, operations);
+        var changeSets = new InMemoryFileChangeSetStore();
+        var operations = new LocalFileToolOperations(
+                workspaces,
+                files,
+                testMutations(workspaces, workspaceId, changeSets, new ProjectId("project-file-read")),
+                () -> "id-1",
+                changeSets);
+        return new Fixture(workspaceId, operations, changeSets);
     }
 
     private static ToolArguments arguments(Map<String, Object> values) {
         return new ToolArguments("haifa.file.read.input", "1.1.0", values);
     }
 
-    private WorkspaceMutationProvider testMutations(InMemoryWorkspaceStore workspaces, WorkspaceId workspaceId) {
+    private WorkspaceMutationProvider testMutations(
+            InMemoryWorkspaceStore workspaces,
+            WorkspaceId workspaceId,
+            InMemoryFileChangeSetStore changeSets,
+            ProjectId projectId) {
         return new WorkspaceMutationProvider() {
             @Override
             public String providerId() {
@@ -199,12 +298,31 @@ class LocalFileToolOperationsTest {
                     WorkspaceRevision before =
                             workspaces.find(workspaceId).orElseThrow().revision();
                     WorkspaceRevision after = new WorkspaceRevision(before.sequence() + 1, "sha256:test-patch-result");
+                    FileChange change = new FileChange(
+                            FileChangeType.REPLACE,
+                            request.path().projectPath(),
+                            null,
+                            new FileVersion(FileType.FILE, request.content().length, "sha256:" + "a".repeat(64)),
+                            new FileVersion(FileType.FILE, request.content().length, "sha256:" + "b".repeat(64)));
+                    FileChangeSet changeSet = FileChangeSet.pending(
+                                    new FileChangeSetId("change-set-test"),
+                                    projectId,
+                                    workspaceId,
+                                    request.context().operationId(),
+                                    request.context().runRef(),
+                                    request.context().toolCallRef(),
+                                    before,
+                                    request.context().actor(),
+                                    request.context().securityDecisionRef(),
+                                    Instant.parse("2026-08-05T00:00:00Z"))
+                            .applied(after, java.util.List.of(change), true, Instant.parse("2026-08-05T00:00:01Z"));
+                    changeSets.create(changeSet);
                     return new MutationResult(
                             new FileChangeSetId("change-set-test"),
                             FileChangeSetStatus.APPLIED,
                             before,
                             after,
-                            java.util.List.of(),
+                            java.util.List.of(change),
                             true,
                             false);
                 } catch (java.io.IOException exception) {
@@ -224,5 +342,6 @@ class LocalFileToolOperationsTest {
         };
     }
 
-    private record Fixture(WorkspaceId workspaceId, LocalFileToolOperations operations) {}
+    private record Fixture(
+            WorkspaceId workspaceId, LocalFileToolOperations operations, InMemoryFileChangeSetStore changeSets) {}
 }

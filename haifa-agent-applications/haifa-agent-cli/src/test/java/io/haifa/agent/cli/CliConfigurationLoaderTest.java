@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.haifa.agent.application.project.persistence.ProjectPersistenceMode;
 import io.haifa.agent.application.project.persistence.ProjectPersistenceProtection;
+import io.haifa.agent.application.project.policy.CodingApprovalThreshold;
 import io.haifa.agent.model.api.ModelApiStyles;
 import io.haifa.agent.model.api.ModelCapability;
 import io.haifa.agent.model.api.ModelReasoningMode;
@@ -156,6 +157,7 @@ class CliConfigurationLoaderTest {
                 .extracting(io.haifa.agent.application.project.product.coding.CodingModelOption::id)
                 .doesNotContain("local-openai-responses");
         assertThat(result.approval()).isEqualTo(ApprovalMode.ASK);
+        assertThat(result.approvalThreshold()).isEqualTo(CodingApprovalThreshold.LOW);
         assertThat(result.execution().provider()).isEqualTo("host-guarded");
         assertThat(result.execution().network()).isEqualTo("allow");
         assertThat(result.persistence().mode()).isEqualTo(ProjectPersistenceMode.SQLITE_WITH_JSONL);
@@ -187,6 +189,40 @@ class CliConfigurationLoaderTest {
                 defaults.maxToolCalls(),
                 defaults.persistence());
         assertThat(explicitCompatibilityConfiguration.enabledTools()).containsExactly("file.search");
+    }
+
+    @Test
+    void resolvesExplicitApprovalThresholdAndCompatibilityModes() throws Exception {
+        Path thresholdConfiguration = Files.createTempFile("haifa-cli-threshold", ".yaml");
+        Files.writeString(thresholdConfiguration, "approval:\n  threshold: high\n");
+        Path autoConfiguration = Files.createTempFile("haifa-cli-auto", ".yaml");
+        Files.writeString(autoConfiguration, "approval:\n  mode: auto\n");
+
+        CliConfiguration threshold = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", thresholdConfiguration.toString()}), Path.of("."));
+        CliConfiguration auto = new CliConfigurationLoader()
+                .load(CliArguments.parse(new String[] {"--config", autoConfiguration.toString()}), Path.of("."));
+        CliConfiguration override = new CliConfigurationLoader()
+                .load(
+                        CliArguments.parse(
+                                new String[] {"--config", thresholdConfiguration.toString(), "--approval", "auto"}),
+                        Path.of("."));
+
+        assertThat(threshold.approval()).isEqualTo(ApprovalMode.ASK);
+        assertThat(threshold.approvalThreshold()).isEqualTo(CodingApprovalThreshold.HIGH);
+        assertThat(auto.approvalThreshold()).isEqualTo(CodingApprovalThreshold.NEVER);
+        assertThat(override.approvalThreshold()).isEqualTo(CodingApprovalThreshold.NEVER);
+    }
+
+    @Test
+    void rejectsConflictingApprovalModeAndThreshold() throws Exception {
+        Path configuration = Files.createTempFile("haifa-cli-threshold-conflict", ".yaml");
+        Files.writeString(configuration, "approval:\n  mode: ask\n  threshold: high\n");
+
+        assertThatThrownBy(() -> new CliConfigurationLoader()
+                        .load(CliArguments.parse(new String[] {"--config", configuration.toString()}), Path.of(".")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("approval.mode and approval.threshold conflict");
     }
 
     @Test

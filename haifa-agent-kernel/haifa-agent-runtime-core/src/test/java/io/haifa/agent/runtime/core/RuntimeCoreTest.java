@@ -29,7 +29,9 @@ import io.haifa.agent.core.tool.ToolResult;
 import io.haifa.agent.model.api.AgentChatModel;
 import io.haifa.agent.model.api.AgentChatRequest;
 import io.haifa.agent.model.api.AgentChatResponse;
+import io.haifa.agent.model.api.ModelErrorCategory;
 import io.haifa.agent.model.api.ModelFinishReason;
+import io.haifa.agent.model.api.ModelInvocationException;
 import io.haifa.agent.model.api.ModelMessageRole;
 import io.haifa.agent.model.api.ModelToolCall;
 import io.haifa.agent.model.api.ModelToolSpecification;
@@ -61,6 +63,7 @@ import io.haifa.agent.runtime.core.input.InMemoryRunInputPort;
 import io.haifa.agent.runtime.core.interaction.InMemoryInteractionPort;
 import io.haifa.agent.runtime.core.interaction.ToolApprovalTarget;
 import io.haifa.agent.runtime.core.retry.BackoffStrategy;
+import io.haifa.agent.runtime.core.retry.ModelRetryPolicy;
 import io.haifa.agent.runtime.core.retry.RetryPolicy;
 import io.haifa.agent.runtime.core.retry.RuntimeBackoffPolicy;
 import io.haifa.agent.runtime.core.storage.InMemoryRuntimeStore;
@@ -69,6 +72,8 @@ import io.haifa.agent.runtime.core.storage.RuntimePersistencePorts;
 import io.haifa.agent.runtime.core.tool.InMemoryToolExecutionJournal;
 import io.haifa.agent.runtime.core.tool.ToolJournalState;
 import io.haifa.agent.runtime.core.tool.ToolPolicyDecision;
+import io.haifa.agent.tool.api.ToolDispatchEvidence;
+import io.haifa.agent.tool.api.ToolReconciliation;
 import io.haifa.agent.tool.api.ToolSchema;
 import java.time.Duration;
 import java.time.Instant;
@@ -535,6 +540,192 @@ class RuntimeCoreTest {
     }
 
     @Test
+    void retriesOneEmptyNonStreamingResponseOnTheSameFrozenBinding() {
+        AtomicInteger calls = new AtomicInteger();
+        List<AgentChatRequest> requests = new ArrayList<>();
+        AgentChatModel model = request -> {
+            requests.add(request);
+            return calls.incrementAndGet() == 1
+                    ? emptyResponse("empty-non-streaming")
+                    : response(finalDecision("recovered from empty response"));
+        };
+        Fixture fixture = fixture(model);
+
+        var accepted = fixture.runtime.start(request("empty-non-streaming-retry"));
+        fixture.scheduler.runAll();
+
+        assertThat(calls).hasValue(2);
+        assertThat(requests).extracting(AgentChatRequest::attempt).containsExactly(1, 2);
+        assertThat(requests)
+                .extracting(request -> request.requestId().value())
+                .containsOnly(requests.getFirst().requestId().value());
+        assertThat(requests.getFirst().requestId()).isEqualTo(requests.getLast().requestId());
+        assertThat(requests.getFirst().callId()).isNotEqualTo(requests.getLast().callId());
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(run.usage().modelCalls()).isEqualTo(2);
+        });
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.empty-response"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("attempt", 1)
+                        .containsEntry("providerCode", "empty_response")
+                        .doesNotContainKeys("response", "content"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .containsSubsequence(
+                        "model.attempt.scheduled",
+                        "model.call.started",
+                        "model.call.failed",
+                        "model.attempt.retry-scheduled",
+                        "model.attempt.scheduled",
+                        "model.call.started",
+                        "model.call.succeeded");
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().startsWith("model.call."))
+                .allSatisfy(event -> assertThat(event.data())
+                        .containsEntry(
+                                "modelRequestId",
+                                requests.getFirst().requestId().value())
+                        .containsKey("durationMillis")
+                        .doesNotContainKeys("response", "reasoning", "prompt"));
+    }
+
+    @Test
+    void terminatesAfterFourEmptyStreamingResponsesWithoutDispatchingTools() {
+        AtomicInteger calls = new AtomicInteger();
+        List<AgentChatRequest> requests = new ArrayList<>();
+        AgentChatModel model = new AgentChatModel() {
+            @Override
+            public AgentChatResponse invoke(AgentChatRequest request) {
+                throw new AssertionError("streaming path expected");
+            }
+
+            @Override
+            public AgentChatResponse invokeStreaming(
+                    AgentChatRequest request, io.haifa.agent.model.api.ModelStreamSink sink) {
+                requests.add(request);
+                calls.incrementAndGet();
+                return emptyResponse("empty-streaming-" + calls.get());
+            }
+        };
+        Fixture fixture = fixture(
+                model,
+                builder -> builder.modelRetry(
+                        new ModelRetryPolicy(new RetryPolicy(4, ignored -> true, BackoffStrategy.none()))));
+
+        var accepted = fixture.runtime.start(request("empty-streaming-terminal"));
+        fixture.scheduler.runAll();
+
+        assertThat(calls).hasValue(4);
+        assertThat(requests).extracting(AgentChatRequest::attempt).containsExactly(1, 2, 3, 4);
+        assertThat(requests.getFirst().requestId()).isEqualTo(requests.getLast().requestId());
+        assertThat(requests).extracting(AgentChatRequest::callId).doesNotHaveDuplicates();
+        var run = fixture.runtime.find(accepted.runId()).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.MODEL_RESPONSE_INVALID);
+        assertThat(fixture.store.toolCalls(accepted.runId())).isEmpty();
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.empty-response"))
+                .extracting(event -> event.data().get("attempt"))
+                .containsExactly(1, 2, 3, 4);
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.attempt.exhausted"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("attempt", 4)
+                        .containsEntry("category", "EMPTY_RESPONSE")
+                        .containsEntry(
+                                "modelRequestId",
+                                requests.getFirst().requestId().value())
+                        .doesNotContainKeys("response", "reasoning", "prompt"));
+    }
+
+    @Test
+    void retriesMalformedResponseBeforeOutputOnTheSameFrozenRequest() {
+        AtomicInteger calls = new AtomicInteger();
+        List<AgentChatRequest> requests = new ArrayList<>();
+        AgentChatModel model = request -> {
+            requests.add(request);
+            if (calls.incrementAndGet() == 1) {
+                throw new ModelInvocationException(
+                        ModelErrorCategory.MALFORMED_RESPONSE,
+                        true,
+                        200,
+                        "malformed_response",
+                        request.callId(),
+                        "safe malformed response",
+                        null,
+                        null,
+                        false);
+            }
+            return response(finalDecision("recovered from malformed response"));
+        };
+        Fixture fixture = fixture(model);
+
+        var accepted = fixture.runtime.start(request("malformed-response-retry"));
+        fixture.scheduler.runAll();
+
+        assertThat(calls).hasValue(2);
+        assertThat(requests).extracting(AgentChatRequest::attempt).containsExactly(1, 2);
+        assertThat(requests.getFirst().requestId()).isEqualTo(requests.getLast().requestId());
+        assertThat(requests.getFirst().callId()).isNotEqualTo(requests.getLast().callId());
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+            assertThat(run.usage().modelCalls()).isEqualTo(2);
+        });
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .extracting(io.haifa.agent.runtime.core.storage.RuntimeEvent::type)
+                .containsSubsequence(
+                        "model.call.failed",
+                        "model.attempt.retry-scheduled",
+                        "model.attempt.scheduled",
+                        "model.call.succeeded");
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .filteredOn(event -> event.type().equals("model.attempt.retry-scheduled"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.data())
+                        .containsEntry("category", "MALFORMED_RESPONSE")
+                        .containsEntry("retryable", true)
+                        .containsEntry("outputObserved", false)
+                        .doesNotContainKeys("response", "reasoning", "prompt"));
+    }
+
+    @Test
+    void neverRetriesUnsafeModelFailureCategoriesEvenWhenTheConfiguredPredicateAllowsThem() {
+        for (ModelErrorCategory category : List.of(
+                ModelErrorCategory.AUTHENTICATION_FAILED,
+                ModelErrorCategory.INVALID_REQUEST,
+                ModelErrorCategory.PARTIAL_RESPONSE)) {
+            AtomicInteger calls = new AtomicInteger();
+            AgentChatModel model = request -> {
+                calls.incrementAndGet();
+                throw new ModelInvocationException(
+                        category,
+                        true,
+                        0,
+                        "safe_code",
+                        request.callId(),
+                        "safe model failure",
+                        null,
+                        null,
+                        category == ModelErrorCategory.PARTIAL_RESPONSE);
+            };
+            Fixture fixture = fixture(
+                    model, builder -> builder.modelRetry(new RetryPolicy(3, ignored -> true, BackoffStrategy.none())));
+
+            var accepted = fixture.runtime.start(request("model-no-retry-" + category.name()));
+            fixture.scheduler.runAll();
+
+            assertThat(calls).as(category.name()).hasValue(1);
+            assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                    .as(category.name())
+                    .isEqualTo(AgentRunStatus.FAILED);
+        }
+    }
+
+    @Test
     void failedDispatchedToolStillCompletesProtocolForTheNextRun() {
         ToolRequest request =
                 toolRequest("uncertain", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
@@ -586,6 +777,123 @@ class RuntimeCoreTest {
                 .anyMatch(message -> message.role() == ModelMessageRole.TOOL
                         && message.providerCorrelationId().orElseThrow().value().equals("provider-uncertain")
                         && message.content().equals("Tool outcome could not be determined"));
+    }
+
+    @Test
+    void reconcilesAnAbandonedLocalToolFromDurableEvidenceWithoutReplayingIt() {
+        AtomicBoolean owned = new AtomicBoolean(true);
+        AtomicInteger invocations = new AtomicInteger();
+        AtomicInteger reconciliations = new AtomicInteger();
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<AgentChatRequest> recoveredRequest = new AtomicReference<>();
+        ToolRequest request =
+                toolRequest("reconciled", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        AgentChatModel model = chatRequest -> {
+            if (modelCalls.incrementAndGet() == 1) return response(new ToolCallDecision(List.of(request)));
+            recoveredRequest.set(chatRequest);
+            return response(finalDecision("recovered after reconcile"));
+        };
+        Fixture fixture = fixture(model, builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        invocation -> {
+                            invocations.incrementAndGet();
+                            invocation
+                                    .observer()
+                                    .dispatched(new ToolDispatchEvidence(
+                                            "execution-reconciled", OptionalLong.of(321), "a".repeat(64)));
+                            throw new AssertionError("simulated executor loss after dispatch");
+                        },
+                        reconciliation -> {
+                            reconciliations.incrementAndGet();
+                            assertThat(reconciliation.dispatchEvidence())
+                                    .contains(new ToolDispatchEvidence(
+                                            "execution-reconciled", OptionalLong.of(321), "a".repeat(64)));
+                            return ToolReconciliation.resolved(
+                                    new ToolResult(
+                                            true,
+                                            "write observed after recovery",
+                                            Map.of("changeSetId", "changes-reconciled"),
+                                            List.of(),
+                                            List.of(),
+                                            false),
+                                    "CHANGE_SET_CONFIRMED");
+                        })
+                .executionOwnership(attempt -> owned.get() || attempt.attemptNumber() > 1));
+        var accepted = fixture.runtime.start(request("reconcile-abandoned-tool"));
+
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        owned.set(false);
+        fixture.runtime.recover(accepted.runId());
+        fixture.scheduler.runAll();
+
+        assertThat(invocations).hasValue(1);
+        assertThat(reconciliations).hasValue(1);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow().status())
+                .isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> {
+            assertThat(call.status().name()).isEqualTo("COMPLETED");
+            assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
+                    .contains(ToolJournalState.COMPLETED);
+        });
+        assertThat(recoveredRequest.get().messages())
+                .anyMatch(message -> message.role() == ModelMessageRole.TOOL
+                        && message.content().contains("write observed after recovery"));
+        assertThat(fixture.store.eventsFor(accepted.runId()))
+                .anySatisfy(event -> assertThat(event.type()).isEqualTo("tool.reconciled"));
+    }
+
+    @Test
+    void stopsAnAbandonedSideEffectingToolWhenReadOnlyReconciliationCannotResolveIt() {
+        AtomicBoolean owned = new AtomicBoolean(true);
+        AtomicInteger invocations = new AtomicInteger();
+        AtomicInteger reconciliations = new AtomicInteger();
+        ToolRequest request = toolRequest(
+                "unresolved-side-effect", "write", "1.0.0", new ToolArguments("write.input", "1.0", Map.of()));
+        Fixture fixture = fixture(model(new ToolCallDecision(List.of(request))), builder -> TestToolPlatform.install(
+                        builder,
+                        "write",
+                        "1.0.0",
+                        "write.input",
+                        true,
+                        invocation -> {
+                            invocations.incrementAndGet();
+                            invocation
+                                    .observer()
+                                    .dispatched(new ToolDispatchEvidence(
+                                            "execution-unresolved", OptionalLong.empty(), "b".repeat(64)));
+                            throw new AssertionError("simulated executor loss after dispatch");
+                        },
+                        reconciliation -> {
+                            reconciliations.incrementAndGet();
+                            return ToolReconciliation.stillUnknown("LOCAL_EVIDENCE_MISSING");
+                        })
+                .executionOwnership(attempt -> owned.get() || attempt.attemptNumber() > 1));
+        var accepted = fixture.runtime.start(request("unresolved-side-effect"));
+
+        assertThatThrownBy(fixture.scheduler::runNext).isInstanceOf(AssertionError.class);
+        owned.set(false);
+        fixture.runtime.recover(accepted.runId());
+        fixture.scheduler.runAll();
+
+        assertThat(invocations).hasValue(1);
+        assertThat(reconciliations).hasValue(1);
+        assertThat(fixture.runtime.find(accepted.runId()).orElseThrow()).satisfies(run -> {
+            assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+            assertThat(run.error().orElseThrow().code()).isEqualTo(AgentErrorCode.TOOL_OUTCOME_UNKNOWN);
+        });
+        assertThat(fixture.store.toolCalls(accepted.runId())).singleElement().satisfies(call -> {
+            assertThat(call.status().name()).isEqualTo("FAILED");
+            assertThat(call.error().orElseThrow().error().details())
+                    .containsEntry("reconcileStatus", "STILL_UNKNOWN")
+                    .containsEntry("reconcileReason", "LOCAL_EVIDENCE_MISSING")
+                    .containsEntry("stopReason", "SIDE_EFFECTING_REPLAY_FORBIDDEN");
+            assertThat(fixture.journal.state(accepted.runId(), call.idempotencyKey()))
+                    .contains(ToolJournalState.OUTCOME_UNKNOWN);
+        });
     }
 
     @Test
@@ -1128,6 +1436,18 @@ class RuntimeCoreTest {
                     Map.of());
         }
         throw new IllegalArgumentException("decision is not representable by the Model API response contract");
+    }
+
+    private static AgentChatResponse emptyResponse(String responseId) {
+        return new AgentChatResponse(
+                responseId,
+                "deepseek-v4-pro",
+                "",
+                List.of(),
+                ModelFinishReason.STOP,
+                ModelUsage.unpriced(1, 0),
+                "",
+                Map.of());
     }
 
     private static ToolRequest toolRequest(String key, String name, String version, ToolArguments arguments) {

@@ -110,6 +110,20 @@ public final class RunEventPayloads {
         }
     }
 
+    /** Logical model-request attempt state; it never contains prompt, response, endpoint, or raw failure text. */
+    public record ModelAttemptLifecycle(
+            String modelRequestId, String modelCallId, String status, int attempt, long delayMillis, String reasonCode)
+            implements AgentRunEvent.Payload {
+        public ModelAttemptLifecycle {
+            modelRequestId = text(modelRequestId, "modelRequestId", 256);
+            modelCallId = optionalText(modelCallId, "modelCallId", 256);
+            status = text(status, "status", 64);
+            if (attempt < 1) throw new IllegalArgumentException("attempt must be positive");
+            if (delayMillis < 0) throw new IllegalArgumentException("delayMillis must not be negative");
+            reasonCode = text(reasonCode, "reasonCode", 128);
+        }
+    }
+
     public record ToolLifecycle(
             String toolCallId,
             String displayName,

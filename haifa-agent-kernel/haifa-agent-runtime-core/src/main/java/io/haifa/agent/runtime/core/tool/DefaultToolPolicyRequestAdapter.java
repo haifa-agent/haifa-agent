@@ -87,21 +87,18 @@ public final class DefaultToolPolicyRequestAdapter implements ToolPolicyRequestA
             Object prior = values.get("priorToolCallId");
             Object permission = values.get("requestedPermission");
             Object justification = values.get("justification");
-            Object operationFamily = values.get("operationFamily");
             Object timeout = values.getOrDefault("timeoutMillis", "DEFAULT");
             if (command instanceof String commandText
                     && workdir instanceof String workdirText
                     && prior instanceof String priorText
                     && permission instanceof String permissionText
-                    && justification instanceof String justificationText
-                    && operationFamily instanceof String familyText) {
+                    && justification instanceof String justificationText) {
                 return PolicyDigest.sha256Fields(List.of(
                         commandText,
                         workdirText,
                         priorText,
                         permissionText,
                         justificationText,
-                        familyText.trim().toUpperCase(java.util.Locale.ROOT),
                         String.valueOf(timeout)));
             }
         }

@@ -28,6 +28,13 @@ the application-owned `artifacts/` directory: no-follow path resolution, owner-o
 atomic publication, SHA-256 verification on read, a 1 MiB single-payload limit, and an explicit
 JSON/Markdown media allowlist. Artifact payload bytes do not enter SQLite or JSONL.
 
+## V8 Tool reconciliation evidence
+
+Runtime migration V8 extends `tool_journal` with nullable bounded dispatch evidence (`execution ID`, host-local PID,
+working-directory digest) and the latest reconciliation status/reason. An outcome-unknown row may retain the bounded
+observed Tool Result payload. Resolved reconciliation returns through `PENDING_RESULT -> COMPLETED`; unresolved
+side-effecting work remains `OUTCOME_UNKNOWN`, so restart recovery does not infer or replay a mutation.
+
 ## V4 Interaction / Run Input / Runtime Journal
 
 Runtime Migration V4 在不修改 V1～V3 的前提下完成 11 号能力 Task 02：

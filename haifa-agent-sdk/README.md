@@ -186,6 +186,11 @@ category、retryability、details 和 diagnosticId；调用方无需解析字符
 Core 或 Provider 异常。同步请求失败属于 `RuntimeApiErrorCode`，异步 Run 失败属于
 `AgentErrorCode`。
 
+应用可通过 `HaifaAgentBuilder.modelRetry(maxAttempts, initialDelay, maxDelay, backoffMultiplier, jitterRatio)`
+配置模型 I/O 的有界重试。该配置只影响 Runtime 对可安全重放错误的物理 Attempt；认证、无效请求、
+上下文过长、已产生部分输出和取消仍由 Runtime 硬拒绝重试，Provider/Model Binding 也不会隐式切换。
+Run Event Feed 使用 `ModelAttemptLifecycle` 暴露逻辑请求、Attempt、等待和耗尽的脱敏稳定视图。
+
 - `ProductPolicies` 将 Memory 人工审查与查询边界、Artifact 配额/Media Type/本地容量门禁及
   Execution 主机/网络/并发/超时政策冻结进 Profile canonical digest；本阶段不允许关闭
   Memory Candidate 人工审查。

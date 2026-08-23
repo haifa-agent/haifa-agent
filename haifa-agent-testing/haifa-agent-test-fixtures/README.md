@@ -25,3 +25,9 @@
   非 ZIP 安全失败副作用、SQLite 原子性、只读分析、合理第二次重试、非幂等 outcome unknown 和
   UNKNOWN Intent；资源不含运行产物。Case 03/04 的修正版 Acceptance 使用 `2.0.0`，不得与旧版本
   混合比较。
+- `fixtures/coding-runtime-reliability/replay-v1.json`：从聚合失败形态提炼的十二个合成 Replay Contract，
+  覆盖复合 Shell、Git/GH 风险、退出码、Workspace 恢复、Model/Context、复数 ChangeSet 和 Push
+  outcome unknown；不包含真实 Prompt、命令输出、Provider 响应、凭据、仓库数据或主机路径。
+- `fixtures/coding-evaluation-reliability/`：首轮 30 题 Coding 评测的脱敏聚合基线，以及模型分类、
+  Physical Attempt、Tool Outcome 和 Completion Evidence 的合成契约 Case；只保存摘要和最小观察，
+  原始 SQLite、JSONL、Prompt 和 Provider 响应继续留在独立私有归档。

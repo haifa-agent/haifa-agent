@@ -16,4 +16,8 @@ public interface ExecutionBroker {
     boolean cancel(ExecutionId id);
 
     Optional<ExecutionResult> find(ExecutionId id);
+
+    default Optional<ExecutionResult> findByIdempotencyKey(String idempotencyKey) {
+        return Optional.empty();
+    }
 }

@@ -127,7 +127,8 @@ public final class StandaloneCodingAgents {
                     localAgent::loadedResources,
                     localAgent::reloadResources,
                     localAgent.shell(),
-                    localAgent.exporter());
+                    localAgent.exporter(),
+                    localAgent.outcomes());
             return new StandaloneCodingAgent(localAgent, client, metadata(configuration));
         } catch (RuntimeException exception) {
             localAgent.close();
@@ -159,6 +160,7 @@ public final class StandaloneCodingAgents {
                 "executionNetwork=" + configuration.execution().network(),
                 "executionShell=" + configuration.execution().shell(),
                 "approval=" + configuration.approval().name(),
+                "approval-threshold=" + configuration.approvalThreshold().name(),
                 "persistence=" + configuration.persistence().mode().name(),
                 "protection=" + configuration.persistence().protection().name(),
                 "maxIterations=" + configuration.maxIterations(),

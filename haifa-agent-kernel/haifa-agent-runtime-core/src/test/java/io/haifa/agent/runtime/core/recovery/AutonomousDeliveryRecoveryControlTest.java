@@ -73,6 +73,29 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     @Test
+    void semanticFingerprintBindsTrustedCommandFactsAndNormalizedIntentWithoutLeakingArguments() {
+        var classifier = new ToolOutcomeClassifier();
+        var first = classifier
+                .classify(failedCommand("intent-1", "git show missing", "GIT", "INSPECT"))
+                .orElseThrow();
+        var same = classifier
+                .classify(failedCommand("intent-2", "git show missing", "GIT", "INSPECT"))
+                .orElseThrow();
+        var sameIntentWithDifferentOperand = classifier
+                .classify(failedCommand("intent-3", "git show other-random-ref", "GIT", "INSPECT"))
+                .orElseThrow();
+        var otherOperation = classifier
+                .classify(failedCommand("intent-4", "git show missing", "GIT", "DIFF"))
+                .orElseThrow();
+
+        assertThat(first.fingerprint()).isEqualTo(same.fingerprint());
+        assertThat(first.fingerprint()).isEqualTo(sameIntentWithDifferentOperand.fingerprint());
+        assertThat(first.fingerprint()).isNotEqualTo(otherOperation.fingerprint());
+        assertThat(first.fingerprint().normalizedIntentDigest()).matches("[0-9a-f]{64}");
+        assertThat(first.fingerprint().toString()).doesNotContain("git show", "missing", "other-random-ref");
+    }
+
+    @Test
     void recoveryEscalatesDeterministicallyAndMeaningfulProgressResetsTheCluster() {
         var controller = new RecoveryController();
         var observation = new ToolOutcomeClassifier()
@@ -81,7 +104,6 @@ class AutonomousDeliveryRecoveryControlTest {
 
         assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.CONTINUE_WITH_DIAGNOSTIC);
         assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.REQUIRE_STRATEGY_CHANGE);
-        assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.REQUIRE_CONVERGENCE);
         assertThat(controller.observe(observation).directive()).isEqualTo(RecoveryDirective.TERMINATE_REPEATED_FAILURE);
 
         controller.meaningfulProgress();
@@ -186,7 +208,7 @@ class AutonomousDeliveryRecoveryControlTest {
         assertThat(ledger.observe(successfulValidation("validation-2", "TEST", "python -m unittest")))
                 .isFalse();
         assertThat(ledger.observe(successfulValidation("validation-3", "DIFF", "git diff --check")))
-                .isTrue();
+                .isFalse();
         assertThat(ledger.observe(successfulValidation("validation-4", "DIFF", "git diff --check")))
                 .isFalse();
         assertThat(ledger.observe(successfulValidation("validation-5", "TEST", "python acceptance.py")))
@@ -194,10 +216,30 @@ class AutonomousDeliveryRecoveryControlTest {
 
         assertThat(ledger.evidence())
                 .extracting(ProgressEvidence::type)
-                .containsExactly(
-                        ProgressEvidence.Type.VALIDATION_ADVANCE,
-                        ProgressEvidence.Type.VALIDATION_ADVANCE,
-                        ProgressEvidence.Type.VALIDATION_ADVANCE);
+                .containsExactly(ProgressEvidence.Type.VALIDATION_ADVANCE, ProgressEvidence.Type.VALIDATION_ADVANCE);
+    }
+
+    @Test
+    void validationIdentityIsBoundToTheCurrentWorkspaceAndRebuildIsDeterministic() {
+        var first = new ProgressLedger();
+        var rebuilt = new ProgressLedger();
+        ToolCall validation = successfulValidation("validation-1", "TEST", "python -m unittest");
+        ToolCall change = completedChangeSets("patch-1", List.of("change-1"));
+
+        assertThat(first.observe(validation)).isTrue();
+        assertThat(first.observe(successfulValidation("validation-2", "TEST", "python -m unittest")))
+                .isFalse();
+        assertThat(first.observe(change)).isTrue();
+        assertThat(first.observe(successfulValidation("validation-3", "TEST", "python -m unittest")))
+                .isTrue();
+
+        assertThat(rebuilt.observe(validation)).isTrue();
+        assertThat(rebuilt.observe(successfulValidation("validation-2", "TEST", "python -m unittest")))
+                .isFalse();
+        assertThat(rebuilt.observe(change)).isTrue();
+        assertThat(rebuilt.observe(successfulValidation("validation-3", "TEST", "python -m unittest")))
+                .isTrue();
+        assertThat(rebuilt.digest()).isEqualTo(first.digest());
     }
 
     @Test
@@ -271,25 +313,24 @@ class AutonomousDeliveryRecoveryControlTest {
     void restoreKeepsFailureClusterAndSuppressesAlreadyCrossedBudgetThresholds() {
         var restored = new AgentLoopContext(3, List.of());
         var snapshot = new RunBudgetSnapshot(4, 4, 4, 4_000, 4, 4, 2, 0, "TOOL_CALLS", 3, 4, 25);
-        restored.rebuildControlState(
-                List.of(
-                        failed("call-restore-1", "bounded-a", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE"),
-                        failed(
-                                "call-restore-2",
-                                "bounded-b",
-                                PROFILE_A,
-                                "DEPENDENCY_UNAVAILABLE",
-                                "CACHE_UNAVAILABLE")),
-                Optional.empty(),
-                0,
-                true,
-                snapshot);
+        ToolCall first =
+                failed("call-restore-1", "bounded-a", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE");
+        ToolCall second =
+                failed("call-restore-2", "bounded-b", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE");
+        restored.rebuildControlState(List.of(first, second), Optional.empty(), 0, true, snapshot);
 
         assertThat(restored.failureClusterAttempts()).isEqualTo(2);
         assertThat(restored.controlPrompt())
                 .contains("attempts=2", RecoveryDirective.REQUIRE_STRATEGY_CHANGE.name())
                 .doesNotContain("bounded-a", "bounded-b");
         assertThat(restored.updateBudgetSnapshot(snapshot)).isEmpty();
+
+        ToolCall third =
+                failed("call-restore-3", "bounded-c", PROFILE_A, "DEPENDENCY_UNAVAILABLE", "CACHE_UNAVAILABLE");
+        AgentLoopContext.ControlObservation terminal =
+                restored.observeAuthoritativeState(List.of(first, second, third), Optional.empty(), 0);
+        assertThat(terminal.recoveryUpdates()).singleElement().satisfies(update -> assertThat(update.directive())
+                .isEqualTo(RecoveryDirective.TERMINATE_REPEATED_FAILURE));
 
         var tenPercent = new RunBudgetSnapshot(1, 1, 1, 1_000, 1, 1, 2, 0, "MODEL_CALLS", 9, 10, 10);
         assertThat(restored.updateBudgetSnapshot(tenPercent)).containsExactly(10);
@@ -319,11 +360,9 @@ class AutonomousDeliveryRecoveryControlTest {
     }
 
     @Test
-    void alternatingDecisionLoopRemainsDetected() {
+    void repeatedActionsWithoutAuthoritativeProgressRemainExploration() {
         var context = new AgentLoopContext(1, List.of("A", "B", "A", "B"));
-        assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, context))
-                .isInstanceOf(LoopDetectedException.class)
-                .hasMessageContaining("alternating");
+        assertThatCode(() -> new LoopDetectionGuard(3).check(null, context)).doesNotThrowAnyException();
     }
 
     @Test
@@ -336,20 +375,39 @@ class AutonomousDeliveryRecoveryControlTest {
         assertThatCode(() -> new LoopDetectionGuard(3).check(null, initialExploration))
                 .doesNotThrowAnyException();
 
-        var afterDelivery = new AgentLoopContext(1, List.of("inspect-a", "inspect-b", "inspect-c"));
+        var afterDelivery = new AgentLoopContext(1, List.of("inspect", "inspect", "inspect"));
         assertThat(afterDelivery.observeInteractions(List.of("interaction-1"))).isPresent();
         String stableDeliveryState = afterDelivery.progressSignatures().getLast();
         afterDelivery.recordProgress(stableDeliveryState);
         afterDelivery.recordProgress(stableDeliveryState);
 
-        assertThatCode(() -> new LoopDetectionGuard(3).check(null, afterDelivery))
-                .doesNotThrowAnyException();
-
-        afterDelivery.recordProgress(stableDeliveryState);
+        new LoopDetectionGuard(3).check(null, afterDelivery);
+        assertThat(afterDelivery.takeStallRecoveryAnnouncement())
+                .hasValueSatisfying(signal ->
+                        assertThat(signal.reason()).isEqualTo(LoopDetectedException.Reason.REPEATED_DECISION));
+        assertThat(afterDelivery.stallRecoveryAttempts()).isOne();
+        assertThat(afterDelivery.modelControlPrompt())
+                .contains("REQUIRE_STRATEGY_CHANGE", "progressDigest=")
+                .doesNotContain("inspect");
 
         assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, afterDelivery))
                 .isInstanceOf(LoopDetectedException.class)
-                .hasMessageContaining("no observable progress");
+                .hasMessageContaining("repeated decision");
+    }
+
+    @Test
+    void restoredStrategySwitchBudgetCannotBeUsedAgain() {
+        var restored = new AgentLoopContext(1, List.of("A", "B", "A", "B"));
+        assertThat(restored.observeInteractions(List.of("interaction-1"))).isPresent();
+        String stable = restored.progressSignatures().getLast();
+        restored.recordProgress(stable);
+        restored.recordProgress(stable);
+        restored.recordProgress(stable);
+        restored.restoreStallRecoveryAttempts(1);
+
+        assertThatThrownBy(() -> new LoopDetectionGuard(3).check(null, restored))
+                .isInstanceOf(LoopDetectedException.class)
+                .hasMessageContaining("alternating decision");
     }
 
     private static RunBudgetSnapshot budgetAt(int remainingPercent) {
@@ -382,6 +440,38 @@ class AutonomousDeliveryRecoveryControlTest {
         return call;
     }
 
+    private static ToolCall failedCommand(String id, String command, String target, String operation) {
+        ToolCall call = requested(
+                id,
+                Map.of(
+                        "operationFamily",
+                        "INSPECT",
+                        "command",
+                        command,
+                        "workdir",
+                        ".",
+                        "description",
+                        "diagnostic-" + id));
+        call.beginValidation();
+        call.beginPolicyCheck();
+        call.start(NOW.plusSeconds(1));
+        call.fail(
+                new ToolExecutionError(new AgentError(
+                        AgentErrorCode.TOOL_BUSINESS_FAILURE,
+                        Map.ofEntries(
+                                Map.entry("failureCategory", "COMMAND_FAILED"),
+                                Map.entry("stableFailureCode", "GIT_REVISION_NOT_FOUND"),
+                                Map.entry("resourceClass", "REPOSITORY_REF"),
+                                Map.entry("effectiveOperationFamily", operation),
+                                Map.entry("commandOperation", operation),
+                                Map.entry("commandTarget", target),
+                                Map.entry("sandboxProfileDigest", PROFILE_A)),
+                        "diag-" + id,
+                        NOW.plusSeconds(2))),
+                NOW.plusSeconds(2));
+        return call;
+    }
+
     private static ToolCall completed(String id) {
         ToolCall call = requested(id);
         call.beginValidation();
@@ -391,7 +481,11 @@ class AutonomousDeliveryRecoveryControlTest {
                 new ToolResult(
                         true,
                         "bounded success",
-                        Map.of("fileChangeSetId", "change-1", "operationFamily", "TEST", "status", "SUCCEEDED"),
+                        Map.of(
+                                "fileChangeSetId",
+                                "change-1",
+                                "validationAttemptRef",
+                                FailureFingerprint.digest(List.of("trusted-validation"))),
                         List.of(),
                         List.of(new ArtifactRef("artifact-1", "test-report", "1", "Test report")),
                         false),
@@ -408,7 +502,11 @@ class AutonomousDeliveryRecoveryControlTest {
                 new ToolResult(
                         true,
                         "bounded success",
-                        Map.of("operationFamily", operationFamily, "status", "SUCCEEDED"),
+                        operationFamily.equals("TEST") || operationFamily.equals("BUILD")
+                                ? Map.of(
+                                        "validationAttemptRef",
+                                        FailureFingerprint.digest(List.of(operationFamily, command)))
+                                : Map.of("operationFamily", operationFamily, "status", "SUCCEEDED"),
                         List.of(),
                         List.of(),
                         false),
